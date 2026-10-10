@@ -131,15 +131,9 @@ resource "kubernetes_cluster_role_binding" "prometheus_server_nodes_proxy" {
   }
 }
 
-# Keel opt-out for this Deployment lives ENTIRELY in the annotation — see the
-# long note on `server.deploymentAnnotations` in prometheus_chart_values.tpl.
-# Keel reads the annotation, and since 2026-08-17 the Kyverno exclude rule
-# selects on that same annotation too (stacks/kyverno/.../keel-annotations.tf).
-#
-# There was a `kubernetes_labels.prometheus_server_keel_optout` here until
-# 2026-08-17, stamping a matching keel.sh/policy LABEL for the exclude to
-# select on. Removed: a keel.sh/* label is drift against any stack declaring a
-# `labels` map on the workload, and it bought nothing the annotation does not.
+# prometheus-server carried a Keel opt-out (keel.sh/policy: never) in the chart
+# values until the Keel cutover, batch B12 on 2026-10-10. See the note on
+# `server:` in prometheus_chart_values.tpl.
 
 # Local-only Prometheus query-API ingress for ha-sofia REST sensors (added
 # 2026-06-05). ha-sofia (external HAOS) reads R730 iDRAC SNMP metrics

@@ -107,7 +107,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
         }
         container {
           name  = "pause"
-          image = "registry.k8s.io/pause:3.10"
+          image = "registry.k8s.io/pause:3.10.2"
           resources {
             requests = {
               cpu    = "1m"
@@ -134,18 +134,9 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    # KEEL: monitoring ns is keel-enrolled — Keel owns the pause image tag and
-    # injects keel.sh annotations. Ignore so TF stops reverting Keel each plan
-    # (completes the cdb7d9a8 KEEL sweep that missed this daemonset and was
-    # tripping drift-detection exit 2 every run). 2026-05-31.
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # tier stamped live by tier-labeling; TF doesn't declare it here
     ]
   }

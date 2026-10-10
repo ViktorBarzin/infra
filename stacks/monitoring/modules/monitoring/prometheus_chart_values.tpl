@@ -488,35 +488,12 @@ prometheus-pushgateway:
     limits:
       memory: 256Mi
 server:
-  # Opt this Deployment out of Keel. Terraform declares every image in this
-  # release (prometheus v3.15.0, config-reloader v0.94.1, and the
-  # prometheus-backup sidecar's alpine tag below), so a Keel bump is always
-  # reverted by the next apply and the two just take turns.
-  #
-  # 2026-08-16: Kyverno stamps keel.sh/policy=patch onto every workload in a
-  # keel-enrolled namespace (keel-annotations.tf; `monitoring` is enrolled —
-  # the stale bullet list in that file's exclude comment predates the
-  # 2026-05-17 enrollment expansion). Keel's hourly poll patch-bumped the
-  # sidecar docker.io/library/alpine:3.21 -> library/alpine:3.21.7 (note it
-  # also drops the registry prefix), the next apply put :3.21 back, and each
-  # flip replaced the Prometheus pod: 11 ReplicaSets in 14h, deployment
-  # generation 242, and only 213 of an expected ~720 self-scrape samples in 24h
-  # (the self-scrape job inherits global scrape_interval: 2m, so 720 is the
-  # 24h ceiling) — under a third of the expected collection. Same fight stacks/proxy hit the same day on its gluetun image.
-  #
-  # The alert consequence is what surfaced it. A restart clears in-memory
-  # alert state, so every `for:` timer restarts from zero — DriftStacksMany
-  # (for: 30m) re-fired and re-resolved all day (each Slack [RESOLVED] lands
-  # within ~2 min of a new ReplicaSet) and DriftStackErrored (for: 2h) could
-  # never stay up long enough to fire at all.
-  #
-  # This annotation is what KEEL reads. The matching LABEL — what Kyverno's
-  # exclude rule selects on — is stamped by kubernetes_labels in
-  # prometheus.tf, since the chart exposes no deployment-labels surface.
-  # Both are needed: excluding the workload stops Kyverno re-adding the
-  # annotation, but cannot remove the policy=patch it already stamped.
-  deploymentAnnotations:
-    keel.sh/policy: never
+  # Until the Keel cutover (batch B12, 2026-10-10) this Deployment carried
+  # deploymentAnnotations keel.sh/policy: never. Keel patch-bumped the
+  # prometheus-backup alpine sidecar, the next apply put the Terraform tag
+  # back, and each flip replaced the Prometheus pod (11 ReplicaSets in 14h on
+  # 2026-08-16). Keel is parked now. Renovate proposes bumps to the chart
+  # version and to the alpine tag below through the CI rails.
   # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
   # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
   # below keep critical metrics fresh; alert `for:` durations were audited and

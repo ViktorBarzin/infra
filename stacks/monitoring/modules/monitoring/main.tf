@@ -75,7 +75,6 @@ resource "kubernetes_namespace" "monitoring" {
       "istio-injection" : "disabled"
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
