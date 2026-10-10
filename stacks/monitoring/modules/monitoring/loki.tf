@@ -34,11 +34,15 @@ resource "helm_release" "alloy" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
+  # Pinned 2026-10-10 (was unpinned, so any apply floated to the newest chart).
+  # Keep in step with helm_release.alloy_syslog below.
+  version = "1.13.1"
 
-  values      = [file("${path.module}/alloy.yaml")]
-  atomic      = true
-  timeout     = 900 # 5-pod DS rolling update + occasional runc-stuck-Terminating on k8s-master needs >300s default
-  max_history = 10  # see helm_release.prometheus for why history is capped
+  values          = [file("${path.module}/alloy.yaml")]
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 900 # 5-pod DS rolling update + occasional runc-stuck-Terminating on k8s-master needs >300s default
+  max_history     = 10  # see helm_release.prometheus for why history is capped
 
   depends_on = [helm_release.loki]
 }
@@ -52,12 +56,13 @@ resource "helm_release" "alloy_syslog" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
-  version    = "1.12.1"
+  version    = "1.13.1"
 
-  values      = [file("${path.module}/alloy-syslog.yaml")]
-  atomic      = true
-  timeout     = 300
-  max_history = 10
+  values          = [file("${path.module}/alloy-syslog.yaml")]
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 300
+  max_history     = 10
 
   depends_on = [helm_release.loki]
 }
