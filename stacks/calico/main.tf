@@ -155,6 +155,8 @@ resource "helm_release" "tigera_operator" {
   repository       = "https://docs.tigera.io/calico/charts"
   chart            = "tigera-operator"
   version          = "v3.30.7"
+  atomic           = true
+  cleanup_on_fail  = true
 
   values = [yamlencode({
     installation = { enabled = false }

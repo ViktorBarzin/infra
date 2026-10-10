@@ -110,6 +110,11 @@ The agent handles all three version patterns in Terraform:
 | Hardcoded | `image = "vaultwarden/server:1.35.4"` | Replace tag in image string |
 | Helm chart | `version = "2026.2.2"` in `helm_release` | Bump chart version |
 
+Since 2026-10-10 every active `helm_release` in `stacks/` sets an explicit chart `version`, so Renovate can own each one (`docs/plans/2026-10-09-software-currency-design.md`, "Ownership of versions"). The last unpinned release, `homepage`, was pinned to its live chart 2.1.0. Each release also sets `atomic = true` and `cleanup_on_fail = true`, with two documented exceptions:
+
+- `prometheus` (`stacks/monitoring/modules/monitoring/prometheus.tf`) sets `cleanup_on_fail` only. It runs with `wait = false`, and Helm turns waiting back on whenever `atomic` is set.
+- `vault` (`stacks/vault/main.tf`) keeps `atomic = false`, because HA pods start sealed and fail readiness until they are unsealed.
+
 ## Configuration
 
 ### Excluding images (handled by DIUN + n8n)

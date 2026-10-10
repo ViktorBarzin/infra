@@ -45,7 +45,8 @@ resource "helm_release" "keel" {
   # Atomic mitigates partial-deploy state. Keel itself is exempt from
   # auto-update (Kyverno mutate excludes the keel namespace), so it only
   # rolls when this stack applies — making atomic safe here.
-  atomic = true
+  atomic          = true
+  cleanup_on_fail = true
 
   values = [yamlencode({
     # 2026-05-26 17:30: re-enabled after switching the Kyverno-injected

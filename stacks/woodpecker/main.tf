@@ -183,8 +183,10 @@ resource "helm_release" "woodpecker" {
     })
   ]
 
-  timeout    = 600
-  depends_on = [kubernetes_manifest.db_external_secret]
+  timeout         = 600
+  atomic          = true
+  cleanup_on_fail = true
+  depends_on      = [kubernetes_manifest.db_external_secret]
 }
 
 # Patch hostAliases onto the woodpecker-server StatefulSet — the chart 3.5.1
