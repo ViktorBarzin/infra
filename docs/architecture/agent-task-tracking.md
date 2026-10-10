@@ -89,7 +89,7 @@ Two layers prevent agents from using built-in task tools:
 
 ### Dolt Server
 
-- **Image**: `dolthub/dolt-sql-server:2.4.2`, an exact pin owned by Terraform (Keel `policy=never`, image not in `ignore_changes`). Upgraded from 2.0.7 on 2026-10-10.
+- **Image**: `dolthub/dolt-sql-server:2.4.2`, an exact pin owned by Terraform (image not in `ignore_changes`); Renovate proposes bumps since 2026-10-10. Upgraded from 2.0.7 on 2026-10-10.
 - **Storage**: `proxmox-lvm` PVC, 2Gi initial, auto-resize to 10Gi
 - **Service**: LoadBalancer via MetalLB on shared IP `10.0.20.200`
   - `metallb.io/allow-shared-ip: shared`

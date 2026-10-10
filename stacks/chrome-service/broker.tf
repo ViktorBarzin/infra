@@ -138,22 +138,12 @@ resource "kubernetes_deployment" "broker" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # This Deployment carries NO keel.sh/policy=never label, so Kyverno's
-      # inject-keel-annotations ClusterPolicy does stamp it (the policy excludes
-      # only never-labelled workloads) — without these, any apply of this stack
-      # strips the annotations off the live object and they only return when the
-      # Deployment is recreated. Canonical block per AGENTS.md → "Kyverno Drift
-      # Suppression"; the container image is deliberately NOT ignored, so TF
+      # The container image is deliberately NOT ignored, so Terraform
       # re-asserts the pinned local.python_image (same reasoning as main.tf).
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

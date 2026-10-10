@@ -36,9 +36,8 @@ resource "kubernetes_namespace" "stremio" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.gpu
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      tier              = local.tiers.gpu
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {
@@ -227,15 +226,11 @@ resource "kubernetes_deployment" "stremio" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Woodpecker/Keel manage the tag
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_manifest.external_secret]
@@ -314,12 +309,6 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
     name      = "cinemeta-proxy"
     namespace = local.namespace
     labels    = { app = "cinemeta-proxy", tier = local.tiers.gpu }
-    # Keel opt-out (annotation, per stacks/kyverno/.../keel-annotations.tf): this
-    # image is pinned in Terraform below, waiting for the Renovate migration
-    # (ADR-0030). Keel's policy=patch never moved it, and with Terraform owning
-    # the tag the two would fight. keel.sh/policy is deliberately NOT in
-    # ignore_changes, so this value is applied to the existing Deployment.
-    annotations = { "keel.sh/policy" = "never" }
   }
   spec {
     # 2 replicas: this is on the critical path for Cinemeta on EVERY device now,
@@ -356,12 +345,12 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
           }
         }
         container {
-          name              = "nginx"
+          name = "nginx"
           # RENOVATE (ADR-0030): one-time bump 1.27 -> 1.30 (current stable line)
           # on 2026-10-09; Keel's policy=patch could never leave 1.27, which upstream
-          # stopped updating. Hand this pin to Renovate when this stack migrates,
-          # and drop the Keel ignore_changes markers below at the same time.
-          image             = "nginx:1.30"
+          # stopped updating. Renovate owns this pin since 2026-10-10 (1.30 ->
+          # 1.30.5, the same image digest).
+          image             = "nginx:1.30.5"
           image_pull_policy = "IfNotPresent"
 
           port {
@@ -418,10 +407,8 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

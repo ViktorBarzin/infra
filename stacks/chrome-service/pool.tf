@@ -17,10 +17,6 @@ resource "kubernetes_deployment" "worker_warm" {
     name      = "chrome-worker-warm"
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
     labels    = merge(local.labels, { app = "chrome-worker", "chrome-pool/role" = "warm" })
-    annotations = {
-      # Pinned image (matches the master's browser); Keel must not roll it.
-      "keel.sh/policy" = "never"
-    }
   }
   spec {
     replicas = 1
@@ -125,18 +121,10 @@ resource "kubernetes_deployment" "worker_warm" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # NO Keel-annotation ignores here, deliberately: this Deployment sets the
-      # label keel.sh/policy = "never" (above), which Kyverno's
-      # inject-keel-annotations ClusterPolicy explicitly excludes — so nothing
-      # re-injects keel.sh/trigger or pollSchedule, and the stale ones the live
-      # object still carries are correctly stripped on apply. Only the tier
-      # label, stamped by the separate resource-governance policy, needs the
-      # ignore.
+      # The image is pinned (matches the master's browser) and not ignored.
+      # The tier label is stamped by the resource-governance policy.
       metadata[0].labels["tier"],
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
