@@ -105,32 +105,20 @@ websockify --web /usr/share/novnc 6080 localhost:5900 &
 SUPERVISED[$!]=websockify
 
 # --- emulator -----------------------------------------------------------------
-# Use the host GPU when the NVIDIA runtime injected one (driver libs +
-# /dev/nvidia* appear when the pod requests nvidia.com/gpu), otherwise
-# swiftshader (CPU rendering). If the GPU launch dies early, fall back to
-# swiftshader automatically so the worst case equals CPU rendering.
-GPU_FLAG="swiftshader_indirect"
-[ -e /dev/nvidiactl ] && GPU_FLAG="host"
-echo "Emulator GPU mode: $GPU_FLAG"
-
-launch_emulator() {
-  emulator -avd "$AVD_NAME" \
-    -gpu "$1" -accel on \
-    -memory "$EMULATOR_RAM_MB" \
-    -no-audio -no-boot-anim \
-    &
-  EMU_PID=$!
-}
-
-launch_emulator "$GPU_FLAG"
-if [ "$GPU_FLAG" = "host" ]; then
-  sleep 25
-  if ! kill -0 "$EMU_PID" 2>/dev/null; then
-    echo "GPU launch (-gpu host) died early — falling back to swiftshader." >&2
-    rm -f "${ANDROID_AVD_HOME}/${AVD_NAME}.avd"/*.lock
-    launch_emulator swiftshader_indirect
-  fi
-fi
+# CPU rendering (SwiftShader) for both GLES and Vulkan. `-gpu host` ran here
+# from 2026-06 to 2026-10 and was never accelerated: the emulator draws GLES
+# through GLX on Xvfb, which has no GPU, so GLES landed on Mesa llvmpipe while
+# Vulkan went to the NVIDIA T4. That mixed mode is the only one that crashed:
+# 13 segfaults in 4h on 2026-10-10, often 25s in and otherwise 2-40 min after
+# boot, against none in SwiftShader runs. Real GPU GL would need an X server on
+# the NVIDIA driver in place of Xvfb.
+echo "Emulator GPU mode: swiftshader_indirect"
+emulator -avd "$AVD_NAME" \
+  -gpu swiftshader_indirect -accel on \
+  -memory "$EMULATOR_RAM_MB" \
+  -no-audio -no-boot-anim \
+  &
+EMU_PID=$!
 
 SUPERVISED[$EMU_PID]=emulator
 

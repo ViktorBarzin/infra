@@ -57,24 +57,20 @@ uninstall your test app when done, and presence-claim
   lives on the `android-emulator-sdk` PVC (`proxmox-lvm`); the entrypoint
   installs it idempotently. **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
-- The emulator runs on the GPU node (k8s-node1) with a T4 time-slice
-  (qemu holds ~100 MiB VRAM while awake; scale-to-zero keeps it transient).
-  Guest GL is deliberately SOFTWARE (llvmpipe): rendering into Xvfb pins GL
-  to the X stack, and true NVIDIA headless GL would need -no-window plus the
-  emulator's own streaming instead of x11vnc — not worth it at the measured
-  CPU numbers below.
+- Rendering is CPU-only (`-gpu swiftshader_indirect`), and the pod requests
+  no GPU, so it schedules on any node with `/dev/kvm` (all of them).
+  From 2026-06 to 2026-10 it ran `-gpu host` on the T4 node. That mode was
+  not accelerated for GLES (GLX on Xvfb resolves to Mesa llvmpipe) and sent
+  only Vulkan to the T4, and it was the one mode that segfaulted (13 times in
+  4h on 2026-10-10). Real GPU GL would need an X server on the NVIDIA driver
+  in place of Xvfb. See the ADR-0001 amendment.
 
-## Rebuilding the image (rare — tool/library bumps only)
+## Rebuilding the image
 
-```bash
-cd stacks/android-emulator/docker
-docker build -t forgejo.viktorbarzin.me/viktor/android-emulator:<new-tag> .
-docker push forgejo.viktorbarzin.me/viktor/android-emulator:<new-tag>
-# then bump var.image_tag default in variables.tf and land via CI
-```
-
-Built manually from a devvm on purpose: it changes rarely, and a one-off push
-doesn't warrant CI plumbing (the off-infra-CI rule targets *repeated* build IO).
+GitHub Actions (`.github/workflows/build-android-emulator.yml`) builds
+`ghcr.io/viktorbarzin/android-emulator:latest` on any change under `docker/`.
+The deployment pulls `:latest` with `imagePullPolicy: Always`, so the next
+container start (a restart, or a wake from zero) runs the new build.
 
 ## Troubleshooting
 
@@ -86,13 +82,15 @@ doesn't warrant CI plumbing (the off-infra-CI rule targets *repeated* build IO).
 - Different API level: set `API_LEVEL` env on the deployment (entrypoint
   installs that system image on the same PVC) or recreate the AVD.
 
-## Resource profile (measured 2026-06-12, v6 on node1)
+## Resource profile (measured 2026-06-12, v6 on node1, GPU mode)
 
 - **Asleep (scaled to zero)**: nothing — the gate (~10m CPU/13Mi) is the only
   standing cost.
 - **Awake**: settles to **~0.5–1.3 cores** with a static screen (on or off),
   ~4.8–5.2 Gi memory (limit 8 Gi, requests 3 Gi), ~100 MiB T4 VRAM. Boot
   bursts 5–9 cores for the first few minutes (dex2oat etc.).
+- Measured 2026-10-10 under continuous Chrome scrolling: ~8.3 cores with
+  CPU rendering against ~6.8 cores in GPU mode.
 - **Disk**: ~7 G of the 30 Gi PVC.
 - Etiquette still applies for long sessions with animated content:
   `adb -s 10.0.20.200:5555 shell input keyevent KEYCODE_SLEEP` when done.
