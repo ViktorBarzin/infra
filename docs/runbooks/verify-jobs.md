@@ -4,7 +4,7 @@ Design: the "Verification contract" in `docs/plans/2026-10-09-software-currency-
 
 | Piece | Where |
 |---|---|
-| Runner (starts the Job, streams its log, returns pass/fail, cleans up) | `scripts/verify/run` |
+| Runner (starts the Job, streams its log, returns pass/fail; Kubernetes cleans up) | `scripts/verify/run` |
 | Floor checks and helpers, shared by every stack | `scripts/verify/lib.sh` |
 | Job entrypoint (floor rollout, floor ingress, component checks, floor alerts) | `scripts/verify/entrypoint.sh` |
 | A stack's own checks | `stacks/<stack>/verify.sh` |
@@ -39,7 +39,7 @@ flowchart TD
   F3 --> V{all passed?}
   V -->|yes| P[Job Complete, exit 0]
   V -->|no| X[Job Failed, exit 1]
-  P --> D[runner deletes the Job;<br/>GC removes pod, ConfigMap, probe pods]
+  P --> D[TTL controller deletes the Job 15 min later;<br/>GC removes pod, ConfigMap, probe pods]
   X --> D
 ```
 
@@ -78,7 +78,7 @@ Storage classes `verify-proxmox-lvm` and `verify-nfs` match `proxmox-lvm` and `n
 
 The namespace runs at `tier-4-aux` priority, so the scheduler may preempt a verify pod for a real workload. The Job's `podFailurePolicy` ignores failures with a `DisruptionTarget` condition (preemption, eviction): the Job starts a new pod, which runs every check again, and the runner follows the new pod's log. On the first full run a preempted pod failed the healthy `rybbit` stack; an eviction test on 2026-10-10 shows the replacement passing.
 
-Everything a run creates in `verify` carries an owner reference to the Job; the runner deletes only the Job and garbage collection removes the rest. That keeps the runner clear of `K8sMassDelete` (more than 5 pod/ConfigMap deletes in 60 s by one user). Jobs also carry `ttlSecondsAfterFinished: 3600` in case the runner dies. A backup Job that fails is left in its namespace for inspection and `BackupCronJobFailed` fires for it, which is the right signal.
+Everything a run creates in `verify` carries an owner reference to the Job, and the Job carries `ttlSecondsAfterFinished: 900`. Fifteen minutes after the Job finishes, the TTL controller deletes it and the garbage collector removes its pod, the ConfigMap and the probe pods. The runner deletes nothing on a normal exit; an interrupted run (Ctrl-C, SIGTERM) deletes only its Job so the checks stop. `K8sMassDelete` counts Pod, Secret and ConfigMap deletes per user and excludes the garbage collector, so this keeps runs out of it. Until 2026-10-10 the runner deleted its Job and ConfigMap itself, and a day of runs (117 of each, as `kubernetes-admin`) fired that critical alert. The Job is created suspended and started once its ConfigMap exists, and the ConfigMap is created with its owner reference already set, so neither can be left behind alone. Probe pods are deleted only when a check needs it (`rm=1`, for PVC release) or when a replacement Job pod reruns a check under the same pod name. A backup Job that fails is left in its namespace for inspection and `BackupCronJobFailed` fires for it, which is the right signal.
 
 ## Write a verify.sh
 
@@ -152,7 +152,7 @@ Every stack also gets the floor. "Full only" checks are skipped with `--quick`.
 ## When a run fails
 
 1. Read the `FAIL` lines in the runner output; each names the check and the value it saw.
-2. `--keep` leaves the Job, its pod and the probe pods in `verify` for `kubectl -n verify logs` and `describe`.
+2. `--keep` leaves the Job, its pod and the probe pods in `verify` for `kubectl -n verify logs` and `describe` (no TTL is set; delete the Job when done). Without it, a finished run stays for 15 minutes.
 3. A floor alert failure names the alert and when it became active. If it is unrelated to the change (for example a weekly credential rotation in the same namespace), rerun with `--since` set after it started.
 4. A check that is wrong for the current healthy state is a bug in the script: fix the script, not the threshold of a real symptom.
 
