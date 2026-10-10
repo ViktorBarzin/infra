@@ -886,6 +886,15 @@ module "anubis" {
       - name: f1-data-routes
         path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
+      # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
+      # A browser fetches the manifest without cookies, and an iPhone's Home
+      # Screen app has its own cookie jar, so both would get the PoW page as
+      # HTML here: Android would not offer to install, and the service worker
+      # that receives session notifications would fail to register or update.
+      # Static files with no data in them; exact names only.
+      - name: f1-installable-app
+        path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
+        action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at
       # f1.f1-stream.svc.cluster.local:80 and never passes through Anubis,
