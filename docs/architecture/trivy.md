@@ -15,8 +15,9 @@ flowchart LR
   OP -- creates --> JOB
   OP -- creates --> NC
   JOB -- client/server --> SRV
-  JOB -- manifests + layers --> CACHE[pull-through cache<br/>10.0.20.10:5000 / :5010]
-  CACHE -. miss .-> UP[Docker Hub / GHCR]
+  JOB -- manifests + layers --> CACHE[pull-through cache<br/>10.0.20.10:5000 / :5020-5040]
+  CACHE -. miss .-> UP[Docker Hub / Quay / k8s / Kyverno]
+  JOB -- GHCR images --> GH[ghcr.io]
   JOB -. fallback .-> UP
   SRV -- DB --> MG[mirror.gcr.io/aquasec/trivy-db]
   OP -- writes --> CRD[(report CRDs in etcd)]
@@ -26,7 +27,7 @@ flowchart LR
 | Component | Image | Notes |
 |---|---|---|
 | `trivy-operator` Deployment | `mirror.gcr.io/aquasec/trivy-operator:0.35.0` | Watches workloads, runs config audit in-process, serves `trivy_*` metrics. 256Mi request, 1Gi limit. |
-| `trivy-server` StatefulSet | `mirror.gcr.io/aquasec/trivy:0.75.0` | Holds the vulnerability DB and the per-layer analysis cache on an emptyDir. 512Mi request, 2Gi limit. |
+| `trivy-server` StatefulSet | `mirror.gcr.io/aquasec/trivy:0.75.0` | Holds the vulnerability DB and the per-layer analysis cache on an emptyDir. 512Mi request, 2Gi limit. Priority `tier-3-edge`, so the scheduler does not preempt it for ordinary workloads (it did at the namespace's `tier-4-aux` on 2026-10-10 and the cache was lost). |
 | scan Jobs | `mirror.gcr.io/aquasec/trivy:0.75.0` | One per workload, at most 2 at once. 128M request, 1Gi limit, 10 minute timeout, failed scans retried after 15 minutes. |
 | node-collector Jobs | `ghcr.io/aquasecurity/node-collector:0.3.1` | One per node, one at a time. Tolerates the control-plane and GPU taints so every node is assessed. |
 
@@ -51,7 +52,7 @@ Choices that keep the load down, and how to change them:
 - **Rescans every 72h, 2 scan Jobs at a time.** Changed on 2026-10-10 from 24h and 3, after the first scan coincided with etcd WAL fsync p99 up to 2.4 s on the shared HDD. A new CVE in an unchanged image appears within 3 days.
 - **Client/server mode** (`builtInTrivyServer = true`). Scan jobs ask the server which layers it has not analysed yet and send only those. A daily rescan of an unchanged image fetches the manifest and config and little else. The server cache is an emptyDir: after a restart the next pass re-downloads every layer once through the registry cache (about 44 GB on the first pass, 2026-10-10), so avoid restarting `trivy-server` without need.
 - **Image mode, not node filesystem mode.** Trivy Operator can instead scan a workload's root filesystem on its own node (`trivy.command = "rootfs"`, no registry pulls). Evaluated on 2026-10-10 against operator v0.35.0 and not adopted: CronJobs are unsupported in that mode (about 130 CronJob images would lose coverage), Sablier-parked workloads go unscanned while parked, every rescan re-reads each image's files from node disks on the same HDD as etcd, and scan pods are pinned onto nodes at 82-99% memory requests. The reasoning is also in `stacks/trivy-operator/main.tf`.
-- **Registry mirrors.** Scan jobs read image manifests and layers from the LAN pull-through caches on `10.0.20.10` (`:5000` Docker Hub, also used for `docker.n8n.io`, which fronts Docker Hub's `n8nio/n8n`; `:5010` GHCR; `:5020` Quay; `:5030` registry.k8s.io; `:5040` reg.kyverno.io) through Trivy's own `registry.mirrors` config file. Images from other registries (nvcr.io, lscr.io, mcr.microsoft.com, codeberg.org, mirror.gcr.io) are fetched upstream. Trivy tries the mirror first and falls back to the original registry on any error, and reports keep the original image name. Without it, about 108 Docker Hub images rescanned daily would run into Docker Hub's anonymous pull limit, which the nodes share. On the first full scan the one unmirrored Docker Hub front, `docker.n8n.io`, already returned `TOOMANYREQUESTS`, which is why it now maps to the cache too.
+- **Registry mirrors.** Scan jobs read image manifests and layers from the LAN pull-through caches on `10.0.20.10` (`:5000` Docker Hub, also used for `docker.n8n.io`, which fronts Docker Hub's `n8nio/n8n`; `:5020` Quay; `:5030` registry.k8s.io; `:5040` reg.kyverno.io) through Trivy's own `registry.mirrors` config file. Images from other registries (ghcr.io, nvcr.io, lscr.io, mcr.microsoft.com, codeberg.org, mirror.gcr.io) are fetched upstream. GHCR was mirrored until 2026-10-10: its images were about 20 GB of the 42 GB the first scan wrote into the cache VM's 61 GB disk, which filled it, and GHCR has no anonymous limit comparable to Docker Hub's. Trivy tries the mirror first and falls back to the original registry on any error, and reports keep the original image name. Without it, about 108 Docker Hub images rescanned daily would run into Docker Hub's anonymous pull limit, which the nodes share. On the first full scan the one unmirrored Docker Hub front, `docker.n8n.io`, already returned `TOOMANYREQUESTS`, which is why it now maps to the cache too.
 
 ## Admission prerequisites (stacks/kyverno)
 
