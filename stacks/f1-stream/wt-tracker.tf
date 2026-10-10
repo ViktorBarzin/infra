@@ -50,15 +50,9 @@ resource "kubernetes_deployment" "wt_tracker" {
     labels = {
       app  = "wt-tracker"
       tier = local.tiers.aux
-      # Terraform owns the image on this Deployment, so declare that ownership
-      # rather than leaving two controllers to fight over it. The namespace
-      # carries `keel.sh/enrolled=true`, so Kyverno's add-keel-annotations rule
-      # would otherwise stamp `keel.sh/policy=patch` here and Keel would re-pin
-      # the tag on every poll while the next apply reverted it — the
-      # image-ownership loop that replaced the proxy VPN gateway's pod six
-      # times in thirty minutes on 2026-08-16. This label is what the companion
-      # `keel-never-when-another-owner` rule selects on to set
-      # `keel.sh/policy=never` instead.
+      # Terraform owns the image on this Deployment. While Keel ran (until
+      # 2026-10-10) this label made Kyverno set keel.sh/policy=never here, so
+      # Keel and Terraform did not both pin the tag.
       "app.kubernetes.io/managed-by" = "terraform"
     }
   }
@@ -189,13 +183,9 @@ resource "kubernetes_deployment" "wt_tracker" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
