@@ -4342,15 +4342,21 @@ serverFiles:
             annotations:
               summary: "Redis pod {{ $labels.pod }} evicting keys ({{ $value }} keys/s) — near maxmemory"
           - alert: RedisForkLatencyHigh
-            # latest_fork_usec > 500ms means BGSAVE fork is stalling the main
-            # thread long enough to drop client requests. COW pressure or
-            # constrained memory headroom are the usual causes.
-            expr: redis_latest_fork_usec{namespace="redis"} > 500000
+            # A fork over 500ms means BGSAVE / AOF rewrite is stalling the main
+            # thread long enough to delay client requests. COW pressure or
+            # constrained memory headroom are the usual causes. redis_exporter
+            # publishes Redis's latest_fork_usec as redis_latest_fork_seconds
+            # (seconds); the rule used to query redis_latest_fork_usec, which
+            # does not exist, so it could never fire (fixed 2026-10-10). The
+            # gauge holds the last fork's duration until the next fork, so one
+            # slow fork fires once and clears at the next normal one. Over the
+            # 26 weeks to 2026-10-10 five pod lifetimes peaked above 0.5s.
+            expr: redis_latest_fork_seconds{namespace="redis"} > 0.5
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "Redis pod {{ $labels.pod }} fork took {{ $value }}us (>500ms) — investigate memory headroom"
+              summary: "Redis pod {{ $labels.pod }} fork took {{ $value | humanizeDuration }} (>500ms) — investigate memory headroom"
           - alert: RedisAOFRewriteLong
             expr: redis_aof_rewrite_in_progress{namespace="redis"} == 1
             for: 10m
@@ -4860,6 +4866,20 @@ serverFiles:
               severity: critical
             annotations:
               summary: "mysql-standalone has 0 ready replicas — DB-dependent apps will fail"
+          - alert: MySQLNotServing
+            # mysqld_exporter (stacks/dbaas, added 2026-10-10) cannot run its
+            # queries while the pod still reports ready: a hung mysqld, a full
+            # connection table, or broken auth. The `unless` leaves the
+            # pod-down case to MysqlStandaloneDown so one outage pages once.
+            # If the exporter pod itself is gone, ScrapeTargetDown covers it.
+            expr: |
+              mysql_up{namespace="dbaas"} == 0
+              unless on() (kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-standalone"} < 1)
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MySQL (mysql-standalone) is running but not answering queries for 5m — check mysqld logs and connection count; DB-dependent apps will fail"
           - alert: ClusterPodReadyRatioDropped
             expr: |
               (
@@ -5684,6 +5704,17 @@ serverFiles:
               description: "Pods needing new PVC attachments on {{ $labels.node }} will fail with 'no free lun found'. Detach unused volumes from this node's Proxmox VM config, or migrate PVCs to a less-loaded node."
       - name: "Application Health"
         rules:
+          - alert: ClickHouseDown
+            # ClickHouse (rybbit analytics event store) exposes its built-in
+            # Prometheus endpoint since 2026-10-10. `or on() vector(0)` makes a
+            # missing pod (no series at all) count as down too. One series, so
+            # at most one notification.
+            expr: (max(up{job="kubernetes-pods", namespace="rybbit", app="clickhouse"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ClickHouse in rybbit has been unreachable for 10m — Rybbit analytics ingestion and dashboards are failing"
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m
