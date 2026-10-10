@@ -324,7 +324,17 @@ resource "kubernetes_deployment" "f1-stream" {
               # (stacks/nvidia) so this fits. A 4K ladder plus two live
               # transcodes (1707 + 2 x 291 = 2289) can still exceed it; Viktor
               # accepted that over CPU decoding for HDR sources.
-              "viktorbarzin.me/gpumem" = "2048"
+              #
+              # RAISED to 2848 on 2026-10-10 for Early copies of 4K HDR replays
+              # (app ADR-0024): one copy, NVDEC 2160p Main 10 + scale_cuda +
+              # OpenCL tone-map + two NVENC rungs, measured 1782 MiB, and in a
+              # test beside the pod's own encoders the watchdog recycled this
+              # pod. 1782 + two live transcodes (2 x 291) + headroom ~= 2848.
+              # The node budget went 14200 -> 15000 first (stacks/nvidia).
+              # While a copy runs the card can drop under the watchdog floor,
+              # and llama-swap (seatless) is then the one recycled; Viktor
+              # chose this knowing that.
+              "viktorbarzin.me/gpumem" = "2848"
               # 2Gi -> 4Gi on 2026-09-27: a 4K HDR replay ladder build was
               # OOM-killed at 99% after ~4.5 h. Measured on a 2-minute excerpt,
               # the HDR ladder's ffmpeg alone peaks at 1405 MiB RSS, and it shares
@@ -382,6 +392,12 @@ resource "kubernetes_deployment" "f1-stream" {
           # Vault or an ExternalSecret to add. Unset, the app keeps today's
           # behaviour and logs a warning once, which is what lets this apply
           # land before the image that enforces it.
+          # Early copies of HDR replays (app ADR-0024). Off in the app by
+          # default; on here now that the gpumem declaration above fits one.
+          env {
+            name  = "REPLAY_EARLY_HDR"
+            value = "1"
+          }
           env {
             name  = "INGRESS_PROOF_SECRET"
             value = random_password.ingress_proof.result
