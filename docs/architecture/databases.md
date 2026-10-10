@@ -83,6 +83,8 @@ graph TB
    - Apps fetch credentials from Vault on startup
    - Vault manages rotation lifecycle
 
+4. **Uptime check**: Uptime Kuma monitor `PostgreSQL pg-cluster (dbaas)` logs into `pg-cluster-rw` every 60 s as `uptime_kuma_probe` (CONNECT on `postgres` only, connection limit 3) and runs `SELECT 1`, so a full connection table or an auth failure shows as down, not only a dead pod. The role and its password are owned by `stacks/uptime-kuma` (added 2026-10-10).
+
 **Used by**:
 - trading-bot
 - apple-health-data (health)
