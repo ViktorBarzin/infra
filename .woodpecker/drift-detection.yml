@@ -106,12 +106,10 @@ steps:
           stack=$(basename "$stack_dir")
           [ -f "$stack_dir/terragrunt.hcl" ] || continue
 
-          # Tier-0 `vault` is human-applied via OIDC; the CI `ci` Vault role lacks
-          # Vault-admin perms (sys/mounts + sys/policies/acl), so `terragrunt plan`
-          # on it ERRORs (detailed-exitcode 1) and fails the whole nightly drift
-          # run. Skip it — drift on Tier-0 vault is caught at human apply time.
-          # (2026-06-27)
-          [ "$stack" = "vault" ] && continue
+          # `vault` used to be skipped here: the CI `ci` Vault role had no
+          # Vault-admin rights, so its plan errored. Since 2026-10-10 the role
+          # carries the ci-vault-admin policy (stacks/vault/main.tf, ADR-0030
+          # decision 11), so vault is planned like every other stack.
 
           # `_template` is the new-stack scaffold, not a deployed stack: it ships
           # a terragrunt.hcl (so it passes the guard above) but only a
