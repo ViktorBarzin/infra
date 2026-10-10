@@ -193,6 +193,12 @@ mounted as `/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve`)
 discards mail from non-allowlisted senders at delivery. Full flow, sender map,
 and add-a-sender procedure: [`runbooks/paperless-mail-ingest.md`](../runbooks/paperless-mail-ingest.md).
 
+Since 2026-10-09 paperless-ngx also reads the `INBOX` of `me@viktorbarzin.me`
+directly (mail account 1, rule 20). It imports PDF and Office attachments and
+marks each processed message with the IMAP keyword `paperless`. Viktor's and
+Emo's Gmail are polled the same way. See
+[ADR-0029](../adr/0029-paperless-polls-mailboxes-directly.md).
+
 ## DNS Records
 
 All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.tf`.
