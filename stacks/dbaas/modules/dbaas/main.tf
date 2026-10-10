@@ -514,6 +514,32 @@ EOT
   }
 }
 
+# verify_probe: the login the MySQL verify Job uses (stacks/dbaas/verify.sh,
+# docs/runbooks/verify-jobs.md). ALL on its own `verify_probe` schema only,
+# where the check writes, reads back and drops a table; nothing else. The
+# password is owned by Vault (static role `mysql-verify-probe`, stacks/vault),
+# so this only creates the user and never resets the password.
+resource "null_resource" "mysql_verify_probe_user" {
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+
+  triggers = {
+    username = "verify_probe"
+    grants   = "verify_probe.ALL;max3"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+CREATE DATABASE IF NOT EXISTS `verify_probe`;
+CREATE USER IF NOT EXISTS 'verify_probe'@'%' IDENTIFIED WITH caching_sha2_password BY 'changeme-vault-will-rotate' WITH MAX_USER_CONNECTIONS 3;
+ALTER USER 'verify_probe'@'%' WITH MAX_USER_CONNECTIONS 3;
+GRANT ALL PRIVILEGES ON `verify_probe`.* TO 'verify_probe'@'%';
+FLUSH PRIVILEGES;
+SQL
+EOT
+  }
+}
+
 resource "kubernetes_secret" "mysqld_exporter" {
   metadata {
     name      = "mysqld-exporter"
@@ -1952,6 +1978,40 @@ resource "null_resource" "pg_f1_stream_db" {
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'f1_stream'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE DATABASE f1_stream OWNER f1_stream"
           psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE f1_stream TO f1_stream"
+        '
+    EOT
+  }
+}
+
+# verify_probe: the login the pg-cluster verify Job uses (stacks/dbaas/verify.sh,
+# docs/runbooks/verify-jobs.md; software-currency design, Verification
+# contract). It owns only the `verify_probe` scratch database, where the check
+# writes, reads back on a replica and drops a table. pg_monitor lets it read
+# pg_stat_replication for the lag check; CONNECT on dawarich and claude_memory
+# lets it run a PostGIS and a pgvector query where those extensions are used.
+# No superuser, no CREATEDB, connection limit 3. The password is set by Vault
+# (static role `pg-verify-probe`, stacks/vault) and reaches the Job via ESO.
+resource "null_resource" "pg_verify_probe" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    username = "verify_probe"
+    grants   = "pg_monitor;connect:dawarich,claude_memory;limit3"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          set -e
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'verify_probe'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE verify_probe WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"' CONNECTION LIMIT 3"
+          psql -U postgres -c "ALTER ROLE verify_probe NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT 3"
+          psql -U postgres -c "GRANT pg_monitor TO verify_probe"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'verify_probe'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE verify_probe OWNER verify_probe"
+          psql -U postgres -c "GRANT CONNECT ON DATABASE dawarich, claude_memory TO verify_probe"
         '
     EOT
   }

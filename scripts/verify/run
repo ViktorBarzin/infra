@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# Run a stack's verify checks as a Kubernetes Job and report pass/fail.
+#
+#   scripts/verify/run [options] <stack> [<stack>...]
+#   scripts/verify/run --all [-j 4] [--log-dir DIR]
+#   scripts/verify/run --list
+#
+# Options:
+#   --since <epoch>   alerts that became active at or after this time count as
+#                     new (default: now). The Woodpecker rails pass the time
+#                     taken before `terragrunt apply`.
+#   --window <sec>    how long the floor watches for new alerts (default 600)
+#   --quick           skip slow steps (backup runs, PVC smoke tests, model
+#                     loads) and shorten the alert window to 60 s unless
+#                     --window is given. For iterating on a script, not for
+#                     landing an upgrade.
+#   --timeout <sec>   Job deadline (default 3600)
+#   --keep            leave the Job, its pod and ConfigMap in place
+#   -j <n>            run up to n stacks at once (default 1)
+#   --log-dir <dir>   with several stacks, write each Job log here
+#
+# Exit status: 0 every stack passed, 1 a check failed, 2 usage error,
+# 3 a stack in the chart/database/GPU groups has no verify.sh (fail closed).
+#
+# Needs kubectl with rights to create ConfigMaps and Jobs in the `verify`
+# namespace (an admin kubeconfig on the devvm; the Woodpecker `default` SA in
+# CI, which is cluster-admin). Everything the checks themselves do runs inside
+# the Job as verify/verify-runner. Contract: docs/runbooks/verify-jobs.md.
+set -uo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+NS=verify
+SA=verify-runner
+# infra-ci carries bash, curl, jq, kubectl and python3. Pinned by digest: the
+# image only publishes :latest. Renovate does not own our own images.
+IMAGE=${VERIFY_IMAGE:-ghcr.io/viktorbarzin/infra-ci@sha256:e886f14437dceb917c045074227cc4606423cb19bb9f7da9e4527450d7f3dd97}
+# Stacks that must have a verify.sh before an upgrade may auto-land: every
+# stack with a helm_release, plus the database and GPU stacks below.
+DB_GPU_STACKS="dbaas redis rybbit beads-server immich nvidia"
+
+SINCE="" WINDOW="" QUICK=0 TIMEOUT=3600 KEEP=0 JOBS=1 LOGDIR="" ALL=0 LIST=0
+STACKS=()
+
+usage() { sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since) SINCE=$2; shift 2 ;;
+    --window) WINDOW=$2; shift 2 ;;
+    --quick) QUICK=1; shift ;;
+    --timeout) TIMEOUT=$2; shift 2 ;;
+    --keep) KEEP=1; shift ;;
+    -j) JOBS=$2; shift 2 ;;
+    --log-dir) LOGDIR=$2; shift 2 ;;
+    --all) ALL=1; shift ;;
+    --list) LIST=1; shift ;;
+    -h | --help) usage; exit 0 ;;
+    -*) echo "unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) STACKS+=("$1"); shift ;;
+  esac
+done
+
+required_stack() {
+  local s=$1
+  case " $DB_GPU_STACKS " in *" $s "*) return 0 ;; esac
+  grep -rqsE '^\s*resource "helm_release"' "$REPO/stacks/$s" --include='*.tf' 2>/dev/null
+}
+
+stack_group() {
+  sed -n 's/^VERIFY_GROUP="\{0,1\}\([a-z]*\)"\{0,1\}.*/\1/p' "$REPO/stacks/$1/verify.sh" 2>/dev/null | head -1
+}
+
+if [ "$LIST" -eq 1 ]; then
+  printf '%-22s %-6s %s\n' STACK GROUP SCRIPT
+  for d in "$REPO"/stacks/*/; do
+    s=$(basename "$d")
+    if [ -f "$d/verify.sh" ]; then
+      printf '%-22s %-6s %s\n' "$s" "$(stack_group "$s")" "stacks/$s/verify.sh"
+    elif required_stack "$s"; then
+      printf '%-22s %-6s %s\n' "$s" "-" "MISSING (fails closed)"
+    fi
+  done
+  exit 0
+fi
+
+if [ "$ALL" -eq 1 ]; then
+  for f in "$REPO"/stacks/*/verify.sh; do STACKS+=("$(basename "$(dirname "$f")")"); done
+fi
+if [ "${#STACKS[@]}" -eq 0 ]; then usage >&2; exit 2; fi
+
+[ -n "$SINCE" ] || SINCE=$(date +%s)
+if [ -z "$WINDOW" ]; then
+  if [ "$QUICK" -eq 1 ]; then WINDOW=60; else WINDOW=600; fi
+fi
+
+# --- several stacks: fan out to this script, one process per stack ---------
+if [ "${#STACKS[@]}" -gt 1 ]; then
+  [ -n "$LOGDIR" ] || LOGDIR=$(mktemp -d "${TMPDIR:-/tmp}/verify.XXXXXX")
+  mkdir -p "$LOGDIR"
+  echo "verify: ${#STACKS[@]} stacks, $JOBS at a time, logs in $LOGDIR"
+  pass_args=(--since "$SINCE" --window "$WINDOW" --timeout "$TIMEOUT")
+  [ "$QUICK" -eq 1 ] && pass_args+=(--quick)
+  [ "$KEEP" -eq 1 ] && pass_args+=(--keep)
+  running=0
+  for s in "${STACKS[@]}"; do
+    (
+      "${BASH_SOURCE[0]}" "${pass_args[@]}" "$s" >"$LOGDIR/$s.log" 2>&1
+      echo $? >"$LOGDIR/$s.rc"
+    ) &
+    running=$((running + 1))
+    if [ "$running" -ge "$JOBS" ]; then
+      wait -n
+      running=$((running - 1))
+    fi
+  done
+  wait
+  rc=0
+  printf '\n%-22s %s\n' STACK RESULT
+  for s in "${STACKS[@]}"; do
+    r=$(cat "$LOGDIR/$s.rc" 2>/dev/null || echo 1)
+    case "$r" in 0) v=PASS ;; 3) v="FAIL (no verify.sh)" ;; *) v=FAIL ;; esac
+    printf '%-22s %s\n' "$s" "$v"
+    [ "$r" -eq 0 ] || rc=1
+  done
+  exit "$rc"
+fi
+
+# --- one stack ---------------------------------------------------------------
+STACK=${STACKS[0]}
+SCRIPT="$REPO/stacks/$STACK/verify.sh"
+if [ ! -d "$REPO/stacks/$STACK" ]; then
+  echo "verify: no such stack: $STACK" >&2
+  exit 2
+fi
+if [ ! -f "$SCRIPT" ]; then
+  if required_stack "$STACK"; then
+    echo "verify: stacks/$STACK has no verify.sh; it is in the chart/database/GPU groups, so it fails closed"
+    echo "VERIFY RESULT: FAIL $STACK"
+    exit 3
+  fi
+  echo "verify: stacks/$STACK has no verify.sh; running the floor on namespace $STACK"
+  SCRIPT=$(mktemp)
+  printf 'VERIFY_GROUP="app"\nVERIFY_NAMESPACES="%s"\n' "$STACK" >"$SCRIPT"
+fi
+
+suffix=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 5)
+JOB=$(printf 'verify-%s' "$STACK" | tr '[:upper:]_' '[:lower:]-' | cut -c1-50)-$suffix
+CM=$JOB
+
+cleanup() {
+  [ "$KEEP" -eq 1 ] && { echo "verify: kept job/$JOB and configmap/$CM in namespace $NS"; return; }
+  # Deleting the Job garbage-collects its pod, the ConfigMap and every pod a
+  # check started (all carry an owner reference to the Job).
+  kubectl delete job -n "$NS" "$JOB" --ignore-not-found --wait=false >/dev/null 2>&1
+  kubectl delete configmap -n "$NS" "$CM" --ignore-not-found --wait=false >/dev/null 2>&1
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+kubectl create configmap -n "$NS" "$CM" \
+  --from-file=lib.sh="$HERE/lib.sh" \
+  --from-file=entrypoint.sh="$HERE/entrypoint.sh" \
+  --from-file=stack.sh="$SCRIPT" >/dev/null || { echo "verify: cannot create configmap in $NS" >&2; exit 1; }
+kubectl label configmap -n "$NS" "$CM" app.kubernetes.io/managed-by=verify "verify/stack=$STACK" >/dev/null
+
+cat <<EOF | kubectl create -f - >/dev/null || { echo "verify: cannot create job in $NS" >&2; exit 1; }
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $JOB
+  namespace: $NS
+  labels:
+    app.kubernetes.io/managed-by: verify
+    verify/stack: "$STACK"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: $TIMEOUT
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: verify
+        verify/stack: "$STACK"
+    spec:
+      serviceAccountName: $SA
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: verify
+          image: $IMAGE
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/verify/entrypoint.sh"]
+          env:
+            - { name: VERIFY_STACK, value: "$STACK" }
+            - { name: VERIFY_SINCE, value: "$SINCE" }
+            - { name: VERIFY_ALERT_WINDOW, value: "$WINDOW" }
+            - { name: VERIFY_QUICK, value: "$QUICK" }
+            - { name: VERIFY_OWN_NS, value: "$NS" }
+            - name: VERIFY_JOB_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['batch.kubernetes.io/job-name']" } }
+            - name: VERIFY_JOB_UID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } }
+          # Database credentials from Vault via ESO (stacks/verify/main.tf).
+          envFrom:
+            - secretRef: { name: verify-db-creds, optional: true }
+            - secretRef: { name: verify-app-creds, optional: true }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+          volumeMounts:
+            - { name: verify, mountPath: /verify, readOnly: true }
+      volumes:
+        - name: verify
+          configMap: { name: $CM }
+EOF
+
+uid=$(kubectl get job -n "$NS" "$JOB" -o jsonpath='{.metadata.uid}')
+kubectl patch configmap -n "$NS" "$CM" --type merge -p \
+  "{\"metadata\":{\"ownerReferences\":[{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"name\":\"$JOB\",\"uid\":\"$uid\"}]}}" >/dev/null
+
+echo "verify: job $NS/$JOB for stack $STACK (window ${WINDOW}s, quick=$QUICK, since $SINCE)"
+
+# Wait for the pod to leave Pending, then stream its log until it exits.
+deadline=$(($(date +%s) + TIMEOUT + 120))
+pod=""
+while :; do
+  pod=$(kubectl get pods -n "$NS" -l "batch.kubernetes.io/job-name=$JOB" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  phase=$(kubectl get pod -n "$NS" "$pod" -o jsonpath='{.status.phase}' 2>/dev/null)
+  case "$phase" in Running | Succeeded | Failed) break ;; esac
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "verify: pod for $JOB never started"
+    kubectl describe job -n "$NS" "$JOB" | tail -20
+    exit 1
+  fi
+  sleep 3
+done
+
+logfile=$(mktemp)
+kubectl logs -n "$NS" -f "$pod" 2>&1 | tee "$logfile"
+
+# Wait for the Job verdict (the log stream can end early on a kubelet rotation).
+while :; do
+  st=$(kubectl get job -n "$NS" "$JOB" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type} {end}' 2>/dev/null)
+  case "$st" in
+    *Complete* | *SuccessCriteriaMet*) result=0; break ;;
+    *Failed* | *FailureTarget*) result=1; break ;;
+  esac
+  if [ "$(date +%s)" -ge "$deadline" ]; then result=1; echo "verify: $JOB did not finish"; break; fi
+  sleep 5
+done
+if ! grep -q 'VERIFY RESULT:' "$logfile"; then
+  echo "verify: log stream ended early; full log follows"
+  kubectl logs -n "$NS" "$pod" 2>&1 | tail -200
+  if [ "$result" -ne 0 ] && [ -n "$(kubectl get job -n "$NS" "$JOB" -o jsonpath='{.status.conditions[?(@.reason=="DeadlineExceeded")].type}' 2>/dev/null)" ]; then
+    echo "verify: job hit its ${TIMEOUT}s deadline"
+  fi
+fi
+rm -f "$logfile"
+if [ "$result" -eq 0 ]; then echo "verify: $STACK PASS"; else echo "verify: $STACK FAIL"; fi
+exit "$result"

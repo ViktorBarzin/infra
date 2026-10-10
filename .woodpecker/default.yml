@@ -198,7 +198,11 @@ steps:
             echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
           else
             # Detect platform stacks that changed
-            git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
+            # A stack's verify.sh is read by scripts/verify/run, never by
+            # Terraform, so editing only that file applies nothing. Without
+            # this filter, adding verify scripts to 32 stacks would re-apply
+            # all 32 (docs/runbooks/verify-jobs.md).
+            git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | grep -Ev '^stacks/[^/]+/verify\.sh$' | cut -d/ -f2 | sort -u > .all_changed
             > .platform_apply
             while read -r stack; do
               if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
@@ -209,7 +213,7 @@ steps:
 
           # Detect app stacks that changed
           > .app_apply
-          git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
+          git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | grep -Ev '^stacks/[^/]+/verify\.sh$' | cut -d/ -f2 | sort -u | while read -r stack; do
             if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
               continue  # Skip platform stacks
             fi
