@@ -7,8 +7,7 @@ resource "kubernetes_namespace" "sealed_secrets" {
   metadata {
     name = "sealed-secrets"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {

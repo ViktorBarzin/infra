@@ -32,8 +32,7 @@ resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
     # labels = {
     #   "istio-injection" : "enabled"
@@ -90,13 +89,6 @@ resource "kubernetes_deployment" "uptime-kuma" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
-      # Stop Keel polling for this workload. Even with match-tag=true,
-      # Keel auto-downgraded :2 → :1 on 2026-05-26 12:14, which v1 booted
-      # into SQLite mode and couldn't read the existing MariaDB store
-      # (db-config.json) → 4h CrashLoopBackOff. Pinning the image string
-      # alone isn't enough because Keel kept fighting the apply. Combined
-      # with the matching LABEL above, this fully bypasses Keel.
-      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -121,13 +113,11 @@ resource "kubernetes_deployment" "uptime-kuma" {
       }
       spec {
         container {
-          # Pinned to 2.3.2 because Keel auto-downgraded :2 → :1 on 2026-05-26
-          # 12:14 UTC despite the Kyverno-injected `keel.sh/match-tag=true` +
-          # `keel.sh/policy=force` annotation pair (which is supposed to gate
-          # digest changes only). The v1 image opens kuma.db (SQLite) at boot
-          # and can't read the v2 db-config.json → 4h CrashLoopBackOff while
-          # the MariaDB store sat intact. Until the keel-match-tag regression
-          # is root-caused, pin minor versions explicitly.
+          # Exact version pin; Renovate proposes bumps. Under Keel a floating
+          # :2 was auto-downgraded to :1 on 2026-05-26: the v1 image opens
+          # kuma.db (SQLite) at boot and cannot read the v2 db-config.json,
+          # which caused a 4h CrashLoopBackOff while the MariaDB store sat
+          # intact. Never move this back to a major-only tag.
           image = "louislam/uptime-kuma:2.3.2"
           name  = "uptime-kuma"
 
@@ -187,16 +177,9 @@ resource "kubernetes_deployment" "uptime-kuma" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # `keel.sh/policy` is intentionally NOT ignored — we want TF to own it
-      # as `never` so a Kyverno reconcile (or manual kubectl) can't flip it
-      # back to `force` and re-enable auto-updates.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],                                            # injected by Kyverno
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

@@ -23,8 +23,7 @@ resource "kubernetes_namespace" "xray" {
   metadata {
     name = "xray"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -88,7 +87,7 @@ resource "kubernetes_deployment" "xray" {
       }
       spec {
         container {
-          image = "teddysun/xray"
+          image = "teddysun/xray:26.7.28"
           name  = "xray"
           port {
             container_port = 7443 // reality
@@ -153,11 +152,7 @@ resource "kubernetes_deployment" "xray" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

@@ -6,8 +6,7 @@ resource "kubernetes_namespace" "redis" {
   metadata {
     name = "redis"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -197,15 +196,6 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
       # policy re-adds it (perma-drift that fed provider identity bugs).
       tier = var.tier
     }
-    annotations = {
-      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a semantic
-      # downgrade) rejected `aof-load-corrupt-tail-max-size` and crashed redis.
-      # This annotation is the whole opt-out — it is what Keel reads AND what
-      # the Kyverno exclude selects on. A matching LABEL sat in the block above
-      # until 2026-08-17, when the exclude moved off labels (a keel.sh/* label
-      # is drift on any stack declaring a `labels` map).
-      "keel.sh/policy" = "never"
-    }
   }
   spec {
     service_name = kubernetes_service.redis_v2_headless.metadata[0].name
@@ -250,9 +240,9 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           # Nothing was corrupted -- an RDB/AOF is simply not readable by a
           # binary older than the one that wrote it, and a floating tag makes
           # that downgrade a coin-flip on every reschedule. An immutable tag
-          # removes the whole class. Bump this deliberately (and never
-          # downwards) after checking the release notes; Keel is opted out
-          # below for the same reason.
+          # removes the whole class. Renovate proposes bumps (never
+          # downwards) through the CI rails; check the release notes of a
+          # major before it lands.
           image   = "docker.io/library/redis:8.10.2-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
@@ -373,10 +363,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
