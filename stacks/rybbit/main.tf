@@ -134,6 +134,10 @@ resource "kubernetes_deployment" "clickhouse" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      # Keel opts out: Terraform owns the image tag below. ClickHouse storage
+      # changes are one-way across major lines, so a version bump needs a
+      # dump first and a deliberate hop, not an automatic roll.
+      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -159,8 +163,13 @@ resource "kubernetes_deployment" "clickhouse" {
           fs_group     = 101
         }
         container {
-          name  = "clickhouse"
-          image = "clickhouse/clickhouse-server:25.4.2"
+          name = "clickhouse"
+          # Exact pin, owned by Terraform (not in lifecycle.ignore_changes).
+          # Parts written on 26.x cannot be read by 25.x (Map/JSON/String
+          # serialization changes), so dump clickhouse.events in Native format
+          # before bumping, and keep each hop within ClickHouse's one-year
+          # compatibility window.
+          image = "clickhouse/clickhouse-server:26.3.46.2"
           env {
             name  = "CLICKHOUSE_DB"
             value = local.clickhouse_db
@@ -236,11 +245,9 @@ resource "kubernetes_deployment" "clickhouse" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
