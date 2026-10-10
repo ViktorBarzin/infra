@@ -1,14 +1,20 @@
 # values from - https://github.com/crowdsecurity/helm-charts/blob/main/charts/crowdsec/values.yaml
 container_runtime: containerd
 
-# Pin the image tag to v1.7.8 — the chart 0.21.0 defaults appVersion to
-# v1.7.3 but Keel had auto-bumped the running pods to v1.7.8 on 2026-05-16
-# and they ran fine with CAPI working for ~8 days. The 2026-05-24 TF apply
-# re-rendered the deployment from chart defaults (v1.7.3) and CAPI auth
-# started returning 403 on every fresh replica. Pinning here makes the
-# image survive future TF applies independently of the chart's appVersion.
+# Pin the image tag explicitly (v1.8.1 since 2026-10-10, chart 0.24.2).
+# History: chart 0.21.0 defaulted appVersion to v1.7.3 but Keel had
+# auto-bumped the running pods to v1.7.8 on 2026-05-16 and they ran fine
+# with CAPI working for ~8 days. The 2026-05-24 TF apply re-rendered the
+# deployment from chart defaults (v1.7.3) and CAPI auth started returning
+# 403 on every fresh replica. Pinning here makes the image survive future
+# TF applies independently of the chart's appVersion.
+# kubectl.tag: since chart 0.22.1 the register hook jobs pull
+# alpine/kubectl in an initContainer, default tag "latest". Pinned to the
+# server's minor so a moving tag cannot fail the atomic upgrade.
 image:
-  tag: "v1.7.8"
+  tag: "v1.8.1"
+  kubectl:
+    tag: "1.35.4"
 
 agent:
   # The whitelist is a subPath mount, which never hot-updates, so a whitelist
@@ -197,6 +203,10 @@ lapi:
   extraSecrets:
     dbPassword: "${DB_PASSWORD}"
   storeCAPICredentialsInSecret: true
+  # Chart 0.22.0 changed this default to false. Keep the shared cscli
+  # machine in the crowdsec-lapi-cscli-credentials secret (register hook job
+  # + LAPI mount), otherwise every LAPI replica registers its own machine.
+  storeLAPICscliCredentialsInSecret: true
   persistentVolume:
     config:
       enabled: false
