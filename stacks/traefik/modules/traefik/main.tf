@@ -49,11 +49,14 @@ resource "helm_release" "traefik" {
   # Bump deliberately, with a values migration and a re-vendor of crds/.
   # 41.7.0 (app v3.7.14) since 2026-10-09, for CVE-2026-88879 (affected range
   # 3.0.0-3.7.11). That bump moved logs.access to accessLog (41.0.0 changed the
-  # logs syntax) and added aliasHeadersStrategy on websecure. No image.tag pin:
-  # the chart default image is the version.
-  version = "41.7.0"
-  atomic  = true
-  timeout = 600
+  # logs syntax) and added aliasHeadersStrategy on websecure. 41.7.1 since
+  # 2026-10-10: same app and templates, it only adds Traefik Hub version
+  # support (Hub is not enabled here). No image.tag pin: the chart default
+  # image is the version.
+  version         = "41.7.1"
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 600
 
   values = [yamlencode({
     deployment = {
@@ -277,7 +280,7 @@ resource "helm_release" "traefik" {
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
         # entrypoint. Verify any change here by rendering the Service first:
-        #   helm template traefik traefik/traefik --version 41.7.0 -f <values>
+        #   helm template traefik traefik/traefik --version 41.7.1 -f <values>
         # and confirm websecure/TCP:443 is still in the output.
         http3 = {
           enabled        = true

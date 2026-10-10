@@ -1,6 +1,7 @@
 # Traefik's traefik.io CRDs, vendored from the Helm chart this stack pins
-# (traefik 41.7.0, appVersion v3.7.14) and applied here. 40.2.0 -> 41.7.0 only
-# added Middleware errors.errorRequestHeaders; no property removed.
+# (traefik 41.7.1, appVersion v3.7.14) and applied here. 40.2.0 -> 41.7.0 only
+# added Middleware errors.errorRequestHeaders; no property removed. 41.7.1 ships
+# the same traefik.io CRDs as 41.7.0 byte for byte.
 #
 # WHY: Helm installs a chart's crds/ directory only on first install and never
 # upgrades it, so the cluster kept the CRDs from 2026-02-07 while the Traefik
