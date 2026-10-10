@@ -122,9 +122,8 @@ resource "kubernetes_deployment" "dolt" {
     }
     annotations = {
       # Keel is namespace-enrolled (keel.sh/enrolled=true on the namespace),
-      # but this deployment opts OUT of auto-updates: dolthub/dolt-sql-server:latest
-      # currently resolves to a broken 0.50.10 build. Pinned image lives in the
-      # container spec below. Codified here so TF state matches live, no drift.
+      # but this deployment opts OUT of auto-updates. Terraform owns the image
+      # tag in the container spec below. Codified here so TF state matches live.
       "keel.sh/policy"       = "never"
       "keel.sh/match-tag"    = "true"
       "keel.sh/trigger"      = "poll"
@@ -150,12 +149,11 @@ resource "kubernetes_deployment" "dolt" {
       spec {
         container {
           name = "dolt"
-          # Pinned to 2.0.3 — :latest currently resolves to 0.50.10 on dolthub
-          # (different versioning stream) whose docker-entrypoint.sh references
-          # an undefined docker_process_sql function and crash-loops on every
-          # init script in /docker-entrypoint-initdb.d. Keel can upgrade this
-          # tag in-cluster; the lifecycle.ignore_changes below preserves that.
-          image = "dolthub/dolt-sql-server:2.0.3"
+          # Exact pin, owned by Terraform (the image is no longer in
+          # lifecycle.ignore_changes, so changing this tag rolls the pod).
+          # Strategy is Recreate, so only one Dolt process opens the store.
+          # Take a tarball of /var/lib/dolt before bumping: no other backup exists.
+          image = "dolthub/dolt-sql-server:2.4.2"
 
           port {
             name           = "mysql"
@@ -227,10 +225,9 @@ resource "kubernetes_deployment" "dolt" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      # Keel annotations are codified in metadata.annotations above (policy=never
-      # opts this deployment out of auto-updates — see the comment there).
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # The image is deliberately NOT ignored: Terraform owns the tag. Keel
+      # annotations are codified in metadata.annotations above (policy=never).
     ]
   }
 }
