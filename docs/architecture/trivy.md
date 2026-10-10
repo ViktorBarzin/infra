@@ -40,7 +40,7 @@ Chart `aquasecurity/trivy-operator` 0.37.0, pinned in `stacks/trivy-operator/mai
 | Secrets in image layers | `ExposedSecretReport` | Same scan job as vulnerabilities |
 | Workload, Service, Ingress, PV/PVC and similar config | `ConfigAuditReport` | Resource change, in the operator |
 | RBAC | `RbacAssessmentReport`, `ClusterRbacAssessmentReport` | Role change, in the operator |
-| Node and control-plane config | `InfraAssessmentReport` | node-collector Job per node |
+| Node and control-plane config | `ClusterInfraAssessmentReport` (one per node), `InfraAssessmentReport` (control-plane static pods) | node-collector Job per node |
 | CIS 1.23, NSA 1.0, PSS baseline/restricted | `ClusterComplianceReport` | Every 6h, summary form |
 
 Choices that keep the load down, and how to change them:
@@ -57,6 +57,24 @@ The question the design left open was which registry the scanner images come fro
 - The operator, server and scan jobs use `mirror.gcr.io/aquasec/*`. That pattern is on the `require-trusted-registries` list. The node-collector uses `ghcr.io/aquasecurity/node-collector`, already trusted.
 - The node-collector pod (`pkg/jobs/template/node-collector.yaml` in trivy-kubernetes) sets `hostPID: true`, mounts `/var/lib/{etcd,kubelet,kube-scheduler,kube-controller-manager}`, `/etc/systemd`, `/lib/systemd`, `/etc/kubernetes` and `/etc/cni/net.d` read-only, and runs as root with `privileged: false`, `allowPrivilegeEscalation: false`, all capabilities dropped and a read-only root filesystem. Of the four pod-security policies, only `deny-host-namespaces` objects to it.
 - PolicyException `kyverno/trivy-node-collector-hostpid` exempts Pods and Jobs named `node-collector-*` in `trivy-system` from `deny-host-namespaces` (the Pod rule and its Job autogen rule). Scan jobs are not covered and stay fully enforced. PolicyExceptions were enabled for this, honoured only in the `kyverno` namespace (`docs/architecture/security.md`).
+
+## Metrics
+
+The operator Service carries `prometheus.io/scrape: "true"`, so the `kubernetes-service-endpoints` job scrapes the operator pod on `:8080`. That job keeps only allowlisted metric names, and `trivy_.+` is on the list (`stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`).
+
+| Metric | Series | Used by |
+|---|---|---|
+| `trivy_image_vulnerabilities{severity}` | 5 per container | Digest totals (Critical/High; the other severities read 0 because they are not stored) |
+| `trivy_vulnerability_id` | one per fixable Critical/High CVE per container | Fixable-CVE alert, digest top items |
+| `trivy_image_exposedsecrets{severity}` | 4 per container | Exposed-secret alert |
+| `trivy_resource_configaudits`, `trivy_role_rbacassessments`, `trivy_clusterrole_clusterrbacassessments`, `trivy_resource_infraassessments` | 4 per resource | Digest counts |
+| `trivy_cluster_compliance` | per spec | Digest |
+
+`trivy_vulnerability_id` is filtered at scrape time: series with an empty `fixed_version`, and Medium/Low/Unknown series, are dropped, and the free-text labels `vuln_title`, `vuln_score`, `published_date` and `last_modified_date` are removed. Unfixable findings remain visible as counts in `trivy_image_vulnerabilities` and in the report CRDs.
+
+Internet reachability comes from `kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type}`. `ingress_factory` already stamps `cloudflare.viktorbarzin.me/dns-type` on every ingress it creates (141 of the 201 ingresses on 2026-10-10 are `proxied` or `non-proxied`, across 103 namespaces), and kube-state-metrics exports it through `metricAnnotationsAllowList`. A namespace counts as internet-reachable when any of its ingresses is `proxied` or `non-proxied`.
+
+The design proposed a new `ingress_factory` label for this. The existing annotation carries the same information, and a module change would re-apply all 113 consuming app stacks plus every platform stack (the CI fan-out in `.woodpecker/default.yml`), including the 9 stacks with unaddressed drift on 2026-10-10. The annotation was used instead; a label can still be added later if a consumer needs one.
 
 ## Upgrades
 

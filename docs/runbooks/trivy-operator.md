@@ -20,7 +20,8 @@ kubectl get exposedsecretreports -A -o wide
 # Config audit, RBAC, node assessment, compliance
 kubectl get configauditreports -A -o wide
 kubectl get rbacassessmentreports,clusterrbacassessmentreports -A -o wide
-kubectl get infraassessmentreports -A -o wide
+kubectl get clusterinfraassessmentreports        # one per node
+kubectl get infraassessmentreports -A -o wide    # control-plane static pods
 kubectl get clustercompliancereports
 ```
 
