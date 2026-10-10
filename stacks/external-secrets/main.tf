@@ -2,8 +2,7 @@ resource "kubernetes_namespace" "external_secrets" {
   metadata {
     name = "external-secrets"
     labels = {
-      tier               = local.tiers.cluster
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.cluster
     }
   }
   lifecycle {

@@ -9,8 +9,7 @@ resource "kubernetes_namespace" "forgejo" {
     name = "forgejo"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.edge
       # Opt out of the auto-generated tier-3-edge ResourceQuota (caps
       # requests.memory at 4Gi). Forgejo's own pod requests 4Gi (the
       # git + OCI-registry backbone, Guaranteed QoS), which pegged that
@@ -88,10 +87,8 @@ resource "kubernetes_deployment" "forgejo" {
       tier = local.tiers.edge
     }
     annotations = {
-      # Keel disabled here — its `force` policy rewrote the image tag
-      # from 11.0.14 → 1.18 on 2026-05-24 (same bug as memory id=1933).
-      # TF owns the tag now; bump it manually here when upgrading.
-      "keel.sh/policy" = "never"
+      # The image tag is Terraform-owned. Renovate holds Forgejo updates for a
+      # supervised session (renovate.json5): 11 -> 16 cannot be downgraded.
       # Roll the pod when the signup secrets (forgejo-email password from Vault,
       # forgejo-turnstile secret) change — env vars are read at boot, not
       # hot-reloaded. Stakater Reloader watches all referenced secrets/CMs.
@@ -452,17 +449,9 @@ resource "kubernetes_deployment" "forgejo" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # KEEL_IGNORE_IMAGE removed 2026-05-24 — Keel is disabled for this
-      # workload now (keel.sh/policy=never annotation above), so TF owns
-      # the image tag. Restore this ignore_changes line if you flip
-      # keel.sh/policy back to `force` later.
-      metadata[0].annotations["keel.sh/match-tag"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

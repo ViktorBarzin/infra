@@ -9,8 +9,7 @@ resource "kubernetes_namespace" "frigate" {
   metadata {
     name = "frigate"
     labels = {
-      tier               = local.tiers.gpu
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.gpu
     }
     # labels = {
     #   "istio-injection" : "enabled"
@@ -74,19 +73,12 @@ resource "kubernetes_deployment" "frigate" {
       app  = "frigate"
       tier = local.tiers.gpu
     }
-    # Keel tracks every higher *-tensorrt release, majors included (Viktor,
-    # 2026-09-22). `major` is semver-ordered and monotonic, so it never rolls
-    # backward, and Keel's default matchPreRelease keeps it on the -tensorrt
-    # variant (it cannot jump to -tensorrt-jp6 or -rocm). Same pattern as
-    # stirling-pdf: these keys are OUT of ignore_changes below so TF owns them,
-    # and Kyverno's +(keel.sh/policy)=patch is add-if-absent, so this wins.
-    # Frigate minors migrate frigate.db one way; back it up before a manual
-    # rollback (sqlite .backup of /config/frigate.db).
+    # The image tag is Terraform-owned and Renovate proposes bumps. Renovate's
+    # docker versioning keeps the -tensorrt suffix, so it does not offer
+    # -tensorrt-jp6 or -rocm. Frigate minors migrate frigate.db one way; back
+    # it up before a manual rollback (sqlite .backup of /config/frigate.db).
     annotations = {
       "reloader.stakater.com/search" = "true"
-      "keel.sh/policy"               = "major"
-      "keel.sh/trigger"              = "poll"
-      "keel.sh/pollSchedule"         = "@every 1h"
     }
   }
   spec {
@@ -253,14 +245,9 @@ for name, det in stats.get('detectors', {}).items():
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy|trigger|pollSchedule are NOT ignored here — TF owns them
-      # so the explicit `major` policy above reconciles over Kyverno's
-      # add-if-absent `patch` default (2026-09-22).
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
