@@ -92,9 +92,9 @@ Trivy's secret scanner also matches public keys that ship inside third-party lib
 
 The weekly section is appended to the daily `alert-digest` post on Mondays (`TRIVY_WEEKDAY` in `alert_digest.tf`). It reads Prometheus only and shows:
 
-- Critical/High CVE totals and the change since last week, split into fixable and unfixable
+- Critical/High CVE findings (counted per workload container) and the change since last week, split into fixable and unfixable
 - fixable Critical/High on internet-reachable workloads (the part that also alerts)
-- the 10 images with the most fixable Critical/High CVEs, marked when internet-reachable
+- the 10 images with the most distinct fixable Critical/High CVEs, marked when internet-reachable (an image shared by several workloads counts once)
 - how many images hold secrets
 - config-audit, RBAC and control-plane assessment counts, with the config-audit change since last week
 - failed controls per compliance spec (CIS 1.23, NSA, PSS baseline and restricted), which is where node-level CIS results show up, since per-node `ClusterInfraAssessmentReport`s have no metric
