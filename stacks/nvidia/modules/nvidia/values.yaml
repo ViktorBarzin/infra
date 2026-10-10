@@ -51,6 +51,20 @@ driver:
   startupProbe:
     failureThreshold: 300
 
+  # 2026-10-10: driver-manager v0.12.1 (chart v26.7.1) evicts GPU pods
+  # through the kubectl drain helper, which refuses any pod with an
+  # emptyDir unless this is true. With it false, a driver pod restart
+  # fails with "cannot delete Pods with local storage" (frigate,
+  # f1-stream, stremio use emptyDir) and the init container crashloops.
+  # The helper's local-storage check runs before its GPU-pod filter, so
+  # it also names non-GPU pods (vault-1, sealed-secrets) in the error;
+  # only pods that request nvidia.com/gpu are actually deleted.
+  # ENABLE_AUTO_DRAIN stays false, so the node is never fully drained.
+  manager:
+    env:
+      - name: DRAIN_DELETE_EMPTYDIR_DATA
+        value: "true"
+
 # GPU time-slicing: the device plugin reads `time-slicing-config` (the
 # kubernetes_config_map in main.tf) and advertises the T4 as 100
 # nvidia.com/gpu slots. This block must sit at the TOP LEVEL. Until
