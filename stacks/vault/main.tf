@@ -684,8 +684,11 @@ resource "vault_policy" "ci" {
     path "secret/data/*" {
       capabilities = ["read", "list"]
     }
+    # read (not only list): the vault_kv_secret_v2 data source also reads
+    # the secret's metadata. Before 2026-10-10 this came from the
+    # terraform-state policy, which the CI role no longer carries.
     path "secret/metadata/*" {
-      capabilities = ["list"]
+      capabilities = ["read", "list"]
     }
     # Allow CI to write k8s_users during automated user provisioning
     path "secret/data/platform" {
@@ -694,6 +697,23 @@ resource "vault_policy" "ci" {
     # Allow CI to get dynamic K8s deploy tokens for user namespaces
     path "kubernetes/creds/*-deployer" {
       capabilities = ["read"]
+    }
+    # scripts/tg reads database/static-creds/pg-terraform-state for the
+    # Tier-1 PG backend; stacks read app DB passwords at plan time. Moved
+    # here from the terraform-state policy on 2026-10-10 (see the role).
+    path "database/static-creds/*" {
+      capabilities = ["read"]
+    }
+    path "database/creds/*" {
+      capabilities = ["read"]
+    }
+    # The breakglass SSH key stays out of CI's reach, as it was while the
+    # role carried terraform-state (which denies it).
+    path "secret/data/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
     }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
     path "transit/encrypt/sops-state-*" {
@@ -708,17 +728,126 @@ resource "vault_policy" "ci" {
   EOT
 }
 
+# --- CI Vault-admin policy: what applying THIS stack needs ---
+#
+# Lets the Woodpecker apply loop apply stacks/vault, so Vault chart bumps
+# land through the same pipeline as every other stack (ADR-0030 decision 11,
+# docs/plans/2026-10-09-software-currency-design.md "Groundwork"). Each block
+# maps to resource types in this file; paths were checked against the Vault
+# audit log of a full plan on 2026-10-10. Accepted risk (design "Accepted
+# risks"): write access to sys/policies/acl lets a compromised CI job grant
+# itself anything, so this is admin in effect. The scoping keeps an honest
+# mistake inside the paths this stack manages.
+resource "vault_policy" "ci_vault_admin" {
+  name   = "ci-vault-admin"
+  policy = <<-EOT
+    # vault_policy
+    path "sys/policies/acl/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    # vault_mount (database, transit), vault_kubernetes_secret_backend,
+    # vault_auth_backend / vault_jwt_auth_backend (sys/mounts/auth/<path>/tune)
+    path "sys/mounts" {
+      capabilities = ["read"]
+    }
+    path "sys/mounts/*" {
+      capabilities = ["create", "read", "update", "delete", "sudo"]
+    }
+    path "sys/auth" {
+      capabilities = ["read"]
+    }
+    path "sys/auth/*" {
+      capabilities = ["create", "read", "update", "delete", "sudo"]
+    }
+    # vault_audit
+    path "sys/audit" {
+      capabilities = ["read", "sudo"]
+    }
+    path "sys/audit/*" {
+      capabilities = ["create", "read", "update", "delete", "sudo"]
+    }
+    # vault_jwt_auth_backend(_role), vault_kubernetes_auth_backend_config/role
+    path "auth/oidc/config" {
+      capabilities = ["create", "read", "update"]
+    }
+    path "auth/oidc/role/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "auth/kubernetes/config" {
+      capabilities = ["create", "read", "update"]
+    }
+    path "auth/kubernetes/role/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    # vault_identity_group(_alias), vault_identity_entity(_alias)
+    path "identity/group" {
+      capabilities = ["create", "update"]
+    }
+    path "identity/group/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "identity/group-alias" {
+      capabilities = ["create", "update"]
+    }
+    path "identity/group-alias/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "identity/entity" {
+      capabilities = ["create", "update"]
+    }
+    path "identity/entity/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "identity/entity-alias" {
+      capabilities = ["create", "update"]
+    }
+    path "identity/entity-alias/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "identity/lookup/*" {
+      capabilities = ["create", "update"]
+    }
+    # vault_database_secret_backend_connection / _static_role
+    path "database/config/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "database/static-roles/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    # vault_kubernetes_secret_backend (config) / _role
+    path "kubernetes/config" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "kubernetes/roles/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    # vault_transit_secret_backend_key (sops-state-<namespace>, incl. /config)
+    path "transit/keys/sops-state-*" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    # data.vault_kv_secret_v2.vault: OIDC client and DB root passwords this
+    # stack configures Vault with.
+    path "secret/data/vault" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/vault" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 resource "vault_kubernetes_auth_backend_role" "ci" {
   backend                          = vault_auth_backend.kubernetes.path
   role_name                        = "ci"
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
-  # terraform_state policy grants `database/static-creds/pg-terraform-state`
-  # read — scripts/tg needs this to fetch the Tier-1 PG backend password.
-  # Without it, CI's per-stack `tg apply` dies with
-  # `ERROR: Cannot read PG credentials from Vault` and the default.yml
-  # apply-loop swallows the exit code (set +e) — fixed in bd code-e1x.
-  token_policies = [vault_policy.ci.name, vault_policy.terraform_state.name]
+  # No terraform-state policy here (dropped 2026-10-10). It denies
+  # secret/data/vault for the shared claude-agent pod, and a deny in any
+  # attached policy overrides a grant in another, so CI could not read what
+  # this stack needs. The grants CI used from it (DB static creds, including
+  # pg-terraform-state for scripts/tg, and KV metadata reads) now live in the
+  # ci policy above, together with its claude-breakglass deny.
+  token_policies = [vault_policy.ci.name, vault_policy.ci_vault_admin.name]
   token_ttl      = 604800 # 7d
   token_period   = 604800 # periodic: auto-renews indefinitely
 }
