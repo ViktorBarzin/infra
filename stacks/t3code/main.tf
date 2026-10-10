@@ -8,8 +8,7 @@ resource "kubernetes_namespace" "t3code" {
     name = "t3code"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -324,7 +323,7 @@ resource "kubernetes_deployment_v1" "t3_probe" {
       spec {
         container {
           name  = "probe"
-          image = "python:3.12-alpine"
+          image = "library/python:3.12.15-alpine"
           # Long-running pod, not a high-cadence CronJob: a one-time pinned
           # pip install at start (with retries against transient DNS) is the
           # lightweight alternative to owning a registry image for ~200 lines.
@@ -366,12 +365,8 @@ resource "kubernetes_deployment_v1" "t3_probe" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }

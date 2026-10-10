@@ -113,12 +113,10 @@ resource "kubernetes_manifest" "slack_external_secret" {
 }
 
 # DockerHub pull-secret — image is private on DockerHub
-# (viktorbarzin/realestatecrawler and viktorbarzin/immoweb) and Keel polls
-# the registry HEAD hourly for digest changes. Without auth, Keel hits 401
-# and the rollout never fires. Pods themselves were pulling fine only
-# because the image landed in the node's containerd cache months ago — a
-# fresh node would also fail. ESO renders the dockerconfigjson server-side
-# (Sprig `b64enc`) so the PAT never sits in K8s in cleartext.
+# (viktorbarzin/realestatecrawler and viktorbarzin/immoweb). Without auth a
+# node that does not already have the image cached cannot pull it. ESO
+# renders the dockerconfigjson server-side (Sprig `b64enc`) so the PAT never
+# sits in K8s in cleartext.
 resource "kubernetes_manifest" "dockerhub_pull_secret" {
   field_manager {
     force_conflicts = true
@@ -197,17 +195,6 @@ resource "kubernetes_namespace" "realestate-crawler" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.aux
-      # UN-ENROLLED from Keel 2026-08-03. CI deploys this app by digest-stable
-      # :<sha> tag (.woodpecker/deploy.yml in the app repo), so Keel has no job
-      # here — and it is actively harmful: under the cluster-default
-      # `policy: patch` Keel RESOLVES non-semver tags and rewrites them to a
-      # concrete version. That is how celery silently moved from :latest to :22
-      # (a 2026-02-22 image) and stayed there for five months; the tag string
-      # `realestatecrawler:22` never appears anywhere in this repo's history.
-      # Removing the label stops Kyverno re-stamping keel annotations; the
-      # per-workload `keel.sh/policy = never` below stops the already-tracking
-      # Keel (annotation + label = the documented safe matrix for floating tags).
-      # "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -238,9 +225,6 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     labels = {
       app  = "realestate-crawler-ui"
       tier = local.tiers.aux
-    }
-    annotations = {
-      "keel.sh/policy" = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -287,9 +271,6 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -327,7 +308,6 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -545,11 +525,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -638,7 +615,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -741,18 +717,11 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy is NOT ignored any more — this stack now OWNS it (= "never").
-      # While it was ignored, Terraform could not undo the `patch` value kyverno
-      # stamped, which is what let Keel keep rewriting these image tags.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -789,7 +758,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -869,18 +837,11 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy is NOT ignored any more — this stack now OWNS it (= "never").
-      # While it was ignored, Terraform could not undo the `patch` value kyverno
-      # stamped, which is what let Keel keep rewriting these image tags.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

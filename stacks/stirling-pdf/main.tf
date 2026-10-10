@@ -10,8 +10,7 @@ resource "kubernetes_namespace" "stirling-pdf" {
     name = "stirling-pdf"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -70,20 +69,6 @@ resource "kubernetes_deployment" "stirling-pdf" {
       # propagation so the first forwarded request never hits a 503 race.
       "sablier.ready-after" = "5s"
     }
-    # v1→v2 upgrade (2026-07-16): auto-track latest SAFELY via the semver-ordered
-    # `major` policy — NOT `force`. force ignores semver ordering and rolled
-    # paperless-ngx 2.20.15→1.5.0 within minutes (2026-07-14, memory #9838); it
-    # is house-banned on upstream multi-tag repos and stirlingtools/stirling-pdf
-    # is exactly that. `major` auto-takes every HIGHER semver (incl. future
-    # majors), is monotonic so it can never roll backward, and performs the
-    # initial 0.33.1→2.x jump itself. These keys are intentionally OUT of
-    # ignore_changes below so TF reconciles the live patch→major flip; Kyverno's
-    # +(keel.sh/policy)=patch is add-if-absent, so this explicit value wins.
-    annotations = {
-      "keel.sh/policy"       = "major"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
-    }
   }
   spec {
     replicas = 1
@@ -103,11 +88,10 @@ resource "kubernetes_deployment" "stirling-pdf" {
       }
       spec {
         container {
-          # Semver seed for Keel's `major` policy (recreate-correct only — Keel
-          # owns the LIVE tag via ignore_changes and bumps 0.33.1→this→newer).
-          # `latest` == v2 today; a semver tag (not `:latest`) is required so
-          # the semver policy has an ordered base to compare on a fresh recreate.
-          image = "stirlingtools/stirling-pdf:2.13.2"
+          # Viktor wants every upstream release here, majors included.
+          # Renovate offers each bump (majors as their own commit); the tag
+          # must stay a semver tag, never `latest`, so the bumps sort.
+          image = "stirlingtools/stirling-pdf:3.1.0"
           name  = "stirling-pdf"
           # v2's entrypoint DYNAMICALLY sizes the JVM from the container memory
           # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
@@ -190,14 +174,9 @@ resource "kubernetes_deployment" "stirling-pdf" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy|trigger|pollSchedule are NOT ignored here — TF owns them
-      # so the explicit `major` policy above reconciles over Kyverno's
-      # add-if-absent `patch` default and flips the live deployment (2026-07-16).
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
