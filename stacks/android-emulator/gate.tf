@@ -87,7 +87,7 @@ resource "kubernetes_deployment" "gate" {
         service_account_name = kubernetes_service_account.gate.metadata[0].name
         container {
           name    = "gate"
-          image   = "python:3.12-alpine"
+          image   = "library/python:3.12.15-alpine"
           command = ["python", "/app/gate.py"]
           env {
             name  = "NAMESPACE"
@@ -132,12 +132,8 @@ resource "kubernetes_deployment" "gate" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }

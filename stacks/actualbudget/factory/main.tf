@@ -1,18 +1,15 @@
 variable "tls_secret_name" {}
 variable "name" {}
+# Image tags for actual-server and actual-http-api. The stack root pins both
+# (locals in ../main.tf, bumped by Renovate). They are separately released and
+# their version ceilings differ (jhonderson publishes patch releases upstream
+# doesn't, e.g. 26.6.1), so the http-api has its own tag rather than reusing
+# var.tag.
 variable "tag" {
-  default = "latest"
+  type = string
 }
-# actual-server and actual-http-api are SEPARATELY released and their version
-# ceilings differ (jhonderson publishes patch releases upstream doesn't, e.g.
-# 26.6.1), so the http-api needs its own tag rather than reusing var.tag. Both
-# images stay in `ignore_changes` — Keel owns the live tag — so this value is
-# only the seed used when a Deployment is CREATED or RECREATED. It was a
-# hardcoded `latest` until 2026-08-16, which meant any recreate pulled whatever
-# was newest at that moment, across a component that migrates the budget file.
 variable "http_api_tag" {
-  type    = string
-  default = "26.8.1"
+  type = string
 }
 variable "tier" { type = string }
 variable "sync_id" {
@@ -148,14 +145,9 @@ resource "kubernetes_deployment" "actualbudget" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -271,14 +263,9 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

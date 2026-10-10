@@ -41,8 +41,7 @@ resource "kubernetes_namespace" "ac" {
   metadata {
     name = "ac"
     labels = {
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {

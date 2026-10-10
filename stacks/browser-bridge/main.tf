@@ -65,11 +65,6 @@ locals {
 # LABEL IS SET: one small Go binary at 256Mi sits far inside both ceilings, and
 # the container below carries explicit resources so the LimitRange defaults
 # never apply to it.
-#
-# keel.sh/enrolled is also deliberately absent. Kyverno's default keel policy is
-# `patch`, which only follows semver image tags, and CI publishes :<sha8> and
-# :latest here. Woodpecker's `kubectl set image` is the real deploy path, so the
-# label would buy nothing and cost four ignore_changes entries.
 resource "kubernetes_namespace" "browser_bridge" {
   metadata {
     name = local.namespace
@@ -339,14 +334,7 @@ resource "kubernetes_deployment" "browser_bridge" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      # Kyverno's inject-keel-annotations background rule patches every
-      # Deployment, enrolled namespace or not (accepted 2026-09-19, bead
-      # code-q9iy); they came back within days of the 09-27 apply.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

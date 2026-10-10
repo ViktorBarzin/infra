@@ -210,6 +210,11 @@
       versioning: "regex:^(?<compatibility>\\d+)-vectorchord(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?<build>-.+)?$",
     },
     {
+      description: "coturn tags end in an Alpine package revision (-r0, -r1). Docker versioning treats that suffix as a compatibility string, so 4.10.0-r1 was never offered 4.18.0-r0 (dry run 2026-10-10)",
+      matchPackageNames: ["coturn/coturn", "docker.io/coturn/coturn"],
+      versioning: "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-r(?<build>\\d+)$",
+    },
+    {
       description: "linuxserver legacy tags sort above current releases (dry runs: lidarr 2.9.4 -> 8.1.2135, qbittorrent 5.1.4 -> 20.04.1 and 14.3.9)",
       matchPackageNames: ["lscr.io/linuxserver/lidarr"],
       allowedVersions: "<8",
