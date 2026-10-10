@@ -397,7 +397,7 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
-          # Member sign-in and the membership check (f1-stream ADR-0020,
+          # Member sign-in and the membership check (f1-stream ADR-0025,
           # ADR-0021; members.tf). The issuer and client id are public; the
           # client secret and the Authentik API token come from the Secret
           # members.tf writes. Unset, /login answers 503 and nothing else
