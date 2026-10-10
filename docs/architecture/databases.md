@@ -150,6 +150,14 @@ Single-replica Deployment `clickhouse` in the `rybbit` namespace (`clickhouse/cl
 
 **Observability** (added 2026-10-10, software-currency groundwork): ClickHouse's built-in Prometheus endpoint on port 9363 (`/metrics`), scraped by the annotation-driven `kubernetes-pods` job, so its series carry `job="kubernetes-pods", namespace="rybbit", app="clickhouse"`. It exports `ClickHouseMetrics_*`, `ClickHouseHistogramMetrics_*` and `ClickHouseAsyncMetrics_*`, about 1,300 series. ProfileEvents (1,586 more series, mostly zero) and errors are off; turn them on in `prometheus.xml` when a dashboard or alert needs them. Alert: `ClickHouseDown` (scrape `up` below 1, or no series, for 10m; warning).
 
+**Backup** (added 2026-10-10, software-currency groundwork): CronJob `clickhouse-backup`, daily 01:10 UTC, on the server's own image. It dumps every user table as schema (`SHOW CREATE TABLE`) plus rows in Native format to `/srv/nfs/clickhouse-backup/<yyyymmdd-hhmm>/` (PVC `rybbit-clickhouse-backup-host`), restores the dump into `clickhouse-local` and checks row counts before writing, then pushes `backup_last_success_timestamp{job="clickhouse-backup"}`. 14-day retention. It connects over the native protocol on port 9000, which the `clickhouse` Service exposes for this. Alerts: `ClickHouseBackupStale` (36h), `ClickHouseBackupNeverRun`. Restore: `docs/runbooks/restore-clickhouse.md`.
+
+### Dolt (beads-server)
+
+Single-replica Deployment `dolt` in the `beads-server` namespace (`dolthub/dolt-sql-server:2.4.2`, `Recreate` strategy), MySQL-protocol on port 3306, data on the `dolt-data` proxmox-lvm PVC. Databases: `code` (beads issues, used by `bd` and BeadBoard) and `beads` (`presence_claims` for the presence CLI). Root has no password; access is in-cluster only.
+
+**Backup** (added 2026-10-10, software-currency groundwork): CronJob `dolt-backup`, daily 01:25 UTC. An init container on `mysql:8.4.8` runs mysqldump per database (`dolt dump` has no remote mode in 2.4.2, and Dolt rejects `--single-transaction`), with view definitions appended from `dolt_schemas`. The main container, on the server's Dolt image, restores the dump into a scratch Dolt directory, checks every table and view, then writes `<db>.sql.gz` files to `/srv/nfs/dolt-backup/<yyyymmdd-hhmm>/` (PVC `beads-dolt-backup-host`) and pushes `backup_last_success_timestamp{job="dolt-backup"}`. 14-day retention. The dump holds current rows, including uncommitted working-set changes, but not Dolt commit history; take a tarball of `/var/lib/dolt` before a version bump when history matters. Alerts: `DoltBackupStale` (36h), `DoltBackupNeverRun`. Restore: `docs/runbooks/restore-dolt.md`.
+
 ### SQLite (Per-App)
 
 **Apps using SQLite**:

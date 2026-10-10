@@ -3,6 +3,8 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
+variable "nfs_server" { type = string }
+
 variable "beadboard_image_tag" {
   type    = string
   default = "17a38e43"
@@ -152,7 +154,8 @@ resource "kubernetes_deployment" "dolt" {
           # Exact pin, owned by Terraform (the image is no longer in
           # lifecycle.ignore_changes, so changing this tag rolls the pod).
           # Strategy is Recreate, so only one Dolt process opens the store.
-          # Take a tarball of /var/lib/dolt before bumping: no other backup exists.
+          # Take a tarball of /var/lib/dolt before bumping: the daily
+          # dolt-backup CronJob below keeps current rows but not commit history.
           image = "dolthub/dolt-sql-server:2.4.2"
 
           port {
@@ -310,6 +313,204 @@ resource "kubernetes_service" "dolt" {
       port        = 3306
       target_port = 3306
     }
+  }
+}
+
+# ── Dolt backup ──
+#
+# Daily logical backup of every Dolt database to the PVE NFS share
+# (192.168.1.127:/srv/nfs/dolt-backup). Software-currency groundwork
+# (docs/plans/2026-10-09-software-currency-design.md): the pre-upgrade
+# snapshot step needs a backup to run before a Dolt bump.
+#
+# Two containers share an emptyDir:
+#   - dump (init, mysql client): mysqldump of each user database. Dolt 2.4.2
+#     has no remote `dolt dump`, and rejects mysqldump's --single-transaction
+#     (SAVEPOINT), so the dump runs without it. Views are skipped by
+#     mysqldump (Dolt's information_schema.views is empty, so it would only
+#     write placeholders) and appended from dolt_schemas instead.
+#   - verify (dolt image matching the server): restores the dump into a
+#     scratch Dolt directory, checks every table and view came back, then
+#     gzips it to /backup/<UTC yyyymmdd-hhmm>/ and pushes the metrics.
+#
+# What it does not keep: Dolt commit history. A restore gives the current
+# rows of every table, including uncommitted working-set changes (the beads
+# database's presence_claims is never committed), as one new commit. Users
+# and grants come from the dolt-init ConfigMap, not from the dump.
+# 14-day retention. Restore: docs/runbooks/restore-dolt.md.
+module "nfs_dolt_backup" {
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "beads-dolt-backup-host"
+  namespace          = kubernetes_namespace.beads.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/dolt-backup"
+  storage_class_name = "nfs-pve"
+}
+
+resource "kubernetes_cron_job_v1" "dolt_backup" {
+  metadata {
+    name      = "dolt-backup"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    schedule                      = "25 1 * * *"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            init_container {
+              name  = "dump"
+              image = "mysql:8.4.8"
+              env {
+                name  = "DOLT_HOST"
+                value = "${kubernetes_service.dolt.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in mysql client image. Writes a logical dump of every user database
+                # into /work (emptyDir); the verify container restores it before it reaches NFS.
+                q() { mysql -h "$DOLT_HOST" -P 3306 -u root -N -B "$@"; }
+                date -u +%s > /work/start
+                q -e "SELECT dolt_version()" > /work/VERSION
+                q -e "SHOW DATABASES" | grep -v -x -E 'information_schema|mysql|performance_schema|sys' > /work/databases
+                : > /work/counts.tsv
+                : > /work/views.tsv
+                while read -r db; do
+                  ignore=""
+                  q -e "SHOW FULL TABLES FROM \`$db\`" > /work/tables.$db
+                  while IFS="$(printf '\t')" read -r t kind; do
+                    if [ "$kind" = "VIEW" ]; then
+                      ignore="$ignore --ignore-table=$db.$t"
+                      printf '%s\t%s\n' "$db" "$t" >> /work/views.tsv
+                    else
+                      printf '%s\t%s\t%s\n' "$db" "$t" "$(q -e "SELECT COUNT(*) FROM \`$db\`.\`$t\`")" >> /work/counts.tsv
+                    fi
+                  done < /work/tables.$db
+                  rm -f /work/tables.$db
+                  # No --single-transaction: Dolt rejects mysqldump's SAVEPOINT handling.
+                  # Views are excluded here because mysqldump only writes placeholder views
+                  # for Dolt (its information_schema.views is empty); their real definitions
+                  # come from dolt_schemas below.
+                  mysqldump -h "$DOLT_HOST" -P 3306 -u root --skip-lock-tables --no-tablespaces \
+                    --set-gtid-purged=OFF --column-statistics=0 --routines --triggers \
+                    --databases "$db" $ignore > "/work/$db.sql"
+                  if grep -q "^$db	" /work/views.tsv; then
+                    printf '\nUSE `%s`;\n' "$db" >> "/work/$db.sql"
+                    q --raw -e "SELECT CONCAT(fragment, ';') FROM \`$db\`.dolt_schemas WHERE type = 'view' ORDER BY name" >> "/work/$db.sql"
+                  fi
+                done < /work/databases
+                echo "dump done:"; ls -l /work; cat /work/counts.tsv /work/views.tsv
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+            }
+            container {
+              name  = "verify"
+              image = "dolthub/dolt-sql-server:2.4.2"
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in the dolt image that matches the server. Restores the dump into a
+                # scratch Dolt directory, checks every table and view came back, then gzips
+                # the dump onto NFS, rotates, and pushes metrics.
+                export HOME=/tmp
+                dolt config --global --add user.name backup >/dev/null
+                dolt config --global --add user.email backup@beads-server >/dev/null
+                TS=$(date -u +%Y%m%d-%H%M)
+                mkdir -p /tmp/restore && cd /tmp/restore
+                while read -r db; do
+                  dolt sql < "/work/$db.sql"
+                done < /work/databases
+                fail=0
+                while IFS="$(printf '\t')" read -r db t n; do
+                  got=$(dolt sql -r csv -q "SELECT COUNT(*) FROM \`$db\`.\`$t\`" | tail -n 1) || got=missing
+                  echo "table $db.$t source=$n restored=$got"
+                  if [ "$got" = missing ] || { [ "$n" -gt 0 ] && [ "$got" -eq 0 ]; }; then fail=1; fi
+                done < /work/counts.tsv
+                while IFS="$(printf '\t')" read -r db v; do
+                  if dolt sql -r csv -q "SELECT COUNT(*) FROM \`$db\`.\`$v\`" > /dev/null; then echo "view $db.$v ok"; else echo "view $db.$v FAILED"; fail=1; fi
+                done < /work/views.tsv
+                [ "$fail" -eq 0 ] || { echo "restore check failed, not writing the backup"; exit 1; }
+
+                out=/backup/$TS
+                mkdir -p "$out.partial"
+                while read -r db; do gzip -9 -c "/work/$db.sql" > "$out.partial/$db.sql.gz"; done < /work/databases
+                cp /work/counts.tsv /work/views.tsv /work/VERSION /work/databases "$out.partial/"
+                (cd "$out.partial" && sha256sum * > SHA256SUMS)
+                mv "$out.partial" "$out"
+                find /backup -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +14 -exec rm -rf {} +
+                find /backup -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mtime +1 -exec rm -rf {} +
+
+                t0=$(cat /work/start)
+                dur=$(( $(date -u +%s) - t0 ))
+                bytes=$(du -sb "$out" | cut -f1)
+                echo "backup written: $out ($bytes bytes, $dur s)"; ls -l "$out"
+                cat <<METRICS | curl -sf --data-binary @- "$PUSHGATEWAY/metrics/job/dolt-backup" || echo "pushgateway push failed"
+                backup_duration_seconds $dur
+                backup_output_bytes $bytes
+                backup_last_success_timestamp $(date -u +%s)
+                METRICS
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "work"
+              empty_dir {}
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_dolt_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 
