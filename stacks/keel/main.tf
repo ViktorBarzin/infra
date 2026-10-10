@@ -2,14 +2,19 @@
 # Design: docs/plans/2026-05-16-auto-upgrade-apps-design.md
 # Plan:   docs/plans/2026-05-16-auto-upgrade-apps-plan.md
 #
-# STATUS (2026-10-10): parked at replicaCount = 0. The software-currency
-# cutover (docs/plans/2026-10-09-software-currency-design.md, Phase 3,
-# batch B00) moves version ownership to Renovate. Keel is scaled to 0
-# first because a running Keel writes back its cached copy of a workload
-# and would revert the annotation and ignore_changes edits of the later
-# batches. The Kyverno inject-keel-annotations policy that enrolled
-# workloads was deleted in the same change. The stack itself is removed
-# once every batch has landed.
+# STATUS (2026-10-10): parked. local.keel_enabled = false uninstalls the
+# helm release, so Keel runs 0 pods. The software-currency cutover
+# (docs/plans/2026-10-09-software-currency-design.md, Phase 3, batch B00)
+# moves version ownership to Renovate. Keel stops first because a running
+# Keel writes back its cached copy of a workload and would revert the
+# annotation and ignore_changes edits of the later batches. The Kyverno
+# inject-keel-annotations policy that enrolled workloads was deleted in
+# the same batch. The stack itself is removed once every batch has landed.
+#
+# Why an uninstall and not replicaCount = 0: chart 1.2.3 hard-codes
+# `replicas: 1` in templates/deployment.yaml and has no replicaCount
+# value, so the value had no effect. The release is stateless
+# (persistence disabled); setting keel_enabled = true reinstalls it.
 #
 # Operation while it ran: Keel polled each watched workload's registry
 # hourly and rolled the workload when a new tag or digest matched its
@@ -35,7 +40,12 @@ resource "kubernetes_namespace" "keel" {
   }
 }
 
+locals {
+  keel_enabled = false
+}
+
 resource "helm_release" "keel" {
+  count      = local.keel_enabled ? 1 : 0
   name       = "keel"
   namespace  = kubernetes_namespace.keel.metadata[0].name
   repository = "https://charts.keel.sh"
@@ -53,7 +63,8 @@ resource "helm_release" "keel" {
   cleanup_on_fail = true
 
   values = [yamlencode({
-    # 2026-10-10: parked (0) for the Renovate cutover, see the header.
+    # Not read by chart 1.2.3 (its Deployment hard-codes replicas: 1);
+    # parking is done with local.keel_enabled, see the header.
     # History: 2026-05-26 17:30: re-enabled after switching the Kyverno-injected
     # default from `force + match-tag=true` (proven unreliable — see
     # stacks/kyverno/modules/kyverno/keel-annotations.tf) to `patch` which
@@ -64,7 +75,7 @@ resource "helm_release" "keel" {
     # that the default is safe. Workloads pinned out-of-band (uptime-kuma
     # via keel.sh/policy=never LABEL) stay opted-out via the Kyverno
     # exclude rule, not via Keel's own annotation.
-    replicaCount = 0
+    replicaCount = 1
     # Patched Keel: 0.22.4 + keel.sh/pollTagsAfterCurrent, which lets a
     # workload poll only the tags pushed after its running tag. Needed for
     # ghcr.io/immich-app/immich-machine-learning, whose 150k+ tag list gets
