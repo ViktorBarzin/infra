@@ -20,7 +20,10 @@ resource "helm_release" "nfs_csi_driver" {
   create_namespace = false
   name             = "csi-driver-nfs"
   atomic           = true
-  timeout          = 300
+  cleanup_on_fail  = true
+  # 600s so atomic=true does not roll back in the middle of the 6-node
+  # DaemonSet rollout (maxUnavailable 1).
+  timeout = 600
 
   repository = "https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts"
   chart      = "csi-driver-nfs"
@@ -36,7 +39,20 @@ resource "helm_release" "nfs_csi_driver" {
   # nfs-csi namespace is in the Kyverno keel exclude list (keel-annotations.tf)
   # so Keel will not touch it again. This version pin is the second line of
   # defense against accidental floating-version drift on `terraform apply`.
-  version = "4.13.1"
+  #
+  # Correction (2026-10-09): helm history never held chart 4.13.2. The May
+  # incident was a Keel image rollout, and chart 4.13.1 already defaults
+  # controller affinity/nodeSelector to empty, so the affinity below is what
+  # keeps the controllers off master in every chart version.
+  #
+  # Bumped 4.13.1 -> 4.13.4 on 2026-10-09 (unattended upgrade run). Rendered
+  # diff is image tags only (provisioner v6.3.0, resizer v2.2.0, snapshotter
+  # v8.6.0, livenessprobe v2.19.0, registrar v2.17.0, nfsplugin v4.13.4), plus
+  # registrar --timeout=60s, revisionHistoryLimit 10, and the GA feature gate
+  # HonorPVReclaimPolicy dropped. Keel had already drifted the live images to
+  # nfsplugin v4.13.4 / provisioner v6.1.1 on 2026-07-01; this brings helm in
+  # line. Chart 4.13.5 was not in the helm index yet on this date.
+  version = "4.13.4"
 
   values = [yamlencode({
     controller = {
