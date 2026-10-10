@@ -162,6 +162,8 @@ Returns a time-limited service account token and kubeconfig.
 3. Woodpecker receives Vault token
 4. Accesses secrets from `secret/ci/global`
 
+The infra apply pipeline logs in to the `ci` role (bound to the `default` SA in `woodpecker`). Its token carries the `ci` and `ci-vault-admin` policies, both in `stacks/vault/main.tf`. `ci-vault-admin` covers the paths the vault stack manages, so CI applies `stacks/vault` like any other stack (since 2026-10-10, ADR-0030 decision 11). Write access to `sys/policies/acl` makes that admin in effect; the software-currency design lists this as an accepted risk. The `ci` role does not carry `terraform-state`, whose deny on `secret/data/vault` would block the vault stack's own read.
+
 **Secret sync CronJob**:
 - Runs every 6h
 - Reads `secret/ci/global` from Vault

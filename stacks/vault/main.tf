@@ -737,7 +737,10 @@ resource "vault_policy" "ci" {
 # audit log of a full plan on 2026-10-10. Accepted risk (design "Accepted
 # risks"): write access to sys/policies/acl lets a compromised CI job grant
 # itself anything, so this is admin in effect. The scoping keeps an honest
-# mistake inside the paths this stack manages.
+# mistake inside the paths this stack manages. The apply loop in
+# .woodpecker/default.yml and the nightly drift-detection plan include this
+# stack since 2026-10-10; adding a new resource type here may need a path
+# added below, or the CI apply fails with a 403.
 resource "vault_policy" "ci_vault_admin" {
   name   = "ci-vault-admin"
   policy = <<-EOT

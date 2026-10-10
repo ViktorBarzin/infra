@@ -285,21 +285,13 @@ steps:
         if [ -s .platform_apply ]; then
           echo "=== Applying platform stacks (serial, locked) ==="
           while read -r stack; do
-            # Tier-0 `vault` is human-applied via OIDC; the CI `ci` Vault role
-            # lacks Vault-admin perms (sys/mounts + sys/policies/acl), so a CI
-            # apply always 403s and fails the pipeline. Kept in PLATFORM_STACKS
-            # (so the app-stack detector still excludes it) but skipped here.
-            # (2026-06-27 — see docs/architecture/ci-cd.md)
-            # The skip is correct (Tier-0, human-applied), but it used to be
-            # ONLY a log line, so a push touching stacks/vault reported green
-            # having applied nothing. That is how three vault changes on
-            # 2026-09-02 were each missed and needed an out-of-band apply
-            # afterwards (infra#84). Record it as an outcome, not a message.
-            if [ "$stack" = "vault" ]; then
-              echo "[vault] SKIPPED (Tier-0, human-applied via OIDC) — NOT APPLIED, needs a human run"
-              echo "$stack" >> .needs_human_apply
-              continue
-            fi
+            # `vault` is applied here like any other platform stack since
+            # 2026-10-10: the CI `ci` Vault role carries the ci-vault-admin
+            # policy (stacks/vault/main.tf), per ADR-0030 decision 11 and the
+            # software-currency design, so Vault chart bumps land through CI.
+            # Before that it was skipped and recorded in .needs_human_apply
+            # (infra#84). That reporting below stays as the channel for any
+            # stack deliberately skipped in future; today nothing writes it.
             echo "[$stack] Starting apply..."
             ATTEMPT=0
             while :; do
