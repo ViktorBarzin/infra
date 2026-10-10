@@ -464,6 +464,169 @@ EOT
   }
 }
 
+# =============================================================================
+# mysqld_exporter for mysql-standalone
+# =============================================================================
+# Prometheus metrics for MySQL (mysql_up, status and InnoDB counters), so the
+# DB checks and the MySQLNotServing alert have a signal that reads MySQL itself
+# rather than pod readiness (software-currency design, Groundwork). A separate
+# Deployment rather than a sidecar, so adding or upgrading it never restarts
+# mysqld.
+#
+# The `exporter` user is read-only: PROCESS and REPLICATION CLIENT for status,
+# and SELECT on performance_schema only, so it cannot read application data.
+# The upstream README suggests SELECT ON *.*; the default collectors
+# (global_status, global_variables, innodb_cmp/cmpmem, slave_status) work with
+# this narrower grant (checked on a scratch mysql:8.4.8 pod, 2026-10-10).
+#
+# The password is derived from the root password rather than generated, so the
+# stack needs no new provider and no new Vault key, and it changes whenever the
+# root password does. sha256 is one-way, so the exporter credential does not
+# reveal the root password.
+locals {
+  mysql_exporter_user     = "exporter"
+  mysql_exporter_password = substr(sha256("mysqld-exporter/${var.dbaas_root_password}"), 0, 32)
+}
+
+resource "null_resource" "mysql_exporter_user" {
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+
+  triggers = {
+    username      = local.mysql_exporter_user
+    password_hash = sha256(local.mysql_exporter_password)
+    grants        = "PROCESS,REPLICATION CLIENT;performance_schema.SELECT;max3"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+CREATE USER IF NOT EXISTS '${local.mysql_exporter_user}'@'%' IDENTIFIED WITH caching_sha2_password BY '${local.mysql_exporter_password}' WITH MAX_USER_CONNECTIONS 3;
+ALTER USER '${local.mysql_exporter_user}'@'%' IDENTIFIED WITH caching_sha2_password BY '${local.mysql_exporter_password}' WITH MAX_USER_CONNECTIONS 3;
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO '${local.mysql_exporter_user}'@'%';
+GRANT SELECT ON performance_schema.* TO '${local.mysql_exporter_user}'@'%';
+FLUSH PRIVILEGES;
+SQL
+EOT
+  }
+}
+
+resource "kubernetes_secret" "mysqld_exporter" {
+  metadata {
+    name      = "mysqld-exporter"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  type = "Opaque"
+  data = {
+    MYSQLD_EXPORTER_PASSWORD = local.mysql_exporter_password
+  }
+}
+
+resource "kubernetes_deployment" "mysqld_exporter" {
+  metadata {
+    name      = "mysqld-exporter"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      app  = "mysqld-exporter"
+      tier = var.tier
+      # ADR-0014 service identity: dbaas holds several workloads, so the
+      # namespace alone cannot attribute Goldmane flows.
+      "service-identity" = "mysqld-exporter"
+    }
+    annotations = {
+      # Restart on a password change (the Secret above changes with the root
+      # password).
+      "reloader.stakater.com/auto" = "true"
+      # Terraform owns the image tag (Renovate takes it over in the
+      # software-currency design). Kyverno's keel-annotations policy keeps an
+      # existing keel.sh/policy value, so this stops Keel from bumping the
+      # image underneath Terraform.
+      "keel.sh/policy" = "never"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "mysqld-exporter"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app                = "mysqld-exporter"
+          "service-identity" = "mysqld-exporter"
+        }
+        annotations = {
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "9104"
+          "prometheus.io/path"   = "/metrics"
+        }
+      }
+      spec {
+        container {
+          name  = "mysqld-exporter"
+          image = "docker.io/prom/mysqld-exporter:v0.20.0"
+          args = [
+            "--mysqld.address=${var.cluster_master_service}.dbaas.svc.cluster.local:3306",
+            "--mysqld.username=${local.mysql_exporter_user}",
+          ]
+          env {
+            name = "MYSQLD_EXPORTER_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.mysqld_exporter.metadata[0].name
+                key  = "MYSQLD_EXPORTER_PASSWORD"
+              }
+            }
+          }
+          port {
+            name           = "metrics"
+            container_port = 9104
+          }
+          # /metrics answers 200 with mysql_up=0 while MySQL is down, which is
+          # the signal we want to keep, so the probes check the exporter
+          # process only.
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 9104
+            }
+            period_seconds    = 30
+            timeout_seconds   = 5
+            failure_threshold = 3
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 9104
+            }
+            period_seconds = 30
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [null_resource.mysql_exporter_user]
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+    ]
+  }
+}
+
 module "nfs_mysql_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
   name       = "dbaas-mysql-backup-host"
