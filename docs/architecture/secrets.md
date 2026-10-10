@@ -60,7 +60,7 @@ graph LR
 |-----------|---------|----------|---------|
 | HashiCorp Vault | 2.1.2 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
 | External Secrets Operator | v1beta1 API | `stacks/external-secrets/` | Sync Vault secrets to K8s Secrets (52 total ExternalSecrets) |
-| Sealed Secrets | Latest | `stacks/platform/` | User-managed encrypted secrets |
+| Sealed Secrets | 0.40.0 (Helm chart 2.20.0) | `stacks/sealed-secrets/` | User-managed encrypted secrets |
 | SOPS | Latest | `scripts/state-sync`, `scripts/tg` | Terraform state encryption (Vault Transit + age) |
 | Vault K8s Auth | Enabled | `stacks/vault/` | CI/CD authentication via service account tokens |
 | Vault DB Engine | Enabled | `stacks/vault/` | Dynamic DB credentials for 7 MySQL + 5 PostgreSQL databases |
@@ -373,9 +373,9 @@ First-apply issue:
 
 ### Sealed Secret won't decrypt
 
-1. Verify controller is running: `kubectl get pods -n kube-system -l app=sealed-secrets`
+1. Verify controller is running: `kubectl get pods -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets`
 2. Check encryption was for correct cluster: `kubeseal --fetch-cert` matches cert used for encryption
-3. Review controller logs: `kubectl logs -n kube-system deployment/sealed-secrets-controller`
+3. Review controller logs: `kubectl logs -n sealed-secrets deployment/sealed-secrets`
 4. Ensure `sealed-*.yaml` hasn't been manually edited (breaks signature)
 
 ### SOPS state decryption fails
