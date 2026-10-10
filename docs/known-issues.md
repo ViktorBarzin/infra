@@ -39,9 +39,10 @@ same behaviour once NFD has detected 26.04.
    NFD-worker reads `/etc/os-release` and now reports
    `system-os_release.VERSION_ID=24.04`, so the operator picks the
    matching ubuntu24.04 driver image which DOES exist.
-4. gpu-operator chart pinned to v25.10.1 in
-   `stacks/nvidia/modules/nvidia/main.tf`; driver pinned to 570.195.03
-   in `stacks/nvidia/modules/nvidia/values.yaml`.
+4. gpu-operator chart pinned in `stacks/nvidia/modules/nvidia/main.tf`
+   (v25.10.1 until 2026-10-10, now v26.7.1, which takes the driver OS tag
+   from the NFD label and so still picks ubuntu24.04); driver pinned to
+   570.195.03 in `stacks/nvidia/modules/nvidia/values.yaml`.
 
 **This is gross but stable.** The kernel matches what 24.04 ships, and
 the `apt-mark hold` keeps it that way. /etc/os-release lying about the
