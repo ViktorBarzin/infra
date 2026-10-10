@@ -90,8 +90,11 @@ resource "helm_release" "descheduler" { # rename me
 
   repository = "https://kubernetes-sigs.github.io/descheduler/"
   chart      = "descheduler"
+  version    = "0.37.0"
 
-
+  # A failed upgrade rolls back instead of leaving a release with no deployed revision.
+  atomic          = true
+  cleanup_on_fail = true
 
   values = [templatefile("${path.module}/values.yaml", {})]
 }
