@@ -221,6 +221,7 @@ resource "kubernetes_service" "ytdlp" {
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
@@ -427,6 +428,7 @@ module "highlights_ingress" {
   tls_secret_name = var.tls_secret_name
   host            = "yt-highlights"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "YT Highlights"

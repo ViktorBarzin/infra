@@ -602,6 +602,7 @@ resource "kubernetes_service" "calibre" {
 module "calibre_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "calibre"
@@ -737,6 +738,7 @@ module "stacks_ingress" {
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
@@ -1282,6 +1284,7 @@ module "book_search_ingress" {
   name            = "book-search"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Book Search"

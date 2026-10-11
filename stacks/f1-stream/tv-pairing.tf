@@ -1,6 +1,6 @@
 # Pairing a television with the f1 API (f1-stream ADR-0007).
 #
-# The TV shows a short code and polls; a member of "F1 Users" opens /pair on a
+# The TV shows a short code and polls; a member of "Home Users" opens /pair on a
 # phone, signs in through the f1-stream OIDC application (members.tf), types
 # the code, and the backend records the TV and mints it a token bound to that
 # record (f1-stream ADR-0021).
@@ -47,7 +47,7 @@ module "ingress_tv_pairing" {
   anti_ai_scraping = false
 
   # No forward-auth since 2026-10-10 (f1-stream ADR-0021). Any member of
-  # "F1 Users" may pair a TV now, and the domain-wide forward-auth application
+  # "Home Users" may pair a TV now, and the domain-wide forward-auth application
   # admits Home Server Admins only, so it would refuse them here. The app is the
   # gate instead: /pair reads the Member session cookie that sign-in through the
   # f1-stream OIDC application mints (members.tf), and redirects to /login
