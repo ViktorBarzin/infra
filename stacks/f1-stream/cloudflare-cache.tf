@@ -130,6 +130,26 @@ resource "cloudflare_ruleset" "f1_cache" {
     }
   }
 
+  # 1b. BYPASS Watch link playlists (ADR-0034 in the f1-stream repo). Ahead of
+  #     the 2s manifest rule, which would otherwise catch them by their .m3u8
+  #     extension. A Watch link playlist is how an external player such as VLC
+  #     is counted as a viewer: each reload has to reach the origin, and one
+  #     answered here is a viewer the app never sees. The origin keeps each
+  #     upstream playlist for 2s in memory, so upstream load stays where this
+  #     edge kept it; the playlists are a few KB each. Segments under them are
+  #     /relay URLs and stay in rule 5.
+  rules {
+    ref         = "f1_bypass_watch_playlists"
+    description = "Never cache Watch link playlists, so every VLC reload reaches the origin"
+    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/watch/f1/\") or starts_with(http.request.uri.path, \"/watch/channel/\")))"
+    action      = "set_cache_settings"
+    enabled     = true
+
+    action_parameters {
+      cache = false
+    }
+  }
+
   # 2. VOD ladder playlists: immutable, so cache them properly. This sits AHEAD
   #    of the second-level manifest rule because cache rules are first-match and
   #    a ladder playlist ends in .m3u8 like every other one, so without this it
