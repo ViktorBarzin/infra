@@ -564,7 +564,7 @@ server:
       readOnly: true
   sidecarContainers:
     prometheus-backup:
-      image: docker.io/library/alpine:3.21
+      image: docker.io/library/alpine:3.24
       command:
         - /bin/sh
         - -c
