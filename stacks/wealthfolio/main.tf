@@ -1035,7 +1035,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
 
             container {
               name  = "curl"
-              image = "curlimages/curl:8.11.1"
+              image = "curlimages/curl:8.22.0"
               env {
                 name = "WF_PASSWORD"
                 value_from {
