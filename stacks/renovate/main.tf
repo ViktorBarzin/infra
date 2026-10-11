@@ -17,7 +17,8 @@
 variable "suspended" {
   type        = bool
   description = "Kill switch. true sets the CronJob to suspend: no Renovate run starts until it is false."
-  default     = true
+  # Unsuspended 2026-10-11 (software-currency wave 6). Set back to true to stop Renovate.
+  default = false
 }
 
 variable "schedule" {
