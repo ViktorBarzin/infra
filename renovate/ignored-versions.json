@@ -78,6 +78,28 @@
       ],
       "matchNewValue": "v0.29.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2280: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 09ff2121)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/library/alpine"
+      ],
+      "matchNewValue": "3.24",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2280: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 09ff2121)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/library/alpine"
+      ],
+      "matchNewValue": "3.24",
+      "enabled": false
     }
   ]
 }

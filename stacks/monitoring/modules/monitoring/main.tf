@@ -317,7 +317,7 @@ resource "kubernetes_cron_job_v1" "forgejo_integrity_probe" {
           spec {
             container {
               name  = "forgejo-integrity-probe"
-              image = "docker.io/library/alpine:3.24"
+              image = "docker.io/library/alpine:3.20"
               env {
                 name = "REG_USER"
                 value_from {
