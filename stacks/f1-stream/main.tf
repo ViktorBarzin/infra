@@ -962,8 +962,18 @@ module "anubis" {
       # cases fail. Bare `/transcode` DOES match, via the `$` branch, exactly as
       # bare `/streams` and `/health` already do; it is not a route, so the app
       # answers 404, and an un-challenged 404 costs nothing.
+      #
+      # `replays/early` joined on 2026-10-11 so a Cast device can play a
+      # session that is still downloading. The TV fetches the Early copy's
+      # playlists and segments with no Anubis cookie, so behind the challenge
+      # it got the PoW page where it expected a playlist. The browser was never
+      # affected, since it carries the cookie. This is the same exposure
+      # `replays/cache` already has: an Early copy only exists for a race an
+      # admin started downloading, and its segments end in `.ts`, so without
+      # the entry a cookieless fetch could also pin a challenge page at the
+      # edge under a segment URL (see `transcode` above).
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
       # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
       # A browser fetches the manifest without cookies, and an iPhone's Home
