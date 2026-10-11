@@ -1,6 +1,7 @@
 #!/bin/bash
 # CronJob entrypoint for stacks/renovate (2026-10-10).
-# Runs Renovate once, then records the outcome in Pushgateway:
+# Runs Renovate once (stopping it after the first automerge, see below), then
+# records the outcome in Pushgateway:
 #   renovate_last_run_timestamp_seconds      every run
 #   renovate_last_run_exit_code              every run (0 ok, 1 renovate error, 75 skipped:
 #                                            Woodpecker busy or rails hold cool-down)
@@ -90,7 +91,44 @@ if [ "$age" != "none" ] && [ "$age" -lt "${RAILS_HOLD_COOLDOWN:-7200}" ] 2>/dev/
   exit 0
 fi
 
-renovate "$@"
+# Stop after the first automerge. Once a branch is automerged, Renovate logs
+# "Restarting repository job after automerge result" and runs the whole
+# repository job again. With prCommitsPerRunLimit=1 that second pass can land
+# nothing, and it overlaps with the pipeline the push just started: on
+# 2026-10-11 Woodpecker step pods (tier-3-edge) preempted this tier-4-aux pod
+# in that window twice, which left a failed Job and no Pushgateway record for
+# a run that had landed its bump. So the wrapper ends the run at that line and
+# records it as a success. RENOVATE_STOP_GRACE (default 20 s) bounds the wait
+# after SIGTERM before SIGKILL. Output is still passed through line by line.
+fifo=$(mktemp -u /tmp/run-renovate.XXXXXX)
+mkfifo "$fifo"
+# Job control gives Renovate its own process group, so the signals below also
+# reach its git child processes.
+set -m
+renovate "$@" >"$fifo" 2>&1 &
+pid=$!
+set +m
+stopped=0
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line"
+  if [ "$stopped" = 0 ] && [[ "$line" == *"Restarting repository job after automerge result"* ]]; then
+    stopped=1
+    echo "run-renovate: one bump landed; stopping Renovate before its post-automerge restart (prCommitsPerRunLimit=1 skips every branch in it)"
+    kill -TERM -- "-$pid" 2>/dev/null
+    (
+      sleep "${RENOVATE_STOP_GRACE:-20}"
+      kill -KILL -- "-$pid" 2>/dev/null
+    ) >/dev/null 2>&1 &
+    break
+  fi
+done <"$fifo"
+if [ "$stopped" = 1 ]; then
+  # Keep draining so a Renovate still writing on its way out does not block.
+  cat "$fifo" >/dev/null 2>&1 &
+fi
+wait "$pid"
 rc=$?
+rm -f "$fifo"
+[ "$stopped" = 1 ] && rc=0
 record "$rc"
 exit "$rc"
