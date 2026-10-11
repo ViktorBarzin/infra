@@ -975,6 +975,23 @@ module "anubis" {
       - name: f1-data-routes
         path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
+      # Watch links (ADR-0034 in the f1-stream repo, 2026-10-11): the stable
+      # playlist URLs VLC, mpv and other external players open. A player sends
+      # no Anubis cookie and cannot solve the challenge, so behind it every
+      # Watch link would answer the PoW page where VLC expects a playlist.
+      # Kept apart from `/watch` itself, which is a SvelteKit page that
+      # redirects old `/watch?session=` bookmarks and stays challenged.
+      #
+      # A CEL `path` match rather than `path_regex`, for the reason the
+      # share-preview rule below gives: `path` is r.URL.Path only, so a client
+      # cannot widen this by sending `X-Original-URI`. The shape is exact:
+      # /watch/f1/<site_key>/<feed_id>[/v<n>].m3u8 and
+      # /watch/channel/<slug>[/v<n>].m3u8, with the charset and bounds the
+      # app publishes. `[.]` for the literal dot, as below, so no backslash
+      # has to survive the heredoc, YAML and CEL string layers.
+      - name: f1-watch-links
+        action: ALLOW
+        expression: 'path.matches("^/watch/(f1/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}|channel/[A-Za-z0-9_-]{1,96})(/v[0-9]{1,2})?[.]m3u8$")'
       # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
       # A browser fetches the manifest without cookies, and an iPhone's Home
       # Screen app has its own cookie jar, so both would get the PoW page as
