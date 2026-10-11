@@ -45,6 +45,61 @@
       ],
       "matchNewValue": "v2.5.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/curlimages/curl"
+      ],
+      "matchNewValue": "8.22.0",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/curlimages/curl"
+      ],
+      "matchNewValue": "8.22.0",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/curlimages/curl"
+      ],
+      "matchNewValue": "8.22.0",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/curlimages/curl"
+      ],
+      "matchNewValue": "8.22.0",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/curlimages/curl"
+      ],
+      "matchNewValue": "8.22.0",
+      "enabled": false
     }
   ]
 }
