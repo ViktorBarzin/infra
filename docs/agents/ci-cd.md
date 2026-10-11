@@ -31,10 +31,10 @@ registration, github-forge; GHA secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` +
 `IMAGE_NAME` → `.woodpecker/deploy.yml` (event:**manual** ONLY, so the raw
 Forgejo→GitHub mirror pushes don't fire a tag-less deploy) runs `kubectl set
 image deployment/<app> …` in-cluster (woodpecker-agent SA = cluster-admin, no
-kubeconfig). Deployment image is `ignore_changes`/KEEL_IGNORE_IMAGE so the SHA
+kubeconfig). Deployment image is `ignore_changes` (`# CI_SETS_IMAGE`) so the SHA
 sticks vs `terragrunt apply`; CronJobs track `:latest` + `imagePullPolicy:
-Always`. **Keel stays enrolled** as a redundant net (sees the SHA already
-running → no-op). **Never** `set image`/`rollout restart` operator-managed
+Always`. (Keel was a redundant net here until it was retired on
+2026-10-11.) **Never** `set image`/`rollout restart` operator-managed
 StatefulSets (memory id=740). Onboarding tool: `scripts/offinfra-onboard` +
 `scripts/offinfra-templates/`; mirror + workflow commits via the Forgejo API over
 the internal Traefik LB (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`).
@@ -67,9 +67,9 @@ github↔forgejo divergence was deliberately NOT reconciled):
 `build-android-emulator.yml` → public ghcr;
 `build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
 `build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
-PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (Keel-deployed; the LAST in-cluster
+PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (was Keel-deployed, no deploy step since Keel was retired; the LAST in-cluster
 Woodpecker build, migrated 2026-06-13 — completes "no local builds"); `build-excalidraw.yml` →
-PRIVATE `ghcr.io/viktorbarzin/excalidraw-library` (Keel-deployed; replaced
+PRIVATE `ghcr.io/viktorbarzin/excalidraw-library` (was Keel-deployed, no deploy step since Keel was retired; replaced
 manual DockerHub pushes 2026-07-02 — DockerHub `:v4` frozen as rollback). **infra-ci**
 is the image the `.woodpecker/default.yml` apply step + `drift-detection.yml` run
 in (proven by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.

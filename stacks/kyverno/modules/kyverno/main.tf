@@ -59,7 +59,7 @@ resource "helm_release" "kyverno" {
       # reportsController itself is now disabled too (2026-06-28, see below).
       # policyReports were already off, so admission/aggregate/background generated
       # ephemeralreports + an hourly all-resource etcd re-scan for NO user-facing
-      # output. Admission enforcement (deny-* policies) and Keel mutation are
+      # output. Admission enforcement (deny-* policies) and mutation are
       # independent of reporting; policy violations surface via Loki->Slack. This
       # removes a steady-state etcd write/scan load (control-plane flap mitigation).
       policyReports = {
@@ -112,7 +112,7 @@ resource "helm_release" "kyverno" {
     # (aggregation off) — and listing that range starves etcd's fdatasync hard
     # enough to flap the apiserver (observed live 2026-06-28). Reports are not
     # consumed (violations surface via Loki->Slack), so disable the controller
-    # outright; enforcement (deny-* policies) + Keel mutation are independent of
+    # outright; enforcement (deny-* policies) + mutation are independent of
     # it. Stale reports are cleared out-of-band (one-time, throttled).
     reportsController = {
       enabled = false

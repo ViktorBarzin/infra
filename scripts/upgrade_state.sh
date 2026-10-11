@@ -6,8 +6,9 @@
 # Read-only by design — no --fix.
 #
 # The three pipelines:
-#   1. Apps  — Keel polls registries hourly and rolls Deployments tagged
-#              keel.sh/policy. Metrics on container :9300/metrics.
+#   1. Apps  — Renovate (CronJob every 30 min) pushes one version bump per
+#              run to master; the Woodpecker rails apply, verify, and revert
+#              on failure. Pushgateway holds renovate_* gauges.
 #   2. OS    — unattended-upgrades patches in-release per node; kured
 #              reboots within a daily 02:00-06:00 London window.
 #   3. K8s   — k8s-version-check CronJob (23:00 UTC nightly) detects new
@@ -39,7 +40,7 @@ HIGHEST_EXIT=0  # 0 healthy, 1 attention, 2 stalled
 # Results — collectors fill these.
 APPS_STATUS_ICON=""; APPS_STATUS_TEXT=""
 APPS_LAST_CHECK=""; APPS_NEXT=""; APPS_NOTES=""
-APPS_ENROLLED=0; APPS_PENDING=0; APPS_UPDATES_LINE=""; APPS_ERROR_LINE=""
+APPS_UPDATES_LINE=""; APPS_ERROR_LINE=""
 
 OS_STATUS_ICON=""; OS_STATUS_TEXT=""
 OS_LAST_CHECK=""; OS_NEXT=""; OS_NOTES=""
@@ -121,121 +122,70 @@ to_epoch_int() {
     python3 -c "import sys; v=sys.argv[1]; print(int(float(v)))" "$v" 2>/dev/null || echo 0
 }
 
-# --- 1. Apps (Keel) ---
+# --- 1. Apps (Renovate + CI rails) ---
+# Single-value Prometheus query -> number, or empty when there is no series.
+prom_scalar() {
+    prom_q "$1" | python3 -c '
+import json, sys
+try:
+    r = json.load(sys.stdin)["data"]["result"]
+    print(r[0]["value"][1] if r else "")
+except Exception:
+    print("")
+' 2>/dev/null || true
+}
+
 collect_apps() {
-    local pending tracked enrolled updates_24h errors
+    local suspended last_success last_exit last_revert outcome age
 
-    # Enrolled: count Deployments with keel.sh/policy != never (Keel itself
-    # is policy=never). The Kyverno auto-injection labels namespaces
-    # keel.sh/enrolled=true, but the annotation is what Keel watches.
-    enrolled=$($KUBECTL get deploy -A -o json 2>/dev/null | python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-n = sum(1 for d in data["items"]
-        if (d["metadata"].get("annotations") or {}).get("keel.sh/policy", "never") != "never")
-print(n)
-' 2>/dev/null || echo 0)
-    APPS_ENROLLED="$enrolled"
+    # Kill switch: variable "suspended" in stacks/renovate/main.tf.
+    suspended=$($KUBECTL -n renovate get cronjob renovate -o jsonpath='{.spec.suspend}' 2>/dev/null || true)
 
-    # Pending approvals (sum across Keel pods).
-    pending=$(prom_q 'sum(pending_approvals)' | python3 -c '
-import json, sys
-try:
-    r = json.load(sys.stdin)["data"]["result"]
-    print(int(float(r[0]["value"][1])) if r else 0)
-except Exception:
-    print(0)
-' 2>/dev/null || echo 0)
-    APPS_PENDING="$pending"
+    # Pushed by stacks/renovate/files/run-renovate.sh after every run.
+    last_success=$(to_epoch_int "$(prom_scalar 'max(renovate_last_success_timestamp_seconds{job="renovate",instance="infra"})')")
+    last_exit=$(prom_scalar 'max(renovate_last_run_exit_code{job="renovate",instance="infra"})')
+    last_exit=${last_exit%%.*}
+    # Pushed by scripts/renovate-rails: 0 verified, 1 reverted, 2 held, 3 incomplete.
+    outcome=$(prom_scalar 'max(renovate_rails_last_outcome{job="renovate-rails"})')
+    outcome=${outcome%%.*}
+    last_revert=$(to_epoch_int "$(prom_scalar 'max(renovate_rails_last_revert_timestamp_seconds{job="renovate-rails"})')")
 
-    # Tracked images — proxy for "is the scrape live?".
-    tracked=$(prom_q 'count(count by (image) (registries_scanned_total))' | python3 -c '
-import json, sys
-try:
-    r = json.load(sys.stdin)["data"]["result"]
-    print(int(float(r[0]["value"][1])) if r else 0)
-except Exception:
-    print(0)
-' 2>/dev/null || echo 0)
-
-    # Last scrape age — `up{job="kubernetes-pods", app="keel"}` is 1 if the
-    # most recent scrape succeeded. We surface the wallclock age via a tiny
-    # `time() - timestamp(up{...})` query.
-    APPS_LAST_CHECK=$(prom_q 'time()-timestamp(up{job="kubernetes-pods",app="keel"})' | python3 -c '
-import json, sys
-try:
-    r = json.load(sys.stdin)["data"]["result"]
-    if not r: print("scrape not live")
-    else:
-        secs = int(float(r[0]["value"][1]))
-        if secs < 60:  print(f"{secs}s ago")
-        elif secs < 3600: print(f"{secs//60}m ago")
-        else: print(f"{secs//3600}h ago")
-except Exception:
-    print("?")
-' 2>/dev/null || echo "?")
-
-    # Recent updates: count lines in Keel logs that report a successful
-    # rollout. Keel logs an "update completed" message per rollout.
-    local log_24h
-    log_24h=$($KUBECTL -n keel logs deploy/keel --since=24h --tail=2000 2>/dev/null || true)
-    updates_24h=$(echo "$log_24h" | grep -cE 'update completed|successfully updated|deployment updated' 2>/dev/null || true)
-    [[ -z "$updates_24h" ]] && updates_24h=0
-    APPS_UPDATES_LINE="$updates_24h in last 24h (tracked images: $tracked)"
-
-    # Known-benign Keel error patterns to suppress. Each is a real error
-    # line Keel emits, but the surrounding behaviour is fine, so flagging
-    # them in /upgrade-state is just noise.
-    #   - `bot.Run(): can not get configuration for bot [slack]` — Keel
-    #     1.2.0 registers a Slack socket-mode bot whenever SLACK_BOT_TOKEN
-    #     is set, then fails because we don't supply an `xapp-` app-level
-    #     token. We don't want the interactive bot (no approvals; opt-out
-    #     auto-update). The Slack NOTIFICATION sender works independently
-    #     of the bot, so rollout messages still post to #general.
-    #   - `failed to check digest` with a transient network error —
-    #     Keel polls ~175 image manifests against public registries
-    #     hourly. Occasional `i/o timeout` / `connection refused` /
-    #     `TLS handshake timeout` / `no such host` / `EOF` /
-    #     `context deadline exceeded` are inherent to public-internet
-    #     polling at that scale and auto-recover on the next poll.
-    #     Actionable digest-check failures surface as HTTP 401/404
-    #     (auth, removed-tag) — those are NOT filtered.
-    #   - `failed to check digest` with HTTP 5xx — upstream registry
-    #     having a problem (DockerHub maintenance, Forgejo restart,
-    #     etc.). Same recovery pattern as network errors: next hourly
-    #     poll succeeds once upstream is back. Persistent 5xx for >24h
-    #     would indicate a real registry-side issue, but that surfaces
-    #     via the registry's own monitoring (e.g. forgejo-integrity-probe
-    #     + RegistryCatalogInaccessible), not via Keel logs.
-    local benign_re='bot\.Run\(\): can not get configuration for bot \[slack\]'
-    benign_re+='|SLACK_APP_TOKEN must have the (previf|prefix)'
-    benign_re+='|failed to check digest.*(i/o timeout|connection refused|connection reset|context deadline exceeded|TLS handshake timeout|no such host|: EOF)'
-    benign_re+='|failed to check digest.*non-successful response \(status=5[0-9][0-9]'
-    errors=$(echo "$log_24h" | grep -iE '"level":"(error|fatal)"|level=error' | grep -vE "$benign_re" | tail -3 || true)
-    if [[ -z "$errors" ]]; then
-        APPS_ERROR_LINE="(none in last 24h)"
+    if [[ "$last_success" -gt 0 ]]; then
+        age=$(( NOW_EPOCH - last_success ))
+        APPS_LAST_CHECK=$(human_age "$age")
     else
-        APPS_ERROR_LINE="$(echo "$errors" | wc -l | tr -d ' ') error(s); newest: $(echo "$errors" | tail -1 | cut -c1-120)"
+        age=-1
+        APPS_LAST_CHECK="no successful run recorded"
     fi
+    APPS_UPDATES_LINE="last rails outcome: ${outcome:-none} (0 verified, 1 reverted, 2 held, 3 incomplete)"
+    if [[ "$last_revert" -gt 0 ]]; then
+        APPS_ERROR_LINE="last revert $(human_age $(( NOW_EPOCH - last_revert ))); last run exit code: ${last_exit:-none}"
+    else
+        APPS_ERROR_LINE="no revert recorded; last run exit code: ${last_exit:-none}"
+    fi
+    APPS_NEXT="every 30 min, one bump per run"
 
-    # Keel pod state.
-    local pod_status
-    pod_status=$($KUBECTL -n keel get pods -l app=keel -o jsonpath='{.items[*].status.phase}' 2>/dev/null || true)
-
-    if [[ "$pod_status" != *"Running"* ]]; then
+    if [[ "$suspended" == "true" ]]; then
+        APPS_STATUS_ICON="⚠"; APPS_STATUS_TEXT="paused"
+        APPS_NOTES="Renovate CronJob suspended (kill switch in stacks/renovate)"
+        APPS_NEXT="none while suspended"
+        raise_exit 1
+    elif [[ -z "$suspended" ]]; then
         APPS_STATUS_ICON="✗"; APPS_STATUS_TEXT="down"
-        APPS_NOTES="Keel pod not Running ($pod_status)"
+        APPS_NOTES="renovate/renovate CronJob not found"
         raise_exit 2
-    elif [[ "$pending" -gt 0 || -n "$errors" ]]; then
+    elif [[ "$age" -lt 0 || "$age" -gt 7200 ]]; then
+        APPS_STATUS_ICON="✗"; APPS_STATUS_TEXT="stalled"
+        APPS_NOTES="no successful Renovate run in 2h (RenovateNotSucceeding)"
+        raise_exit 2
+    elif [[ "$last_revert" -gt 0 && $(( NOW_EPOCH - last_revert )) -lt 86400 ]] || [[ -n "$last_exit" && "$last_exit" != "0" && "$last_exit" != "75" ]]; then
         APPS_STATUS_ICON="⚠"; APPS_STATUS_TEXT="attn"
-        APPS_NOTES="$enrolled enrolled; $pending pending; $(echo "$errors" | wc -l | tr -d ' ') recent error(s)"
+        APPS_NOTES="a bump was reverted in the last 24h, or the last run failed"
         raise_exit 1
     else
         APPS_STATUS_ICON="✓"; APPS_STATUS_TEXT="healthy"
-        APPS_NOTES="$enrolled enrolled, 0 pending, 0 errors"
+        APPS_NOTES="last success ${APPS_LAST_CHECK}"
     fi
-
-    APPS_NEXT="rolling, hourly poll"
 }
 
 # --- 2. OS (apt + kured) ---
@@ -525,11 +475,9 @@ render_table() {
     } | column -t -s '|' -o ' | '
 
     echo
-    printf "${BOLD}--- Apps (Keel) ---${NC}\n"
-    echo "Enrolled deployments: $APPS_ENROLLED"
-    echo "Recent rollouts: $APPS_UPDATES_LINE"
-    echo "Pending approvals: $APPS_PENDING"
-    echo "Last Keel error: $APPS_ERROR_LINE"
+    printf "${BOLD}--- Apps (Renovate) ---${NC}\n"
+    echo "Rails: $APPS_UPDATES_LINE"
+    echo "Reverts and run status: $APPS_ERROR_LINE"
 
     echo
     printf "${BOLD}--- OS (apt + kured) ---${NC}\n"
@@ -557,7 +505,6 @@ render_json() {
     # embedded quotes/backslashes in error lines.
     APPS_STATUS_ICON="$APPS_STATUS_ICON" APPS_STATUS_TEXT="$APPS_STATUS_TEXT" \
     APPS_LAST_CHECK="$APPS_LAST_CHECK" APPS_NEXT="$APPS_NEXT" APPS_NOTES="$APPS_NOTES" \
-    APPS_ENROLLED="$APPS_ENROLLED" APPS_PENDING="$APPS_PENDING" \
     APPS_UPDATES_LINE="$APPS_UPDATES_LINE" APPS_ERROR_LINE="$APPS_ERROR_LINE" \
     OS_STATUS_ICON="$OS_STATUS_ICON" OS_STATUS_TEXT="$OS_STATUS_TEXT" \
     OS_LAST_CHECK="$OS_LAST_CHECK" OS_NEXT="$OS_NEXT" OS_NOTES="$OS_NOTES" \
@@ -582,8 +529,6 @@ out = {
         "last_check": env("APPS_LAST_CHECK"),
         "next_upgrade": env("APPS_NEXT"),
         "notes": env("APPS_NOTES"),
-        "enrolled": int(env("APPS_ENROLLED") or 0),
-        "pending_approvals": int(env("APPS_PENDING") or 0),
         "updates_line": env("APPS_UPDATES_LINE"),
         "errors_line": env("APPS_ERROR_LINE"),
     },

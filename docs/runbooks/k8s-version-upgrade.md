@@ -254,11 +254,13 @@ the `--skip-phases`, forcing past the preflight makes kubeadm overwrite the
 Corefile with its default and downgrade the image (verified via
 `kubeadm upgrade apply --dry-run`).
 
-**Keep CoreDNS off Keel.** On 2026-06-12 Keel had auto-bumped CoreDNS
-v1.12.1 → v1.12.4 (kube-system out-of-band annotation from the 2026-05-26 Keel
-cascade), and 1.12.4 is ahead of kubeadm 1.34.9's corefile-migration table —
-which is what blocked the 1.34.9 upgrade. CoreDNS is now `keel.sh/policy=never`
-(`kubectl -n kube-system annotate deploy/coredns keel.sh/policy=never`). If a
+**CoreDNS has no automatic version owner.** On 2026-06-12 Keel had auto-bumped
+CoreDNS v1.12.1 → v1.12.4 (kube-system out-of-band annotation from the
+2026-05-26 Keel cascade), and 1.12.4 is ahead of kubeadm 1.34.9's
+corefile-migration table — which is what blocked the 1.34.9 upgrade. CoreDNS was
+then set to `keel.sh/policy=never`, and Keel was retired on 2026-10-11. CoreDNS
+is not in Terraform, so neither Renovate nor kubeadm (with the skip above)
+advances it. If a
 future kubeadm minor ships a CoreDNS that DOES know the running version, drop the
 `--skip-phases` for that run to let kubeadm re-take ownership.
 

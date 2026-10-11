@@ -2,14 +2,19 @@
 # Design: docs/plans/2026-05-16-auto-upgrade-apps-design.md
 # Plan:   docs/plans/2026-05-16-auto-upgrade-apps-plan.md
 #
-# STATUS (2026-10-10): parked. local.keel_enabled = false uninstalls the
-# helm release, so Keel runs 0 pods. The software-currency cutover
-# (docs/plans/2026-10-09-software-currency-design.md, Phase 3, batch B00)
-# moves version ownership to Renovate. Keel stops first because a running
-# Keel writes back its cached copy of a workload and would revert the
-# annotation and ignore_changes edits of the later batches. The Kyverno
-# inject-keel-annotations policy that enrolled workloads was deleted in
-# the same batch. The stack itself is removed once every batch has landed.
+# STATUS (2026-10-11): retired, stack kept parked. local.keel_enabled =
+# false uninstalls the helm release, so Keel runs 0 pods. The
+# software-currency cutover (docs/plans/2026-10-09-software-currency-design.md,
+# Phase 3) moved version ownership of third-party images to Renovate; batch
+# B00 parked Keel, B17 removed DIUN, the KeelUpdateFailing alert and the
+# upgrade-agent files.
+#
+# The stack is kept rather than deleted because seven first-party apps were
+# rolled only by Keel and have no automatic deploy until their build
+# workflows get a deploy step: excalidraw, interview-prep-app, k8s-portal,
+# pages-publish, repowise, learning and trading-bot. They are listed in docs/architecture/automated-upgrades.md
+# ("First-party images without a deploy step"). Delete this stack and the
+# ghcr.io/viktorbarzin/keel fork image once each of them has one.
 #
 # Why an uninstall and not replicaCount = 0: chart 1.2.3 hard-codes
 # `replicas: 1` in templates/deployment.yaml and has no replicaCount
@@ -90,8 +95,7 @@ resource "helm_release" "keel" {
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`
-    # Prometheus job keys on these annotations. Used by
-    # infra/scripts/upgrade_state.sh (the /upgrade-state skill).
+    # Prometheus job keys on these annotations.
     podAnnotations = {
       "prometheus.io/scrape" = "true"
       "prometheus.io/port"   = "9300"
@@ -113,10 +117,8 @@ resource "helm_release" "keel" {
     # Direct Slack notifications DISABLED (2026-07-02): at notificationLevel
     # info Keel posted every rollout event to #general, and a stuck update
     # (gotenberg blocked by require-trusted-registries) re-posted the same
-    # failure EVERY HOURLY POLL for days. Failure visibility now comes from
-    # the KeelUpdateFailing Loki-ruler alert (stacks/monitoring loki.tf),
-    # which rides the alert-on-change routing: one Slack notification plus
-    # the daily digest — never an hourly drip.
+    # failure EVERY HOURLY POLL for days. The KeelUpdateFailing Loki alert
+    # that replaced it was removed with Keel's retirement (2026-10-11).
     slack = {
       enabled = false
     }

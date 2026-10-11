@@ -30,9 +30,11 @@ Actual Budget has two independent syncs. Conflating them costs a lot of time.
 | Metrics | Pushgateway job `bank-sync-<user>` |
 | Credentials | `SYNC_ID` and `API_KEY` are literals in the CronJob spec; the GoCardless API credential arrives at runtime as the `CREDENTIALS` env var from the ESO-managed `actualbudget-secrets`, so it is not readable from the spec |
 
-Both images are Keel-managed (`keel.sh/policy=minor`); the Terraform `tag` /
-`http_api_tag` values are create-time seeds only. Keep the seeds level with live
-— see the comment block in `stacks/actualbudget/main.tf`.
+Both images are pinned in Terraform (`actual_server_tag`, `actual_http_api_tag`
+locals) and Renovate bumps them through the CI rails; Keel managed them
+(`keel.sh/policy=minor`) until 2026-10-10. The pins must not lag the version a
+budget file was migrated to; see the comment block in
+`stacks/actualbudget/main.tf`.
 
 ## Reading the budget file directly
 

@@ -2,19 +2,22 @@
 # Image-ownership conflict detector
 # =============================================================================
 # Finds Deployments whose container image is being rewritten in a loop by two
-# owners — most often Keel versus whatever declares the image (a Terraform
-# helm_release, a raw kubernetes_deployment, the authentik server).
+# owners. Until 2026-10 that was most often Keel versus whatever declares the
+# image (a Terraform helm_release, a raw kubernetes_deployment, the authentik
+# server). Keel was retired on 2026-10-11 (software-currency cutover); the
+# detector stays because the same loop can form between any two owners, for
+# example a Renovate-managed Terraform pin and a CI job that runs
+# `kubectl set image`, or Terraform and an operator.
 #
-# This is the BACKSTOP half of the 2026-08-16 fix. The preventive half is the
-# Kyverno rule `keel-never-when-another-owner`, which stamps
-# keel.sh/policy=never on any workload declaring `app.kubernetes.io/managed-by`.
-# That label undercounts — a raw kubernetes_deployment carries no such label —
-# so this job keys on observed BEHAVIOUR instead: a Deployment that produced
-# >= 3 ReplicaSets in 24h AND put back an image set it had already replaced.
+# History: this was the BACKSTOP half of the 2026-08-16 fix. The preventive
+# half was the Kyverno rule `keel-never-when-another-owner` (deleted with the
+# Keel annotation policy in 2026-10). The job keys on observed BEHAVIOUR: a
+# Deployment that produced >= 3 ReplicaSets in 24h AND put back an image set
+# it had already replaced.
 #
-# Why it needs to exist at all: the fight is silent by construction. Keel logs
-# an ordinary "resource updated", the other owner logs an ordinary reconcile,
-# and neither knows the other exists. Every instance so far was found only via
+# Why it needs to exist at all: the fight is silent by construction. Each
+# owner logs an ordinary update or reconcile, and neither knows the other
+# exists. Every instance so far was found only via
 # an unrelated downstream symptom — a flapping alert (prometheus-server, whose
 # hourly restarts reset every alert `for:` timer), a dropped VPN tunnel
 # (proxy-gw-1), or not at all: authentik/ak-outpost-public sat at deployment

@@ -77,12 +77,12 @@ graph LR
    image deployment/<app> <container>=<image>` in-cluster. The `woodpecker-agent`
    SA is `cluster-admin`, so the `bitnami/kubectl` step needs no
    kubeconfig/RBAC. The Deployment image is in `lifecycle.ignore_changes`
-   (`KEEL_IGNORE_IMAGE`) so the SHA tag sticks and `terragrunt apply` doesn't
+   (`# CI_SETS_IMAGE`) so the SHA tag sticks and `terragrunt apply` doesn't
    fight it. CronJobs in owned apps track `:latest` + `imagePullPolicy: Always`
    instead of a deploy step.
 
-**Keel stays enrolled** as a redundant net (finds the deployed SHA already
-running → no-op).
+Keel was a redundant net here (it found the deployed SHA already running)
+until it was retired on 2026-10-11.
 
 **Tooling**: `infra/scripts/offinfra-onboard` + `infra/scripts/offinfra-templates/`
 scaffold a repo onto this pattern (mirror, workflow, Woodpecker deploy repo,
@@ -167,7 +167,6 @@ unchanged. Flow:
  └─────────────────────────────────────────────────────────────┘
    guards / supporting:
      • Kyverno require-trusted-registries [Enforce] → ghcr.io/* ALLOWED   (admission)
-     • Keel policy=patch @1h → watches GHCR via ghcr-credentials          (backstop)
      • ghcr-credentials ⇐ Kyverno generate-clone ⇐ Vault secret/viktor/ghcr_pull_token
 
  ═══════════════ Serving path (unchanged) ══════════════════════════════════
@@ -189,8 +188,8 @@ reconciled — the workflows were added to the GitHub lineage via PR):
 | android-emulator | `build-android-emulator.yml` | public `ghcr.io/viktorbarzin/android-emulator` |
 | infra CLI | `build-cli.yml` | DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli` |
 | infra-ci | `build-infra-ci.yml` | private `ghcr.io/viktorbarzin/infra-ci` |
-| k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal` (Keel rolls `:latest` digests) |
-| excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library` (Keel rolls `:latest` digests; DockerHub `:v4` frozen as rollback) |
+| k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal` (Keel rolled `:latest` digests until 2026-10-11; no deploy step yet, see `automated-upgrades.md`) |
+| excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library` (Keel rolled `:latest` digests until 2026-10-11; no deploy step yet, see `automated-upgrades.md`; DockerHub `:v4` frozen as rollback) |
 
 **`infra-ci`** is the image the `.woodpecker/default.yml` apply step and
 `drift-detection.yml` run in (proven by pipelines 165/166). `chatterbox-tts` is

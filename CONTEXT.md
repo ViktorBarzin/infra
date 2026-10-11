@@ -332,13 +332,9 @@ Mass image eviction when kubelet crosses `imageGCHighThresholdPercent`, reclaimi
 _Avoid_: reading a FALLING disk-usage figure as the fix working. A cliff and a working retention setting both make the number go down, and they are indistinguishable from the number alone — node5 falling 83.3% to 76% was the cliff firing, not the settings. Check for a pass in the same window and whether the unique-digest count dropped, since retention lowers it gradually and a threshold pass does it in seconds.
 _Avoid_: conflating it with pod eviction (no pod was evicted); reading a recovered `DiskPressure` condition as evidence nothing happened.
 
-**Keel**:
-The **poll-driven** rollout orchestrator — watches registries for new image tags and rolls the matching Deployments automatically. The actor behind "auto-upgrade" for upstream images, and a redundant net for owned apps (already rolled on push by **Woodpecker deploy**).
-_Avoid_: conflating with **Woodpecker deploy** (push-driven, fires on commit) or **Diun** (watches but only notifies). Never point Keel / `set image` at operator-managed StatefulSets.
-
-**Diun**:
-**Notify-only** image-update monitoring — reports that a newer image exists, never rolls anything (contrast **Keel**, which acts). Disabled on pinned images (MySQL, PostgreSQL, Redis) so version pins aren't nagged.
-_Avoid_: expecting Diun to deploy; conflating with **Keel**.
+**Renovate**:
+The **commit-driven** version updater for third-party software. Every 30 minutes it pushes at most one bump of a pinned version (an image tag, a `helm_release` chart version, a Helm values tag) straight to master; the Woodpecker **rails** then apply it, run the stack's verify checks, and revert it with an ignore entry if they fail (ADR-0030, `docs/runbooks/renovate.md`). Replaced **Keel** (poll-driven, rolled live Deployments without a commit) and **Diun** (notify-only), both retired 2026-10-11.
+_Avoid_: conflating with **Woodpecker deploy** (rolls first-party images on their own commits); expecting Renovate to touch the cluster directly, since every change it makes is a commit. Never point `set image` at operator-managed StatefulSets.
 
 **Anubis**:
 A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW).
@@ -365,7 +361,7 @@ _Avoid_: asking Valia to rename her files to fit hosting conventions.
 - An **Ingress** picks exactly one **Ingress auth** mode; the choice defines how strangers reach the backend.
 - A **proxmox-lvm-encrypted** PVC binds to one Node at a time (RWO) and requires a Service-level backup CronJob; an **NFS volume** is RWX and is backed up at the host level via rsync.
 - **State tier** and **Namespace tier** are orthogonal — a Tier 0 Stack can deploy a Service into any Namespace tier and vice versa.
-- A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit) or **Keel** (poll-driven, on a new registry tag); **Diun** only notifies. Operator-managed StatefulSets are rolled by neither.
+- A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit to the app's repo) or a **Renovate** commit to infra that bumps its pin (applied by the rails). Operator-managed StatefulSets are rolled by neither.
 - An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
 - A **Valia site** mirrors exactly one **Content folder** and serves exactly one **Entry file** at `/`; the folder is hers, the subdomain name is Viktor's, the hosting is off-infra.
