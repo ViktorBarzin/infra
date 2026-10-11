@@ -34,6 +34,17 @@
       ],
       "matchNewValue": "v2.16.3",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2275: stack homepage failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 5b417e8d)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/gethomepage/homepage"
+      ],
+      "matchNewValue": "v2.5.0",
+      "enabled": false
     }
   ]
 }
