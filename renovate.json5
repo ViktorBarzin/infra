@@ -313,9 +313,8 @@
       enabled: false,
     },
     {
-      description: "HELD: dbaas mysql-standalone, all updates (2026-10-11). The rails' pre-upgrade snapshot (full mysqldump | gzip -9) takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s), so 8.4.11 was held-reverted in pipeline 2244 and each retry would pause Renovate for 2 h. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
+      description: "HELD: every update in stacks/dbaas (2026-10-11). Before any dbaas bump the rails run all of the stack's backup CronJobs, and the full mysqldump | gzip -9 takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s). mysql 8.4.11 was held-reverted in pipeline 2244, and each held bump pauses Renovate for 2 h, so a pgadmin or phpmyadmin bump would stall the backlog the same way. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
       matchFileNames: ["stacks/dbaas/**"],
-      matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
       enabled: false,
     },
     {
