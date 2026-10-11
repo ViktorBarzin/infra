@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "error_pages" {
         }
         container {
           name  = "error-pages"
-          image = "ghcr.io/tarampampam/error-pages:3"
+          image = "ghcr.io/tarampampam/error-pages:3.0.1"
 
           port {
             container_port = 8080
@@ -111,15 +111,9 @@ resource "kubernetes_deployment" "error_pages" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
-      # live object (keel enrollment / resource-governance) — don't strip them.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
+      # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

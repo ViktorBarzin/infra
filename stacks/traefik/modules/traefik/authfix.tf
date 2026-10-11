@@ -145,19 +145,6 @@ resource "kubernetes_deployment" "authfix" {
       tier                           = "0-core"
       "app.kubernetes.io/managed-by" = "terraform"
     }
-    annotations = {
-      # Opt out of Keel, and say so here rather than letting Kyverno decide.
-      # policy=never is what keeps Keel from acting on this pod. It does NOT
-      # stop Kyverno's background pass from adding the trigger/pollSchedule
-      # pair (they were back by 2026-10-01, days after an apply removed them),
-      # so the lifecycle block below ignores those two and leaves this one
-      # enforced.
-      #
-      # never, not patch: this pod answers the 400 on the forward-auth callback
-      # for the whole estate, and it runs a stock upstream python image. An
-      # unattended image bump here is not worth the patch-level CVE currency.
-      "keel.sh/policy" = "never"
-    }
   }
   spec {
     replicas = 2
@@ -169,7 +156,12 @@ resource "kubernetes_deployment" "authfix" {
       }
       spec {
         container {
-          name    = "authfix"
+          name = "authfix"
+          # This pod answers the 400 on the forward-auth callback for the whole
+          # estate. Renovate proposes bumps of this tag through the CI rails.
+          # A version pin is deferred: the 2 pods run different 3.13-alpine
+          # digests and neither matches a current version tag, so a pin
+          # restarts both.
           image   = "python:3.13-alpine"
           command = ["python3", "/app/authfix.py"]
           port { container_port = 8080 }
@@ -199,14 +191,8 @@ resource "kubernetes_deployment" "authfix" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # policy=never above does not stop Kyverno's background pass from
-      # adding the trigger/pollSchedule pair (seen again 2026-10-01 after the
-      # 09-27 apply removed them). keel.sh/policy is deliberately NOT ignored,
-      # so Terraform keeps enforcing never, which is what keeps Keel off it.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

@@ -30,7 +30,6 @@ resource "kubernetes_namespace" "traefik" {
       "app.kubernetes.io/name"     = "traefik"
       "app.kubernetes.io/instance" = "traefik"
       tier                         = var.tier
-      "keel.sh/enrolled"           = "true"
     }
   }
   lifecycle {
@@ -865,16 +864,14 @@ resource "kubernetes_deployment" "bot_block_proxy" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
-      # live object (keel enrollment / resource-governance) — don't strip them.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
+      # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      # FLOATING_TAG_DEFERRED: the 2 pods run different openresty:alpine
+      # digests and neither matches a current version tag, so any pin
+      # restarts them onto new bytes.
+      spec[0].template[0].spec[0].container[0].image,
     ]
   }
 }
@@ -1057,17 +1054,13 @@ resource "kubernetes_deployment" "x402_gateway" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      # KEEL_IGNORE_IMAGE: the GHA->ghcr build (ADR-0002 infra#28) set-images
-      # the running :sha8 tag; don't let terragrunt revert it to :latest.
+      # CI_SETS_IMAGE: first-party image. The GHA->ghcr build (ADR-0002
+      # infra#28) set-images the running :sha8 tag; don't let terragrunt
+      # revert it to :latest.
       spec[0].template[0].spec[0].container[0].image,
-      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
-      # live object (keel enrollment / resource-governance) — don't strip them.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
+      # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -1451,15 +1444,13 @@ resource "kubernetes_deployment" "auth_proxy" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
-      # live object (keel enrollment / resource-governance) — don't strip them.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
+      # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      # FLOATING_TAG_DEFERRED: the 2 pods run different nginx:1-alpine digests
+      # (one equals 1.31.2-alpine, the other matches no current tag), so any
+      # pin restarts them and one gets new bytes.
+      spec[0].template[0].spec[0].container[0].image,
     ]
   }
 }
