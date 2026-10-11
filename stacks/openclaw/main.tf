@@ -1171,7 +1171,7 @@ resource "kubernetes_deployment" "openclaw" {
           # agentRuntime"), crashlooping the gateway on any restart. 2026.2.26
           # predates that bug. Revisit the openai-codex/ChatGPT-Plus OAuth
           # primary (commit 4b39cb72) when upgrading openclaw again.
-          image = "ghcr.io/openclaw/openclaw:2026.2.26"
+          image = "ghcr.io/openclaw/openclaw:2026.10.1"
           # Startup sequence:
           #   1. doctor --fix     — repair sessions/state (also resets some config)
           #   2. models set       — pin gpt-5.4-mini (doctor auto-promotes to gpt-5-pro otherwise)
