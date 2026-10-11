@@ -75,7 +75,7 @@ resource "kubernetes_deployment" "listenarr" {
           name  = "listenarr"
 
           port {
-            container_port = 5000
+            container_port = 4545
           }
           volume_mount {
             name       = "data"
@@ -134,7 +134,7 @@ resource "kubernetes_service" "listenarr" {
     port {
       name        = "http"
       port        = 80
-      target_port = 5000
+      target_port = 4545
     }
   }
 }
