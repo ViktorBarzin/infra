@@ -56,7 +56,7 @@ resource "kubectl_manifest" "inject_dependency_init_containers" {
                     initContainers = [
                       {
                         name    = "wait-for-{{ element | split(@, ':') | [0] | replace_all(@, '.', '-') }}"
-                        image   = "busybox:1.37"
+                        image   = "busybox:1.38"
                         command = ["sh", "-c", "until nc -z {{ element | split(@, ':') | [0] }} {{ element | split(@, ':') | [1] }}; do echo waiting for {{ element }}; sleep 2; done"]
                         # Without its own resources this container took the
                         # namespace LimitRange default, 1Gi in immich. A pod's
