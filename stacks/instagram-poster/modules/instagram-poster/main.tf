@@ -501,7 +501,7 @@ module "ingress_protected" {
 #             alternative ("rotate at expiry-7d") needs persistent state.
 
 locals {
-  ig_cron_image = "curlimages/curl:8.10.1"
+  ig_cron_image = "curlimages/curl:8.22.0"
 }
 
 resource "kubernetes_cron_job_v1" "ig_ingest_stories" {
