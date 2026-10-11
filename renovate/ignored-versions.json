@@ -23,6 +23,17 @@
       ],
       "matchNewValue": "1.15.3",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2270: stack linkwarden failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit edb32636)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/linkwarden/linkwarden"
+      ],
+      "matchNewValue": "v2.16.3",
+      "enabled": false
     }
   ]
 }
