@@ -297,7 +297,7 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
             restart_policy = "Never"
             container {
               name  = "sync"
-              image = "mysql:8.0"
+              image = "mysql:8.4"
               command = ["/bin/bash", "-c", <<-EOT
                 set -e
                 TECH_URL="http://technitium-web.technitium.svc.cluster.local:5380"
