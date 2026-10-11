@@ -479,7 +479,7 @@ resource "kubernetes_deployment" "gotenberg" {
       }
       spec {
         container {
-          image = "gotenberg/gotenberg:8.25.1"
+          image = "gotenberg/gotenberg:8.37.0"
           name  = "gotenberg"
           # docker-compose `command:` == k8s `args` (overrides CMD, keeps the
           # image's tini ENTRYPOINT). Paperless's recommended hardening flags.
