@@ -241,7 +241,7 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
           #
           # To bump: take a fresh dump first (mysql-backup CronJob), then
           # change the tag. Restore path: docs/runbooks/restore-mysql.md.
-          image = "mysql:8.4.11"
+          image = "mysql:8.4.8"
 
           port {
             container_port = 3306
