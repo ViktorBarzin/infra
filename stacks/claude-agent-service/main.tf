@@ -1013,7 +1013,7 @@ resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
             restart_policy = "OnFailure"
             container {
               name  = "push-expiry"
-              image = "docker.io/curlimages/curl:8.11.0"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/claude-oauth-expiry-monitor'
