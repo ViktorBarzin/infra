@@ -171,7 +171,7 @@ resource "kubernetes_deployment" "wealthfolio" {
           # History: pinned 3.2.1 on 2026-05-26 after the Keel tag-rewrite
           # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08;
           # 3.6.3 is what Keel had rolled when it was retired (2026-10-10).
-          image = "afadil/wealthfolio:3.6.3"
+          image = "afadil/wealthfolio:3.9.1"
           name  = "wealthfolio"
           port {
             container_port = 8080
