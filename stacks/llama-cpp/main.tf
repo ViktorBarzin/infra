@@ -28,7 +28,10 @@ locals {
   # stays a hand-made change.
   llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
-  # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
+  # Model set: one text-only LLM (qwen3-8b), for paperless-ai. Since 2026-10-11
+  # every other caller (tripit, nextcloud-todos, lesson-harvester, fire-planner)
+  # uses claude-agent-service instead, so the qwen3vl-8b vision model that only
+  # tripit used was removed (qwen3vl-4b had already gone).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
   # Image long-edge capped at 1024 px to keep prefill <2s on the T4.
   # 2026-07-16 cleanup/eval (docs/research/2026-07-16-local-llm-sota-and-upgrade.md):
@@ -71,15 +74,8 @@ locals {
   # `text_only = true` skips mmproj download + --mmproj flag (text-only LLM).
   # Vision models keep `text_only = false` (default).
   models = {
-    qwen3vl-8b = {
-      hf_repo        = "Qwen/Qwen3-VL-8B-Instruct-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = "*mmproj*.gguf"
-      ctx_size       = 3072
-      gpu_layers     = 99
-      text_only      = false
-    }
-    # Text-only triage / drafting model for recruiter-responder.
+    # Text-only enrichment model for paperless-ai (originally added as the
+    # triage / drafting model for recruiter-responder, now switched off).
     # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
     # for recruiter emails + extraction prompt + JSON output).
     # Unsloth's GGUF: well-maintained, includes Q4_K_M. Qwen3 is a
