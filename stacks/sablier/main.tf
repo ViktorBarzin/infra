@@ -23,7 +23,7 @@ locals {
   # Pin the app version (plugin v1.3.0 <-> server compatibility is verified
   # as a pair). Renovate proposes upstream releases; the Traefik plugin is
   # vendored in stacks/traefik, so check a bump against it.
-  image = "sablierapp/sablier:1.15.0"
+  image = "sablierapp/sablier:1.18.0"
 }
 
 resource "kubernetes_namespace" "sablier" {
