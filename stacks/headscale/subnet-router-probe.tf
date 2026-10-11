@@ -205,7 +205,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
 
             container {
               name  = "push"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "20", "--data-binary", "@/shared/metrics.prom",
                 "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/tailscale-subnet-router-probe",
