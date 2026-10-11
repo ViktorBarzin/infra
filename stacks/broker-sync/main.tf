@@ -811,7 +811,7 @@ resource "kubernetes_cron_job_v1" "backup" {
             node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             container {
               name  = "backup"
-              image = "alpine:3.20"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
               set -eu
               TIMESTAMP=$(date +%Y-%m-%dT%H-%M-%S)
