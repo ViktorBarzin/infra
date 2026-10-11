@@ -74,7 +74,7 @@ resource "kubernetes_deployment" "pgbouncer" {
         }
         container {
           name  = "pgbouncer"
-          image = "edoburu/pgbouncer:v1.25.2-p0"
+          image = "edoburu/pgbouncer:v1.26.0-p0"
           # Exact tag, so IfNotPresent (the live value) is enough.
           image_pull_policy = "IfNotPresent"
 
