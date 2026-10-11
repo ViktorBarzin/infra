@@ -529,7 +529,7 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
             restart_policy = "Never"
             container {
               name  = "import"
-              image = "alpine:3.21"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1
@@ -729,7 +729,7 @@ resource "kubernetes_cron_job_v1" "phpipam_remote_import" {
             restart_policy = "Never"
             container {
               name  = "import"
-              image = "alpine:3.21"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1
