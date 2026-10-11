@@ -5580,7 +5580,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "f1-stream is stalled: MEDIAN request {{ $value | printf \"%.2f\" }}s for 30m (threshold: 2s)"
-              description: "Half of all requests to f1 are taking over two seconds, sustained for half an hour. This is deliberately the median and not the p95: p95 for this service is dominated by 6 MB replay chunks and crosses 3s during any healthy race, which is why f1 is excluded from IngressTTFBCritical. A slow median means the app itself is not answering. The known cause of this shape is a blocking call on the asyncio event loop — an NFS tree walk over /data/replays-mp4 has done it before — so check whether a conversion or ladder build is running and whether /replays/events is slow in isolation: `kubectl -n f1-stream exec deploy/f1-stream -- python -c \"import time,urllib.request; t=time.time(); urllib.request.urlopen('http://localhost:8000/replays/events').read(); print(time.time()-t)\"`. Compare f1's byte rate against the 32 Mbit/s uplink before assuming congestion; during the 2026-08-27 instance f1 was serving 0.081 Mbit/s."
+              description: "Half of all requests to f1 are taking over two seconds, sustained for half an hour. This is deliberately the median and not the p95: p95 for this service is dominated by 6 MB replay chunks and crosses 3s during any healthy race, which is why f1 is excluded from IngressTTFBCritical. A slow median means the app itself is not answering. The known cause of this shape is a blocking call on the asyncio event loop — an NFS tree walk over /data/replays-mp4 has done it before — so check whether a conversion or ladder build is running and whether /replays/events is slow in isolation: `kubectl -n f1-stream exec deploy/f1-stream-edge -- python -c \"import time,urllib.request; t=time.time(); urllib.request.urlopen('http://localhost:8000/replays/events').read(); print(time.time()-t)\"` (`deploy/f1-stream` before the ADR-0029 cutover; conversions and ladder builds run on `deploy/f1-stream-worker` after it). Compare f1's byte rate against the 32 Mbit/s uplink before assuming congestion; during the 2026-08-27 instance f1 was serving 0.081 Mbit/s."
           - alert: IngressErrorRate5xxHigh
             # Rolling upgrades / pod migrations cause brief 5xx spikes that
             # clear within 1-2 min. Only persistent 5xx indicates a real
@@ -7266,10 +7266,21 @@ serverFiles:
       # succeeded, because a now-valued timestamp reads as healthy and is how a
       # ten-day outage stays invisible. No total is exposed; sum() it here.
       #
-      # Scrape job: `f1-stream` (extraScrapeConfigs), 1m, straight at
-      # f1.f1-stream.svc.cluster.local:80/metrics. `up{job="f1-stream"} == 0`
-      # is already covered by ScrapeTargetDown (30m, warning) — no rule here
-      # duplicates it.
+      # Scrape job: `f1-stream` (extraScrapeConfigs), 1m, every app pod by pod
+      # discovery, each series labelled with the pod's `role`.
+      # `up{job="f1-stream"} == 0` is already covered by ScrapeTargetDown (30m,
+      # warning) — no rule here duplicates it.
+      #
+      # WHY role=~"worker|" ON THE EXTRACTION GAUGES. Since ADR-0029 (f1-stream
+      # repo) the app runs as Edges, a Transcoder and a Worker, and only the
+      # Worker extracts. A gauge registered in a process that never sets it
+      # exports 0, so an Edge could report f1_streams_served 0 beside the
+      # Worker's real value, which would hide absent() and skew sum(). The
+      # empty alternative matches the single pre-ADR-0029 pod, which carries no
+      # `role` label, so the rules read the same before and after the cutover.
+      # The app also registers these families only on the Worker; the filter
+      # covers the case where that is missed. The playback counters
+      # (F1PlaybackFailing and below) are summed across every pod on purpose.
       - name: F1 Stream Sources
         rules:
           # THE rule. Sustained zero across every source is the ten-day
@@ -7304,8 +7315,8 @@ serverFiles:
           # while /metrics answers.
           - alert: F1AllSourcesDry
             expr: |
-              (sum(f1_streams_served) or on() vector(0)) == 0
-              and on() f1_extraction_last_run_timestamp_seconds > 0
+              (sum(f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
+              and on() f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
             # 12h is Viktor's choice, asked directly on 2026-09-06 when offered
             # 20m / 2h / 12h. It still catches the failure that prompted all of
             # this: during the 2026-08-26..09-05 outage 156 consecutive runs
@@ -7325,8 +7336,9 @@ serverFiles:
           # sum() over an empty vector returns NO series rather than 0, so
           # F1AllSourcesDry cannot fire when the endpoint disappears — only
           # this can. Causes worth expecting: /metrics removed or renamed, the
-          # scrape job misconfigured, or Anubis challenging the scrape (see the
-          # f1-metrics ALLOW rule in stacks/f1-stream/main.tf).
+          # scrape job misconfigured, or the Worker pod (the single f1-stream
+          # pod before ADR-0029) not running. The scrape reads pods directly, so
+          # Anubis is not in its path.
           #
           # 30m matches ScrapeTargetDown's hold so a dead pod produces one
           # alert rather than two at different times.
@@ -7339,13 +7351,13 @@ serverFiles:
           # extraction timestamp is a single unlabelled gauge that is always
           # exposed, so its absence means the exposition itself is gone.
           - alert: F1MetricsMissing
-            expr: absent(f1_extraction_last_run_timestamp_seconds)
+            expr: absent(f1_extraction_last_run_timestamp_seconds{role=~"worker|"})
             for: 30m
             labels:
               severity: warning
             annotations:
               summary: "f1-stream /metrics has returned nothing for 30m — every F1 stream alert is now blind"
-              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale, F1SourceExtractionErroring and F1ExtractionNotResolving are all evaluating nothing. Either the f1-stream pod is down (ScrapeTargetDown says so too), /metrics moved, or Anubis started challenging the scrape. Confirm with `homelab k8s status f1-stream` and a direct `curl f1.f1-stream.svc.cluster.local/metrics` from in-cluster."
+              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale, F1SourceExtractionErroring and F1ExtractionNotResolving are all evaluating nothing. The series is read from the Worker only (role=~\"worker|\"), so either the f1-stream Worker pod is down (ScrapeTargetDown says so too) or /metrics moved. Confirm with `homelab k8s status f1-stream` and a direct `curl f1-stream-worker.f1-stream.svc.cluster.local/metrics` from in-cluster (`f1.f1-stream.svc.cluster.local/metrics` while the single pre-ADR-0029 Deployment still runs)."
           # The extraction loop itself stopping. Distinct from every source
           # failing: the sources look frozen at their last values rather than
           # empty, so nothing above notices while the site quietly serves
@@ -7371,14 +7383,14 @@ serverFiles:
             # gauge reads 0 until the first extraction completes after a pod
             # restart, so without it every deploy fires this instantly.
             expr: |
-              (time() - f1_extraction_last_run_timestamp_seconds) > 25200
-              and f1_extraction_last_run_timestamp_seconds > 0
+              (time() - f1_extraction_last_run_timestamp_seconds{role=~"worker|"}) > 25200
+              and f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
             for: 15m
             labels:
               severity: warning
             annotations:
               summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>2 missed idle cycles)"
-              description: "The APScheduler stream_extraction job (3h idle, 15 min pre-session and live, per CHECK_INTERVALS in backend/session_clock.py) has not completed a run in over seven hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream pod logs for an exception that killed the job, and whether the pod restarted into a bad state."
+              description: "The APScheduler stream_extraction job (3h idle, 15 min pre-session and live, per CHECK_INTERVALS in backend/session_clock.py) has not completed a run in over seven hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream Worker's logs (`kubectl -n f1-stream logs deploy/f1-stream-worker`; `deploy/f1-stream` before the ADR-0029 cutover) for an exception that killed the job, and whether the pod restarted into a bad state."
           # Per-source staleness, scoped to aceztrims ON PURPOSE.
           #
           # 6h, kept, with its arithmetic corrected on 2026-09-18.
@@ -7428,8 +7440,8 @@ serverFiles:
             # of A, so with the operands the other way round $value renders the
             # raw unix timestamp and the Slack line reads "dry for 56.7 years".
             expr: |
-              (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims"}) > 21600
-              and f1_source_last_success_timestamp_seconds{source=~"aceztrims"} > 0
+              (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"}) > 21600
+              and f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"} > 0
             for: 30m
             labels:
               severity: info
@@ -7457,13 +7469,13 @@ serverFiles:
           # weekends, so without this a source dying on a Tuesday is seen by
           # nobody until Friday.
           - alert: F1SourceExtractionErroring
-            expr: f1_source_last_extraction_ok == 0
+            expr: f1_source_last_extraction_ok{role=~"worker|"} == 0
             for: 2h
             labels:
               severity: info
             annotations:
               summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
-              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
+              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream Worker's logs (`kubectl -n f1-stream logs deploy/f1-stream-worker`; `deploy/f1-stream` before the ADR-0029 cutover) before assuming the upstream is down."
           # The gap the three rules above leave: a source that finds F1,
           # recognises it, and still ends the run with nothing. Every rule so
           # far reads the END of the funnel — served, cached, or an exception —
@@ -7503,8 +7515,8 @@ serverFiles:
           # so single-cycle failures are expected and must not page.
           - alert: F1ExtractionNotResolving
             expr: |
-              f1_extraction_matched > 0
-              and on(source) f1_streams_cached == 0
+              f1_extraction_matched{role=~"worker|"} > 0
+              and on(source) f1_streams_cached{role=~"worker|"} == 0
             for: 2h
             labels:
               severity: warning
@@ -7540,8 +7552,8 @@ serverFiles:
           # no series rather than 0.
           - alert: F1ZeroSupply
             expr: |
-              sum(f1_streams_cached) > 0
-              and on() (sum(f1_streams_served) or on() vector(0)) == 0
+              sum(f1_streams_cached{role=~"worker|"}) > 0
+              and on() (sum(f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
             for: 30m
             labels:
               severity: warning
@@ -7687,14 +7699,14 @@ serverFiles:
           # sawtooth a conversion writing and a ladder building produce.
           - alert: F1LibraryFilling
             expr: |
-              (f1_library_used_bytes / f1_library_cap_bytes) > 0.70
-              and f1_library_cap_bytes > 0
+              (f1_library_used_bytes{role=~"worker|"} / f1_library_cap_bytes{role=~"worker|"}) > 0.70
+              and f1_library_cap_bytes{role=~"worker|"} > 0
             for: 6h
             labels:
               severity: warning
             annotations:
               summary: "f1-stream replay library is {{ $value | humanizePercentage }} full — new sessions will be refused soon"
-              description: "The converted-replay library is past 70% of REPLAY_LIBRARY_CAP_GB. The cap is a REFUSAL and not an eviction, so when it is reached a newly downloaded session simply does not get converted and never appears as playable — there is no cleanup that happens on its own. One session measures 17.8-21.2 GB (its mp4 plus its four-rung ladder) and a race weekend is five of them, so 70% is roughly two sessions of warning. Three things to check, cheapest first: `homelab k8s exec f1-stream -- du -sh /data/replays-mp4` for what is actually held; whether the shared /srv/nfs pool has room, since 41 namespaces share it and PVFillingUp covers the volume itself; and whether the duplication is worth reclaiming — the v0 rung is a stream copy of the mp4 it was built from, measured at a 1.029 byte ratio, so about 41% of the library is the same video stored twice."
+              description: "The converted-replay library is past 70% of REPLAY_LIBRARY_CAP_GB. The cap is a REFUSAL and not an eviction, so when it is reached a newly downloaded session simply does not get converted and never appears as playable — there is no cleanup that happens on its own. One session measures 17.8-21.2 GB (its mp4 plus its four-rung ladder) and a race weekend is five of them, so 70% is roughly two sessions of warning. Three things to check, cheapest first: `homelab k8s exec f1-stream-worker -n f1-stream -- du -sh /data/replays-mp4` for what is actually held (`homelab k8s exec f1-stream -- ...` before the ADR-0029 cutover); whether the shared /srv/nfs pool has room, since 41 namespaces share it and PVFillingUp covers the volume itself; and whether the duplication is worth reclaiming — the v0 rung is a stream copy of the mp4 it was built from, measured at a 1.029 byte ratio, so about 41% of the library is the same video stored twice."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
@@ -8663,21 +8675,46 @@ extraScrapeConfigs: |
   # Sources" group in alerting_rules.yml. Incident and timing analysis:
   # f1-stream/docs/playback-guard.md.
   #
-  # Straight at the app Service (`f1` in ns f1-stream, :80 -> pod :8000), NOT
-  # through the ingress. The Anubis instance sits only in front of the Ingress,
-  # so this scrape never meets a proof-of-work challenge; the /metrics ALLOW
-  # rule in stacks/f1-stream/main.tf exists so a human can curl the endpoint
-  # from outside, not for this job.
+  # Every f1-stream pod, found by pod discovery, NOT the `f1` Service. Changed
+  # for ADR-0029 in the f1-stream repo, which splits the app into three Roles
+  # from one image: Edges (2+, the `f1` Service), one Transcoder and one Worker.
+  # A Service target reaches one Edge per scrape, so the Worker's extraction
+  # gauges would never be read and the playback counters would come from
+  # whichever Edge the connection landed on. Pod discovery reads each pod's
+  # :8000 directly, inside the cluster, so Anubis (which fronts only the
+  # Ingress) never sees this scrape and /metrics stays off the public host.
   #
-  # 1m rather than the 30m extraction cadence: the gauges are cheap (a handful
-  # of series) and a fast scrape keeps `up` meaningful and the alert clocks
-  # honest without adding data the extraction loop does not produce.
+  # Labels: `role` from the pod's `role` label (edge, transcoder, worker; empty
+  # on the single pre-ADR-0029 Deployment), and `pod` and `instance` from the
+  # pod name. The alert rules read Worker-owned gauges with role=~"worker|",
+  # which matches the Worker and the unlabelled monolith, so this job and those
+  # rules work on either side of the cutover. `app=f1-stream` matches the app
+  # pods only: the source-guard, the data-copy Job and the TV publish pod carry
+  # other `app` values.
+  #
+  # 1m rather than the extraction cadence: the gauges are cheap (a handful of
+  # series per pod) and a fast scrape keeps `up` meaningful and the alert
+  # clocks honest without adding data the extraction loop does not produce.
   - job_name: 'f1-stream'
     scrape_interval: 1m
-    static_configs:
-      - targets:
-        - "f1.f1-stream.svc.cluster.local:80"
     metrics_path: '/metrics'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['f1-stream']
+        selectors:
+          - role: pod
+            label: 'app=f1-stream'
     relabel_configs:
-      - target_label: instance
-        replacement: 'f1-stream'
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: '8000'
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_phase]
+        regex: 'Running'
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_role]
+        target_label: role
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance

@@ -23,11 +23,40 @@ resource "kubernetes_namespace" "f1-stream" {
       "istio-injection" : "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/client" = "true"
+      # Opt out of the Kyverno-generated tier-4-aux quota (requests.memory
+      # 3Gi); the namespace quota below replaces it. See that resource.
+      "resource-governance/custom-quota" = "true"
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Namespace quota, replacing the generated tier-4-aux one (opted out by the
+# resource-governance/custom-quota label above). ADR-0029 in the f1-stream repo
+# runs the app as three Roles: two Edges and a Transcoder that roll with a surge
+# pod, and a Worker that is recreated. Memory requests at the peak of a rollout
+# come to about 3.7Gi (three Edges at 384Mi, two Transcoders at 512Mi, the
+# Worker at 1Gi, Anubis and wt-tracker at 320Mi, the source-guard Job at
+# 256Mi), over the generated quota's 3Gi. A surge pod over quota is refused by
+# the ReplicaSet controller and the rollout stalls, which is the stall ADR-0029
+# exists to remove. Only requests.memory moves; the other three values are the
+# tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,
+# limits.memory 16Gi, pods 20). Limits at the same peak come to about 13.7Gi.
+resource "kubernetes_resource_quota_v1" "f1_stream" {
+  metadata {
+    name      = "f1-stream-quota"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "2"
+      "requests.memory" = "6Gi"
+      "limits.memory"   = "16Gi"
+      pods              = "20"
+    }
   }
 }
 
@@ -172,6 +201,40 @@ module "nfs_replay_cache" {
   storage            = "200Gi"
   access_modes       = ["ReadWriteMany"]
   storage_class_name = "nfs-pve"
+}
+
+# The app's data volume from the ADR-0029 cutover on (f1-stream repo): replay
+# library, Early copies, the TV app and the small JSON state files. ReadWriteMany
+# because the Edges mount it read-only beside the Worker, which is the only Role
+# that writes it. It replaces f1-stream-data-host above (RWO), which stays,
+# unmounted, for two weeks after the cutover as the copy to fall back to.
+#
+# A dynamic claim rather than the nfs_volume module: the module's PV points at a
+# directory that has to be created by hand on the Proxmox host, while nfs-pve
+# provisions /srv/nfs/pvc-<uid> itself, with Retain, inside the export that
+# already exists. Precedent: stacks/learn (prep-sync-data). The directory sits
+# under /srv/nfs, so the existing offsite sync of /srv/nfs covers it.
+#
+# Created before the cutover so provisioning is off its critical path.
+# wait_until_bound stays at its default (true): csi-nfs-controller restarted
+# 92 and 76 times in the 36 hours to 2026-10-11, and an apply that waits fails
+# visibly if provisioning stalls instead of leaving a Pending claim behind.
+resource "kubernetes_persistent_volume_claim_v1" "f1_stream_data" {
+  metadata {
+    name      = "f1-stream-data"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteMany"]
+    storage_class_name = "nfs-pve"
+    resources {
+      requests = {
+        # Nominal on NFS, which enforces no size. REPLAY_LIBRARY_CAP_GB (180)
+        # below is what bounds the library.
+        storage = "200Gi"
+      }
+    }
+  }
 }
 
 resource "kubernetes_deployment" "f1-stream" {
