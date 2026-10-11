@@ -98,7 +98,7 @@ locals {
   # renovate: datasource=docker depName=actualbudget/actual-server
   actual_server_tag = "26.10.0"
   # renovate: datasource=docker depName=jhonderson/actual-http-api
-  actual_http_api_tag = "26.8.1"
+  actual_http_api_tag = "26.10.0"
 }
 
 # https://budget-viktor.viktorbarzin.me/
