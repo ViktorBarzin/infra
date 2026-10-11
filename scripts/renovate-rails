@@ -463,14 +463,14 @@ stage_finish() {
   esac
 
   # mode = verify
-  # Stacks are verified in parallel, up to RAILS_VERIFY_JOBS at once (default
-  # 6): each verify watches alerts for 10 minutes, so a batch of several bumps
+  # Stacks are verified in parallel, up to RAILS_VERIFY_JOBS at once (default 10;
+  # 6 until 2026-10-11 20:05, when a batch of 8 needed two waves): each verify watches alerts for 10 minutes, so a batch of several bumps
   # in one pipeline costs about one watch instead of one per stack, and stays
   # inside the 60-minute Woodpecker timeout. Each stack's output is printed in
   # full after it finishes, so the log stays readable.
   local since jobs launched=() pids=()
   since=$(cat .rails_since)
-  jobs=${RAILS_VERIFY_JOBS:-6}
+  jobs=${RAILS_VERIFY_JOBS:-10}
   for s in $(cat .rails_stacks); do
     if cat .platform_failed .app_failed 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
       failed+=("$s"); why+=("its terragrunt apply failed")
