@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# stack-namespaces <stack-dir>
+#
+# Prints, space-separated, the Kubernetes namespaces a stack creates, read from
+# its .tf files (stack-local modules included). The verify runner uses this to
+# scope the floor checks of a stack that has no verify.sh, because a stack's
+# directory name is often not its namespace (claude-agent-service deploys into
+# claude-agent, blog into website).
+#
+# 1. The metadata name of every kubernetes_namespace / kubernetes_namespace_v1
+#    resource: a string literal, local.<x> (a string in a locals block) or
+#    var.<x> (a string variable default).
+# 2. If there is no such resource, every literal `namespace = "<ns>"`
+#    (a stack that deploys into a namespace it does not own, e.g. kube-system).
+# 3. Otherwise nothing; the runner then falls back to the stack name.
+#
+# The result is a static reading of the source. Namespaces that do not exist
+# (a module that is commented out) are dropped inside the Job by floor_scope.
+set -uo pipefail
+
+dir=${1:?usage: stack-namespaces <stack-dir>}
+files=()
+while IFS= read -r f; do files+=("$f"); done < <(find "$dir" -name '*.tf' -not -path '*/.terraform/*' 2>/dev/null | sort)
+[ "${#files[@]}" -gt 0 ] || exit 0
+
+awk '
+  { line = $0 }
+  /^[[:space:]]*variable[[:space:]]+"/ { match(line, /"[^"]+"/); curvar = substr(line, RSTART + 1, RLENGTH - 2) }
+  curvar != "" && /^[[:space:]]*default[[:space:]]*=[[:space:]]*"[^"]*"/ {
+    v = line; sub(/^[^"]*"/, "", v); sub(/".*/, "", v); vars[curvar] = v; curvar = ""
+  }
+  /^\}/ { curvar = "" }
+  /^locals[[:space:]]*\{/ { inlocals = 1; next }
+  inlocals && /^\}/ { inlocals = 0 }
+  inlocals && /^[[:space:]]*[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*"[^"$]*"[[:space:]]*(#.*)?$/ {
+    k = line; sub(/^[[:space:]]*/, "", k); sub(/[[:space:]]*=.*/, "", k)
+    v = line; sub(/^[^"]*"/, "", v); sub(/".*/, "", v); strs[k] = v
+  }
+  /^resource[[:space:]]+"kubernetes_namespace(_v1)?"/ { innsres = 1; next }
+  innsres && /^\}/ { innsres = 0 }
+  innsres && /^[[:space:]]*name[[:space:]]*=/ {
+    e = line; sub(/^[^=]*=[[:space:]]*/, "", e); sub(/[[:space:]]*(#.*)?$/, "", e); nsexpr[++n] = e; innsres = 0
+  }
+  /^[[:space:]]*namespace[[:space:]]*=[[:space:]]*"[a-z0-9-]+"/ {
+    v = line; sub(/^[^"]*"/, "", v); sub(/".*/, "", v); lits[v] = 1
+  }
+  END {
+    for (i = 1; i <= n; i++) {
+      e = nsexpr[i]
+      if (e ~ /^"[^"$]*"$/) { gsub(/"/, "", e); out[e] = 1 }
+      else if (e ~ /^local\./ && (substr(e, 7) in strs)) out[strs[substr(e, 7)]] = 1
+      else if (e ~ /^var\./ && (substr(e, 5) in vars)) out[vars[substr(e, 5)]] = 1
+    }
+    if (n == 0) for (l in lits) out[l] = 1
+    for (o in out) print o
+  }
+' "${files[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//'

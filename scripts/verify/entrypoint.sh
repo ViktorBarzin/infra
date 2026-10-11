@@ -2,7 +2,7 @@
 # Entrypoint of the verify Job pod. The runner (scripts/verify/run) mounts this
 # file, lib.sh and the stack's verify.sh from a ConfigMap at /verify.
 #
-# Order: floor rollout (wait for convergence), floor ingress, the stack's own
+# Order: floor scope (the namespaces exist), floor rollout (wait for convergence), floor ingress, the stack's own
 # checks, then the floor alert watch, which runs last so it covers the window
 # after everything else has settled.
 set -uo pipefail
@@ -26,6 +26,8 @@ fi
 
 log "verify stack=$VERIFY_STACK group=$VERIFY_GROUP namespaces=[$VERIFY_NAMESPACES] quick=${VERIFY_QUICK:-0} since=${VERIFY_SINCE:-0}"
 
+section "floor: scope"
+floor_scope
 section "floor: rollout"
 floor_rollout
 section "floor: ingress"
