@@ -100,6 +100,17 @@
       ],
       "matchNewValue": "8.22.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 7263fc41)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "busybox"
+      ],
+      "matchNewValue": "1.38",
+      "enabled": false
     }
   ]
 }

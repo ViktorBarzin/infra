@@ -847,7 +847,7 @@ resource "kubernetes_deployment" "immich-postgres" {
         }
         init_container {
           name  = "write-pg-override-conf"
-          image = "busybox:1.38"
+          image = "busybox:1.36"
           command = ["sh", "-c", <<-EOT
             # Skip write on uninitialised PGDATA — initdb refuses non-empty dirs.
             # On first boot the override is absent; trigger a pod restart after
