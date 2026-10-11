@@ -174,7 +174,7 @@ resource "kubernetes_deployment" "t3_afk" {
         # NFS mounts land root-owned; make /data writable by uid 1000.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37.0"
+          image   = "busybox:1.38.0"
           command = ["sh", "-c", "mkdir -p /data && chown -R 1000:1000 /data && chmod 0775 /data"]
           security_context {
             run_as_user = 0
