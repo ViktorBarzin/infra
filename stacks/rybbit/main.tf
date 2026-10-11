@@ -331,7 +331,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
             restart_policy = "OnFailure"
             container {
               name  = "truncate"
-              image = "curlimages/curl:8.12.1"
+              image = "curlimages/curl:8.22.0"
               command = [
                 "sh", "-c",
                 join(" && ", [
