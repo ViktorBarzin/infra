@@ -13,7 +13,7 @@ locals {
   # If you bump this image, also bump `playwright==X.Y.Z` in callers'
   # requirements (currently f1-stream, snapshot-harvester) and re-run the
   # connect smoke test. Image ships chromium under /ms-playwright/.
-  image = "mcr.microsoft.com/playwright:v1.48.0-noble"
+  image = "mcr.microsoft.com/playwright:v1.64.0-noble"
   # Python image for the snapshot-harvester CronJob and the snapshot-server
   # sidecar (the latter just runs a 60-line stdlib HTTP server). Also carries
   # the cdp-bridge sidecar + turn-cred initContainer — reusing it there costs no
