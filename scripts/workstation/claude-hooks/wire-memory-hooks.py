@@ -2,7 +2,7 @@
 """Wire the standard homelab hooks into a user's ~/.claude/settings.json.
 
 (Named for its original memory-only scope; it now wires the whole hook set,
-including the PreToolUse zsh-guard.)
+including the PreToolUse zsh-guard and scan-guard.)
 
 Part of the claude-memory MCP -> homelab CLI migration (all-users rollout).
 Two passes, idempotent, never touching `env` (the per-user MEMORY_API_KEY) or any
@@ -38,6 +38,10 @@ WANT = [
     # zsh-vs-bash guard: blocks unquoted $VAR flag-lists (zsh does not word-split)
     # and unquoted `word(...)` (zsh globs it away). Both fail silently otherwise.
     ("PreToolUse", "zsh-guard.py", f"python3 {hooks_dir}/zsh-guard.py", {"timeout": 5}, "Bash"),
+    # Disk-scan guard: blocks greps across ~/.claude/projects and du/find/grep -r
+    # over / or ~. The devvm disk shares a spindle with etcd; on 2026-10-11 a
+    # transcript grep pushed etcd fsync to 8 s. No override by design.
+    ("PreToolUse", "scan-guard.py", f"python3 {hooks_dir}/scan-guard.py", {"timeout": 5}, "Bash"),
     # Access-wall reminder: when a command output carries a real denial (kubectl
     # RBAC, Vault policy, sudo), name the route past it — file a `broken` issue
     # and the fixer repairs it. In a hook rather than prose because it has to

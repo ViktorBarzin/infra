@@ -1,0 +1,700 @@
+#!/usr/bin/env python3
+"""Throttle, then stop, disk scans on the devvm while the disk is saturated.
+
+Background (2026-10-11). The devvm's disk is a slice of the Proxmox host's one
+spinning drive, sdc, which also holds etcd. That day etcd's WAL fsync p99
+reached 8.2 s twice. At 07:12-07:32 a subagent ran `xargs grep` six times over
+all 7.6 GB of ~/.claude/projects transcripts; at 14:25-17:45 about 80 parallel
+sessions read 200-500 IOPS between them. The spindle sustains about 227 read
+IOPS, so the QEMU cap of 400 never binds, and devvm-io-fairshare only caps when
+two or more people are working, at 200 riops each.
+
+Viktor's own habit was the model: when a command is heavy and slow, kill it and
+try something else. This does that, but only while the disk is actually
+struggling, so a scan at a quiet moment is left alone.
+
+HOW IT DECIDES. Every 2 s it reads /proc/pressure/io. The "full" line is the
+share of time every runnable task here was stalled on IO; over 14 h on
+2026-10-11, full above 50% matched 25 of 29 etcd stalls over 1 s, with 4 false
+alarms and 4 misses (the misses were other VMs, which this cannot fix).
+
+  1. Clamp. Pressure above TRIGGER for TRIGGER_SECS: every user slice gets an
+     io.max read ceiling of CLAMP_RIOPS split evenly between the slices that
+     read in the last RANK_WINDOW seconds. A lone user is clamped too. The
+     per-slice value goes in /run/devvm-io-guard/clamp so the fairshare timer
+     applies the same ceiling instead of undoing it two minutes later.
+  2. Kill. Clamped for KILL_AFTER_SECS and pressure still above TRIGGER: the
+     read-only scanner with the most disk wait plus bytes read over the last
+     RANK_WINDOW seconds is stopped, at most once every KILL_COOLDOWN seconds.
+     A note is appended to the command's output first, so the agent reading it
+     learns why and what to use instead.
+  3. Release. avg60 under RELEASE for RELEASE_SECS: the clamp file goes and
+     devvm-io-fairshare.service runs once to put back whatever it wants.
+
+WHAT IT WILL KILL. Only a process whose argv0 is a read-only scanner: ugrep,
+grep, egrep, fgrep, rg, bfs, find, du, tree, locate, or ls with -R. An agent's
+grep, find and rg are shell-snapshot functions that run the claude binary with
+argv0 set to ugrep, bfs or rg, and its comm is a version string, so matching is
+on argv0 and never on comm. The claude process itself, tmux, sshd, builds,
+Python and git are never candidates; they get the throttle. Only processes in
+user.slice are considered.
+
+HOW MUCH IT KILLS. A Bash tool command runs in its own scope,
+user@<uid>.service/app.slice/run-u<N>.scope (claude-command-scope). When that
+scope holds nothing but shells, scanners and text tools (xargs, head, sort...),
+the scan IS the command, and the whole scope goes, which is what stops the next
+xargs batch. When it also holds something else (make, npm, python), only the
+scanner goes, plus its xargs parent if it has one. A scanner anywhere else, such
+as the built-in Grep tool's ugrep in the pane scope, is killed alone: the pane
+scope also holds claude and tmux. SIGTERM first; 2 s later SIGKILL, through
+cgroup.kill for a whole scope, after checking the pid was not reused.
+
+WHAT IT RANKS BY. Bytes alone miss the du/find shape: `du -s` on a cold tree
+read 7 MB but made 6,100 IOs over 38 s. So the score is seconds of block-IO
+wait (stat field 42, which needs kernel.task_delayacct=1) plus megabytes read
+divided by READ_UNIT_MB. Below MIN_SCORE there is no victim, and it says so.
+
+DRY RUN. With DRY_RUN=1 every decision is made and logged as would-clamp,
+would-kill and would-release, and nothing is changed. That is the shipped
+setting for the first three days.
+
+FAIL OPEN. An exception in one sweep is logged and the next sweep starts
+fresh. On stop it lifts its own clamp, and systemd removes /run/devvm-io-guard,
+so a dead guard leaves nothing throttled past the next fairshare run.
+
+Every decision is one journald line under SYSLOG_IDENTIFIER=devvm-io-guard, as
+key=value pairs, so the calibration query is:
+    homelab logs query '{job="devvm-journal"} |= "devvm-io-guard"' --since 3d
+"""
+
+import collections
+import os
+import pwd
+import re
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+
+# argv0 basenames that only read the filesystem. Anything else is throttled,
+# never killed.
+SCANNERS = frozenset((
+    "ugrep", "grep", "egrep", "fgrep", "rg", "bfs", "find", "du", "tree",
+    "locate", "plocate", "mlocate",
+))
+# What else may share a Bash scope with a scanner for the scope to count as
+# "just a scan": the shell Claude runs the command in, and the text tools a
+# search pipes through.
+PIPE_TOOLS = frozenset((
+    "zsh", "bash", "sh", "dash", "xargs", "head", "tail", "sort", "uniq", "wc",
+    "cut", "tr", "cat", "tee", "awk", "sed", "timeout", "env", "nice", "ionice",
+    "time", "less",
+))
+BASH_SCOPE = re.compile(r"/app\.slice/run-u\d+\.scope$")
+SLICE_UID = re.compile(r"/user-(\d+)\.slice(?:/|$)")
+LS_RECURSIVE = re.compile(r"^-[A-Za-z]*R")
+
+ADVICE = (
+    "Narrow the path, use `git grep` inside a repo, "
+    "`homelab claude-usage --session <id>` for past Claude sessions, "
+    "or `homelab logs query` for logs."
+)
+
+
+class Config:
+    """Every knob, read from DEVVM_IO_GUARD_* (see /etc/default/devvm-io-guard)."""
+
+    def __init__(self, env):
+        def get(name, default, cast):
+            raw = env.get("DEVVM_IO_GUARD_" + name)
+            if raw is None or raw == "":
+                return default
+            try:
+                return cast(raw)
+            except ValueError:
+                return default
+
+        self.dry_run = get("DRY_RUN", 1, int) != 0
+        # Fractions of time stalled, as rate(node_pressure_io_stalled_seconds_total)
+        # reports it; /proc/pressure/io prints the same thing in percent.
+        self.trigger = get("TRIGGER", 0.5, float)
+        self.trigger_secs = get("TRIGGER_SECS", 20, float)
+        self.kill_after_secs = get("KILL_AFTER_SECS", 30, float)
+        self.kill_cooldown = get("KILL_COOLDOWN", 20, float)
+        self.release = get("RELEASE", 0.2, float)
+        self.release_secs = get("RELEASE_SECS", 60, float)
+        self.clamp_riops = get("CLAMP_RIOPS", 100, int)
+        self.interval = get("INTERVAL", 2, float)
+        self.rank_window = get("RANK_WINDOW", 10, float)
+        self.read_unit_mb = get("READ_UNIT_MB", 4, float)
+        self.min_score = get("MIN_SCORE", 1.0, float)
+        # A slice counts as reading when it made at least this many read IOs
+        # inside the window.
+        self.reading_rios = get("READING_RIOS", 10, int)
+        self.term_grace = get("TERM_GRACE", 2, float)
+        # Restricts victims to cgroups containing this string. For exercising
+        # the kill path on one synthetic process; empty in production.
+        self.only_cgroup = get("ONLY_CGROUP", "", str)
+        self.proc_root = get("PROC_ROOT", "/proc", str)
+        self.cgroup_root = get("CGROUP_ROOT", "/sys/fs/cgroup", str)
+        self.clamp_root = get("CLAMP_ROOT",
+                              os.path.join(self.cgroup_root, "user.slice"), str)
+        self.state_dir = get("STATE_DIR", "/run/devvm-io-guard", str)
+        self.textfile_dir = get("TEXTFILE_DIR",
+                                "/var/lib/node_exporter/textfile", str)
+        self.fairshare_unit = get("FAIRSHARE_UNIT",
+                                  "devvm-io-fairshare.service", str)
+        self.devnum = get("DEVNUM", "", str) or root_devnum()
+
+
+def root_devnum():
+    """MAJ:MIN of the device / sits on, as io.max and io.stat name it."""
+    try:
+        with open("/proc/mounts") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) > 1 and parts[1] == "/":
+                    rdev = os.stat(parts[0]).st_rdev
+                    return "%d:%d" % (os.major(rdev), os.minor(rdev))
+    except OSError:
+        pass
+    return ""
+
+
+def parse_psi(text):
+    """(full avg10, full avg60) as fractions from /proc/pressure/io."""
+    for line in text.splitlines():
+        if line.startswith("full "):
+            fields = dict(kv.split("=", 1) for kv in line.split()[1:])
+            return (round(float(fields["avg10"]) / 100, 6),
+                    round(float(fields["avg60"]) / 100, 6))
+    raise ValueError("no full line in pressure file")
+
+
+def parse_stat(text):
+    """ppid, starttime and block-IO delay ticks from /proc/<pid>/stat."""
+    # Field 2 is (comm) and may hold spaces or parentheses; split after the
+    # LAST ')'. After it, fields[0] is field 3, so field N is fields[N-3].
+    close = text.rfind(")")
+    fields = text[close + 2:].split()
+    return {
+        "ppid": int(fields[1]),        # field 4
+        "starttime": int(fields[19]),  # field 22
+        "blkio_ticks": int(fields[39]) if len(fields) > 39 else 0,  # field 42
+    }
+
+
+def argv_name(argv):
+    return os.path.basename(argv[0]) if argv else ""
+
+
+def is_scanner(argv):
+    name = argv_name(argv)
+    if name in SCANNERS:
+        return True
+    if name == "ls":
+        return any(a == "--recursive" or LS_RECURSIVE.match(a)
+                   for a in argv[1:])
+    return False
+
+
+def eligible(argv, cgroup):
+    return cgroup.startswith("/user.slice/") and is_scanner(argv)
+
+
+class Proc:
+    __slots__ = ("pid", "start", "ppid", "argv", "cgroup", "read_bytes",
+                 "ticks", "score", "mb", "wait")
+
+    def __init__(self, pid, start, ppid, argv, cgroup, read_bytes, ticks):
+        self.pid, self.start, self.ppid = pid, start, ppid
+        self.argv, self.cgroup = argv, cgroup
+        self.read_bytes, self.ticks = read_bytes, ticks
+        self.score = self.mb = self.wait = 0.0
+
+    @property
+    def uid(self):
+        m = SLICE_UID.search(self.cgroup)
+        return int(m.group(1)) if m else -1
+
+    def cmd(self, limit=200):
+        text = " ".join(self.argv).replace("\n", " ").replace('"', "'")
+        return text[:limit]
+
+
+def read_file(path):
+    with open(path, "rb") as fh:
+        return fh.read().decode("utf-8", "replace")
+
+
+def default_uid_name(uid):
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def default_fairshare(unit):
+    def run():
+        subprocess.run(["systemctl", "start", "--no-block", unit],
+                       check=False, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return run
+
+
+def default_log(line):
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
+class Guard:
+    def __init__(self, cfg, kill=os.kill, run_fairshare=None, log=default_log,
+                 uid_name=default_uid_name):
+        self.cfg = cfg
+        self.kill_fn = kill
+        self.run_fairshare = run_fairshare or default_fairshare(cfg.fairshare_unit)
+        self.log_fn = log
+        self.uid_name = uid_name
+
+        self.clamped = False
+        self.clamped_at = None
+        self.above_since = None
+        self.quiet_since = None
+        self.last_decision = None
+        self.pending = None          # (deadline, [(pid, start)], scope or None)
+        self.per_slice = None
+        self.applied = {}            # uid -> riops written to io.max
+        self.procs = {}              # pid -> Proc from the latest sweep
+        self.proc_hist = {}          # (pid, start) -> deque[(t, bytes, ticks)]
+        self.slice_hist = {}         # uid -> deque[(t, rios)]
+        self.psi = (0.0, 0.0)
+        self.counters = collections.Counter()
+        self.metrics_written = None
+        self.metrics_state = None
+
+        os.makedirs(cfg.state_dir, exist_ok=True)
+        if os.path.exists(self.clamp_file):
+            # Left by a guard that died mid-clamp. Fail open.
+            self.remove_clamp_file()
+            self.log("stale-clamp-cleared", path=self.clamp_file)
+            self.run_fairshare()
+
+    # ---- plumbing --------------------------------------------------------
+
+    @property
+    def clamp_file(self):
+        return os.path.join(self.cfg.state_dir, "clamp")
+
+    def log(self, action, **fields):
+        parts = ["action=%s" % action, "dry_run=%d" % self.cfg.dry_run,
+                 "psi_full10=%.2f" % self.psi[0], "psi_full60=%.2f" % self.psi[1]]
+        for key, value in fields.items():
+            if isinstance(value, float):
+                value = "%.1f" % value
+            value = str(value)
+            if " " in value or not value:
+                value = '"%s"' % value
+            parts.append("%s=%s" % (key, value))
+        self.log_fn(" ".join(parts))
+
+    def remove_clamp_file(self):
+        try:
+            os.unlink(self.clamp_file)
+        except FileNotFoundError:
+            pass
+
+    # ---- sampling --------------------------------------------------------
+
+    def read_proc(self, pid):
+        base = os.path.join(self.cfg.proc_root, str(pid))
+        try:
+            cgroup = ""
+            for line in read_file(os.path.join(base, "cgroup")).splitlines():
+                if line.startswith("0::"):
+                    cgroup = line[3:]
+            if not cgroup.startswith("/user.slice/"):
+                return None
+            raw = read_file(os.path.join(base, "cmdline"))
+            argv = [a for a in raw.split("\0")]
+            if argv and argv[-1] == "":
+                argv.pop()
+            st = parse_stat(read_file(os.path.join(base, "stat")))
+            read_bytes = 0
+            for line in read_file(os.path.join(base, "io")).splitlines():
+                if line.startswith("read_bytes:"):
+                    read_bytes = int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            return None   # exited mid-read, or a kernel thread
+        return Proc(pid, st["starttime"], st["ppid"], argv, cgroup,
+                    read_bytes, st["blkio_ticks"])
+
+    def sample(self, now):
+        horizon = now - self.cfg.rank_window
+        procs, seen = {}, set()
+        for entry in os.listdir(self.cfg.proc_root):
+            if not entry.isdigit():
+                continue
+            p = self.read_proc(int(entry))
+            if p is None:
+                continue
+            key = (p.pid, p.start)
+            seen.add(key)
+            hist = self.proc_hist.setdefault(key, collections.deque())
+            hist.append((now, p.read_bytes, p.ticks))
+            while hist and hist[0][0] < horizon:
+                hist.popleft()
+            first = hist[0]
+            p.mb = (p.read_bytes - first[1]) / 1048576.0
+            p.wait = (p.ticks - first[2]) / float(CLK_TCK)
+            p.score = p.wait + p.mb / self.cfg.read_unit_mb
+            procs[p.pid] = p
+        for key in list(self.proc_hist):
+            if key not in seen:
+                del self.proc_hist[key]
+        self.procs = procs
+
+        for uid, rios in self.slice_rios().items():
+            hist = self.slice_hist.setdefault(uid, collections.deque())
+            hist.append((now, rios))
+            while hist and hist[0][0] < horizon:
+                hist.popleft()
+
+    def user_slices(self):
+        out = []
+        try:
+            names = os.listdir(self.cfg.clamp_root)
+        except OSError:
+            return out
+        for name in names:
+            m = re.match(r"^user-(\d+)\.slice$", name)
+            if m and int(m.group(1)) >= 1000:
+                out.append((int(m.group(1)),
+                            os.path.join(self.cfg.clamp_root, name)))
+        return sorted(out)
+
+    def slice_rios(self):
+        out = {}
+        for uid, path in self.user_slices():
+            rios = 0
+            try:
+                for line in read_file(os.path.join(path, "io.stat")).splitlines():
+                    if line.startswith(self.cfg.devnum + " "):
+                        for kv in line.split()[1:]:
+                            if kv.startswith("rios="):
+                                rios = int(kv[5:])
+            except (OSError, ValueError):
+                pass
+            out[uid] = rios
+        return out
+
+    def reading_slices(self):
+        return sorted(uid for uid, hist in self.slice_hist.items()
+                      if hist and hist[-1][1] - hist[0][1] >= self.cfg.reading_rios)
+
+    # ---- stage 1: clamp --------------------------------------------------
+
+    def clamp_value(self):
+        n = max(1, len(self.reading_slices()))
+        return max(1, self.cfg.clamp_riops // n)
+
+    def apply_clamp(self, per):
+        if self.cfg.dry_run:
+            return
+        tmp = self.clamp_file + ".new"
+        with open(tmp, "w") as fh:
+            fh.write("%d\n" % per)
+        os.replace(tmp, self.clamp_file)
+        for uid, path in self.user_slices():
+            if self.applied.get(uid) == per:
+                continue
+            try:
+                with open(os.path.join(path, "io.max"), "w") as fh:
+                    fh.write("%s riops=%d" % (self.cfg.devnum, per))
+                self.applied[uid] = per
+            except OSError as exc:
+                self.log("error", stage="clamp", uid=uid, err=exc)
+
+    def clamp_on(self, now):
+        self.clamped, self.clamped_at, self.quiet_since = True, now, None
+        self.per_slice = self.clamp_value()
+        self.applied = {}
+        self.apply_clamp(self.per_slice)
+        action = "would-clamp" if self.cfg.dry_run else "clamp"
+        self.counters[action] += 1
+        self.log(action, riops_total=self.cfg.clamp_riops,
+                 riops_per_slice=self.per_slice,
+                 readers=",".join(self.uid_name(u)
+                                  for u in self.reading_slices()) or "-")
+
+    def adjust_clamp(self):
+        per = self.clamp_value()
+        if per != self.per_slice:
+            self.log("clamp-adjust", riops_per_slice=per, was=self.per_slice)
+            self.per_slice = per
+        self.apply_clamp(per)   # also catches a slice that appeared since
+
+    def release(self):
+        action = "would-release" if self.cfg.dry_run else "release"
+        self.counters[action] += 1
+        self.log(action, clamped_for=time_since(self.clamped_at, self.quiet_since))
+        self.clamped = False
+        self.clamped_at = self.quiet_since = self.per_slice = None
+        self.applied = {}
+        if not self.cfg.dry_run:
+            self.remove_clamp_file()
+            self.run_fairshare()
+
+    # ---- stage 2: kill ---------------------------------------------------
+
+    def scope_procs(self, scope):
+        path = os.path.join(self.cfg.cgroup_root, scope.lstrip("/"),
+                            "cgroup.procs")
+        out = []
+        try:
+            pids = [int(x) for x in read_file(path).split()]
+        except (OSError, ValueError):
+            return out
+        for pid in dict.fromkeys(pids):
+            p = self.procs.get(pid) or self.read_proc(pid)
+            if p is not None:
+                out.append(p)
+        return out
+
+    def plan_kill(self, victim):
+        """(targets, whole-scope path or None, process whose output gets the note)."""
+        if BASH_SCOPE.search(victim.cgroup):
+            members = self.scope_procs(victim.cgroup)
+            if members and all(argv_name(p.argv) in PIPE_TOOLS or is_scanner(p.argv)
+                               for p in members):
+                leader = min(members, key=lambda p: p.start)
+                return members, victim.cgroup, leader
+        targets = []
+        parent = self.procs.get(victim.ppid)
+        if (parent is not None and parent.cgroup == victim.cgroup
+                and argv_name(parent.argv) == "xargs"):
+            targets.append(parent)   # first, so it cannot start the next batch
+        targets.append(victim)
+        return targets, None, victim
+
+    def notify(self, procs, text):
+        for p in procs:
+            for fd in (2, 1):
+                path = os.path.join(self.cfg.proc_root, str(p.pid), "fd", str(fd))
+                try:
+                    fdesc = os.open(path, os.O_WRONLY | os.O_APPEND |
+                                    os.O_NONBLOCK | os.O_NOCTTY)
+                except OSError:
+                    continue
+                try:
+                    # Not a terminal (it would land in someone's pane) and
+                    # not /dev/null (nobody would see it).
+                    if stat.S_ISCHR(os.fstat(fdesc).st_mode):
+                        continue
+                    os.write(fdesc, text.encode())
+                    return True
+                except OSError:
+                    continue
+                finally:
+                    os.close(fdesc)
+        return False
+
+    def decide_kill(self, now):
+        self.last_decision = now
+        pool = [p for p in self.procs.values()
+                if eligible(p.argv, p.cgroup)
+                and (not self.cfg.only_cgroup or self.cfg.only_cgroup in p.cgroup)]
+        victim = max(pool, key=lambda p: p.score, default=None)
+        if victim is None or victim.score < self.cfg.min_score:
+            top = max(self.procs.values(), key=lambda p: p.score, default=None)
+            self.counters["no-victim"] += 1
+            self.log("no-victim",
+                     top_user=self.uid_name(top.uid) if top else "-",
+                     top_pid=top.pid if top else 0,
+                     top_read_mb=top.mb if top else 0.0,
+                     top_wait_s=top.wait if top else 0.0,
+                     top_cmd=top.cmd() if top else "-")
+            return
+
+        targets, scope, noted = self.plan_kill(victim)
+        action = "would-kill" if self.cfg.dry_run else "kill"
+        self.counters[action] += 1
+        self.log(action, user=self.uid_name(victim.uid), pid=victim.pid,
+                 target=("scope:" + os.path.basename(scope)) if scope
+                 else "pids:" + ",".join(str(p.pid) for p in targets),
+                 read_mb=victim.mb, wait_s=victim.wait,
+                 window_s=self.cfg.rank_window, cmd=victim.cmd())
+        if self.cfg.dry_run:
+            return
+
+        note = (
+            "\n[devvm-io-guard] Stopped `%s`: in the last %ds it read %.0f MB "
+            "and waited %.1fs on disk while the disk was saturated "
+            "(%.0f%% of the time every task was stalled on IO). This disk is "
+            "shared with the Kubernetes control plane (etcd). %s Re-running "
+            "the same command will be stopped again while the disk is busy.\n"
+            % (victim.cmd(120), self.cfg.rank_window, victim.mb, victim.wait,
+               self.psi[0] * 100, ADVICE))
+        self.notify([noted, victim] if noted is not victim else [victim], note)
+        for p in targets:
+            try:
+                self.kill_fn(p.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        self.pending = (now + self.cfg.term_grace,
+                        [(p.pid, p.start) for p in targets], scope)
+
+    def finish_kill(self, now):
+        if self.pending is None or now < self.pending[0]:
+            return
+        _, targets, scope = self.pending
+        self.pending = None
+        if scope:
+            path = os.path.join(self.cfg.cgroup_root, scope.lstrip("/"),
+                                "cgroup.kill")
+            try:
+                with open(path, "w") as fh:
+                    fh.write("1")
+                return
+            except OSError:
+                pass   # scope already gone, or no cgroup.kill: per pid below
+        for pid, start in targets:
+            p = self.read_proc(pid)
+            if p is None or p.start != start:
+                continue   # exited, or the pid now belongs to someone else
+            try:
+                self.kill_fn(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    # ---- the loop --------------------------------------------------------
+
+    def step(self, now):
+        cfg = self.cfg
+        self.psi = parse_psi(read_file(os.path.join(cfg.proc_root,
+                                                    "pressure", "io")))
+        high = self.psi[0] > cfg.trigger
+        if high:
+            if self.above_since is None:
+                self.above_since = now
+        else:
+            self.above_since = None
+
+        if self.clamped or self.above_since is not None:
+            self.sample(now)
+        else:
+            # Nothing to rank while the disk is fine; history restarts with
+            # the next spike, which leaves TRIGGER_SECS of it before a clamp.
+            self.proc_hist.clear()
+            self.slice_hist.clear()
+            self.procs = {}
+
+        self.finish_kill(now)
+
+        if not self.clamped:
+            if (self.above_since is not None
+                    and now - self.above_since >= cfg.trigger_secs):
+                self.clamp_on(now)
+        else:
+            self.adjust_clamp()
+            if self.psi[1] < cfg.release:
+                if self.quiet_since is None:
+                    self.quiet_since = now
+                if now - self.quiet_since >= cfg.release_secs:
+                    self.release()
+            else:
+                self.quiet_since = None
+            if (self.clamped and high
+                    and now - self.clamped_at >= cfg.kill_after_secs
+                    and (self.last_decision is None
+                         or now - self.last_decision >= cfg.kill_cooldown)):
+                self.decide_kill(now)
+
+        self.write_metrics(now)
+
+    def safe_step(self, now):
+        try:
+            self.step(now)
+        except Exception as exc:   # one bad sweep must never stop the guard
+            self.log("error", stage="sweep", err="%s: %s" % (type(exc).__name__, exc))
+
+    def shutdown(self):
+        if self.clamped and not self.cfg.dry_run:
+            self.remove_clamp_file()
+            self.run_fairshare()
+            self.log("release", reason="shutdown")
+
+    def write_metrics(self, now):
+        d = self.cfg.textfile_dir
+        if not d or not os.path.isdir(d):
+            return
+        state = (self.clamped, self.per_slice, tuple(sorted(self.counters.items())))
+        if (state == self.metrics_state and self.metrics_written is not None
+                and now - self.metrics_written < 60):
+            return
+        c = self.counters
+        lines = [
+            "# HELP devvm_io_guard_clamp 1 while the guard is clamping user slices (or would be, in dry run).",
+            "# TYPE devvm_io_guard_clamp gauge",
+            "devvm_io_guard_clamp %d" % self.clamped,
+            "# HELP devvm_io_guard_clamp_riops_per_slice Read IOPS ceiling per user slice while clamped; 0 when not.",
+            "# TYPE devvm_io_guard_clamp_riops_per_slice gauge",
+            "devvm_io_guard_clamp_riops_per_slice %d" % (self.per_slice or 0),
+            "# HELP devvm_io_guard_dry_run 1 when the guard only logs what it would do.",
+            "# TYPE devvm_io_guard_dry_run gauge",
+            "devvm_io_guard_dry_run %d" % self.cfg.dry_run,
+            "# HELP devvm_io_guard_decisions_total Decisions since the guard started, by action.",
+            "# TYPE devvm_io_guard_decisions_total counter",
+        ]
+        for action in ("clamp", "would-clamp", "release", "would-release",
+                       "kill", "would-kill", "no-victim"):
+            lines.append('devvm_io_guard_decisions_total{action="%s"} %d'
+                         % (action, c[action]))
+        lines += [
+            "# HELP devvm_io_guard_pressure_full_avg10 IO pressure 'full' avg10 as a fraction, at the last metrics write.",
+            "# TYPE devvm_io_guard_pressure_full_avg10 gauge",
+            "devvm_io_guard_pressure_full_avg10 %.4f" % self.psi[0],
+            "# HELP devvm_io_guard_last_write_timestamp_seconds When the guard last wrote this file.",
+            "# TYPE devvm_io_guard_last_write_timestamp_seconds gauge",
+            "devvm_io_guard_last_write_timestamp_seconds %d" % time.time(),
+        ]
+        path = os.path.join(d, "devvm_io_guard.prom")
+        try:
+            with open(path + ".tmp", "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+            os.replace(path + ".tmp", path)
+        except OSError:
+            return
+        self.metrics_state, self.metrics_written = state, now
+
+
+def time_since(start, end):
+    if start is None or end is None:
+        return 0.0
+    return float(end - start)
+
+
+def main():
+    cfg = Config(os.environ)
+    guard = Guard(cfg)
+
+    def stop(signum, frame):
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    guard.log("start", trigger=cfg.trigger, trigger_secs=cfg.trigger_secs,
+              kill_after_secs=cfg.kill_after_secs, clamp_riops=cfg.clamp_riops,
+              release=cfg.release, devnum=cfg.devnum or "unknown")
+    try:
+        while True:
+            guard.safe_step(time.monotonic())
+            time.sleep(cfg.interval)
+    finally:
+        guard.shutdown()
+
+
+if __name__ == "__main__":
+    main()

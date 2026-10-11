@@ -88,6 +88,20 @@
     # numbers on either side, so a busy page is never mistaken for a leak.
     devvm_playwright_reaper_threshold_cores: 2
     devvm_playwright_reaper_window_minutes: 10
+    # devvm-io-guard (2026-10-11). Ships in log-only mode: every decision is
+    # logged as would-clamp / would-kill and nothing changes. On 2026-10-14 the
+    # three days of those lines set the thresholds below and this goes to 0.
+    # The trigger is the "full" IO pressure fraction: above 0.5 matched 25 of
+    # 29 etcd stalls over 1 s on 2026-10-11, with 4 false alarms. 100 riops
+    # total sits under the ~227 the spindle sustains, leaving room for etcd.
+    devvm_io_guard_dry_run: 1
+    devvm_io_guard_trigger: 0.5
+    devvm_io_guard_trigger_secs: 20
+    devvm_io_guard_kill_after_secs: 30
+    devvm_io_guard_kill_cooldown: 20
+    devvm_io_guard_release: 0.2
+    devvm_io_guard_release_secs: 60
+    devvm_io_guard_clamp_riops: 100
     # Swap sized from measurement, not from a RAM ratio: system.slice peaked at
     # 8.4 GiB over the 30 days to 2026-09-02 (p50 2.7, p99 7.0) and two users at
     # 4G each add 8, so 24 GiB total leaves ~7.6 GiB spare. The old 14 GiB never
@@ -1505,6 +1519,75 @@
         state: started
         daemon_reload: true
 
+    # Fairshare divides the disk between people; it cannot tell a scan from a
+    # build, and a lone user is uncapped. On 2026-10-11 that let one agent's
+    # transcript grep, and later ~80 parallel sessions, push etcd's WAL fsync
+    # to 8.2 s, because the devvm disk shares a spindle with etcd. The guard
+    # acts only while the disk is saturated: it clamps every user slice, then
+    # stops the read-only scanner doing the most damage. Builds are throttled,
+    # never killed. Its docstring has the whole contract, and
+    # docs/architecture/devvm-io-guard.md how to read its log.
+    - name: Enable per-task block-IO delay accounting for the IO guard
+      ansible.builtin.copy:
+        src: files/devvm/60-devvm-delayacct.conf
+        dest: /etc/sysctl.d/60-devvm-delayacct.conf
+        mode: "0644"
+      notify: reload sysctl
+
+    - name: Install the IO guard
+      ansible.builtin.copy:
+        src: files/devvm/devvm-io-guard
+        dest: /usr/local/bin/devvm-io-guard
+        mode: "0755"
+        owner: root
+        group: root
+      notify: restart devvm-io-guard
+
+    - name: Configure the IO guard
+      ansible.builtin.copy:
+        dest: /etc/default/devvm-io-guard
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml -- edit there, not here.
+          # 1 = log what it would do and change nothing.
+          DEVVM_IO_GUARD_DRY_RUN={{ devvm_io_guard_dry_run }}
+          # IO pressure "full" fraction, and how long it must hold, before a clamp.
+          DEVVM_IO_GUARD_TRIGGER={{ devvm_io_guard_trigger }}
+          DEVVM_IO_GUARD_TRIGGER_SECS={{ devvm_io_guard_trigger_secs }}
+          # Seconds clamped, with pressure still high, before a scanner is stopped,
+          # and the minimum gap between two kills.
+          DEVVM_IO_GUARD_KILL_AFTER_SECS={{ devvm_io_guard_kill_after_secs }}
+          DEVVM_IO_GUARD_KILL_COOLDOWN={{ devvm_io_guard_kill_cooldown }}
+          # The clamp lifts once avg60 stays under RELEASE for RELEASE_SECS.
+          DEVVM_IO_GUARD_RELEASE={{ devvm_io_guard_release }}
+          DEVVM_IO_GUARD_RELEASE_SECS={{ devvm_io_guard_release_secs }}
+          # Read IOPS shared between every user slice reading while clamped.
+          DEVVM_IO_GUARD_CLAMP_RIOPS={{ devvm_io_guard_clamp_riops }}
+      notify: restart devvm-io-guard
+
+    - name: Install the IO guard unit
+      ansible.builtin.copy:
+        src: files/devvm/devvm-io-guard.service
+        dest: /etc/systemd/system/devvm-io-guard.service
+        mode: "0644"
+        owner: root
+        group: root
+      notify:
+        - reload systemd
+        - restart devvm-io-guard
+
+    # Same --check guard as the playwright reaper: on a box that has never had
+    # this applied the unit does not exist yet.
+    - name: Enable the IO guard
+      ansible.builtin.systemd_service:
+        name: devvm-io-guard.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     - name: Enable the pane swap guard timer
       ansible.builtin.systemd_service:
         name: devvm-pane-swap-guard.timer
@@ -2520,6 +2603,15 @@
       ansible.builtin.systemd_service:
         name: earlyoom
         state: restarted
+
+    # Defined after "reload systemd", so a changed unit file is loaded first.
+    # A restart lifts any clamp the guard holds (it fails open on stop) and
+    # its state is rebuilt within one trigger window.
+    - name: restart devvm-io-guard
+      ansible.builtin.systemd_service:
+        name: devvm-io-guard
+        state: restarted
+      when: not ansible_check_mode
 
     - name: restart node-exporter
       ansible.builtin.systemd_service:

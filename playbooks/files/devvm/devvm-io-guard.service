@@ -1,0 +1,36 @@
+[Unit]
+Description=Throttle, then stop, disk scans while the devvm disk is saturated
+Documentation=file:/usr/local/bin/devvm-io-guard
+ConditionPathExists=/proc/pressure/io
+ConditionPathExists=/sys/fs/cgroup/user.slice
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/devvm-io-guard
+ExecStart=/usr/local/bin/devvm-io-guard
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devvm-io-guard
+
+# It reads /proc, writes io.max and cgroup.kill under /sys/fs/cgroup, signals
+# processes owned by other users and asks systemd to run the fairshare unit,
+# so it runs as root. Everything else is taken away, as for playwright-reaper.
+# /sys stays writable under ProtectSystem=strict as long as
+# ProtectControlGroups is off. Appending the kill note to a command's output
+# goes through /proc/<pid>/fd, which reaches the file even with ProtectHome
+# and PrivateTmp (checked on the devvm 2026-10-11).
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/node_exporter/textfile
+RuntimeDirectory=devvm-io-guard
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target
