@@ -299,7 +299,7 @@ locals {
     # can land in either order.
     { name = "OIDC_ISSUER", value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/" },
     { name = "OIDC_CLIENT_ID", value = authentik_provider_oauth2.f1_stream.client_id },
-    { name = "MEMBER_GROUP", value = authentik_group.f1_users.name },
+    { name = "MEMBER_GROUP", value = data.authentik_group.home_users.name },
     { name = "DISCORD_CHANNELS", value = var.discord_f1_channel_ids },
     # Verifier connects to in-cluster headed Chromium pool — see
     # stacks/chrome-service/. Falls back to in-process headless if unset.
@@ -1553,9 +1553,36 @@ module "anubis" {
       # cases fail. Bare `/transcode` DOES match, via the `$` branch, exactly as
       # bare `/streams` and `/health` already do; it is not a route, so the app
       # answers 404, and an un-challenged 404 costs nothing.
+      #
+      # `replays/early` joined on 2026-10-11 so a Cast device can play a
+      # session that is still downloading. The TV fetches the Early copy's
+      # playlists and segments with no Anubis cookie, so behind the challenge
+      # it got the PoW page where it expected a playlist. The browser was never
+      # affected, since it carries the cookie. This is the same exposure
+      # `replays/cache` already has: an Early copy only exists for a race an
+      # admin started downloading, and its segments end in `.ts`, so without
+      # the entry a cookieless fetch could also pin a challenge page at the
+      # edge under a segment URL (see `transcode` above).
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
+      # Watch links (ADR-0034 in the f1-stream repo, 2026-10-11): the stable
+      # playlist URLs VLC, mpv and other external players open. A player sends
+      # no Anubis cookie and cannot solve the challenge, so behind it every
+      # Watch link would answer the PoW page where VLC expects a playlist.
+      # Kept apart from `/watch` itself, which is a SvelteKit page that
+      # redirects old `/watch?session=` bookmarks and stays challenged.
+      #
+      # A CEL `path` match rather than `path_regex`, for the reason the
+      # share-preview rule below gives: `path` is r.URL.Path only, so a client
+      # cannot widen this by sending `X-Original-URI`. The shape is exact:
+      # /watch/f1/<site_key>/<feed_id>[/v<n>].m3u8 and
+      # /watch/channel/<slug>[/v<n>].m3u8, with the charset and bounds the
+      # app publishes. `[.]` for the literal dot, as below, so no backslash
+      # has to survive the heredoc, YAML and CEL string layers.
+      - name: f1-watch-links
+        action: ALLOW
+        expression: 'path.matches("^/watch/(f1/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}|channel/[A-Za-z0-9_-]{1,96})(/v[0-9]{1,2})?[.]m3u8$")'
       # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
       # A browser fetches the manifest without cookies, and an iPhone's Home
       # Screen app has its own cookie jar, so both would get the PoW page as
@@ -1564,6 +1591,15 @@ module "anubis" {
       # Static files with no data in them; exact names only.
       - name: f1-installable-app
         path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
+        action: ALLOW
+      # Channel logos (f1-stream ADR-0033, 2026-10-11). The TV app loads each
+      # Channel's /logos/<slug>.png with its own HTTP client, which never holds
+      # an Anubis cookie, so from the household's public address every logo
+      # came back as the PoW page (200 text/html), the image decoder failed and
+      # the TV drew monograms; from the LAN the trusted-networks rule hid it.
+      # Static PNGs with no data in them; one path segment, PNG only.
+      - name: f1-channel-logos
+        path_regex: ^/logos/[A-Za-z0-9_-]+\.png$
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reads every app pod's :8000 directly (pod discovery, job

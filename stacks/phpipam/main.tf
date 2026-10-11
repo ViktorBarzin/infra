@@ -171,7 +171,7 @@ resource "kubernetes_deployment" "phpipam_web" {
       }
       spec {
         container {
-          image = "phpipam/phpipam-www:v1.7.4"
+          image = "phpipam/phpipam-www:v1.8.3"
           name  = "phpipam-web"
           port {
             container_port = 80
@@ -297,7 +297,7 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
             restart_policy = "Never"
             container {
               name  = "sync"
-              image = "mysql:8.0"
+              image = "mysql:8.4"
               command = ["/bin/bash", "-c", <<-EOT
                 set -e
                 TECH_URL="http://technitium-web.technitium.svc.cluster.local:5380"
@@ -529,7 +529,7 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
             restart_policy = "Never"
             container {
               name  = "import"
-              image = "alpine:3.21"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1
@@ -729,7 +729,7 @@ resource "kubernetes_cron_job_v1" "phpipam_remote_import" {
             restart_policy = "Never"
             container {
               name  = "import"
-              image = "alpine:3.21"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1

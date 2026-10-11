@@ -1,7 +1,7 @@
 # ADR-0023: Forward-auth authorization via a generated host→groups table, not per-app Applications
 
 Date: 2026-07-26
-Status: Accepted
+Status: Superseded by ADR-0031 (2026-10-11). The generated table never enforced anything under domain-level forward auth; see ADR-0031.
 
 ## Context
 

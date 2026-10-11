@@ -598,7 +598,7 @@ resource "kubernetes_cron_job_v1" "payslip_freshness_export" {
             restart_policy = "OnFailure"
             container {
               name  = "export"
-              image = "alpine:3.20"
+              image = "alpine:3.24"
 
               # DB_CONNECTION_STRING lives here.
               env_from {

@@ -97,7 +97,7 @@ resource "kubernetes_deployment" "qbittorrent" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/qbittorrent:5.1.4"
+          image = "lscr.io/linuxserver/qbittorrent:5.2.4"
           name  = "qbittorrent"
 
           port {
@@ -540,6 +540,7 @@ module "ingress" {
   name            = "qbittorrent"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"         = "true"
     "gethomepage.dev/name"            = "qBittorrent"

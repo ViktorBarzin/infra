@@ -280,6 +280,7 @@ module "ingress" {
   name            = "ebook2audiobook"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Ebook2Audiobook"
@@ -519,6 +520,7 @@ module "audiblez-web-ingress" {
   dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   max_body_size   = "500m" # Allow large EPUB uploads
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

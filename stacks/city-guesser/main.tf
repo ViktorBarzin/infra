@@ -117,6 +117,7 @@ module "ingress" {
   name            = "city-guesser"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "City Guesser"

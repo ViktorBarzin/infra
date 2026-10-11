@@ -129,7 +129,7 @@ resource "kubernetes_deployment" "roundcubemail" {
       spec {
         container {
           name  = "roundcube"
-          image = "roundcube/roundcubemail:1.6.19-apache"
+          image = "roundcube/roundcubemail:1.7.4-apache"
           volume_mount {
             name       = "roundcube-config"
             mount_path = "/var/roundcube/config/custom.php"

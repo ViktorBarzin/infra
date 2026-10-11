@@ -200,7 +200,7 @@ resource "kubernetes_deployment" "torrserver" {
       spec {
         container {
           name  = "torrserver"
-          image = "ghcr.io/yourok/torrserver:MatriX.141"
+          image = "ghcr.io/yourok/torrserver:MatriX.146"
           port {
             name           = "http"
             container_port = 8090
@@ -324,6 +324,7 @@ module "torrserver_ingress" {
   tls_secret_name = var.tls_secret_name
   port            = "8090"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
   # explicit record this name would resolve via Cloudflare and go public.
   dns_type          = "internal"
