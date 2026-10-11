@@ -26,8 +26,9 @@ mktree() { # root, devnum, uid:bytes...
   done
 }
 
-run() { # root, state, elapsed_fudge_seconds -> stdout
-  local root="$1" state="$2"
+run() { # root, state, [clamp file] -> stdout
+  local root="$1" state="$2" clamp="${3:-/nonexistent}"
+  DEVVM_IO_GUARD_CLAMP_FILE="$clamp" \
   DEVVM_IO_FAIRSHARE_CGROUP_ROOT="$root" \
   DEVVM_IO_FAIRSHARE_STATE="$state" \
   DEVVM_IO_FAIRSHARE_DRY_RUN=1 \
@@ -83,6 +84,51 @@ else
   bad "the same 16 MB over 600s is idle, so the floor follows the period" "got: $(tr '\n' '|' <<<"$out3")"
 fi
 
-rm -rf "$T" "$T2" "$T3"
+# --- devvm-io-guard's clamp survives the fairshare timer --------------------
+# While the disk is saturated the guard writes a per-slice read ceiling to its
+# clamp file. A lone user is normally uncapped here, which would undo the
+# clamp within two minutes, so the clamp has to win even when n <= 1.
+T4=$(mktemp -d); S4="$T4/state"; C4="$T4/clamp"
+echo 50 > "$C4"
+mktree "$T4/cg" "$DN" 1000:0
+out4="$(run "$T4/cg" "$S4" "$C4")"
+if grep -q 'would set user-1000 io.max: riops=50 rbps=max wbps=max' <<<"$out4"; then
+  ok "a lone user is held to the guard's clamp"
+else
+  bad "a lone user is held to the guard's clamp" "got: $(tr '\n' '|' <<<"$out4")"
+fi
+
+# Two working users: each gets the lower of their share (200) and the clamp.
+T5=$(mktemp -d); S5="$T5/state"; C5="$T5/clamp"
+echo 50 > "$C5"
+mktree "$T5/cg" "$DN" 1000:0 1002:0
+run "$T5/cg" "$S5" "$C5" >/dev/null
+sed -i 's/^__ts .*/__ts '"$(( $(date +%s) - 120 ))"'/' "$S5" 2>/dev/null
+mktree "$T5/cg" "$DN" 1000:$((16 * 1024 * 1024)) 1002:$((16 * 1024 * 1024))
+out5="$(run "$T5/cg" "$S5" "$C5")"
+if [[ "$(grep -c 'io.max: riops=50 rbps=31457280 wbps=31457280' <<<"$out5")" == 2 ]]; then
+  ok "two working users each get min(share, clamp)"
+else
+  bad "two working users each get min(share, clamp)" "got: $(tr '\n' '|' <<<"$out5")"
+fi
+
+# A clamp above the share changes nothing, and no clamp file means no clamp.
+echo 1000 > "$C5"
+sed -i 's/^__ts .*/__ts '"$(( $(date +%s) - 120 ))"'/' "$S5" 2>/dev/null
+mktree "$T5/cg" "$DN" 1000:$((32 * 1024 * 1024)) 1002:$((32 * 1024 * 1024))
+out6="$(run "$T5/cg" "$S5" "$C5")"
+if [[ "$(grep -c 'io.max: riops=200 ' <<<"$out6")" == 2 ]]; then
+  ok "a clamp looser than the share leaves the share alone"
+else
+  bad "a clamp looser than the share leaves the share alone" "got: $(tr '\n' '|' <<<"$out6")"
+fi
+out7="$(run "$T4/cg" "$S4")"
+if grep -q 'would set user-1000 io.max: riops=max rbps=max wbps=max' <<<"$out7"; then
+  ok "without a clamp file a lone user is uncapped, as before"
+else
+  bad "without a clamp file a lone user is uncapped, as before" "got: $(tr '\n' '|' <<<"$out7")"
+fi
+
+rm -rf "$T" "$T2" "$T3" "$T4" "$T5"
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
