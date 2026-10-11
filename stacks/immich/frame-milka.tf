@@ -130,7 +130,7 @@ resource "kubernetes_deployment" "immich-frame-milka" {
         container {
           # Pinned: releases <= v1.0.33.0 crash on Immich v3 API responses, and
           # album filtering needs >= v1.0.34.0.
-          image = "ghcr.io/immichframe/immichframe:v1.0.35.0"
+          image = "ghcr.io/immichframe/immichframe:v1.0.39.0"
           # IfNotPresent, deliberately NOT "Always" like frame-emo: the Kyverno
           # set-image-pull-policy ClusterPolicy rewrites pinned tags to
           # IfNotPresent at admission, so declaring "Always" makes Terraform
