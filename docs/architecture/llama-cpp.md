@@ -2,11 +2,19 @@
 
 ## Overview
 
-In-cluster, OpenAI-compatible vision-LLM endpoint. A single
-`mostlygeek/llama-swap:cuda` Deployment fronts three GGUF models
-served by `llama.cpp`'s `llama-server` subprocesses, hot-swapped on
-demand by `llama-swap`. One Service, one `/v1` endpoint, model
-selected by the request body `model` field.
+In-cluster, OpenAI-compatible LLM endpoint. A single
+`mostlygeek/llama-swap:cuda` Deployment fronts GGUF models served by
+`llama.cpp`'s `llama-server` subprocesses, hot-swapped on demand by
+`llama-swap`. One Service, one `/v1` endpoint, model selected by the
+request body `model` field.
+
+**Since 2026-10-11 it serves one model, `qwen3-8b`, for one consumer,
+paperless-ai.** Viktor kept paperless-ai local because it reads Emo's
+financial and medical documents, and moved every other caller (tripit,
+nextcloud-todos, lesson-harvester, fire-planner) to claude-agent-service's
+no-tools mode. recruiter-responder still points here but has been at 0
+replicas since 2026-08-21. The history below describes how the endpoint
+grew to its earlier, larger model set.
 
 Initial use case: vision-LLM benchmark on a curated Immich album,
 choosing between **Qwen3-VL-8B**, **MiniCPM-V-4.5**, and
@@ -116,12 +124,18 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 | ID | HF repo | Quant | Ctx | mmproj |
 |----|---------|-------|-----|--------|
 | `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 8192 | no (text-only) |
-| `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
-| `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
-| `qwen38-27b` | `unsloth/Qwen3.8-27B-GGUF` | UD-Q2_K_XL | 8192 | no (text-only) |
 
-`qwen38-27b` is **interactive-only — no consumer should point at it.** It
-needs immich-ml scaled to 0 to fit (~9670 MiB resident; with frigate and
+Removed models:
+
+| ID | Removed | Why |
+|----|---------|-----|
+| `qwen3vl-8b` | 2026-10-11 | Its only consumer, tripit, moved to claude-agent-service (tripit ADR-0067) |
+| `qwen3vl-4b` | before 2026-10-11 | Retired from the config earlier; its leftover 3.6 GB on the PVC was deleted 2026-10-11 |
+| `qwen38-27b` | 2026-08-21 | Interactive trial only, see below |
+| `minicpm-v-4-5` | 2026-07-16 | Unused, "nothing special" in the 2026-05-10 benchmark |
+
+`qwen38-27b` was **interactive-only, and no consumer pointed at it.** It
+needed immich-ml scaled to 0 to fit (~9670 MiB resident; with frigate and
 immich-ml up, free VRAM lands under the ADR-0016 watchdog floor and the
 watchdog recycles llama-swap mid-conversation). It runs at 8.2 tok/s
 against qwen3-8b's 33, so it is a curiosity rather than an upgrade — see
@@ -130,12 +144,9 @@ the round-3 row in
 means it unloads 10 minutes after the last message, so a forgotten immich
 pause stops mattering on its own.
 
-(`minicpm-v-4-5` was dropped 2026-07-16 — unused, "nothing special" in the
-2026-05-10 benchmark.)
-
-`qwen3-8b` (text-only) is the Tier-0 triage model for
-`recruiter-responder`, and the enrichment + RAG-answer model for
-`paperless-ai`; the `qwen3vl-*` models serve the vision use cases.
+`qwen3-8b` (text-only) is the enrichment and RAG-answer model for
+`paperless-ai`. It was also the Tier-0 triage model for
+`recruiter-responder`, which is switched off.
 
 **`qwen3-8b` runs with `--reasoning off`** (2026-07-13). Qwen3 defaults
 to thinking under `--jinja`, which returns an *empty* `message.content`
@@ -199,7 +210,7 @@ Method, numbers, and the broader SoTA survey:
   once that finished. Two reasons it is not worth leaving up by default: the
   UI can load and *unload* models, so browsing it while a consumer job runs
   can evict that job's model; and llama-swap holds one model at a time, so
-  every interactive use competes with the six consumers below. To use it
+  every interactive use competes with paperless-ai's enrichment. To use it
   again, re-add an `ingress_factory` module (`auth = "required"`, service
   `llama-swap`, port 8080) or port-forward the Service.
 
@@ -235,8 +246,9 @@ At 8192 resident is ~5900 MiB, leaving ~2400 above the floor.
 
 The reduction costs nothing measurable. Over the seven days to 2026-09-16 the
 largest prompt any consumer sent was **1993 tokens**, so 8192 is still four
-times the observed maximum. The three consumers (paperless-ai,
-recruiter-responder, nextcloud-todos) are short-prompt classifiers. Note that
+times the observed maximum. The consumers at the time (paperless-ai,
+recruiter-responder, nextcloud-todos) were short-prompt classifiers; only
+paperless-ai remains. Note that
 llama.cpp clamps an oversized `max_tokens` and returns HTTP 200 rather than
 erroring, so a consumer that outgrows the window will truncate silently instead
 of failing loudly.
