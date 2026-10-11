@@ -16,8 +16,11 @@ locals {
   # Static env shared by the Deployment + poll CronJob. All LH_-prefixed
   # (config.py env_prefix="LH_"). Secrets come via env_from (below).
   app_env = {
-    LH_LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-    LH_LLM_MODEL    = "qwen3-8b"
+    # Extraction runs on claude-agent-service (Haiku, no-tools mode) since
+    # 2026-10-11; llama-swap is kept for paperless-ai only. The bearer is
+    # LH_LLM_API_KEY from the ExternalSecret below.
+    LH_LLM_ENDPOINT = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+    LH_LLM_MODEL    = "haiku"
     # whisper extra is not in the image yet (v0.3.0) — keep ASR off so a
     # caption-less video parks needs_attention instead of crashing on import.
     LH_WHISPER_ENABLED = "false"
@@ -62,6 +65,7 @@ resource "kubernetes_manifest" "app_external_secret" {
         { secretKey = "LH_WEBHOOK_BEARER_TOKEN", remoteRef = { key = "lesson-harvester", property = "webhook_bearer_token" } },
         { secretKey = "LH_YOUTUBE_API_KEY", remoteRef = { key = "lesson-harvester", property = "youtube_api_key" } },
         { secretKey = "LH_LEARN_LATER_PLAYLIST_ID", remoteRef = { key = "lesson-harvester", property = "learn_later_playlist_id" } },
+        { secretKey = "LH_LLM_API_KEY", remoteRef = { key = "claude-agent-service", property = "api_bearer_token" } },
       ]
     }
   }
