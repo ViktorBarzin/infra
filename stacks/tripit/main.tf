@@ -520,7 +520,7 @@ resource "kubernetes_deployment" "tripit" {
         # export). The NFS vault handles its own perms and is left untouched.
         init_container {
           name    = "chown-personal-documents"
-          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
+          image   = "busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
           command = ["sh", "-c", "chown -R 10001:999 /data/personal-documents"]
           security_context {
             run_as_user = 0
