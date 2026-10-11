@@ -551,7 +551,7 @@ resource "kubernetes_deployment" "workbench" {
           # which speaks an old GraphQL schema (missing `type` arg on
           # addDatabaseConnection) → seed-config fails, UI can't add the
           # connection. :0.3.73 was the last Keel-resolved good tag.
-          image = "dolthub/dolt-workbench:0.3.73"
+          image = "dolthub/dolt-workbench:0.3.75"
           command = ["sh", "-c", <<-EOT
             # Seed connection store
             cp /config/store.json /store/store.json
