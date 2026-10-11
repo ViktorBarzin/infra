@@ -91,15 +91,18 @@ if [ "$age" != "none" ] && [ "$age" -lt "${RAILS_HOLD_COOLDOWN:-7200}" ] 2>/dev/
   exit 0
 fi
 
-# Stop after the first automerge. Once a branch is automerged, Renovate logs
-# "Restarting repository job after automerge result" and runs the whole
-# repository job again. With prCommitsPerRunLimit=1 that second pass can land
-# nothing, and it overlaps with the pipeline the push just started: on
-# 2026-10-11 Woodpecker step pods (tier-3-edge) preempted this tier-4-aux pod
-# in that window twice, which left a failed Job and no Pushgateway record for
-# a run that had landed its bump. So the wrapper ends the run at that line and
-# records it as a success. RENOVATE_STOP_GRACE (default 20 s) bounds the wait
-# after SIGTERM before SIGKILL. Output is still passed through line by line.
+# Optional stop after the first automerge (RENOVATE_STOP_AFTER_AUTOMERGE=1).
+# Once a branch is automerged, Renovate logs "Restarting repository job after
+# automerge result" and runs the whole repository job again. With
+# prCommitsPerRunLimit=1 that second pass lands nothing, but it is the pass
+# that rewrites the Dependency Dashboard issue and the repository cache.
+# On 2026-10-11 Woodpecker step pods (tier-3-edge) preempted the then
+# tier-4-aux Renovate pod in that window twice, so this stop was turned on
+# by default; it also kept the dashboard from ever refreshing. The pod now
+# runs at the renovate PriorityClass (same value as tier-3-edge, never
+# preempts), so the default is to let the run finish. Set it to 1 to go back
+# to stopping. RENOVATE_STOP_GRACE (default 20 s) bounds the wait after
+# SIGTERM before SIGKILL. Output is still passed through line by line.
 fifo=$(mktemp -u /tmp/run-renovate.XXXXXX)
 mkfifo "$fifo"
 # Job control gives Renovate its own process group, so the signals below also
@@ -111,7 +114,7 @@ set +m
 stopped=0
 while IFS= read -r line || [ -n "$line" ]; do
   printf '%s\n' "$line"
-  if [ "$stopped" = 0 ] && [[ "$line" == *"Restarting repository job after automerge result"* ]]; then
+  if [ "${RENOVATE_STOP_AFTER_AUTOMERGE:-0}" = 1 ] && [ "$stopped" = 0 ] && [[ "$line" == *"Restarting repository job after automerge result"* ]]; then
     stopped=1
     echo "run-renovate: one bump landed; stopping Renovate before its post-automerge restart (prCommitsPerRunLimit=1 skips every branch in it)"
     kill -TERM -- "-$pid" 2>/dev/null

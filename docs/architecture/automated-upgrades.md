@@ -17,11 +17,11 @@ Until 2026-10 two other systems handled app images: Keel rolled live Deployments
 
 Design: `docs/plans/2026-10-09-software-currency-design.md` ("Ownership of versions", "Phase 3"). Decision: ADR-0030. Operations: `docs/runbooks/renovate.md`.
 
-Renovate runs as a CronJob in `stacks/renovate` every 30 minutes. It reads `renovate.json5` at the repo root, picks the highest-priority pending update, and pushes it straight to master as the `renovate-bot` Forgejo account: one commit per run, no pull request. The infra pipeline applies the commit, and for Renovate commits `scripts/renovate-rails` wraps that apply with a gate, a snapshot, a verify and a revert.
+Renovate runs as a CronJob in `stacks/renovate` every 10 minutes and skips a run while an infra pipeline is running, so bumps land back to back, one per pipeline. It reads `renovate.json5` at the repo root, picks the highest-priority pending update, and pushes it straight to master as the `renovate-bot` Forgejo account: one commit per run, no pull request. The infra pipeline applies the commit, and for Renovate commits `scripts/renovate-rails` wraps that apply with a gate, a snapshot, a verify and a revert.
 
 ```mermaid
 flowchart TD
-  R[Renovate CronJob<br/>every 30 min] -->|one bump per run| M[master]
+  R[Renovate CronJob<br/>every 10 min] -->|one bump per run| M[master]
   M --> P[Woodpecker infra pipeline]
   P --> G{upgrade gate:<br/>blocking alerts clear?}
   G -->|no, after 10 min| H[revert, no ignore entry<br/>Slack: held]
@@ -33,7 +33,7 @@ flowchart TD
   T[Trivy Operator] -.->|CVE alerts, weekly digest| HUM[people]
 ```
 
-Status on 2026-10-11: the CronJob runs every 30 minutes (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
+Status on 2026-10-11: the CronJob runs every 10 minutes (every 30 until the backlog speed-up the same day) (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
 
 ### Who updates which version
 
