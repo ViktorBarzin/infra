@@ -151,7 +151,20 @@ resource "authentik_application" "f1_stream" {
 # Default-deny: without a binding Authentik lets any authenticated user
 # through an OAuth2 application, which is what app-access-bindings.tf closed
 # for the other OIDC apps on 2026-07-26.
-resource "authentik_policy_binding" "f1_stream_members" {
+#
+# A new resource address rather than an edit of `f1_stream_members`: on
+# 2026-10-11 the authentik stack deleted the F1 Users group before this stack
+# repointed the binding, the deletion cascaded to the binding, and state was
+# left pointing at an object that no longer exists. The removed block forgets
+# that entry without trying to delete it again.
+removed {
+  from = authentik_policy_binding.f1_stream_members
+  lifecycle {
+    destroy = false
+  }
+}
+
+resource "authentik_policy_binding" "f1_stream_home_users" {
   target = authentik_application.f1_stream.uuid
   group  = data.authentik_group.home_users.id
   order  = 0
