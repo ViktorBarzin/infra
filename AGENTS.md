@@ -78,9 +78,9 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 
 ## Claude-Specific Resources
 - **Skills**: `.claude/skills/` (10).
-- **Agents**: `.claude/agents/` (10 files).
+- **Agents**: `.claude/agents/` (9 files).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
-  - **Other**: service-upgrade, issue-responder, postmortem-todo-resolver, f1-source-fixer, payslip-extractor
+  - **Other**: issue-responder, postmortem-todo-resolver, f1-source-fixer, payslip-extractor
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
 
 ## Contributor Onboarding
@@ -152,7 +152,7 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 - `docs/agents/storage-backup.md` — storage classes, NFS rules, PVC templates, 3-2-1 backups
 - `docs/agents/ci-cd.md` — CI/CD Architecture (GHA → ghcr, Woodpecker deploy)
 - `docs/agents/ingress.md` — `ingress_factory` auth and DNS tiers, Anubis, Sablier scale-to-zero
-- `docs/agents/kyverno-drift.md` — the `# KYVERNO_LIFECYCLE_V1` block every pod-owning resource needs, plus the Keel, MetalLB and Reloader markers
+- `docs/agents/kyverno-drift.md` — the `# KYVERNO_LIFECYCLE_V1` block every pod-owning resource needs, plus the MetalLB, Reloader and legacy template-annotation markers
 - `docs/agents/terraform.md` — two-tier state backend, adopting resources with `import {}`
 - `docs/agents/secrets.md` — ESO, plan-time secrets, DB rotation, Sealed Secrets
 - `docs/agents/databases.md` — CNPG host and tuning, Redis endpoints

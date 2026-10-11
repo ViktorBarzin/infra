@@ -31,8 +31,7 @@
     ".claude/**",
     "state/**",
     "tests/**",
-    "stacks/keel/**", // retired in wave 5
-    "stacks/diun/**", // retired in wave 5
+    "stacks/keel/**", // retired in wave 5, stack kept parked at 0 pods
     "stacks/monitoring/modules/monitoring/prometheus_snmp_chart_values.yaml", // 57k lines, no images
     // Shared module defaults (e.g. the anubis image_tag): a change under
     // modules/ makes the pipeline re-apply every platform stack, so these pins

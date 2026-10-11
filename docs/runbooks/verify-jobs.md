@@ -129,7 +129,7 @@ Every stack also gets the floor. "Full only" checks are skipped with `--quick`.
 | homepage | chart | healthcheck `up`; service list renders (5+ groups, 50+ services); Kubernetes widget reads the cluster |
 | immich | db | Postgres has `vchord` and `vector`, `vchord` preloaded, `clip_index` is a vchordrq index, an ANN query over `smart_search` returns rows, scratch schema write/read/drop; server and ML ping; one CLIP textual inference; full only: `postgresql-backup` Job |
 | k8s-dashboard | chart | all seven deployments converged; web serves the UI; API issues a CSRF token; kong to auth to API lists namespaces with a bearer token |
-| keel | chart | converged; health endpoint; no panics (stack is retired in wave 5) |
+| keel | chart | parked: no Deployment and no pods in `keel` (retired 2026-10-11, stack kept at 0 pods) |
 | kured | chart | both DaemonSets converged; startup log has the schedule and lock; gated sentinel and Prometheus filter in the args; `kured_reboot_required` served |
 | kyverno | chart | three controllers converged; every ClusterPolicy Ready; a privileged pod is denied and a plain pod gets `tier-4-aux` priority and `ndots=2` (dry runs); policy reports stay off; update requests bounded |
 | metallb | chart | controller and speakers converged; every LoadBalancer Service has an IP; configuration Valid; L2 announcements have a node; TCP to the state DB, Forgejo SSH, DNS and ingress VIPs |

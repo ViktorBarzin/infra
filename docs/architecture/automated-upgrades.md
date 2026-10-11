@@ -1,235 +1,120 @@
 # Automated Upgrades
 
-This doc covers three independent automation paths, plus a short section on Keel, which applied in-cluster image updates until it was parked on 2026-10-10 (see "Keel").
+Four automation paths keep the cluster current. Each owns a distinct set of versions:
 
-1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
-2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
-3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — daily detection CronJob → chain of phase Jobs (preflight → master → one worker Job per worker, enumerated live → postflight). See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
+| What | Path | Section |
+|---|---|---|
+| Third-party versions in this repo: image pins in `.tf`, Helm values tags, `helm_release` chart versions | Renovate commits a bump to master; the Woodpecker rails apply it, verify it, and revert it on failure | "Third-party versions: Renovate and the CI rails" |
+| First-party images (our own apps) | Each app's CI builds the image and rolls its Deployment (`docs/architecture/ci-cd.md`) | "First-party images without a deploy step" lists the ones that have no deploy step yet |
+| OS packages on the K8s nodes | `unattended-upgrades` + `kured` with a sentinel gate and Prometheus halt-on-alert | "K8s Node OS Upgrades", runbook `docs/runbooks/k8s-node-auto-upgrades.md` |
+| kubeadm, kubelet, kubectl | Daily detection CronJob, then a chain of phase Jobs | "K8s Version Upgrades", runbook `docs/runbooks/k8s-version-upgrade.md` |
 
-Since 2026-10-10 the Trivy Operator reports which running images have fixable Critical/High CVEs (`docs/architecture/trivy.md`). It does not trigger upgrades itself; the software-currency design (`docs/plans/2026-10-09-software-currency-design.md`) has Renovate pick up fixed versions, and rewrites this doc around Renovate when Phase 3 lands.
+The Trivy Operator supplies the CVE signal ("CVE signal: Trivy"). `/upgrade-state` (`scripts/upgrade_state.sh`) reports the state of the Renovate, OS and K8s paths in one table.
 
-The Renovate stack itself (`stacks/renovate`, runbook `docs/runbooks/renovate.md`) exists since 2026-10-10 and is suspended until the rails and the Keel cutover are in place. Its repo config is `renovate.json5` at the repo root.
+Until 2026-10 two other systems handled app images: Keel rolled live Deployments onto new tags, and DIUN fed an n8n workflow that started an upgrade agent. Both were retired in the software-currency cutover (`docs/plans/2026-10-09-software-currency-design.md`, ADR-0030); their history and the markers they left behind are at the end of this part of the doc.
 
-Also since 2026-10-10, every chart, database and GPU stack has a `stacks/<stack>/verify.sh`, run as a Kubernetes Job by `scripts/verify/run` (`docs/runbooks/verify-jobs.md`). The Woodpecker rails (`scripts/renovate-rails`, runbook `docs/runbooks/renovate.md` "Rails") run these checks after every Renovate apply and revert a bump that fails them.
+## Third-party versions: Renovate and the CI rails
 
-## Overview
+Design: `docs/plans/2026-10-09-software-currency-design.md` ("Ownership of versions", "Phase 3"). Decision: ADR-0030. Operations: `docs/runbooks/renovate.md`.
 
-OSS services are automatically upgraded via a pipeline that detects new container image versions, analyzes changelogs for breaking changes, backs up databases, applies version bumps through Terraform, and verifies health post-upgrade with automatic rollback on failure.
+Renovate runs as a CronJob in `stacks/renovate` every 30 minutes. It reads `renovate.json5` at the repo root, picks the highest-priority pending update, and pushes it straight to master as the `renovate-bot` Forgejo account: one commit per run, no pull request. The infra pipeline applies the commit, and for Renovate commits `scripts/renovate-rails` wraps that apply with a gate, a snapshot, a verify and a revert.
 
-## Architecture
-
-```
-DIUN (every 6h)
-  │ detects new image tags
-  │
-  ▼
-n8n Webhook (POST /webhook/<uuid>)
-  │ filters: skip databases, custom images, infra, :latest
-  │ rate limit: max 5 upgrades per 6h window
-  │
-  ▼
-HTTP POST → claude-agent-service (K8s)
-  │
-  ▼
-claude -p "upgrade agent prompt" (in-cluster)
-  │
-  ▼
-Service Upgrade Agent
-  ├── 1. Identify service + .tf files (grep stacks/)
-  ├── 2. Resolve GitHub repo (config overrides + auto-detect)
-  ├── 3. Fetch changelogs via GitHub API (authenticated, 5000 req/hr)
-  ├── 4. Classify risk (SAFE / CAUTION / UNKNOWN)
-  ├── 5. Slack notification — starting
-  ├── 6. DB backup (if DB-backed service)
-  ├── 7. Edit .tf files (version bump + config changes)
-  ├── 8. Commit + push (Woodpecker CI applies)
-  ├── 9. Wait for CI (poll Woodpecker API)
-  ├── 10. Verify (pod ready + HTTP + Uptime Kuma)
-  ├── 11a. SUCCESS → Slack report
-  └── 11b. FAILURE → git revert + CI re-applies → Slack alert
+```mermaid
+flowchart TD
+  R[Renovate CronJob<br/>every 30 min] -->|one bump per run| M[master]
+  M --> P[Woodpecker infra pipeline]
+  P --> G{upgrade gate:<br/>blocking alerts clear?}
+  G -->|no, after 10 min| H[revert, no ignore entry<br/>Slack: held]
+  G -->|yes| S[snapshot: the stack's *-backup CronJobs<br/>+ etcd for chart bumps]
+  S --> A[terragrunt apply]
+  A --> V[scripts/verify/run per stack]
+  V -->|pass| OK[marker moves on]
+  V -->|fail| F[revert + ignore entry<br/>apply reverted tree<br/>Slack names the snapshot]
+  T[Trivy Operator] -.->|CVE alerts, weekly digest| HUM[people]
 ```
 
-## Components
+Status on 2026-10-11: the CronJob is suspended (`variable "suspended"` in `stacks/renovate/main.tf`, default `true`) until wave 6 of the build plan unsuspends it. The rails were exercised end to end on one passing and one failing bump in wave 4.
 
-### DIUN (Docker Image Update Notifier)
-- **Stack**: `stacks/diun/`
-- **Schedule**: Every 6 hours (`DIUN_WATCH_SCHEDULE=0 */6 * * *`)
-- **Role**: Detection only — fires a webhook to n8n when a new image tag is found
-- **Skip patterns**: Databases, `viktorbarzin/*`, `registry.viktorbarzin.me/*`, infrastructure images
-- **Webhook**: `DIUN_NOTIF_WEBHOOK_ENDPOINT` from Vault `secret/diun` → `n8n_webhook_url`
+### Who updates which version
 
-### n8n Workflow ("DIUN Upgrade Agent")
-- **Stack**: `stacks/n8n/`
-- **Workflow backup**: `stacks/n8n/workflows/diun-upgrade.json`
-- **Webhook path**: UUID-based (`/webhook/<uuid>`)
-- **Filters**:
-  - Only `status=update` (skip `new`, `unchanged`)
-  - Skip databases, custom images, infra images, `:latest`
-- **Rate limiting**: Max 5 upgrades per 6-hour window using `$getWorkflowStaticData('global')`
-- **Action**: HTTP POST to `claude-agent-service.claude-agent.svc:8080/execute` with the upgrade agent prompt
+| Version | Owner | Notes |
+|---|---|---|
+| `helm_release` chart versions in `stacks/` | Renovate | Every active release sets an explicit `version` (since 2026-10-10) |
+| Third-party image pins in `.tf`, including `variable` defaults with a `# renovate:` comment | Renovate | Pinned to the live string during the Keel cutover |
+| Tags inside Helm values files and `.tpl` values | Renovate (`customManagers` regexes in `renovate.json5`) | |
+| Pins under `modules/` (for example the `anubis_instance` image tag) | Manual for now | `ignorePaths` excludes `modules/**`, because a change there re-applies every platform stack |
+| `.woodpecker/*.yml` CI images | Manual | Excluded so a broken CI image cannot break the rails that would revert it |
+| First-party images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, Forgejo registry) | The app's own CI | Renovate skips them (package rule "Our own images") |
+| CoreDNS | Nobody yet | Not in Terraform, and kubeadm skips the addon (`scripts/update_k8s.sh`). Keel rolled it before 2026-10 |
 
-### Upgrade Agent
-- **Prompt**: `.claude/agents/service-upgrade.md`
-- **Config**: `.claude/reference/upgrade-config.json`
-- Contains:
-  - 50+ Docker image → GitHub repo mappings
-  - 22 Helm chart → GitHub repo mappings
-  - 27 DB-backed service definitions with backup metadata
-  - Skip patterns and breaking change keywords
+Components held for a supervised session are disabled `packageRules` with a `HELD:` description in `renovate.json5`: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, the NVIDIA driver major, the Loki chart repository switch, Kyverno 1.20 (chart 3.10), Forgejo, and Technitium 14 to 15.
 
-## Risk Classification
+### Version patterns
 
-| Risk | Criteria | Verification | Version Jump |
-|------|----------|-------------|-------------|
-| **SAFE** | Patch/minor bump, no breaking keywords in release notes | 2 minutes | Direct to target |
-| **CAUTION** | Major bump, or breaking change keywords found, or in `version_jump_always_step` list | 10 minutes | Step through each version |
-| **UNKNOWN** | Changelog unavailable | 2 minutes (SAFE defaults) | Direct to target |
+| Pattern | Example | How Renovate reads it |
+|---|---|---|
+| Variable-based | `variable "immich_version" { default = "v3.3.1" }` | A `# renovate:` comment names the datasource and package |
+| Hardcoded | `image = "vaultwarden/server:1.35.4"` | The image-string custom manager |
+| Helm chart | `version = "2026.2.2"` in `helm_release` | Renovate's Terraform manager |
 
-**Breaking change keywords**: `breaking`, `BREAKING`, `migration required`, `schema change`, `database migration`, `manual intervention`, `action required`, `removed`, `deprecated`, `renamed`, `incompatible`
-
-## Database Backup
-
-DB-backed services trigger a pre-upgrade backup automatically:
-- **Shared PostgreSQL**: `kubectl create job --from=cronjob/postgresql-backup -n dbaas`
-- **Shared MySQL**: `kubectl create job --from=cronjob/mysql-backup -n dbaas`
-- **Dedicated databases** (e.g., Immich): Trigger existing backup CronJob in the service's namespace
-
-If the backup fails, the upgrade is **aborted**.
-
-## Rollback
-
-On verification failure:
-1. `git revert --no-edit <upgrade-commit-sha>`
-2. `git push` → Woodpecker CI re-applies the old version
-3. Re-verify rollback succeeded
-4. If rollback also fails → CRITICAL Slack alert for manual intervention
-
-## Version Patterns
-
-The agent handles all three version patterns in Terraform:
-
-| Pattern | Example | Agent Action |
-|---------|---------|-------------|
-| Variable-based | `variable "immich_version" { default = "v2.7.4" }` | Edit the `default` value |
-| Hardcoded | `image = "vaultwarden/server:1.35.4"` | Replace tag in image string |
-| Helm chart | `version = "2026.2.2"` in `helm_release` | Bump chart version |
-
-Since 2026-10-10 every active `helm_release` in `stacks/` sets an explicit chart `version`, so Renovate can own each one (`docs/plans/2026-10-09-software-currency-design.md`, "Ownership of versions"). The last unpinned release, `homepage`, was pinned to its live chart 2.1.0. Each release also sets `atomic = true` and `cleanup_on_fail = true`, with two documented exceptions:
+Each `helm_release` also sets `atomic = true` and `cleanup_on_fail = true`, with two documented exceptions:
 
 - `prometheus` (`stacks/monitoring/modules/monitoring/prometheus.tf`) sets `cleanup_on_fail` only. It runs with `wait = false`, and Helm turns waiting back on whenever `atomic` is set.
 - `vault` (`stacks/vault/main.tf`) keeps `atomic = false`, because HA pods start sealed and fail readiness until they are unsealed.
 
-Any change to a `helm_release`, even a flag such as `cleanup_on_fail`, runs a full `helm upgrade` that re-renders the chart. Where Keel has moved a workload's image past the tag in Terraform, that upgrade puts the Terraform tag back and rolls the pods. On 2026-10-10 this rolled `homepage` (same image) and moved `woodpecker` from Keel's v3.14.1 back to v3.14.0. Because CI runs inside Woodpecker, the roll stopped the pipeline that was applying it and left the release in `pending-upgrade`; the fix was to delete the dead revision Secret, set the tag to v3.14.1, and apply `stacks/woodpecker` from a workstation. Apply `stacks/woodpecker` changes that roll its pods from a workstation, then push, so the CI apply finds nothing to change. Before changing a `helm_release`, compare its live images with the Terraform tags.
+Any change to a `helm_release`, even a flag such as `cleanup_on_fail`, runs a full `helm upgrade` that re-renders the chart. Where a workload's live image differs from the tag in Terraform (Keel moved several past their Terraform tags before it was parked), that upgrade puts the Terraform tag back and rolls the pods. On 2026-10-10 this rolled `homepage` (same image) and moved `woodpecker` from Keel's v3.14.1 back to v3.14.0. Because CI runs inside Woodpecker, the roll stopped the pipeline that was applying it and left the release in `pending-upgrade`; the fix was to delete the dead revision Secret, set the tag to v3.14.1, and apply `stacks/woodpecker` from a workstation. Apply `stacks/woodpecker` changes that roll its pods from a workstation, then push, so the CI apply finds nothing to change. Before changing a `helm_release`, compare its live images with the Terraform tags.
 
-## Configuration
+### Pins Renovate cannot bump yet
 
-### Excluding images (handled by DIUN + n8n)
-- Databases: `*postgres*`, `*mysql*`, `*redis*`, `*clickhouse*`, `*etcd*`
-- Custom: `viktorbarzin/*`, `registry.viktorbarzin.me/*`, `ancamilea/*`, `mghee/*`
-- Infrastructure: `registry.k8s.io/*`, `quay.io/tigera/*`, `nvcr.io/*`, `reg.kyverno.io/*`
-- `:latest` tags
+These stayed on their previous strings during the cutover, each with its ignore line kept, because a clean pin would restart pods or needs a decision first. Each batch commit names them with the reason:
 
-### Rate limiting
-- Max 5 upgrades per 6-hour DIUN scan cycle
-- Counter resets when the window expires
-- Configurable in the n8n "Filter and Rate Limit" code node
+- Floating tags whose pods run digests that match no version tag (`# FLOATING_TAG_DEFERRED`): crowdsec firewall-bouncer, immich-frame, immich-postgresql, kured-sentinel-gate, lean-proxy, tor-proxy, wireguard and wg-peer-sync, auth-proxy, bot-block-proxy. authfix (`python:3.13-alpine`) and sysctl-inotify (`busybox:1.37`) are Terraform-owned with no ignore and the same multi-digest situation, so Renovate may propose bumps for them through the rails.
+- Digest-only pins: anisette, llama-swap, gluetun, and headscale-ui (`# DIGEST_PIN_DEFERRED`).
+- changedetection, whose two images run in each other's containers (`# IMAGE_SWAP_DEFERRED`).
+- Nextcloud, whose tag comes from a live-tag lookup that Renovate cannot read.
 
-### Services that always step through versions
-- Authentik, Nextcloud, Immich (configured in `upgrade-config.json` → `version_jump_always_step`)
+## First-party images without a deploy step
 
-## Monitoring
+Keel was the only rollout for seven first-party apps. With Keel parked they keep running their current image, and a new build does not reach the cluster until someone rolls the Deployment:
 
-- **Slack**: All upgrade events reported (start, success, failure, rollback)
-- **Git**: Detailed commit messages with changelog summaries, risk level, backup status
-- **DIUN Slack**: REMOVED 2026-07-02 (per-tag @channel pings in #image-updates; human cadence is the weekly upgrade report). The n8n webhook feed to the upgrade agent is unchanged.
+| App | Image | What Keel did | What it needs |
+|---|---|---|---|
+| excalidraw | `ghcr.io/viktorbarzin/excalidraw-library:latest` | `force`, digest tracking every 5 min | a rollout step in `.github/workflows/build-excalidraw.yml` |
+| interview-prep-app | `ghcr.io/viktorbarzin/interview-prep-app:latest` | `force`, digest tracking every 5 min | a rollout step in its build workflow |
+| k8s-portal | `ghcr.io/viktorbarzin/k8s-portal:latest` | `force`, digest tracking every 5 min | a rollout step in `.github/workflows/build-k8s-portal.yml` |
+| pages-publish | `ghcr.io/viktorbarzin/pages-publish:latest` | `force` + `match-tag`, digest tracking every 5 min | a rollout step in `.github/workflows/build-pages-publish.yml` |
+| repowise | `ghcr.io/viktorbarzin/repowise` | `patch` over the daily upstream rebuild | a rollout step in `.github/workflows/build-repowise.yml` |
+| learning | `ghcr.io/viktorbarzin/learning` semver tags | `patch` ("pushing a new patch tag is the whole of the rollout") | a `kubectl set image` step in learning's build workflow |
+| trading-bot | `ghcr.io/viktorbarzin/trading-bot-service`, `-dashboard` | `patch`, hourly poll | a deploy step in trading-bot's `build.yml` |
 
-## Bulk Upgrades
+Their stacks keep the Keel lines (`KEEL_IGNORE_IMAGE`, the `keel.sh/*` ignores and the `keel.sh/enrolled` namespace label), which are inert now. `stacks/keel` is kept with `local.keel_enabled = false` (0 pods) rather than deleted. Once each app has a deploy step, migrate its stack like the other cutover batches, then delete `stacks/keel` and the `ghcr.io/viktorbarzin/keel` fork image. Until then, roll one of these apps by hand: `kubectl -n <ns> rollout restart deploy/<name>` for a `:latest` image pulled with `imagePullPolicy: Always`, or `kubectl -n <ns> set image` to the new tag.
 
-To upgrade all outdated services at once, fire webhooks for each service:
+## CVE signal: Trivy
 
-```bash
-WEBHOOK="https://n8n.viktorbarzin.me/webhook/<uuid>"
-curl -s -X POST "$WEBHOOK" \
-  -H "Content-Type: application/json" \
-  -d '{"diun_entry_status":"update","diun_entry_image":"<image>","diun_entry_imagetag":"<new_tag>","diun_entry_provider":"kubernetes"}'
-```
+Since 2026-10-10 the Trivy Operator (`stacks/trivy-operator`, `docs/architecture/trivy.md`) scans every running image, plus secrets in image layers, workload and RBAC configuration, and node configuration. Fixable Critical/High CVEs on internet-reachable workloads and secrets found in images alert in Slack `#alerts`; everything else goes to a weekly section of `alert-digest`. Trivy does not start upgrades: Renovate picks up a fixed release on its next run once it is published. To act on a finding sooner, start a Renovate run by hand (`docs/runbooks/renovate.md`).
 
-n8n processes all webhooks in parallel (one `claude -p` per webhook); `claude-agent-service` runs them concurrently via a bounded pool (`MAX_CONCURRENCY`, default 10, excess queued) — it no longer single-flight-locks. Before bulk runs, increase the rate limit in the n8n Code node (`MAX_UPGRADES_PER_WINDOW`) and reset the counter:
+## Legacy markers left by Keel and DIUN
 
-```sql
--- Reset rate limiter
-UPDATE workflow_entity SET "staticData" = '{}'::json WHERE name = 'DIUN Upgrade Agent';
-```
+The cutover changed no pod template, so two kinds of Keel and DIUN metadata are still on live workloads, and Terraform keeps tolerating them:
 
-### First Bulk Run (2026-04-16)
+- `keel.sh/update-time` on pod templates, ignored as `# LEGACY_TEMPLATE_ANNOTATIONS` (about 160 lines). Removing the ignore strips the stamp, which is a pod-template change and restarts the workload (84 workloads carried it on 2026-10-10).
+- `diun.*` pod-template annotations, declared in about 40 Deployments and in the authentik and Technitium configuration. They are inert since DIUN is gone; removing them restarts those pods (traefik, technitium, authentik server, nextcloud and immich among them), so each goes with the next change that rolls its workload anyway.
 
-12 services upgraded in ~30 minutes, fully automated:
+Chart-rendered workloads and the authentik outposts also keep `keel.sh/policy|trigger|pollSchedule` metadata annotations that the deleted Kyverno policy stamped; Terraform does not declare them and they are inert. Marker reference: `docs/agents/kyverno-drift.md`.
 
-| Service | From | To | Notes |
-|---------|------|----|-------|
-| audiobookshelf | 2.32.1 | 2.33.1 | Security fixes (IDOR) |
-| owntracks | 0.9.9 | 1.0.1 | Major version bump |
-| open-webui | v0.7.2 | v0.8.12 | |
-| immich | v2.7.4 | v2.7.5 | Patch, DB backup taken |
-| coturn | 4.6.3-r1 | 4.10.0-r1 | Major version bump |
-| shlink | 4.3.4 | 5.0.2 | Major, DB-backed |
-| phpipam | v1.7.0 | v1.7.4 | Patch, DB-backed |
-| onlyoffice | 8.2.3 | 9.3.1 | Major version bump |
-| paperless-ngx | 2.16.4 | 2.20.14 | Agent also bumped memory 1Gi → 2Gi |
-| linkwarden | v2.9.1 | v2.14.0 | 23 intermediate releases, 254M DB backup |
-| synapse | v1.125.0 | v1.151.0 | Large jump, DB-backed |
-| dawarich | 0.37.1 | 1.6.1 | Upgraded → verification failed → auto-rolled back → forward-fixed |
+## History: DIUN and the upgrade agent (2026-04 to 2026-10)
 
-Key behaviors observed:
-- **Auto-rollback works**: Dawarich upgrade failed verification, agent reverted, then re-applied with a forward fix
-- **Resource awareness**: Paperless-ngx agent detected the new version needed more memory and bumped limits
-- **DB backups**: All DB-backed services had pre-upgrade dumps taken automatically
-- **Changelog analysis**: Linkwarden commit summarized 23 intermediate releases; vaultwarden (earlier test) identified 3 CVEs
-- **Parallel execution**: 11 agents ran concurrently, handled git rebase conflicts automatically
+From April 2026, DIUN (`stacks/diun`, a 6-hourly image scan) posted new-image events to an n8n webhook; the "DIUN Upgrade Agent" workflow filtered and rate-limited them (5 per 6 hours) and asked `claude-agent-service` to run the service-upgrade agent (`.claude/agents/service-upgrade.md`), which read changelogs, took a database backup, bumped the version in Terraform, waited for CI and reverted on a failed check. Its first bulk run on 2026-04-16 upgraded 12 services in about 30 minutes, including one automatic rollback and forward fix (dawarich).
 
-## Secrets
+The n8n filter kept only `status=update` (a new digest on an existing tag) and dropped `status=new` (a new tag), so after April it received digest re-pushes but no version bumps; its last upgrade commit was 2026-04-19. DIUN watched images only, so chart versions had no watcher. ADR-0030 replaced the pipeline with Renovate, and batch B17 (2026-10-11) removed DIUN, its PVC, the n8n workflow, the agent prompt and `upgrade-config.json`; they remain in git history before that commit. The `claude-agent-service` credentials the agent used are documented in `docs/architecture/incident-response.md`.
 
-| Secret | Vault Path | Purpose |
-|--------|-----------|---------|
-| n8n webhook URL | `secret/diun` → `n8n_webhook_url` | DIUN → n8n trigger |
-| Agent API bearer token | `secret/claude-agent-service` → `api_bearer_token` | n8n → claude-agent-service `/execute` auth. Synced into both `claude-agent` ns (consumer) and `n8n` ns (caller) via ESO. n8n exposes it to the container as `CLAUDE_AGENT_API_TOKEN` env var. |
-| Claude OAuth (primary) | `secret/claude-agent-service` → `claude_oauth_token` | Long-lived 1-year token from `claude setup-token`. Consumed by the CLI via `CLAUDE_CODE_OAUTH_TOKEN` env var (set on the container via `envFrom`). Preferred over the short-lived `.credentials.json` — CLI skips the refresh dance entirely. Rotate yearly; alert fires 30d out. |
-| Claude OAuth (spares) | `secret/claude-agent-service-spare-{1,2}` → `claude_oauth_token` | Failover tokens. Minted alongside primary (verified Anthropic does NOT revoke earlier sessions on new mint). Swap into primary if revocation or compromise. |
-| GitHub PAT | `secret/viktor` → `github_pat` | Changelog fetch (5000 req/hr) |
-| Slack webhook | `secret/platform` → `alertmanager_slack_api_url` | Upgrade notifications |
-| Woodpecker token | `secret/viktor` → `woodpecker_token` | CI pipeline polling |
+## History: Keel (2026-05 to 2026-10)
 
-## OAuth token lifecycle
+Keel (`stacks/keel/`) polled the registry of each enrolled workload hourly and rolled it when a newer tag or digest matched the workload's `keel.sh/policy`. Enrollment and default annotations came from the Kyverno `inject-keel-annotations` policy (formerly `stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`. Keel changed the live cluster outside git, so its updates skipped any snapshot, verify or revert, and Terraform needed `ignore_changes` markers to tolerate it; ADR-0030 retired it for that reason.
 
-The CLI supports two auth modes. We use the second — long-lived.
+Batch B00 (2026-10-10) parked Keel (`local.keel_enabled = false` uninstalls the helm release; chart 1.2.3 hard-codes `replicas: 1`, so a `replicaCount` value has no effect) and deleted the Kyverno policy with its background-controller ClusterRole. Keel stopped first because a running Keel writes back its cached copy of a workload and would have reverted the edits of the later batches.
 
-| Mode | How minted | TTL | Needs refresh? | When to use |
-|------|-----------|-----|----------------|-------------|
-| `claude login` → `.credentials.json` | Interactive browser OAuth | Access ~6h + refresh token | Yes — CLI auto-refreshes on startup if refresh token valid | Human dev machines |
-| `claude setup-token` → opaque `sk-ant-oat01-*` | Interactive browser OAuth | **1 year** | No — expires hard | **Headless / service accounts (us)** |
-
-When both are present on disk, `CLAUDE_CODE_OAUTH_TOKEN` env var wins.
-
-**Harvesting headless**: `setup-token` uses Ink (React for terminals) and needs a real PTY with **≥300-column width**. At 80-col, Ink wraps and DROPS one character at the wrap boundary (107-char invalid instead of 108-char valid). Python wrapper pattern documented in memory; we harvested 2 spare tokens into Vault on 2026-04-18 using a temporary harvester pod.
-
-**Monitoring**: CronJob `claude-oauth-expiry-monitor` (claude-agent ns, every 6h) pushes `claude_oauth_token_expiry_timestamp{path="..."}` to Pushgateway. Alerts: `ClaudeOAuthTokenExpiringSoon` (30d, warn), `ClaudeOAuthTokenCritical` (7d, crit), `ClaudeOAuthTokenMonitorStale` (48h no push, warn), `ClaudeOAuthTokenMonitorNeverRun` (metric absent, warn).
-
-**Rotation**: on alert, harvest a new token, `vault kv patch secret/claude-agent-service claude_oauth_token=<new>`, update the `claude_oauth_token_mint_epochs` local in `stacks/claude-agent-service/main.tf`, `scripts/tg apply` → alert clears on next cron tick.
-
-## n8n workflow gotchas
-
-The `DIUN Upgrade Agent` workflow is imported once into n8n's PG DB — it is **not** Terraform-managed. The JSON at `stacks/n8n/workflows/diun-upgrade.json` is a backup; the live state lives in `workflow_entity.nodes`. Drift between the two is possible.
-
-- **HTTP Request node header expressions must use template-literal form**: `=Bearer {{ $env.CLAUDE_AGENT_API_TOKEN }}` works; `='Bearer ' + $env.CLAUDE_AGENT_API_TOKEN` does NOT evaluate and sends an empty/bogus header → 401 from claude-agent-service.
-- **`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`** must be set on the n8n deployment for expressions to read `$env.*` at all.
-- **Troubleshooting 401**: the workflow will show `success` status on the webhook node but error on `Run Upgrade Agent`. Inspect in n8n UI → Executions, or query `execution_entity` + `execution_data` directly. Claude-agent-service logs will also show `POST /execute HTTP/1.1 401 Unauthorized`.
-- **Patching the live workflow** (one-off, since it's not in TF): `UPDATE workflow_entity SET nodes = REPLACE(nodes::text, OLD, NEW)::json WHERE name = 'DIUN Upgrade Agent';`
-
-## Keel
-
-Status since 2026-10-10: Keel is parked (`local.keel_enabled = false` in `stacks/keel/main.tf` uninstalls the helm release, so it runs 0 pods; chart 1.2.3 hard-codes `replicas: 1`, so a `replicaCount` value has no effect) and the Kyverno `inject-keel-annotations` policy, with its background-controller ClusterRole, is deleted. This is batch B00 of the Keel to Renovate cutover (`docs/plans/2026-10-09-software-currency-design.md`, Phase 3). Keel stops first because a running Keel writes back its cached copy of a workload and would revert the edits of the later batches. Nothing rolls app images on its own until Renovate takes over each stack. The `keel.sh/*` annotations already on workloads stay in place and are inert; later batches remove the ones Terraform declares, and the stack is removed after the last batch. Re-enabling Keel means setting `keel_enabled = true` and restoring `keel-annotations.tf` from git history.
-
-Cutover progress, one batch per landing (batches and classes: the Keel inventory of 2026-10-10). Each migrated stack pins every third-party image to the exact string that was running, so the apply changes no pod template; drops the `KEEL_IGNORE_IMAGE` image ignores and the `keel.sh/policy|trigger|pollSchedule|match-tag` annotation ignores; and removes the `keel.sh/enrolled` namespace label. Two kinds of ignore stay, under neutral markers: `keel.sh/update-time` on the pod template (`# LEGACY_TEMPLATE_ANNOTATIONS`), because stripping it restarts the pod, and first-party images that their own CI deploys (`# CI_SETS_IMAGE`) or that are built by hand and pushed as `:latest` (`# FIRST_PARTY_IMAGE`; Renovate skips first-party images). Stacks that could not move cleanly are listed with the reason in the batch commit and stay on their previous lines.
+Each later batch pinned every third-party image in its stacks to the exact string that was running, so the apply changed no pod template; dropped the `KEEL_IGNORE_IMAGE` image ignores and the `keel.sh/policy|trigger|pollSchedule|match-tag` annotation ignores; and removed the `keel.sh/enrolled` namespace label. First-party images that their own CI deploys keep their ignore as `# CI_SETS_IMAGE`, and hand-built first-party `:latest` images as `# FIRST_PARTY_IMAGE`. Stacks that could not move cleanly are listed in the batch commit and stay on their previous lines (batches and classes: the Keel inventory of 2026-10-10).
 
 | Batch | Stacks | Date |
 |---|---|---|
@@ -248,25 +133,14 @@ Cutover progress, one batch per landing (batches and classes: the Keel inventory
 | B13 | technitium, vault. technitium-primary, -secondary and -tertiary were already pinned to the live `technitium/dns-server:14.3.0`; only their image ignores, the `keel.sh/policy|trigger|pollSchedule` annotation ignores and the `keel.sh/enrolled` namespace label go. Renovate holds the Technitium 14 -> 15 major; 14.x patch and minor releases land through the rails. The primary keeps its `diun.*` pod-template annotations, since removing them restarts the DNS pod. vault only lost the namespace label; its images stay with the chart values (`local.vault_version`, already the live `2.1.2`), and CI applies the vault stack | 2026-10-10 |
 | B14 | dbaas. pgadmin moved from the bare `dpage/pgadmin4` to the live `dpage/pgadmin4:9.16`; phpmyadmin (`phpmyadmin/phpmyadmin:5.2.3`), mysql-standalone (`mysql:8.4.8`) and mysqld-exporter (`prom/mysqld-exporter:v0.20.0`) were already pinned to the live string. The image ignores and `keel.sh/policy|trigger|pollSchedule|match-tag` annotation ignores go, as do the explicit `keel.sh/policy = "never"` annotations on mysql-standalone and mysqld-exporter; the MySQL pin itself is what holds the version now, and Renovate holds MySQL majors. pgadmin keeps `keel.sh/update-time` on its pod template as `LEGACY_TEMPLATE_ANNOTATIONS`, since removing it rolls the pod template. The dbaas namespace never carried `keel.sh/enrolled` | 2026-10-11 |
 | B15 | authentik. pgbouncer moved from `edoburu/pgbouncer:latest` to the live `edoburu/pgbouncer:v1.25.2-p0`, and its `image_pull_policy` from `Always` to the live `IfNotPresent`; both ignores go. The explicit `keel.sh/policy|trigger|pollSchedule` annotations on the pgbouncer Deployment and the `keel.sh/match-tag` ignore are removed. pgbouncer keeps `keel.sh/update-time` on its pod template as `LEGACY_TEMPLATE_ANNOTATIONS`, since removing it rolls the pods. renovate.json5 gained regex versioning for pgbouncer (`vX.Y.Z-pN`). goauthentik-server and -worker stay with the chart: the `helm_release` version is the authentik version, the values carry no image override, and the `diun.*` pod annotations in `values.yaml` stay, since removing them restarts the server pods. The authentik namespace never carried `keel.sh/enrolled`; the outposts (`ak-outpost-*`) are set by the outpost controller | 2026-10-11 |
+| B16 | traefik. error-pages moved from `ghcr.io/tarampampam/error-pages:3` to the live `:3.0.1`; the explicit `keel.sh/policy = "never"` opt-out on authfix, the `keel.sh/*` annotation ignores on auth-proxy, authfix, bot-block-proxy, error-pages and x402-gateway, and the namespace label go. auth-proxy (`nginx:1-alpine`) and bot-block-proxy (`openresty/openresty:alpine`) keep their image ignore as `# FLOATING_TAG_DEFERRED` (each has 2 pods on different digests); authfix stays on `python:3.13-alpine` for the same reason; x402-gateway keeps `# CI_SETS_IMAGE`. The traefik Deployment stays with its chart | 2026-10-11 |
+| B17 | Retirement. DIUN (`stacks/diun`, its PVC, the Keel release watch and the n8n webhook notifier), the n8n "DIUN Upgrade Agent" workflow and its backup JSON, `build-diun.yml`, the service-upgrade agent and `upgrade-config.json`, `scripts/audit-keel-image-ownership.py` and the `KeelUpdateFailing` Loki rule are removed; `/upgrade-state` reports Renovate instead of Keel; `keel` leaves the Kyverno security-policy exclude list; n8n drops its Keel ignores and namespace label. `stacks/keel` stays parked at 0 pods (see "First-party images without a deploy step") | 2026-10-11 |
 
-While it ran, Keel (`stacks/keel/`) polled the registry of each enrolled workload hourly and rolled it when a newer tag or digest matched the workload's `keel.sh/policy`. Enrollment and default annotations came from the Kyverno `inject-keel-annotations` policy (formerly `stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
-
-### Patched image (`keel.sh/pollTagsAfterCurrent`)
-
-Since 2026-10-08 the cluster runs Keel 0.22.4 plus one patch, built from `github.com/ViktorBarzin/keel` (branch `homelab`, workflow `homelab-image.yml`) and pinned by digest in `stacks/keel/main.tf`.
-
-- **Why**: stock Keel lists every tag of a repository on each poll, 100 per page. `ghcr.io/immich-app/immich-machine-learning` has more than 150,000 tags, and ghcr returned HTTP 429 around page 1,537 on every hourly poll from 2026-08 to 2026-10, so the ML deployment was never updated by Keel in that period and drifted behind immich-api.
-- **What it adds**: the annotation `keel.sh/pollTagsAfterCurrent: "true"`. Keel then lists only the tags pushed after the running tag, using the registry's `last` cursor. ghcr lists tags in push order, so this is a few pages instead of the whole list.
-- **Safety net**: the distribution spec lists tags lexically (Docker Hub, quay), where a cursor would skip `v3.10.0` when running `v3.9.x`. The patch uses the cursor result only when the registry's response shows push order, and otherwise lists every tag as stock Keel does.
-- **Scope**: it applies only when every workload polling the same image opts in. It was set on immich-api, immich-worker and immich-machine-learning until B09 removed the annotation (2026-10-10); Renovate now takes the Immich version from the immich-server tags, a lookup of about 260 tags. Other repositories with large tag lists (frigate, rybbit, openclaw, the lscr images) poll successfully today and are left on the full listing.
-- **Known limitation**: a newer version pushed *before* the running tag (for example, while running a backport release) is not seen.
-- **When to use it**: a workload whose image repository has a very large tag list on a push-ordered registry (ghcr), and whose Keel poll fails with 429 or times out.
-- **Release watch**: DIUN watches `ghcr.io/keel-hq/keel` for the newest semver tag and posts the first new one to Slack through a script notifier that ignores every other image (`stacks/diun/main.tf`, `kubernetes_config_map.keel_release_watch`). PR keel-hq/keel#943 merged on 2026-10-08; the message asks you to confirm the release contains it. Remove the watch after the exit below.
-- **Exit**: upstream issue keel-hq/keel#942, PR keel-hq/keel#943. When a Keel release contains the patch, remove the `image` override in `stacks/keel/main.tf`, bump the chart, and archive the fork's `homelab` branch.
+From 2026-10-08 until it was parked, the cluster ran a patched Keel 0.22.4 (`ghcr.io/viktorbarzin/keel`, built from `github.com/ViktorBarzin/keel`, branch `homelab`) that added `keel.sh/pollTagsAfterCurrent`: list only the tags pushed after the running tag, using the registry's `last` cursor. Stock Keel listed all of `ghcr.io/immich-app/immich-machine-learning`'s 150,000+ tags on every poll, and ghcr returned HTTP 429 from 2026-08 to 2026-10, so the ML deployment drifted behind immich-api. Upstream: issue keel-hq/keel#942, PR keel-hq/keel#943 (merged 2026-10-08). Renovate now takes the Immich version from the immich-server tags, a lookup of about 260 tags.
 
 ## K8s Node OS Upgrades
 
-Independent of the service-upgrade pipeline above. Drives apt package updates + reboots on the 5 K8s VMs (master + 4 workers).
+Independent of the Renovate path above. Drives apt package updates + reboots on the 5 K8s VMs (master + 4 workers).
 
 ### Stack
 - **In-guest**: `unattended-upgrades` runs apt upgrades within Allowed-Origins (`-security`, `-updates`, ESM). Package-Blacklist excludes runtime components (`containerd`, `containerd.io`, `runc`, `cri-tools`, `kubernetes-cni`, `calico-*`, `cni-plugins-*`, `docker-ce`). `apt-mark hold` on `kubelet`, `kubeadm`, `kubectl` (and runtime pkgs as belt-and-braces). `Automatic-Reboot=false` — kured handles reboots.
@@ -312,7 +186,7 @@ See `docs/runbooks/k8s-node-auto-upgrades.md` for: verifying health, halting rol
 
 ## K8s Version Upgrades
 
-Independent of the OS-upgrade and service-upgrade pipelines. Drives
+Independent of the OS-upgrade and Renovate paths. Drives
 kubeadm/kubelet/kubectl bumps (patch + minor) on all 5 K8s VMs.
 
 ### Architecture

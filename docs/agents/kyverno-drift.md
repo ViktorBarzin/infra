@@ -1,6 +1,6 @@
-# Kyverno drift suppression and Keel image ownership
+# Kyverno drift suppression and lifecycle markers
 
-Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CLAUDE.md`) on 2026-09-22, when the two merged into one root `AGENTS.md`. Related as-built docs: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
+Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CLAUDE.md`) on 2026-09-22, when the two merged into one root `AGENTS.md`. Rewritten on 2026-10-11 when Keel was retired: the Keel markers are history now, and Terraform owns every third-party image version, with Renovate bumping it (`docs/architecture/automated-upgrades.md`).
 
 ## Kyverno Drift Suppression (`# KYVERNO_LIFECYCLE_V1`)
 
@@ -34,51 +34,32 @@ this rule's resource list, which is how they were overlooked.
 
 **Audit**: `rg "KYVERNO_LIFECYCLE_V1" stacks/ | wc -l` — should grow (never shrink). Add the marker to every new pod-owning resource. The `_template/main.tf.example` stub shows the canonical form.
 
-### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
+### Other `ignore_changes` markers
 
-Status since 2026-10-10: the `inject-keel-annotations` policy is deleted and Keel is parked with 0 pods (batch B00 of the Keel to Renovate cutover, `docs/plans/2026-10-09-software-currency-design.md`). New workloads no longer receive `keel.sh/*` annotations, so they do not need the Keel lines below. Existing workloads keep their annotations and ignore lines until their stack's cutover batch removes them (progress table in `docs/architecture/automated-upgrades.md`, section "Keel"). A migrated stack keeps two kinds of ignore under neutral markers: `spec[0].template[0].metadata[0].annotations["keel.sh/update-time"]` as `# LEGACY_TEMPLATE_ANNOTATIONS` (removing it strips the stamp from the pod template, which restarts the pod), and the image of a first-party container its own CI deploys as `# CI_SETS_IMAGE` (or, for a hand-built first-party `:latest` image with no deploy pipeline, `# FIRST_PARTY_IMAGE`). changedetection keeps both image ignores as `# IMAGE_SWAP_DEFERRED` until its crossed images are fixed (batch B08). Third-party images are pinned in Terraform and bumped by Renovate. The rest of this section describes the policy as it was.
-
-When a namespace is labeled `keel.sh/enrolled=true` (and, through the policy's background rule, in practice on almost every namespace; see the note after the block), the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
-
-```
-keel.sh/policy: patch
-keel.sh/trigger: poll
-keel.sh/pollSchedule: "@every 1h"
-```
-
-**`keel.sh/match-tag` is NO LONGER injected — it is actively STRIPPED.** It was the pre-2026-05-26 default (`force + match-tag`), proven unreliable: under `force` it let Keel rewrite tag strings and cross-assign images between containers in multi-image pods. The `blog` deployment was a casualty — its `nginx` ⇄ `nginx-exporter` images got swapped and the site was down 2026-05-26 → 2026-06-01. The policy now sets the annotation to `null` (strips on admission); the 194 pre-existing workloads still carrying it were swept once via `kubectl annotate … keel.sh/match-tag-` on 2026-06-01. The `ignore_changes` line for it (below) is retained as a harmless no-op. See `docs/post-mortems/2026-06-01-keel-match-tag-image-swap.md`.
-
-**Three stacks re-declare it deliberately, and need it** — `k8s-portal`, `interview-prep-app`, `pages-publish`. For a **single-container** workload tracking its own `:latest`, `match-tag` is what makes Keel poll the tag's DIGEST ("watch tag digest job") instead of scanning for new tags ("watch repository tags job", logged with `digest=` empty). A repo that only publishes `:latest` + a commit SHA never grows a new *tag*, so without it `force + poll` registers a watcher that can never fire and the app silently stops auto-deploying — `pages-publish` sat on a stale digest across ~3 poll windows on 2026-08-17 before anyone noticed. The 2026-06-01 swap hazard needs a multi-image pod sharing a floating tag; one container has no sibling image to swap with. A TF-declared value survives admission (checked with `kubectl annotate --dry-run=server`), because the strip lands on CREATE and Terraform owns the field afterwards. **Do not add `match-tag` to `ignore_changes` on these three** — if a recreate loses it, an apply must restore it and the nightly drift report must be able to see it gone, since silent loss means silent no-deploys.
-
-To suppress the resulting Terraform drift, **enrolled workloads** must carry the complete `ignore_changes` block below. This is the canonical form — it folds together every marker (see the legend after it):
+The canonical block for a new pod-owning resource is the `KYVERNO_LIFECYCLE_V1` line above, plus the Reloader line when Reloader watches the workload:
 
 ```hcl
 lifecycle {
   ignore_changes = [
     spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-    metadata[0].annotations["keel.sh/policy"],
-    metadata[0].annotations["keel.sh/trigger"],
-    metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-    metadata[0].annotations["keel.sh/match-tag"],
-    spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-    metadata[0].annotations["kubernetes.io/change-cause"],
-    metadata[0].annotations["deployment.kubernetes.io/revision"],
-    spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
   ]
 }
 ```
 
-**Marker legend** (the names are historical; grep each to audit coverage):
+New workloads need no Keel lines: nothing stamps `keel.sh/*` annotations since the `inject-keel-annotations` policy was deleted (2026-10-10).
+
+**Marker legend** (grep each to audit coverage):
 
 | Marker | Ignores | Why |
 |---|---|---|
 | `# KYVERNO_LIFECYCLE_V1` | `dns_config` | Kyverno injects pod DNS `ndots` config |
-| `# KYVERNO_LIFECYCLE_V2` | `keel.sh/policy`, `/trigger`, `/pollSchedule` | Kyverno-injected Keel control annotations |
-| `# KEEL_IGNORE_IMAGE` | `container[N].image` (one line **per container index**, incl. `init_container[N]`) | Keel rewrites the image tag on `policy=patch`; without this, `apply` reverts the bump (a **downgrade**) |
-| `# KEEL_LIFECYCLE_V1` | `keel.sh/match-tag`, `keel.sh/update-time` (pod template), `kubernetes.io/change-cause`, `deployment.kubernetes.io/revision` | every Keel digest-update restamps these; without ignoring them `apply` strips them → forces a rollout → Keel re-stamps → fight loop |
 | `# METALLB_LIFECYCLE_V1` | `metallb.io/ip-allocated-from-pool` (on **LoadBalancer Services**) | MetalLB's controller writes this onto the live Service once it allocates an IP; without the ignore every apply strips it and MetalLB re-adds it |
 | `# RELOADER_LIFECYCLE_V1` | `reloader.stakater.com/last-reloaded-from` (pod template) | Stakater Reloader stamps this on the pod template when a watched Secret or ConfigMap rotates. Terraform manages a pod template's `annotations` map **even when the resource declares no `annotations` block** — it manages it as empty — so the stamp plans as a removal on **any** TF-managed workload Reloader watches, declared map or not, and Reloader re-adds it. Same provider behaviour as `metadata.labels` in the Kyverno row above. The declared-map test that `1fb7455d` asserts is disproved by its own contents: 4 of its 13 deployments declare no template annotations map and drifted anyway, as does `job-hunter`, the original precedent the convention is copied from |
+| `# LEGACY_TEMPLATE_ANNOTATIONS` | `keel.sh/update-time` (pod template) | Left by Keel's rollouts. Removing the ignore strips the stamp, which is a pod-template change and restarts the workload, so it stays until a change that rolls the workload anyway |
+| `# CI_SETS_IMAGE` | `container[N].image` / `init_container[N].image` | A first-party image that the app's own CI sets with `kubectl set image` (`docs/architecture/ci-cd.md`). Without the ignore, `apply` puts the Terraform tag back |
+| `# FIRST_PARTY_IMAGE` | `container[N].image` | A first-party image built by hand and pushed as `:latest`, with no deploy pipeline. Renovate skips first-party images |
+| `# FLOATING_TAG_DEFERRED`, `# DIGEST_PIN_DEFERRED`, `# IMAGE_SWAP_DEFERRED` | `container[N].image` | Third-party images that the Keel cutover could not pin without a pod restart; listed in `docs/architecture/automated-upgrades.md` ("Pins Renovate cannot bump yet"). Each goes once its pin lands |
 
 **LoadBalancer Services** are the one non-pod-owning resource class in this
 legend. Every `kubernetes_service` with `type = "LoadBalancer"` needs the
@@ -105,52 +86,24 @@ later. Audit against the watched set (any workload with a
 `reloader.stakater.com/*` annotation other than `last-reloaded-from`), never
 against today's drift report.
 
-**Multi-container caveat**: `container[0].image` only covers the first container. Add one `container[N].image` line for **every** container index, plus `init_container[N].image` for init containers — otherwise the un-ignored container's image still drifts/downgrades.
+**Multi-container caveat**: an image ignore covers one container index. Add one `container[N].image` line for **every** container index that needs it, plus `init_container[N].image` for init containers. Read the index off the live pod (`kubectl -n <ns> get <kind>/<name> -o json`), not off the HCL's first container; claude-agent-service's CI-set images, for example, are `init_container[2]` and `[3]`.
 
-The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces need the keel lines too, even though nothing enrolled them: the policy's background rule (`mutateExistingOnPolicyUpdate`) patches whatever its `targets` name, and `targets` is not scoped by the namespace label, so it reaches every Deployment, StatefulSet and DaemonSet except those in `authentik`. That reach was measured on 2026-09-19 (42 workloads in un-enrolled namespaces) and accepted rather than narrowed (bead code-q9iy). The cost of missing the lines is drift that comes back after every apply: on 2026-10-01 `learn`, `browser-bridge`, `bastion` and traefik's `authfix` had the annotations re-added within days of the 09-27 apply that removed them. A workload that opts out with `keel.sh/policy = "never"` still gets `trigger` and `pollSchedule`, so it ignores those two and keeps `keel.sh/policy` enforced (`authfix` did this until cutover batch B16, 2026-10-11).
+### Who owns an image version
 
-Per-workload opt-out: add the ANNOTATION `keel.sh/policy = "never"` on the Deployment metadata (not pod template). It was a label until 2026-08-17, when the `exclude` clause moved to the annotation because an injected label is drift (see `stacks/kyverno/modules/kyverno/keel-annotations.tf`). On an existing, already-enrolled Deployment, also drop `keel.sh/policy` from `ignore_changes`, or Terraform never sends the new value; examples were `stacks/stremio` (cinemeta-proxy) and `stacks/servarr/aiostreams` (2026-10-09; both annotations removed in cutover batch B07, 2026-10-10).
+Terraform declares every image, and the declared string is what runs. Third-party versions change through a commit: Renovate's, or a person's. An image ignore is only right where something other than Terraform sets the image on purpose: the app's own CI (`# CI_SETS_IMAGE`), or one of the deferred cases above. A Terraform-tracked image that some other controller also rewrites makes the two undo each other on every apply; the image-flipflop detector (`stacks/monitoring/modules/monitoring/image_flipflop.tf`, alert `ImageOwnershipConflict`) reports that pattern.
 
-**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines). `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one). `rg "RELOADER_LIFECYCLE_V1" stacks/` should equal the number of TF-managed workloads Reloader watches — **94** as of 2026-09-16.
+### Retired Keel markers
 
-### The invariant: nothing auto-upgraded is tracked by Terraform
+From 2026-05 to 2026-10, Keel rolled enrolled workloads onto new tags, and the Kyverno `inject-keel-annotations` policy stamped `keel.sh/policy|trigger|pollSchedule` on almost every Deployment, StatefulSet and DaemonSet. Terraform tolerated that with three markers:
 
-**If Keel may bump a workload's image, Terraform must not track that image.**
-(Viktor, 2026-08-15.) The two owners are mutually exclusive, and exactly one of
-these must hold for every pod-owning resource:
+| Marker | Ignored |
+|---|---|
+| `# KYVERNO_LIFECYCLE_V2` | `keel.sh/policy`, `/trigger`, `/pollSchedule` on workload metadata |
+| `# KEEL_IGNORE_IMAGE` | each container's image, which Keel rewrote |
+| `# KEEL_LIFECYCLE_V1` | `keel.sh/match-tag`, `keel.sh/update-time` (pod template), `kubernetes.io/change-cause`, `deployment.kubernetes.io/revision` |
 
-- **Keel owns the version** — the workload carries `keel.sh/policy` set to
-  anything other than `never`, and **every** container index that Keel can reach
-  has a `KEEL_IGNORE_IMAGE` entry. Terraform still declares the image, but only
-  as the value used when the resource is first created.
-- **Terraform owns the version** — the workload is opted out with
-  `keel.sh/policy: never`, and Terraform tracks the image normally. Use this
-  where a pin is load-bearing (mysql-standalone, redis-v2, forgejo,
-  node-local-dns, chrome-service and the rest of the ~29 currently on `never`).
+The Keel cutover (batches B00 to B17, 2026-10-10 to 2026-10-11) removed them stack by stack, renaming the `keel.sh/update-time` line to `# LEGACY_TEMPLATE_ANNOTATIONS`. They remain only in the stacks it deferred: the seven first-party apps that Keel deployed and that have no deploy step yet (excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot), anisette and llama-cpp (digest-only pins), and nextcloud (held for a supervised session). Those lines are inert. Many workloads also keep inert `kubernetes.io/change-cause` and `deployment.kubernetes.io/revision` ignores from the same block.
 
-Anything in between means the two fight on every apply. That is not only drift
-noise: on 2026-08-15 four workloads were found where Terraform was reverting a
-Keel upgrade to an **older** release each time it ran (hermes-agent and
-claude-agent-service curl 8.11.1→8.11.0, learn git-sync v4.7.1→v4.7.0,
-postiz/temporal auto-setup 1.28.4→1.28.1).
+Background on the policy, the `keel.sh/match-tag` image swap of 2026-06-01 and the "nothing Keel bumps is tracked by Terraform" rule of 2026-08-15 is in git history (this file before 2026-10-11), `docs/post-mortems/2026-06-01-keel-match-tag-image-swap.md` and `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
 
-Two traps when adding the ignore:
-
-- **The container index is not always 0.** Read it off the live pod
-  (`kubectl -n <ns> get <kind>/<name> -o json`), not off the HCL's first
-  container. hermes-agent and claude-agent-service drift on `container[1]`, the
-  curl `vault-token-refresher` sidecar; android-emulator's drifting image lives
-  in the `gate` Deployment, not the main one.
-- **`keel.sh/policy` can be a label as well as an annotation.** node-local-dns
-  carried it as a *label* valued `never`; ignoring only the annotation left
-  Terraform stripping the opt-out. (The label is gone live, and the B10 Keel
-  cutover on 2026-10-10 removed that ignore.)
-
-**Audit the invariant** with `scripts/audit-keel-image-ownership.py`, which
-walks every pod-owning resource, resolves its live workload, and reports any
-Keel-enrolled workload whose image Terraform still tracks. It should print zero
-gaps; it did across all 160 TF-managed enrolled workloads on 2026-08-15. Note it
-skips commented-out `resource` blocks and is heredoc-aware — a naive brace match
-mis-parses the stacks that embed shell scripts.
-
-**Design context**: `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
+**Audit**: `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one). `rg "RELOADER_LIFECYCLE_V1" stacks/` should equal the number of TF-managed workloads Reloader watches (**94** as of 2026-09-16). `rg "KYVERNO_LIFECYCLE_V2|KEEL_IGNORE_IMAGE|KEEL_LIFECYCLE_V1" stacks/` should list only the deferred stacks named above, and shrink to nothing.

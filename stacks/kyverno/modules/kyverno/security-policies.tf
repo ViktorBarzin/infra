@@ -11,11 +11,12 @@
 # failurePolicy stays Ignore (chart-level) to prevent admission webhook
 # failures from cascading.
 
-# Shared namespace exclude list — 31 critical namespaces from the Keel rollout
-# (memory id=1970) + `frigate` (legitimately needs host access for camera RTSP).
+# Shared namespace exclude list: 30 critical namespaces first listed for the
+# Keel rollout (memory id=1970) + `frigate` (legitimately needs host access for
+# camera RTSP). `keel` left the list when Keel was retired (2026-10-11).
 locals {
   security_policy_exclude_namespaces = [
-    "keel", "calico-system", "authentik", "vault", "cnpg-system", "dbaas",
+    "calico-system", "authentik", "vault", "cnpg-system", "dbaas",
     "monitoring", "traefik", "technitium", "mailserver", "kyverno",
     "metallb-system", "external-secrets", "proxmox-csi", "nfs-csi", "nvidia",
     "kube-system", "cloudflared", "crowdsec", "reverse-proxy", "reloader",

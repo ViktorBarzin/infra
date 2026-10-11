@@ -14,7 +14,7 @@ trends can be tracked over time.
 | Thing | Location |
 |---|---|
 | Source code | Forgejo `https://forgejo.viktorbarzin.me/viktor/job-hunter` (NOT in the monorepo) |
-| Image | `forgejo.viktorbarzin.me/viktor/job-hunter:latest` (CI builds on push; Keel rolls the Deployment) |
+| Image | `forgejo.viktorbarzin.me/viktor/job-hunter:latest` (CI builds on push and rolls the Deployment) |
 | Terraform stack | `infra/stacks/job-hunter/` (`main.tf` = Deployment/Service/ESO; `cronjob.tf` = weekly refresh) |
 | Database | `pg-cluster-rw.dbaas.svc.cluster.local:5432/job_hunter`, role `job_hunter` (Vault `static-creds/pg-job-hunter`, 7d rotation) |
 | App secrets | Vault `secret/job-hunter` → `webhook_bearer_token`, `cdio_api_key`, `smtp_username/password`, `digest_to/from_address` |
@@ -88,7 +88,7 @@ ATS companies are scraped from `config/companies.yaml` in the **Forgejo repo**
    # Ashby:  https://api.ashbyhq.com/posting-api/job-board/<slug>?includeCompensation=true
    ```
 2. Add a `{slug, display_name, ats_type, ats_id, careers_url}` block to `config/companies.yaml`, commit, push.
-3. CI builds the image; Keel rolls the Deployment. The next refresh picks it up. (No Terraform change — config ships in the image.)
+3. CI builds the image and rolls the Deployment. The next refresh picks it up. (No Terraform change — config ships in the image.)
 
 A board that later starts 404ing is skipped automatically; remove its entry
 when the 404 is permanent (keeps logs clean).
@@ -115,8 +115,8 @@ drives the rollout (`.woodpecker.yml`: `build-and-push` tags `latest` +
 `${CI_COMMIT_SHA:0:8}`, then a `deploy` step runs
 `kubectl set image deployment/job-hunter ...:${SHA}` + `rollout status`). The
 woodpecker-agent SA is cluster-admin, so no kubeconfig/RBAC is wired into the
-step. Keel stays enrolled in parallel as a redundant net (finds the SHA already
-running → no-op). So to ship code:
+step. (Keel was a redundant net here until it was retired on 2026-10-11.) So
+to ship code:
 
 ```bash
 # in the job-hunter source repo (forgejo viktor/job-hunter)
@@ -154,7 +154,7 @@ Grafana datasource password is mirrored via a second ExternalSecret in the
 | Symptom | Cause | Fix |
 |---|---|---|
 | Refresh job `Error`, log shows `ats: skipping company=X — HTTP 404` | A board slug was renamed/removed | Expected — the run continues. Remove the dead slug from `companies.yaml` if permanent. |
-| Refresh aborts with a traceback before any company | Pre-2026-06-02 image (no skip-on-404) | Confirm Keel rolled the new image: `kubectl -n job-hunter get deploy job-hunter -o jsonpath='{..image}'`. |
+| Refresh aborts with a traceback before any company | Pre-2026-06-02 image (no skip-on-404) | Confirm CI rolled the new image: `kubectl -n job-hunter get deploy job-hunter -o jsonpath='{..image}'`. |
 | `snapshot` / refresh fails: `relation "job_hunter.comp_snapshots" does not exist` | Migration 0004 not applied | The CronJob + Deployment run `migrate` on start. Run `kubectl -n job-hunter exec deploy/job-hunter -- python -m job_hunter migrate`. |
 | `/webhook/cdio` returns 401 | `webhook_bearer_token` mismatch between Vault and the CDIO notification URL | Re-run `cdio-seed` after rotating the token; it rebuilds the `jsons://...?+Authorization=` URL. |
 | Non-GBP comp looks wrong / NULL | `fx_rates` gap for the role's `posted_at` date | `kubectl -n job-hunter exec deploy/job-hunter -- python -m job_hunter backfill-fx --days 30` |
@@ -172,7 +172,7 @@ any that **newly crossed** since last week's snapshot. Threshold is the
 `--threshold` arg in `cronjob.tf` (default 500000 — well above the ~£267k move
 floor, so only clearly-exceptional comp pings). Slack webhook comes from Vault
 `secret/job-hunter` → `slack_webhook_url` (seeded from the shared workspace
-webhook → currently posts to the same channel as Keel; repoint to a dedicated
+webhook → currently posts to the same channel Keel used; repoint to a dedicated
 channel by `vault kv patch secret/job-hunter slack_webhook_url=<url>`).
 
 ```bash

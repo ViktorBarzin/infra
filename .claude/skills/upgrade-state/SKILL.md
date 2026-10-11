@@ -1,18 +1,19 @@
 ---
 name: upgrade-state
 description: |
-  Audit the three autonomous-upgrade pipelines (apps via Keel, OS via
-  unattended-upgrades+kured, K8s components via the version-check chain).
+  Audit the three autonomous-upgrade pipelines (apps via Renovate and the
+  Woodpecker rails, OS via unattended-upgrades+kured, K8s components via
+  the version-check chain).
   Use when:
   (1) User asks "/upgrade-state" or "are we current",
   (2) User asks "what's pending upgrade" or "what's the upgrade state",
-  (3) User asks if Keel / kured / k8s-version-check is healthy,
+  (3) User asks if Renovate / kured / k8s-version-check is healthy,
   (4) User asks about kept-back / held packages or pending reboots,
   (5) Periodic survey before the next `k8s-version-check` daily run.
   Read-only — no `--fix`. Exits 0 healthy / 1 attention / 2 stalled.
 author: Claude Code
-version: 1.0.0
-date: 2026-05-18
+version: 1.1.0
+date: 2026-10-11
 ---
 
 # Upgrade-state
@@ -49,7 +50,7 @@ Exit codes: `0` healthy, `1` attention warranted, `2` stalled / broken.
 
 | Layer | What runs | Cadence | Data sources |
 |---|---|---|---|
-| **Apps** | Keel polls every watched Deployment's container registry; rolls on new digest | hourly | Prom (`pending_approvals`, `registries_scanned_total`), Keel pod logs |
+| **Apps** | Renovate pushes one version bump per run to master; the Woodpecker rails apply it, run the stack's verify, and revert on failure | every 30 min | Pushgateway (`renovate_*`, `renovate_rails_*`), `renovate` CronJob |
 | **OS** | `unattended-upgrades` in-release patching; `kured` reboots when `/var/run/reboot-required` is set | daily 02:00-06:00 London | SSH fan-out to all 5 nodes |
 | **K8s** | `k8s-version-check` CronJob detects new kubeadm patch/minor; spawns the Job-chain that drains+upgrades node-by-node | nightly 23:00 UTC | Pushgateway (`k8s_upgrade_*`), `kubectl get nodes` |
 
@@ -74,30 +75,28 @@ Jobs directly, so it also catches a Failed preflight that left no metric.
 | `✓` | Healthy, fully current |
 | `→` | Update available, not yet applied (K8s patch/minor) |
 | `…` | In flight — chain currently running |
-| `⚠` | Attention: held-with-bumps, recent errors, pending approvals |
+| `⚠` | Attention: held-with-bumps, Renovate suspended, a recent revert or failed run |
 | `✗` | Broken: pod down, alert firing, chain stalled, or a chain Job failed |
 
 ## Drill-down — when a row trips, what to do
 
-### Apps `⚠` — pending approvals or errors
+### Apps `⚠` / `✗` — Renovate paused, stalled, or reverting
+
+- `paused`: the CronJob is suspended by `variable "suspended"` in
+  `stacks/renovate/main.tf` (the kill switch).
+- `stalled`: no successful run in 2 hours, the same condition as the
+  `RenovateNotSucceeding` alert. Exit code 75 means the run was skipped
+  because a Woodpecker pipeline was running or the rails held a bump.
+- `attn`: the rails reverted a bump in the last 24 hours, or the last run
+  exited with an error.
 
 ```bash
-# Read recent Keel log lines
-kubectl -n keel logs deploy/keel --since=24h --tail=200
-
-# What is Keel currently tracking?
-kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
-    wget -qO- 'http://localhost:9090/api/v1/query?query=count by (image) (registries_scanned_total)'
-
-# Is the scrape live?
-kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
-    wget -qO- 'http://localhost:9090/api/v1/query?query=up{job="kubernetes-pods",app="keel"}'
+kubectl -n renovate get cronjob,jobs
+kubectl -n renovate logs job/<latest>
+homelab metrics query '{__name__=~"renovate_.*"}'
 ```
 
-Common Keel errors:
-- `failed to add image watch job` — image annotation mistyped (rare; Kyverno auto-injects)
-- `registry authentication required` — bad imagePullSecret on the watched Deployment
-- `bad tag pattern` — Keel can't parse the watched image's tag against its policy
+Runbook: `docs/runbooks/renovate.md` (rails, reverts, starting a run by hand).
 
 ### OS `⚠` — held packages with bumps
 

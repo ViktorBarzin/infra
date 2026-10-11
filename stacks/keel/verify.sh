@@ -1,9 +1,9 @@
 # shellcheck shell=bash
-# Verify checks for stacks/keel (docs/runbooks/verify-jobs.md). Since
-# 2026-10-10 Keel is parked (helm release uninstalled, local.keel_enabled =
-# false) for the Renovate cutover (software-currency design, Phase 3, batch
-# B00), so the checks confirm it stays stopped. The stack is removed after
-# the last cutover batch.
+# Verify checks for stacks/keel (docs/runbooks/verify-jobs.md). Keel was
+# parked on 2026-10-10 (helm release uninstalled, local.keel_enabled = false)
+# and retired on 2026-10-11 (software-currency design, Phase 3), so the checks
+# confirm it stays stopped. The stack stays until the first-party apps Keel
+# deployed have their own deploy step (stacks/keel/main.tf header).
 VERIFY_GROUP="chart"
 VERIFY_NAMESPACES="keel"
 

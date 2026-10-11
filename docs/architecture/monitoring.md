@@ -58,8 +58,8 @@ graph TB
 | Prometheus | v3.15.0 from chart `prometheus` 29.36.1 (since 2026-10-09; upgrade path in `docs/plans/2026-10-09-software-currency-design.md`). Same release: Alertmanager v0.34.1, kube-state-metrics v2.20.0, node-exporter v1.12.1, pushgateway v1.11.4, config-reloader v0.94.1. The chart's default scrape jobs are off (`scrapeConfigs: null`), since every job is declared in `serverFiles`. `get nodes/proxy` for the kubelet scrape jobs comes from the Terraform ClusterRole `prometheus-server-nodes-proxy`, because chart 29 no longer grants it. The tuya-bridge jobs set `fallback_scrape_protocol` because that exporter answers `text/html`. Not Keel-managed | `stacks/monitoring/modules/monitoring/` | Metrics collection and storage, scrape configs for all services |
 | Grafana | 13.2.3, chart grafana-community/grafana 13.5.0 (pinned 2026-10-10; moved from the deprecated grafana.github.io chart 10.5.15 / Grafana 12.3.1). Image tag pinned to the non-distroless `{{ .Chart.AppVersion }}` because the folder-ACL `null_resource` execs curl in the container. Grafana 13 migrated dashboards and folders to unified storage on first start, which is one-way: a downgrade needs the pre-upgrade `grafana` MySQL dump restored | `stacks/monitoring/modules/monitoring/` | Visualization, 14+ dashboards (API server, CoreDNS, GPU, UPS, etc.) |
 | Loki | **DEPLOYED 2026-05-18** (SingleBinary mode, 30d retention, 50Gi PVC on `proxmox-lvm`, ruler enabled → Alertmanager). Re-enabled from previous "operational overhead" disable. Ships logs via Alloy DaemonSet (now on all nodes including master after 2026-05-19 toleration add). **Ruler remote-writes recording-rule samples to Prometheus** since 2026-07-06 (`loki.rulerConfig.remote_write` in `loki.yaml` + `web.enable-remote-write-receiver` on prometheus-server; ruler WAL at `/var/loki/ruler-wal` on the PVC) — first user is the share-link analytics row below. Ingester WAL at `/var/loki/wal` on the PVC and `max_chunk_age: 2h` since 2026-10-02; before that the WAL was an in-memory emptyDir and `max_chunk_age` was 24h, so replacing loki-0 at 11:19:40 that day lost ~9h of low-volume streams (agent-api, agent-api-trace, tmux-api) that never idled or filled a chunk. `tests/loki-wal-durable.test.sh` checks the values. **GOTCHA: the chart key is `loki.rulerConfig`, NOT `loki.ruler`** — the values sat under the ignored `loki.ruler` key from install (2026-05-18) to 2026-07-06, so the live ruler ran with `alertmanager_url=""` and **every Loki-ruler alert (Security Wave 1, CloudflaredTunnelConnLoss, t3, Matrix, Vaultwarden) evaluated but was never delivered**; the 2026-07-06 rename resurrected that lane. Chart pinned to 7.0.0 in the same change; moved to 7.3.0 (Loki 3.6.11) on 2026-10-10. grafana/loki 7.x stays on Loki 3.6.x, Loki 3.7+ needs the grafana-community/loki chart. Heavy ad-hoc queries: go through `kubectl port-forward svc/loki 3100` — the `loki.viktorbarzin.lan` ingress 504s at ~60s, and querying through the ingress logs the query URL into the very traefik stream being searched. | `stacks/monitoring/modules/monitoring/` | Log aggregation and querying |
-| Alertmanager | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Alert routing with cascade inhibitions |
-| Uptime Kuma | Latest (Diun monitored) | `stacks/uptime-kuma/` | Internal + external HTTP monitors, status page |
+| Alertmanager | Chart-pinned (Renovate) | `stacks/monitoring/modules/monitoring/` | Alert routing with cascade inhibitions |
+| Uptime Kuma | Pinned (Renovate) | `stacks/uptime-kuma/` | Internal + external HTTP monitors, status page |
 | External Monitor Sync | Python 3.12 | `stacks/uptime-kuma/` | CronJob (10min) syncs `[External]` monitors from `cloudflare_proxied_names` |
 | Trivy Operator metrics | trivy-operator 0.35.0 (chart 0.37.0) | `stacks/trivy-operator/` (scrape annotation), keep allowlist and `trivy_vulnerability_id` filtering in `prometheus_chart_values.tpl` | `trivy_*` vulnerability, exposed-secret, config-audit, RBAC and infra-assessment counts; internet reachability from `kube_ingress_annotations` (dns-type annotation). Details in [trivy.md](trivy.md) |
 | dcgm-exporter | Configurable resources | `stacks/monitoring/modules/monitoring/` | NVIDIA GPU metrics collection |
@@ -368,7 +368,7 @@ two-minute samples, 1 of them in the last 60 days. Wiring of the config:
 
 ### Database Version Pinning
 
-MySQL, PostgreSQL, and Redis images have Diun monitoring disabled to prevent automatic version updates that could cause compatibility issues. Version upgrades are manual and coordinated.
+MySQL, PostgreSQL, and Redis images carry exact pins. Renovate lands patch and minor releases through the CI rails (backup, apply, verify, revert on failure) and holds MySQL and Postgres majors for a supervised upgrade.
 
 ## Configuration
 
@@ -818,7 +818,7 @@ No direct Vault integration required for the monitoring stack (platform stack ca
 - "Pod not ready" is expected and not actionable
 - Prevents false positive alerts
 
-### Why disable Diun for databases?
+### Why hold database majors?
 - Version upgrades require migration planning
 - Breaking schema changes need coordination
 - Manual upgrade testing prevents production issues

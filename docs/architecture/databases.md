@@ -241,9 +241,9 @@ secret/data/postgres/root
 
 ### Version Pinning
 
-**Diun Monitoring Disabled** for database images to prevent unwanted version bumps:
-- MySQL: pinned version in Terraform
-- PostgreSQL: pinned CNPG operator version
+Database images carry exact pins in Terraform. Renovate bumps them through the CI rails, which take a backup before the apply and run the stack's verify after it (`docs/architecture/automated-upgrades.md`):
+- MySQL: pinned version in Terraform; 8.x patch and minor releases land, 9.x and 26.x majors are held
+- PostgreSQL: pinned CNPG operator version (held) and image; Postgres majors are held
 - Redis: pinned image tag
 
 **Rationale**: Database upgrades require careful planning and testing
