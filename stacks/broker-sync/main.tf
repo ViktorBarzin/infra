@@ -946,7 +946,7 @@ resource "kubernetes_cron_job_v1" "fidelity" {
             # so we chown+chmod 600 to grant read access to the broker user.
             init_container {
               name  = "stage-storage-state"
-              image = "busybox:1.36"
+              image = "busybox:1.38"
               command = ["/bin/sh", "-c", <<-EOT
               set -eu
               mkdir -p /data
