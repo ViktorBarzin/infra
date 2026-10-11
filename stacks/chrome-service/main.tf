@@ -18,7 +18,7 @@ locals {
   # sidecar (the latter just runs a 60-line stdlib HTTP server). Also carries
   # the cdp-bridge sidecar + turn-cred initContainer — reusing it there costs no
   # extra pull, since it is already resident for snapshot-server in this pod.
-  python_image = "mcr.microsoft.com/playwright/python:v1.48.0-noble"
+  python_image = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
   snapshot_dir = "/profile/snapshots"
 
   # neko v3 (WebRTC H.264 + Opus) streams the master browser — the same display
