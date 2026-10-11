@@ -249,7 +249,7 @@ resource "helm_release" "vault" {
         },
         {
           name    = "audit-tail"
-          image   = "busybox:1.37"
+          image   = "busybox:1.38"
           command = ["/bin/sh", "-c"]
           # `tail -F` follows the file across rotations. Until the file exists
           # (first audit write) we wait without spinning. Output flushed line
