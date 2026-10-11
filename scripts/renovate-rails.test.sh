@@ -158,6 +158,32 @@ eq "verify fail: marker moves (the commit is handled)" "$H1" "$MARKED"
 eq "verify fail: outcome 1" "1" "$METRIC"
 eq "verify fail: pipeline exits non-zero" "1" "$(stage_exit >/dev/null; echo $?)"
 
+# Verify runs stacks in parallel (RAILS_VERIFY_JOBS): two stacks whose checks
+# take 2 s each finish in under 4 s, and a failing stack does not fail the other.
+mkrepo; git reset -q --hard "$H1"; mkdir -p scripts/verify
+cat >scripts/verify/run <<'STUB'
+#!/bin/bash
+stack=${@: -1}
+echo "start $stack $(date +%s.%N)" >>"$VERIFY_LOG"
+sleep 2
+[ "$stack" = "${STUB_FAIL_STACK:-}" ] && exit 1
+exit 0
+STUB
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE MARKED="" METRIC=""
+CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+echo chart >>.rails_stacks
+VERIFY_LOG=$(mktemp); export VERIFY_LOG
+t0=$(date +%s)
+CI_COMMIT_SHA=$H1 RAILS_VERIFY_JOBS=2 STUB_FAIL_STACK=app stage_finish >/dev/null
+t1=$(date +%s)
+eq "parallel verify: both stacks verified" "2" "$(wc -l <"$VERIFY_LOG" | tr -d ' ')"
+# reverting and applying the rollback adds a little; 2 s of checks each run in
+# sequence would take at least 4 s before that.
+[ $((t1 - t0)) -lt 4 ] && ok "parallel verify: ran concurrently ($((t1 - t0))s)" || bad "parallel verify: ran concurrently" "$((t1 - t0))s"
+eq "parallel verify: the failing stack's commit is reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+eq "parallel verify: outcome 1" "1" "$METRIC"
+rm -f "$VERIFY_LOG"; unset VERIFY_LOG
+
 # Apply failure of a rails-owned stack goes the same way, without running verify.
 mkrepo; git reset -q --hard "$R1"; mkdir -p scripts/verify
 printf '#!/bin/bash\necho SHOULD-NOT-RUN; exit 0\n' >scripts/verify/run
