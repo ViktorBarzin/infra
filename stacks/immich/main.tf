@@ -1361,7 +1361,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
             }
             container {
               name  = "push"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "20", "--data-binary", "@/shared/metrics.prom",
                 "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-search-probe",
@@ -1399,7 +1399,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
               # curl baked into the image — never apt/apk/pip install at
               # runtime in a CronJob (writes to the node container layer on
               # every run; see status-page-pusher disk-write incident).
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "30",
                 "-F", "entries={\"clip\":{\"textual\":{\"modelName\":\"ViT-B-16-SigLIP2__webli\"}}}",
