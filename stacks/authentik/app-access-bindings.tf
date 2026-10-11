@@ -56,7 +56,21 @@ resource "authentik_policy_binding" "k8s_app_access" {
 # A dedicated "TripIt Users" group until 2026-10-11, when it was folded into
 # Home Users (home-users.tf). TripIt's native passkey signup never touches
 # Authentik and is unaffected; this gates only "Log in with Authentik".
-resource "authentik_policy_binding" "tripit_users_access" {
+#
+# A new resource address rather than an edit of the old `tripit_users_access`:
+# changing that binding's group in place failed on 2026-10-11 because deleting
+# the TripIt Users group cascaded to the binding mid-apply, leaving state
+# pointing at an object that no longer exists ("Root object was present, but
+# now absent"). The removed block forgets that stale entry without trying to
+# delete it again.
+removed {
+  from = authentik_policy_binding.tripit_users_access
+  lifecycle {
+    destroy = false
+  }
+}
+
+resource "authentik_policy_binding" "tripit_home_users_access" {
   target = "bce7ba06-4af1-474a-a622-d629cd727a1c" # app "TripIt App"
   group  = authentik_group.home_users.id
   order  = 0
