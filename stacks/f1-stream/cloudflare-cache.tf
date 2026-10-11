@@ -130,9 +130,12 @@ resource "cloudflare_ruleset" "f1_cache" {
     }
   }
 
-  # 1b. BYPASS Watch link playlists (ADR-0034 in the f1-stream repo). Ahead of
-  #     the 2s manifest rule, which would otherwise catch them by their .m3u8
-  #     extension. A Watch link playlist is how an external player such as VLC
+  # 1b. BYPASS Watch link playlists (ADR-0034 in the f1-stream repo). The 2s
+  #     manifest rule (4) also EXCLUDES /watch/, and that exclusion is what
+  #     actually keeps them off the edge: measured 2026-10-11, with only this
+  #     rule in place a Watch link answered MISS then HIT, because Cloudflare
+  #     cache rules stack and a later matching rule's settings override an
+  #     earlier one's. Not first-match, whatever the ordering note above says. A Watch link playlist is how an external player such as VLC
   #     is counted as a viewer: each reload has to reach the origin, and one
   #     answered here is a viewer the app never sees. The origin keeps each
   #     upstream playlist for 2s in memory, so upstream load stays where this
@@ -337,7 +340,7 @@ resource "cloudflare_ruleset" "f1_cache" {
   rules {
     ref         = "f1_cache_manifests_briefly"
     description = "HLS playlists: 2s edge TTL"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")))"
+    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")) and not starts_with(http.request.uri.path, \"/watch/\"))"
     action      = "set_cache_settings"
     enabled     = true
 
