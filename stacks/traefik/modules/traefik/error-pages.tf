@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "error_pages" {
         }
         container {
           name  = "error-pages"
-          image = "ghcr.io/tarampampam/error-pages:3.0.1"
+          image = "ghcr.io/tarampampam/error-pages:4.2.6"
 
           port {
             container_port = 8080
