@@ -446,9 +446,36 @@ run_cronjob() {
 # Floor checks (every stack)
 # ---------------------------------------------------------------------------
 
+# floor_scope: every namespace in VERIFY_NAMESPACES exists. kubectl prints
+# nothing for a namespace that does not exist, so without this check a wrong
+# namespace passes every floor check while checking nothing (on 2026-10-11 the
+# claude-agent-service floor ran on namespace claude-agent-service; the
+# workloads live in claude-agent). When the runner derived the namespaces from
+# the stack source (VERIFY_NAMESPACES_DERIVED=1, no verify.sh), namespaces that
+# do not exist are dropped, for a module that is commented out, and the check
+# fails only if none is left. A namespace that a verify.sh names must exist.
+floor_scope() {
+  local ns present=() missing=()
+  for ns in $VERIFY_NAMESPACES; do
+    if k get namespace "$ns" >/dev/null 2>&1; then present+=("$ns"); else missing+=("$ns"); fi
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    pass "floor: namespaces exist: $VERIFY_NAMESPACES"
+  elif [ "${VERIFY_NAMESPACES_DERIVED:-0}" = 1 ] && [ "${#present[@]}" -gt 0 ]; then
+    log "INFO  floor: dropping namespaces that do not exist: ${missing[*]}"
+    VERIFY_NAMESPACES="${present[*]}"
+    pass "floor: namespaces exist: $VERIFY_NAMESPACES"
+  else
+    fail "floor: namespace scope" "no such namespace: ${missing[*]}; the floor would check nothing there. Add stacks/${VERIFY_STACK:-<stack>}/verify.sh with the right VERIFY_NAMESPACES"
+  fi
+}
+
 # floor_rollout: every Deployment/StatefulSet/DaemonSet in VERIFY_NAMESPACES is
 # converged within VERIFY_ROLLOUT_TIMEOUT (default 600 s), and no pod there is
-# in CrashLoopBackOff or an image-pull error.
+# in CrashLoopBackOff or an image-pull error. Namespaces holding no
+# Deployment, StatefulSet, DaemonSet or CronJob fail the check, since the floor
+# then verified nothing; a stack that is meant to be empty (keel, parked) sets
+# VERIFY_EMPTY_OK=1 in its verify.sh.
 floor_rollout() {
   local timeout=${VERIFY_ROLLOUT_TIMEOUT:-600} deadline pending line ns obj out
   # shellcheck disable=SC2086
@@ -466,7 +493,17 @@ floor_rollout() {
   done
   local n
   n=$(list_workloads "$@" | wc -l | tr -d ' ')
-  if [ "${#pending[@]}" -eq 0 ]; then
+  local crons=0
+  if [ "$n" -eq 0 ]; then
+    for ns in "$@"; do
+      crons=$((crons + $(k get cronjob -n "$ns" --no-headers 2>/dev/null | wc -l)))
+    done
+  fi
+  if [ "$n" -eq 0 ] && [ "$crons" -eq 0 ] && [ "${VERIFY_EMPTY_OK:-0}" != 1 ]; then
+    fail "floor: rollout" "no Deployment, StatefulSet, DaemonSet or CronJob in $*; the floor checked nothing. Check VERIFY_NAMESPACES, or set VERIFY_EMPTY_OK=1 if the stack is meant to be empty"
+  elif [ "$n" -eq 0 ] && [ "$crons" -gt 0 ]; then
+    pass "floor: no long-running workloads in $*; $crons CronJobs, which the floor does not run"
+  elif [ "${#pending[@]}" -eq 0 ]; then
     pass "floor: $n workloads converged in $*"
   else
     for line in "${pending[@]}"; do fail "floor: rollout" "$line"; done
