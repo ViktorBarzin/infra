@@ -11,7 +11,7 @@ Design: `docs/plans/2026-10-09-software-currency-design.md` ("Phase 3"). Decisio
 | Repo config (managers, package rules, holds) | `renovate.json5` at the repo root |
 | Per-version ignore list (the rails append to it on a revert) | `renovate/ignored-versions.json`, pulled in as `local>viktor/infra//renovate/ignored-versions` |
 | Runtime config (platform, token source, one commit per run) | `stacks/renovate/files/config.js` |
-| Wrapper (Woodpecker-busy guard, Pushgateway metrics) | `stacks/renovate/files/run-renovate.sh` |
+| Wrapper (Woodpecker-busy guard, stop after the first automerge, Pushgateway metrics) | `stacks/renovate/files/run-renovate.sh` |
 | Kill switch | `variable "suspended"` in `stacks/renovate/main.tf`, default `false` since 2026-10-11 (set `true` to stop runs) |
 | Bot token | Vault `secret/renovate`, property `forgejo_token`, delivered by the `renovate-env` ExternalSecret |
 | GitHub token (release notes, API rate limit) | Vault `secret/viktor`, property `ghcr_pull_token` (classic PAT, `read:packages` scope only) |
@@ -22,7 +22,8 @@ Design: `docs/plans/2026-10-09-software-currency-design.md` ("Phase 3"). Decisio
 1. The wrapper asks Woodpecker for the last 10 pipelines of repo 82 (`viktor/infra`). If any is `running`, `pending` or `blocked`, it records exit code 75 and stops, because a push now would cancel that pipeline. It also stops with 75 when the rails held a bump in the last 2 hours (`renovate_rails_hold_timestamp_seconds` in Pushgateway; `RAILS_HOLD_COOLDOWN` overrides the 7200 s), so a blocked gate does not receive the same bump every 30 minutes.
 2. Renovate clones the repo, looks up every dependency, and sorts the pending updates (vulnerability, priority, then pin, digest, patch, minor, major, then title).
 3. It commits the first update to `renovate/<stack>-<dep>` and fast-forwards `master` to it (`automergeType: branch`, `ignoreTests: true`). `prCommitsPerRunLimit: 1` stops every later branch in the same run, including the one Renovate's own post-automerge restart would otherwise land.
-4. The wrapper pushes `renovate_last_run_timestamp_seconds`, `renovate_last_run_exit_code`, `renovate_last_run_duration_seconds`, and on exit 0 `renovate_last_success_timestamp_seconds` to Pushgateway (`job="renovate"`, `instance="infra"`).
+4. When Renovate logs `Restarting repository job after automerge result`, the wrapper stops it (SIGTERM to its process group, SIGKILL after `RENOVATE_STOP_GRACE`, default 20 s) and records the run as a success. That second pass cannot land anything, and it overlaps with the pipeline the push just started: on 2026-10-11 Woodpecker step pods (`tier-3-edge`) preempted the Renovate pod (`tier-4-aux`) in that window in two of three runs, leaving a failed Job and no Pushgateway record. Renovate's end-of-run steps (dependency dashboard, repository cache save) may therefore be skipped on runs that land a bump; runs that land nothing still reach them. Not checked against the Renovate source.
+5. The wrapper pushes `renovate_last_run_timestamp_seconds`, `renovate_last_run_exit_code`, `renovate_last_run_duration_seconds`, and on exit 0 `renovate_last_success_timestamp_seconds` to Pushgateway (`job="renovate"`, `instance="infra"`).
 
 Commit subjects read `<stack>: bump <dep> <old> -> <new>`. The body lists each pin and ends with `Renovate-Dep: <datasource> <package> <version>` trailers, which the rails use to write an ignore entry.
 
@@ -72,7 +73,7 @@ Working with the rails:
 - Read what a run did: `homelab logs query '{namespace="woodpecker"} |= "[rails]"' --since 2h`.
 - Retry a reverted version: delete its entry from `renovate/ignored-versions.json` and land that change.
 - See or move the marker: `kubectl -n woodpecker get cm renovate-rails -o yaml`. Deleting it makes the next pipeline consider only its own diff.
-- Unit tests: `bash scripts/renovate-rails.test.sh` (temporary git repos, no cluster access).
+- Unit tests: `bash scripts/renovate-rails.test.sh` (temporary git repos, no cluster access) and `bash scripts/run-renovate.test.sh` for the CronJob wrapper (fake `renovate` and Pushgateway, needs `node`).
 
 ## Start, stop, run by hand
 
