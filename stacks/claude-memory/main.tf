@@ -465,8 +465,22 @@ resource "kubernetes_deployment" "claude-memory" {
               # re-measured since the arena change, and an under-seated tenant is worse
               # than an over-seated one — the watchdog recycles offenders. Worth
               # lowering once a re-embed run has been observed under the new strategy.
+              #
+              # 2026-10-11: 5000 -> 2500 with the fp16 graph and per-run arena
+              # shrinkage (claude-memory-mcp c47a32f). The arena still kept every
+              # peak under kSameAsRequested: recall embeds the whole prompt, and
+              # attention memory grows with the square of its length, so one long
+              # prompt left the pod at its high-water mark (daily peaks of 3-4.9 GB).
+              # Measured on the T4 with fp16 and shrinkage: 1,272 MiB resident after
+              # load, after 357 queries and after the five longest eval documents;
+              # +144 MiB at 512 tokens, +340 at 1,024 and +820 at 2,048, returned at
+              # the end of each request. 2500 covers prompts to roughly 2,000-2,500
+              # tokens (my sessions' p99 over 7 days was 9,655 characters). A longer
+              # prompt peaks above it for the length of one request, which is a
+              # transient the watchdog only acts on under contention. fp16 vectors
+              # match fp32 at cosine >= 0.99997, so stored embeddings stay valid.
               "nvidia.com/gpu"         = "1"
-              "viktorbarzin.me/gpumem" = "5000"
+              "viktorbarzin.me/gpumem" = "2500"
             }
           }
         }
