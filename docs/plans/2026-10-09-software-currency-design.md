@@ -178,7 +178,7 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 **Adjacent fixes, in the same build**
 
 - Backup freshness metrics: the dbaas and Immich backup jobs succeed, but `apt-get update` fails on bullseye, so the Pushgateway push never happens and `backup_last_success_timestamp` reads about 33 days old.
-- Remove the leftover MySQL InnoDB Cluster CR and CRDs (0 pods, reports ONLINE), `drone-logbook-backup` (failing since 2026-08-04, namespace empty) and the stale postiz backup metric.
+- Remove the leftover MySQL InnoDB Cluster CR and CRDs (0 pods, reports ONLINE) and the stale postiz backup metric. `drone-logbook-backup` (failing since 2026-08-04) was planned for removal; wave 3 found the app is live behind Sablier and fixed the backup instead.
 - Fix the stale MySQL upgrade comment (`stacks/dbaas/modules/dbaas/main.tf:255-262`, superseded by the 2026-09-04 rehearsal) and the gpu-operator pin rationale (`stacks/nvidia/main.tf:136-141`; node1 runs 24.04).
 
 **Renovate**
@@ -224,6 +224,24 @@ As built (2026-10-10): `scripts/renovate-rails`, called from the apply step of `
 - DIUN goes entirely, including the Keel release watch, since Keel is retired.
 - `docs/architecture/automated-upgrades.md` is rewritten around Renovate and Trivy, and `docs/agents/kyverno-drift.md` drops the Keel markers.
 
+### Renovate upgrade best practices
+
+Recorded 2026-10-11 against Renovate 44.115.9. The config is `renovate.json5` and `stacks/renovate/files/config.js`.
+
+Adopted:
+
+- Dependency Dashboard as a Forgejo issue ("Renovate dashboard"), rewritten every run with pending, held and abandoned updates. Writing it does not count against the one-commit limit and starts no pipeline.
+- `abandonments:recommended` from `config:best-practices`, which flags packages with no release for a year on the dashboard.
+- `separateMultipleMajor` for every package, so a jump of two majors lands as two hops, each verified and revertible on its own. Vault, Authentik, CNPG, Calico and Nextcloud also step through each minor.
+- One bump per run (`prCommitsPerRunLimit: 1`), because a push to master cancels a running Woodpecker pipeline and with it the previous bump's verify and revert.
+
+Not adopted, on purpose:
+
+- `minimumReleaseAge`. Viktor chose no wait on 2026-10-10 so a CVE fix lands within about 30 minutes of release, with the post-merge rails as the safety net. Also, 98 of the 125 bumps in the dry run carry no release timestamp, and the default `minimumReleaseAgeBehaviour=timestamp-required` would hold those indefinitely.
+- `docker:pinDigests`. It doubles the number of commits (a digest refresh for every tag) and each digest change restarts the pod.
+- `:configMigration`. It opens a PR that waits for a human merge; Renovate migrates old option names in memory anyway.
+- Tests before merge. There is no staging cluster, so the check runs after the merge instead: apply, the stack's verify Job, and an automatic revert with the version added to `renovate/ignored-versions.json` when it fails.
+
 ## Build plan
 
 The build runs as a sequence of workflows, one wave at a time, and I review each wave's results before starting the next. Inside a wave, every change that touches a stack is landed one at a time: a push to master cancels any Woodpecker pipeline still running, so two concurrent landings would cancel each other's apply.
@@ -245,15 +263,116 @@ flowchart TD
   W5 --> W6[Wave 6<br/>unsuspend Renovate,<br/>watch first bumps]
 ```
 
-| Wave | Steps | Passes when |
-|---|---|---|
-| 0 | Baseline: firing alerts, `cluster_healthcheck.sh`, Uptime Kuma down list, image digest per pod, `nvidia.com/gpu` allocatable, scrape `up` by job, rule count, Vault status | snapshot saved for later comparison |
-| 1 | GPU time-slicing key fix + allocatable alert; Vault 1.19.5 → 1.20.4 → 1.21.4 → 2.1.2; Prometheus 2.55.1, then chart 29.36.1 / v3.15; the Vault doc corrections | GPU checks, Vault checks and Prometheus checks from this doc pass after every hop, and nothing new is firing compared with the baseline |
-| 2 | Trivy Operator with its Kyverno and scrape prerequisites, alert rules, alert-digest section | VulnerabilityReports appear for running images, `trivy_` metrics are scraped, the test alert routes |
-| 3 | MySQL exporter, pg-cluster monitor, ClickHouse metrics, ClickHouse and Dolt backups, the shared verify Job runner and every chart/DB/GPU verify script, CI Vault-admin, pin the 7 unpinned charts, adjacent fixes | each verify script passes against today's versions, and each new backup has run once |
-| 4 | Renovate stack (suspended), Forgejo bot account, Renovate config with package rules and custom managers, Woodpecker rails, liveness alert | a dry run lists the expected pending bumps, and the rails are exercised end to end on one deliberate low-risk bump and one deliberate failing bump that reverts |
-| 5 | Keel cutover in one change, DIUN and the upgrade-agent files removed, docs rewritten | the plan shows no pod restarts, and every pod runs the same image digest as in the baseline |
-| 6 | Unsuspend Renovate | the first bumps land through the rails with green checks, and the backlog shrinks run over run |
+| Wave | Steps | Passes when | Status (2026-10-11) |
+|---|---|---|---|
+| 0 | Baseline: firing alerts, `cluster_healthcheck.sh`, Uptime Kuma down list, image digest per pod, `nvidia.com/gpu` allocatable, scrape `up` by job, rule count, Vault status | snapshot saved for later comparison | done |
+| 1 | GPU time-slicing key fix + allocatable alert; Vault 1.19.5 → 1.20.4 → 1.21.4 → 2.1.2; Prometheus 2.55.1, then chart 29.36.1 / v3.15; the Vault doc corrections | GPU checks, Vault checks and Prometheus checks from this doc pass after every hop, and nothing new is firing compared with the baseline | done |
+| 2 | Trivy Operator with its Kyverno and scrape prerequisites, alert rules, alert-digest section | VulnerabilityReports appear for running images, `trivy_` metrics are scraped, the test alert routes | done |
+| 3 | MySQL exporter, pg-cluster monitor, ClickHouse metrics, ClickHouse and Dolt backups, the shared verify Job runner and every chart/DB/GPU verify script, CI Vault-admin, pin the 7 unpinned charts, adjacent fixes | each verify script passes against today's versions, and each new backup has run once | done |
+| 4 | Renovate stack (suspended), Forgejo bot account, Renovate config with package rules and custom managers, Woodpecker rails, liveness alert | a dry run lists the expected pending bumps, and the rails are exercised end to end on one deliberate low-risk bump and one deliberate failing bump that reverts | done |
+| 5 | Keel cutover in one change, DIUN and the upgrade-agent files removed, docs rewritten | the plan shows no pod restarts, and every pod runs the same image digest as in the baseline | partial |
+| 6 | Unsuspend Renovate | the first bumps land through the rails with green checks, and the backlog shrinks run over run | done |
+
+Notes on the status column:
+
+- Wave 4: the rails test used a real bump (homepage v1.10.1 → v1.13.2, `3f0e14c4`) and a deliberately failing one (v1.13.99), which failed at apply and was reverted (`3d0b212c`).
+- Wave 5 landed as 18 batches (B00 to B17, 2026-10-10 20:01 to 2026-10-11 07:55) instead of one change, so each batch could be checked for restarts on its own. DIUN, the upgrade agent and the Kyverno `inject-keel-annotations` policy are gone. Keel is parked at 0 pods with its stack kept, because seven first-party apps had Keel as their only deploy path. The workloads that were left on their current strings are listed under "Not migrated yet" below.
+- Wave 6: Renovate was unsuspended at 2026-10-11 08:13. By 11:05 four bumps had landed, one per run, each through the rails with a green pipeline and none reverted: chrome-service busybox (`3d7c78dc`), claude-agent-service busybox (`23bd8173`), homepage nginx (`2506f656`) and the gluetun digest (`5901acfb`). Work left from the first runs is in the "Rails and Renovate" group below.
+
+## Not migrated yet (2026-10-10)
+
+Viktor's instruction for waves 4 to 6 was to move everything that could move cleanly to Renovate and record the rest for later. This is that record, consolidated on 2026-10-11 from the run's working notes. Each row stays on its current string, with its `ignore_changes` entry kept where it had one, until the change in the last column is made.
+
+### Held for a supervised session
+
+Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HELD:` description, so Renovate lists the update on the dashboard but does not land it.
+
+| Component | Stack | Why | What it needs |
+|---|---|---|---|
+| MetalLB | metallb | supervised upgrade pending | a supervised upgrade, then drop the rule |
+| CNPG operator chart | cnpg | operator for every Postgres database | a supervised upgrade, then drop the rule |
+| Nextcloud chart and image | nextcloud | majors need stepping in a supervised run. The image tag comes from a live-tag lookup (`data.kubernetes_resources.nextcloud_live`, floor 32.0.9) that Renovate cannot read, and the stack still carries the `keel.sh/enrolled` label and comments describing Keel's safeguards | replace the lookup with a literal `docker.io/library/nextcloud` 32.0.14 pin (equal to the live chart value today), drop the label, rewrite the comments, then step the majors |
+| Calico / tigera-operator | calico | cluster networking. A commented-out `keel.sh/enrolled` line remains in `calico/main.tf` | a supervised upgrade; drop the comment in the same change |
+| MySQL majors (8.4 to 9.x and 26.x) | dbaas | the supported in-place jump path is unconfirmed, and innovation releases cannot be downgraded. 8.x patch and minor releases still land | confirm Oracle's supported jumps (open question below) and encode the stepping |
+| Postgres majors (pg-cluster and its backup clients) | dbaas, immich | each major needs the `cnpg-postgis-pgvector` image built for it first | settle where that image is built (open question below), then CNPG's declarative in-place upgrade |
+| Woodpecker chart and images | woodpecker | the rails run on Woodpecker. A CI self-apply ends its own pipeline and can leave the helm release in pending-upgrade | apply from the main checkout first, then push |
+| NVIDIA driver majors | nvidia | the driver stays on 570.195.03, which is outside the gpu-operator v26.x documented matrix and no longer on NVIDIA's active driver list. It compiles against the held GPU node kernel 6.8.0-117 | a supervised hop to 580.173.02 (LTSB, supported to June 2028) or 595.91.07 (the chart default) |
+| Loki chart | monitoring | the grafana repository stops at 7.3.0; newer charts are in grafana-community/loki (18.x) | a supervised repository switch |
+| Kyverno chart 3.10 and later (Kyverno 1.20) | kyverno | 1.20 removes `kyverno.io/v1` ClusterPolicy and `v2` ClusterCleanupPolicy. The 18 ClusterPolicies and `cleanup-failed-pods` must move to the CEL policy types first. 3.9.x patches still land | migrate the policies and run `kyverno migrate`, then drop the rule |
+| Forgejo | forgejo | 11 to 16 cannot be downgraded, and Forgejo hosts this repository, the bot account and the webhook the rails use. Held entirely, including the 11.0.14 to 11.0.16 patch | a supervised session; afterwards narrow the rule to majors |
+| Technitium 14 to 15 | technitium | home DNS. 14.x patch and minor releases still land | a supervised major upgrade |
+
+### Could not migrate cleanly (Keel cutover leftovers)
+
+Most of these are images where any pin that Renovate can read would restart the pod onto different bytes. The cutover batches allowed restarts only in B07, and only where the new pin resolved to the digest already running.
+
+| Component | Stack | Why | What it needs |
+|---|---|---|---|
+| First-party apps whose only deploy path was Keel: excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot | one stack each | with Keel at 0 pods a new build does not reach the cluster until someone runs a rollout. The stacks keep their inert Keel ignores and labels. Listed in `docs/architecture/automated-upgrades.md` under "First-party images without a deploy step" | a deploy step in each app's build workflow (`kubectl set image` to the new tag or digest), then migrate the stack |
+| Keel stack and fork | keel | parked (`keel_enabled = false`, 0 pods) until the apps above have a deploy step | delete `stacks/keel`, the `ghcr.io/viktorbarzin/keel` package and the ViktorBarzin/keel fork |
+| changedetection image swap | changedetection | since a Keel update on 2026-08-26 the app image runs in the `sockpuppetbrowser` container and the browser image in `changedetection`. The app writes to the container overlay (reset at every restart); the NFS datastore, last written 2026-08-26, is unused. Both image ignores stay as `IMAGE_SWAP_DEFERRED` and Terraform says `:latest` for both | a supervised change pinning sockpuppetbrowser 0.0.3 and changedetection.io 0.55.8 (`ghcr.io/dgtlmoon`) to the right containers (one restart onto the NFS datastore), after deciding whether anything in the overlay must be copied first |
+| anisette | anisette | digest-only pin under `KEEL_IGNORE_IMAGE`. Renovate does propose digest bumps for it, so a `HELD` rule (`37de7b1d`) stops a bump that would change git while the pod kept its old bytes | drop the ignore and pin a tag with its digest (one restart), then remove the rule |
+| headscale-ui | headscale | digest-only pin; the same digest is tag 2026.03.17, and adding the tag changes the string | pin tag `2026.03.17` with digest `015f5b...` (one restart), drop the `DIGEST_PIN_DEFERRED` ignore |
+| llama-swap | llama-cpp | digest-only pin; every Renovate run logs "Could not determine new digest" | pin a version tag with its digest, or disable the dependency |
+| firewall-bouncer `debian:bookworm-slim` | crowdsec | DaemonSet pods run two different digests, one of them matching no current tag | pin `bookworm-20260623-slim` and accept one DaemonSet roll, drop the `FLOATING_TAG_DEFERRED` ignore |
+| immich-frame `immichframe:immich_v3` | immich | no version tag shares the running digest | pin tag@digest or a version tag (one restart of the frame), drop the ignore |
+| immich-postgresql `postgres:15-vectorchord0.4.3-pgvectors0.2.0` | immich | re-pushed tag; a tag@digest pin restarts the Immich database. While the Deployment's image stays ignored, a Renovate bump of this string moves the backup CronJob pins but not the database | a database restart window, pin tag@digest, drop the ignore |
+| kured-sentinel-gate `bitnami/kubectl:latest` | kured | 6-pod DaemonSet; no version tag has the running digest | pin `latest` with digest `999d5eb2...`, or a version tag (one DaemonSet roll), drop the ignore |
+| lean-proxy and bot-block-proxy `openresty/openresty:alpine` | reverse-proxy, traefik | each has 2 pods on different digests, none matching a current version tag | pin a current openresty alpine release in both (one roll each), drop the ignores |
+| auth-proxy `nginx:1-alpine` | traefik | 2 pods on different digests (one equals 1.31.2-alpine); it fronts forward-auth | pin `nginx:1.31.2-alpine` (one roll), drop the ignore |
+| authfix `python:3.13-alpine` | traefik | 2 pods on different digests, neither matching a version tag. The opt-out is gone, so Renovate may now propose 3.13 to 3.14 through the rails | pin a 3.13.x alpine tag (one roll), or hold python for authfix |
+| tor-proxy `dperson/torproxy:latest` | tor-proxy | no version tag shares the running digest | pin tag@digest (one restart), drop the ignore |
+| wireguard `sclevine/wg:latest` and bare `busybox` init | wireguard | no version tag shares the running digest; a tagless `busybox` gives Renovate no version to bump | pin `latest` with digest `52af4627...` in both containers and `busybox:1.38.0` together (one VPN pod restart), drop the ignores |
+| sysctl-inotify `busybox:1.37` init | monitoring | DaemonSet pods run different digests under the floating tag | pin `busybox:1.37.0` or `1.38.0` (one DaemonSet roll), or let the Renovate bump do it |
+| openclaw floating pins: `busybox:1.37` (5 init containers), `debian:bookworm-slim` (2), `bitnami/kubectl:latest` (2 CronJobs) | openclaw | never Keel-managed. Renovate tracks busybox but cannot track the other two | pin them when openclaw is next scaled up (it runs 0 replicas, so nothing restarts) |
+| Shared module pins (e.g. `anubis_instance` `image_tag`) | modules/ | `ignorePaths: modules/**`, because a module change re-applies every platform stack. anubis-cc, anubis-blog, anubis-f1, anubis-json and anubis-kms keep their Keel ignore lines | move each pin to its callers, or accept a full platform apply per bump |
+| Inert Keel and DIUN metadata | about 40 stacks | `diun.*` pod-template annotations and the `LEGACY_TEMPLATE_ANNOTATIONS` ignores stay, because removing them restarts 42 and 84 workloads. Chart-rendered workloads in crowdsec, external-secrets, k8s-dashboard, calico, cnpg, monitoring, traefik and the authentik outposts keep `keel.sh/*` metadata annotations that Terraform does not declare. authentik's `values.yaml` keeps `diun.*` podAnnotations and a Keel comment | drop template annotations with the next change that rolls each workload (authentik with its next chart bump); strip the metadata annotations in one supervised `kubectl annotate` pass, or leave them |
+| Orphaned Keel UpdateRequests | kyverno | 89 UpdateRequests for the deleted `inject-keel-annotations` policy (2026-05-16 to 2026-10-10, never processed); other policies have 116 similar leftovers | delete once in a supervised session, or leave |
+| youtubedl-material | ytdlp | pinned `nightly-2025-03-18`, the running digest; upstream has published nothing newer | none until upstream publishes, or replace the app |
+| plotting-book | plotting-book | the image is deployed by its owner's CI (Woodpecker repo 43, `kubectl set image`) and stays ignored as `CI_SETS_IMAGE` | none unless the owner wants Renovate to drive it |
+
+### Rails and Renovate open items
+
+| Component | Stack | Why | What it needs |
+|---|---|---|---|
+| Docker Hub rate limit | renovate | about 240 Docker lookups per run against 100 anonymous manifest reads per hour per IP; only the cache PVC reduces repeats | if runs log 429s, add `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` to the `renovate-env` ExternalSecret (`config.js` already reads them) |
+| Release-note links | renovate | the first real commit (`3f0e14c4`) had no release-note URL although `fetchChangeLogs: branch` and a GitHub token are set. The token is the shared `ghcr_pull_token` (read:packages) on Viktor's account | read the changelog lookup in a debug run; optionally mint a dedicated no-scope token |
+| Aborted runs count as success | renovate | run `renovate-29861850` hit ETIMEDOUT on one registry, Renovate aborted the repository (`external-host-error`) and the process still exited 0, so the wrapper recorded a success for a run that processed nothing | have `run-renovate.sh` treat `external-host-error` as a failure |
+| End-of-run steps after a landed bump | renovate | since `4b808e14` the wrapper stops Renovate at "Restarting repository job after automerge result", which ended the pod preemptions. Whether the dashboard and repository cache are still written on those runs is not checked | confirm in the Renovate source or a debug run |
+| RenovateNotSucceeding at unsuspend | monitoring | fires right after an unsuspend until the first run succeeds | add a grace window keyed on `kube_cronjob_spec_suspend` changes, or accept a short firing |
+| One-bump-per-run evidence | renovate | "Reached commits limit" is a debug-level line, and the CronJob logs at info. The evidence today is one renovate-bot commit per run, no leftover `renovate/*` branch and one rails pipeline per run | a `logLevelRemap` entry in `config.js`, if the line is wanted in the run log |
+| Woodpecker repo timeout | woodpecker (repo 82 settings) | 60 minutes; a rails run for dbaas (verify about 28 minutes plus backups) or descheduler (verify up to 60 minutes) can be cut off, after which later pipelines verify it again | raise the repo timeout to 120 minutes (Woodpecker admin setting) or shorten those two verify scripts |
+| Verify-failure path | renovate rails | the live failing-bump test failed at apply, so the verify-failure branch of `renovate-rails finish` is covered by `scripts/renovate-rails.test.sh` only | watch the first real verify failure, or force one in a supervised session |
+| Floor does not run CronJobs | verify | a bump whose image runs only in a CronJob is covered by apply plus the alert window | a `verify.sh` with `run_cronjob` for stacks whose CronJob images Renovate moves |
+| gluetun socks5 | proxy | Renovate lands digest bumps for this pin (`5901acfb` checked by hand: socks5 on :1080 and HTTP on :8888 both exit in GB). The rails do not check socks5 on later bumps | a `stacks/proxy/verify.sh` that requests ipinfo through :8888 and :1080 and expects GB |
+| osrm-backend majors | osm_routing | Renovate plans v6.0.0 to v26.4.0. The serving pods cannot read graphs built by another version, the graph is rebuilt only by the monthly `osrm-refresh` CronJob, and the stack has no `verify.sh` | hold osrm-backend majors, or have the bump run a graph rebuild before the serving pods roll |
+| busybox in immich-postgresql init | immich | Renovate plans 1.36 to 1.38, which restarts the Immich database through the rails | accept, or hold busybox for immich until a database window |
+| Verify pod preemption | verify | verify pods ran at tier-4-aux and were preempted 3 times while node memory requests were above 93% | a higher priority class for verify Jobs |
+
+### Other findings from the run
+
+The Kyverno 1.20 migration and the GPU driver are in the held group above.
+
+| Component | Stack | Why | What it needs |
+|---|---|---|---|
+| paperless-ngx OOM | paperless-ngx | OOM-killed at its 8Gi limit during OCR on 2026-10-10 from 01:47 to 02:33 (about 17 KernelOOMKiller alerts, 2 restarts). No restarts in the 24 hours to 2026-10-11 11:25 | a higher limit or lower OCR concurrency |
+| Wrong certificate for helm.ngc.nvidia.com | nvidia, woodpecker | from pods on k8s-node2, where `woodpecker-agent-0` runs, some requests got a certificate for `*.development.minervaproject.com`. CI pipeline #2140 failed on it and the nvidia apply was done from the main checkout | find the DNS or egress path on k8s-node2 that answers for that name |
+| CoreDNS version | kube-system | not in the ownership table, so neither Renovate nor the rails track it | choose an owner (the Kubernetes version chain or a Renovate custom manager) |
+| kured Slack webhook | kured | `notifyUrl` from Vault (`slack_kured_webhook`) is rendered into the DaemonSet args as `--notify-url`, readable by anyone who can read DaemonSets in `kured` | pass it from a Secret instead of an argument, then rotate the webhook |
+| Kyverno `cleanup-failed-pods` | kyverno | its condition uses `request.object.status.phase`, which fails on every pod, so it likely never cleans anything (already true on 1.18.1) | fix with the 1.20 policy migration |
+| Stray-workload false positive | monitoring | `StrayWorkloadDetected` fires since 2026-10-11 07:06 for `dbaas/mysqld-exporter` (added in wave 3); `declared_tier0.json` was not regenerated | run `scripts/gen-tier0-workload-inventory.py` from the main checkout and commit the result |
+| Control-plane restarts | cluster | four episodes since 2026-10-10 15:40 (about 16:55, 18:55, 22:25 and 07:18) with leader-election restarts and kube-apiserver restarts; etcd WAL fsync p99 reached 8.2 s (5-minute window) at 07:20, with `sdc` writes at 30 to 90 MB/s in each episode. The writers are not identified | find the `sdc` writers (pve-nfs-data and the k8s-node1 disk are the leads) |
+| Trivy image-secret alerts | trivy-operator | 12 images flagged; tripit is a false positive (a public AWS key ID in yt-dlp), the others are not reviewed | review, and silence false positives |
+| Trivy coverage and load | trivy-operator | Woodpecker pipeline PVCs and their PVs are still config-audited (about 135 updates per hour); rancher/local-path-provisioner is no longer scanned because its namespace is excluded; about 148 stale ResourceQuota reports remain; Medium and Low findings are never stored; filesystem scan mode not adopted | drop PV/PVC from the audited kinds or label the PVCs; skip helper pods by label; delete the stale reports once; decide on severity scope |
+| Trivy CRDs on chart bumps | trivy-operator | Helm does not upgrade CRDs | apply CRDs separately when the release notes change them (runbook) |
+| Registry cache space | registry VM | 18.6 GB of Docker Hub layers cached by the first Trivy scan expire through `proxy.ttl` on 2026-10-17 | confirm free space after that date |
+| Monday Trivy digest | alert-digest | first real run 2026-10-12 08:00 London; only a dry run checked so far | read the first post |
+| Dolt backup history | beads-server | backups keep rows, not Dolt commit history | remotesapi or an NFS mount (restarts Dolt); a tarball before Dolt bumps meanwhile |
+| PGPASSWORD in Loki | dbaas | `set -x` printed the backup password into Loki before `cb36cca2` | rotate the password, or accept until the 30-day retention passes |
+| dbaas leftovers | dbaas | the `mysql-standalone` NetworkPolicy from the old chart selects no pod; `cluster.yaml` is an unreferenced presslabs manifest; `docs/agents/databases.md` still describes InnoDB Cluster | remove both in Terraform and the repo; rewrite the doc for mysql-standalone |
+| Alert texts | monitoring | `CIStackPendingHumanApply` still says CI skips vault; `ImageOwnershipConflict` still suggests `keel.sh/policy=never` | fix with the next monitoring rules change (checking the prometheus-server pod template stays unchanged) |
+| DIUN and upgrade-agent leftovers | vault, Docker Hub, claude-agent-service, n8n | Vault `secret/diun` is no longer read; the Docker Hub image `viktorbarzin/diun` stays published; claude-agent-service keeps `WOODPECKER_API_TOKEN` and `SLACK_WEBHOOK_URL` and n8n keeps `CLAUDE_AGENT_API_TOKEN`, whose other consumers were not checked | delete the secret and the image if wanted; check consumers, then drop or re-comment the env |
+| osrm-refresh | osm_routing | the monthly job failed on 2026-10-01 | check the next run |
 
 ## Accepted risks
 
