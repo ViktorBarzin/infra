@@ -248,6 +248,7 @@ module "ingress" {
     group = "trek"
   }
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.trek.metadata[0].name
   name            = "trek"
