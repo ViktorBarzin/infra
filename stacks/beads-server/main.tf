@@ -358,7 +358,7 @@ resource "kubernetes_cron_job_v1" "dolt_backup" {
             restart_policy = "Never"
             init_container {
               name  = "dump"
-              image = "mysql:8.4.8"
+              image = "mysql:8.4.11"
               env {
                 name  = "DOLT_HOST"
                 value = "${kubernetes_service.dolt.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
