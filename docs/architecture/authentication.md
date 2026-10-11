@@ -40,9 +40,9 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| Authentik Server | 2026.8.0 | `stacks/authentik/` | Core IdP application servers (3 replicas) |
-| Authentik Worker | 2026.8.0 | `stacks/authentik/` | Background task processors (2 replicas) |
-| PgBouncer | Latest | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
+| Authentik Server | 2026.8.3 | `stacks/authentik/` | Core IdP application servers (3 replicas) |
+| Authentik Worker | 2026.8.3 | `stacks/authentik/` | Background task processors (2 replicas) |
+| PgBouncer | v1.25.2-p0 (Renovate proposes bumps) | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
 | Embedded Outpost | - | Standalone deployment, managed by Authentik | Forward auth endpoint for Traefik (2 replicas, PG-backed sessions) |
 | Public Outpost | - | `stacks/authentik/guest.tf` | Anonymous-binding outpost backing `auth = "public"` (1 replica) |
 | LDAP Outpost | - | `stacks/authentik/postgres-ldap.tf` | Prepared for Postgres `ldap` auth. **0 replicas, inert** |
