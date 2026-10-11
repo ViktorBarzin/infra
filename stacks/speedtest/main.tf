@@ -108,7 +108,7 @@ resource "kubernetes_deployment" "speedtest" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/speedtest-tracker:0.24.3"
+          image = "lscr.io/linuxserver/speedtest-tracker:1.15.0"
           name  = "speedtest"
           port {
             container_port = 80
