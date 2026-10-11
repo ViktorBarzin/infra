@@ -166,41 +166,15 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/name"      = "mysql"
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
-      # There was a `keel.sh/policy = "never"` LABEL here from 2026-05-26 to
-      # 2026-08-17, as defense-in-depth on top of the annotation below: the
-      # Kyverno `inject-keel-annotations` exclude used to select on that label
-      # (`exclude.any[].resources.selector.matchLabels`), so it bypassed the
-      # mutation even if the dbaas namespace exclude were lost. It earned its
-      # place — without it a Kyverno reconcile had overwritten annotation=never
-      # → patch and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD
-      # upgrade.
-      #
-      # Removed because that exclude now selects on the ANNOTATION, and because
-      # Kyverno stamping a keel.sh/* label is drift against every stack that
-      # declares a `labels` map (see stacks/kyverno/.../keel-annotations.tf).
-      # What protects this StatefulSet now: the `+(keel.sh/policy)` preserve
-      # anchor in that policy never overwrites an existing annotation value —
-      # the 2026-05-26 overwrite came from an earlier version that did — plus
-      # the dbaas namespace exclude, plus the annotation-based exclude. Lifting
-      # the opt-out still MUST go through the upgrade plan referenced below.
-      #
       # Declared because the sync-tier-label-from-namespace Kyverno policy
       # stamps it live; without it every apply strips the label and the
       # policy re-adds it (perma-drift that fed provider identity bugs).
       tier = var.tier
     }
-    # Explicit Keel opt-out. The dbaas namespace is already excluded
-    # from the `inject-keel-annotations` Kyverno ClusterPolicy, but the
-    # StatefulSet historically picked up Keel annotations anyway (from
-    # an earlier version of that policy that didn't have the exclusion
-    # list). `keel.sh/policy: never` makes Keel skip this resource even
-    # if those legacy annotations are still present, so we cannot be
-    # silently bumped to a new MySQL version again.
-    #
-    # Lifting this MUST go through docs/plans/2026-05-19-mysql-8.4.9-upgrade-*.
-    annotations = {
-      "keel.sh/policy" = "never"
-    }
+    # The MySQL version is the image pin below. Renovate proposes 8.4.x
+    # patch and minor bumps through the CI rails and holds majors
+    # (renovate.json5). Keel no longer manages it, so the former
+    # keel.sh/policy = "never" opt-out annotation is gone.
   }
   spec {
     service_name = "mysql-standalone"
@@ -377,17 +351,6 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # Kyverno stamps these two onto every workload in a keel-enrolled
-      # namespace. They are NOT declared here, so without the ignore every
-      # apply plans to strip them and Kyverno immediately re-adds them —
-      # dbaas showed this same two-line diff on every nightly drift run.
-      # `keel.sh/policy` is deliberately absent from this list: it IS declared
-      # in TF as "never", which is what keeps mysql pinned at 8.4.8 after the
-      # 2026-05-18 Keel bump to 8.4.9 forced a PVC wipe + dump-restore. Leaving
-      # policy TF-owned means a future change to it still shows up as drift,
-      # which is what we want for this one.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       # StatefulSet volumeClaimTemplates are immutable post-creation, and the
       # pvc-autoresizer rewrites their annotations on the live object
       # (storage_limit/threshold), so TF's desired VCT can never apply and a
@@ -566,11 +529,6 @@ resource "kubernetes_deployment" "mysqld_exporter" {
       # Restart on a password change (the Secret above changes with the root
       # password).
       "reloader.stakater.com/auto" = "true"
-      # Terraform owns the image tag (Renovate takes it over in the
-      # software-currency design). Kyverno's keel-annotations policy keeps an
-      # existing keel.sh/policy value, so this stops Keel from bumping the
-      # image underneath Terraform.
-      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -648,10 +606,7 @@ resource "kubernetes_deployment" "mysqld_exporter" {
   depends_on = [null_resource.mysql_exporter_user]
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -1105,17 +1060,7 @@ resource "kubernetes_deployment" "phpmyadmin" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      # This Deployment is Keel-enrolled (keel.sh/policy=patch). Ignore the
-      # attributes Keel/Kyverno mutate at runtime so `terragrunt apply` (incl.
-      # the daily drift plan) doesn't fight them or revert the live image —
-      # canonical KEEL/KYVERNO lifecycle guard, matches linkwarden/chrome-service.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -2091,7 +2036,7 @@ resource "kubernetes_deployment" "pgadmin" {
       }
       spec {
         container {
-          image = "dpage/pgadmin4"
+          image = "dpage/pgadmin4:9.16"
           name  = "pgadmin"
           env {
             name  = "PGADMIN_DEFAULT_EMAIL"
@@ -2144,17 +2089,9 @@ resource "kubernetes_deployment" "pgadmin" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
-      # This Deployment is Keel-enrolled (keel.sh/policy=patch) and Keel has
-      # bumped the live image (dpage/pgadmin4:9.16). Ignore the Keel/Kyverno
-      # runtime-mutated attributes so `terragrunt apply` (incl. the daily drift
-      # plan) doesn't revert the image to bare `dpage/pgadmin4` or strip Keel's
-      # annotations — canonical guard, matches linkwarden/chrome-service.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      # Left on the pod template by Keel's last bump; removing it would roll
+      # the pod template, so it stays ignored.
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

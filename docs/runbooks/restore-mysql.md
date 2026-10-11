@@ -247,7 +247,9 @@ flush phase is IO-starved. **Don't retry 8.4.9 without first bumping
 IO capacity and pinning a proper maintenance window.**
 
 Until then, the StatefulSet pins to `mysql:8.4.8` exactly, not the
-floating `mysql:8.4` tag. Keel will not silently bump it.
+floating `mysql:8.4` tag. Keel no longer manages it; version bumps
+arrive as Renovate commits through the CI rails, which run the dbaas
+backup CronJobs first (Renovate holds MySQL majors).
 
 ## See also
 - `docs/runbooks/forgejo-registry-breakglass.md` — companion runbook
