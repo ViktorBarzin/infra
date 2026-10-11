@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "v1.13.99",
       "enabled": false
+    },
+    {
+      "description": "manual revert 2026-10-11 (catch-up window): dawarich 1.15.3 data migration DropLegacyLatLonFromPoints fails with PG::UniqueViolation on index_points_on_lonlat_timestamp_user_id (duplicate points); needs a points de-dup before upgrading",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "freikin/dawarich"
+      ],
+      "matchNewValue": "1.15.3",
+      "enabled": false
     }
   ]
 }
