@@ -33,7 +33,7 @@ flowchart TD
   T[Trivy Operator] -.->|CVE alerts, weekly digest| HUM[people]
 ```
 
-Status on 2026-10-11: the CronJob is suspended (`variable "suspended"` in `stacks/renovate/main.tf`, default `true`) until wave 6 of the build plan unsuspends it. The rails were exercised end to end on one passing and one failing bump in wave 4.
+Status on 2026-10-11: the CronJob runs every 30 minutes (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
 
 ### Who updates which version
 

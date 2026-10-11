@@ -12,7 +12,7 @@ Design: `docs/plans/2026-10-09-software-currency-design.md` ("Phase 3"). Decisio
 | Per-version ignore list (the rails append to it on a revert) | `renovate/ignored-versions.json`, pulled in as `local>viktor/infra//renovate/ignored-versions` |
 | Runtime config (platform, token source, one commit per run) | `stacks/renovate/files/config.js` |
 | Wrapper (Woodpecker-busy guard, Pushgateway metrics) | `stacks/renovate/files/run-renovate.sh` |
-| Kill switch | `variable "suspended"` in `stacks/renovate/main.tf`, default `true` |
+| Kill switch | `variable "suspended"` in `stacks/renovate/main.tf`, default `false` since 2026-10-11 (set `true` to stop runs) |
 | Bot token | Vault `secret/renovate`, property `forgejo_token`, delivered by the `renovate-env` ExternalSecret |
 | GitHub token (release notes, API rate limit) | Vault `secret/viktor`, property `ghcr_pull_token` (classic PAT, `read:packages` scope only) |
 | Cache (repo clone, lookup cache) | PVC `renovate/renovate-cache`, `proxmox-lvm`, 5Gi with autoresize to 20Gi, no backup (rebuilt by the next run) |
