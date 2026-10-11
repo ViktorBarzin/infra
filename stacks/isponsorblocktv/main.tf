@@ -57,7 +57,7 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
       }
       spec {
         container {
-          image = "ghcr.io/dmunozv04/isponsorblocktv:v2.9.0"
+          image = "ghcr.io/dmunozv04/isponsorblocktv:v2.11.0"
           name  = "isponsorblocktv-vermont"
           volume_mount {
             name       = "data"
