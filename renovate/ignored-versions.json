@@ -47,69 +47,14 @@
       "enabled": false
     },
     {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
+      "description": "manual revert 2026-10-11 (catch-up window): immichframe v1.0.39.0 crash-loops immich-frame-emo and immich-frame-milka at startup in its new EF Core settings migration (RelationalDatabaseCreator.CreateAsync, SettingsService.InitializeAsync); v1.0.35.0 restored",
       "matchDatasources": [
         "docker"
       ],
       "matchPackageNames": [
-        "docker.io/curlimages/curl"
+        "ghcr.io/immichframe/immichframe"
       ],
-      "matchNewValue": "8.22.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/curlimages/curl"
-      ],
-      "matchNewValue": "8.22.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/curlimages/curl"
-      ],
-      "matchNewValue": "8.22.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/curlimages/curl"
-      ],
-      "matchNewValue": "8.22.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e087125c)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/curlimages/curl"
-      ],
-      "matchNewValue": "8.22.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-11 pipeline #2277: stack immich failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 7263fc41)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "busybox"
-      ],
-      "matchNewValue": "1.38",
+      "matchNewValue": "v1.0.39.0",
       "enabled": false
     }
   ]

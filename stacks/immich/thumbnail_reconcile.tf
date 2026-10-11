@@ -243,7 +243,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
             # 3. Re-enqueue the survivors, batched, routed to each owner's key.
             init_container {
               name  = "repair"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -u
                 queued=0
@@ -345,7 +345,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
             # emptyDir root is 0777.
             container {
               name  = "push"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
                 cat /shared/metrics.*.prom > /tmp/all.prom
