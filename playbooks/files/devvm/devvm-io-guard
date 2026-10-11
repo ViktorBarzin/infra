@@ -62,9 +62,9 @@ FAIL OPEN. An exception in one sweep is logged and the next sweep starts
 fresh. On stop it lifts its own clamp, and systemd removes /run/devvm-io-guard,
 so a dead guard leaves nothing throttled past the next fairshare run.
 
-Every decision is one journald line under SYSLOG_IDENTIFIER=devvm-io-guard, as
-key=value pairs, so the calibration query is:
-    homelab logs query '{job="devvm-journal"} |= "devvm-io-guard"' --since 3d
+Every decision is one journald line from devvm-io-guard.service, as key=value
+pairs. Loki labels them with the unit, so the calibration query is:
+    homelab logs query '{job="devvm-journal", unit="devvm-io-guard.service"}' --since 3d
 """
 
 import collections
