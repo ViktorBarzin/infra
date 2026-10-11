@@ -71,7 +71,7 @@ Before the signal, the guard appends a note to the command's output: for a Bash 
 
 ### Reading its log
 
-Every decision is one journald line under `SYSLOG_IDENTIFIER=devvm-io-guard`, as `key=value` pairs:
+Every decision is one journald line from `devvm-io-guard.service`, as `key=value` pairs. The lines do not contain the service name, so filter on Loki's `unit` label rather than with `|=`:
 
 ```
 action=would-kill dry_run=1 psi_full10=0.62 psi_full60=0.55 user=wizard pid=123 target=scope:run-u5001.scope read_mb=812.3 wait_s=7.9 window_s=10.0 cmd="ugrep -r foo /home"
@@ -80,7 +80,7 @@ action=would-kill dry_run=1 psi_full10=0.62 psi_full60=0.55 user=wizard pid=123 
 `action` is one of `start`, `clamp`/`would-clamp`, `clamp-adjust`, `kill`/`would-kill`, `no-victim`, `release`/`would-release`, `stale-clamp-cleared` and `error`. Across the cluster:
 
 ```sh
-homelab logs query '{job="devvm-journal"} |= "devvm-io-guard"' --since 3d
+homelab logs query '{job="devvm-journal", unit="devvm-io-guard.service"}' --since 3d
 ```
 
 Metrics go to `/var/lib/node_exporter/textfile/devvm_io_guard.prom`: `devvm_io_guard_clamp`, `devvm_io_guard_clamp_riops_per_slice`, `devvm_io_guard_dry_run`, `devvm_io_guard_decisions_total{action}`, `devvm_io_guard_pressure_full_avg10` and `devvm_io_guard_last_write_timestamp_seconds`.
