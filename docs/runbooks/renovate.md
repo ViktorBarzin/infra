@@ -102,7 +102,7 @@ Two ways, both in the repo:
   { "matchDatasources": ["helm"], "matchPackageNames": ["traefik"], "matchNewValue": "41.8.0", "enabled": false }
   ```
 
-- A component that waits for a supervised session: a `HELD:` package rule in `renovate.json5` with `enabled: false` and a description saying why. Held today: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, NVIDIA driver majors, the Loki chart, Kyverno chart 3.10 and later, Forgejo (every update), Technitium majors. Remove the rule to release the component.
+- A component that waits for a supervised session: a `HELD:` package rule in `renovate.json5` with `enabled: false` and a description saying why. Held today: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, NVIDIA driver majors, the Loki chart, Kyverno chart 3.10 and later, Forgejo (every update), Technitium majors, the anisette digest-only pin (its image is still under `ignore_changes`, so a bump would not reach the pod). Remove the rule to release the component.
 
 Not managed by Renovate at all: `modules/**` (a change there re-applies every platform stack), `.woodpecker/**` (CI images), our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, `forgejo.viktorbarzin.me/*`), Terraform providers, and `:latest` or untagged refs.
 

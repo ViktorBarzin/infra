@@ -350,5 +350,11 @@
       matchPackageNames: ["kyverno"],
       allowedVersions: "<3.10.0",
     },
+    {
+      description: "HELD: anisette digest-only pin. Its container image is still under ignore_changes (KEEL_IGNORE_IMAGE, Keel cutover B01), so a bump would change the string in git while the pod keeps the old bytes, and verify would pass on an unchanged pod. Release when the stack drops that ignore.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["docker.io/dadoum/anisette-v3-server", "dadoum/anisette-v3-server"],
+      enabled: false,
+    },
   ],
 }
