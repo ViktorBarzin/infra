@@ -108,7 +108,7 @@ resource "kubernetes_deployment" "speedtest" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/speedtest-tracker:0.24.3"
+          image = "lscr.io/linuxserver/speedtest-tracker:1.15.0"
           name  = "speedtest"
           port {
             container_port = 80
@@ -236,6 +236,7 @@ module "ingress" {
   name            = "speedtest"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Speedtest"

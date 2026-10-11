@@ -305,7 +305,7 @@ resource "kubernetes_job" "models_dir_init" {
         restart_policy = "Never"
         container {
           name    = "mkdir"
-          image   = "busybox:1.37"
+          image   = "busybox:1.38"
           command = ["sh", "-c", "mkdir -p /mnt/chatterbox/hf_cache /mnt/chatterbox/reference_audio && ls -la /mnt/chatterbox"]
           volume_mount {
             name       = "nfs-ssd-root"

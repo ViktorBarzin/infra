@@ -239,7 +239,7 @@ resource "kubernetes_deployment" "n8n" {
         service_account_name = kubernetes_service_account.n8n.metadata[0].name
         container {
           name  = "n8n"
-          image = "docker.n8n.io/n8nio/n8n:1.80.5"
+          image = "docker.n8n.io/n8nio/n8n:1.123.84"
           env {
             name  = "N8N_PORT"
             value = "5678"

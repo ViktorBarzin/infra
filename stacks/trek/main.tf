@@ -22,7 +22,7 @@ variable "tls_secret_name" {
 variable "image_tag" {
   type = string
   # renovate: datasource=docker depName=mauriceboe/trek
-  default = "3.0.22"
+  default = "4.3.3"
 }
 
 resource "kubernetes_namespace" "trek" {
@@ -248,6 +248,7 @@ module "ingress" {
     group = "trek"
   }
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.trek.metadata[0].name
   name            = "trek"

@@ -52,7 +52,7 @@ resource "kubernetes_deployment" "echo" {
       }
       spec {
         container {
-          image = "mendhak/http-https-echo:36"
+          image = "mendhak/http-https-echo:42"
           name  = "echo"
           port {
             container_port = 8080

@@ -318,7 +318,7 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
           spec {
             container {
               name  = "bank-sync"
-              image = "alpine:3.20"
+              image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
               set -u
               apk add --no-cache curl jq >/dev/null 2>&1

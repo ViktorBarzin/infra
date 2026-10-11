@@ -188,7 +188,7 @@ resource "kubernetes_deployment" "shlink" {
       }
       spec {
         container {
-          image = "shlinkio/shlink:5.0.2"
+          image = "shlinkio/shlink:5.1.7"
           name  = "shlink"
           env {
             name  = "DEFAULT_DOMAIN"
@@ -378,7 +378,7 @@ resource "kubernetes_deployment" "shlink-web" {
       }
       spec {
         container {
-          image = "shlinkio/shlink-web-client:4.7.1"
+          image = "shlinkio/shlink-web-client:4.8.1"
           name  = "shlink-web"
           volume_mount {
             mount_path = "/usr/share/nginx/html/servers.json"

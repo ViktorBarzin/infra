@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
           # kuma.db (SQLite) at boot and cannot read the v2 db-config.json,
           # which caused a 4h CrashLoopBackOff while the MariaDB store sat
           # intact. Never move this back to a major-only tag.
-          image = "louislam/uptime-kuma:2.3.2"
+          image = "louislam/uptime-kuma:2.5.6"
           name  = "uptime-kuma"
 
           resources {

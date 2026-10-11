@@ -798,25 +798,10 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
 #   ~/code/fire-planner/docs/plans/2026-05-28-reddit-examples-{design,plan}.md
 # ----------------------------------------------------------------------
 
-variable "llama_cpp_base_url" {
-  type        = string
-  description = "llama-swap /v1/chat/completions endpoint for primary LLM extraction"
-  # Service is named `llama-swap`, NOT `llama-cpp` — the proxy in front of
-  # the actual llama-cpp pod. Port 8080. (Initial 2026-05-28 value pointed
-  # at a non-existent service:port and the bulk Job produced 0 rows.)
-  default = "http://llama-swap.llama-cpp.svc.cluster.local:8080/v1/chat/completions"
-}
-
 variable "claude_agent_service_url" {
   type        = string
-  description = "claude-agent-service /v1/chat/completions endpoint for Tier 2 fallback"
+  description = "claude-agent-service /v1/chat/completions endpoint for example extraction (Haiku, no-tools mode; the qwen tier was retired 2026-10-11)"
   default     = "http://claude-agent-service.claude-agent.svc.cluster.local:8080/v1/chat/completions"
-}
-
-variable "examples_llm_model" {
-  type        = string
-  description = "llama-swap model id for the examples LLM primary extractor. The extractor is text-only, so this is the text model; the app default in fire_planner/examples/llm_extract.py matches."
-  default     = "qwen3-8b"
 }
 
 variable "run_examples_bulk_ingest" {
@@ -984,16 +969,8 @@ resource "kubernetes_job_v1" "examples_bulk_ingest" {
             value = "fire-planner/0.1"
           }
           env {
-            name  = "LLAMA_CPP_BASE_URL"
-            value = var.llama_cpp_base_url
-          }
-          env {
             name  = "CLAUDE_AGENT_SERVICE_URL"
             value = var.claude_agent_service_url
-          }
-          env {
-            name  = "LLM_MODEL"
-            value = var.examples_llm_model
           }
           env {
             name  = "LLM_CONCURRENCY"
@@ -1105,10 +1082,6 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
               env {
                 name  = "REDDIT_USER_AGENT"
                 value = "fire-planner/0.1"
-              }
-              env {
-                name  = "LLAMA_CPP_BASE_URL"
-                value = var.llama_cpp_base_url
               }
               env {
                 name  = "CLAUDE_AGENT_SERVICE_URL"

@@ -136,6 +136,12 @@ curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' 
   -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
 ```
 
+If a command's output ends with a `[devvm-io-guard] Stopped ...` note, the
+devvm disk was saturated and the guard stopped that scan to protect etcd,
+which shares the disk. Don't re-run it as is: narrow the path, or use the
+tool the note names. A `BLOCKED by scan-guard` message is the same rule
+applied before the command runs. Details: `docs/architecture/devvm-io-guard.md`.
+
 ## Common Operations
 - **`homelab` CLI** (`/usr/local/bin/homelab`, source `cli/`): unified infra-ops verbs — run `homelab manifest` to discover the surface (each verb tagged read/write). Infra loop: `homelab tf plan|fmt|apply <stack>` (wraps `scripts/tg`; `apply` auto-claims presence + releases on exit, warns out-of-band), `homelab claim|release <kind>:<name>`, `homelab work start|land|clean <topic>` (worktree lifecycle; `land` gates on verification, `--verify-cmd`/`--no-verify`). Full docs: `cli/README.md`.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.

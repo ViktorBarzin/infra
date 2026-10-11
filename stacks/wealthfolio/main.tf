@@ -171,7 +171,7 @@ resource "kubernetes_deployment" "wealthfolio" {
           # History: pinned 3.2.1 on 2026-05-26 after the Keel tag-rewrite
           # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08;
           # 3.6.3 is what Keel had rolled when it was retired (2026-10-10).
-          image = "afadil/wealthfolio:3.6.3"
+          image = "afadil/wealthfolio:3.9.1"
           name  = "wealthfolio"
           port {
             container_port = 8080
@@ -230,7 +230,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # a nightly sqlite3 .backup so we have an off-cluster copy.
         container {
           name  = "backup"
-          image = "library/alpine:3.20.10"
+          image = "library/alpine:3.24.2"
           command = ["/bin/sh", "-c", <<-EOT
           set -eu
           apk add --no-cache --quiet sqlite busybox-suid
@@ -281,7 +281,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # incremental upserts and gives clean cold-start behaviour.
         container {
           name  = "pg-sync"
-          image = "library/alpine:3.20.10"
+          image = "library/alpine:3.24.2"
           env {
             name = "PGHOST"
             value_from {
@@ -1035,7 +1035,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
 
             container {
               name  = "curl"
-              image = "curlimages/curl:8.11.1"
+              image = "curlimages/curl:8.22.0"
               env {
                 name = "WF_PASSWORD"
                 value_from {

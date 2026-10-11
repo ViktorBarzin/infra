@@ -240,12 +240,10 @@ Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses a
 **token-injector** instead — users never see the dashboard's token prompt:
 
 1. **Authentik forward-auth** (`auth=required`) gates access AND injects
-   `X-authentik-username` (the user's email). The `admin-services-restriction`
-   policy (a generated **default-deny host→groups table**, ADR-0023) admits this
-   host's `allowed_groups` — for `k8s` that's `kubernetes-admins` /
+   `X-authentik-username` (the user's email). `k8s` has its own `forward_single`
+   application (ADR-0031) bound to `kubernetes-admins` /
    `kubernetes-power-users` / `kubernetes-namespace-owners` + `Home Server Admins`
-   (admins also always pass via the break-glass bypass)
-   (`stacks/authentik/admin-services-restriction.tf`).
+   (`stacks/authentik/forward-auth-apps.json`).
 2. **Token-injector** (`stacks/k8s-dashboard/dashboard_injector.tf`): an nginx
    that maps `X-authentik-username` → that user's ServiceAccount token and sets
    `Authorization: Bearer` before proxying to kong-proxy, so the dashboard

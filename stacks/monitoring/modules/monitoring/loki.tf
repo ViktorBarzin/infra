@@ -96,7 +96,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
       spec {
         init_container {
           name  = "sysctl"
-          image = "busybox:1.37"
+          image = "busybox:1.38"
           command = [
             "sh", "-c",
             "sysctl -w fs.inotify.max_user_watches=1048576 && sysctl -w fs.inotify.max_user_instances=8192 && sysctl -w fs.inotify.max_queued_events=1048576"
@@ -418,7 +418,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
               annotations = {
                 summary     = "llama-swap could not start a model"
-                description = "A model load failed, so consumers (paperless-ai, recruiter-responder, tripit) get HTTP 500 or fall back. If GpuCudaOom is also firing this is VRAM starvation and the watchdog should clear it; if not, look at the model files on the NFS-SSD PVC and the llama-swap log."
+                description = "A model load failed, so paperless-ai (the only consumer since 2026-10-11) gets HTTP 500 and skips documents until the next scan. If GpuCudaOom is also firing this is VRAM starvation and the watchdog should clear it; if not, look at the model files on the NFS-SSD PVC and the llama-swap log."
               }
             },
             {

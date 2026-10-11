@@ -871,7 +871,7 @@ resource "kubernetes_deployment" "beadboard" {
 
         init_container {
           name    = "seed-beads-config"
-          image   = "busybox:1.36.1"
+          image   = "busybox:1.38.0"
           command = ["sh", "-c", "cp /config/* /beads/ && mkdir -p /beads/templates /beads/archetypes"]
           volume_mount {
             name       = "beads-config"

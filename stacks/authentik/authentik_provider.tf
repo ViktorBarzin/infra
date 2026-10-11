@@ -30,9 +30,8 @@ data "authentik_flow" "default_provider_invalidation" {
 # Catch-all Proxy Provider + Application.
 #
 # Created via the Authentik UI ~a year ago; adopted into Terraform 2026-04-18
-# (Wave 6a). The proxy provider is consumed by the embedded outpost
-# (uuid 0eecac07-97c7-443c-8925-05f2f4fe3e47) via an outpost-level binding
-# that stays in the UI — it's a single toggle with no drift risk.
+# (Wave 6a). The embedded outpost below serves it, alongside the per-host
+# forward_single providers from forward-auth-apps.tf.
 # -----------------------------------------------------------------------------
 
 resource "authentik_application" "catchall" {
@@ -79,15 +78,21 @@ resource "authentik_provider_proxy" "catchall" {
 # reconciler no-ops by itself because the outpost is embedded, which is why the
 # kubernetes_json_patches that used to sit here never did anything.
 #
-# What the record is still FOR: it carries the catchall proxy provider, so the
-# inline outpost knows which provider to serve, and it is the object authentik's
-# UI shows as the embedded outpost.
+# What the record is still FOR: it carries the proxy providers the inline
+# outpost serves (the catch-all plus one forward_single provider per host in
+# forward-auth-apps.json), and it is the object authentik's UI shows as the
+# embedded outpost. It depends_on every per-host binding so that no provider is
+# served before its bindings exist (forward-auth-apps.tf, ORDERING).
 # -----------------------------------------------------------------------------
 
 resource "authentik_outpost" "embedded" {
-  name               = "authentik Embedded Outpost"
-  type               = "proxy"
-  protocol_providers = [authentik_provider_proxy.catchall.id]
+  name = "authentik Embedded Outpost"
+  type = "proxy"
+  protocol_providers = concat(
+    [authentik_provider_proxy.catchall.id],
+    [for host in sort(keys(local.forward_auth_apps)) : authentik_provider_proxy.forward_auth[host].id],
+  )
+  depends_on         = [authentik_policy_binding.forward_auth]
   service_connection = "99e227a7-4562-4888-9660-4c27da678c50"
   config = jsonencode({
     # info, not trace: the outpost sits on the hot path of every request to

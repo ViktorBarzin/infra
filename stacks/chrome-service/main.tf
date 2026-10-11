@@ -13,12 +13,12 @@ locals {
   # If you bump this image, also bump `playwright==X.Y.Z` in callers'
   # requirements (currently f1-stream, snapshot-harvester) and re-run the
   # connect smoke test. Image ships chromium under /ms-playwright/.
-  image = "mcr.microsoft.com/playwright:v1.48.0-noble"
+  image = "mcr.microsoft.com/playwright:v1.64.0-noble"
   # Python image for the snapshot-harvester CronJob and the snapshot-server
   # sidecar (the latter just runs a 60-line stdlib HTTP server). Also carries
   # the cdp-bridge sidecar + turn-cred initContainer — reusing it there costs no
   # extra pull, since it is already resident for snapshot-server in this pod.
-  python_image = "mcr.microsoft.com/playwright/python:v1.48.0-noble"
+  python_image = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
   snapshot_dir = "/profile/snapshots"
 
   # neko v3 (WebRTC H.264 + Opus) streams the master browser — the same display
@@ -243,7 +243,7 @@ resource "kubernetes_deployment" "chrome_service" {
         # previous pod is gone before this one starts.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", "chown -R 1000:1000 /profile && rm -f /profile/chromium-data/Singleton*"]
           security_context {
             run_as_user = 0
@@ -1070,7 +1070,7 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
             }
             container {
               name  = "backup"
-              image = "docker.io/library/alpine:3.20"
+              image = "docker.io/library/alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
                 apk add --no-cache rsync

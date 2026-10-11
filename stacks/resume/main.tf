@@ -105,7 +105,7 @@ resource "kubernetes_deployment" "printer" {
       spec {
         container {
           name  = "printer"
-          image = "ghcr.io/browserless/chromium:v2.49.0"
+          image = "ghcr.io/browserless/chromium:v2.57.0"
 
           port {
             container_port = 3000
