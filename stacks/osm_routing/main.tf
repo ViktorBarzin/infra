@@ -313,7 +313,7 @@ resource "kubernetes_deployment" "otp" {
       spec {
         container {
           name  = "otp"
-          image = "opentripplanner/opentripplanner:2.6.0"
+          image = "opentripplanner/opentripplanner:2.10.0"
           args  = ["--build", "--save"]
           port {
             name           = "http"
