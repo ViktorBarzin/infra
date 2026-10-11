@@ -1001,6 +1001,15 @@ module "anubis" {
       - name: f1-installable-app
         path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
         action: ALLOW
+      # Channel logos (f1-stream ADR-0033, 2026-10-11). The TV app loads each
+      # Channel's /logos/<slug>.png with its own HTTP client, which never holds
+      # an Anubis cookie, so from the household's public address every logo
+      # came back as the PoW page (200 text/html), the image decoder failed and
+      # the TV drew monograms; from the LAN the trusted-networks rule hid it.
+      # Static PNGs with no data in them; one path segment, PNG only.
+      - name: f1-channel-logos
+        path_regex: ^/logos/[A-Za-z0-9_-]+\.png$
+        action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at
       # f1.f1-stream.svc.cluster.local:80 and never passes through Anubis,
