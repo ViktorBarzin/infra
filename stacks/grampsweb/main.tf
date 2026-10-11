@@ -387,6 +387,7 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   # Internal-only: with the * wildcard CNAME live, a name without an explicit
   # record would resolve through Cloudflare and become publicly reachable.
   # The internal A record shadows the wildcard (outsiders resolve 10.0.20.203,

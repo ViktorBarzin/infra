@@ -1,23 +1,19 @@
 # The "Domain wide catch all" application's own group binding, adopted into
 # Terraform 2026-09-19.
 #
-# WHY THIS FILE EXISTS. Every auth="required" host (87 of them, across 91
-# ingresses) is served by the single catch-all forward_domain provider. Two
-# policy bindings sit on that application, and until today NEITHER was declared
-# in code — both were created in the Authentik UI:
+# WHY THIS FILE EXISTS. Every auth="required" host that is not in
+# forward-auth-apps.json is served by the single catch-all forward_domain
+# provider, and this binding is its only gate: Home Server Admins, nobody else.
+# Removing it would drop every such host to authentik's default of "allow any
+# authenticated user".
 #
-#   order 0   Group "Home Server Admins"                 <- adopted here
-#   order 10  Policy "admin-services-restriction"        <- still UI-managed
+# Until 2026-10-11 a second, UI-managed binding sat at order 10, attaching the
+# expression policy "admin-services-restriction" (ADR-0023). From 2026-09-19 it
+# returned False, for the reason below. It was deleted with the change that gave
+# non-admin hosts their own providers (ADR-0031, forward-auth-apps.tf), and
+# deleting the policy removed its binding with it.
 #
-# policy_engine_mode is "any", so a user passes if EITHER binding passes. The
-# expression policy returns True for every request (see below), which is what
-# makes the group binding moot today. Removing the expression binding is what
-# turns this group binding into the real gate, and that is a SEPARATE change
-# that must land only after this one is applied and verified. Done in the other
-# order, all 85 admin-only hosts would fall back to authentik's default of
-# "allow any authenticated user", which is worse than the current state.
-#
-# WHY THE EXPRESSION POLICY CANNOT WORK (measured 2026-09-19, ADR-0023 revisited).
+# WHY THE EXPRESSION POLICY COULD NOT WORK (measured 2026-09-19, ADR-0023 revisited).
 # ADR-0023 assumed the policy would be re-evaluated per request with the visited
 # host in `request.context["host"]`. It is not. In domain-level forward auth the
 # policy engine is never in the per-request path at all: the outpost answers from

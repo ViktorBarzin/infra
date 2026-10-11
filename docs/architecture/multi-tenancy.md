@@ -180,7 +180,7 @@ their Authentik identity (`X-authentik-username`) to their `dashboard-<user>` SA
 token (`admin` on their namespace + read-only on the namespace list & nodes
 only — they can't read other tenants' resources) and injects it as
 `Authorization: Bearer`. Forward-auth admits the `kubernetes-*` groups for this
-host (`stacks/authentik/admin-services-restriction.tf`).
+host through its own per-host application (`stacks/authentik/forward-auth-apps.json`, ADR-0031).
 
 > **Why not seamless OIDC SSO:** the intended oauth2-proxy OIDC path is built but
 > blocked — the apiserver rejects all Authentik OIDC tokens. The injector uses SA

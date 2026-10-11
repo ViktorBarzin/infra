@@ -435,7 +435,7 @@ resource "kubernetes_deployment" "f1-stream" {
           }
           env {
             name  = "MEMBER_GROUP"
-            value = authentik_group.f1_users.name
+            value = data.authentik_group.home_users.name
           }
           env {
             name = "AUTHENTIK_API_TOKEN"
