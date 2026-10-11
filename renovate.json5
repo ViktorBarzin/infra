@@ -313,6 +313,12 @@
       enabled: false,
     },
     {
+      description: "HELD: dbaas mysql-standalone, all updates (2026-10-11). The rails' pre-upgrade snapshot (full mysqldump | gzip -9) takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s), so 8.4.11 was held-reverted in pipeline 2244 and each retry would pause Renovate for 2 h. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
+      matchFileNames: ["stacks/dbaas/**"],
+      matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
+      enabled: false,
+    },
+    {
       description: "HELD: MySQL majors, 8.4 -> 9.x and 26.x (in-place jump path unconfirmed; innovation releases cannot be downgraded). 8.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
