@@ -463,8 +463,14 @@ stage_finish() {
   esac
 
   # mode = verify
-  local since
+  # Stacks are verified in parallel, up to RAILS_VERIFY_JOBS at once (default
+  # 6): each verify watches alerts for 10 minutes, so a batch of several bumps
+  # in one pipeline costs about one watch instead of one per stack, and stays
+  # inside the 60-minute Woodpecker timeout. Each stack's output is printed in
+  # full after it finishes, so the log stays readable.
+  local since jobs launched=() pids=()
   since=$(cat .rails_since)
+  jobs=${RAILS_VERIFY_JOBS:-6}
   for s in $(cat .rails_stacks); do
     if cat .platform_failed .app_failed 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
       failed+=("$s"); why+=("its terragrunt apply failed")
@@ -475,9 +481,17 @@ stage_finish() {
       incomplete+=("$s")
       continue
     fi
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs" ]; do wait -n; done
     log "[$s] running scripts/verify/run --since $since $s"
-    bash scripts/verify/run --since "$since" "$s"
-    rc=$?
+    ( bash scripts/verify/run --since "$since" "$s" >".verify_$s.log" 2>&1; echo $? >".verify_$s.rc" ) &
+    launched+=("$s"); pids+=($!)
+  done
+  for pid in "${pids[@]}"; do wait "$pid"; done
+  for s in "${launched[@]}"; do
+    log "[$s] verify output:"
+    sed "s/^/[$s] /" ".verify_$s.log" 2>/dev/null
+    rc=$(cat ".verify_$s.rc" 2>/dev/null || echo 1)
+    rm -f ".verify_$s.log" ".verify_$s.rc"
     if [ "$rc" -eq 0 ]; then
       verified+=("$s")
     else
