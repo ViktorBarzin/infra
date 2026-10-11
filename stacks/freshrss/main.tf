@@ -138,7 +138,7 @@ resource "kubernetes_deployment" "freshrss" {
 
         container {
           name  = "freshrss"
-          image = "freshrss/freshrss:1.29.1"
+          image = "freshrss/freshrss:1.30.1"
           env {
             name  = "CRON_MIN"
             value = "0,30"
