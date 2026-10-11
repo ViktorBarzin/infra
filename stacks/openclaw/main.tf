@@ -455,7 +455,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Init 0: fix /workspace ownership so node user can write
         init_container {
           name    = "fix-workspace-perms"
-          image   = "busybox:1.37"
+          image   = "busybox:1.38"
           command = ["sh", "-c", "chown 1000:1000 /workspace"]
           volume_mount {
             name       = "workspace"
@@ -466,7 +466,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Init 1: copy openclaw.json from ConfigMap into writable NFS home
         init_container {
           name    = "copy-config"
-          image   = "busybox:1.37"
+          image   = "busybox:1.38"
           command = ["sh", "-c", "cp /config/openclaw.json /home/node/.openclaw/openclaw.json && chown 1000:1000 /home/node/.openclaw/openclaw.json"]
           volume_mount {
             name       = "openclaw-config"
@@ -484,7 +484,7 @@ resource "kubernetes_deployment" "openclaw" {
         # long-dead pod and kubectl returns "must be logged in to the server".
         init_container {
           name  = "setup-kubeconfig"
-          image = "busybox:1.37"
+          image = "busybox:1.38"
           command = ["sh", "-c", <<-EOT
             cat > /home/node/.openclaw/kubeconfig <<'KUBECONFIG_EOF'
             apiVersion: v1
@@ -561,7 +561,7 @@ resource "kubernetes_deployment" "openclaw" {
         # older NFS snapshot from silently restoring the plugin on a restart.
         init_container {
           name  = "remove-nextcloud-todos-plugin"
-          image = "busybox:1.37"
+          image = "busybox:1.38"
           command = ["sh", "-c", <<-EOT
             set -eu
             rm -rf /home/node/.openclaw/extensions/nextcloud-todos-api
@@ -759,7 +759,7 @@ resource "kubernetes_deployment" "openclaw" {
         # entry-point (skill).
         init_container {
           name  = "seed-devvm-memory-note"
-          image = "busybox:1.37"
+          image = "busybox:1.38"
           command = ["sh", "-c", <<-EOT
             set -eu
 
