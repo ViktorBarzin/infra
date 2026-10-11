@@ -229,7 +229,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               }
               # Playback goes through our own /proxy, never straight at the CDN:
               # the videocdn token is bound to the requesting IP, and /proxy
-              # re-originates from the f1-stream pod, so the token stays valid
+              # re-originates from an f1-stream Edge, so the token stays valid
               # whichever node the leased browser sits on. The code default is
               # 127.0.0.1:8000, which is right for the app's in-process use and
               # wrong here — a cron pod runs no FastAPI, so an unset value would
@@ -261,6 +261,17 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               env {
                 name  = "GUARD_SCHEDULE_URL"
                 value = "http://f1.f1-stream.svc.cluster.local/api/schedule"
+              }
+              # The source history the guard reads before filing, from /metrics.
+              # Straight at the Worker since ADR-0029 (f1-stream repo): only the
+              # Worker extracts, so only its exposition carries the per-source
+              # extraction families, and the `f1` Service reaches an Edge. The
+              # app's default is the `f1` Service, which is right only for the
+              # single pre-ADR-0029 Deployment. /api/schedule above stays on `f1`,
+              # which any Edge answers.
+              env {
+                name  = "GUARD_METRICS_URL"
+                value = "${local.f1_worker_url}/metrics"
               }
               # Faults are filed against the infra tracker, where the
               # broken-label webhook and issue-responder already live — not

@@ -126,8 +126,8 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
 # the Vault database engine's static role `pg-f1-stream`.
 #
 # MOUNTED AS A FILE, NOT AN ENV VAR, and marked for Reloader to ignore. The
-# Deployment below carries reloader.stakater.com/auto, so any Secret it
-# references by env would restart the pod on every rotation, at whatever time
+# Deployments below carry reloader.stakater.com/auto, so any Secret they
+# reference by env would restart them on every rotation, at whatever time
 # the rotation lands, and a restart during a session takes the stream away from
 # everyone watching. Instead the app hands asyncpg a password callable that
 # re-reads this file for each new connection, so a rotation reaches it through
@@ -176,6 +176,11 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
   depends_on = [kubernetes_namespace.f1-stream]
 }
 
+# The app's data volume before the ADR-0029 cutover (RWO). Nothing mounts it
+# since then: kubernetes_job_v1.f1_stream_data_copy copied it into
+# f1-stream-data, and it stays, untouched, for two weeks as the copy to roll
+# back to. The cleanup removes it together with that Job; the PV is Retain, so
+# /srv/nfs/f1-stream stays on the Proxmox host until removed there by hand.
 module "nfs_data_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "f1-stream-data-host"
@@ -237,12 +242,617 @@ resource "kubernetes_persistent_volume_claim_v1" "f1_stream_data" {
   }
 }
 
-resource "kubernetes_deployment" "f1-stream" {
+# ---------------------------------------------------------------------------
+# The app runs as three Roles from one image (ADR-0029 in the f1-stream repo,
+# "Rollouts never stall a playing stream"). The ROLE env picks what a pod does:
+#
+#   f1-stream-edge        2 replicas, no GPU. The site, the API, /proxy,
+#                         /relay and replays; the `f1` Service selects these.
+#   f1-stream-transcoder  1 replica on the GPU. Live quality ladders; Edges
+#                         start sessions through the f1-transcoder Service.
+#   f1-stream-worker      1 replica on the GPU. Scheduler, extraction,
+#                         scrapes, replay ladders and Early copies, and the
+#                         only Role that writes /data.
+#
+# Before ADR-0029 this was one Deployment rolled with no surge. Two pods of
+# that shape needed more gpumem than k8s-node1 had free, and its stream cache,
+# token refresh and report-dead maps were per-process, so a second pod would
+# have disagreed with the first. Every deploy took the site down for a cold
+# start, which is why the deploy pipeline held off during sessions.
+#
+# The split removes both reasons. Edges hold no GPU seat and keep shared state
+# in Redis, so they roll one at a time with a surge pod: the new Edge is Ready
+# before an old one leaves, the old one drains (preStop sends SIGUSR1, which
+# makes readiness 503 and closes keep-alives, then uvicorn's graceful shutdown
+# lets in-flight responses finish), and the PDB keeps one serving through a
+# node drain. The Transcoder also rolls with a surge and hands its sessions to
+# the new pod in its preStop before it exits. The Worker is Recreate: viewers
+# keep playing from the Edges while it restarts, and only new extraction and
+# replay work waits for it.
+#
+# ROLE unset means `all`, the monolith, so the same image still runs under a
+# single Deployment; rolling this file back to that shape relies on it.
+#
+# GPU seats on k8s-node1 (advertises 15000 gpumem): 12148 declared on
+# 2026-10-11, of which this namespace held 2848. Steady state with the split is
+# 2848 + 1200 = 4048 (node 13348); a Transcoder surge adds 1200 for the length
+# of a handover (node 14548). The Worker is Recreate, so its seat never
+# doubles. If a parked GPU tenant comes back first, the surge Transcoder waits
+# Pending and the old one keeps serving.
+# ---------------------------------------------------------------------------
+
+locals {
+  f1_image = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
+
+  # Plain env shared by the Edge and the Worker, which both run backend
+  # features. Kept as an ORDERED LIST, never a map: Kubernetes expands $(VAR)
+  # only against entries earlier in the list, and a map would sort by key. The
+  # Transcoder reads none of these and has its own short list.
+  f1_env_values = [
+    # Early copies of HDR replays (app ADR-0024). Off in the app by default;
+    # on here now that the Worker's gpumem declaration fits one.
+    { name = "REPLAY_EARLY_HDR", value = "1" },
+    # Member sign-in and the membership check (f1-stream ADR-0025, ADR-0021;
+    # members.tf). The issuer and client id are public; the client secret and
+    # the Authentik API token come from the Secret members.tf writes. Unset,
+    # /login answers 503 and nothing else changes, so the image and this stack
+    # can land in either order.
+    { name = "OIDC_ISSUER", value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/" },
+    { name = "OIDC_CLIENT_ID", value = authentik_provider_oauth2.f1_stream.client_id },
+    { name = "MEMBER_GROUP", value = authentik_group.f1_users.name },
+    { name = "DISCORD_CHANNELS", value = var.discord_f1_channel_ids },
+    # Verifier connects to in-cluster headed Chromium pool — see
+    # stacks/chrome-service/. Falls back to in-process headless if unset.
+    # 2026-06-04: migrated WS (:3000 / path-token) → CDP (:9222 /
+    # NetworkPolicy-gated). Token is no longer needed for the
+    # connection itself; the chrome-service-client-secrets ExternalSecret
+    # above stays in place because the snapshot endpoint (dev-box only,
+    # not used by f1-stream) reuses the same Vault key.
+    #
+    # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
+    # proposes as build step 2. Two things measured 2026-09-05 say that swap
+    # would be a regression rather than a fix:
+    #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
+    #     /json/version returns the FleetView HTML page, so
+    #     connect_over_cdp() against it fails. Leasing is a code change
+    #     (backend/chrome_fleet.py), not an env value.
+    #   - the address below now answers. From this pod,
+    #     chrome-service:9222/json/version returned 200 Chrome/147.0.7727.55.
+    #     The connection-refused the design recorded was the neko container
+    #     in that pod being taskless after a restart; the pod has since
+    #     restarted again and reads 3/3 Running.
+    # The guard CronJob does not set this var at all — it leases a worker
+    # per run and injects that worker's URL directly. See f1-source-guard.tf.
+    { name = "CHROME_CDP_URL", value = "http://chrome-service.chrome-service.svc.cluster.local:9222" },
+    # The streamed extractor resolves embed pages by loading them in a
+    # browser, and leases a worker from the fleet broker to do it rather
+    # than holding the single chrome-service instance above for a whole
+    # extraction run. Without this the extractor logs that the var is
+    # unset and returns no streams, which is how it shipped on
+    # 2026-09-06: registered, deployed, and quietly yielding nothing.
+    # Note this is the BROKER, not a CDP endpoint — :8080 serves
+    # /acquire and /release, and the worker's own podIP:9222 is what
+    # gets dialled. See backend/chrome_fleet.py.
+    { name = "CHROME_FLEET_URL", value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080" },
+    # Replay torrent streaming: qBittorrent does the fetching (auth is
+    # bypassed for 10.0.0.0/8, so no credentials), we read the partial
+    # file off the shared export.
+    { name = "QBITTORRENT_URL", value = "http://qbittorrent.servarr.svc" },
+    { name = "REPLAY_CACHE_DIR", value = "/replay-cache" },
+    # qBittorrent's own view of the same directory, for savepath on add.
+    { name = "REPLAY_CACHE_REMOTE_DIR", value = "/downloads/f1-replays" },
+    { name = "REPLAY_CACHE_CAP_GB", value = "150" },
+    # The converted library's own ceiling, and a DIFFERENT thing from the
+    # torrent cache above it: this one bounds `/data/replays-mp4`, the
+    # seekable mp4s plus their HLS ladders, which is what a viewer plays
+    # days after the torrent is gone.
+    #
+    # SET EXPLICITLY ON 2026-09-11. It was unset, so the cap was the code
+    # default in backend/replays/library.py:617 — `int(os.getenv(
+    # "REPLAY_LIBRARY_CAP_GB", "120")) * 1024**3`, i.e. 120 GiB. Note the
+    # units: GiB, not GB, and `int()` rather than the `float()` the cache
+    # cap above uses, so this value must stay a whole number.
+    #
+    # WHY 180 AND NOT THE 120 IT WAS, measured in-pod on 2026-09-11.
+    # `/data/replays-mp4` holds 56,914,498,254 B (53.0 GiB) in three
+    # sessions, and each session is its mp4 plus its ladder:
+    #     68fbb492  9,082,285,192 + 12,159,955,298 = 21.24 GB (19.78 GiB)
+    #     67e70279  7,282,644,360 + 10,562,067,486 = 17.84 GB (16.62 GiB)
+    #     ed641a9a  7,275,450,051 + 10,552,091,230 = 17.83 GB (16.60 GiB)
+    # A race weekend is FIVE sessions. Against the old 120 GiB cap only
+    # 67.0 GiB was left, so a weekend needed 88.4 GiB at the mean session
+    # size and 98.9 GiB at the largest, and BOTH exceed what was free.
+    # The refusal was therefore not a corner case, it was the expected
+    # outcome partway through the weekend — and the cap REFUSES rather
+    # than evicting, so the symptom is a session that never arrives.
+    # 180 GiB covers the resident 53.0 plus a worst-case weekend at 98.9
+    # plus one more largest-session of slack (19.8) = 171.7, with a little
+    # rounding room.
+    # Honest limit on that arithmetic: all three held sessions are RACES,
+    # so sizing practice and qualifying at a race's bitrate is pessimistic.
+    # Pessimism is the cheap direction here, because the cost of being
+    # wrong low is a silently missing session on a race weekend.
+    #
+    # WHY NOT SIMPLY HUGE. The volume behind this is shared, so the cap is
+    # the only thing keeping f1 off everyone else's disk. Measured the
+    # same day: `192.168.1.127:/srv/nfs/f1-stream` reports 4,327,881,048,064
+    # B total and 904,448,180,224 B (842.3 GiB) available at 79% used, and
+    # that pool is the `/srv/nfs` filesystem shared by 41 namespaces (40
+    # besides this one, counted over the `nfs-pve` PVs). 180 GiB lets f1
+    # grow by at most 127 GiB from today, which is 15% of the remaining
+    # slack and leaves ~715 GiB for everyone else. Unbounded, f1 alone
+    # would take the volume past the 95% where PVFillingUp pages.
+    { name = "REPLAY_LIBRARY_CAP_GB", value = "180" },
+    # Peer-assisted delivery. The backend injects these into the served
+    # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
+    # rather than the frontend baking them at build time, because the
+    # frontend is built once into the image while the tracker URL is
+    # deployment config that follows the ingress.
+    #
+    # UNSET MEANS OFF, deliberately: p2pSettings treats a missing tracker
+    # list as "peer-assist disabled", so a viewer then pulls every segment
+    # over HTTP exactly as before. That keeps a feature which opens WebRTC
+    # connections between viewers' browsers behind a single env var.
+    #
+    # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
+    # on this same host under /tracker, so it follows f1 through the
+    # Cloudflare cutover with no second decision.
+    { name = "P2P_TRACKERS", value = "wss://f1.viktorbarzin.me/tracker" },
+    # STUN only, no TURN. A STUN server learns a candidate address and
+    # carries no media, so this leaks less than the segment request that
+    # follows it; TURN would relay the video itself and defeat the point.
+    # Google's public STUN is used because it costs nothing and we do not
+    # run one — if that ever matters, coturn in-cluster is the swap.
+    { name = "P2P_STUN", value = "stun:stun.l.google.com:19302" },
+    # Peer assist is OFF for live, on for replays, since 2026-09-18.
+    #
+    # It was never carrying live traffic worth the machinery. Measured
+    # at the live edge over 16 samples, peers moved 0.1 KB against
+    # 85.9 MB total, because a live viewer's neighbours are all inside
+    # the same few seconds of the same playlist and have nothing the
+    # CDN has not already sent. Replays are the opposite shape and keep
+    # it, so the code stays and only the live path is gated.
+    #
+    # Set to 1 to put it back without a code change.
+    { name = "P2P_LIVE", value = "0" },
+    # The visitor and viewing record (app repo ADR-0014). The URL carries
+    # no password: the app reads it from the mounted file below on every
+    # new connection, which is what lets a rotation land without a
+    # restart (see the ExternalSecret above). Unset or unreachable, the
+    # app records nothing and serves exactly as before.
+    { name = "VIEWING_DATABASE_URL", value = "postgresql://f1_stream@${var.postgresql_host}:5432/f1_stream" },
+    { name = "VIEWING_DATABASE_PASSWORD_FILE", value = "/secrets/viewing-db/password" },
+    # Where the daily job asks which other homelab hosts and Authentik
+    # usernames a viewer's address used that week. One batched query a
+    # day, never during a session.
+    { name = "LOKI_URL", value = "http://loki.monitoring.svc.cluster.local:3100" },
+  ]
+
+  # Secret-backed env shared by the Edge and the Worker.
+  f1_env_secrets = [
+    # Signs the admin session cookie, and the URLs and internal header the
+    # Roles pass each other. Unset, the app issues and accepts nothing rather
+    # than signing with a guessable key. The Transcoder sets it on its own.
+    { name = "ADMIN_SESSION_KEY", secret = "f1-stream-secrets", key = "admin_session_key", optional = false },
+    { name = "OIDC_CLIENT_SECRET", secret = kubernetes_secret.f1_members.metadata[0].name, key = "oidc_client_secret", optional = false },
+    { name = "AUTHENTIK_API_TOKEN", secret = kubernetes_secret.f1_members.metadata[0].name, key = "authentik_api_token", optional = false },
+    { name = "DISCORD_TOKEN", secret = "f1-stream-secrets", key = "discord_user_token", optional = false },
+    # Announces a television taking a different build, to the same
+    # #alerts webhook the source-guard already carries in this namespace.
+    # optional=true so the pod starts before the guard's ExternalSecret
+    # has synced; the app logs the line instead of posting it when unset.
+    { name = "TV_SLACK_WEBHOOK", secret = "f1-stream-guard-secrets", key = "slack_webhook", optional = true },
+    # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
+    # incoming webhook. It comes from the Vault "f1-stream" key through the
+    # dataFrom.extract ExternalSecret above; optional=true so the pod
+    # starts before the key exists, and the app skips the message.
+    { name = "SLACK_F1_WEBHOOK_URL", secret = "f1-stream-secrets", key = "slack_f1_webhook_url", optional = true },
+    # Session notifications (app repo ADR-0020) sign Web Push with this
+    # VAPID identity, from the Vault "f1-stream" key through the same
+    # dataFrom.extract ExternalSecret. optional=true: with any of the
+    # three missing the app keeps notifications off and hides the bell.
+    { name = "PUSH_VAPID_PRIVATE_KEY", secret = "f1-stream-secrets", key = "push_vapid_private_key", optional = true },
+    { name = "PUSH_VAPID_PUBLIC_KEY", secret = "f1-stream-secrets", key = "push_vapid_public_key", optional = true },
+    { name = "PUSH_VAPID_SUBJECT", secret = "f1-stream-secrets", key = "push_vapid_subject", optional = true },
+    # Replays feature (app repo ADR-0002). optional=true so the pod still
+    # starts before the Reddit app credentials exist; the app treats missing
+    # creds as "replays off" (logs "Replays pipeline disabled"). The
+    # ExternalSecret above uses dataFrom.extract on the Vault "f1-stream"
+    # key, so adding reddit_client_id / reddit_client_secret there auto-syncs
+    # them into this Secret — no ExternalSecret change needed, just a pod
+    # restart to pick them up.
+    { name = "REDDIT_CLIENT_ID", secret = "f1-stream-secrets", key = "reddit_client_id", optional = true },
+    { name = "REDDIT_CLIENT_SECRET", secret = "f1-stream-secrets", key = "reddit_client_secret", optional = true },
+  ]
+
+  f1_namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  # In-cluster addresses the Roles use to reach each other.
+  f1_edge_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
+  f1_worker_url     = "http://${kubernetes_service_v1.f1_worker.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
+  f1_transcoder_url = "http://${kubernetes_service_v1.f1_transcoder.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
+}
+
+# One-shot copy of the old RWO volume into the RWX claim, at the cutover. The
+# three Roles depend on it, so Terraform starts none of them until the copy has
+# finished. Run it with the old Deployment scaled to zero so nothing writes
+# /data during the copy. 18 GiB on 2026-10-11, almost all of it the replay
+# library; the duration on the shared HDD pool has not been measured, hence the
+# hour.
+#
+# The marker file makes a re-run harmless: if this Job is ever recreated after
+# the cutover it must not copy the old volume over newer data. No
+# ttl_seconds_after_finished, because a Job that deletes itself is planned for
+# re-creation on the next apply. It goes, with module.nfs_data_host, in the
+# cleanup two weeks after the cutover.
+#
+# The old claim mounts beside the new one from any node: the NFS CSIDriver has
+# attachRequired: false, so RWO is not enforced across nodes. The export is
+# no_root_squash (the app's files are owned by uid 0), so `cp -a` keeps owners.
+resource "kubernetes_job_v1" "f1_stream_data_copy" {
   metadata {
-    name      = "f1-stream"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "f1-stream-data-copy"
+    namespace = local.f1_namespace
+    labels    = { app = "f1-stream-data-copy" }
+  }
+  spec {
+    backoff_limit = 0
+    template {
+      metadata {
+        # Not app=f1-stream, so the Prometheus pod job and the deploy
+        # pipeline's label selector never pick this pod up.
+        labels = { app = "f1-stream-data-copy" }
+      }
+      spec {
+        restart_policy = "Never"
+        container {
+          name  = "copy"
+          image = "docker.io/library/busybox:1.37.0"
+          command = ["/bin/sh", "-c", <<-EOT
+            set -eu
+            if [ -e /new/.copied-from-rwo ]; then
+              echo "already copied on $(cat /new/.copied-from-rwo)"; exit 0
+            fi
+            cp -a /old/. /new/
+            date -u > /new/.copied-from-rwo
+            echo "copied: $(du -sh /new | cut -f1)"
+          EOT
+          ]
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "256Mi" }
+          }
+          volume_mount {
+            name       = "old"
+            mount_path = "/old"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "new"
+            mount_path = "/new"
+          }
+        }
+        volume {
+          name = "old"
+          persistent_volume_claim {
+            claim_name = module.nfs_data_host.claim_name
+            read_only  = true
+          }
+        }
+        volume {
+          name = "new"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  wait_for_completion = true
+  timeouts {
+    create = "60m"
+  }
+  lifecycle {
+    # Without it every apply plans a replace and re-runs the Job
+    # (docs/agents/kyverno-drift.md, "kubernetes_job matters more").
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+# Edge: the site, the API, /proxy, /relay and replays. Every viewer byte passes
+# through an Edge, so this is the Role a rollout must not interrupt.
+resource "kubernetes_deployment_v1" "f1_edge" {
+  metadata {
+    name      = "f1-stream-edge"
+    namespace = local.f1_namespace
     labels = {
       app  = "f1-stream"
+      role = "edge"
+      tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
+  }
+  spec {
+    replicas = 2
+    # A new Edge must be Ready, and stay Ready for 10s, before an old one is
+    # taken out; with max_unavailable 0 two Edges serve throughout a rollout.
+    min_ready_seconds = 10
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = 1
+        max_unavailable = 0
+      }
+    }
+    selector {
+      match_labels = {
+        app  = "f1-stream"
+        role = "edge"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app  = "f1-stream"
+          role = "edge"
+        }
+      }
+      spec {
+        # preStop 10s + uvicorn graceful shutdown 45s + about 10s of lifespan
+        # shutdown + 5s margin. 45s is above Traefik's p99.9 request time of
+        # 29s, so a TV's segment load in flight at SIGTERM finishes.
+        termination_grace_period_seconds = 70
+        # The two Edges of one revision on different nodes, so losing a node
+        # leaves one serving. A spread per revision (pod-template-hash) rather
+        # than required anti-affinity: anti-affinity also counts the old
+        # Edges that are draining, so a rollout would need a fourth untainted
+        # node for its second surge pod, and only node2-5 qualify. Old and new
+        # Edges may share a node for the length of a rollout.
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "DoNotSchedule"
+          match_label_keys   = ["pod-template-hash"]
+          label_selector {
+            match_labels = {
+              app  = "f1-stream"
+              role = "edge"
+            }
+          }
+        }
+        container {
+          # deploy.yml in the f1-stream repo sets the image by this name.
+          name  = "f1-stream"
+          image = local.f1_image
+          port {
+            container_port = 8000
+          }
+          # No Edge-only process has been measured yet: the monolith's
+          # 1.3-1.5 GiB working set included ffmpeg and extraction, which the
+          # Edge does not run. 384Mi is a first guess and 1536Mi leaves room to
+          # find out; revisit after a week of data. No CPU limit (Kyverno
+          # strip-cpu-limits removes one at admission anyway) and no GPU.
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "384Mi"
+            }
+            limits = {
+              memory = "1536Mi"
+            }
+          }
+          # Ready once one read of the shared stream cache in Redis has
+          # answered (or, after 20s of failed reads, once /data's copy loads),
+          # and latched after that, so a Redis blip cannot take both Edges out
+          # of the Service at once. 503 while draining. Fast period and a short
+          # failure count because the drain must leave the endpoints quickly.
+          #
+          # NO LIVENESS PROBE, as before the split. A liveness probe that
+          # misfires kills a working pod. Measured over 30 days to
+          # 2026-09-13, 177 distinct f1-stream pods reported a maximum
+          # container restart count of 0, so a hung process is not a failure
+          # this service has produced.
+          readiness_probe {
+            http_get {
+              path = "/health/ready"
+              port = 8000
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 2
+            timeout_seconds       = 2
+            failure_threshold     = 3
+            success_threshold     = 1
+          }
+          lifecycle {
+            pre_stop {
+              # SIGUSR1 starts the app's drain: readiness answers 503 and
+              # responses carry Connection: close, so Anubis's keep-alives
+              # redial to another Edge. The sleep covers the endpoint
+              # leaving kube-proxy and Traefik before SIGTERM.
+              exec {
+                command = ["/bin/sh", "-c", "kill -USR1 1; sleep 10"]
+              }
+            }
+          }
+          # This pod's own address, for the one env var below that cannot use
+          # the Service. Declared BEFORE it, because Kubernetes expands
+          # $(VAR) only against env entries that come earlier in the list.
+          env {
+            name = "POD_IP"
+            value_from {
+              field_ref {
+                field_path = "status.podIP"
+              }
+            }
+          }
+          # The embed proxy (this pod's /embed?url=…) must be reachable from
+          # the remote chrome-service pod. Default 127.0.0.1 only works for
+          # in-process Chromium, so the remote browser needs a routable
+          # address.
+          #
+          # The pod IP rather than the ClusterIP service, changed 2026-09-18
+          # from the live streaming audit. Routing through
+          # f1.f1-stream.svc.cluster.local closes a loop on every cold start:
+          # the Service only carries endpoints for a READY pod, readiness is
+          # /health/ready, and reaching ready involves the verification that
+          # has to call back through this address. So the first verification
+          # of a pod's life dials a Service that does not yet list it.
+          # Measured 16 of 16 boots. The downward API address skips the
+          # Service entirely and is reachable from the chrome-service pod the
+          # moment the container has an IP.
+          #
+          # On the Edge since ADR-0029 because re-verify of watched streams
+          # runs on one Edge at a time under a Redis lease.
+          env {
+            name  = "PLAYBACK_VERIFY_PROXY_BASE"
+            value = "http://$(POD_IP):8000"
+          }
+          env {
+            name  = "ROLE"
+            value = "edge"
+          }
+          # Read by the uvicorn CLI (UVICORN_* env). See the grace period.
+          env {
+            name  = "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"
+            value = "45"
+          }
+          # Replay mutations, Early-copy playlists and the other routes that
+          # start work or write /data are forwarded here.
+          env {
+            name  = "WORKER_URL"
+            value = local.f1_worker_url
+          }
+          # Where an Edge asks for a live quality ladder. Reads of a running
+          # session go to the owning Transcoder's pod IP from Redis.
+          env {
+            name  = "TRANSCODER_URL"
+            value = local.f1_transcoder_url
+          }
+          # The base the Transcoder's ffmpeg reads the source through: the
+          # in-cluster Edge Service rather than Cloudflare and Anubis, so a
+          # read cut by an Edge drain reconnects to the other Edge.
+          env {
+            name  = "TRANSCODE_SOURCE_BASE"
+            value = local.f1_edge_url
+          }
+          # Share-link thumbnails are a regenerable cache, so each Edge keeps
+          # its own outside the read-only /data.
+          env {
+            name  = "SHARE_THUMBNAIL_DIR"
+            value = "/tmp/share-thumbs"
+          }
+          # Proves to the app that a request came through the ingress rather
+          # than straight at a pod. Straight from the random_password rather
+          # than through f1-stream-secrets: the Middleware in ingress-proof.tf
+          # reads the same resource, so there is nothing for Vault or an
+          # ExternalSecret to add.
+          #
+          # Set on every Role, not only the Edges that the ingress reaches.
+          # Unset, the app trusts Authentik headers from anything that can
+          # reach it, and this namespace has no NetworkPolicy, so a Worker or
+          # Transcoder without it would mint an admin session for any pod in
+          # the cluster.
+          env {
+            name  = "INGRESS_PROOF_SECRET"
+            value = random_password.ingress_proof.result
+          }
+          dynamic "env" {
+            for_each = local.f1_env_values
+            content {
+              name  = env.value.name
+              value = env.value.value
+            }
+          }
+          dynamic "env" {
+            for_each = local.f1_env_secrets
+            content {
+              name = env.value.name
+              value_from {
+                secret_key_ref {
+                  name     = env.value.secret
+                  key      = env.value.key
+                  optional = env.value.optional
+                }
+              }
+            }
+          }
+          volume_mount {
+            name       = "viewing-db"
+            mount_path = "/secrets/viewing-db"
+            read_only  = true
+          }
+          # Read-only: only the Worker writes /data (ADR-0029). A write from
+          # an Edge fails with EROFS on its request path, which is how a
+          # missed write shows up instead of two pods racing on one file.
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+            read_only  = true
+          }
+          # Read-only: qBittorrent owns these files, we only stream them out.
+          volume_mount {
+            name       = "replay-cache"
+            mount_path = "/replay-cache"
+            read_only  = true
+          }
+        }
+        volume {
+          name = "data"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
+            read_only  = true
+          }
+        }
+        # optional so the pod starts before the ExternalSecret has synced; the
+        # app treats a missing password file as "record nothing".
+        volume {
+          name = "viewing-db"
+          secret {
+            secret_name = "f1-stream-viewing-db"
+            optional    = true
+          }
+        }
+        volume {
+          name = "replay-cache"
+          persistent_volume_claim {
+            claim_name = module.nfs_replay_cache.claim_name
+          }
+        }
+        # Pull the (private) Forgejo-registry image. Kyverno syncs
+        # registry-credentials into every namespace.
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        # Private ghcr image (ADR-0002 off-infra builds) — cloned into this
+        # namespace by the kyverno sync-ghcr-credentials allowlist policy.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+    ]
+  }
+}
+
+# Transcoder: live quality ladders on the GPU. Edges start a session through
+# the f1-transcoder Service and read its playlist and segments from the owning
+# pod's IP, which the session record in Redis names. Segments stay in this
+# pod's memory, as before the split.
+resource "kubernetes_deployment_v1" "f1_transcoder" {
+  metadata {
+    name      = "f1-stream-transcoder"
+    namespace = local.f1_namespace
+    labels = {
+      app  = "f1-stream"
+      role = "transcoder"
       tier = local.tiers.aux
     }
     annotations = {
@@ -251,48 +861,255 @@ resource "kubernetes_deployment" "f1-stream" {
   }
   spec {
     replicas = 1
-    # RollingUpdate with NO surge, which at one replica behaves exactly as
-    # Recreate did and is simply the conventional spelling.
-    #
-    # A surge was the first plan and cannot be scheduled. Two f1-stream pods
-    # alive at once need 14,500 of the 14,000 `viktorbarzin.me/gpumem` budget
-    # advertised on k8s-node1, where 13,300 is already declared (claude-memory
-    # 5,000, frigate 2,800, immich-machine-learning 2,500, immich-worker 1,500,
-    # this pod 1,200, android-emulator 300). The second pod would sit Pending
-    # and the rollout would stall. Measured 2026-09-13; it is admission control
-    # rather than real memory, since the T4 holds 15,360 MiB and 8,070 was in
-    # use at the time.
-    #
-    # A second, independent reason: TokenRefreshManager._active_streams, the
-    # extraction lock and the report-dead debounce maps are all per-process, so
-    # two pods would let a viewer take /streams from one and have /activate
-    # land on the other, which holds no record of that stream and would never
-    # refresh its CDN token.
-    #
-    # What removes the gap instead is the persisted stream list the app now
-    # reads at boot (backend/stream_cache_store.py).
+    # The surge pod takes a second 1200 gpumem seat for the length of a
+    # handover; see the GPU seat note above the locals.
     strategy {
       type = "RollingUpdate"
       rolling_update {
-        max_surge       = 0
-        max_unavailable = 1
+        max_surge       = 1
+        max_unavailable = 0
       }
     }
     selector {
       match_labels = {
-        app = "f1-stream"
+        app  = "f1-stream"
+        role = "transcoder"
       }
     }
     template {
       metadata {
         labels = {
-          app = "f1-stream"
+          app  = "f1-stream"
+          role = "transcoder"
         }
       }
       spec {
+        # The preStop handover is bounded at 75s, then uvicorn gets 10s, plus
+        # lifespan shutdown and margin.
+        termination_grace_period_seconds = 120
+        # k8s-node1 carries nvidia.com/gpu=true:NoSchedule so only work that
+        # wants the card lands there.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         container {
-          image = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
+          # deploy.yml in the f1-stream repo sets the image by this name.
           name  = "f1-stream"
+          image = local.f1_image
+          port {
+            container_port = 8000
+          }
+          resources {
+            requests = {
+              cpu    = "200m"
+              memory = "512Mi"
+            }
+            limits = {
+              # One GPU slice for NVDEC/NVENC. This pins the pod to k8s-node1.
+              "nvidia.com/gpu" = "1"
+              # GPU VRAM seat (ADR-0016). Live sessions measured 139-297 MiB
+              # each for SDR sources, and TRANSCODE_MAX_SESSIONS is 2 (the warm
+              # encoder takes one of those slots), so 1200 covers two at the top
+              # of that range (594) with room to spare. A 2160p HDR live
+              # session is inferred at about 1,800 MiB and would put this pod
+              # over its seat, which the gpu-vram-watchdog answers by deleting
+              # the pod at the next contention event; TRANSCODE_LIVE_HDR=0
+              # below refuses those sources instead. Raise both together.
+              "viktorbarzin.me/gpumem" = "1200"
+              # Two encoders at about 360 MB RSS each, the app, and the 256Mi
+              # memory emptyDir, which counts against this limit.
+              memory = "2Gi"
+            }
+          }
+          # Ready once Redis has answered and ffmpeg is on PATH; 503 while
+          # draining. No liveness probe (see the Edge).
+          readiness_probe {
+            http_get {
+              path = "/health/ready"
+              port = 8000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+            timeout_seconds       = 3
+            failure_threshold     = 12
+            success_threshold     = 1
+          }
+          lifecycle {
+            pre_stop {
+              # Hands each live session to the new Transcoder and returns once
+              # the new pod has caught up, or after 75s. It runs here rather
+              # than on SIGTERM because uvicorn closes its listener at SIGTERM,
+              # and the Edges keep reading this pod's IP until the handover.
+              # An exec hook talks to localhost and adds no HTTP route that
+              # Anubis, which passes every non-GET method, could reach.
+              exec {
+                command = ["python", "-m", "backend.transcode_handover", "--deadline", "75"]
+              }
+            }
+          }
+          # This pod's address and name, written into the Redis session records so
+          # the Edges know which pod owns a session. Declared first, as on the Edge.
+          env {
+            name = "POD_IP"
+            value_from {
+              field_ref {
+                field_path = "status.podIP"
+              }
+            }
+          }
+          env {
+            name = "POD_NAME"
+            value_from {
+              field_ref {
+                field_path = "metadata.name"
+              }
+            }
+          }
+          env {
+            name  = "ROLE"
+            value = "transcoder"
+          }
+          # Short: in-flight requests are segment reads, and the handover has
+          # already run in the preStop hook.
+          env {
+            name  = "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"
+            value = "10"
+          }
+          env {
+            name  = "TRANSCODE_DIR"
+            value = "/transcode"
+          }
+          # Two encoders at ~1.8 cores each is the most this pod may spend.
+          env {
+            name  = "TRANSCODE_MAX_SESSIONS"
+            value = "2"
+          }
+          # Refuse HDR and 10-bit live sources (503, and the client plays the
+          # source) until the gpumem seat above is sized for them. The app
+          # default, 1, is the behaviour before the split.
+          env {
+            name  = "TRANSCODE_LIVE_HDR"
+            value = "0"
+          }
+          # The warm encoder reads its source through an Edge; loopback no
+          # longer reaches one.
+          env {
+            name  = "WARM_ENCODER_PROXY_BASE"
+            value = local.f1_edge_url
+          }
+          # Signs the source URLs the warm encoder fetches and keys the header
+          # the internal /internal/transcode routes require.
+          env {
+            name = "ADMIN_SESSION_KEY"
+            value_from {
+              secret_key_ref {
+                name = "f1-stream-secrets"
+                key  = "admin_session_key"
+              }
+            }
+          }
+          # On every Role; see the Edge.
+          env {
+            name  = "INGRESS_PROOF_SECRET"
+            value = random_password.ingress_proof.result
+          }
+          volume_mount {
+            name       = "transcode"
+            mount_path = "/transcode"
+          }
+        }
+        # Encoder scratch. Six segments per rung is only a few MB, and it is
+        # rewritten constantly — memory-backed keeps that churn off the shared
+        # HDD (see the recurring IO-storm work) and guarantees it is discarded
+        # with the pod. The size counts against the pod's memory limit.
+        volume {
+          name = "transcode"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "256Mi"
+          }
+        }
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+    ]
+  }
+}
+
+# Worker: scheduler, extraction, scrapes, replay ladders and Early copies, and
+# the only Role that writes /data. A singleton: two would run every job twice.
+resource "kubernetes_deployment_v1" "f1_worker" {
+  metadata {
+    name      = "f1-stream-worker"
+    namespace = local.f1_namespace
+    labels = {
+      app  = "f1-stream"
+      role = "worker"
+      tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
+  }
+  spec {
+    replicas = 1
+    # Recreate, so the old Worker has stopped before the new one starts: no
+    # two schedulers, no two writers of /data, and no second 2848 gpumem seat,
+    # which node1 does not have. Viewers keep playing from the Edges while it
+    # restarts; the stream cache in Redis stays fresh through the Edge-leased
+    # re-verify.
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app  = "f1-stream"
+        role = "worker"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app  = "f1-stream"
+          role = "worker"
+        }
+      }
+      spec {
+        # uvicorn's 30s graceful shutdown plus lifespan shutdown and margin.
+        termination_grace_period_seconds = 60
+        # k8s-node1 carries nvidia.com/gpu=true:NoSchedule so only work that
+        # wants the card lands there.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
+        container {
+          # deploy.yml in the f1-stream repo sets the image by this name.
+          name  = "f1-stream"
+          image = local.f1_image
+          port {
+            container_port = 8000
+          }
+          # Sizing history, carried over from the single Deployment, which ran
+          # everything the Worker runs plus the live transcodes and serving.
+          #
           # Right-sized 2026-06-05: was 1Gi (bundled-Chromium era). The image is
           # now CDP-only (verifier drives the remote chrome-service), so actual
           # usage is ~116Mi and the VPA upperBound (incl. live races) is ~185Mi.
@@ -310,31 +1127,17 @@ resource "kubernetes_deployment" "f1-stream" {
           # ~377MB peak so a regression still shows up as an OOM rather than
           # being absorbed silently.
           #
-          # Raised 2026-08-23 for the server-side quality ladder. Our providers
-          # publish a single rendition (1280x720 at 50 fps, ~4.5 Mbps), so a
-          # client on a mobile connection has nothing smaller to ask for; the
-          # pod now re-encodes a 540p/360p ladder on demand. Measured on the
-          # real stream, 30s of video costs ~54s of CPU (~1.8 cores) and ~360MB
-          # RSS per encoder, and TRANSCODE_MAX_SESSIONS caps it at two at once.
-          # The CPU limit is that ceiling plus room for uvicorn and the
-          # Playwright driver; memory covers two encoders alongside the ~520MB
-          # those two processes already use.
+          # Raised 2026-08-23 for the server-side quality ladder, which is the
+          # Transcoder's job since ADR-0029. Measured on the real stream, 30s of
+          # video costs ~54s of CPU (~1.8 cores) and ~360MB RSS per encoder.
           #
-          # Nothing is spent unless a client asks for lower quality: the
-          # untouched source stays the default and starts no encoder.
+          # No CPU limit: Kyverno's strip-cpu-limits removes one at admission.
           resources {
             limits = {
-              cpu = "4"
-              # One GPU, for NVENC. The live ladder encodes continuously for as
-              # long as anyone is watching a reduced quality, which measured at
-              # ~1.8 cores for two rungs; on the card that is close to free.
-              # Replay ladders stay on the CPU on purpose - they are built once
-              # and streamed many times, so their ~13% smaller output is worth
-              # the one-off encode time.
-              #
-              # This pins the pod to k8s-node1, the only node with a card, so
-              # f1-stream now shares node1's fate. Accepted: every video path
-              # on the hardware is worth more here than spreading the risk.
+              # One GPU slice, for the replay ladders' NVDEC and the Early
+              # copies' NVENC. This pins the pod to k8s-node1, so f1-stream
+              # shares node1's fate. Accepted: every video path on the
+              # hardware is worth more here than spreading the risk.
               "nvidia.com/gpu" = "1"
               # GPU VRAM budget (ADR-0016), declared 2026-08-31 at 500 and
               # RAISED to 1200 on 2026-09-10. This pod ran with NO gpumem
@@ -395,6 +1198,12 @@ resource "kubernetes_deployment" "f1-stream" {
               # While a copy runs the card can drop under the watchdog floor,
               # and llama-swap (seatless) is then the one recycled; Viktor
               # chose this knowing that.
+              #
+              # KEPT at 2848 when ADR-0029 moved the live transcodes to the
+              # Transcoder, which declares its own 1200. The Worker's own worst
+              # case is now an Early copy beside a ladder build; a smaller seat
+              # here (for example 2000, which would let the Transcoder take
+              # 1850 and run HDR live sessions) waits for a measurement.
               "viktorbarzin.me/gpumem" = "2848"
               # 2Gi -> 4Gi on 2026-09-27: a 4K HDR replay ladder build was
               # OOM-killed at 99% after ~4.5 h. Measured on a 2-minute excerpt,
@@ -408,247 +1217,22 @@ resource "kubernetes_deployment" "f1-stream" {
               memory = "1Gi"
             }
           }
-          port {
-            container_port = 8000
-          }
-          # READINESS ONLY, DELIBERATELY NO LIVENESS PROBE. A liveness probe
-          # that misfires kills a working pod, and with one replica nothing is
-          # left serving while the replacement warms -- a blank we would have
-          # caused ourselves. Measured over 30 days to 2026-09-13, 177 distinct
-          # f1-stream pods reported a maximum container restart count of 0, so
-          # a hung process is not a failure this service has produced.
-          #
-          # /health/ready answers on whether a full extract-and-verify pass has
-          # finished in THIS process, not on whether there are streams to serve.
-          # On 2026-09-11 an extraction genuinely found nothing for an hour, and
-          # a gate waiting for a stream would have held that rollout open until
-          # it timed out and rolled back. /health keeps meaning "this process is
-          # alive" and is what the Anubis allow-list names.
-          #
-          # At one replica this closes no gap on its own; what it buys is that
-          # the Service drops the endpoint honestly instead of serving an empty
-          # list, and that `kubectl rollout status` means something. It matters
-          # most on a first boot, or after an outage long enough that the
-          # persisted stream list has aged past its freshness window.
+          # Ready once the scheduler has started and the stream store has
+          # loaded (from Redis, or seeded from /data); 503 while draining. It
+          # no longer waits for a first extraction, because the Edges keep
+          # serving the cached streams meanwhile. 120 failures x 5s gives a
+          # slow start ten minutes, the deploy pipeline's wait. No liveness
+          # probe (see the Edge).
           readiness_probe {
             http_get {
               path = "/health/ready"
               port = 8000
             }
-            # A cold pod defers its first extraction 8s (backend/main.py), then
-            # spends 13-60s extracting and verifying. 5s initial + 5s period x
-            # 24 failures allows just over two minutes before the pod is called
-            # broken, which covers the slowest run measured (60.5s) with room
-            # for a race weekend's fuller set.
             initial_delay_seconds = 5
             period_seconds        = 5
             timeout_seconds       = 3
-            failure_threshold     = 24
+            failure_threshold     = 120
             success_threshold     = 1
-          }
-          # Proves to the app that a request came through the ingress rather
-          # than straight at the Service. Straight from the random_password
-          # rather than through f1-stream-secrets: the Middleware in
-          # ingress-proof.tf reads the same resource, so there is nothing for
-          # Vault or an ExternalSecret to add. Unset, the app keeps today's
-          # behaviour and logs a warning once, which is what lets this apply
-          # land before the image that enforces it.
-          # Early copies of HDR replays (app ADR-0024). Off in the app by
-          # default; on here now that the gpumem declaration above fits one.
-          env {
-            name  = "REPLAY_EARLY_HDR"
-            value = "1"
-          }
-          env {
-            name  = "INGRESS_PROOF_SECRET"
-            value = random_password.ingress_proof.result
-          }
-          # Signs the admin session cookie. Unset, the app issues and accepts
-          # nothing rather than signing with a guessable key.
-          env {
-            name = "ADMIN_SESSION_KEY"
-            value_from {
-              secret_key_ref {
-                name = "f1-stream-secrets"
-                key  = "admin_session_key"
-              }
-            }
-          }
-          # Member sign-in and the membership check (f1-stream ADR-0025,
-          # ADR-0021; members.tf). The issuer and client id are public; the
-          # client secret and the Authentik API token come from the Secret
-          # members.tf writes. Unset, /login answers 503 and nothing else
-          # changes, so the image and this stack can land in either order.
-          env {
-            name  = "OIDC_ISSUER"
-            value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/"
-          }
-          env {
-            name  = "OIDC_CLIENT_ID"
-            value = authentik_provider_oauth2.f1_stream.client_id
-          }
-          env {
-            name = "OIDC_CLIENT_SECRET"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.f1_members.metadata[0].name
-                key  = "oidc_client_secret"
-              }
-            }
-          }
-          env {
-            name  = "MEMBER_GROUP"
-            value = authentik_group.f1_users.name
-          }
-          env {
-            name = "AUTHENTIK_API_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.f1_members.metadata[0].name
-                key  = "authentik_api_token"
-              }
-            }
-          }
-          env {
-            name = "DISCORD_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "f1-stream-secrets"
-                key  = "discord_user_token"
-              }
-            }
-          }
-          env {
-            name  = "DISCORD_CHANNELS"
-            value = var.discord_f1_channel_ids
-          }
-          # Announces a television taking a different build, to the same
-          # #alerts webhook the source-guard already carries in this namespace.
-          # optional=true so the pod starts before the guard's ExternalSecret
-          # has synced; the app logs the line instead of posting it when unset.
-          env {
-            name = "TV_SLACK_WEBHOOK"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-guard-secrets"
-                key      = "slack_webhook"
-                optional = true
-              }
-            }
-          }
-          # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
-          # incoming webhook. It comes from the Vault "f1-stream" key through the
-          # dataFrom.extract ExternalSecret above; optional=true so the pod
-          # starts before the key exists, and the app skips the message.
-          env {
-            name = "SLACK_F1_WEBHOOK_URL"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "slack_f1_webhook_url"
-                optional = true
-              }
-            }
-          }
-          # Session notifications (app repo ADR-0020) sign Web Push with this
-          # VAPID identity, from the Vault "f1-stream" key through the same
-          # dataFrom.extract ExternalSecret. optional=true: with any of the
-          # three missing the app keeps notifications off and hides the bell.
-          env {
-            name = "PUSH_VAPID_PRIVATE_KEY"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "push_vapid_private_key"
-                optional = true
-              }
-            }
-          }
-          env {
-            name = "PUSH_VAPID_PUBLIC_KEY"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "push_vapid_public_key"
-                optional = true
-              }
-            }
-          }
-          env {
-            name = "PUSH_VAPID_SUBJECT"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "push_vapid_subject"
-                optional = true
-              }
-            }
-          }
-          # Replays feature (app repo ADR-0002). optional=true so the pod still
-          # starts before the Reddit app credentials exist; the app treats missing
-          # creds as "replays off" (logs "Replays pipeline disabled"). The
-          # ExternalSecret above uses dataFrom.extract on the Vault "f1-stream"
-          # key, so adding reddit_client_id / reddit_client_secret there auto-syncs
-          # them into this Secret — no ExternalSecret change needed, just a pod
-          # restart to pick them up.
-          env {
-            name = "REDDIT_CLIENT_ID"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "reddit_client_id"
-                optional = true
-              }
-            }
-          }
-          env {
-            name = "REDDIT_CLIENT_SECRET"
-            value_from {
-              secret_key_ref {
-                name     = "f1-stream-secrets"
-                key      = "reddit_client_secret"
-                optional = true
-              }
-            }
-          }
-          # Verifier connects to in-cluster headed Chromium pool — see
-          # stacks/chrome-service/. Falls back to in-process headless if unset.
-          # 2026-06-04: migrated WS (:3000 / path-token) → CDP (:9222 /
-          # NetworkPolicy-gated). Token is no longer needed for the
-          # connection itself; the chrome-service-client-secrets ExternalSecret
-          # below stays in place because the snapshot endpoint (dev-box only,
-          # not used by f1-stream) reuses the same Vault key.
-          #
-          # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
-          # proposes as build step 2. Two things measured 2026-09-05 say that swap
-          # would be a regression rather than a fix:
-          #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
-          #     /json/version returns the FleetView HTML page, so
-          #     connect_over_cdp() against it fails. Leasing is a code change
-          #     (backend/chrome_fleet.py), not an env value.
-          #   - the address below now answers. From this pod,
-          #     chrome-service:9222/json/version returned 200 Chrome/147.0.7727.55.
-          #     The connection-refused the design recorded was the neko container
-          #     in that pod being taskless after a restart; the pod has since
-          #     restarted again and reads 3/3 Running.
-          # The guard CronJob does not set this var at all — it leases a worker
-          # per run and injects that worker's URL directly. See f1-source-guard.tf.
-          env {
-            name  = "CHROME_CDP_URL"
-            value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
-          }
-          # The streamed extractor resolves embed pages by loading them in a
-          # browser, and leases a worker from the fleet broker to do it rather
-          # than holding the single chrome-service instance above for a whole
-          # extraction run. Without this the extractor logs that the var is
-          # unset and returns no streams, which is how it shipped on
-          # 2026-09-06: registered, deployed, and quietly yielding nothing.
-          # Note this is the BROKER, not a CDP endpoint — :8080 serves
-          # /acquire and /release, and the worker's own podIP:9222 is what
-          # gets dialled. See backend/chrome_fleet.py.
-          env {
-            name  = "CHROME_FLEET_URL"
-            value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080"
           }
           # This pod's own address, for the one env var below that cannot use
           # the Service. Declared BEFORE it, because Kubernetes expands
@@ -680,130 +1264,38 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "PLAYBACK_VERIFY_PROXY_BASE"
             value = "http://$(POD_IP):8000"
           }
-          # Replay torrent streaming: qBittorrent does the fetching (auth is
-          # bypassed for 10.0.0.0/8, so no credentials), we read the partial
-          # file off the shared export.
           env {
-            name  = "QBITTORRENT_URL"
-            value = "http://qbittorrent.servarr.svc"
+            name  = "ROLE"
+            value = "worker"
           }
           env {
-            name  = "REPLAY_CACHE_DIR"
-            value = "/replay-cache"
+            name  = "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"
+            value = "30"
           }
-          # qBittorrent's own view of the same directory, for savepath on add.
+          # On every Role; see the Edge.
           env {
-            name  = "REPLAY_CACHE_REMOTE_DIR"
-            value = "/downloads/f1-replays"
+            name  = "INGRESS_PROOF_SECRET"
+            value = random_password.ingress_proof.result
           }
-          env {
-            name  = "REPLAY_CACHE_CAP_GB"
-            value = "150"
+          dynamic "env" {
+            for_each = local.f1_env_values
+            content {
+              name  = env.value.name
+              value = env.value.value
+            }
           }
-          # The converted library's own ceiling, and a DIFFERENT thing from the
-          # torrent cache above it: this one bounds `/data/replays-mp4`, the
-          # seekable mp4s plus their HLS ladders, which is what a viewer plays
-          # days after the torrent is gone.
-          #
-          # SET EXPLICITLY ON 2026-09-11. It was unset, so the cap was the code
-          # default in backend/replays/library.py:617 — `int(os.getenv(
-          # "REPLAY_LIBRARY_CAP_GB", "120")) * 1024**3`, i.e. 120 GiB. Note the
-          # units: GiB, not GB, and `int()` rather than the `float()` the cache
-          # cap above uses, so this value must stay a whole number.
-          #
-          # WHY 180 AND NOT THE 120 IT WAS, measured in-pod on 2026-09-11.
-          # `/data/replays-mp4` holds 56,914,498,254 B (53.0 GiB) in three
-          # sessions, and each session is its mp4 plus its ladder:
-          #     68fbb492  9,082,285,192 + 12,159,955,298 = 21.24 GB (19.78 GiB)
-          #     67e70279  7,282,644,360 + 10,562,067,486 = 17.84 GB (16.62 GiB)
-          #     ed641a9a  7,275,450,051 + 10,552,091,230 = 17.83 GB (16.60 GiB)
-          # A race weekend is FIVE sessions. Against the old 120 GiB cap only
-          # 67.0 GiB was left, so a weekend needed 88.4 GiB at the mean session
-          # size and 98.9 GiB at the largest, and BOTH exceed what was free.
-          # The refusal was therefore not a corner case, it was the expected
-          # outcome partway through the weekend — and the cap REFUSES rather
-          # than evicting, so the symptom is a session that never arrives.
-          # 180 GiB covers the resident 53.0 plus a worst-case weekend at 98.9
-          # plus one more largest-session of slack (19.8) = 171.7, with a little
-          # rounding room.
-          # Honest limit on that arithmetic: all three held sessions are RACES,
-          # so sizing practice and qualifying at a race's bitrate is pessimistic.
-          # Pessimism is the cheap direction here, because the cost of being
-          # wrong low is a silently missing session on a race weekend.
-          #
-          # WHY NOT SIMPLY HUGE. The volume behind this is shared, so the cap is
-          # the only thing keeping f1 off everyone else's disk. Measured the
-          # same day: `192.168.1.127:/srv/nfs/f1-stream` reports 4,327,881,048,064
-          # B total and 904,448,180,224 B (842.3 GiB) available at 79% used, and
-          # that pool is the `/srv/nfs` filesystem shared by 41 namespaces (40
-          # besides this one, counted over the `nfs-pve` PVs). 180 GiB lets f1
-          # grow by at most 127 GiB from today, which is 15% of the remaining
-          # slack and leaves ~715 GiB for everyone else. Unbounded, f1 alone
-          # would take the volume past the 95% where PVFillingUp pages.
-          env {
-            name  = "REPLAY_LIBRARY_CAP_GB"
-            value = "180"
-          }
-          # Peer-assisted delivery. The backend injects these into the served
-          # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
-          # rather than the frontend baking them at build time, because the
-          # frontend is built once into the image while the tracker URL is
-          # deployment config that follows the ingress.
-          #
-          # UNSET MEANS OFF, deliberately: p2pSettings treats a missing tracker
-          # list as "peer-assist disabled", so a viewer then pulls every segment
-          # over HTTP exactly as before. That keeps a feature which opens WebRTC
-          # connections between viewers' browsers behind a single env var.
-          #
-          # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
-          # on this same host under /tracker, so it follows f1 through the
-          # Cloudflare cutover with no second decision.
-          env {
-            name  = "P2P_TRACKERS"
-            value = "wss://f1.viktorbarzin.me/tracker"
-          }
-          # STUN only, no TURN. A STUN server learns a candidate address and
-          # carries no media, so this leaks less than the segment request that
-          # follows it; TURN would relay the video itself and defeat the point.
-          # Google's public STUN is used because it costs nothing and we do not
-          # run one — if that ever matters, coturn in-cluster is the swap.
-          env {
-            name  = "P2P_STUN"
-            value = "stun:stun.l.google.com:19302"
-          }
-          # Peer assist is OFF for live, on for replays, since 2026-09-18.
-          #
-          # It was never carrying live traffic worth the machinery. Measured
-          # at the live edge over 16 samples, peers moved 0.1 KB against
-          # 85.9 MB total, because a live viewer's neighbours are all inside
-          # the same few seconds of the same playlist and have nothing the
-          # CDN has not already sent. Replays are the opposite shape and keep
-          # it, so the code stays and only the live path is gated.
-          #
-          # Set to 1 to put it back without a code change.
-          env {
-            name  = "P2P_LIVE"
-            value = "0"
-          }
-          # The visitor and viewing record (app repo ADR-0014). The URL carries
-          # no password: the app reads it from the mounted file below on every
-          # new connection, which is what lets a rotation land without a
-          # restart (see the ExternalSecret above). Unset or unreachable, the
-          # app records nothing and serves exactly as before.
-          env {
-            name  = "VIEWING_DATABASE_URL"
-            value = "postgresql://f1_stream@${var.postgresql_host}:5432/f1_stream"
-          }
-          env {
-            name  = "VIEWING_DATABASE_PASSWORD_FILE"
-            value = "/secrets/viewing-db/password"
-          }
-          # Where the daily job asks which other homelab hosts and Authentik
-          # usernames a viewer's address used that week. One batched query a
-          # day, never during a session.
-          env {
-            name  = "LOKI_URL"
-            value = "http://loki.monitoring.svc.cluster.local:3100"
+          dynamic "env" {
+            for_each = local.f1_env_secrets
+            content {
+              name = env.value.name
+              value_from {
+                secret_key_ref {
+                  name     = env.value.secret
+                  key      = env.value.key
+                  optional = env.value.optional
+                }
+              }
+            }
           }
           volume_mount {
             name       = "viewing-db"
@@ -820,33 +1312,11 @@ resource "kubernetes_deployment" "f1-stream" {
             mount_path = "/replay-cache"
             read_only  = true
           }
-          env {
-            name  = "TRANSCODE_DIR"
-            value = "/transcode"
-          }
-          # Two encoders at ~1.8 cores each is the most this pod may spend.
-          env {
-            name  = "TRANSCODE_MAX_SESSIONS"
-            value = "2"
-          }
-          volume_mount {
-            name       = "transcode"
-            mount_path = "/transcode"
-          }
         }
-        # k8s-node1 carries nvidia.com/gpu=true:NoSchedule so only work that
-        # wants the card lands there. This pod now does.
-        toleration {
-          key      = "nvidia.com/gpu"
-          operator = "Equal"
-          value    = "true"
-          effect   = "NoSchedule"
-        }
-
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data_host.claim_name
+            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
           }
         }
         # optional so the pod starts before the ExternalSecret has synced; the
@@ -864,43 +1334,34 @@ resource "kubernetes_deployment" "f1-stream" {
             claim_name = module.nfs_replay_cache.claim_name
           }
         }
-        # Encoder scratch. Six segments per rung is only a few MB, and it is
-        # rewritten constantly — memory-backed keeps that churn off the shared
-        # HDD (see the recurring IO-storm work) and guarantees it is discarded
-        # with the pod. The size counts against the pod's memory limit.
-        volume {
-          name = "transcode"
-          empty_dir {
-            medium     = "Memory"
-            size_limit = "256Mi"
-          }
-        }
-        # Pull the (private) Forgejo-registry image. Kyverno syncs
-        # registry-credentials into every namespace.
         image_pull_secrets {
           name = "registry-credentials"
         }
-        # Private ghcr image (ADR-0002 off-infra builds) — cloned into this
-        # namespace by the kyverno sync-ghcr-credentials allowlist policy.
         image_pull_secrets {
           name = "ghcr-credentials"
         }
       }
     }
   }
+  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
+  # The first start after the cutover may seed the shared stream store from
+  # /data and pull the image onto node1.
+  timeouts {
+    create = "20m"
+    update = "20m"
+  }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
-      metadata[0].annotations["kubernetes.io/change-cause"],
-      metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
 
-
+# The public Service: Anubis, the /admin/login and /pair carve-out ingresses
+# and the source-guard all address `f1`, and every one of them wants an Edge.
+# The name stays; since ADR-0029 the selector picks Edges only.
 resource "kubernetes_service" "f1-stream" {
   metadata {
     name      = "f1"
@@ -912,11 +1373,78 @@ resource "kubernetes_service" "f1-stream" {
 
   spec {
     selector = {
-      app = "f1-stream"
+      app  = "f1-stream"
+      role = "edge"
     }
     port {
       port        = "80"
       target_port = "8000"
+    }
+  }
+}
+
+# Where Edges start a live quality ladder. Reads of a running session bypass
+# this and go to the owning pod's IP.
+resource "kubernetes_service_v1" "f1_transcoder" {
+  metadata {
+    name      = "f1-transcoder"
+    namespace = local.f1_namespace
+    labels = {
+      app  = "f1-stream"
+      role = "transcoder"
+    }
+  }
+  spec {
+    selector = {
+      app  = "f1-stream"
+      role = "transcoder"
+    }
+    port {
+      port        = 80
+      target_port = 8000
+    }
+  }
+}
+
+# Where Edges forward replay mutations and other Worker routes, and where the
+# source-guard reads the extraction metrics.
+resource "kubernetes_service_v1" "f1_worker" {
+  metadata {
+    name      = "f1-stream-worker"
+    namespace = local.f1_namespace
+    labels = {
+      app  = "f1-stream"
+      role = "worker"
+    }
+  }
+  spec {
+    selector = {
+      app  = "f1-stream"
+      role = "worker"
+    }
+    port {
+      port        = 80
+      target_port = 8000
+    }
+  }
+}
+
+# Keeps one Edge serving through voluntary disruptions such as a kured node
+# drain. None for the Transcoder or the Worker: each is a single replica on
+# k8s-node1, and a min_available 1 budget there would block every drain of
+# node1 (stacks/claude-memory records that failure).
+resource "kubernetes_pod_disruption_budget_v1" "f1_edge" {
+  metadata {
+    name      = "f1-stream-edge"
+    namespace = local.f1_namespace
+  }
+  spec {
+    min_available = "1"
+    selector {
+      match_labels = {
+        app  = "f1-stream"
+        role = "edge"
+      }
     }
   }
 }
@@ -1038,8 +1566,8 @@ module "anubis" {
         path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
-      # scrape reaches the app Service directly at
-      # f1.f1-stream.svc.cluster.local:80 and never passes through Anubis,
+      # scrape reads every app pod's :8000 directly (pod discovery, job
+      # `f1-stream` in stacks/monitoring) and never passes through Anubis,
       # which fronts only the Ingress. An ALLOW rule would therefore buy the
       # scrape nothing and would publish per-source stream counts and
       # timestamps on the public hostname for no reason. If the exposition ever
