@@ -1070,7 +1070,7 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
             }
             container {
               name  = "backup"
-              image = "docker.io/library/alpine:3.20"
+              image = "docker.io/library/alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
                 apk add --no-cache rsync
