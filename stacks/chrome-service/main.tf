@@ -243,7 +243,7 @@ resource "kubernetes_deployment" "chrome_service" {
         # previous pod is gone before this one starts.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
+          image   = "busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
           command = ["sh", "-c", "chown -R 1000:1000 /profile && rm -f /profile/chromium-data/Singleton*"]
           security_context {
             run_as_user = 0
