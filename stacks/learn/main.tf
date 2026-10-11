@@ -360,7 +360,7 @@ resource "kubernetes_deployment" "learn" {
 
         container {
           name  = "caddy"
-          image = "docker.io/library/caddy:2.10.2-alpine"
+          image = "docker.io/library/caddy:2.11.7-alpine"
           port {
             container_port = 8080
             name           = "http"
