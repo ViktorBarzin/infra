@@ -27,8 +27,8 @@
 #
 # Membership is declared here rather than left to the Authentik UI (the pattern
 # "TripIt Users" uses), because the group has one member for one purpose and the
-# commit is the record of who was let in and when. Removing her is deleting a
-# line. Usernames in this instance are email addresses, verified live against
+# commit is the record of who was let in and when. Removing someone is deleting
+# a line. Usernames in this instance are email addresses, verified live against
 # /api/v3/core/users on 2026-09-03.
 
 data "authentik_user" "anca" {
@@ -38,9 +38,17 @@ data "authentik_user" "anca" {
   username = "ancaelena98@gmail.com"
 }
 
+data "authentik_user" "valia" {
+  # "Валентина Колева-Барзина", in Headscale Users. Added 2026-10-11 so the
+  # family in Sofia can read pages written for them (pages/valia/ and
+  # pages/shared/), starting with the Sofia TV and internet options.
+  username = "valentinakolevabarzina@gmail.com"
+}
+
 resource "authentik_group" "pages_readers" {
   name = "Pages Readers"
   users = [
     data.authentik_user.anca.id,
+    data.authentik_user.valia.id,
   ]
 }

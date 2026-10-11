@@ -21,6 +21,7 @@
 # handed to the other one resolves instead of 404ing). A Pages Reader reads only
 # their own space — added 2026-09-03 for Anca, whose prep page lives in
 # pages/anca/ and who should not inherit the admins' 100+ published pages.
+# Valia (2026-10-11) reads her own pages/valia/ plus pages/shared/.
 # pages/<user>/ is an authoring namespace, not an access boundary; unlisted
 # identities still get 403. Before that date each identity was pinned to its
 # own directory, which meant a page URL handed to the other person resolved
@@ -187,7 +188,7 @@ resource "kubernetes_config_map" "caddyfile" {
       	@pages_shared {
       		host pages.viktorbarzin.me
       		path /shared/*
-      		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin)(@.*)?$
+      		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin|valentinakolevabarzina)(@.*)?$
       	}
       	handle @pages_shared {
       		root * /repo/src/current/pages
@@ -236,6 +237,37 @@ resource "kubernetes_config_map" "caddyfile" {
       		root * /repo/src/current/pages/anca
       		try_files {path} {path}index.html
       		file_server
+      	}
+      	# Valia (valentinakolevabarzina@gmail.com, verified against the live
+      	# Authentik user list 2026-10-11). A Pages Reader like Anca, but with two
+      	# spaces: her own pages/valia/ first, then pages/shared/, which is where
+      	# pages written for the family in Sofia live (/shared/* URLs reach her
+      	# through @pages_shared above). Each space gets its OWN pinned root, the
+      	# same control as Anca's handle, rather than one root over the pages tree
+      	# with prefixed try_files. The prefixed form leaked twice when tested
+      	# against caddy 2.10.2 before landing: with no match, try_files leaves the
+      	# path unchanged, and {path} is decoded but not cleaned, so
+      	# /%2e%2e/wizard/<page>.html turned /valia{path} into a path outside her
+      	# space. A pinned root is joined safely, so neither case resolves.
+      	@pages_valia {
+      		host pages.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^valentinakolevabarzina(@.*)?$
+      	}
+      	handle @pages_valia {
+      		@pages_valia_own file {
+      			root /repo/src/current/pages/valia
+      			try_files {path} {path}index.html
+      		}
+      		handle @pages_valia_own {
+      			root * /repo/src/current/pages/valia
+      			rewrite {file_match.relative}
+      			file_server
+      		}
+      		handle {
+      			root * /repo/src/current/pages/shared
+      			try_files {path} {path}index.html =404
+      			file_server
+      		}
       	}
       	@pages_emo {
       		host pages.viktorbarzin.me
