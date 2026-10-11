@@ -15,11 +15,6 @@
 #   Group.objects.get(name="kubernetes-admins").group_uuid
 # All three apps are policy_engine_mode="any", so membership in ANY bound group grants.
 
-# --- TripIt Users: dedicated group for the TripIt app (Viktor + travel-sharers) ---
-resource "authentik_group" "tripit_users" {
-  name = "TripIt Users"
-}
-
 locals {
   # Kubernetes + Kubernetes Dashboard: cluster operators + admins only.
   k8s_apps = {
@@ -57,10 +52,13 @@ resource "authentik_policy_binding" "k8s_app_access" {
   order    = each.value.order
 }
 
-# --- TripIt: the TripIt Users group + admins ---
+# --- TripIt: Home Users + admins ---
+# A dedicated "TripIt Users" group until 2026-10-11, when it was folded into
+# Home Users (home-users.tf). TripIt's native passkey signup never touches
+# Authentik and is unaffected; this gates only "Log in with Authentik".
 resource "authentik_policy_binding" "tripit_users_access" {
   target = "bce7ba06-4af1-474a-a622-d629cd727a1c" # app "TripIt App"
-  group  = authentik_group.tripit_users.id
+  group  = authentik_group.home_users.id
   order  = 0
 }
 
