@@ -144,9 +144,15 @@ if [ ! -f "$SCRIPT" ]; then
     echo "VERIFY RESULT: FAIL $STACK"
     exit 3
   fi
-  echo "verify: stacks/$STACK has no verify.sh; running the floor on namespace $STACK"
+  # The floor runs on the namespaces the stack creates, read from its source;
+  # the directory name is often not the namespace (claude-agent-service
+  # deploys into claude-agent). floor_scope in the Job fails the run if none of
+  # them exists, so a wrong guess cannot pass on an empty namespace.
+  nss=$("$HERE/stack-namespaces" "$REPO/stacks/$STACK")
+  [ -n "$nss" ] || nss=$STACK
+  echo "verify: stacks/$STACK has no verify.sh; running the floor on namespaces [$nss] (from the stack source)"
   SCRIPT=$(mktemp)
-  printf 'VERIFY_GROUP="app"\nVERIFY_NAMESPACES="%s"\n' "$STACK" >"$SCRIPT"
+  printf 'VERIFY_GROUP="app"\nVERIFY_NAMESPACES="%s"\nVERIFY_NAMESPACES_DERIVED=1\n' "$nss" >"$SCRIPT"
 fi
 
 suffix=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 5)

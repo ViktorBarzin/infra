@@ -6,7 +6,9 @@ Design: the "Verification contract" in `docs/plans/2026-10-09-software-currency-
 |---|---|
 | Runner (starts the Job, streams its log, returns pass/fail; Kubernetes cleans up) | `scripts/verify/run` |
 | Floor checks and helpers, shared by every stack | `scripts/verify/lib.sh` |
-| Job entrypoint (floor rollout, floor ingress, component checks, floor alerts) | `scripts/verify/entrypoint.sh` |
+| Job entrypoint (floor scope, floor rollout, floor ingress, component checks, floor alerts) | `scripts/verify/entrypoint.sh` |
+| Namespaces of a stack without `verify.sh`, read from its `.tf` files | `scripts/verify/stack-namespaces` |
+| Tests for the floor scope (stubbed kubectl, no cluster) | `scripts/verify/verify.test.sh` |
 | A stack's own checks | `stacks/<stack>/verify.sh` |
 | Namespace, ServiceAccount, RBAC, test storage classes, credentials | `stacks/verify` |
 
@@ -22,6 +24,8 @@ scripts/verify/run --list                      # which stacks have a script, whi
 
 Exit status: `0` all checks passed, `1` a check failed, `2` usage error, `3` the stack has a `helm_release` or is a database/GPU stack and has no `verify.sh` (fail closed: it must not auto-land).
 
+Any other stack without a `verify.sh` gets the floor alone, on the namespaces `scripts/verify/stack-namespaces` reads from its source: the metadata name of each `kubernetes_namespace` resource (a literal, a string in a `locals` block, or a string variable default), or, when the stack creates no namespace, each literal `namespace = "..."`. If neither yields anything, the stack name is used. The directory name is often not the namespace: `claude-agent-service` deploys into `claude-agent`, `blog` into `website`, `nodelocal-dns` into `kube-system`. The runner prints the namespaces it chose.
+
 The runner needs a kubeconfig that can create ConfigMaps and Jobs in the `verify` namespace: an admin kubeconfig on the devvm, or `KUBECONFIG=$PWD/config` inside the Woodpecker apply step (the `woodpecker/default` ServiceAccount is cluster-admin). It uses the current kubectl context, so check `kubectl config current-context` first on a machine with several.
 
 `--since <epoch>` sets the time from which a firing alert counts as new. The rails pass the time taken before `terragrunt apply`; by hand it defaults to the moment the runner starts. A full run takes the alert window (600 s) plus the checks. Measured on 2026-10-10: about 10 minutes for most stacks, 13 for `immich` (backup), 15 to 19 for `nfs-csi` and `proxmox-csi` (smoke tests), 28 for `dbaas` (PostgreSQL and MySQL backups run together, 16 minutes), and up to an hour for `descheduler` when it has to wait for the next scheduled run.
@@ -32,7 +36,8 @@ The runner needs a kubeconfig that can create ConfigMaps and Jobs in the `verify
 flowchart TD
   R[scripts/verify/run stack] --> CM[ConfigMap: lib.sh,<br/>entrypoint.sh, verify.sh]
   CM --> J[Job in ns verify<br/>SA verify-runner]
-  J --> F1[floor: rollout<br/>10 min budget]
+  J --> F0[floor: scope<br/>namespaces exist]
+  F0 --> F1[floor: rollout<br/>10 min budget]
   F1 --> F2[floor: ingress<br/>every host via Traefik]
   F2 --> C[component checks<br/>stacks/stack/verify.sh]
   C --> F3[floor: alerts<br/>window, new since --since]
@@ -45,7 +50,8 @@ flowchart TD
 
 The floor, implemented once in `lib.sh`:
 
-- **Rollout**: every Deployment, StatefulSet and DaemonSet in the stack's namespaces has observed its latest spec and has all replicas updated and ready, within `VERIFY_ROLLOUT_TIMEOUT` (600 s). Workloads scaled to 0 (Sablier) count as converged; `OnDelete` StatefulSets/DaemonSets skip the revision test. No pod there may be in `CrashLoopBackOff`, `ImagePullBackOff`/`ErrImagePull` or `CreateContainerConfigError`.
+- **Scope**: every namespace in `VERIFY_NAMESPACES` exists. kubectl prints nothing for a namespace that does not exist, so a wrong namespace would otherwise pass every floor check while checking nothing. On 2026-10-11 the floor for the Renovate bump of `claude-agent-service` ran on a namespace of that name and passed with "0 workloads converged"; the workloads live in `claude-agent`. When the runner derived the namespaces (no `verify.sh`), the ones that do not exist are dropped (for example `readarr`, whose module is commented out in `stacks/servarr`) and the check fails only if none is left. A namespace that a `verify.sh` names must exist.
+- **Rollout**: every Deployment, StatefulSet and DaemonSet in the stack's namespaces has observed its latest spec and has all replicas updated and ready, within `VERIFY_ROLLOUT_TIMEOUT` (600 s). Workloads scaled to 0 (Sablier) count as converged; `OnDelete` StatefulSets/DaemonSets skip the revision test. No pod there may be in `CrashLoopBackOff`, `ImagePullBackOff`/`ErrImagePull` or `CreateContainerConfigError`. Namespaces that hold no Deployment, StatefulSet, DaemonSet or CronJob fail the check, since the floor then verified nothing; a stack that is meant to be empty sets `VERIFY_EMPTY_OK=1` (`stacks/keel`, which is parked). CronJob-only namespaces pass with a note: the floor does not run CronJobs.
 - **Ingress**: the first host and path of every Ingress in those namespaces is requested through the in-cluster Traefik Service (`--resolve host:443:<traefik ClusterIP>`), so the check exercises the route and not Cloudflare or external DNS. Any status from 100 to 499 passes (Authentik redirects, 401, 404 on API-only roots); `000` and 5xx fail after three tries. A 503 from a route whose backend Service has no ready endpoint counts as a parked app (Deployment at 0 replicas, by hand or by Sablier), because a crashed app still asks for replicas and fails the rollout check instead. Every HTTP probe sends the user agent `homelab-verify/1 (blackbox probe ...)`: Sablier ignores user agents matching `blackbox`, so a probe never wakes a parked app (a plain curl woke `affine` for its 3-hour session on the first run).
 - **Alerts**: Prometheus `/api/v1/alerts` is polled every 30 s for `VERIFY_ALERT_WINDOW` seconds. A firing alert fails the run when it became active at or after `--since` and its `namespace` (or `exported_namespace`) is one of the stack's namespaces, its Traefik `service` label starts with one of them, or its name matches the stack's `VERIFY_ALERTNAMES`. `Trivy*`, `Watchdog` and `InfoInhibitor` never count. Alerts with a `for:` longer than the window cannot fire inside it; the window catches the fast ones.
 
@@ -91,6 +97,7 @@ VERIFY_NAMESPACES="traefik"          # floor scope: rollout, ingress, alerts
 VERIFY_ALERTNAMES="^Traefik"         # optional: alerts without a namespace label
 VERIFY_INGRESS_SKIP=""               # optional regex over "<ns>/<ingress>"
 VERIFY_ROLLOUT_SKIP=""               # optional regex over "<ns>/<Kind>/<name>"
+VERIFY_EMPTY_OK=""                   # optional: 1 if the namespaces are meant to hold no workload
 
 verify_component() {
   check "traefik runs 3 ready replicas" workload_ready traefik deployment/traefik

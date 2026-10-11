@@ -6,6 +6,8 @@
 # deployed have their own deploy step (stacks/keel/main.tf header).
 VERIFY_GROUP="chart"
 VERIFY_NAMESPACES="keel"
+# Empty on purpose: without this the floor fails a namespace with no workload.
+VERIFY_EMPTY_OK=1
 
 _parked() {
   local deploys pods
