@@ -350,7 +350,7 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
           # on 2026-10-09; Keel's policy=patch could never leave 1.27, which upstream
           # stopped updating. Renovate owns this pin since 2026-10-10 (1.30 ->
           # 1.30.5, the same image digest).
-          image             = "nginx:1.30.5"
+          image             = "nginx:1.31.6"
           image_pull_policy = "IfNotPresent"
 
           port {
