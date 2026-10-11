@@ -225,16 +225,13 @@ resource "kubernetes_deployment" "nextcloud_todos" {
             name  = "IDEATION_ALLOWLIST"
             value = "Noticing File"
           }
-          # Tier-0 LLM classifier
+          # Tier-1 triage (Haiku, no-tools mode), research auto-run and two-pass
+          # exec all go to claude-agent-service; llama-swap is kept for
+          # paperless-ai only since 2026-10-11.
           env {
-            name  = "LLAMA_SWAP_URL"
-            value = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+            name  = "TRIAGE_MODEL"
+            value = "haiku"
           }
-          env {
-            name  = "LLAMA_SWAP_MODEL"
-            value = "qwen3-8b"
-          }
-          # Tier-2 LLM (claude-agent-service: research auto-run + two-pass exec)
           env {
             name  = "CLAUDE_AGENT_URL"
             value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
