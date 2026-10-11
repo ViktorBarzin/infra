@@ -11,6 +11,6 @@ module "nodelocal_dns" {
   # Technitium ClusterIP — upstream for .viktorbarzin.lan.
   technitium_ip = "10.96.0.53"
 
-  image = "registry.k8s.io/dns/k8s-dns-node-cache:1.23.1"
+  image = "registry.k8s.io/dns/k8s-dns-node-cache:1.27.1"
   tier  = local.tiers.core
 }
