@@ -189,6 +189,10 @@ resource "kubernetes_cron_job_v1" "renovate" {
             security_context {
               # The image runs as uid 12021; fsGroup makes the cache PVC writable.
               fs_group = 12021
+              # Only chown the volume when its root has the wrong group. The
+              # default (Always) re-chowned all ~12,000 cache files on every pod
+              # start, which took about 10 minutes per run on 2026-10-11.
+              fs_group_change_policy = "OnRootMismatch"
             }
             container {
               name  = "renovate"
