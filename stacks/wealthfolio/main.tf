@@ -230,7 +230,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # a nightly sqlite3 .backup so we have an off-cluster copy.
         container {
           name  = "backup"
-          image = "library/alpine:3.20.10"
+          image = "library/alpine:3.24.2"
           command = ["/bin/sh", "-c", <<-EOT
           set -eu
           apk add --no-cache --quiet sqlite busybox-suid
@@ -281,7 +281,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # incremental upserts and gives clean cold-start behaviour.
         container {
           name  = "pg-sync"
-          image = "library/alpine:3.20.10"
+          image = "library/alpine:3.24.2"
           env {
             name = "PGHOST"
             value_from {
