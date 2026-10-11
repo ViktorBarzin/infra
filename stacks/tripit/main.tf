@@ -28,8 +28,8 @@ locals {
   # Env shared by the Deployment app container and the worker CronJobs.
   # Real integrations: FLIGHT_PROVIDER=aerodatabox + RAIL_PROVIDER=realtimetrains
   # (keys via the tripit-secrets ExternalSecret), WEATHER_PROVIDER=openmeteo,
-  # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=llamacpp
-  # (qwen3vl-8b + the ADR-0033 claude-agent fallback) so the Deployment can run
+  # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=claude_agent
+  # (claude-agent-service only, no-tools mode; tripit ADR-0067) so the Deployment can run
   # real extraction for in-app reel-URL paste (#120) and booking share; the reel
   # route uses REEL_GEOCODER_PROVIDER=nominatim. MAIL_INGEST_ENABLED=false here
   # (the ingest-plans CronJob overrides it to true).
@@ -73,12 +73,10 @@ locals {
     GEOCODER_PROVIDER = "openmeteo"
     PUSH_PROVIDER     = "webpush"
     # Real LLM on the Deployment too (was fake): in-app reel-URL paste (#120) and
-    # booking share run ingest in the web pod. llama-cpp primary + claude-agent
-    # fallback (ADR-0033). qwen3-8b segfaults on the current llama-swap image, so
-    # use qwen3vl-8b (matches the ingest-plans CronJob).
-    LLM_MODE     = "llamacpp"
-    LLM_MODEL    = "qwen3vl-8b"
-    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    # booking share run ingest in the web pod. Since 2026-10-11 every read goes to
+    # claude-agent-service alone, in its no-tools mode, with no llama leg (tripit
+    # ADR-0067, superseding ADR-0033); llama-swap is kept for paperless-ai only.
+    LLM_MODE = "claude_agent"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
     # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
@@ -432,15 +430,8 @@ locals {
   # Shared verbatim by the realtime listener and the 15-minute repair CronJob
   # so their extraction/routing behavior cannot drift.
   mail_ingest_env = {
-    LLM_MODE     = "llamacpp"
-    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-    # Text extraction needs the 8B model to retain flight numbers. qwen3-8b
-    # crashes on the current CUDA image, while qwen3vl-8b is proven live.
-    # Attachments share it: qwen3vl-4b is retired, and both VLMs were served
-    # with the same 3072-token context, so this is token-neutral and stops
-    # mail ingest swapping models within one email (ADR-0033 fallback remains).
-    LLM_MODEL           = "qwen3vl-8b"
-    LLM_VISION_MODEL    = "qwen3vl-8b"
+    # claude-agent-service only (tripit ADR-0067), same as app_env.
+    LLM_MODE            = "claude_agent"
     MAIL_INGEST_ENABLED = "true"
     # Forwarded Reels require POI-level Nominatim, isolated from the global
     # city-level OpenMeteo geocoder used by weather/tours (ADR-0031).
