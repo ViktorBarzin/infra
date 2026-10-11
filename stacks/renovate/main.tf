@@ -10,7 +10,9 @@
 # Out of band (Forgejo admin API, 2026-10-10, not Terraform-managed, same as
 # the infra-agent bot): the renovate-bot account, its write access on
 # viktor/infra, its entry on master's push whitelist, and the PAT stored at
-# secret/renovate (forgejo_token).
+# secret/renovate (forgejo_token). Added 2026-10-11 with Viktor's OK: its entry
+# on master's merge whitelist, so the PR Renovate opens when a fast-forward
+# loses a race with another push (PR #113) can be merged by Renovate itself.
 #
 # Kyverno: the image is referenced as docker.io/renovate/renovate, which the
 # existing "docker.io/*" entry in require-trusted-registries already admits.

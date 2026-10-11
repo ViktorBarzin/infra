@@ -127,6 +127,10 @@ Created through the Forgejo admin API on 2026-10-10, outside Terraform (the `inf
 - on the `master` branch protection push whitelist, next to `ebarzin`, `infra-agent`, `viktor`
 - PAT `renovate-infra` with `write:repository`, `read:user`, `write:issue`, `read:organization`; the token and the account password are in `secret/renovate`
 
+## When a fast-forward loses a race
+
+If another push lands on master while Renovate is running, its fast-forward is rejected ("rejected (fetch first)") and Renovate opens a pull request for that branch instead. On later runs it rebases the branch and merges the PR through the Forgejo API. That needs `renovate-bot` on master's merge whitelist (added 2026-10-11 after PR #113 sat unmergeable and every run spent its one-commit budget rebasing it). If a Renovate PR is ever stuck again, merge it with the fast-forward-only style so master stays linear and the rails still see a renovate-bot commit.
+
 ## Known limits
 
 - Docker Hub: about 240 Docker lookups per run. Renovate authenticates as the registry cache's Docker Hub account (`secret/registry-cache`, `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` in the `renovate-env` ExternalSecret), because anonymous manifest reads share the home IP's 100 per hour: two cold-cache dry runs used that up on 2026-10-11 and the second aborted with 429. The cache PVC keeps repeat lookups down. Requests to Docker Hub are capped at 2 at a time and 5 per second (`config.js` hostRule): an image used in several stacks is looked up once per stack, and the parallel token requests got 429 "too many failed login attempts" for `library/nginx` and `actualbudget/actual-server` even with valid credentials.
