@@ -825,7 +825,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # auth" step, woodpecker vault-sync sidecar).
         container {
           name  = "vault-token-refresher"
-          image = "curlimages/curl:8.11.1"
+          image = "curlimages/curl:8.22.0"
           # No `set -e`: a transient Vault blip must NOT kill the refresh loop
           # (the stale token keeps working until its 6d TTL). curlimages/curl
           # is Alpine/busybox — has `sed`, no `jq`, so parse client_token with
