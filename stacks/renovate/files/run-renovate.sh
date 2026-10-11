@@ -4,7 +4,8 @@
 # records the outcome in Pushgateway:
 #   renovate_last_run_timestamp_seconds      every run
 #   renovate_last_run_exit_code              every run (0 ok, 1 renovate error, 75 skipped:
-#                                            Woodpecker busy or rails hold cool-down)
+#                                            Woodpecker busy, gap since the last bump,
+#                                            control plane not calm, or rails hold cool-down)
 #   renovate_last_run_duration_seconds       every run
 #   renovate_last_success_timestamp_seconds  only when renovate exited 0
 # POST (not PUT) replaces only the metrics named in the body, so a failed run
@@ -52,19 +53,60 @@ renovate_last_success_timestamp_seconds ${now}
 # arrives, so a Renovate commit landing mid-rails would cancel the previous
 # bump's verify/revert. Enabled when WOODPECKER_REPO_ID is set (viktor/infra
 # is id 82; the repo is public, so the token is optional).
+#
+# Gap between bumps: also skip while the newest Renovate pipeline finished
+# less than RENOVATE_MIN_GAP seconds ago (default 1200), so the cluster
+# settles after one upgrade before the next one starts. Viktor asked for
+# fewer upgrades at a time on 2026-10-11 after outages on the shared host.
 if [ -n "${WOODPECKER_REPO_ID:-}" ]; then
-  busy=$(node -e '
+  read -r busy since_bump < <(node -e '
     const [base, repo, token] = process.argv.slice(1);
     fetch(`${base}/api/repos/${repo}/pipelines?page=1&perPage=10`, token ? { headers: { Authorization: `Bearer ${token}` } } : {})
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
-      .then(ps => console.log(ps.filter(p => ["running", "pending", "blocked"].includes(p.status)).length))
-      .catch(e => { console.error("woodpecker", e.message); console.log("error"); });
+      .then(ps => {
+        const busy = ps.filter(p => ["running", "pending", "blocked"].includes(p.status)).length;
+        const done = ps.filter(p => p.author === "renovate-bot" && p.finished).map(p => p.finished);
+        const age = done.length ? Math.round(Date.now() / 1000 - Math.max(...done)) : "none";
+        console.log(busy, age);
+      })
+      .catch(e => { console.error("woodpecker", e.message); console.log("error none"); });
   ' "${WOODPECKER_URL:-https://ci.viktorbarzin.me}" "$WOODPECKER_REPO_ID" "${WOODPECKER_TOKEN:-}")
   if [ "$busy" != "0" ]; then
     echo "Woodpecker busy or unreachable (${busy}); skipping this run"
     record 75
     exit 0
   fi
+  if [ "$since_bump" != "none" ] && [ "$since_bump" -lt "${RENOVATE_MIN_GAP:-1200}" ] 2>/dev/null; then
+    echo "The last Renovate pipeline finished ${since_bump}s ago; skipping this run (gap ${RENOVATE_MIN_GAP:-1200}s)"
+    record 75
+    exit 0
+  fi
+fi
+
+# Calm gate: skip while the control plane is struggling, because applies then
+# time out and the rails can revert a good bump for a slow cluster. Busy means
+# etcd WAL fsync p99 over 10 minutes above CALM_MAX_FSYNC seconds (default
+# 0.5), or EtcdWalFsyncSlow / EtcdBackendCommitSlow firing. On 2026-10-11 the
+# p99 reached 7.8 s while other workloads overloaded the Proxmox host. Fails
+# closed: no answer from Prometheus means no run (RenovateNotSucceeding fires
+# if that lasts 2 hours).
+calm=$(node -e '
+  const [base, maxFsync] = process.argv.slice(1);
+  const q = s => fetch(`${base}/api/v1/query?query=${encodeURIComponent(s)}`)
+    .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+    .then(j => { const v = j.data && j.data.result && j.data.result[0]; return v ? Number(v.value[1]) : 0; });
+  Promise.all([
+    q("histogram_quantile(0.99, sum by (le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[10m])))"),
+    q("count(ALERTS{alertstate=\"firing\",alertname=~\"EtcdWalFsyncSlow|EtcdBackendCommitSlow\"})"),
+  ]).then(([f, a]) => {
+    if (Number.isNaN(f)) return console.log("no-etcd-data");
+    console.log(f > Number(maxFsync) || a > 0 ? `etcd fsync p99 ${f.toFixed(3)}s, etcd alerts firing ${a}` : "calm");
+  }).catch(e => console.log("prometheus unreachable: " + e.message));
+' "${PROMETHEUS_URL:-http://prometheus-server.monitoring}" "${CALM_MAX_FSYNC:-0.5}")
+if [ "$calm" != "calm" ]; then
+  echo "Control plane not calm (${calm}); skipping this run"
+  record 75
+  exit 0
 fi
 
 # Hold cool-down: when the Woodpecker rails held a bump (upgrade gate blocked
