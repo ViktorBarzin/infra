@@ -171,7 +171,7 @@ resource "kubernetes_deployment" "phpipam_web" {
       }
       spec {
         container {
-          image = "phpipam/phpipam-www:v1.7.4"
+          image = "phpipam/phpipam-www:v1.8.3"
           name  = "phpipam-web"
           port {
             container_port = 80
