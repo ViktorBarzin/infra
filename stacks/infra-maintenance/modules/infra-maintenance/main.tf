@@ -117,7 +117,7 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
             dns_policy          = "ClusterFirstWithHostNet"
             init_container {
               name    = "backup-etcd"
-              image   = "registry.k8s.io/etcd:3.5.21-0"
+              image   = "registry.k8s.io/etcd:3.7.2-0"
               command = ["etcdctl", "snapshot", "save", "/backup/etcd-snapshot-latest.db"]
               resources {
                 requests = {
@@ -236,7 +236,7 @@ resource "kubernetes_cron_job_v1" "defrag-etcd" {
             host_network        = true
             container {
               name    = "defrag-etcd"
-              image   = "registry.k8s.io/etcd:3.5.21-0"
+              image   = "registry.k8s.io/etcd:3.7.2-0"
               command = ["etcdctl"]
               args    = ["--endpoints=https://127.0.0.1:2379", "--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt", "--key=/etc/kubernetes/pki/etcd/healthcheck-client.key", "--command-timeout=60s", "defrag"]
               env {
