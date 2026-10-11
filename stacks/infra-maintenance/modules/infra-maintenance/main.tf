@@ -160,7 +160,7 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
             }
             container {
               name    = "backup-manage"
-              image   = "busybox:1.37"
+              image   = "busybox:1.38"
               command = ["/bin/sh", "-c"]
               args = [<<-EOT
                 set -eu
