@@ -44,7 +44,7 @@ resource "kubernetes_cron_job_v1" "egress_country_probe" {
           spec {
             container {
               name  = "egress-country-probe"
-              image = "docker.io/library/alpine:3.20"
+              image = "docker.io/library/alpine:3.24"
               env {
                 name  = "PROXY"
                 value = "http://proxy-egress-uk.proxy.svc.cluster.local:8888"
