@@ -50,7 +50,7 @@ resource "helm_release" "nfs_csi_driver" {
   # HonorPVReclaimPolicy dropped. Keel had already drifted the live images to
   # nfsplugin v4.13.4 / provisioner v6.1.1 on 2026-07-01; this brings helm in
   # line. Chart 4.13.5 was not in the helm index yet on this date.
-  version = "4.13.4"
+  version = "4.13.5"
 
   values = [yamlencode({
     controller = {
