@@ -239,6 +239,11 @@
       matchPackageNames: ["tzahi12345/youtubedl-material", "docker.io/tzahi12345/youtubedl-material"],
       versioning: "regex:^nightly-(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$",
     },
+    {
+      description: "edoburu/pgbouncer tags end in a packaging revision (v1.24.1-p0, -p1). Docker versioning treats that suffix as a compatibility string, so a -p1 rebuild of the same release would never be offered to a -p0 pin; read it as the build number (Keel cutover B15, 2026-10-11)",
+      matchPackageNames: ["edoburu/pgbouncer", "docker.io/edoburu/pgbouncer"],
+      versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-p(?<build>\\d+)$",
+    },
 
     // ---- Groups: versions that must move together ----
     {

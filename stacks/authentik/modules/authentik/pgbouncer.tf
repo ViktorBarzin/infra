@@ -32,22 +32,8 @@ resource "kubernetes_deployment" "pgbouncer" {
       app  = "pgbouncer"
       tier = var.tier
     }
-    # Declared here on 2026-09-19 rather than left to Kyverno (bead code-q9iy).
-    # inject-keel-annotations no longer touches ns authentik, so a recreate of
-    # this Deployment would have come back with no keel annotations at all and
-    # quietly stopped being updated. Keel is the DELIBERATE owner of this
-    # image -- the container tracks :latest and the image is in ignore_changes
-    # below with a KEEL_IGNORE_IMAGE marker -- so the enrollment has to be
-    # stated somewhere that survives recreation.
-    #
-    # patch, not never: this is the one workload in ns authentik that is
-    # supposed to auto-update. Everything else there is pinned by Terraform,
-    # Helm or the outpost controller.
-    annotations = {
-      "keel.sh/policy"       = "patch"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
-    }
+    # The image below is an exact version pin. Renovate proposes bumps through
+    # the CI rails (Keel managed this Deployment until the 2026-10 cutover).
   }
 
   spec {
@@ -88,12 +74,9 @@ resource "kubernetes_deployment" "pgbouncer" {
         }
         container {
           name  = "pgbouncer"
-          image = "edoburu/pgbouncer:latest"
-          # `:latest` tag — keep `Always` so pod restarts pick up upstream
-          # updates. The previous `IfNotPresent` value was declared at module
-          # creation but the live cluster has reconciled to `Always` (likely
-          # via a Helm/operator default). Match reality to drop the drift.
-          image_pull_policy = "Always"
+          image = "edoburu/pgbouncer:v1.25.2-p0"
+          # Exact tag, so IfNotPresent (the live value) is enough.
+          image_pull_policy = "IfNotPresent"
 
           port {
             container_port = 6432
@@ -174,17 +157,11 @@ resource "kubernetes_deployment" "pgbouncer" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # policy / trigger / pollSchedule are DECLARED above now, so they are
-      # deliberately no longer ignored -- Terraform owns them and an apply
-      # reasserts them. match-tag stays ignored because the Kyverno rule
-      # actively strips it (the 2026-05-26 finding that it let Keel rewrite
-      # tag strings and cross-assign images).
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image,             # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].container[0].image_pull_policy, # Keel flip-flops this between Always/IfNotPresent
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      # Left on the pod template by the last Keel rollout; removing it from the
+      # template would roll the pods, so it stays ignored.
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
