@@ -7,8 +7,8 @@
 //   RENOVATE_GITHUB_COM_TOKEN      read-only github.com PAT, read:packages scope only
 //                                  (secret/viktor ghcr_pull_token): release-note links and
 //                                  the authenticated GitHub API rate limit
-//   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   not wired today; setting both in the
-//                                  ExternalSecret lifts Docker Hub's anonymous limit
+//   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   the registry cache's Docker Hub account
+//                                  (secret/registry-cache); lifts the anonymous limit
 'use strict';
 
 const hostRules = [

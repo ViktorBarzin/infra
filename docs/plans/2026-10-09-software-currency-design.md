@@ -60,7 +60,7 @@ Renovate-owned pins land through the rails in the existing Woodpecker pipeline:
 
 ```mermaid
 flowchart TD
-  R[Renovate<br/>every 30m, 1 bump] -->|commit| W[Woodpecker]
+  R[Renovate<br/>every 10m, 1 bump] -->|commit| W[Woodpecker]
   W --> G{upgrade-gate<br/>alerts clear?}
   G -->|no| H[hold]
   G -->|yes| S[snapshot<br/>if stateful]
@@ -162,7 +162,7 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
   - fixable Critical or High CVE on an internet-reachable workload
   - a secret found in an image layer
 - Everything else (non-public or unfixable CVEs, config audit, node findings) becomes a weekly section in the existing `alert-digest`: counts by severity, top fixable items, change since last week.
-- No automatic trigger from a finding to an upgrade. Renovate runs every 30 minutes, so a fixed version is picked up on its next run once the backlog has cleared. The runbook documents how to start a Renovate run by hand.
+- No automatic trigger from a finding to an upgrade. Renovate runs every 10 minutes, so a fixed version is picked up on its next run once the backlog has cleared. The runbook documents how to start a Renovate run by hand.
 
 ### Phase 3: Renovate, Woodpecker rails, Keel retired
 
@@ -183,7 +183,7 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 
 **Renovate**
 
-- New stack `stacks/renovate`: `renovate/renovate` image as a CronJob every 30 minutes, `platform: forgejo` (Forgejo 11.0.14; native since Renovate 41.41.0), plus a GitHub run for opted-in GitHub repos.
+- New stack `stacks/renovate`: `renovate/renovate` image as a CronJob every 30 minutes (every 10 since 2026-10-11), `platform: forgejo` (Forgejo 11.0.14; native since Renovate 41.41.0), plus a GitHub run for opted-in GitHub repos.
 - A dedicated Forgejo bot account, allowed to push to master. Tokens in Vault via ESO. Kyverno allowlist gets the full `docker.io/renovate/*` form.
 - Lands straight to master, no PRs (branch automerge with no required status checks). One commit per chart or pin.
 - At most one bump lands per run. Woodpecker cancels a running pipeline when the next push arrives, so several commits in one run would cancel each other's health checks and reverts. Each run takes about 15 to 20 minutes including the 10-minute check window, so 30-minute runs don't overlap. That is up to 48 bumps a day. Keel rolled 23 workloads in the 30 days to 2026-10-09 on `patch` only (a lower bound), so steady state fits easily. The first backlog (about 20 charts plus the apps that are a minor or major behind) clears in about 4 days.
@@ -232,7 +232,7 @@ Adopted:
 
 - Dependency Dashboard as a Forgejo issue ("Renovate dashboard"), rewritten every run with pending, held and abandoned updates. Writing it does not count against the one-commit limit and starts no pipeline.
 - `abandonments:recommended` from `config:best-practices`, which flags packages with no release for a year on the dashboard.
-- `separateMultipleMajor` for every package, so a jump of two majors lands as two hops, each verified and revertible on its own. Vault, Authentik, CNPG, Calico and Nextcloud also step through each minor.
+- `separateMultipleMajor` for stateful images (databases, Immich, Paperless, n8n, CNPG), so a jump of two majors lands as two hops, each verified and revertible on its own. Vault, Authentik, CNPG, Calico and Nextcloud also step through each minor. Stateless apps take the newest major in one bump: the upgrade-best-practices page recommends one major at a time, and on 2026-10-11 Viktor chose fewer hops for stateless apps to clear the backlog faster (echo 36 to 42 had been six hops).
 - One bump per run (`prCommitsPerRunLimit: 1`), because a push to master cancels a running Woodpecker pipeline and with it the previous bump's verify and revert.
 
 Not adopted, on purpose:
@@ -335,10 +335,8 @@ Most of these are images where any pin that Renovate can read would restart the 
 
 | Component | Stack | Why | What it needs |
 |---|---|---|---|
-| Docker Hub rate limit | renovate | about 240 Docker lookups per run against 100 anonymous manifest reads per hour per IP; only the cache PVC reduces repeats | if runs log 429s, add `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` to the `renovate-env` ExternalSecret (`config.js` already reads them) |
 | Release-note links | renovate | the first real commit (`3f0e14c4`) had no release-note URL although `fetchChangeLogs: branch` and a GitHub token are set. The token is the shared `ghcr_pull_token` (read:packages) on Viktor's account | read the changelog lookup in a debug run; optionally mint a dedicated no-scope token |
 | Aborted runs count as success | renovate | run `renovate-29861850` hit ETIMEDOUT on one registry, Renovate aborted the repository (`external-host-error`) and the process still exited 0, so the wrapper recorded a success for a run that processed nothing | have `run-renovate.sh` treat `external-host-error` as a failure |
-| End-of-run steps after a landed bump | renovate | since `4b808e14` the wrapper stops Renovate at "Restarting repository job after automerge result", which ended the pod preemptions. Whether the dashboard and repository cache are still written on those runs is not checked | confirm in the Renovate source or a debug run |
 | RenovateNotSucceeding at unsuspend | monitoring | fires right after an unsuspend until the first run succeeds | add a grace window keyed on `kube_cronjob_spec_suspend` changes, or accept a short firing |
 | One-bump-per-run evidence | renovate | "Reached commits limit" is a debug-level line, and the CronJob logs at info. The evidence today is one renovate-bot commit per run, no leftover `renovate/*` branch and one rails pipeline per run | a `logLevelRemap` entry in `config.js`, if the line is wanted in the run log |
 | Woodpecker repo timeout | woodpecker (repo 82 settings) | 60 minutes; a rails run for dbaas (verify about 28 minutes plus backups) or descheduler (verify up to 60 minutes) can be cut off, after which later pipelines verify it again | raise the repo timeout to 120 minutes (Woodpecker admin setting) or shorten those two verify scripts |

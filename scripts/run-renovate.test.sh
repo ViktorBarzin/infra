@@ -41,7 +41,7 @@ run_wrapper() { # -> sets OUT, RC, SECS
   : >"$WORK/pushes"
   local start; start=$(date +%s)
   OUT=$(env -u WOODPECKER_REPO_ID PATH="$WORK/bin:$PATH" PUSHGATEWAY_URL="$PGW" \
-    RENOVATE_STOP_GRACE=3 timeout 60 bash "$WRAPPER" 2>&1)
+    RENOVATE_STOP_GRACE=3 RENOVATE_STOP_AFTER_AUTOMERGE="${STOP_AFTER_AUTOMERGE:-}" timeout 60 bash "$WRAPPER" 2>&1)
   RC=$?
   SECS=$(($(date +%s) - start))
 }
@@ -49,8 +49,10 @@ run_wrapper() { # -> sets OUT, RC, SECS
 last_exit_code() { grep '^renovate_last_run_exit_code ' "$WORK/pushes" | tail -1 | awk '{print $2}'; }
 has_success() { grep -q '^renovate_last_success_timestamp_seconds ' "$WORK/pushes"; }
 
-# 1. After the first automerge Renovate restarts its repository job; the wrapper
-#    stops it there, records success and exits 0 well before the fake would end.
+# 1. With RENOVATE_STOP_AFTER_AUTOMERGE=1, after the first automerge Renovate
+#    restarts its repository job; the wrapper stops it there, records success
+#    and exits 0 well before the fake would end.
+STOP_AFTER_AUTOMERGE=1
 fake_renovate 'echo " INFO: Branch created (repository=viktor/infra, branch=renovate/x)"
 echo " INFO: Branch automerged (repository=viktor/infra, branch=renovate/x)"
 echo " INFO: Restarting repository job after automerge result (repository=viktor/infra)"
@@ -74,6 +76,8 @@ run_wrapper
 [ "$RC" = 0 ] && pass "TERM ignored: exit 0" || fail "TERM ignored: exit $RC"
 [ "$SECS" -lt 15 ] && pass "TERM ignored: killed after grace (${SECS}s)" || fail "TERM ignored: took ${SECS}s"
 
+unset STOP_AFTER_AUTOMERGE
+
 # 3. A normal run with nothing to land keeps Renovate's exit code and success push.
 fake_renovate 'echo " INFO: Repository finished (repository=viktor/infra)"; exit 0'
 run_wrapper
@@ -91,6 +95,18 @@ fake_renovate 'echo "ARGS:$*"'
 : >"$WORK/pushes"
 OUT=$(env -u WOODPECKER_REPO_ID PATH="$WORK/bin:$PATH" PUSHGATEWAY_URL="$PGW" timeout 30 bash "$WRAPPER" --dry-run=full 2>&1)
 grep -q "ARGS:--dry-run=full" <<<"$OUT" && pass "args passed through" || fail "args not passed through: $OUT"
+
+# 6. By default the wrapper lets Renovate finish the run after an automerge, so
+#    the post-automerge pass refreshes the Dependency Dashboard and the caches.
+fake_renovate 'echo " INFO: Branch automerged (repository=viktor/infra, branch=renovate/x)"
+echo " INFO: Restarting repository job after automerge result (repository=viktor/infra)"
+sleep 2
+echo " INFO: Dependency Dashboard updated FINISHED-MARKER"
+exit 0'
+run_wrapper
+[ "$RC" = 0 ] && pass "default: exit 0 after automerge" || fail "default: exit $RC"
+grep -q "FINISHED-MARKER" <<<"$OUT" && pass "default: run continues past the automerge restart" || fail "default: run was stopped at the automerge restart"
+[ "$(last_exit_code)" = 0 ] && has_success && pass "default: records success" || fail "default: recorded '$(last_exit_code)'"
 
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; } || { echo "$fails failed"; exit 1; }

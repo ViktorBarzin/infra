@@ -1,4 +1,5 @@
-# Renovate: lands third-party version bumps on viktor/infra master, one per run.
+# Renovate: lands third-party version bumps on viktor/infra master, one per run,
+# with runs back to back (every 10 minutes, skipped while an infra pipeline runs).
 #
 # Software-currency design (docs/plans/2026-10-09-software-currency-design.md,
 # "Phase 3") and ADR-0030. Renovate reads renovate.json5 at the repo root and
@@ -22,8 +23,12 @@ variable "suspended" {
 }
 
 variable "schedule" {
-  type    = string
-  default = "*/30 * * * *"
+  type = string
+  # Every 10 minutes (was 30, changed 2026-10-11 to clear the backlog faster).
+  # The wrapper skips a run while an infra pipeline is running or queued, so
+  # one bump still lands per pipeline; this only removes the idle gap between
+  # a pipeline finishing and the next run starting.
+  default = "*/10 * * * *"
 }
 
 locals {
@@ -49,6 +54,20 @@ resource "kubernetes_namespace" "renovate" {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
   }
+}
+
+# Same value as tier-3-edge, so the Woodpecker step pods a Renovate push starts
+# (tier-3-edge) cannot preempt this pod mid-run, which happened twice on
+# 2026-10-11 at tier-4-aux. preemption_policy Never: Renovate itself never
+# evicts another pod to get scheduled; it waits for room instead.
+resource "kubernetes_priority_class_v1" "renovate" {
+  metadata {
+    name = "renovate"
+  }
+  value             = 400000
+  preemption_policy = "Never"
+  global_default    = false
+  description       = "Renovate CronJob: tier-3-edge value, never preempts (stacks/renovate)."
 }
 
 resource "kubernetes_manifest" "external_secret" {
@@ -82,6 +101,18 @@ resource "kubernetes_manifest" "external_secret" {
           # notes and the authenticated GitHub API rate limit.
           secretKey = "RENOVATE_GITHUB_COM_TOKEN"
           remoteRef = { key = "viktor", property = "ghcr_pull_token" }
+        },
+        {
+          # The Docker Hub account the registry pull-through cache already
+          # uses (playbooks/registry-cache.yml). Anonymous lookups share the
+          # home IP's 100 manifest requests per hour; two dry runs used it up
+          # on 2026-10-11. config.js adds a docker.io hostRule when both are set.
+          secretKey = "DOCKERHUB_USERNAME"
+          remoteRef = { key = "registry-cache", property = "dockerhub_username" }
+        },
+        {
+          secretKey = "DOCKERHUB_TOKEN"
+          remoteRef = { key = "registry-cache", property = "dockerhub_token" }
         },
       ]
     }
@@ -153,7 +184,8 @@ resource "kubernetes_cron_job_v1" "renovate" {
             labels = local.labels
           }
           spec {
-            restart_policy = "Never"
+            restart_policy      = "Never"
+            priority_class_name = kubernetes_priority_class_v1.renovate.metadata[0].name
             security_context {
               # The image runs as uid 12021; fsGroup makes the cache PVC writable.
               fs_group = 12021

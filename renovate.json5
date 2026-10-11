@@ -62,10 +62,10 @@
   dependencyDashboard: true,
   dependencyDashboardTitle: "Renovate dashboard",
   separateMajorMinor: true,
-  // One major per hop for every package (upgrade-best-practices: "take major
-  // updates one version at a time"), so 2.x -> 4.x lands as 3.x then 4.x and
-  // each hop is verified and reverted on its own.
-  separateMultipleMajor: true,
+  // Majors: stateless apps jump straight to the newest major in one bump
+  // (Viktor, 2026-10-11, to clear the backlog faster: echo 36 -> 42 had been
+  // six hops). Stateful components still step one major at a time; see the
+  // "Step majors one at a time" packageRules below.
   // Docker/Helm lookups only: never pin digests we did not pin ourselves.
   pinDigests: false,
 
@@ -265,6 +265,17 @@
       ],
       separateMultipleMajor: true,
       separateMultipleMinor: true,
+    },
+    {
+      description: "Step majors one at a time for stateful images: their data migrations usually run one major at a time, so 2.x -> 4.x lands as 3.x then 4.x and each hop is verified and reverted on its own",
+      matchPackageNames: [
+        "/(^|/)(mysql|mariadb|postgres|postgresql|postgis|redis|valkey|mongo|mongodb|elasticsearch|opensearch|meilisearch|dolt|clickhouse-server)$/",
+        "/^ghcr\\.io\\/immich-app\\//",
+        "/paperless-ngx$/",
+        "/n8nio\\/n8n$/",
+        "/^ghcr\\.io\\/cloudnative-pg\\//",
+      ],
+      separateMultipleMajor: true,
     },
     {
       description: "Vault 2.0.1 IPC_LOCK regression: never land it",
