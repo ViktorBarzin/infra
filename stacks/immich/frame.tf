@@ -73,11 +73,11 @@ resource "kubernetes_deployment" "immich-frame" {
       }
       spec {
         container {
-          # immich_v3 is the upstream compat tag for Immich v3 servers — every
-          # versioned release (≤ v1.0.33.0) crashes deserializing v3 API
-          # responses (immichFrame/immichFrame#653). Pin back to a vX.Y.Z.W tag
-          # once a stable release ships v3 support (upstream PR #654).
-          image = "ghcr.io/immichframe/immichframe:immich_v3"
+          # Versioned pin, same release as frame-emo/frame-milka. Releases
+          # <= v1.0.33.0 crashed deserializing Immich v3 API responses
+          # (immichFrame/immichFrame#653), so this ran the floating immich_v3
+          # compat tag until 2026-10-12; v1.0.34+ supports Immich v3.
+          image = "ghcr.io/immichframe/immichframe:v1.0.39.0@sha256:b4bd2ac6ec75c0117a24bd627dc0b449d485ac87ec3a410c73d5db05a4bbfcaf"
           name  = "immich-frame"
           resources {
             requests = {
@@ -95,11 +95,26 @@ resource "kubernetes_deployment" "immich-frame" {
             protocol       = "TCP"
             name           = "http"
           }
+          # From v1.0.38 ImmichFrame keeps its settings in a SQLite DB
+          # (immichframe.db) in /app/Config and imports Settings.yml into it
+          # only when the DB is empty, so a read-only ConfigMap mount there
+          # crash-loops it. Same pattern as frame-emo.tf: /app/Config is a
+          # writable emptyDir with Settings.yml mounted into it, every new pod
+          # re-imports the file, and the ConfigMap stays the source of truth.
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/Config"
+          }
           volume_mount {
             name       = "config"
-            mount_path = "/app/Config"
+            mount_path = "/app/Config/Settings.yml"
+            sub_path   = "Settings.yml"
             read_only  = true
           }
+        }
+        volume {
+          name = "data"
+          empty_dir {}
         }
         volume {
           name = "config"
@@ -116,7 +131,6 @@ resource "kubernetes_deployment" "immich-frame" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].template[0].spec[0].container[0].image,                                          # FLOATING_TAG_DEFERRED: immich_v3 matches no version tag; a tag@digest pin restarts the pod
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
