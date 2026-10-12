@@ -40,7 +40,7 @@ Measured or found on 2026-10-12:
 | Trigger | The iPhone alarm, through a Shortcut; no HA schedule | Viktor sets alarms in the Clock app already. No alarm means no sunrise |
 | Which alarm | Earliest enabled alarm in the next 24 hours | Backup alarms (07:05, 07:10) are ignored |
 | Skips | Not home, or no alarm | Uses `person.viktorbarzin` |
-| Fade | 1% at 2000K to 100% warm white over 30 minutes, ending at the alarm; hold 30 minutes, then off | Peak tuned after a week if it bothers Anca |
+| Fade | 1% at 2200K to 100% warm white over 30 minutes, ending at the alarm; hold 30 minutes, then off | Peak tuned after a week if it bothers Anca |
 | Smart plug | Kept. HA turns it on 35 minutes before the alarm if it is off | Switching the lamp off at the plug no longer breaks the next morning |
 | Bulb power-on | Set to "off" | Restoring power through the plug does not flash the lamp at full brightness |
 | Daily control | HA tile in iPhone Control Center; the lamp's own switch stays on | The bulb dims itself, so an on/off lamp is fine; only cutting power stops the sunrise |
