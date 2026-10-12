@@ -19,11 +19,12 @@ running while its signature is valid, and serves a small HTTP API on
 `127.0.0.1:8102` that `homelab ios` calls.
 
 ```mermaid
-flowchart LR
+flowchart TD
   CLI["homelab ios<br/>devvm"] -->|HTTP, loopback| SVC["ios-rig-wifi.service<br/>pymobiledevice3"]
-  SVC -->|RemotePairing tunnel, TCP 49152<br/>over WireGuard| P["iPhone<br/>iphone-london, 192.168.9.205"]
+  SVC -->|RemotePairing, TCP 49152| P["iPhone, iphone-london<br/>192.168.9.205"]
   CLI -->|W3C WebDriver, taps| WDA["WebDriverAgent :8100<br/>on the phone"]
-  MAC["MacBook<br/>when present"] -.->|USB: build apps,<br/>re-sign WDA| P
+  WDA --- P
+  MAC["MacBook, when present"] -.->|USB: build apps, re-sign WDA| P
 ```
 
 | Works with the Mac away | Verb |
