@@ -2,7 +2,7 @@
 """Wire the standard homelab hooks into a user's ~/.claude/settings.json.
 
 (Named for its original memory-only scope; it now wires the whole hook set,
-including the PreToolUse zsh-guard and scan-guard.)
+including the PreToolUse zsh-guard, scan-guard and rm-guard.)
 
 Part of the claude-memory MCP -> homelab CLI migration (all-users rollout).
 Two passes, idempotent, never touching `env` (the per-user MEMORY_API_KEY) or any
@@ -42,6 +42,11 @@ WANT = [
     # over / or ~. The devvm disk shares a spindle with etcd; on 2026-10-11 a
     # transcript grep pushed etcd fsync to 8 s. No override by design.
     ("PreToolUse", "scan-guard.py", f"python3 {hooks_dir}/scan-guard.py", {"timeout": 5}, "Bash"),
+    # rm guard: blocks `rm -r` on a path an empty variable would turn into / or a
+    # top-level directory (`rm -rf $S/$b` in a loop), and asks for ${VAR:?}.
+    # Claude Code asks a person about that shape even in bypass mode, which left
+    # unattended sessions waiting on an "approve this command" card (2026-10-12).
+    ("PreToolUse", "rm-guard.py", f"python3 {hooks_dir}/rm-guard.py", {"timeout": 5}, "Bash"),
     # Access-wall reminder: when a command output carries a real denial (kubectl
     # RBAC, Vault policy, sudo), name the route past it — file a `broken` issue
     # and the fixer repairs it. In a hook rather than prose because it has to
