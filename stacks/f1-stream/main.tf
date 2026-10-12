@@ -177,10 +177,10 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
 }
 
 # The app's data volume before the ADR-0029 cutover (RWO). Nothing mounts it
-# since then: kubernetes_job_v1.f1_stream_data_copy copied it into
-# f1-stream-data, and it stays, untouched, for two weeks as the copy to roll
-# back to. The cleanup removes it together with that Job; the PV is Retain, so
-# /srv/nfs/f1-stream stays on the Proxmox host until removed there by hand.
+# since then; module.nfs_data below is a second, ReadWriteMany claim on the
+# same /srv/nfs/f1-stream directory. Kept for now so the claim the old
+# Deployment used still exists; the PV is Retain, so removing this module
+# never touches the data.
 module "nfs_data_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "f1-stream-data-host"
@@ -211,35 +211,27 @@ module "nfs_replay_cache" {
 # The app's data volume from the ADR-0029 cutover on (f1-stream repo): replay
 # library, Early copies, the TV app and the small JSON state files. ReadWriteMany
 # because the Edges mount it read-only beside the Worker, which is the only Role
-# that writes it. It replaces f1-stream-data-host above (RWO), which stays,
-# unmounted, for two weeks after the cutover as the copy to fall back to.
+# that writes it.
 #
-# A dynamic claim rather than the nfs_volume module: the module's PV points at a
-# directory that has to be created by hand on the Proxmox host, while nfs-pve
-# provisions /srv/nfs/pvc-<uid> itself, with Retain, inside the export that
-# already exists. Precedent: stacks/learn (prep-sync-data). The directory sits
-# under /srv/nfs, so the existing offsite sync of /srv/nfs covers it.
-#
-# Created before the cutover so provisioning is off its critical path.
-# wait_until_bound stays at its default (true): csi-nfs-controller restarted
-# 92 and 76 times in the 36 hours to 2026-10-11, and an apply that waits fails
-# visibly if provisioning stalls instead of leaving a Pending claim behind.
-resource "kubernetes_persistent_volume_claim_v1" "f1_stream_data" {
-  metadata {
-    name      = "f1-stream-data"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
-  }
-  spec {
-    access_modes       = ["ReadWriteMany"]
-    storage_class_name = "nfs-pve"
-    resources {
-      requests = {
-        # Nominal on NFS, which enforces no size. REPLAY_LIBRARY_CAP_GB (180)
-        # below is what bounds the library.
-        storage = "200Gi"
-      }
-    }
-  }
+# The SAME NFS directory as module.nfs_data_host above, not a copy. An access
+# mode cannot change on an existing claim, so this is a second static PV and
+# claim onto /srv/nfs/f1-stream. The cutover first used a dynamic claim filled
+# by a copy Job; the directory turned out to hold 46.7 GiB (46.5 GiB of it the
+# replay library) and copied at about 5 MB/s, so on 2026-10-12 Viktor chose to
+# point at the existing directory instead. The NFS CSIDriver has
+# attachRequired: false, so the access mode is not enforced across nodes
+# either way.
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "f1-stream-data-shared"
+  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/f1-stream"
+  # Nominal on NFS, which enforces no size. REPLAY_LIBRARY_CAP_GB (180)
+  # below is what bounds the library.
+  storage            = "200Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 # ---------------------------------------------------------------------------
@@ -470,101 +462,6 @@ locals {
   f1_edge_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
   f1_worker_url     = "http://${kubernetes_service_v1.f1_worker.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
   f1_transcoder_url = "http://${kubernetes_service_v1.f1_transcoder.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
-}
-
-# One-shot copy of the old RWO volume into the RWX claim, at the cutover. 18 GiB
-# on 2026-10-11, almost all of it the replay library; the duration on the shared
-# HDD pool has not been measured.
-#
-# It lands one push before the Roles (the cutover in the app repo's rolling
-# deploys plan, steps 3 to 5): the commit on wizard/f1-stream-b0 scales the old
-# Deployment to zero and creates this Job, and the Roles land once the Job has
-# completed and written its marker. Nothing in an apply waits for the copy,
-# and the Roles carry no depends_on on it, so landing them early would start
-# the Worker on a half-copied volume. A CI apply that waited on a copy of
-# unknown length would be killed by the next infra push, losing its state
-# write; split this way, the copy runs while no apply is open, and the Roles'
-# apply lasts as long as their rollout.
-#
-# The script first waits out the old pod's 30 s termination grace period: the
-# Deployment reports zero replicas while that pod is still shutting down, and
-# it may write /data until the kubelet kills it.
-#
-# The marker file makes a re-run harmless: if this Job is ever recreated after
-# the cutover it must not copy the old volume over newer data. No
-# ttl_seconds_after_finished, because a Job that deletes itself is planned for
-# re-creation on the next apply. It goes, with module.nfs_data_host, in the
-# cleanup two weeks after the cutover.
-#
-# The old claim mounts beside the new one from any node: the NFS CSIDriver has
-# attachRequired: false, so RWO is not enforced across nodes. The export is
-# no_root_squash (the app's files are owned by uid 0), so `cp -a` keeps owners.
-resource "kubernetes_job_v1" "f1_stream_data_copy" {
-  metadata {
-    name      = "f1-stream-data-copy"
-    namespace = local.f1_namespace
-    labels    = { app = "f1-stream-data-copy" }
-  }
-  spec {
-    backoff_limit = 0
-    template {
-      metadata {
-        # Not app=f1-stream, so the Prometheus pod job and the deploy
-        # pipeline's label selector never pick this pod up.
-        labels = { app = "f1-stream-data-copy" }
-      }
-      spec {
-        restart_policy = "Never"
-        container {
-          name  = "copy"
-          image = "docker.io/library/busybox:1.37.0"
-          command = ["/bin/sh", "-c", <<-EOT
-            set -eu
-            if [ -e /new/.copied-from-rwo ]; then
-              echo "already copied on $(cat /new/.copied-from-rwo)"; exit 0
-            fi
-            sleep 45
-            cp -a /old/. /new/
-            date -u > /new/.copied-from-rwo
-            echo "copied: $(du -sh /new | cut -f1)"
-          EOT
-          ]
-          resources {
-            requests = { cpu = "50m", memory = "64Mi" }
-            limits   = { memory = "256Mi" }
-          }
-          volume_mount {
-            name       = "old"
-            mount_path = "/old"
-            read_only  = true
-          }
-          volume_mount {
-            name       = "new"
-            mount_path = "/new"
-          }
-        }
-        volume {
-          name = "old"
-          persistent_volume_claim {
-            claim_name = module.nfs_data_host.claim_name
-            read_only  = true
-          }
-        }
-        volume {
-          name = "new"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
-          }
-        }
-      }
-    }
-  }
-  wait_for_completion = false
-  lifecycle {
-    # Without it every apply plans a replace and re-runs the Job
-    # (docs/agents/kyverno-drift.md, "kubernetes_job matters more").
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
-  }
 }
 
 # Edge: the site, the API, /proxy, /relay and replays. Every viewer byte passes
@@ -809,7 +706,7 @@ resource "kubernetes_deployment_v1" "f1_edge" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
+            claim_name = module.nfs_data.claim_name
             read_only  = true
           }
         }
@@ -1324,7 +1221,7 @@ resource "kubernetes_deployment_v1" "f1_worker" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
+            claim_name = module.nfs_data.claim_name
           }
         }
         # optional so the pod starts before the ExternalSecret has synced; the
