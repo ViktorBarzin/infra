@@ -152,9 +152,9 @@ resource "kubernetes_deployment" "android-emulator" {
             limits = {
               memory           = "8Gi"
               "nvidia.com/gpu" = "1" # T4 time-slice
-              # GPU VRAM budget (ADR-0016). Provisional until the GPU
-              # renderer's real footprint is measured.
-              "viktorbarzin.me/gpumem" = "300"
+              # GPU VRAM budget (ADR-0016). Measured 693 MiB peak rendering
+              # on the T4 through 10 min of Chrome scrolling (2026-10-12).
+              "viktorbarzin.me/gpumem" = "800"
             }
           }
 
