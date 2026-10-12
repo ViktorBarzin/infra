@@ -121,7 +121,9 @@ resource "kubernetes_service" "blog" {
 # tiny PoW (~250ms desktop), get a 30-day cookie, and pass through. Replaces
 # the global ai-bot-block forwardAuth for this site.
 module "anubis" {
-  source           = "../../modules/kubernetes/anubis_instance"
+  source = "../../modules/kubernetes/anubis_instance"
+  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
+  image_tag        = "v1.25.0"
   name             = "blog"
   namespace        = kubernetes_namespace.website.metadata[0].name
   target_url       = "http://${kubernetes_service.blog.metadata[0].name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local"
