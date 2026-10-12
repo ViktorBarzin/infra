@@ -176,22 +176,6 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
   depends_on = [kubernetes_namespace.f1-stream]
 }
 
-# The app's data volume before the ADR-0029 cutover (RWO). Nothing mounts it
-# since then; module.nfs_data below is a second, ReadWriteMany claim on the
-# same /srv/nfs/f1-stream directory. Kept for now so the claim the old
-# Deployment used still exists; the PV is Retain, so removing this module
-# never touches the data.
-module "nfs_data_host" {
-  source             = "../../modules/kubernetes/nfs_volume"
-  name               = "f1-stream-data-host"
-  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server         = var.nfs_server
-  nfs_path           = "/srv/nfs/f1-stream"
-  storage            = "1Gi"
-  access_modes       = ["ReadWriteOnce"]
-  storage_class_name = "nfs-pve"
-}
-
 # Replay torrent cache. Shares the servarr qBittorrent downloads export so the
 # backend can serve a file while qBittorrent is still writing it — a PVC cannot
 # cross namespaces, so this is a second claim onto the same NFS path rather than
@@ -213,9 +197,10 @@ module "nfs_replay_cache" {
 # because the Edges mount it read-only beside the Worker, which is the only Role
 # that writes it.
 #
-# The SAME NFS directory as module.nfs_data_host above, not a copy. An access
-# mode cannot change on an existing claim, so this is a second static PV and
-# claim onto /srv/nfs/f1-stream. The cutover first used a dynamic claim filled
+# The directory the single pre-cutover Deployment used through a ReadWriteOnce
+# claim (f1-stream-data-host, removed 2026-10-12 with its data left in place).
+# An access mode cannot change on an existing claim, so this is a second static
+# PV and claim onto /srv/nfs/f1-stream. The cutover first used a dynamic claim filled
 # by a copy Job; the directory turned out to hold 46.7 GiB (46.5 GiB of it the
 # replay library) and copied at about 5 MB/s, so on 2026-10-12 Viktor chose to
 # point at the existing directory instead. The NFS CSIDriver has
