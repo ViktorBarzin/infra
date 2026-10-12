@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) guard for two shapes that Claude Code's own rm checks ask
+"""PreToolUse(Bash) guard for three shapes that Claude Code's own rm checks ask
 a person about, even in a session started with --dangerously-skip-permissions.
 
 1. `rm -r` on a path an empty variable would turn into / or a top-level
@@ -7,6 +7,8 @@ a person about, even in a session started with --dangerously-skip-permissions.
 2. A shell -c script wrapped by another command that takes a variable, such as
    `kubectl exec $P -- sh -c '...'`, anywhere in a command that joins commands
    with && or ||. Described after the first.
+3. rm of a whole directory's contents by a relative path, such as
+   `cd $S && rm -f out/*`. Described last.
 
 Claude Code has its own check for this shape, and it asks a person even in a
 session started with --dangerously-skip-permissions. On 2026-10-12 that raised
@@ -58,6 +60,27 @@ in it. What Claude Code 2.1.296 did in a bypass scratch session:
   - It ran the two rewrites this hook asks for: `set -e` with `;` between the
     statements, and `if ...; then ...; fi`.
 
+The third shape raised the card four times in one renovate-upgrades subagent
+on 2026-10-12, for
+
+    S=/var/tmp/.../kt; cd $S && rm -f out/*; timeout 300 docker run ...
+
+with the reason "This command changes directories before the removal, so the
+relative glob target cannot be statically resolved". What Claude Code 2.1.296
+did in headless `claude -p --dangerously-skip-permissions` runs:
+
+  - It asked when the last part of an rm target was exactly *, as in `out/*`,
+    `./out/*` or `../out/*`, after any cd it could not follow: a cd to a
+    variable or a relative path, a pushd, or more than one cd. rm -f asked too.
+  - It asked for a bare `*` or `./*` with no cd at all, and for `"$PWD"/*`.
+  - It ran `out/*` after a single cd to a literal absolute path, any glob with
+    more than * in the last part (`out/*.yaml`, `out/a*`), a target without a
+    glob, and a target rooted at a variable (`$S/out/*`).
+  - It ran the rewrite this hook asks for, `"${PWD:?}"/out/*`.
+
+A cd inside a subshell, `(cd $S && rm -f out/*)`, ran there and is blocked
+here; the rewrite works in both places.
+
 Exit codes: 0 = allow, 2 = block and return stderr to Claude.
 """
 import json
@@ -103,6 +126,23 @@ SHELL_C_MSG = (
     "or put the step behind `if ...; then ...; fi`. Claude Code runs either form\n"
     "without asking."
 )
+
+CD_GLOB_MSG = (
+    "BLOCKED by rm-guard: `{rm} {target}` removes everything in a directory named\n"
+    "relative to the current one.\n{why}\n"
+    "so it stops for a person's approval even in bypass mode, and the session\n"
+    "would sit waiting.\n"
+    "Name the directory from $PWD, with :? so an empty value stops the shell:\n"
+    "  {rm} {fixed}\n"
+    "Claude Code runs that form without asking."
+)
+CD_GLOB_WHY = {
+    "bare": "Claude Code asks before any rm of * in the current directory,",
+    "cd": "Claude Code cannot tell which directory that is after a cd to a\n"
+          "variable or a relative path, a pushd, or a second cd,",
+    "pwd": "Claude Code treats $PWD as possibly empty, which makes the path /*,",
+}
+PWD_GLOB = re.compile(r"^\$(PWD|\{PWD\})/\*$")
 
 
 def _strip_heredocs(cmd):
@@ -287,9 +327,37 @@ def _wrapped_shell_c(argv):
     return None
 
 
+def _cd_glob(rm_args, cd_followed):
+    """The message for rm of a relative dir/*, or None.
+
+    cd_followed is False once the command has run a cd Claude Code cannot
+    follow.
+    """
+    _, flags, targets = _rm_parts(rm_args)
+    rm = " ".join(["rm"] + flags)
+    for t in targets:
+        if t != "*" and not t.endswith("/*"):
+            continue
+        if PWD_GLOB.match(t):
+            why, fixed = "pwd", '"${PWD:?}"/*'
+        elif t.startswith(("/", "~", "$", "\x00")):
+            continue
+        else:
+            rel = t[2:] if t.startswith("./") else t
+            if rel == "*":
+                why = "bare"
+            elif not cd_followed:
+                why = "cd"
+            else:
+                continue
+            fixed = '"${PWD:?}"/' + rel
+        return CD_GLOB_MSG.format(rm=rm, target=t, why=CD_GLOB_WHY[why], fixed=fixed)
+    return None
+
+
 def check(cmd):
     """Return the block message for a command, or None to allow it."""
-    if "$" not in cmd:
+    if "$" not in cmd and "*" not in cmd:
         return None
     ops = []
     try:
@@ -297,7 +365,7 @@ def check(cmd):
     except ValueError:
         return None            # unbalanced quotes: not ours to judge
     chained = "&&" in ops or "||" in ops
-    known, depth = {}, 0
+    known, depth, cds, cd_followed = {}, 0, 0, True
     for argv in segs:
         keywords, assigns, rest = _unwrap(argv)
         for kw in keywords:
@@ -315,10 +383,19 @@ def check(cmd):
             hit = _wrapped_shell_c(rest)
             if hit:
                 return hit
+        if rest and rest[0] in ("cd", "pushd"):
+            cds += 1
+            literal = (rest[0] == "cd" and len(rest) == 2 and rest[1].startswith("/")
+                       and not re.search(r"[$`\x00*?\[]", rest[1]))
+            cd_followed = cds == 1 and literal
+            continue
         if not rest or os.path.basename(rest[0]) != "rm":
             continue
+        hit = _cd_glob(rest[1:], cd_followed)
         recursive, flags, targets = _rm_parts(rest[1:])
         if not recursive:
+            if hit:
+                return hit
             continue
         visible = known if depth == 0 else {}
         for t in targets:
@@ -329,6 +406,8 @@ def check(cmd):
                     flags=" ".join(flags), target=t, names=names,
                     either="it is" if len(set(emptied)) == 1 else "they are",
                     emptied=re.sub(r"/+", "/", path), fixed=fixed)
+        if hit:
+            return hit
     return None
 
 
