@@ -10,8 +10,9 @@ request body `model` field.
 
 **Since 2026-10-11 it serves one model, `qwen3-8b`, for one consumer.**
 Since 2026-10-12 that consumer is paperless-ngx's native AI
-(`PAPERLESS_AI_LLM_BACKEND=openai-like`, tool calling, context 8192 to match
-`-c`); paperless-ai, which used it before, is scaled to 0 with its PVC kept.
+(`PAPERLESS_AI_LLM_BACKEND=openai-like`, tool calling, prompt budget
+`PAPERLESS_AI_LLM_CONTEXT_SIZE=2048` so the whole prompt stays under `-c` 8192;
+the reasoning is in `stacks/paperless-ngx/main.tf`); paperless-ai, which used it before, is scaled to 0 with its PVC kept.
 Viktor kept document enrichment local because it reads Emo's
 financial and medical documents, and moved every other caller (tripit,
 nextcloud-todos, lesson-harvester, fire-planner) to claude-agent-service's

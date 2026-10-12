@@ -352,7 +352,16 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # 2026-10-12). Uses the local qwen3-8b on llama-swap so Emo's
           # documents stay in the cluster. openai-like forces tool calling;
           # no API key is needed (the client falls back to a placeholder).
-          # Context 8192 matches llama-swap's -c. No embedding backend: similar
+          # PAPERLESS_AI_LLM_CONTEXT_SIZE is a prompt budget, not llama-swap's
+          # -c (8192). Paperless trims the document text and the similar-document
+          # context against it separately, counts with a different tokenizer
+          # than qwen, and adds ~1100 tokens of template and tool schema. At
+          # 8192, 2 of 20 test documents overflowed llama-swap (8379 and 9399
+          # tokens). Measured 2026-10-12 on the 100 longest documents with
+          # qwen's own tokenizer: largest prompt 7502 tokens at 4096, 6786 at
+          # 3072, 4663 at 2048. 2048 leaves ~2400 tokens of headroom. Raising
+          # -c instead does not fit on the shared T4 (see stacks/llama-cpp).
+          # No embedding backend: similar
           # documents come from the Tantivy index, so no extra RAM in a pod
           # that has OOMed at 8Gi. Output language unset so titles stay in the
           # document's own language. A Document Added workflow (created in the
@@ -379,7 +388,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           }
           env {
             name  = "PAPERLESS_AI_LLM_CONTEXT_SIZE"
-            value = "8192"
+            value = "2048"
           }
           volume_mount {
             name       = "data"
