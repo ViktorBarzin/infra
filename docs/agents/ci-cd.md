@@ -34,7 +34,11 @@ image deployment/<app> …` in-cluster (woodpecker-agent SA = cluster-admin, no
 kubeconfig). Deployment image is `ignore_changes` (`# CI_SETS_IMAGE`) so the SHA
 sticks vs `terragrunt apply`; CronJobs track `:latest` + `imagePullPolicy:
 Always`. (Keel was a redundant net here until it was retired on
-2026-10-11.) **Never** `set image`/`rollout restart` operator-managed
+2026-10-11.) Apps without a Woodpecker repo of their own (the infra-built
+k8s-portal, excalidraw, pages-publish and repowise, plus interview-prep-app,
+learning and trading-bot) trigger the shared `.woodpecker/first-party-deploy.yml`
+on Woodpecker repo 1 instead, with `PIPELINE=first-party-deploy`, `APP` and
+`IMAGE_TAG`. **Never** `set image`/`rollout restart` operator-managed
 StatefulSets (memory id=740). Onboarding tool: `scripts/offinfra-onboard` +
 `scripts/offinfra-templates/`; mirror + workflow commits via the Forgejo API over
 the internal Traefik LB (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`).
@@ -67,9 +71,9 @@ github↔forgejo divergence was deliberately NOT reconciled):
 `build-android-emulator.yml` → public ghcr;
 `build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
 `build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
-PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (was Keel-deployed, no deploy step since Keel was retired; the LAST in-cluster
+PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (deployed by `.woodpecker/first-party-deploy.yml`; the LAST in-cluster
 Woodpecker build, migrated 2026-06-13 — completes "no local builds"); `build-excalidraw.yml` →
-PRIVATE `ghcr.io/viktorbarzin/excalidraw-library` (was Keel-deployed, no deploy step since Keel was retired; replaced
+PRIVATE `ghcr.io/viktorbarzin/excalidraw-library` (deployed by `.woodpecker/first-party-deploy.yml`; replaced
 manual DockerHub pushes 2026-07-02 — DockerHub `:v4` frozen as rollback). **infra-ci**
 is the image the `.woodpecker/default.yml` apply step + `drift-detection.yml` run
 in (proven by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.
