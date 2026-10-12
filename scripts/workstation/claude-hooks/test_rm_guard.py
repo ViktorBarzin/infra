@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for rm-guard.py, the PreToolUse(Bash) guard for rm -r on a path that
-an empty variable would turn into / or a top-level directory.
+"""Tests for rm-guard.py, the PreToolUse(Bash) guard for the shapes Claude
+Code's own rm checks ask a person about even in bypass mode: rm -r on a path
+an empty variable would turn into / or a top-level directory, and a wrapped
+shell -c script in a command that joins with && or ||.
 
 Run: python3 test_rm_guard.py
 
@@ -47,6 +49,8 @@ BLOCKED = [
     # $(...) is not a literal, so the variable stays unknown.
     "S=$(pwd); for b in a; do rm -rf $S/$b; done",
     "rm -rf ${X:-}/$Y",
+    # A # inside a word is not a comment.
+    "P=x; for b in a; do rm -rf ${P#pod/}/$b; done",
 ]
 
 ALLOWED = [
@@ -75,10 +79,65 @@ ALLOWED = [
     "git commit -m \"note: rm -rf $X/$Y is dangerous\"",
     "cat <<'EOF'\nrm -rf $X/$Y\nEOF",
     "grep -n 'rm -rf $S/$b' notes.md",
+    # A comment is not a command.
+    "ls  # rm -rf $X/$Y",
+]
+
+
+# A shell -c script wrapped by another command (kubectl exec, docker exec)
+# that also takes a variable, anywhere in a command that joins with && or ||.
+# Claude Code 2.1.296 says it "could not check the script for dangerous
+# removals" and asks, even in bypass mode and with no rm in the script. The
+# first is the paperless session's command from 2026-10-12 02:48, trimmed.
+BLOCKED_SHELL_C = [
+    "P=$(kubectl -n paperless-ngx get pod -l app=paperless-ngx -o name | head -1); "
+    "kubectl -n paperless-ngx cp ./ai1.py ${P#pod/}:/tmp/ai1.py -c paperless-ngx && "
+    "kubectl -n paperless-ngx exec $P -c paperless-ngx -- sh -c "
+    "'cd /usr/src/paperless/src && python3 manage.py shell < /tmp/ai1.py' 2>&1 | tail -8",
+    "P=x; echo ${P} && kubectl -n ns exec $P -- sh -c 'echo hi'",
+    "P=x; echo \"${P#pod/}\" && kubectl -n ns exec \"$P\" -- sh -c 'echo hi'",
+    "P=x; false || kubectl -n ns exec $P -- sh -c 'echo hi'",
+    "P=$(echo x); true && kubectl -n ns exec $P -- bash -c 'echo hi'",
+    "P=x; echo ${P} || exit 1; kubectl -n ns exec $P -- sh -c 'echo hi'",
+    "sudo kubectl -n ns exec $P -- sh -c 'echo hi' && echo done",
+    "docker exec $C bash -lc 'echo hi' && echo done",
+]
+
+# Ran without asking in the same session.
+ALLOWED_SHELL_C = [
+    "P=x; echo ${P#pod/}; kubectl -n ns exec $P -- sh -c 'echo hi'",
+    "P=$(kubectl get pod -o name); kubectl -n ns exec $P -c c -- sh -c 'cd /tmp && echo hi'",
+    "kubectl -n ns cp ./a.py x:/tmp/a.py -c box && kubectl -n ns exec x -c box -- sh -c 'echo hi'",
+    "P=x; echo ${P#pod/} && kubectl -n ns exec $P -- python3 -c 'print(1)'",
+    "P=x; echo ${P#pod/} && sh -c 'echo hi'",
+    "P=x; true && env X=$P sh -c 'echo hi'",
+    "P=x; true && sh -c 'echo hi' $P",
+    "echo ${HOME#/} && sh -c 'echo hi'",
+    # The rewrites the block message asks for.
+    "set -e; P=x; echo ${P}; kubectl -n ns exec $P -- sh -c 'echo hi'",
+    "P=x; if echo ${P}; then kubectl -n ns exec $P -- sh -c 'echo hi'; fi",
+    # && inside the quoted script, or inside a heredoc, is not the outer chain.
+    "kubectl -n ns exec $P -- sh -c 'cd /tmp && echo hi'",
+    "cat > a.sh <<'EOF'\nx && y\nEOF\nkubectl exec $P -- sh -c 'echo hi'",
 ]
 
 
 class RmGuardTest(unittest.TestCase):
+    def test_blocked_shell_c(self):
+        for cmd in BLOCKED_SHELL_C:
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(check(cmd), "should block")
+
+    def test_allowed_shell_c(self):
+        for cmd in ALLOWED_SHELL_C:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(check(cmd), "should allow")
+
+    def test_shell_c_message_names_the_fix(self):
+        msg = check("P=x; echo ${P} && kubectl -n ns exec $P -- sh -c 'echo hi'")
+        self.assertIn("set -e", msg)
+        self.assertIn("$P", msg)
+
     def test_blocked(self):
         for cmd in BLOCKED:
             with self.subTest(cmd=cmd):
