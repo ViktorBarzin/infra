@@ -338,11 +338,6 @@
       enabled: false,
     },
     {
-      description: "HELD: Calico / tigera-operator",
-      matchPackageNames: ["tigera-operator", "quay.io/tigera/**", "calico/**", "quay.io/calico/**"],
-      enabled: false,
-    },
-    {
       description: "HELD: osrm-backend majors and minors (2026-10-12, replaces the majors-only hold after the v26.4.0 cut-over). osrm-routed refuses a graph built by a different major.minor (util::FingerPrint::IsDataCompatible), and osrm releases a minor every month (v26.5 to v26.10 so far). A bump moves stacks/osm_routing to an empty graph directory, so the graph must be built first: bump only the osrm-refresh image, run it once, then move the serving pods. Patches keep the graph format and stay automatic.",
       matchPackageNames: ["ghcr.io/project-osrm/osrm-backend"],
       matchUpdateTypes: ["major", "minor"],
