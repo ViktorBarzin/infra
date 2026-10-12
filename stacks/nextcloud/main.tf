@@ -166,8 +166,8 @@ resource "helm_release" "nextcloud" {
   namespace = kubernetes_namespace.nextcloud.metadata[0].name
   name      = "nextcloud"
 
-  repository      = "https://nextcloud.github.io/helm/"
-  chart           = "nextcloud"
+  repository = "https://nextcloud.github.io/helm/"
+  chart      = "nextcloud"
   # Not atomic: the image entrypoint runs `occ upgrade` before Apache starts,
   # so a failed rollout has usually migrated the DB already. An atomic rollback
   # would put the previous image on that DB, and Nextcloud refuses to start on
@@ -296,7 +296,14 @@ module "ingress" {
   # device). This middleware answers discovery at the ingress with a clean
   # https redirect, before the request reaches Nextcloud. See
   # kubernetes_manifest.wellknown_dav_redirect below.
-  extra_middlewares = ["nextcloud-wellknown-dav@kubernetescrd"]
+  extra_middlewares = [
+    "nextcloud-wellknown-dav@kubernetescrd",
+    # The Files app's cold-load chunk burst overruns the default 10/50
+    # limiter (blank page, 429s). Dedicated per-client 100/1000 chain defined
+    # in stacks/traefik/modules/traefik/middleware.tf.
+    "traefik-nextcloud-rate-limit@kubernetescrd",
+  ]
+  skip_default_rate_limit = true
   extra_annotations = {
     "gethomepage.dev/enabled"         = "true"
     "gethomepage.dev/name"            = "Nextcloud"

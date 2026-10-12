@@ -595,6 +595,59 @@ resource "kubernetes_manifest" "middleware_dawarich_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# Nextcloud-specific rate limit. The Nextcloud 35 Files app cold-loads well
+# over 50 JS/CSS chunks from /dist in one burst (the server serves them itself),
+# so the default 10/50 limiter 429s the tail and the page stays blank.
+# Measured 2026-10-12: 122 429s for one LAN client in the 6h after the 32 -> 35
+# upgrade, and a headless cold load of a file link 429'd ~100 requests. Native
+# WebDAV/CalDAV sync clients ride the same host, so the limiter stays per
+# client (real-ip first, keyed on X-Real-Ip) at the 100/1000 used by the other
+# app carve-outs.
+resource "kubernetes_manifest" "middleware_nextcloud_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "nextcloud-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      chain = {
+        middlewares = [
+          { name = kubectl_manifest.middleware_real_ip.name },
+          { name = kubernetes_manifest.middleware_nextcloud_rate_limit_per_client.manifest.metadata.name },
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# The limiter behind nextcloud-rate-limit. Reference the chain above, never
+# this one directly, or real-ip will not have run and the key will be empty.
+resource "kubernetes_manifest" "middleware_nextcloud_rate_limit_per_client" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "nextcloud-rate-limit-per-client"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
