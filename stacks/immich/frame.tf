@@ -28,7 +28,7 @@ resource "kubernetes_config_map" "mailserver_config" {
         WeatherLatLong: "51.5074,-0.1278"
         Language: en
     Accounts:
-        - ImmichServerUrl: http://immich.viktorbarzin.me
+        - ImmichServerUrl: https://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key"]}
           # 4 years (was 730). ImmichFrame draws 25 random assets per batch and keeps
           # no record of what it showed, so repeats scale with 1/pool: 730 days left
