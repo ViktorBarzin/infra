@@ -14,7 +14,7 @@ variable "mysql_host" { type = string }
 variable "nextcloud_image_tag" {
   type = string
   # renovate: datasource=docker depName=docker.io/library/nextcloud
-  default = "32.0.14"
+  default = "32.0.15"
 }
 
 data "vault_kv_secret_v2" "secrets" {
