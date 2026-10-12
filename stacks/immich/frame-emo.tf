@@ -32,7 +32,7 @@ resource "kubernetes_config_map" "frame_config_emo" {
         WeatherLatLong: "42.6977,23.3219"
         Language: en
     Accounts:
-        - ImmichServerUrl: http://immich.viktorbarzin.me
+        - ImmichServerUrl: https://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key_emo"]}
           ImagesFromDays: 365
           ExcludedAlbums:

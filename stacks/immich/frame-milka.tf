@@ -79,7 +79,7 @@ resource "kubernetes_config_map" "frame_config_milka" {
         # on-disk DownloadImages file cache. It does not affect exclusions.
         RefreshAlbumPeopleInterval: 1
     Accounts:
-        - ImmichServerUrl: http://immich.viktorbarzin.me
+        - ImmichServerUrl: https://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.emo_immich_frame_milka.data["key"]}
           # 1825 days covers essentially the whole library; it spans 2012-2026
           # but is overwhelmingly 2024-2026.
