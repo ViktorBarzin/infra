@@ -108,7 +108,11 @@ Two ways, both in the repo:
 
 - A component that waits for a supervised session: a `HELD:` package rule in `renovate.json5` with `enabled: false` and a description saying why. Held today: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, NVIDIA driver majors, the Loki chart, Kyverno chart 3.10 and later, Forgejo (every update), Technitium majors, the anisette digest-only pin (its image is still under `ignore_changes`, so a bump would not reach the pod). Remove the rule to release the component.
 
-Not managed by Renovate at all: `modules/**` (a change there re-applies every platform stack), `.woodpecker/**` (CI images), our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, `forgejo.viktorbarzin.me/*`), Terraform providers, and `:latest` or untagged refs.
+Not managed by Renovate at all: `modules/docker-registry/**` (synced to the registry VM by its own pipeline, outside the rails), `.woodpecker/**` (CI images), our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, `forgejo.viktorbarzin.me/*`), and `:latest` or untagged refs.
+
+Shared-module image pins live in the callers, not in the module default: the anubis tag is pinned in each of its eight stacks, so Renovate bumps one stack per commit. A pin left inside `modules/**` lands in a Tuesday 00:00-03:59 window, and the rails verify every stack that uses the module.
+
+Terraform providers are exact pins in root `terragrunt.hcl`, one `# renovate:` annotation each. Renovate lands at most one a week (Wednesday 00:00-03:59, subject `providers: bump ...`). CI re-applies the 32 platform stacks; the rails do not verify that commit, so a failed apply turns the pipeline red without a revert. Majors of vault, cloudflare and authentik and every telmate/proxmox update are held. `scripts/tg` runs `terragrunt init -upgrade` when a workstation lockfile predates a pin.
 
 ## Alert
 
