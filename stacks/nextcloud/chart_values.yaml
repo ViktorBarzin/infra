@@ -126,12 +126,15 @@ persistence:
   accessMode: ReadWriteOnce
   size: 20Gi
 
+# 30 + 180 x 10s = about 30 min. A new major runs `occ upgrade` in the
+# entrypoint before Apache answers; at 60 failures (10.5 min) a slow migration
+# would be killed halfway, leaving the DB half-migrated.
 startupProbe:
   enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
   timeoutSeconds: 30
-  failureThreshold: 60
+  failureThreshold: 180
   successThreshold: 1
 
 livenessProbe:
