@@ -106,7 +106,7 @@ resource "kubernetes_service" "kms-web-page" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.25.0"
+  image_tag        = "v1.28.1"
   name             = "kms"
   namespace        = kubernetes_namespace.kms.metadata[0].name
   target_url       = "http://${kubernetes_service.kms-web-page.metadata[0].name}.${kubernetes_namespace.kms.metadata[0].name}.svc.cluster.local"
