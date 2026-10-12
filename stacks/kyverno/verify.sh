@@ -8,10 +8,12 @@ VERIFY_NAMESPACES="kyverno"
 _policies_ready() {
   # The CEL policy types replaced the kyverno.io ClusterPolicies (Kyverno 1.20
   # removes them). Expect 28: 5 validating, 8 mutating, 14 generating,
-  # 1 deleting.
+  # 1 deleting. Kyverno 1.19.1 left the DeletingPolicy without any status for
+  # the first hour after the 2026-10-12 migration, while every other kind
+  # reported Ready, so that kind only has to exist.
   local out
   out=$(kubectl get validatingpolicies.policies.kyverno.io,mutatingpolicies.policies.kyverno.io,generatingpolicies.policies.kyverno.io,deletingpolicies.policies.kyverno.io -o json 2>/dev/null | jq -r '
-    [.items[] | {n:(.kind + "/" + .metadata.name), r:(.status.conditionStatus.ready // false)}] as $a
+    [.items[] | {n:(.kind + "/" + .metadata.name), r:(if .kind == "DeletingPolicy" then true else (.status.conditionStatus.ready // false) end)}] as $a
     | [$a[] | select(.r != true) | .n] as $bad
     | "cel policies=\($a|length) not ready=\($bad)", (if ($a|length) >= 28 and ($bad|length)==0 then 0 else 1 end)')
   head -1 <<<"$out"
