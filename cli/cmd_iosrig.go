@@ -767,6 +767,13 @@ func iosInstallUnits(dry bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	wrote, err := iosRestorePairRecords(filepath.Join(home, ".pymobiledevice3"), iosDefaults().UDID, iosVaultField)
+	for _, w := range wrote {
+		fmt.Printf("    restored %s from Vault\n", w)
+	}
+	if err != nil {
+		fmt.Printf("    warning: %v; the Wi-Fi path needs the pairing (runbook: re-pair over the cable)\n", err)
+	}
 	for _, u := range units {
 		body, err := iosAssets.ReadFile("ios_assets/" + u)
 		if err != nil {

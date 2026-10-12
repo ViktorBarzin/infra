@@ -106,3 +106,41 @@ func TestIosWifiScriptIsWrittenFromTheEmbed(t *testing.T) {
 		t.Errorf("script at %s does not match the embedded copy", path)
 	}
 }
+
+// A rebuilt devvm has no pairing, and pairing again needs the Mac and the
+// phone on a cable. Restoring from Vault must fill only what is missing, at
+// mode 600, and never overwrite a record that is there.
+func TestIosRestorePairRecords(t *testing.T) {
+	dir := t.TempDir()
+	udid := "00008110-TEST"
+	existing := filepath.Join(dir, udid+".plist")
+	if err := os.WriteFile(existing, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fetch := func(field string) (string, error) {
+		return map[string]string{
+			"remote_pair_record":   "cmVtb3Rl",    // "remote"
+			"lockdown_pair_record": "bG9ja2Rvd24", // "lockdown", unpadded
+		}[field], nil
+	}
+	wrote, err := iosRestorePairRecords(dir, udid, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wrote) != 1 || filepath.Base(wrote[0]) != "remote_"+udid+".plist" {
+		t.Errorf("wrote %v, want only the missing remote record", wrote)
+	}
+	if b, _ := os.ReadFile(existing); string(b) != "keep me" {
+		t.Errorf("existing record was overwritten: %q", b)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "remote_"+udid+".plist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, want 0600", fi.Mode().Perm())
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "remote_"+udid+".plist")); string(b) != "remote" {
+		t.Errorf("decoded %q, want %q", b, "remote")
+	}
+}
