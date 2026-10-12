@@ -225,16 +225,16 @@ resource "kubernetes_deployment" "nextcloud_todos" {
             name  = "IDEATION_ALLOWLIST"
             value = "Noticing File"
           }
-          # Tier-0 LLM classifier
+          # Tier-1 triage (no-tools mode), research auto-run and two-pass exec
+          # all go to claude-agent-service; llama-swap is kept for paperless-ai
+          # only since 2026-10-11. Sonnet, not Haiku: on a 5-todo check Haiku
+          # called "find the best-reviewed headphones under 300 GBP" noise, so
+          # it would have been dropped; Sonnet and the old qwen3-8b both said
+          # research.
           env {
-            name  = "LLAMA_SWAP_URL"
-            value = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+            name  = "TRIAGE_MODEL"
+            value = "sonnet"
           }
-          env {
-            name  = "LLAMA_SWAP_MODEL"
-            value = "qwen3-8b"
-          }
-          # Tier-2 LLM (claude-agent-service: research auto-run + two-pass exec)
           env {
             name  = "CLAUDE_AGENT_URL"
             value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"

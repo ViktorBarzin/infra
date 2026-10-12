@@ -1,9 +1,9 @@
 # Proxy access scoping + self-signup invite.
 #
-# ACCESS SCOPING: the admin-services-restriction policy restricts a non-admin
-# to ONLY proxy.viktorbarzin.me when they are EITHER in the "Proxy Users" group
-# (manual add — after a first login auto-provisions them) OR carry the
-# `proxy_only` user attribute (set by the signup invitation, see below).
+# ACCESS SCOPING: proxy.viktorbarzin.me has its own forward_single application
+# (forward-auth-apps.json) bound to "Proxy Users" and Home Server Admins, so a
+# member of this group reaches that host and no other (ADR-0031). Members are
+# added by hand after a first login auto-provisions them.
 resource "authentik_group" "proxy_users" {
   name = "Proxy Users"
 }

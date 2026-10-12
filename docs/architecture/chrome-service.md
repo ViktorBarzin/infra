@@ -404,11 +404,12 @@ isolated instance. The session-exposure trade-off above was explicitly accepted.
 
 Two independent grants make up "browser access" for a user:
 
-1. **neko (interactive view, `chrome.viktorbarzin.me`)** — gated by the Authentik
-   `admin-services-restriction` policy via the **`Chrome Users` group** (ADR-0023;
-   the `chrome`/`chrome-fleet` ingresses set `allowed_groups = ["Chrome Users"]`).
+1. **neko (interactive view, `chrome.viktorbarzin.me`)** — gated by a per-host
+   Authentik application bound to the **`Chrome Users` group** (ADR-0031;
+   the `chrome`/`chrome-fleet` ingresses set `allowed_groups = ["Chrome Users"]`,
+   matched in `stacks/authentik/forward-auth-apps.json`).
    Add the user to `Chrome Users` — kept deliberately tighter than admin, though
-   `Home Server Admins` also pass via the break-glass bypass. No kubeconfig/RBAC
+   `Home Server Admins` is bound on every per-host application too. No kubeconfig/RBAC
    needed. (Was a hardcoded `CHROME_ALLOWED` username/email set until 2026-07-26.)
 2. **CLI (`homelab browser`, CDP over port-forward)** — needs `pods/portforward`
    in `chrome-service` PLUS a non-interactive credential (a normal devvm user's

@@ -55,7 +55,7 @@ resource "kubernetes_deployment" "oauth2_proxy" {
       spec {
         container {
           name  = "oauth2-proxy"
-          image = "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+          image = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.5"
           args = [
             "--http-address=0.0.0.0:4180",
             "--provider=oidc",

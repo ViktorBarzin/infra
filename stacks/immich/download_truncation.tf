@@ -168,7 +168,7 @@ resource "kubernetes_cron_job_v1" "immich_download_truncation" {
 
             container {
               name  = "push"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "20", "--data-binary", "@/work/metrics.prom",
                 "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-download-truncation",

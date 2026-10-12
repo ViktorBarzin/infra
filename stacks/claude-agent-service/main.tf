@@ -410,7 +410,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # recursively and chmod the infra subdir for safety.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", "mkdir -p /workspace/infra /persistent && chown -R 1000:1000 /workspace /persistent && chmod 0775 /workspace/infra /persistent"]
           security_context {
             run_as_user = 0
@@ -436,7 +436,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # Copy Claude credentials to writable volume (CLI needs to refresh OAuth tokens)
         init_container {
           name    = "copy-claude-creds"
-          image   = "busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", "cp /secrets/claude/.credentials.json /home/agent/.claude/.credentials.json && chown 1000:1000 /home/agent/.claude/.credentials.json"]
           security_context {
             run_as_user = 0
@@ -825,7 +825,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # auth" step, woodpecker vault-sync sidecar).
         container {
           name  = "vault-token-refresher"
-          image = "curlimages/curl:8.11.1"
+          image = "curlimages/curl:8.22.0"
           # No `set -e`: a transient Vault blip must NOT kill the refresh loop
           # (the stale token keeps working until its 6d TTL). curlimages/curl
           # is Alpine/busybox — has `sed`, no `jq`, so parse client_token with
@@ -1013,7 +1013,7 @@ resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
             restart_policy = "OnFailure"
             container {
               name  = "push-expiry"
-              image = "docker.io/curlimages/curl:8.11.0"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/claude-oauth-expiry-monitor'

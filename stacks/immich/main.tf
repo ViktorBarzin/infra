@@ -847,7 +847,7 @@ resource "kubernetes_deployment" "immich-postgres" {
         }
         init_container {
           name  = "write-pg-override-conf"
-          image = "busybox:1.36"
+          image = "busybox:1.38"
           command = ["sh", "-c", <<-EOT
             # Skip write on uninitialised PGDATA — initdb refuses non-empty dirs.
             # On first boot the override is absent; trigger a pod restart after
@@ -1361,7 +1361,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
             }
             container {
               name  = "push"
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "20", "--data-binary", "@/shared/metrics.prom",
                 "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-search-probe",
@@ -1399,7 +1399,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
               # curl baked into the image — never apt/apk/pip install at
               # runtime in a CronJob (writes to the node container layer on
               # every run; see status-page-pusher disk-write incident).
-              image = "docker.io/curlimages/curl:8.11.1"
+              image = "docker.io/curlimages/curl:8.22.0"
               command = [
                 "curl", "-sf", "-m", "30",
                 "-F", "entries={\"clip\":{\"textual\":{\"modelName\":\"ViT-B-16-SigLIP2__webli\"}}}",

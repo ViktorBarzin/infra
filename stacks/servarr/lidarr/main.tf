@@ -50,7 +50,7 @@ resource "kubernetes_deployment" "lidarr" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/lidarr:2.9.4"
+          image = "lscr.io/linuxserver/lidarr:3.1.0"
           # image = "youegraillot/lidarr-on-steroids"
           name = "lidarr"
 

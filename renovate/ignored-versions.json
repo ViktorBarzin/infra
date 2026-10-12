@@ -12,6 +12,72 @@
       ],
       "matchNewValue": "v1.13.99",
       "enabled": false
+    },
+    {
+      "description": "manual revert 2026-10-11 (catch-up window): dawarich 1.15.3 data migration DropLegacyLatLonFromPoints fails with PG::UniqueViolation on index_points_on_lonlat_timestamp_user_id (duplicate points); needs a points de-dup before upgrading",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "freikin/dawarich"
+      ],
+      "matchNewValue": "1.15.3",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2270: stack linkwarden failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit edb32636)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/linkwarden/linkwarden"
+      ],
+      "matchNewValue": "v2.16.3",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-11 pipeline #2275: stack homepage failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 5b417e8d)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/gethomepage/homepage"
+      ],
+      "matchNewValue": "v2.5.0",
+      "enabled": false
+    },
+    {
+      "description": "manual revert 2026-10-11 (catch-up window): immichframe v1.0.39.0 crash-loops immich-frame-emo and immich-frame-milka at startup in its new EF Core settings migration (RelationalDatabaseCreator.CreateAsync, SettingsService.InitializeAsync); v1.0.35.0 restored",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/immichframe/immichframe"
+      ],
+      "matchNewValue": "v1.0.39.0",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2282: stack traefik failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 36ac74f5)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "quay.io/prometheus/node-exporter"
+      ],
+      "matchNewValue": "v1.12.1",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2282: stack traefik failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit f63dc782)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/tarampampam/error-pages"
+      ],
+      "matchNewValue": "4.2.6",
+      "enabled": false
     }
   ]
 }
