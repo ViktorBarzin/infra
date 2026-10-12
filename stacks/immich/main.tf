@@ -747,7 +747,6 @@ resource "kubernetes_deployment" "immich-postgres" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # FLOATING_TAG_DEFERRED: no version tag matches the running digest; a tag@digest pin restarts the pod
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
@@ -771,7 +770,7 @@ resource "kubernetes_deployment" "immich-postgres" {
       }
       spec {
         container {
-          image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
+          image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf0e3c6a35df94ee8cd7ad413b5d1a5a0ff18fead0bb241b413f6d664110310"
           name  = "immich-postgresql"
           port {
             container_port = 5432
@@ -1176,7 +1175,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
             }
             init_container {
               name  = "measure"
-              image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf0e3c6a35df94ee8cd7ad413b5d1a5a0ff18fead0bb241b413f6d664110310"
               command = ["/bin/bash", "-c", <<-EOT
                 set -uo pipefail
                 OUT=/shared/metrics.prom
