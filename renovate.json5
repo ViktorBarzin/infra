@@ -248,6 +248,13 @@
       versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-p(?<build>\\d+)$",
     },
 
+    {
+      description: "NetBox: stable releases only. The stack ran v4.7.0-beta1 until 2026-10-12, and Docker versioning reads '-beta1' as a compatibility suffix, so Renovate only ever offered other -beta1 tags. NetBox does not support upgrading from a beta: v4.7.0-beta1 -> v4.7.2 renumbered ipam migrations 0094-0096, which a beta database cannot migrate through",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["netboxcommunity/netbox", "docker.io/netboxcommunity/netbox"],
+      allowedVersions: "/^v\\d+\\.\\d+\\.\\d+$/",
+    },
+
     // ---- Groups: versions that must move together ----
     {
       description: "Vault chart + server/auto-unseal/raft-backup image (one local.vault_version pin) land as one commit",
