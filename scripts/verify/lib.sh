@@ -619,6 +619,33 @@ expect_no_log_errors() {
   echo "no lines matching /$re/ in $ns $sel since $since"
 }
 
+# expect_no_log_errors_after_start <ns> <selector> <regex> <grace-seconds> [since]
+# Like expect_no_log_errors, but ignores matching lines that a container wrote
+# in its first <grace-seconds> after it started. For errors a component logs
+# once while its caches sync at startup and never again, such as Traefik's
+# "middleware ... does not exist" when the Ingress provider builds routers
+# before the CRD provider has listed the Middlewares. A real break keeps
+# logging on later config rebuilds and still fails. Lines from a container
+# with no known start time are always counted.
+expect_no_log_errors_after_start() {
+  local ns=$1 sel=$2 re=$3 grace=$4 since=${5:-15m} cutoffs hits
+  cutoffs=$(k get pods -n "$ns" -l "$sel" -o json | jq -r --argjson g "$grace" '
+    .items[] | .metadata.name as $p | .status.containerStatuses[]? |
+    select(.state.running.startedAt) |
+    "\($p)/\(.name) \((.state.running.startedAt | fromdateiso8601) + $g | todate)"') || return 1
+  hits=$(k logs -n "$ns" -l "$sel" --all-containers --since="$since" --tail=2000 --prefix --timestamps 2>/dev/null |
+    grep -Ei -- "$re" |
+    awk 'NR == FNR { if ($1 != "") c[$1] = substr($2, 1, 19); next }
+      { key = $1; sub(/^\[pod\//, "", key); sub(/\]$/, "", key)
+        if (!(key in c) || substr($2, 1, 19) >= c[key]) print }' <(printf '%s\n' "$cutoffs") - |
+    head -5)
+  if [ -n "$hits" ]; then
+    echo "$hits"
+    return 1
+  fi
+  echo "no lines matching /$re/ in $ns $sel since $since, past ${grace}s after container start"
+}
+
 # expect_alert_inactive <alertname-regex>
 expect_alert_inactive() {
   local hits
