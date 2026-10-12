@@ -68,6 +68,7 @@ WebDriverAgent, whose free-team signature lasts 7 days.
         --tap <X,Y>                tap at those screen coordinates (needs WDA)
         --app <bundle-id>          launch that app first
   ios safari <url> [flags]         open a URL in Safari and print title and URL
+                                   (pauses WDA for ~30s; shot --url does not)
         --js <script>              also run this JavaScript and print its result
         --settle <seconds>         wait after load before reading (default 2)
   ios launch <bundle-id> [args]    launch an installed app
