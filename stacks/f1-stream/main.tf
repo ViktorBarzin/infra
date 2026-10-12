@@ -472,12 +472,23 @@ locals {
   f1_transcoder_url = "http://${kubernetes_service_v1.f1_transcoder.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
 }
 
-# One-shot copy of the old RWO volume into the RWX claim, at the cutover. The
-# three Roles depend on it, so Terraform starts none of them until the copy has
-# finished. Run it with the old Deployment scaled to zero so nothing writes
-# /data during the copy. 18 GiB on 2026-10-11, almost all of it the replay
-# library; the duration on the shared HDD pool has not been measured, hence the
-# hour.
+# One-shot copy of the old RWO volume into the RWX claim, at the cutover. 18 GiB
+# on 2026-10-11, almost all of it the replay library; the duration on the shared
+# HDD pool has not been measured.
+#
+# It lands one push before the Roles (the cutover in the app repo's rolling
+# deploys plan, steps 3 to 5): the commit on wizard/f1-stream-b0 scales the old
+# Deployment to zero and creates this Job, and the Roles land once the Job has
+# completed and written its marker. Nothing in an apply waits for the copy,
+# and the Roles carry no depends_on on it, so landing them early would start
+# the Worker on a half-copied volume. A CI apply that waited on a copy of
+# unknown length would be killed by the next infra push, losing its state
+# write; split this way, the copy runs while no apply is open, and the Roles'
+# apply lasts as long as their rollout.
+#
+# The script first waits out the old pod's 30 s termination grace period: the
+# Deployment reports zero replicas while that pod is still shutting down, and
+# it may write /data until the kubelet kills it.
 #
 # The marker file makes a re-run harmless: if this Job is ever recreated after
 # the cutover it must not copy the old volume over newer data. No
@@ -512,6 +523,7 @@ resource "kubernetes_job_v1" "f1_stream_data_copy" {
             if [ -e /new/.copied-from-rwo ]; then
               echo "already copied on $(cat /new/.copied-from-rwo)"; exit 0
             fi
+            sleep 45
             cp -a /old/. /new/
             date -u > /new/.copied-from-rwo
             echo "copied: $(du -sh /new | cut -f1)"
@@ -547,10 +559,7 @@ resource "kubernetes_job_v1" "f1_stream_data_copy" {
       }
     }
   }
-  wait_for_completion = true
-  timeouts {
-    create = "60m"
-  }
+  wait_for_completion = false
   lifecycle {
     # Without it every apply plans a replace and re-runs the Job
     # (docs/agents/kyverno-drift.md, "kubernetes_job matters more").
@@ -832,7 +841,6 @@ resource "kubernetes_deployment_v1" "f1_edge" {
       }
     }
   }
-  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
@@ -1041,7 +1049,6 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
       }
     }
   }
-  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
@@ -1343,7 +1350,6 @@ resource "kubernetes_deployment_v1" "f1_worker" {
       }
     }
   }
-  depends_on = [kubernetes_job_v1.f1_stream_data_copy]
   # The first start after the cutover may seed the shared stream store from
   # /data and pull the image onto node1.
   timeouts {
