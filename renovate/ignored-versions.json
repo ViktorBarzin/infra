@@ -36,17 +36,6 @@
       "enabled": false
     },
     {
-      "description": "manual revert 2026-10-11 (catch-up window): immichframe v1.0.39.0 crash-loops immich-frame-emo and immich-frame-milka at startup in its new EF Core settings migration (RelationalDatabaseCreator.CreateAsync, SettingsService.InitializeAsync); v1.0.35.0 restored",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "ghcr.io/immichframe/immichframe"
-      ],
-      "matchNewValue": "v1.0.39.0",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-10-12 pipeline #2282: stack traefik failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 36ac74f5)",
       "matchDatasources": [
         "docker"
