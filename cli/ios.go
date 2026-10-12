@@ -28,6 +28,7 @@ import (
 //go:embed ios_assets/build-install.sh ios_assets/resign-wda.sh ios_assets/run-wda.sh
 //go:embed ios_assets/launchagents/*.tmpl
 //go:embed ios_assets/ios-rig-tunnel.service ios_assets/ios-rig-doctor.service ios_assets/ios-rig-doctor.timer
+//go:embed ios_assets/ios-rig-wifi.service ios_assets/wifi/ios_rig_wifi.py
 //go:embed ios_assets/testapp/project.yml ios_assets/testapp/Sources/RigTestApp.swift
 var iosAssets embed.FS
 
