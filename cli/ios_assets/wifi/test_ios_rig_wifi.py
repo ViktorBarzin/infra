@@ -5,6 +5,7 @@ import pytest
 from ios_rig_wifi import (
     DEFAULT_PAIRING_PORT,
     candidate_ports,
+    connect_failure_reason,
     launch_failure_reason,
     should_scan,
     summarise_battery,
@@ -78,3 +79,22 @@ def test_resolve_phone_falls_back_to_the_pinned_address():
 
     assert resolve_phone("iphone-london.viktorbarzin.lan", "192.168.9.205", broken) == "192.168.9.205"
     assert resolve_phone("iphone-london.viktorbarzin.lan", "192.168.9.205", lambda h: "10.1.2.3") == "10.1.2.3"
+
+
+def test_connect_failure_reason_names_a_locked_phone():
+    assert "phone is locked" in connect_failure_reason("The device has not been unlocked recently")
+    assert connect_failure_reason("timed out") == "timed out"
+
+
+def test_only_connection_errors_mean_try_another_port():
+    import asyncio
+
+    from ios_rig_wifi import means_port_moved
+
+    assert means_port_moved(ConnectionRefusedError())
+    assert means_port_moved(TimeoutError())
+    assert means_port_moved(asyncio.IncompleteReadError(b"", 4))
+    ConnectionTerminatedError = type("ConnectionTerminatedError", (Exception,), {})
+    assert means_port_moved(ConnectionTerminatedError())
+    # The phone answered: scanning other ports would only hide its reason.
+    assert not means_port_moved(RuntimeError("The device has not been unlocked recently"))
