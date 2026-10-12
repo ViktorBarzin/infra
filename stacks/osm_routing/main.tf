@@ -397,8 +397,10 @@ resource "kubernetes_service" "otp" {
 # =============================================================================
 # Both NFS PVCs were EMPTY (4.0K, untouched since 2026-04-12), so osrm-routed had
 # no graph to load — the serving pods could not have worked even at replicas>0.
-# These build the Greater London graphs the deployments' commands already expect
-# at /data/foot and /data/bicycle.
+# These build the Greater London graphs the deployments load, into
+# local.osrm_graph_dir (/data/<osrm version>/<profile>). The v6.0.0 graphs from
+# before the v26 cut-over stay at /data/foot and /data/bicycle until v26 is
+# verified.
 #
 # Staging + swap: each profile builds into <profile>.new and is moved into place
 # only once complete, so a refresh never corrupts a graph being served. The build
@@ -407,9 +409,21 @@ resource "kubernetes_service" "otp" {
 #
 # Design: realestate-crawler/docs/plans/2026-08-04-routing-backends-design.md
 locals {
+  # Serving image. Stays on v6.0.0 until the v26 graph exists; the second
+  # landing of the v26 cut-over moves it.
   osrm_image = "ghcr.io/project-osrm/osrm-backend:v6.0.0"
 
+  # Build image, ahead of the serving image during the v26 cut-over. osrm-routed
+  # refuses a graph prepared by a different major.minor
+  # (util::FingerPrint::IsDataCompatible), so the v26 graph is built next to the
+  # v6 one instead of over it: graphs live in a directory named after the osrm
+  # version that built them. The v6 pods keep reading /data/foot and
+  # /data/bicycle, which this job no longer touches.
+  osrm_build_image = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
+  osrm_graph_dir   = "/data/${element(split(":", local.osrm_build_image), 1)}"
+
   # Shared by the one-off Job and the monthly CronJob so the two can never drift.
+  # GRAPH_DIR comes from the container env (local.osrm_graph_dir).
   osrm_build_script = <<-EOT
     # sh, not bash: the osrm-backend image ships /bin/sh only. No pipefail for
     # the same reason. wget, not curl: curl is not in the image (verified 2026-08-04).
@@ -417,25 +431,38 @@ locals {
     cd /data
     echo "downloading Greater London extract"
     rm -f greater-london-latest.osm.pbf.tmp
-    wget -q -O greater-london-latest.osm.pbf.tmp \
-      https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf
+    # Retry with a wait. The 2026-10-01 run failed all three pod attempts within
+    # 83 s on "wget: too many redirections" from Geofabrik (the -latest URL is a
+    # 307 to a dated file); the same request worked on 2026-10-12, so this was
+    # transient upstream, and the Job's own retries came too fast to outlast it.
+    n=1
+    until wget -q -O greater-london-latest.osm.pbf.tmp \
+      https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf; do
+      if [ "$n" -ge 6 ]; then echo "download failed $n times, giving up"; exit 1; fi
+      echo "download attempt $n failed, retrying in 10 minutes"
+      n=$((n + 1))
+      rm -f greater-london-latest.osm.pbf.tmp
+      sleep 600
+    done
     mv greater-london-latest.osm.pbf.tmp greater-london-latest.osm.pbf
+    mkdir -p "$GRAPH_DIR"
     for profile in foot bicycle; do
-      echo "=== building $profile ==="
-      rm -rf "$profile.new"
-      mkdir -p "$profile.new"
-      cp greater-london-latest.osm.pbf "$profile.new/"
-      osrm-extract -p "/opt/$profile.lua" "$profile.new/greater-london-latest.osm.pbf"
-      osrm-partition "$profile.new/greater-london-latest.osrm"
-      osrm-customize "$profile.new/greater-london-latest.osrm"
-      rm -f "$profile.new/greater-london-latest.osm.pbf"
-      rm -rf "$profile.old"
-      if [ -d "$profile" ]; then mv "$profile" "$profile.old"; fi
-      mv "$profile.new" "$profile"
-      rm -rf "$profile.old"
+      out="$GRAPH_DIR/$profile"
+      echo "=== building $profile into $out ==="
+      rm -rf "$out.new"
+      mkdir -p "$out.new"
+      cp greater-london-latest.osm.pbf "$out.new/"
+      osrm-extract -p "/opt/$profile.lua" "$out.new/greater-london-latest.osm.pbf"
+      osrm-partition "$out.new/greater-london-latest.osrm"
+      osrm-customize "$out.new/greater-london-latest.osrm"
+      rm -f "$out.new/greater-london-latest.osm.pbf"
+      rm -rf "$out.old"
+      if [ -d "$out" ]; then mv "$out" "$out.old"; fi
+      mv "$out.new" "$out"
+      rm -rf "$out.old"
       echo "built $profile"
     done
-    ls -la /data/foot /data/bicycle
+    ls -la "$GRAPH_DIR/foot" "$GRAPH_DIR/bicycle"
   EOT
 }
 
@@ -473,9 +500,13 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
             restart_policy = "Never"
             container {
               name    = "build"
-              image   = local.osrm_image
+              image   = local.osrm_build_image
               command = ["/bin/sh", "-c"]
               args    = [local.osrm_build_script]
+              env {
+                name  = "GRAPH_DIR"
+                value = local.osrm_graph_dir
+              }
               volume_mount {
                 name       = "osrm-data"
                 mount_path = "/data"
