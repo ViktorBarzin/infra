@@ -1,5 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": []
+  "packageRules": [
+    {
+      "description": "rails revert 2026-10-12 pipeline #2349: stack k8s-dashboard failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 07be5beb)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "nginxinc/nginx-unprivileged"
+      ],
+      "matchNewValue": "1.31.6-alpine",
+      "enabled": false
+    }
+  ]
 }
