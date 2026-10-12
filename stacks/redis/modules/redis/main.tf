@@ -390,7 +390,7 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
           spec {
             container {
               name  = "redis-backup"
-              image = "redis:7-alpine"
+              image = "redis:8-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eux
                 _t0=$(date +%s)
