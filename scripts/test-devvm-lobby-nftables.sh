@@ -115,6 +115,7 @@ listen "$C" 7681
 listen "$C2" 5432
 listen "$L" 9000
 listen "$H" 7681   # ttyd itself
+listen "$H" 7690   # tl-t3-view, the lobby's T3 view
 listen "$H" 2022   # any other host port
 sleep 0.5  # listeners binding; the reach() checks below retry nothing
 
@@ -131,6 +132,7 @@ ok "lan reaches a host port the table does not name" reach "$L" 10.99.0.1 2022
 
 # The rules that were there before.
 no "lan (not a Traefik node) reaches ttyd" reach "$L" 10.99.0.1 7681
+no "lan (not a Traefik node) reaches the T3 view" reach "$L" 10.99.0.1 7690
 
 echo "$pass passed, $fail failed"
 [[ $fail -eq 0 ]]
