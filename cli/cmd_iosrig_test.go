@@ -545,3 +545,44 @@ func TestIosXcodeLicensePending(t *testing.T) {
 		}
 	}
 }
+
+// Xcode 27's devicectl rewrote its human-readable output ("Boot State:
+// booted" instead of "bootState: booted") once its license was accepted,
+// and every doctor check that grepped the text failed while the phone was
+// fine (2026-10-12). The JSON keys did not change, so checks read those.
+func TestIosDeviceFactsFromDevicectlJSON(t *testing.T) {
+	raw := `{"info":{"outcome":"success"},"result":{
+		"connectionProperties":{"pairingState":"paired","tunnelState":"connected","transportType":"wired"},
+		"deviceProperties":{"bootState":"booted","developerModeStatus":"enabled","ddiServicesAvailable":true,"osVersionNumber":"26.5.2","name":"Empress Anca"}}}`
+	got, err := iosDeviceFacts(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"bootState: booted", "pairingState: paired", "developerModeStatus: enabled",
+		"ddiServicesAvailable: true", "osVersionNumber: 26.5.2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("facts %q missing %q", got, want)
+		}
+	}
+	if _, err := iosDeviceFacts("Gathering device information…"); err == nil {
+		t.Error("non-JSON output should be an error, not empty facts")
+	}
+}
+
+func TestIosPasscodeRequiredFromDevicectlJSON(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{`{"result":{"passcodeRequired":false,"unlockedSinceBoot":true}}`, false},
+		{`{"result":{"passcodeRequired":true,"unlockedSinceBoot":true}}`, true},
+		{`not json`, false},
+	}
+	for _, tc := range cases {
+		if got := iosPasscodeRequired(tc.raw); got != tc.want {
+			t.Errorf("iosPasscodeRequired(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}

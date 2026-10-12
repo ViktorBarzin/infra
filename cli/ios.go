@@ -130,16 +130,70 @@ func (c iosConfig) onMac(script string) (string, error) {
 // deviceDetails is the CoreDevice view. iOS 17+ keeps two independent pairing
 // records and the classic lockdown one is blocked on this phone by Stolen
 // Device Protection, so everything that must work unattended reads from here.
+//
+// It reads devicectl's JSON, not its text: Xcode 27 rewrote the text output
+// ("Boot State: booted" for "bootState: booted") and every check that grepped
+// it failed while the phone was fine. The result is normalised back to
+// "key: value" lines so callers stay simple.
 func (c iosConfig) deviceDetails() (string, error) {
-	return c.onMac(fmt.Sprintf("%s/usr/bin/devicectl device info details --device %s", c.DeveloperDir, c.UDID))
+	out, err := c.onMac(c.devicectlJSON("device info details"))
+	if err != nil && !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		return out, err
+	}
+	return iosDeviceFacts(out)
+}
+
+// devicectlJSON runs a devicectl subcommand and prints only its JSON result.
+func (c iosConfig) devicectlJSON(sub string) string {
+	return fmt.Sprintf(`f=$(mktemp); %s/usr/bin/devicectl %s --device %s --json-output "$f" >/dev/null 2>&1; cat "$f"; rm -f "$f"`,
+		c.DeveloperDir, sub, c.UDID)
+}
+
+// iosDeviceFacts turns `devicectl device info details --json-output` into the
+// "key: value" lines doctor checks for.
+func iosDeviceFacts(raw string) (string, error) {
+	var d struct {
+		Result struct {
+			Connection struct {
+				PairingState string `json:"pairingState"`
+			} `json:"connectionProperties"`
+			Device struct {
+				BootState     string `json:"bootState"`
+				DeveloperMode string `json:"developerModeStatus"`
+				DDI           bool   `json:"ddiServicesAvailable"`
+				OSVersion     string `json:"osVersionNumber"`
+			} `json:"deviceProperties"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &d); err != nil {
+		return raw, fmt.Errorf("devicectl gave no JSON: %s", firstLine(raw))
+	}
+	r := d.Result
+	return fmt.Sprintf("bootState: %s\npairingState: %s\ndeveloperModeStatus: %s\nddiServicesAvailable: %t\nosVersionNumber: %s\n",
+		r.Device.BootState, r.Connection.PairingState, r.Device.DeveloperMode, r.Device.DDI, r.Device.OSVersion), nil
+}
+
+// iosPasscodeRequired reads `devicectl device info lockState --json-output`.
+// Unparseable output counts as unlocked, so a devicectl hiccup does not
+// report a lock that is not there; the WDA checks catch a real one.
+func iosPasscodeRequired(raw string) bool {
+	var d struct {
+		Result struct {
+			PasscodeRequired bool `json:"passcodeRequired"`
+		} `json:"result"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &d) != nil {
+		return false
+	}
+	return d.Result.PasscodeRequired
 }
 
 // phoneLocked matters more than it sounds. A locked phone can be screenshotted
 // and nothing else: opening an app fails, WebDriverAgent's listener stops
 // answering, and it cannot unlock a device that has a passcode.
 func (c iosConfig) phoneLocked() bool {
-	out, _ := c.onMac(fmt.Sprintf("%s/usr/bin/devicectl device info lockState --device %s", c.DeveloperDir, c.UDID))
-	return strings.Contains(out, "passcodeRequired: true")
+	out, _ := c.onMac(c.devicectlJSON("device info lockState"))
+	return iosPasscodeRequired(out)
 }
 
 var wdaURLRe = regexp.MustCompile(`https?://[0-9A-Za-z.\-]+:\d+`)
