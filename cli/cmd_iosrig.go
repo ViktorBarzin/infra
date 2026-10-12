@@ -166,6 +166,15 @@ func iosDoctor(args []string) error {
 			"or move the reservation", configured, c.MacHost, c.MacHWAddr))
 	}
 
+	if out, _ := c.onMac(c.DeveloperDir + "/usr/bin/xcodebuild -showsdks 2>&1 | head -3"); iosXcodeLicensePending(out) {
+		dir, _ := c.resolvedDeveloperDir()
+		add(2, "xcode", "the license of the newest Xcode is not accepted, so building and re-signing fail "+
+			"and devicectl lists no apps. On the Mac: sudo "+dir+"/usr/bin/xcodebuild -license accept")
+	} else {
+		dir, _ := c.resolvedDeveloperDir()
+		add(0, "xcode", dir)
+	}
+
 	details, err := c.deviceDetails()
 	if err != nil && !strings.Contains(details, "bootState") {
 		add(2, "device", "devicectl could not read the device: "+firstLine(details))
@@ -286,6 +295,12 @@ func iosReport(checks []iosCheck) error {
 		return fmt.Errorf("%d checks failing", failCount)
 	}
 	return nil
+}
+
+// iosXcodeLicensePending spots xcodebuild refusing to run until someone
+// accepts a new Xcode's license with sudo.
+func iosXcodeLicensePending(out string) bool {
+	return strings.Contains(out, "not agreed to the Xcode license")
 }
 
 func afterKey(s, key string) string {
