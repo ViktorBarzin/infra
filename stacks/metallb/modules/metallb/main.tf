@@ -17,14 +17,23 @@ resource "helm_release" "metallb" {
   name       = "metallb"
   repository = "https://metallb.github.io/metallb"
   chart      = "metallb"
-  version    = "0.15.3"
-  namespace  = kubernetes_namespace.metallb.metadata[0].name
-  timeout    = 600
+  # 0.15.3 -> 0.16.1 (2026-10-12). 0.16.0 flipped frrk8s.enabled to true, which
+  # would add a frr-k8s DaemonSet, 4 CRDs and a second webhook; we run native L2
+  # only, so frrk8s stays off. 0.16.0 is skipped on purpose: its controller probes
+  # target 127.0.0.1 on a non-hostNetwork pod (fixed in 0.16.1, metallb#3062).
+  # CRDs are templates in the chart's crds subchart, so helm upgrades them with
+  # the release.
+  version   = "0.16.1"
+  namespace = kubernetes_namespace.metallb.metadata[0].name
+  timeout   = 600
 
   atomic          = true
   cleanup_on_fail = true
 
   values = [yamlencode({
+    frrk8s = {
+      enabled = false
+    }
     controller = {
       image = {
         pullPolicy = "IfNotPresent"
