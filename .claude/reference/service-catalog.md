@@ -55,6 +55,7 @@
 | dawarich | Location history | dawarich |
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
+| eurooffice | Euro-Office Document Server (OnlyOffice fork): opens docx/xlsx/pptx in the browser from Nextcloud through the `eurooffice` connector app. Stateless standalone image (bundled Postgres/Redis/RabbitMQ), JWT shared with Nextcloud from the TF-generated `eurooffice-jwt` Secret is the only gate (`auth=none`) — eurooffice.viktorbarzin.me | eurooffice |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
 | f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002). One image, three Deployments chosen by `ROLE` (app ADR-0029): `f1-stream-edge` (2 replicas, no GPU, behind the `f1` Service: site, API, `/proxy`, `/relay`, replays; mounts `/data` read-only), `f1-stream-transcoder` (1, GPU 1850 gpumem, live quality ladders incl. HDR, Service `f1-transcoder`) and `f1-stream-worker` (1, GPU 2000 gpumem, Recreate: scheduler, extraction, scrapes, replay ladders, Early copies; the only `/data` writer, Service `f1-stream-worker`). Extraction logs and metrics live on `deploy/f1-stream-worker`. `/data` is the RWX claim `f1-stream-data-shared`, a second claim on the same `/srv/nfs/f1-stream` directory as the old RWO `f1-stream-data-host`; Prometheus scrapes every pod (job `f1-stream`, `role` label). CNPG `f1_stream` db (Vault static role `pg-f1-stream`, rotated Tuesdays 10:00 UTC; password mounted as a file with `reloader.stakater.com/ignore` so rotation never restarts the pod) holds the visitor, viewing and delivery record behind the site's `/admin/viewing` page (app ADR-0014) | f1-stream |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
@@ -146,7 +147,8 @@
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox, phpipam, tripit, t3, stem95su, tasks, agentmd
+travel, netbox, phpipam, tripit, t3, stem95su, tasks, agentmd,
+eurooffice
 ```
 
 ### Non-Proxied (Direct DNS)
