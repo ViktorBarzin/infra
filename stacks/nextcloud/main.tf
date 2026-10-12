@@ -14,7 +14,7 @@ variable "mysql_host" { type = string }
 variable "nextcloud_image_tag" {
   type = string
   # renovate: datasource=docker depName=docker.io/library/nextcloud
-  default = "33.0.9"
+  default = "34.0.4"
 }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -164,7 +164,7 @@ resource "helm_release" "nextcloud" {
   chart           = "nextcloud"
   atomic          = true
   cleanup_on_fail = true
-  version         = "9.1.4"
+  version         = "9.3.0"
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
   timeout    = 6000
