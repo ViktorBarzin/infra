@@ -60,8 +60,8 @@ loki:
     working_directory: /var/loki/compactor
     compaction_interval: 1h
     delete_request_store: filesystem
-  # RULER CONFIG LIVES UNDER `rulerConfig`, NOT `ruler` (loki chart 7.x
-  # consumes .Values.loki.rulerConfig via mergeOverwrite in _helpers.tpl;
+  # RULER CONFIG LIVES UNDER `rulerConfig`, NOT `ruler` (loki chart 7.x, and
+  # grafana-community/loki 18.x, consume .Values.loki.rulerConfig via mergeOverwrite in _helpers.tpl;
   # a `loki.ruler` key is silently ignored). This block sat under `ruler`
   # from the 2026-05-18 install until 2026-07-06, so NONE of it was live:
   # the running ruler had alertmanager_url="" — every Loki-ruler alert
@@ -94,6 +94,13 @@ loki:
   storage:
     type: "filesystem"
   auth_enabled: false
+  # The grafana-community chart (18.x) defaults this to true; Loki's own default,
+  # and what the grafana/loki 7.x chart rendered, is false. One pod: the
+  # loki-memberlist Service has no publishNotReadyAddresses, so its DNS is empty
+  # until loki-0 is Ready, and a WAL replay longer than the ~10 join retries
+  # (1s-1m backoff, dskit memberlist_client.go) would make Loki exit at startup.
+  extraMemberlistConfig:
+    abort_if_cluster_join_fails: false
 
 minio:
   enabled: false
@@ -107,7 +114,9 @@ lokiCanary:
       operator: Exists
       effect: NoSchedule
 
-deploymentMode: SingleBinary
+# Community chart 12.x renamed SingleBinary to Monolithic (old name still
+# accepted; the render is identical).
+deploymentMode: Monolithic
 
 singleBinary:
   replicas: 1
