@@ -88,13 +88,14 @@
     # numbers on either side, so a busy page is never mistaken for a leak.
     devvm_playwright_reaper_threshold_cores: 2
     devvm_playwright_reaper_window_minutes: 10
-    # devvm-io-guard (2026-10-11). Ships in log-only mode: every decision is
-    # logged as would-clamp / would-kill and nothing changes. On 2026-10-14 the
-    # three days of those lines set the thresholds below and this goes to 0.
+    # devvm-io-guard (2026-10-11). Enforcing since 2026-10-12: Viktor switched
+    # it on after 5 h of log-only data (5 would-clamps, 0 would-kills) rather
+    # than waiting the planned 3 days. Set dry_run to 1 to go back to logging
+    # would-clamp / would-kill without changing anything.
     # The trigger is the "full" IO pressure fraction: above 0.5 matched 25 of
     # 29 etcd stalls over 1 s on 2026-10-11, with 4 false alarms. 100 riops
     # total sits under the ~227 the spindle sustains, leaving room for etcd.
-    devvm_io_guard_dry_run: 1
+    devvm_io_guard_dry_run: 0
     devvm_io_guard_trigger: 0.5
     devvm_io_guard_trigger_secs: 20
     devvm_io_guard_kill_after_secs: 30
