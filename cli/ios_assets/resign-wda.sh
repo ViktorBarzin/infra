@@ -49,14 +49,20 @@ trap 'launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.viktorba
 # and the classic lockdown one. They break independently, and the lockdown one
 # needs a Trust dialog that is easy to lose. CoreDevice's survives, so the job
 # that has to run unattended depends only on that.
+# Read devicectl's JSON rather than its text: Xcode 27 rewrote the text
+# ("Boot State: booted"), which made this job report the phone absent while it
+# sat on the cable.
 DC="$DEVELOPER_DIR/usr/bin/devicectl"
-details="$("$DC" device info details --device "$UDID" 2>&1)"
+details_json="$(mktemp)"
+"$DC" device info details --device "$UDID" --json-output "$details_json" >/dev/null 2>&1
+dget() { plutil -extract "result.$1" raw -o - "$details_json" 2>/dev/null; }
 
-grep -q "bootState: booted" <<<"$details" || fail device-absent "device $UDID is not connected and booted"
-grep -q "developerModeStatus: enabled" <<<"$details" || \
+[[ "$(dget deviceProperties.bootState)" == booted ]] || fail device-absent "device $UDID is not connected and booted"
+[[ "$(dget deviceProperties.developerModeStatus)" == enabled ]] || \
   fail developer-mode "Developer Mode is off; enable it in Settings, Privacy and Security"
-grep -q "ddiServicesAvailable: true" <<<"$details" || \
+[[ "$(dget deviceProperties.ddiServicesAvailable)" == true ]] || \
   fail ddi "developer disk image services unavailable"
+rm -f "$details_json"
 
 # -allowProvisioningUpdates is what mints the fresh 7-day certificate against
 # the free personal team. It needs the login keychain unlocked, which is why
