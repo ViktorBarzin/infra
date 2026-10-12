@@ -1,5 +1,5 @@
 {
-  "_comment": "Addon -> highest k8s minor each addon version supports. The preflight compat-gate (compat-gate.py) reads the RUNNING version of each addon and blocks a k8s upgrade whose target minor exceeds what that running version supports — so the chain auto-halts + alerts instead of breaking on an unsupported addon. Keep current; sources are the addons' own k8s compat matrices (last refreshed 2026-06-19 for the 1.34->1.36 catch-up). max_k8s keys are addon-version floors (major.minor); value is the highest k8s minor that floor supports. An addon entry may also set \"pinned\": true (+ \"pin_reason\") to mark it deliberately held: the gate classifies its block as PINNED/held (quiet — no alert, nightly report only) even if a supporting version exists, for upgrades coupled to other work we're not ready for (e.g. gpu-operator's NVIDIA-driver/Ubuntu coupling). A block with NO supporting version in the matrix is WAITING (also quiet); a block a newer matrix version would clear is ACTIONABLE (alerts).",
+  "_comment": "Addon -> highest k8s minor each addon version supports. The preflight compat-gate (compat-gate.py) reads the RUNNING version of each addon and blocks a k8s upgrade whose target minor exceeds what that running version supports — so the chain auto-halts + alerts instead of breaking on an unsupported addon. Keep current; sources are the addons' own k8s compat matrices, last refreshed 2026-10-12: Calico https://docs.tigera.io/calico/<minor>/getting-started/kubernetes/requirements (3.31: 1.32-1.35, 3.32: 1.34-1.36, 3.33: 1.35-1.37); ESO https://external-secrets.io/latest/introduction/stability-support/ (2.8-2.12: 1.36); Kyverno https://kyverno.io/docs/installation/releases/ (1.18.x and 1.19.x: 1.33-1.35; 1.20 unreleased on 2026-10-12, add its row from the same page when it ships); gpu-operator https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html (26.7: 1.33-1.37). containerd_min: kubelet keeps containerd 1.7 support through 1.37 (CHANGELOG-1.37, kubernetes#139121 deferred the removal to 1.38); 1.37 keeps the 2.0 floor as a conservative check, all nodes run 2.3.4. max_k8s keys are addon-version floors (major.minor); value is the highest k8s minor that floor supports. An addon entry may also set \"pinned\": true (+ \"pin_reason\") to mark it deliberately held: the gate classifies its block as PINNED/held (quiet — no alert, nightly report only) even if a supporting version exists, for upgrades coupled to other work we're not ready for (e.g. gpu-operator's NVIDIA-driver/Ubuntu coupling). A block with NO supporting version in the matrix is WAITING (also quiet); a block a newer matrix version would clear is ACTIONABLE (alerts). Do not add a row for an unreleased addon version: it turns a quiet WAITING block into an ACTIONABLE alert nobody can act on.",
   "addons": [
     {
       "name": "calico",
@@ -14,7 +14,8 @@
         "3.29": "1.32",
         "3.30": "1.35",
         "3.31": "1.35",
-        "3.32": "1.36"
+        "3.32": "1.36",
+        "3.33": "1.37"
       }
     },
     {
@@ -25,7 +26,8 @@
       "image_re": "external-secrets:v?([0-9]+\\.[0-9]+)",
       "max_k8s": {
         "0.12": "1.31",
-        "2.0": "1.35"
+        "2.0": "1.35",
+        "2.8": "1.36"
       }
     },
     {
@@ -36,7 +38,8 @@
       "image_re": "kyverno:v?([0-9]+\\.[0-9]+)",
       "max_k8s": {
         "1.16": "1.34",
-        "1.18": "1.35"
+        "1.18": "1.35",
+        "1.19": "1.35"
       }
     },
     {
@@ -53,6 +56,7 @@
     }
   ],
   "containerd_min": {
-    "1.37": "2.0"
+    "1.37": "2.0",
+    "1.38": "2.0"
   }
 }
