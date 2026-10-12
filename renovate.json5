@@ -253,6 +253,12 @@
       matchPackageNames: ["ghcr.io/mostlygeek/llama-swap"],
       versioning: "regex:^v(?<major>\\d+)-cuda-b(?<minor>\\d+)$",
     },
+    {
+      description: "debian dated slim tags (bookworm-20261005-slim): docker versioning cannot read the codename prefix; read the date as the version. Only pins already on a dated tag match, so plain codename tags keep their default handling (2026-10-12)",
+      matchPackageNames: ["debian", "docker.io/library/debian", "library/debian"],
+      matchCurrentValue: "/^bookworm-\\d{8}-slim$/",
+      versioning: "regex:^bookworm-(?<major>\\d{4})(?<minor>\\d{2})(?<patch>\\d{2})-slim$",
+    },
 
     // ---- Groups: versions that must move together ----
     {
