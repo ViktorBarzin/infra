@@ -555,7 +555,7 @@ resource "cloudflare_record" "git" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag  = "v1.25.0"
+  image_tag  = "v1.28.1"
   name       = "forgejo"
   namespace  = kubernetes_namespace.forgejo.metadata[0].name
   target_url = "http://${kubernetes_service.forgejo.metadata[0].name}.${kubernetes_namespace.forgejo.metadata[0].name}.svc.cluster.local"
