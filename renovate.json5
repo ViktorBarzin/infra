@@ -406,13 +406,6 @@
       enabled: false,
     },
     {
-      description: "HELD: Technitium 14 -> 15 major (home DNS). 14.x patch/minor still land.",
-      matchDatasources: ["docker"],
-      matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
-      matchUpdateTypes: ["major"],
-      enabled: false,
-    },
-    {
       description: "HELD: hashicorp/vault provider 4 -> 5 (2026-10-12). v5 is a breaking release used by every stack that reads Vault (vault_kv_secret_v2 and friends); it needs a plan of each consumer and the stacks/vault apply working again (bead code-f2u0). 4.x minor/patch still land.",
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["hashicorp/vault"],
