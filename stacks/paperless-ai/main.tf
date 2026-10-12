@@ -142,7 +142,13 @@ resource "kubernetes_deployment" "paperless_ai" {
   # rollout is verified out-of-band with kubectl.
   wait_for_rollout = false
   spec {
-    replicas = 1
+    # Scaled down 2026-10-12: paperless-ngx's native AI (qwen3-8b on
+    # llama-swap) does the enrichment now. The PVC, its .env and the Vault
+    # secret are kept. To restore: set replicas = 1, lower TOKEN_LIMIT in the
+    # PVC .env to 6000 or less (qwen3-8b's context is 8192), and expect it to
+    # create new tags, types and correspondents again unless the RESTRICT_*
+    # settings stay on.
+    replicas = 0
     # RWO encrypted PVC -> never run two pods against it at once.
     strategy {
       type = "Recreate"

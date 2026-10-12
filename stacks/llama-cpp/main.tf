@@ -19,7 +19,7 @@ locals {
   # wrong build fails by emitting GARBAGE TOKENS rather than erroring
   # (llama.cpp discussion #27164) — so an engine that changes under us presents
   # as a model/quant quality regression, which is expensive to diagnose and
-  # reaches real consumers (recruiter-responder, paperless-ai, nextcloud-todos).
+  # reaches real consumers (paperless-ngx's native AI).
   # A digest also makes IfNotPresent safe.
   #
   # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
@@ -28,7 +28,8 @@ locals {
   # stays a hand-made change.
   llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
-  # Model set: one text-only LLM (qwen3-8b), for paperless-ai. Since 2026-10-11
+  # Model set: one text-only LLM (qwen3-8b), for paperless-ngx's native AI
+  # (paperless-ai until 2026-10-12, now scaled to 0). Since 2026-10-11
   # every other caller (tripit, nextcloud-todos, lesson-harvester, fire-planner)
   # uses claude-agent-service instead, so the qwen3vl-8b vision model that only
   # tripit used was removed (qwen3vl-4b had already gone).
@@ -54,7 +55,7 @@ locals {
   # hands-on test finished. It could not safely stay once immich-ml was back:
   # resident 9670 MiB leaves ~1000 MiB free, under the ADR-0016 watchdog's
   # 1536 MiB floor, so one click on it in the web UI would have had llama-swap
-  # recycled — possibly mid-job for paperless-ai. To use it again, re-add the
+  # recycled — possibly mid-job for paperless-ngx. To use it again, re-add the
   # entry AND scale immich-ml to 0 for the session; the numbers are below.
   # 2026-08-21, round 3 — Qwen3.8-27B (dense 27B, the same Gated DeltaNet hybrid
   # family as the rejected qwen3.5-9b) tested on-card at UD-IQ1_S and UD-Q2_K_XL
@@ -74,10 +75,10 @@ locals {
   # `text_only = true` skips mmproj download + --mmproj flag (text-only LLM).
   # Vision models keep `text_only = false` (default).
   models = {
-    # Text-only enrichment model for paperless-ai (originally added as the
+    # Text-only enrichment model for paperless-ngx's native AI (originally the
     # triage / drafting model for recruiter-responder, now switched off).
-    # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
-    # for recruiter emails + extraction prompt + JSON output).
+    # Q4_K_M, ~4.7GB, 32k native context (capped at 8192 here, see ctx_size;
+    # paperless-ngx's PAPERLESS_AI_LLM_CONTEXT_SIZE must match it).
     # Unsloth's GGUF: well-maintained, includes Q4_K_M. Qwen3 is a
     # thinking-capable model; thinking is force-disabled server-side for
     # qwen3-8b via `--reasoning off` in the cmd builder below (2026-07-13 — see
@@ -164,7 +165,7 @@ locals {
           # Thinking-capable Qwen text models: force reasoning OFF. Qwen3/Qwen3.5
           # default to thinking under --jinja, returning EMPTY message.content
           # (all output -> reasoning_content) + blowing the token budget:
-          # paperless-ai gets no JSON, every enrichment fails, ~50x slower.
+          # paperless-ai got no JSON, every enrichment failed, ~50x slower.
           # `--reasoning off` is llama.cpp's supported control (deprecates the
           # enable_thinking chat-template kwarg recruiter-responder sends).
           # Scoped to text models via text_only; vision keeps default reasoning.
@@ -497,7 +498,7 @@ resource "kubernetes_deployment" "llama_swap" {
               # weights + ~2.25 GiB KV) and llama-swap is idle almost all the
               # time, so a reserved 7000 seat would sit unused all day and would
               # not fit alongside the other residents. It cannot be scaled to
-              # zero by Sablier either: no ingress, and paperless-ai reaches the
+              # zero by Sablier either: no ingress, and paperless-ngx reaches the
               # ClusterIP directly, so Traefik middleware never sees the request.
               # So it is an OPPORTUNISTIC tenant — it bursts into real slack,
               # which exists now that immich-ml is budgeted at its fresh

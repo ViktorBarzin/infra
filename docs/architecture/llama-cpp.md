@@ -8,8 +8,11 @@ In-cluster, OpenAI-compatible LLM endpoint. A single
 `llama-swap`. One Service, one `/v1` endpoint, model selected by the
 request body `model` field.
 
-**Since 2026-10-11 it serves one model, `qwen3-8b`, for one consumer,
-paperless-ai.** Viktor kept paperless-ai local because it reads Emo's
+**Since 2026-10-11 it serves one model, `qwen3-8b`, for one consumer.**
+Since 2026-10-12 that consumer is paperless-ngx's native AI
+(`PAPERLESS_AI_LLM_BACKEND=openai-like`, tool calling, context 8192 to match
+`-c`); paperless-ai, which used it before, is scaled to 0 with its PVC kept.
+Viktor kept document enrichment local because it reads Emo's
 financial and medical documents, and moved every other caller (tripit,
 nextcloud-todos, lesson-harvester, fire-planner) to claude-agent-service's
 no-tools mode. recruiter-responder still points here but has been at 0
@@ -144,8 +147,9 @@ the round-3 row in
 means it unloads 10 minutes after the last message, so a forgotten immich
 pause stops mattering on its own.
 
-`qwen3-8b` (text-only) is the enrichment and RAG-answer model for
-`paperless-ai`. It was also the Tier-0 triage model for
+`qwen3-8b` (text-only) is the suggestion model for paperless-ngx's native
+AI (title, tags, correspondent, document type), and was the enrichment model
+for `paperless-ai` until 2026-10-12. It was also the Tier-0 triage model for
 `recruiter-responder`, which is switched off.
 
 **`qwen3-8b` runs with `--reasoning off`** (2026-07-13). Qwen3 defaults
@@ -210,7 +214,7 @@ Method, numbers, and the broader SoTA survey:
   once that finished. Two reasons it is not worth leaving up by default: the
   UI can load and *unload* models, so browsing it while a consumer job runs
   can evict that job's model; and llama-swap holds one model at a time, so
-  every interactive use competes with paperless-ai's enrichment. To use it
+  every interactive use competes with paperless-ngx's AI suggestions. To use it
   again, re-add an `ingress_factory` module (`auth = "required"`, service
   `llama-swap`, port 8080) or port-forward the Service.
 
@@ -248,7 +252,7 @@ The reduction costs nothing measurable. Over the seven days to 2026-09-16 the
 largest prompt any consumer sent was **1993 tokens**, so 8192 is still four
 times the observed maximum. The consumers at the time (paperless-ai,
 recruiter-responder, nextcloud-todos) were short-prompt classifiers; only
-paperless-ai remains. Note that
+paperless-ngx's native AI remains. Note that
 llama.cpp clamps an oversized `max_tokens` and returns HTTP 200 rather than
 erroring, so a consumer that outgrows the window will truncate silently instead
 of failing loudly.
