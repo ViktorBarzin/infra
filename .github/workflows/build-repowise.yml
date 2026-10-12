@@ -30,7 +30,7 @@ name: Build repowise
 on:
   schedule:
     # Daily. Upstream ships roughly every other day; this picks up new
-    # versions so Keel (policy=patch) has tags to roll forward onto.
+    # versions, and the deploy step at the end rolls the Deployment onto each.
     - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
@@ -154,6 +154,7 @@ jobs:
         if: steps.exists.outputs.skip != 'true'
 
       - name: Build and push
+        id: build
         if: steps.exists.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
@@ -167,6 +168,33 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
             ${{ env.IMAGE }}:latest
+
+      # Roll the cluster onto this build: Woodpecker repo 1 (this repo's GitHub
+      # mirror) runs .woodpecker/first-party-deploy.yml, which does kubectl set
+      # image in-cluster. The Deployment image is CI_SETS_IMAGE in Terraform.
+      # Master only, so a workflow_dispatch on a branch builds but never deploys.
+      # tag@digest, because a forced rebuild re-pushes the same version tag and
+      # nodes keep a cached tag (Kyverno sets IfNotPresent on pinned tags).
+      - name: Trigger the Woodpecker deploy
+        if: github.ref == 'refs/heads/master' && steps.exists.outputs.skip != 'true'
+        env:
+          WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
+          IMAGE_TAG: ${{ steps.ver.outputs.version }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          body=$(jq -nc --arg tag "$IMAGE_TAG" --arg digest "$IMAGE_DIGEST" \
+            '{branch: "master", variables: {PIPELINE: "first-party-deploy", APP: "repowise", IMAGE_TAG: $tag, IMAGE_DIGEST: $digest}}')
+          for attempt in 1 2 3; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              https://ci.viktorbarzin.me/api/repos/1/pipelines \
+              -H "Authorization: Bearer $WOODPECKER_TOKEN" \
+              -H 'Content-Type: application/json' -d "$body")
+            if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+              echo "Woodpecker deploy triggered (HTTP $status)"; exit 0
+            fi
+            echo "attempt $attempt: HTTP $status, retrying in 30s"; sleep 30
+          done
+          echo "could not trigger the Woodpecker deploy"; exit 1
 
       - name: Prune old versions
         if: steps.exists.outputs.skip != 'true'

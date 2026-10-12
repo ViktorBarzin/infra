@@ -1,0 +1,62 @@
+# Roll a first-party app onto the image its GitHub Actions build just pushed.
+#
+# Keel used to do this by polling :latest. It was retired in the 2026-10
+# software-currency cutover (ADR-0030), and these apps had no other deploy
+# path. Each app's build workflow now ends by triggering this pipeline:
+#
+#   POST https://ci.viktorbarzin.me/api/repos/1/pipelines
+#   {"branch":"master","variables":{"PIPELINE":"first-party-deploy",
+#     "APP":"<app>","IMAGE_TAG":"<tag>","IMAGE_DIGEST":"<sha256:... or empty>"}}
+#
+# The caller names the app and the tag, nothing else. Namespace, Deployment,
+# containers and image repository come from the table below, so a trigger can
+# only move a listed app onto another tag of its own image. The Terraform for
+# each Deployment keeps the image under lifecycle.ignore_changes
+# (# CI_SETS_IMAGE), so an apply does not put the seed tag back.
+#
+# IMAGE_DIGEST is optional. Pass it when the tag can be re-pushed with new
+# content (repowise rebuilds a version tag on a forced run): Kyverno sets
+# IfNotPresent on pinned tags, so only a tag@digest reference makes the node
+# pull the new bytes.
+#
+# The woodpecker-agent ServiceAccount is cluster-admin, so the kubectl step
+# needs no kubeconfig. Same mechanism as each app repo's .woodpecker/deploy.yml
+# from scripts/offinfra-onboard; this one lives in infra because four of the
+# apps are built from this repo, and the other three are GitHub-canonical
+# repos with no Woodpecker registration of their own.
+
+when:
+  - event: manual
+    evaluate: 'PIPELINE == "first-party-deploy"'
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: deploy
+    image: bitnami/kubectl:latest
+    # The logic is a script in the repo rather than inline, so Woodpecker's
+    # variable substitution never touches its shell variables.
+    commands:
+      - sh scripts/first-party-deploy.sh
+
+  - name: notify
+    image: alpine:3.20
+    when:
+      - status: failure
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache curl
+      - test -n "$SLACK_WEBHOOK" || exit 0
+      # Quoted as a whole so YAML reads it as a string, not a map (see
+      # terminal-lobby-deploy.yml).
+      - >-
+        curl -sf -X POST -H 'Content-Type: application/json'
+        -d "{\"text\":\"first-party deploy of $${APP} FAILED - see the Woodpecker log\"}"
+        "$SLACK_WEBHOOK" || true
