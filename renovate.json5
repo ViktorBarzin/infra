@@ -31,7 +31,6 @@
     ".claude/**",
     "state/**",
     "tests/**",
-    "stacks/keel/**", // retired in wave 5, stack kept parked at 0 pods
     "stacks/monitoring/modules/monitoring/prometheus_snmp_chart_values.yaml", // 57k lines, no images
     // The registry VM's compose file: synced to the VM by
     // .woodpecker/registry-config-sync.yml, not by Terragrunt, so the rails
