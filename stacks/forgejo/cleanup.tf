@@ -84,7 +84,7 @@ resource "kubernetes_cron_job_v1" "forgejo_cleanup" {
           spec {
             container {
               name    = "cleanup"
-              image   = "docker.io/library/alpine:3.20"
+              image   = "docker.io/library/alpine:3.24"
               command = ["/bin/sh", "/scripts/cleanup.sh"]
               env {
                 name = "FORGEJO_TOKEN"
