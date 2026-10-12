@@ -45,6 +45,20 @@ BLOCKED_TRANSCRIPTS = [
     # Inside a loop or a conditional, missed by the first version.
     "for h in wizard emo; do sudo find /home/$h/.claude/projects -path '*/memory/*' -type f; done",
     "if true; then grep -rl x ~/.claude/projects; fi",
+    # 06:39 on 2026-10-12, killed by devvm-io-guard after reading 29 MB. The
+    # path reached grep through variables, so the first version never saw it.
+    "T=$(tmux show-options -v -t renovate-upgrades @claude_transcript 2>/dev/null); echo \"$T\"; D=$(dirname \"$T\"); "
+    "for id in toolu_01Sv toolu_01Cc; do f=$(grep -rl \"\\\"id\\\":\\\"$id\\\"\" \"$D\" 2>/dev/null | head -1); echo \"== $id in $f\"; done",
+    "D=$(dirname \"$(tmux show-options -v @claude_transcript)\"); rg -l foo \"$D\"",
+    "P=~/.claude/projects/-home-wizard-code; grep -l foo \"$P\"/*.jsonl",
+    "P=/home/wizard/.claude/projects/-home-wizard-code; for f in \"$P\"/*.jsonl; do grep -q foo \"$f\" && echo $f; done",
+    "for f in ~/.claude/projects/*/*.jsonl; do grep -l foo \"$f\"; done",
+    # ~/.claude itself holds the transcripts.
+    "grep -rl foo ~/.claude",
+    "grep -rl \"'id':'toolu_01Sv'\" /home/wizard/.claude",
+    "rg foo $HOME/.claude/",
+    "sudo grep -rl foo /home/*/.claude",
+    "cd ~/.claude && grep -rn foo .",
 ]
 
 BLOCKED_WIDE = [
@@ -76,6 +90,24 @@ ALLOWED = [
     "tail -n 50 " + T,
     "jq -r .type " + T + " | sort | uniq -c",
     "wc -l " + T,
+    # A transcript path held in a variable is still one file.
+    "T=$(tmux show-options -v @claude_transcript); grep -n foo \"$T\"",
+    "T=$(tmux show-options -v @claude_transcript); tail -c 4000 \"$T\" | jq -r .type",
+    # Small files under ~/.claude, and a repo's own .claude directory.
+    "grep -n hooks ~/.claude/settings.json",
+    "cat ~/.claude/settings.json | jq .hooks",
+    "grep -rn description ~/.claude/skills/unslop",
+    "ls ~/.claude",
+    "find ~/.claude -maxdepth 2 -name settings.json",
+    "grep -rn foo .claude",
+    # From the replay of 3,424 real commands: one named file in a variable,
+    # a pid found by its command line, and find listing recent config files.
+    "F=/home/wizard/.claude/projects/-home-wizard-code/0164/tool-results/bsb1vvzsc.txt; grep -o -E 'autoMemory' \"$F\" | sort -u",
+    "S=/home/wizard/.claude/projects/-home-wizard-code-infra/2a14/workflows/scripts/wave.js; grep -n step $S | head",
+    "P=$(pgrep -f 'count.py /home/wizard/.claude/projects' | head -1); grep -e rchar /proc/$P/io",
+    "find ~/.claude ~/.codex -maxdepth 4 -newermt '-20 minutes' -type f",
+    # A loop over a handful of named files.
+    "for f in a.txt b.txt; do grep -c x \"$f\"; done",
     # Listing is metadata only.
     "ls -t ~/.claude/projects/-home-wizard-code/*.jsonl | head -3",
     "find ~/.claude/projects -maxdepth 2 -name '*.jsonl' -mmin -60",

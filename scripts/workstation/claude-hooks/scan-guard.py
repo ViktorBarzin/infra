@@ -21,6 +21,15 @@ It blocks three shapes, with no override:
      it still reads every directory underneath.
   3. A recursive grep, rg or ls -R rooted at the same places.
 
+~/.claude itself counts as the transcripts for a grep, rg, jq or cat, since
+they sit under it; find there only lists names and keeps the rules above. A path
+that reaches a command through a shell variable is followed too: a variable
+set from tmux's @claude_transcript, or from a path under ~/.claude/projects,
+stands for that file, dirname of it stands for the whole project directory,
+and a `for` loop over a glob there stands for every file it matches. On
+2026-10-12 a session ran `D=$(dirname "$T"); grep -rl ... "$D"` and read
+29 MB before devvm-io-guard stopped it; the first version never saw the path.
+
 Matching works on shell tokens, so the same words inside a quoted grep pattern,
 a commit message or a heredoc body never trigger it. devvm-io-guard covers the
 rest at run time, by watching the disk instead of the command text.
@@ -175,14 +184,62 @@ def _norm(path):
     return path.rstrip("/") or "/"
 
 
+CLAUDE_ROOT = re.compile(r"^(~|\$HOME|\$\{HOME\}|/home/[^/]+|%s)/\.claude$"
+                         % re.escape(HOME))
+# Stand-ins for a variable that holds one transcript, or a directory of them.
+VAR_FILE = "~/" + PROJ + "/_var_/transcript.jsonl"
+VAR_DIR = "~/" + PROJ + "/_var_"
+ASSIGN = re.compile(
+    r"(?<![\w$])([A-Za-z_]\w*)="
+    r"(\$\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
+    r"|\"[^\"]*\"|'[^']*'|[^\s;&|]+)")
+FOR_LOOP = re.compile(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*[;\n]\s*do\b")
+
+
+def _ref(var):
+    return re.compile(r"\$\{?%s\}?(?!\w)" % re.escape(var))
+
+
+def _resolve_vars(cmd):
+    """Replace variables that hold transcript paths with a stand-in path."""
+    taint = {}
+
+    def subst(text):
+        for var, kind in taint.items():
+            text = _ref(var).sub(VAR_FILE if kind == "file" else VAR_DIR, text)
+        return text
+
+    for _ in range(2):   # a second pass catches D=$(dirname "$T") chains
+        for m in ASSIGN.finditer(cmd):
+            var, value = m.group(1), subst(m.group(2))
+            bare = value.strip("\"'")
+            if "@claude_transcript" in value:
+                taint[var] = "dir" if "dirname" in value else "file"
+            elif value.startswith("$(") and re.match(r"^\$\(\s*dirname\b", value) \
+                    and PROJ in value:
+                taint[var] = "dir"
+            elif PROJ in bare and bare.startswith(("~", "/", "$HOME", "${HOME}")) \
+                    and not re.search(r"\s", bare):
+                taint[var] = "file" if FILE_LIKE.search(bare.rstrip("/")) else "dir"
+        for m in FOR_LOOP.finditer(cmd):
+            items = subst(m.group(2))
+            if PROJ in items and GLOB.search(items):
+                taint[m.group(1)] = "dir"
+    return subst(cmd) if taint else cmd
+
+
+def _claude_root(path):
+    return bool(CLAUDE_ROOT.match(_norm(path)))
+
+
 def _is_wide(path, cwd_wide):
     if cwd_wide and path in (".", "./"):
         return True
     return _norm(path) in WIDE
 
 
-def _in_projects(path, cwd_projects):
-    if PROJ in path:
+def _in_projects(path, cwd_projects, claude_root=False):
+    if PROJ in path or (claude_root and _claude_root(path)):
         return True
     return cwd_projects and not path.startswith(("/", "~", "$"))
 
@@ -257,6 +314,7 @@ def _find(args):
 
 def check(cmd):
     """Return the block message for a command, or None to allow it."""
+    cmd = _resolve_vars(cmd)
     try:
         segs = [_unwrap(s) for s in _segments(cmd)]
     except ValueError:
@@ -279,7 +337,7 @@ def check(cmd):
 
         if name == "cd":
             target = args[0] if args else "~"
-            cwd_projects = PROJ in target
+            cwd_projects = PROJ in target or _claude_root(target)
             cwd_wide = _is_wide(target, False)
             continue
 
@@ -297,7 +355,8 @@ def check(cmd):
             if not paths and recursive and (cwd_projects or cwd_wide):
                 paths = ["."]
             for p in paths:
-                if _in_projects(p, cwd_projects) and (_too_broad(p) or recursive):
+                if (_in_projects(p, cwd_projects, claude_root=True)
+                        and (_too_broad(p) or recursive)):
                     return TRANSCRIPT_MSG.format(
                         what="BLOCKED by scan-guard: `%s` over %s reads many "
                              "transcripts." % (name, p))
