@@ -329,9 +329,9 @@
       enabled: false,
     },
     {
-      description: "HELD: osrm-backend majors (2026-10-12). The serving pods cannot read graphs built by another osrm version, so a major needs the graph rebuilt with the new image first (osm_routing osrm-refresh). Land it in a supervised run.",
+      description: "HELD: osrm-backend majors and minors (2026-10-12, replaces the majors-only hold after the v26.4.0 cut-over). osrm-routed refuses a graph built by a different major.minor (util::FingerPrint::IsDataCompatible), and osrm releases a minor every month (v26.5 to v26.10 so far). A bump moves stacks/osm_routing to an empty graph directory, so the graph must be built first: bump only the osrm-refresh image, run it once, then move the serving pods. Patches keep the graph format and stay automatic.",
       matchPackageNames: ["ghcr.io/project-osrm/osrm-backend"],
-      matchUpdateTypes: ["major"],
+      matchUpdateTypes: ["major", "minor"],
       enabled: false,
     },
     {
