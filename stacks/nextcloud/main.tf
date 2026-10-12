@@ -162,8 +162,12 @@ resource "helm_release" "nextcloud" {
 
   repository      = "https://nextcloud.github.io/helm/"
   chart           = "nextcloud"
-  atomic          = true
-  cleanup_on_fail = true
+  # Not atomic: the image entrypoint runs `occ upgrade` before Apache starts,
+  # so a failed rollout has usually migrated the DB already. An atomic rollback
+  # would put the previous image on that DB, and Nextcloud refuses to start on
+  # a newer schema. A failed release stays on the new image to fix forward.
+  atomic          = false
+  cleanup_on_fail = false
   version         = "8.8.1"
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
@@ -530,6 +534,10 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
   }
 
   spec {
+    # Suspended while the 32 -> 35 major hops run (2026-10-12): its F1 branch
+    # would start a second `occ upgrade` next to the entrypoint's, and F3 would
+    # clear a maintenance flag the upgrade still needs.
+    suspend = true
     # */30 since 2026-08-16 (was */5). At 5-minute granularity this was 288 pod
     # creations a day, and on this host that is not free — each pod create and
     # destroy writes containerd overlay layers, a kubelet pod dir, /var/log/pods
