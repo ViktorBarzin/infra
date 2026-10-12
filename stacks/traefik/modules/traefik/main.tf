@@ -811,7 +811,7 @@ resource "kubernetes_deployment" "bot_block_proxy" {
         }
         container {
           name  = "nginx"
-          image = "openresty/openresty:alpine"
+          image = "openresty/openresty:1.31.1.1-alpine@sha256:52ff9a6e337bd0138745c73cdfeb5aaa0e783e29eeec0695eec6971c1231f3bd"
 
           port {
             container_port = 8080
@@ -868,10 +868,6 @@ resource "kubernetes_deployment" "bot_block_proxy" {
       metadata[0].labels["tier"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
-      # FLOATING_TAG_DEFERRED: the 2 pods run different openresty:alpine
-      # digests and neither matches a current version tag, so any pin
-      # restarts them onto new bytes.
-      spec[0].template[0].spec[0].container[0].image,
     ]
   }
 }
@@ -1368,7 +1364,7 @@ resource "kubernetes_deployment" "auth_proxy" {
         }
         container {
           name  = "nginx"
-          image = "nginx:1-alpine"
+          image = "nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2"
 
           port {
             container_port = 9000
@@ -1447,10 +1443,6 @@ resource "kubernetes_deployment" "auth_proxy" {
       # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      # FLOATING_TAG_DEFERRED: the 2 pods run different nginx:1-alpine digests
-      # (one equals 1.31.2-alpine, the other matches no current tag), so any
-      # pin restarts them and one gets new bytes.
-      spec[0].template[0].spec[0].container[0].image,
     ]
   }
 }
