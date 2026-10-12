@@ -378,7 +378,7 @@
       enabled: false,
     },
     {
-      description: "HELD: NVIDIA driver 570 -> 580 (kernel 6.8.0-117 held; see post-mortem 2026-05-17)",
+      description: "HELD: NVIDIA driver majors (580 LTSB since 2026-10-12; the next major needs a supervised run against the held GPU node kernel 6.8.0-117, see post-mortem 2026-05-17)",
       matchPackageNames: ["nvcr.io/nvidia/driver"],
       matchUpdateTypes: ["major"],
       enabled: false,
