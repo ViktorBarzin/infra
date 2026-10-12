@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/gethomepage/homepage
-  tag: v1.13.2
+  tag: v2.5.0
 
 # Enable RBAC. RBAC is necessary to use Kubernetes integration
 enableRbac: true
@@ -103,7 +103,11 @@ config:
         columns: 4
 
 env:
-  HOMEPAGE_ALLOWED_HOSTS: home.viktorbarzin.me
+  # v2 checks the Host header on every page, not only /api/* as v1 did.
+  # Something in-cluster requests the page through the Service name every 5
+  # minutes; without this entry v2.5.0 answers it with 400 and logs an error
+  # (rails revert 2c06ea782, pipeline #2275).
+  HOMEPAGE_ALLOWED_HOSTS: home.viktorbarzin.me,homepage.homepage.svc.cluster.local:3000
 
 persistence:
   logs:
