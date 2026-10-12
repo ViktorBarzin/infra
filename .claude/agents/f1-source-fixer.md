@@ -33,7 +33,7 @@ the fix with the tests, ship it, verify it actually recovered, and close the
 issue. Or revert and hand back.**
 
 You run **inside the cluster** (the claude-agent-service pod), so your egress IP
-matches the f1-stream pod's — probe upstreams from here and they behave exactly
+matches the f1-stream pods' — probe upstreams from here and they behave exactly
 as they will in production.
 
 ## Input: a Forgejo issue
@@ -136,8 +136,8 @@ curl -s -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>/comments?limit=100"
      an m3u8 manifest.
    - **play** — an m3u8 resolved but did not render. Check whether the manifest
      itself still serves segments, and whether the token is IP-bound (ours are;
-     that is why playback goes through `/proxy`, which re-originates from the
-     f1-stream pod). This stage can also mean the stream is genuinely stale
+     that is why playback goes through `/proxy`, which re-originates from an
+     f1-stream Edge pod). This stage can also mean the stream is genuinely stale
      rather than the extractor being wrong — say so if that is what you find.
 4. **Fix it in the extraction layer**, updating the docstring to say what
    changed and when, and updating the `MockTransport` fixtures to match.
@@ -172,9 +172,16 @@ waiting on a pipeline that does not exist.
 
 Then: merge latest master, `git push origin HEAD:master`, and **verify recovery**.
 
-- Watch the GHA build and the Woodpecker deploy (~5-8 min; poll the deployment
-  image tag, `kubectl -n f1-stream get deploy f1-stream -o jsonpath='{...image}'`).
-- Then GET `http://f1.f1-stream.svc.cluster.local/extractors` and `/streams`, and
+- Watch the GHA build and the Woodpecker deploy (~5-8 min). The app runs as
+  three Deployments from one image (f1-stream ADR-0029): `f1-stream-worker`
+  runs extraction, `f1-stream-edge` serves the site, API and `/proxy`, and
+  `f1-stream-transcoder` runs the live quality ladders. The deploy rolls the
+  Worker first, so poll its image tag,
+  `kubectl -n f1-stream get deploy f1-stream-worker -o jsonpath='{...image}'`,
+  and wait for `kubectl -n f1-stream rollout status deploy/f1-stream-worker`.
+  Extraction tracebacks are in `kubectl -n f1-stream logs deploy/f1-stream-worker`.
+- Then GET `http://f1.f1-stream.svc.cluster.local/extractors` and `/streams`
+  (the `f1` Service reaches the Edges, which read the Worker's results), and
   confirm the source you repaired is producing streams again (or, between
   sessions, that `source_health` reports ok and the extractor returns the shape
   you proved in step 6).
