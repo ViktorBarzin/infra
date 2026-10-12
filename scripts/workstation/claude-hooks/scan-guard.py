@@ -187,8 +187,9 @@ def _norm(path):
 CLAUDE_ROOT = re.compile(r"^(~|\$HOME|\$\{HOME\}|/home/[^/]+|%s)/\.claude$"
                          % re.escape(HOME))
 # Stand-ins for a variable that holds one transcript, or a directory of them.
-VAR_FILE = "~/" + PROJ + "/_var_/transcript.jsonl"
-VAR_DIR = "~/" + PROJ + "/_var_"
+# The name shows up in the block message, so it says which variable it was.
+VAR_FILE = "~/" + PROJ + "/from-var-{}/transcript.jsonl"
+VAR_DIR = "~/" + PROJ + "/from-var-{}"
 ASSIGN = re.compile(
     r"(?<![\w$])([A-Za-z_]\w*)="
     r"(\$\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
@@ -206,7 +207,8 @@ def _resolve_vars(cmd):
 
     def subst(text):
         for var, kind in taint.items():
-            text = _ref(var).sub(VAR_FILE if kind == "file" else VAR_DIR, text)
+            stand_in = (VAR_FILE if kind == "file" else VAR_DIR).format(var)
+            text = _ref(var).sub(lambda _m: stand_in, text)
         return text
 
     for _ in range(2):   # a second pass catches D=$(dirname "$T") chains
