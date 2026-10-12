@@ -194,7 +194,7 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
 
         container {
           name  = "firewall-bouncer"
-          image = "debian:bookworm-slim"
+          image = "debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
           command = [
             local.firewall_bouncer_bin_path,
             "-c", local.firewall_bouncer_cfg_path,
@@ -259,7 +259,6 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].template[0].spec[0].container[0].image,                                          # FLOATING_TAG_DEFERRED: nodes run different bookworm-slim builds; a pinned tag restarts pods
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
