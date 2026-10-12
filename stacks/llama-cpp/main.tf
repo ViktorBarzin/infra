@@ -236,7 +236,7 @@ resource "kubernetes_job_v1" "download_models" {
 
         container {
           name  = "download"
-          image = "python:3.12-slim"
+          image = "python:3.14-slim"
           command = ["/bin/bash", "-c", <<-EOT
             set -euo pipefail
             pip install --quiet --no-cache-dir 'huggingface_hub>=0.24'
