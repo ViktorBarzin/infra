@@ -106,7 +106,7 @@ Two ways, both in the repo:
   { "matchDatasources": ["helm"], "matchPackageNames": ["traefik"], "matchNewValue": "41.8.0", "enabled": false }
   ```
 
-- A component that waits for a supervised session: a `HELD:` package rule in `renovate.json5` with `enabled: false` and a description saying why. Held today: Nextcloud majors, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, NVIDIA driver majors, Kyverno chart 3.10 and later, Forgejo majors, Technitium majors, the anisette digest-only pin (its image is still under `ignore_changes`, so a bump would not reach the pod). Remove the rule to release the component.
+- A component that waits for a supervised session: a `HELD:` package rule in `renovate.json5` with `enabled: false` and a description saying why. Held today (2026-10-12): every update in `stacks/dbaas` and in `stacks/vault`, the image pins in `prometheus_chart_values.tpl`, Woodpecker (every update; apply from a workstation before the push), osrm-backend majors and minors, and the majors of Nextcloud, Forgejo, Technitium, the NVIDIA driver, MySQL (9.x and 26.x) and Postgres. Provider holds: vault 5, cloudflare 5, authentik 2026.x and every telmate/proxmox update. Remove the rule to release the component.
 
 Not managed by Renovate at all: `modules/docker-registry/**` (synced to the registry VM by its own pipeline, outside the rails), `.woodpecker/**` (CI images), our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, `forgejo.viktorbarzin.me/*`), and `:latest` or untagged refs.
 
