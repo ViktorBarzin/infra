@@ -7,8 +7,9 @@
 # commits + pushes to the monorepo. The learn pod git-syncs and serves the page
 # ~30s later. Bearer-token API → auth = "none" (Authentik would break clients).
 #
-# App source + image: pages-publish/ → ghcr.io/viktorbarzin/pages-publish:latest
-# (GHA, ADR-0002). Keel polls the :latest digest and rolls this deployment.
+# App source + image: pages-publish/ → ghcr.io/viktorbarzin/pages-publish:<sha>
+# (GHA, ADR-0002); the build triggers .woodpecker/first-party-deploy.yml, which
+# rolls this deployment.
 #
 # Vault secret/pages-publish carries:
 #   - api_keys   : JSON {user: token} map → env PAGES_API_KEYS. The user KEYS
@@ -31,7 +32,9 @@ variable "tls_secret_name" {
 locals {
   namespace = "pages-publish"
   image     = "ghcr.io/viktorbarzin/pages-publish"
-  image_tag = "latest"
+  # The build running on 2026-10-12; CI sets the live tag, so this is used
+  # only on a recreate.
+  image_tag = "a391ec7fdceba06da07f79b65de6fef5aded1396"
   labels    = { app = "pages-publish" }
 }
 
@@ -41,8 +44,7 @@ resource "kubernetes_namespace" "pages_publish" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -105,36 +107,10 @@ resource "kubernetes_deployment" "pages_publish" {
     name      = "pages-publish"
     namespace = local.namespace
     labels    = local.labels
-    # Own single-tag :latest image (ADR-0002) — Keel polls the digest and rolls
-    # the deployment. force+poll is safe here: this is our own single-tag repo,
-    # not the multi-tag-upstream hazard the CLAUDE.md force-policy warning is about.
-    #
-    # `match-tag` is REQUIRED for that to actually happen, and its absence is why
-    # this deployment silently stopped auto-deploying (found 2026-08-17: ghcr
-    # :latest had moved to a new digest and the pod still ran the old one across
-    # ~3 poll windows). Without it Keel registers only a "watch repository tags"
-    # job — it scans for NEW TAGS, which never appear in a repo that only ever
-    # publishes `:latest` + a commit SHA — and logs `digest=` empty. With it Keel
-    # registers a "watch tag digest" job and rolls on a digest change under the
-    # same tag string. `k8s-portal` and `interview-prep-app` declare it for
-    # exactly this reason; they roll, this did not.
-    #
-    # It is stripped fleet-wide by the Kyverno add-keel-annotations rule after
-    # the 2026-06-01 incident (post-mortems/2026-06-01-keel-match-tag-image-swap.md),
-    # where `force + match-tag` cross-assigned container images and took the blog
-    # down ~6 days. That hazard needs a MULTI-IMAGE pod sharing a floating tag —
-    # this pod runs one container, so there is no sibling image to swap with.
-    # Verified with `kubectl annotate --dry-run=server` that admission keeps it.
-    #
-    # Deliberately NOT in lifecycle.ignore_changes below: if a recreate ever loses
-    # it to admission, an apply must put it back and the nightly drift report must
-    # be able to see it missing. Silent loss here means silent no-deploys.
-    annotations = {
-      "keel.sh/policy"       = "force"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 5m"
-      "keel.sh/match-tag"    = "true"
-    }
+    # Own image (ADR-0002), built by .github/workflows/build-pages-publish.yml,
+    # whose last step runs .woodpecker/first-party-deploy.yml to set the
+    # :<sha> tag (CI_SETS_IMAGE below). Keel rolled this deployment by
+    # polling :latest until it was retired in 2026-10.
   }
 
   spec {
@@ -162,10 +138,8 @@ resource "kubernetes_deployment" "pages_publish" {
           fs_group     = 10001
         }
 
-        # Private ghcr image → pull via the Kyverno-synced ghcr-credentials.
-        # This ALSO lets Keel read these creds to poll the private :latest digest
-        # and roll new builds — without it Keel logs an empty digest and never
-        # rolls (and the pod would depend on fragile node-level ghcr creds).
+        # Private ghcr image → pull via the Kyverno-synced ghcr-credentials
+        # (without it the pod would depend on fragile node-level ghcr creds).
         image_pull_secrets {
           name = "ghcr-credentials"
         }
@@ -270,13 +244,10 @@ resource "kubernetes_deployment" "pages_publish" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages the :latest digest
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }

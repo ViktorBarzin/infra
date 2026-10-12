@@ -6,6 +6,14 @@ variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 locals {
+  # Image tag for the two Deployments. trading's GHA build tags both images
+  # 0.1.N and ends by triggering infra's .woodpecker/first-party-deploy.yml,
+  # which sets that tag on every container (CI_SETS_IMAGE below), so this
+  # value, the build running on 2026-10-12, is used only on a recreate. The
+  # migrations Job keeps :latest: a Job's pod template is immutable, so a new
+  # string would replace the Job and re-run it.
+  image_tag = "0.1.108"
+
   common_env = {
     TRADING_REDIS_URL                        = "redis://${var.redis_host}:6379/4"
     TRADING_LOG_LEVEL                        = "INFO"
@@ -36,8 +44,7 @@ resource "kubernetes_namespace" "trading-bot" {
   metadata {
     name = "trading-bot"
     labels = {
-      tier               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.edge
     }
   }
 }
@@ -314,7 +321,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
 
         container {
           name  = "dashboard"
-          image = "ghcr.io/viktorbarzin/trading-bot-dashboard:latest"
+          image = "ghcr.io/viktorbarzin/trading-bot-dashboard:${local.image_tag}"
           port {
             container_port = 80
             protocol       = "TCP"
@@ -331,7 +338,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
         }
         container {
           name    = "api-gateway"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.api_gateway.main"]
           port {
             container_port = 8000
@@ -368,7 +375,8 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
     }
   }
   lifecycle {
-    # DRIFT_WORKAROUND: CI pipeline owns image tags for api + migrations containers. Reviewed 2026-04-18.
+    # CI_SETS_IMAGE: first-party images, deployed by their own CI
+    # (scripts/first-party-deploy.sh sets dashboard and api-gateway).
     ignore_changes = [
       # Stakater Reloader stamps this on every secret-triggered restart. The
       # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
@@ -378,11 +386,8 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_job.migrations]
@@ -430,7 +435,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
 
         container {
           name    = "signal-generator"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.signal_generator.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -465,7 +470,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "learning-engine"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.learning_engine.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -500,7 +505,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "market-data"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.market_data.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -535,7 +540,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "meet-kevin-watcher"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.meet_kevin_watcher.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -592,7 +597,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "kevin-signal-bridge"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.kevin_signal_bridge.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -632,7 +637,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "trade-executor"
-          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:${local.image_tag}"
           command = ["python", "-m", "services.trade_executor.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -699,7 +704,8 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     }
   }
   lifecycle {
-    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 6 worker containers. Reviewed 2026-05-26.
+    # CI_SETS_IMAGE: first-party images, deployed by their own CI
+    # (scripts/first-party-deploy.sh sets all 6 worker containers).
     ignore_changes = [
       # Stakater Reloader stamps this on every secret-triggered restart. The
       # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
@@ -713,11 +719,8 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       spec[0].template[0].spec[0].container[3].image,
       spec[0].template[0].spec[0].container[4].image,
       spec[0].template[0].spec[0].container[5].image,
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_job.migrations]

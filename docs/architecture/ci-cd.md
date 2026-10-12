@@ -188,8 +188,19 @@ reconciled — the workflows were added to the GitHub lineage via PR):
 | android-emulator | `build-android-emulator.yml` | public `ghcr.io/viktorbarzin/android-emulator` |
 | infra CLI | `build-cli.yml` | DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli` |
 | infra-ci | `build-infra-ci.yml` | private `ghcr.io/viktorbarzin/infra-ci` |
-| k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal` (Keel rolled `:latest` digests until 2026-10-11; no deploy step yet, see `automated-upgrades.md`) |
-| excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library` (Keel rolled `:latest` digests until 2026-10-11; no deploy step yet, see `automated-upgrades.md`; DockerHub `:v4` frozen as rollback) |
+| k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal`, deployed by `.woodpecker/first-party-deploy.yml` |
+| excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library`, deployed by `.woodpecker/first-party-deploy.yml` (DockerHub `:v4` frozen as rollback) |
+| pages-publish | `build-pages-publish.yml` | private `ghcr.io/viktorbarzin/pages-publish`, deployed by `.woodpecker/first-party-deploy.yml` |
+| repowise | `build-repowise.yml` | private `ghcr.io/viktorbarzin/repowise` (upstream PyPI release, built daily), deployed by `.woodpecker/first-party-deploy.yml` |
+
+The infra-built apps above, plus interview-prep-app, learning and trading-bot
+(whose repos have no Woodpecker registration of their own), deploy through one
+shared manual pipeline on Woodpecker repo 1: the build POSTs
+`{"PIPELINE":"first-party-deploy","APP":"<app>","IMAGE_TAG":"<tag>"}` and
+`scripts/first-party-deploy.sh` runs `kubectl set image` on the Deployments
+listed for that app. Details and the per-app table:
+`docs/architecture/automated-upgrades.md`, "First-party images Keel used to
+deploy".
 
 **`infra-ci`** is the image the `.woodpecker/default.yml` apply step and
 `drift-detection.yml` run in (proven by pipelines 165/166). `chatterbox-tts` is

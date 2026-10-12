@@ -8,8 +8,7 @@ resource "kubernetes_namespace" "interview-prep-app" {
     name = "interview-prep-app"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true" # Keel watches this ns for :latest digest rolls
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -32,14 +31,6 @@ resource "kubernetes_deployment" "interview-prep-app" {
       app  = "interview-prep-app"
       tier = local.tiers.aux
     }
-    # Keel rolls new ghcr:latest digests. Seeds only — keys are in
-    # ignore_changes below, so live annotations win on an existing deployment.
-    annotations = {
-      "keel.sh/policy"       = "force"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/match-tag"    = "true"
-      "keel.sh/pollSchedule" = "@every 5m"
-    }
   }
   spec {
     replicas = 1
@@ -58,7 +49,11 @@ resource "kubernetes_deployment" "interview-prep-app" {
         # sync-ghcr-credentials ClusterPolicy (allowlist — see ghcr-credentials.tf).
         image_pull_secrets { name = "ghcr-credentials" }
         container {
-          image             = "ghcr.io/viktorbarzin/interview-prep-app:latest"
+          # The repo's GHA build ends by triggering infra's
+          # .woodpecker/first-party-deploy.yml, which sets the :<sha> tag
+          # (CI_SETS_IMAGE below). This value, the build running on
+          # 2026-10-12, is used only on a recreate.
+          image             = "ghcr.io/viktorbarzin/interview-prep-app:4f3bd20f79015b7daa6dbc9230b1512110167990"
           image_pull_policy = "Always"
           name              = "interview-prep-app"
           port { container_port = 80 } # Dockerfile EXPOSEs 80 (nginx)
@@ -73,14 +68,9 @@ resource "kubernetes_deployment" "interview-prep-app" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
