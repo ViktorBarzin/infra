@@ -87,8 +87,8 @@ resource "kubernetes_deployment" "forgejo" {
       tier = local.tiers.edge
     }
     annotations = {
-      # The image tag is Terraform-owned. Renovate holds Forgejo updates for a
-      # supervised session (renovate.json5): 11 -> 16 cannot be downgraded.
+      # The image tag is Terraform-owned and Renovate bumps it. Forgejo DB
+      # migrations are one-way: take a forgejo dump and a mysqldump first.
       # Roll the pod when the signup secrets (forgejo-email password from Vault,
       # forgejo-turnstile secret) change — env vars are read at boot, not
       # hot-reloaded. Stakater Reloader watches all referenced secrets/CMs.
@@ -133,7 +133,7 @@ resource "kubernetes_deployment" "forgejo" {
           # tag-rewriting incident (memory id=1933). The pod crashlooped
           # because the DB had already been migrated to schema 305 by
           # 11.0.14 and v1.18 only knows up to migration 231.
-          image = "codeberg.org/forgejo/forgejo:15.0.9"
+          image = "codeberg.org/forgejo/forgejo:16.0.5"
           env {
             name  = "USER_UID"
             value = 1000
