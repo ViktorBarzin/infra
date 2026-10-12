@@ -16,8 +16,13 @@
 # other secret-checking services. The WebSocket at /ws carries the session
 # cookie and goes through forward-auth on the upgrade, like the lobby's own.
 #
-# The factory's default CSP is frame-ancestors *.viktorbarzin.me, which is
-# what lets terminal.viktorbarzin.me frame it.
+# Framing is narrowed to the lobby alone: frame-ancestors names
+# terminal.viktorbarzin.me and nothing else. The factory's default CSP
+# (frame-ancestors *.viktorbarzin.me) would let any page on the site frame an
+# admin's T3 client, and pages.viktorbarzin.me carries pages other users
+# publish. The sidecar sends the same frame-ancestors on its own pages, so
+# whether Traefik's header replaces the upstream one or a browser sees both,
+# the result names only the lobby.
 #
 # Reach on the DevVM side: the nftables table in playbooks/devvm.yml admits
 # 7690 from the Traefik nodes only, and the AdminNetworkPolicy in
@@ -75,7 +80,8 @@ module "ingress_t3view" {
   # per-client limit (10/s, burst 50) would answer most of them 429. Every
   # chunk is content-hashed and cached as immutable, so later loads fetch a
   # handful; the route is behind Authentik and admin only.
-  skip_default_rate_limit = true
-  anti_ai_scraping        = false # behind Authentik, admin only
-  homepage_enabled        = false # a view inside the lobby, not a tile of its own
+  skip_default_rate_limit        = true
+  anti_ai_scraping               = false # behind Authentik, admin only
+  homepage_enabled               = false # a view inside the lobby, not a tile of its own
+  custom_content_security_policy = "frame-ancestors https://terminal.viktorbarzin.me"
 }
