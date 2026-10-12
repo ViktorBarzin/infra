@@ -69,8 +69,10 @@ resource "kubernetes_deployment" "tor-proxy" {
       }
       spec {
         container {
-          name  = "tor-proxy"
-          image = "dperson/torproxy:latest"
+          name = "tor-proxy"
+          # Upstream publishes only :latest (plus per-arch tags), so this is
+          # latest@digest: immutable, and Renovate bumps the digest.
+          image = "dperson/torproxy:latest@sha256:d8b5f1cf24f1b7a0aa334929a264b2606a107223dd0d51eb1cda8aae6fbeec53"
           port {
             name           = "http"
             container_port = 8118
@@ -107,8 +109,7 @@ resource "kubernetes_deployment" "tor-proxy" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # FLOATING_TAG_DEFERRED: dperson/torproxy:latest has no version tag; a tag@digest pin restarts the pod
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
