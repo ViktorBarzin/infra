@@ -170,6 +170,13 @@ resource "kubernetes_deployment" "eurooffice" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
+  # A node without the 2.5 GB image takes about 7.5 min to pull it, and the
+  # bundled Postgres can time out once on a cold first boot and restart. The
+  # provider's default 10 min rollout wait ran out on the first apply.
+  timeouts {
+    create = "20m"
+    update = "20m"
+  }
 }
 
 resource "kubernetes_service" "eurooffice" {
