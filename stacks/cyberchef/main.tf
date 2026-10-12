@@ -120,7 +120,7 @@ resource "kubernetes_service" "cyberchef" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.25.0"
+  image_tag        = "v1.28.1"
   name             = "cc"
   namespace        = kubernetes_namespace.cyberchef.metadata[0].name
   target_url       = "http://${kubernetes_service.cyberchef.metadata[0].name}.${kubernetes_namespace.cyberchef.metadata[0].name}.svc.cluster.local"
