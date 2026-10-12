@@ -526,3 +526,22 @@ func TestDeveloperDirDefaultsToNewestXcode(t *testing.T) {
 		t.Errorf("default DeveloperDir = %q, want the newest-Xcode expression %q", got, want)
 	}
 }
+
+// A new Xcode refuses to run xcodebuild until its license is accepted with
+// sudo, and devicectl then lists no apps at all, which read as "WDA is not
+// installed" (2026-10-12). Doctor names the real cause instead.
+func TestIosXcodeLicensePending(t *testing.T) {
+	cases := []struct {
+		out  string
+		want bool
+	}{
+		{"You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window", true},
+		{"Xcode 27.1\nBuild version 27A9275", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := iosXcodeLicensePending(tc.out); got != tc.want {
+			t.Errorf("iosXcodeLicensePending(%q) = %v, want %v", tc.out, got, tc.want)
+		}
+	}
+}
