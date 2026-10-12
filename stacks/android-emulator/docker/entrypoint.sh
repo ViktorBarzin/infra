@@ -158,20 +158,42 @@ echo "Boot completed."
 if [ "$EMULATOR_GPU" = host ]; then
   # Headless emulator: scrcpy mirrors the screen into Xvfb as a borderless
   # window covering the display, and forwards noVNC's clicks and keys as
-  # touches and key presses. --no-power-on and no --stay-awake, so opening the
-  # view does not count as use for the idle sleeper. It restarts on exit and is
-  # not supervised: a viewer dying should not restart the phone.
+  # touches and key presses. It only runs while a viewer is connected: its
+  # server encodes H.264 in software inside the guest, about 2.5 cores
+  # (measured 2026-10-12), which adb-only use should not pay. A viewer shows
+  # up as an established connection to x11vnc on :5900 (170C in
+  # /proc/net/tcp); scrcpy stops 30s after the last one leaves.
+  # --no-power-on and no --stay-awake, so opening the view does not count as
+  # use for the idle sleeper. Not supervised: a viewer dying should not
+  # restart the phone.
   ( set +e
     export DISPLAY=:0 ADB=/sdk/platform-tools/adb
     w=${SCREEN_GEOMETRY%%x*}; rest=${SCREEN_GEOMETRY#*x}; h=${rest%%x*}
+    viewer_connected() {
+      grep -qE '^ *[0-9]+: [0-9A-F]+:170C [0-9A-F]+:[0-9A-F]+ 01 ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+    }
+    scr=""; idle=0
     while true; do
-      /opt/scrcpy/scrcpy --no-audio --no-power-on \
-        --render-driver=software --max-fps=30 --max-size="$h" \
-        --window-borderless --window-x=0 --window-y=0 \
-        --window-width="$w" --window-height="$h" \
-        --window-title="Android Emulator"
-      echo "scrcpy exited with status $?; restarting in 3s" >&2
-      sleep 3
+      if viewer_connected; then
+        idle=0
+        if [ -z "$scr" ] || ! kill -0 "$scr" 2>/dev/null; then
+          echo "viewer connected; starting scrcpy" >&2
+          /opt/scrcpy/scrcpy --no-audio --no-power-on \
+            --render-driver=software --max-fps=30 --max-size="$h" \
+            --window-borderless --window-x=0 --window-y=0 \
+            --window-width="$w" --window-height="$h" \
+            --window-title="Android Emulator" &
+          scr=$!
+        fi
+      elif [ -n "$scr" ]; then
+        idle=$((idle + 2))
+        if [ "$idle" -ge 30 ]; then
+          echo "no viewer for 30s; stopping scrcpy" >&2
+          kill "$scr" 2>/dev/null
+          scr=""
+        fi
+      fi
+      sleep 2
     done
   ) &
 else
