@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "error_pages" {
         }
         container {
           name  = "error-pages"
-          image = "ghcr.io/tarampampam/error-pages:3.0.1"
+          image = "ghcr.io/tarampampam/error-pages:4.2.6"
 
           port {
             container_port = 8080
@@ -55,19 +55,6 @@ resource "kubernetes_deployment" "error_pages" {
           env {
             name  = "TEMPLATE_NAME"
             value = "shuffle"
-          }
-
-          env {
-            # fasthttp's per-connection read buffer ALSO caps total request
-            # header size (default 5120 bytes). Authentik forward-auth sets
-            # one authentik_proxy_* cookie per protected service, all scoped
-            # to .viktorbarzin.me — 30+ services puts the aggregate Cookie
-            # header way past 5KB, so every error-middleware dispatch here
-            # answered 431 "Too big request header" instead of the styled
-            # error page (same cookie-bloat class as the 2026-06-01 openresty
-            # buffer fixes on bot-block-proxy/auth-proxy).
-            name  = "READ_BUFFER_SIZE"
-            value = "131072"
           }
 
           liveness_probe {
