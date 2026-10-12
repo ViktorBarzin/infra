@@ -1,0 +1,32 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: set-image-pull-policy
+  annotations:
+    policies.kyverno.io/title: Set Image Pull Policy
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: "Set imagePullPolicy to IfNotPresent for pinned tags and Always for :latest to prevent ImagePullBackOff from transient cache failures."
+spec:
+  failurePolicy: Ignore
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            spec: Object.spec{
+              containers: object.spec.containers.map(c, Object.spec.containers{
+                name: c.name,
+                imagePullPolicy: (c.image.endsWith(':latest') || !c.image.contains(':')) ? 'Always' : 'IfNotPresent'
+              })
+            }
+          }

@@ -1,0 +1,37 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-trusted-registries
+  annotations:
+    policies.kyverno.io/title: "Require Trusted Image Registries"
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: "Images must come from trusted registries to prevent supply chain attacks."
+spec:
+  validationActions: [Deny]
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  variables:
+    - name: allowedPrefixes
+      expression: '${prefixes}'
+  validations:
+    - message: Images must be from trusted registries. Allowlist defined in stacks/kyverno/modules/kyverno/security-policies.tf — add the new registry there if intentional, otherwise switch the workload to a trusted source.
+      expression: >-
+        object.spec.containers.all(c,
+          variables.allowedPrefixes.exists(p, c.image.startsWith(p)))
