@@ -389,12 +389,6 @@
       enabled: false,
     },
     {
-      description: "HELD: NVIDIA driver 570 -> 580 (kernel 6.8.0-117 held; see post-mortem 2026-05-17)",
-      matchPackageNames: ["nvcr.io/nvidia/driver"],
-      matchUpdateTypes: ["major"],
-      enabled: false,
-    },
-    {
       description: "HELD: Loki chart (grafana repo stops at 7.3.0; the move to grafana-community/loki 18.x is a supervised repository switch)",
       matchDatasources: ["helm"],
       matchPackageNames: ["loki"],
