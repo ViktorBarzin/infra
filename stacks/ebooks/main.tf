@@ -442,7 +442,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           # the seeding logic does not depend on the Calibre-Web version, so
           # reusing it avoids a second image to keep current.
           name    = "seed-smtp-password"
-          image   = "crocodilestick/calibre-web-automated:v4.0.8"
+          image   = "docker.io/crocodilestick/calibre-web-automated:v4.0.8"
           command = ["python3", "-c", file("${path.module}/files/seed-smtp-password.py")]
           env {
             name = "SMTP_PASSWORD"
@@ -478,7 +478,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           # Upstream CWA. It bundles Calibre under /app/calibre, so the former
           # viktorbarzin/calibre-web-automated rebuild (upstream plus a
           # universal-calibre DOCKER_MODS step that installed nothing) is retired.
-          image = "crocodilestick/calibre-web-automated:v4.0.8"
+          image = "docker.io/crocodilestick/calibre-web-automated:v4.0.8"
           name  = "calibre-web-automated"
           env {
             name  = "PUID"
