@@ -364,8 +364,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # No embedding backend: similar
           # documents come from the Tantivy index, so no extra RAM in a pod
           # that has OOMed at 8Gi. Output language unset so titles stay in the
-          # document's own language. A Document Added workflow (created in the
-          # UI/API, not here) applies the suggestions automatically.
+          # document's own language. A Document Added workflow (id 3, created
+          # in the UI/API, not here) applies document type and tags only;
+          # titles and correspondents stay as they arrive (Viktor, 2026-10-12).
           env {
             name  = "PAPERLESS_AI_ENABLED"
             value = "true"
