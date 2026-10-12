@@ -396,7 +396,7 @@ resource "kubernetes_cron_job_v1" "external_monitor_sync" {
             service_account_name = kubernetes_service_account_v1.external_monitor_sync.metadata[0].name
             container {
               name  = "sync"
-              image = "docker.io/library/python:3.12-alpine"
+              image = "docker.io/library/python:3.14-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
@@ -1047,7 +1047,7 @@ resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
             service_account_name = kubernetes_service_account_v1.internal_monitor_sync.metadata[0].name
             container {
               name  = "sync"
-              image = "docker.io/library/python:3.12-alpine"
+              image = "docker.io/library/python:3.14-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'

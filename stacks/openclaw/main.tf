@@ -1171,7 +1171,7 @@ resource "kubernetes_deployment" "openclaw" {
           # agentRuntime"), crashlooping the gateway on any restart. 2026.2.26
           # predates that bug. Revisit the openai-codex/ChatGPT-Plus OAuth
           # primary (commit 4b39cb72) when upgrading openclaw again.
-          image = "ghcr.io/openclaw/openclaw:2026.10.1"
+          image = "ghcr.io/openclaw/openclaw:2026.10.2"
           # Startup sequence:
           #   1. doctor --fix     — repair sessions/state (also resets some config)
           #   2. models set       — pin gpt-5.4-mini (doctor auto-promotes to gpt-5-pro otherwise)
@@ -1403,7 +1403,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Stdlib-only Python; no pip install at startup.
         container {
           name    = "openclaw-exporter"
-          image   = "library/python:3.12.15-slim"
+          image   = "library/python:3.14.8-slim"
           command = ["python3", "/scripts/exporter.py"]
           port {
             container_port = 9099
@@ -1449,7 +1449,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Sidecar: modelrelay — auto-routes to fastest healthy free model
         container {
           name  = "modelrelay"
-          image = "docker.io/library/node:22.23.3-alpine"
+          image = "docker.io/library/node:24.21.0-alpine"
           command = ["sh", "-c", <<-EOF
             if [ ! -f /tools/modelrelay/node_modules/.package-lock.json ]; then
               mkdir -p /tools/modelrelay

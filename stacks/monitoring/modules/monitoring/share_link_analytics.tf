@@ -63,7 +63,7 @@ resource "kubernetes_cron_job_v1" "share_link_geo" {
             restart_policy = "OnFailure"
             container {
               name              = "share-link-geo"
-              image             = "docker.io/library/python:3.12-alpine"
+              image             = "docker.io/library/python:3.14-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/share_link_geo.py"]
               env {
