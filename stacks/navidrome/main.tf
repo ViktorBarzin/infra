@@ -155,7 +155,7 @@ resource "kubernetes_deployment" "navidrome" {
       spec {
         container {
           name  = "navidrome"
-          image = "deluan/navidrome:0.64.2"
+          image = "deluan/navidrome:0.61.2"
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -190,7 +190,7 @@ resource "kubernetes_deployment" "navidrome" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1Gi" # 0.64.2 OOMKilled at 384Mi on its first start (pipeline 2349)
+              memory = "384Mi"
             }
           }
         }
