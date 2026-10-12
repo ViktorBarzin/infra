@@ -158,12 +158,13 @@ resource "kubectl_manifest" "sync_ghcr_credentials" {
             ]
           }
           generate = {
-            generateExisting = true
-            apiVersion       = "v1"
-            kind             = "Secret"
-            name             = "ghcr-credentials"
-            namespace        = "{{request.object.metadata.name}}"
-            synchronize      = true
+            generateExisting               = true
+            apiVersion                     = "v1"
+            kind                           = "Secret"
+            name                           = "ghcr-credentials"
+            namespace                      = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
             clone = {
               namespace = "kyverno"
               name      = "ghcr-credentials"
