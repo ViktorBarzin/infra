@@ -51,10 +51,16 @@ logs into each mailbox and picks out the documents itself. Nothing forwards.
 
 ```mermaid
 flowchart TD
-  EG["emil.barzin@gmail.com<br/>All Mail"] -->|"account 4, rule 18"| P
-  VG["vbarzin@gmail.com<br/>All Mail"] -->|"account 5, rule 19"| P
-  ME["me@viktorbarzin.me<br/>INBOX"] -->|"account 1, rule 20"| P
-  AG["ancaelena98@gmail.com<br/>All Mail"] -->|"account 37, rule 51"| P
+  subgraph GM["Gmail All Mail, imap.gmail.com"]
+    direction TB
+    EG["emil.barzin@gmail.com<br/>account 4, rule 18"]
+    VG["vbarzin@gmail.com<br/>account 5, rule 19"]
+    AG["ancaelena98@gmail.com<br/>account 37, rule 51"]
+    EG ~~~ VG ~~~ AG
+  end
+  ME["me@viktorbarzin.me INBOX<br/>account 1, rule 20"]
+  GM --> P
+  ME --> P
   P["Paperless mail task, every 10 min<br/>PDF + Office only<br/>labels source mail 'paperless'"] --> C["Consume + OCR<br/>owner from the rule"]
   C --> AI["paperless-ai (local model)<br/>daily RAG refresh"]
 ```
