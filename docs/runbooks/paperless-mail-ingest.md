@@ -16,10 +16,11 @@ Two paths feed Paperless from email:
 | 18 `auto: Emo (Gmail All Mail)` | 4, `emil.barzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | emo (id 7) |
 | 19 `auto: Viktor (Gmail All Mail)` | 5, `vbarzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | root (id 3) |
 | 20 `auto: Viktor (me@ INBOX)` | 1, `me@viktorbarzin.me` | `INBOX` | root (id 3) |
+| 51 `auto: Anca (Gmail All Mail)` | 37, `ancaelena98@gmail.com` (imap.gmail.com) | `[Gmail]/Toate mesajele` | anca (id 4) |
 
-Planned (2026-10-12, ADR-0029): Anca's `ancaelena98@gmail.com` `[Gmail]/All Mail`,
-owner anca (id 4), same rule shape, once she has created an app password. Its
-source will be Vault `secret/paperless-ngx` field `anca_gmail_app_password`.
+Anca's Gmail is set to Romanian, so its All Mail folder has a localized name.
+For any new Gmail account, find the folder carrying the `\All` flag in the IMAP
+`LIST` output rather than assuming `[Gmail]/All Mail`.
 
 Shared settings: `attachment_type=2` (inline parts included),
 `filter_attachment_filename_include=*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`,
@@ -30,7 +31,8 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
 
 - **Credentials:** the Gmail app passwords live in the Paperless DB. Their
   sources are Vault `secret/recruiter-responder` `gmail_imap_pass` (Viktor's,
-  shared with recruiter-responder) and Emo's Vaultwarden item
+  shared with recruiter-responder), Vault `secret/paperless-ngx`
+  `anca_gmail_app_password` (Anca's), and Emo's Vaultwarden item
   `accounts.google.com (emil.barzin@gmail.com)`, custom field
   `claude app password` (read as emo: `sudo -u emo -i homelab vault get
   59a3cb8b-0667-4e47-847e-f29a5e323813 --all`). If an app password is revoked,
@@ -200,7 +202,7 @@ The map lives in **two places by design** — keep them in sync:
 
 ## Rollback
 
-Mailbox poll: delete rules 18-20 and mail accounts 4 and 5. Documents already
+Mailbox poll: delete rules 18-20 and 51 and mail accounts 4, 5 and 37. Documents already
 consumed stay. The original `email-backfill` tag was removed on 2026-10-12;
 select the historical batch as `email-ingest` documents added on 2026-10-09
 and 2026-10-10.
