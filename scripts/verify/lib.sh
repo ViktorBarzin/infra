@@ -474,7 +474,7 @@ floor_scope() {
 # converged within VERIFY_ROLLOUT_TIMEOUT (default 600 s), and no pod there is
 # in CrashLoopBackOff or an image-pull error. Namespaces holding no
 # Deployment, StatefulSet, DaemonSet or CronJob fail the check, since the floor
-# then verified nothing; a stack that is meant to be empty (keel, parked) sets
+# then verified nothing; a stack that is meant to be empty sets
 # VERIFY_EMPTY_OK=1 in its verify.sh.
 floor_rollout() {
   local timeout=${VERIFY_ROLLOUT_TIMEOUT:-600} deadline pending line ns obj out
