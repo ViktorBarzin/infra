@@ -19,9 +19,8 @@ resource "kubernetes_namespace" "learning" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.aux
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      tier              = local.tiers.aux
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {
@@ -160,13 +159,10 @@ resource "kubernetes_deployment" "learning" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,    # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI set-image wins
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_persistent_volume_claim.data]

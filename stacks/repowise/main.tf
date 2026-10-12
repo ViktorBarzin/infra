@@ -14,10 +14,13 @@ variable "tls_secret_name" {
 locals {
   app = "repowise"
 
-  # Pinned upstream release. Keel (policy=patch) rolls 0.x.Y forward on its
-  # own; a minor bump is a deliberate edit here. Upstream ships roughly every
-  # other day at v0.x, and its API surface should not change under us.
-  image = "ghcr.io/viktorbarzin/repowise:0.42.0"
+  # Upstream release, built into our private ghcr by
+  # .github/workflows/build-repowise.yml (daily, from PyPI). That workflow's
+  # last step runs .woodpecker/first-party-deploy.yml, which sets every
+  # container to <version>@<digest> (CI_SETS_IMAGE below), so this value is
+  # used only on a recreate. 0.55.0 is the newest build on 2026-10-12; the
+  # digest the parked Deployment last ran has been pruned from ghcr.
+  image = "ghcr.io/viktorbarzin/repowise:0.55.0"
 
   # Do NOT add image_pull_policy here. The cluster-wide Kyverno policy
   # `set-image-pull-policy` forces IfNotPresent on any pinned tag (and Always
@@ -27,7 +30,7 @@ locals {
   # Dockerfile) is not picked up by a restart, because the tag is already
   # cached on the node. Move the pod onto the rebuilt content with
   # `kubectl set image ... =<repo>@sha256:<digest>` — image is the
-  # Keel-managed field and is ignore_changes here, so that is the sanctioned
+  # CI-managed field and is ignore_changes here, so that is the sanctioned
   # nudge. A genuine upstream version bump gets a new tag and needs none of this.
   #
   # The uid/gid the image is patched to use (see build-repowise.yml). The
@@ -43,8 +46,7 @@ resource "kubernetes_namespace" "repowise" {
   metadata {
     name = local.app
     labels = {
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
       # Opt out of BOTH Kyverno tier-4-aux governance objects. The api container
       # accumulates a per-repo SQLAlchemy engine, FTS index and vector store for
       # all 42 repos and holds them for the life of the process, which lands it
@@ -224,12 +226,6 @@ resource "kubernetes_deployment" "repowise" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      # Pinned-version image: take patch releases automatically, hold minors
-      # for a deliberate bump. NEVER policy=force here — it would roll to
-      # whatever tag a poll happens to pick, regardless of semver order.
-      "keel.sh/policy"       = "patch"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 6h"
     }
   }
   spec {
@@ -278,7 +274,6 @@ resource "kubernetes_deployment" "repowise" {
       }
       spec {
         # Private ghcr package (AGPL: we run it, we do not convey it).
-        # Keel also needs this to poll the tag list.
         image_pull_secrets {
           name = "ghcr-credentials"
         }
@@ -691,19 +686,15 @@ resource "kubernetes_deployment" "repowise" {
 
   lifecycle {
     ignore_changes = [
-      # KEEL_IGNORE_IMAGE: Keel owns the running tag (policy=patch).
+      # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      # (build-repowise.yml sets cross-repo, api, web and sync together).
+      spec[0].template[0].spec[0].init_container[0].image,
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].spec[0].container[2].image,
-      spec[0].template[0].spec[0].container[3].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
