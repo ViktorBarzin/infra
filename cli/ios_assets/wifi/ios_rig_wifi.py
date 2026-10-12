@@ -13,8 +13,6 @@ Mac's host id, because the phone stores the host under the id of the machine
 that paired it.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -50,7 +48,7 @@ class Config:
     scan_cooldown: float
 
     @classmethod
-    def from_env(cls) -> Config:
+    def from_env(cls) -> "Config":
         env = os.environ.get
         return cls(
             udid=env("IOS_RIG_UDID", "00008110-001614D03442801E"),
@@ -96,6 +94,23 @@ def summarise_battery(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         "external_power": bool(raw.get("ExternalConnected")),
         "fully_charged": bool(raw.get("FullyCharged")),
     }
+
+
+SAFARI_SETTINGS_HINT = (
+    "Safari automation is switched off on the phone: Settings > Apps > Safari > Advanced, "
+    "turn on Web Inspector and Remote Automation"
+)
+
+
+def launch_failure_reason(bundle_id: str, message: str) -> str:
+    """A refused launch is almost always a lapsed free-team signature."""
+    if "failed to launch process" in message.lower():
+        return (
+            f"iOS refused to launch {bundle_id}: if it is a sideloaded app, its free-team signature has "
+            "most likely expired (7 days); rebuild it with `homelab ios install <dir>`. Otherwise check "
+            "the bundle id with `homelab ios apps`."
+        )
+    return message
 
 
 def wda_failure_reason(message: str) -> str:
@@ -295,7 +310,12 @@ class Rig:
 
         async def op(rsd: Any) -> int:
             async with DvtProvider(rsd) as dvt, ProcessControl(dvt) as pc:
-                return await pc.launch(bundle_id, arguments=args)
+                try:
+                    return await pc.launch(bundle_id, arguments=args)
+                except Exception as e:
+                    if isinstance(e, (ConnectionError, OSError)):
+                        raise
+                    raise RuntimeError(launch_failure_reason(bundle_id, str(e))) from e
 
         return await self.call(op)
 
@@ -325,14 +345,21 @@ class Rig:
         """Open url in real Safari through Web Inspector automation. Needs
         Settings > Apps > Safari > Advanced > Web Inspector and Remote
         Automation on the phone; no signing is involved."""
+        from pymobiledevice3.exceptions import RemoteAutomationNotEnabledError, WebInspectorNotEnabledError
         from pymobiledevice3.services.web_protocol.driver import WebDriver
         from pymobiledevice3.services.webinspector import SAFARI, WebinspectorService
 
         async def op(rsd: Any) -> dict[str, Any]:
             inspector = WebinspectorService(lockdown=rsd)
-            await inspector.connect()
             try:
-                session = await inspector.automation_session(await inspector.open_app(SAFARI))
+                await inspector.connect()
+            except (WebInspectorNotEnabledError, RemoteAutomationNotEnabledError) as e:
+                raise RuntimeError(SAFARI_SETTINGS_HINT) from e
+            try:
+                try:
+                    session = await inspector.automation_session(await inspector.open_app(SAFARI))
+                except (WebInspectorNotEnabledError, RemoteAutomationNotEnabledError) as e:
+                    raise RuntimeError(SAFARI_SETTINGS_HINT) from e
                 driver = WebDriver(session)
                 await driver.start_session()
                 try:
