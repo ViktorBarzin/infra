@@ -129,9 +129,12 @@ sync monitor to be pending, not green, during a rebuild.
 apply the stack. Traefik reads the list from the Middleware CR, so a single
 holder can be dropped without touching the others.
 
-**Bump the repowise version** — edit `local.image` in `stacks/repowise/main.tf`.
-The daily workflow will already have built the tag; if not, run
-`build-repowise.yml` with a `version` input.
+**Bump the repowise version** — nothing to do for a new upstream release:
+`build-repowise.yml` builds it the next morning and its last step runs
+`.woodpecker/first-party-deploy.yml`, which sets the Deployment to
+`<version>@<digest>`. To move to a specific version, run `build-repowise.yml`
+with a `version` input (and `force` to rebuild a tag that exists). The image in
+`stacks/repowise/main.tf` is `CI_SETS_IMAGE`, used only on a recreate.
 
 ## Credentials
 
