@@ -5,7 +5,7 @@ The devvm's disk is a slice of the Proxmox host's one spinning drive, `sdc`, whi
 - `devvm-io-guard`, a root daemon that watches IO pressure and throttles, then stops, read-only scans while the disk is saturated.
 - `scan-guard.py`, a Claude Code PreToolUse hook that blocks the known whole-disk and whole-transcript scan shapes before they run.
 
-Both were added on 2026-10-11. The guard ships in log-only mode; enforcement is planned for 2026-10-14 once three days of its decisions have been reviewed.
+Both were added on 2026-10-11. The guard logged without acting until 2026-10-12, when it was switched to enforcing after about 5 hours of log-only data instead of the three days first planned. Setting `devvm_io_guard_dry_run: 1` in `playbooks/devvm.yml` puts it back in log-only mode.
 
 ## Background
 
@@ -112,6 +112,6 @@ Tests: `python3 scripts/workstation/claude-hooks/test_scan_guard.py`.
 
 ## Open questions
 
-- The thresholds (0.5 trigger, 100 riops, 30 s before a kill) come from one day of data. The three days of `would-*` lines are there to check them before enforcement.
+- The thresholds (0.5 trigger, 100 riops, 30 s before a kill) come from one day of data. The log-only hours had 5 would-clamps and no would-kills; most triggering readings sat between 0.50 and 0.56 while etcd fsync p99 stayed under 1 s, so the trigger may turn out to be lower than it needs to be. The `clamp` and `kill` lines from the first enforcing days are the data to check it against.
 - 4 of the 29 etcd stalls on 2026-10-11 had no matching devvm pressure. Those came from elsewhere on the host, and this guard does not address them.
 - Python loops and builds that read heavily are clamped but never stopped. If the log shows them as the main source of `no-victim` decisions, the clamp level is the setting to revisit.
