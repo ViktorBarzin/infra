@@ -159,10 +159,9 @@ resource "kubernetes_deployment" "authfix" {
           name = "authfix"
           # This pod answers the 400 on the forward-auth callback for the whole
           # estate. Renovate proposes bumps of this tag through the CI rails.
-          # A version pin is deferred: the 2 pods run different 3.13-alpine
-          # digests and neither matches a current version tag, so a pin
-          # restarts both.
-          image   = "python:3.13-alpine"
+          # Pinned patch@digest (2026-10-12); the floating 3.13-alpine tag had
+          # left the 2 pods on different builds.
+          image   = "python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a"
           command = ["python3", "/app/authfix.py"]
           port { container_port = 8080 }
           volume_mount {
