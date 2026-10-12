@@ -650,12 +650,14 @@ resource "kubernetes_deployment" "mailserver" {
           }
 
           resources {
+            # 16.0.1 (Debian 13, Dovecot 2.4) was OOMKilled three times at a
+            # 512Mi limit during startup on 2026-10-12; 15.x peaked at 378Mi.
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "768Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1536Mi"
             }
           }
 
