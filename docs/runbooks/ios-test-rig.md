@@ -37,6 +37,14 @@ flowchart TD
 | Taps, while WDA's 7-day signature is valid | `homelab ios shot out.png --tap X,Y` |
 | List apps, battery and charger state | `homelab ios apps`, `homelab ios doctor` |
 
+`ios shot --url` opens the page through WebDriverAgent when WDA is running,
+and through Safari's Web Inspector automation otherwise. `ios safari` always
+uses Web Inspector automation, because that is what can run JavaScript and
+read the title. Starting a Web Inspector automation session ends WDA's XCTest
+session (measured 2026-10-12: WDA survived screenshots, launches and app
+listing, and died after one `ios safari`), and the service restarts WDA about
+30 seconds later.
+
 Still needs the Mac: building an Xcode project (`homelab ios install <dir>`)
 and re-signing WebDriverAgent. Once WDA's signature lapses, taps stop until the
 Mac re-signs it; everything else in the table keeps working.

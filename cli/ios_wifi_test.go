@@ -144,3 +144,31 @@ func TestIosRestorePairRecords(t *testing.T) {
 		t.Errorf("decoded %q, want %q", b, "remote")
 	}
 }
+
+// Safari's Remote Automation session ends any running XCTest session, so with
+// WDA up `shot --url` must open the page through WDA instead (measured
+// 2026-10-12: WDA survived screenshot, launch and apps, and died after one
+// /safari call).
+func TestIosWDAOpenURLNamesSafari(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/session" && r.Method == http.MethodPost:
+			json.NewEncoder(w).Encode(map[string]interface{}{"sessionId": "S1", "value": map[string]interface{}{"sessionId": "S1"}})
+		case r.URL.Path == "/session/S1/url":
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]interface{}{"value": nil})
+		case r.URL.Path == "/wda/activeAppInfo":
+			json.NewEncoder(w).Encode(map[string]interface{}{"value": map[string]interface{}{"bundleId": "com.apple.mobilesafari"}})
+		default:
+			json.NewEncoder(w).Encode(map[string]interface{}{"value": nil})
+		}
+	}))
+	defer srv.Close()
+	if err := iosWDAOpenURL(srv.URL, "https://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["url"] != "https://example.com" || gotBody["bundleId"] != "com.apple.mobilesafari" {
+		t.Errorf("WDA got %v; the phone's default browser is not Safari, so bundleId must be explicit", gotBody)
+	}
+}

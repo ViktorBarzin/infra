@@ -51,8 +51,8 @@ def test_summarise_battery_handles_no_data():
 @pytest.mark.parametrize(
     "message,needle",
     [
-        ("Failed to launch process with bundle identifier 'me.viktorbarzin.wda.xctrunner'.", "signature has most likely expired"),
-        ("0xe8008011 This provisioning profile has expired", "signature has most likely expired"),
+        ("Failed to launch process with bundle identifier 'me.viktorbarzin.wda.xctrunner'.", "may have expired"),
+        ("0xe8008011 This provisioning profile has expired", "signature expired"),
         ("The application could not be launched because the Developer App Certificate is not trusted", "Trust"),
         ("No such service: com.apple.dt.testmanagerd.remote", "disk image"),
         ("something new", "something new"),

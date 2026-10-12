@@ -148,12 +148,19 @@ func iosWifiShot(st *iosWifiStatus, out, url, tap, bundle string) error {
 		time.Sleep(2 * time.Second) // launch returns at exec, not at first frame
 	}
 	if url != "" {
-		r, err := iosWifiPost(base, "/safari", map[string]interface{}{"url": url})
-		if err != nil {
-			return fmt.Errorf("Safari over Wi-Fi: %w. If it says WebInspectorNotEnabled or Remote automation, "+
-				"turn on Settings > Apps > Safari > Advanced > Web Inspector and Remote Automation on the phone", err)
+		// Safari's Remote Automation ends WDA's XCTest session, so with WDA up
+		// the page is opened through WDA and taps keep working afterwards.
+		if st.WDA.Ready {
+			if err := iosWDAOpenURL(st.WDA.URL, url); err != nil {
+				return err
+			}
+		} else {
+			r, err := iosWifiPost(base, "/safari", map[string]interface{}{"url": url})
+			if err != nil {
+				return fmt.Errorf("Safari over Wi-Fi: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "safari: %v\n", r["title"])
 		}
-		fmt.Fprintf(os.Stderr, "safari: %v\n", r["title"])
 	}
 	if tap != "" {
 		x, y, err := parseXY(tap)
@@ -169,12 +176,12 @@ func iosWifiShot(st *iosWifiStatus, out, url, tap, bundle string) error {
 	return iosWifiScreenshot(base, out)
 }
 
-// iosWDATap speaks W3C WebDriver straight to WebDriverAgent on the phone. No
-// Appium: WDA implements sessions and pointer actions itself.
-func iosWDATap(wda string, x, y int) error {
+// iosWDASession opens a WebDriverAgent session and returns its id and a
+// function that closes it.
+func iosWDASession(wda string) (string, func(), error) {
 	resp, err := postJSON(wda+"/session", map[string]interface{}{"capabilities": map[string]interface{}{}}, time.Minute)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	sid, _ := resp["sessionId"].(string)
 	if sid == "" {
@@ -183,9 +190,47 @@ func iosWDATap(wda string, x, y int) error {
 		}
 	}
 	if sid == "" {
-		return fmt.Errorf("WebDriverAgent returned no session id")
+		return "", nil, fmt.Errorf("WebDriverAgent returned no session id")
 	}
-	defer doJSON(http.MethodDelete, wda+"/session/"+sid, nil, 30*time.Second)
+	return sid, func() { doJSON(http.MethodDelete, wda+"/session/"+sid, nil, 30*time.Second) }, nil
+}
+
+// iosWDAOpenURL opens url in Safari through WebDriverAgent and waits for
+// Safari to be frontmost. The bundle id is explicit because the phone's
+// default browser is Chrome.
+func iosWDAOpenURL(wda, url string) error {
+	sid, done, err := iosWDASession(wda)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if _, err := postJSON(wda+"/session/"+sid+"/url",
+		map[string]interface{}{"url": url, "bundleId": "com.apple.mobilesafari"}, 2*time.Minute); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, err := getJSON(wda+"/wda/activeAppInfo", 20*time.Second); err == nil {
+			if v, ok := r["value"].(map[string]interface{}); ok && v["bundleId"] == "com.apple.mobilesafari" {
+				// Frontmost is not the same as finished animating or loading.
+				time.Sleep(2 * time.Second)
+				fmt.Fprintf(os.Stderr, "safari: opened %s via WebDriverAgent\n", url)
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("Safari never came to the front after opening %s", url)
+}
+
+// iosWDATap speaks W3C WebDriver straight to WebDriverAgent on the phone. No
+// Appium: WDA implements sessions and pointer actions itself.
+func iosWDATap(wda string, x, y int) error {
+	sid, done, err := iosWDASession(wda)
+	if err != nil {
+		return err
+	}
+	defer done()
 	_, err = postJSON(wda+"/session/"+sid+"/actions", map[string]interface{}{
 		"actions": []interface{}{map[string]interface{}{
 			"type": "pointer", "id": "finger1",

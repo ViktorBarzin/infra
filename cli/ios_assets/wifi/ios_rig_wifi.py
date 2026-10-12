@@ -129,10 +129,15 @@ def launch_failure_reason(bundle_id: str, message: str) -> str:
 def wda_failure_reason(message: str) -> str:
     """Turn an XCUITest launch error into what a person can act on."""
     low = message.lower()
-    if "failed to launch process" in low or "provisioning profile has expired" in low:
+    if "provisioning profile has expired" in low:
         return (
-            "WDA would not launch: its free-team signature has most likely expired "
-            "(7 days). Re-sign it: plug the phone into the Mac and run the wda-resign job."
+            "WDA would not launch: its free-team signature expired (7 days). "
+            "Re-sign it: plug the phone into the Mac and run the wda-resign job."
+        )
+    if "failed to launch process" in low:
+        return (
+            "iOS refused to launch WDA: its 7-day signature may have expired (doctor's last-resign shows "
+            "when it was signed), or the launch raced another session that was ending. The service retries."
         )
     if "not trusted" in low:
         return "WDA's developer certificate is not trusted: Settings > General > VPN & Device Management > Trust."
@@ -357,7 +362,9 @@ class Rig:
     async def safari(self, url: str, script: str | None, settle: float) -> dict[str, Any]:
         """Open url in real Safari through Web Inspector automation. Needs
         Settings > Apps > Safari > Advanced > Web Inspector and Remote
-        Automation on the phone; no signing is involved."""
+        Automation on the phone; no signing is involved. Starting an
+        automation session ends WDA's XCTest session (measured 2026-10-12);
+        keep_wda restarts WDA about 30 seconds later."""
         from pymobiledevice3.exceptions import RemoteAutomationNotEnabledError, WebInspectorNotEnabledError
         from pymobiledevice3.services.web_protocol.driver import WebDriver
         from pymobiledevice3.services.webinspector import SAFARI, WebinspectorService
