@@ -333,8 +333,11 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           effect   = "NoSchedule"
         }
         container {
-          name              = "gate"
-          image             = "bitnami/kubectl:latest"
+          name = "gate"
+          # bitnami/kubectl publishes only :latest on Docker Hub (versioned
+          # tags moved to bitnamilegacy in 2025), so this is latest@digest:
+          # the digest makes the pin immutable and Renovate bumps it.
+          image             = "bitnami/kubectl:latest@sha256:999d5eb28f404b45f15117f2a110ff23c6164f76edac261d75d783b6e88252b7"
           image_pull_policy = "Always"
           command = [
             "/bin/bash",
@@ -456,8 +459,7 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # FLOATING_TAG_DEFERRED: bitnami/kubectl:latest has no matching version tag; a tag@digest pin restarts the gate pods
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
