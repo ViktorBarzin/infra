@@ -32,24 +32,25 @@ resource "kubernetes_namespace" "calico_system" {
       metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"],
       metadata[0].labels["pod-security.kubernetes.io/enforce"],
       metadata[0].labels["pod-security.kubernetes.io/enforce-version"],
+      # tigera-operator v1.44 (Calico 3.33) labels the namespace it manages.
+      metadata[0].labels["app.kubernetes.io/component"],
+      metadata[0].labels["app.kubernetes.io/instance"],
+      metadata[0].labels["app.kubernetes.io/managed-by"],
+      metadata[0].labels["app.kubernetes.io/name"],
+      metadata[0].labels["app.kubernetes.io/part-of"],
+      metadata[0].labels["k8s-app"],
     ]
   }
 }
 
-resource "kubernetes_namespace" "calico_apiserver" {
-  metadata {
-    name = "calico-apiserver"
-    labels = {
-      name = "calico-apiserver"
-    }
-  }
+# calico-apiserver namespace: no longer declared. From tigera-operator v1.42
+# (Calico 3.32) the API server runs in calico-system and the operator deletes
+# the calico-apiserver namespace, so declaring it made every apply recreate an
+# empty namespace that the operator then removed again.
+removed {
+  from = kubernetes_namespace.calico_apiserver
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1 + PSA labels applied by tigera-operator (see calico_system).
-    ignore_changes = [
-      metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"],
-      metadata[0].labels["pod-security.kubernetes.io/enforce"],
-      metadata[0].labels["pod-security.kubernetes.io/enforce-version"],
-    ]
+    destroy = false
   }
 }
 
