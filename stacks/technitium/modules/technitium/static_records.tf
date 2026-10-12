@@ -64,6 +64,10 @@ locals {
   # projector-london.lan for its own clients; this record is what lets Sofia,
   # the cluster and the devvm reach it by name over the tunnel.
   #
+  # iphone-london: the iOS test rig phone, on the Flint's GUEST network and
+  # pinned to .205 by a static lease (scripts/london-flint/provision.sh). The
+  # devvm drives it over Wi-Fi by this name (docs/runbooks/ios-test-rig.md).
+  #
   # health-test: the LAN-only, auth-free test host for the health app
   # (health ADR-0008). It points at the internal Traefik LB, the same address
   # the ingress sync writes for ingress.viktorbarzin.lan, because it is an
@@ -80,6 +84,7 @@ locals {
   static_lan_a_records = {
     "mbp-london"       = "192.168.8.168"
     "projector-london" = "192.168.9.100"
+    "iphone-london"    = "192.168.9.205"
     "health-test"      = "10.0.20.203"
     "mladost3"         = "10.3.2.7"
     "mladost3-openwrt" = "192.168.3.1"
