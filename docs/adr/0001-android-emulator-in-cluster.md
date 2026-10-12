@@ -72,3 +72,32 @@ node1. Measured cost under continuous scrolling: about 8.3 cores against 6.8
 in GPU mode. Real GPU rendering remains possible with an X server on the
 NVIDIA driver in place of Xvfb; that is a larger change and is not planned.
 
+## Amendment, 2026-10-12: rendering on the T4, headless
+
+The T4 had room again (about 4 GB free with qwen3-8b loaded, 9.9 GB without),
+so we revisited GPU rendering without an X server. The emulator's headless
+binary renders GLES through EGL when `ANDROID_EGL_ON_EGL=1` is set, and the
+NVIDIA driver serves EGL without a display. Two details decide whether it
+reaches the GPU: the `emulator` launcher puts its bundled SwiftShader libEGL
+first on `LD_LIBRARY_PATH`, so the entrypoint starts
+`qemu-system-x86_64-headless` directly with the system (glvnd) libraries
+first; and with `DISPLAY` set, glvnd picks Mesa, so the emulator starts with
+`DISPLAY` cleared and the NVIDIA EGL vendor named outright.
+
+Result, measured 2026-10-12: the guest reports `OpenGL ES 3.2 NVIDIA
+580.178.04` on the Tesla T4, and 10 minutes of continuous Chrome scrolling
+ran with no crash or restart. GLES and Vulkan both go to the T4, so the
+mixed-driver setup suspected in the 2026-10-10 crashes is gone. The emulator
+process used 1.17 cores on a static screen and 2.35 while scrolling, against
+about 8.3 for CPU rendering. VRAM peaked at 693 MiB, so the pod declares an
+800 MiB seat.
+
+Headless means the emulator no longer draws a window into Xvfb. scrcpy
+mirrors the screen into Xvfb instead, so the noVNC URL stays the same, and
+it forwards clicks and keys as touches. Its encoding runs in software in the
+guest at about 2.5 cores, so it runs only while a noVNC viewer is connected.
+`EMULATOR_GPU=swiftshader` on the deployment restores CPU rendering.
+
+Open question: the 2026-10-10 crashes were never tied to a backtrace, so a
+longer soak in this mode is the real test of stability.
+

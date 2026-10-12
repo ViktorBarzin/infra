@@ -173,3 +173,10 @@ Vulkan to the T4 and was the mode that segfaulted; details in the ADR-0001
 amendment of the same date. Before this change the declared total on node1
 was 14,948 of 15,000 MiB.
 
+## Amendment, 2026-10-12
+
+android-emulator requests the GPU again, now rendering GLES and Vulkan on the
+T4 headless (ADR-0001 amendment of the same date). Its seat is 800 MiB, from
+a measured 693 MiB peak over 10 minutes of Chrome scrolling. The declared
+total on node1 is 13,950 of 15,000 MiB.
+
