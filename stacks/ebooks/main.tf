@@ -442,7 +442,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           # the seeding logic does not depend on the Calibre-Web version, so
           # reusing it avoids a second image to keep current.
           name    = "seed-smtp-password"
-          image   = "viktorbarzin/calibre-web-automated:latest"
+          image   = "crocodilestick/calibre-web-automated:v4.0.8"
           command = ["python3", "-c", file("${path.module}/files/seed-smtp-password.py")]
           env {
             name = "SMTP_PASSWORD"
@@ -475,7 +475,10 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           }
         }
         container {
-          image = "viktorbarzin/calibre-web-automated:latest"
+          # Upstream CWA. It bundles Calibre under /app/calibre, so the former
+          # viktorbarzin/calibre-web-automated rebuild (upstream plus a
+          # universal-calibre DOCKER_MODS step that installed nothing) is retired.
+          image = "crocodilestick/calibre-web-automated:v4.0.8"
           name  = "calibre-web-automated"
           env {
             name  = "PUID"
@@ -567,8 +570,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
