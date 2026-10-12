@@ -389,12 +389,13 @@
       enabled: false,
     },
     {
-      description: "HELD: Forgejo (11 -> 16 cannot be downgraded, and Forgejo hosts this repo, the bot and the webhook the rails use). All Forgejo updates wait for a supervised session.",
+      description: "HELD: Forgejo majors. Forgejo hosts this repo, the bot and the webhook the rails use, and its migrations are one-way, so a major gets a supervised run with an LVM snapshot first. Minors and patches go through the rails.",
       matchPackageNames: ["codeberg.org/forgejo/forgejo", "forgejo", "forgejo/forgejo"],
+      matchUpdateTypes: ["major"],
       enabled: false,
     },
     {
-      description: "HELD: Technitium 14 -> 15 major (home DNS). 14.x patch/minor still land.",
+      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run). 15.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
       matchUpdateTypes: ["major"],
