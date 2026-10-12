@@ -168,7 +168,10 @@ resource "helm_release" "woodpecker" {
   namespace  = kubernetes_namespace.woodpecker.metadata[0].name
   repository = "oci://ghcr.io/woodpecker-ci/helm"
   chart      = "woodpecker"
-  version    = "3.5.1"
+  # 3.5.1 -> 3.7.5 (server/agent v3.19.0) on 2026-10-12. Apply this stack from
+  # the main checkout, never from CI: the apply restarts the agent running the
+  # pipeline, which kills it and leaves the release in pending-upgrade.
+  version = "3.7.5"
 
   values = [
     templatefile("${path.module}/values.yaml", {
@@ -182,14 +185,17 @@ resource "helm_release" "woodpecker" {
     })
   ]
 
-  timeout         = 600
+  # 1200, not 600: longer than the server's 10-minute liveness budget for DB
+  # migrations (values.yaml), so a slow migration is not cut short by an
+  # atomic rollback to the old image against an already migrated database.
+  timeout         = 1200
   atomic          = true
   cleanup_on_fail = true
   depends_on      = [kubernetes_manifest.db_external_secret]
 }
 
-# Patch hostAliases onto the woodpecker-server StatefulSet — the chart 3.5.1
-# does NOT expose this field, so we have to do it after the helm release.
+# Patch hostAliases onto the woodpecker-server StatefulSet — the chart (3.5.1,
+# still true in 3.7.5) does NOT expose this field, so we have to do it after the helm release.
 # Keeps the OAuth/forge-API path off the WAN gateway (forgejo.viktorbarzin.me
 # resolves to the public IP via DNS, which round-trips through Cloudflare
 # and routinely tripped 30s context-deadline timeouts when fetching pipeline

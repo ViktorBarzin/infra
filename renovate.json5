@@ -370,7 +370,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Woodpecker chart and images (the rails run on Woodpecker)",
+      description: "HELD: Woodpecker chart and images (the rails run on Woodpecker, and a CI apply restarts the agent running that same pipeline; upgrade by applying from a workstation before the push)",
       matchPackageNames: ["ghcr.io/woodpecker-ci/helm/woodpecker", "woodpeckerci/woodpecker-server", "woodpeckerci/woodpecker-agent", "docker.io/woodpeckerci/**"],
       enabled: false,
     },
