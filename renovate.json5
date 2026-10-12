@@ -33,10 +33,14 @@
     "tests/**",
     "stacks/keel/**", // retired in wave 5, stack kept parked at 0 pods
     "stacks/monitoring/modules/monitoring/prometheus_snmp_chart_values.yaml", // 57k lines, no images
-    // Shared module defaults (e.g. the anubis image_tag): a change under
-    // modules/ makes the pipeline re-apply every platform stack, so these pins
-    // stay manual for now (deferred, software-currency wave 4).
-    "modules/**",
+    // The registry VM's compose file: synced to the VM by
+    // .woodpecker/registry-config-sync.yml, not by Terragrunt, so the rails
+    // never apply or verify it, and the VM is the pull-through cache every
+    // node (and this Renovate image) pulls through. registry 2.8.3 is the last
+    // 2.x; 3.x is a supervised upgrade (docs/runbooks/registry-vm.md).
+    // The rest of modules/ is scanned: the anubis tag moved to its callers
+    // (2026-10-12), and any future pin there gets the weekly module rule below.
+    "modules/docker-registry/**",
     // CI images: a broken CI image would break the rails that revert it.
     ".woodpecker/**",
   ],
@@ -283,6 +287,11 @@
       allowedVersions: "!/^2\\.0\\.1$/",
     },
 
+    {
+      description: "Pins inside a shared module (modules/**) re-apply every stack that uses the module, and the rails verify each of those stacks (scripts/renovate-rails commit_stacks maps modules/ to its callers). Land them in a weekly window so a wide re-apply is not mixed into the normal backlog. Prefer pinning in the callers instead, as the anubis tag does.",
+      matchFileNames: ["modules/**"],
+      schedule: ["* 0-3 * * 2"],
+    },
     {
       description: "Renovate's own image (stacks/renovate) publishes several releases a day; take at most one bump a week so it does not use up the one-bump-per-run budget",
       matchPackageNames: ["docker.io/renovate/renovate", "renovate/renovate"],

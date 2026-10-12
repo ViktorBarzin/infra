@@ -554,7 +554,9 @@ resource "kubernetes_service" "realestate-crawler-api" {
 # Anubis fronts the UI ingress only; the /api ingress (`module "ingress-api"`)
 # stays direct so XHRs from the UI bypass the challenge.
 module "anubis" {
-  source           = "../../modules/kubernetes/anubis_instance"
+  source = "../../modules/kubernetes/anubis_instance"
+  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
+  image_tag        = "v1.25.0"
   name             = "wrongmove"
   namespace        = kubernetes_namespace.realestate-crawler.metadata[0].name
   target_url       = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
