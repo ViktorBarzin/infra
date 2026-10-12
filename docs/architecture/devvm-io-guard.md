@@ -39,9 +39,11 @@ Every 2 s it reads the `full` line of `/proc/pressure/io`: the share of time eve
 
 | Stage | Condition | Action |
 |---|---|---|
-| Clamp | `full avg10` > 0.5 for 20 s | Every user slice gets `io.max riops` = 100 divided by the number of slices that read in the last 10 s. A lone user is clamped too. When more slices start reading, the value drops (`clamp-adjust`); it does not rise again until release, so it doesn't swing each time the reader count changes. The per-slice value goes in `/run/devvm-io-guard/clamp` |
-| Kill | Clamped for 30 s and `full avg10` still > 0.5 | Stop the eligible process with the highest score. At most one decision every 20 s |
-| Release | `full avg60` < 0.2 for 60 s | Remove the clamp file and run `devvm-io-fairshare.service` once to restore its own caps |
+| Clamp | `full avg10` > 0.5 for 20 s, and the devvm's own disk completing at least 150 reads/s over the last 10 s | Every user slice gets `io.max riops` = 100 divided by the number of slices that read in the last 10 s. A lone user is clamped too. When more slices start reading, the value drops (`clamp-adjust`); it does not rise again until release, so it doesn't swing each time the reader count changes. The per-slice value goes in `/run/devvm-io-guard/clamp`. If the devvm is reading less than 150 reads/s, the pressure is coming from elsewhere on the host and the clamp is skipped, logged once per episode as `skip-clamp` |
+| Kill | Clamped for 30 s and `full avg10` still > 0.5 | Stop the eligible process with the highest score, if it read at least 20 MB, or its scope made at least 1,000 disk reads, in the last 10 s. At most one decision every 20 s |
+| Release | `full avg60` < 0.2 for 60 s (`reason=quiet`), or 5 minutes after the clamp started (`reason=max`) | Remove the clamp file and run `devvm-io-fairshare.service` once to restore its own caps. After a `max` release, a new clamp needs another 20 s of pressure with the devvm reading at least 150 reads/s |
+
+The 150 reads/s line comes from the first enforcing hours on 2026-10-12. The real scans ran with the devvm at 202 to 552 reads/s. During the host-driven pressure, which held a clamp on every user for 2 h 40 min and still saw etcd reach 8.2 s, the devvm read 77 to 137 reads/s.
 
 `devvm-io-fairshare.sh` reads the clamp file on every run and uses the lower of its own share and the clamp, including for a lone user. Without that, its 2-minute timer would lift the clamp.
 
@@ -63,7 +65,7 @@ SIGTERM first, then SIGKILL 2 s later: through `cgroup.kill` for a whole scope, 
 
 ### How it ranks
 
-Score = seconds of block-IO wait over the last 10 s, plus MB read over the last 10 s divided by 4. Bytes alone would miss the `du`/`find` shape: `du -s ~/code/infra` on a cold cache read 7 MB but made about 6,100 IOs over 38 s. The wait figure is field 42 of `/proc/<pid>/stat`, which needs `kernel.task_delayacct = 1` (`/etc/sysctl.d/60-devvm-delayacct.conf`). A score under 1.0 is not a victim, and the guard logs `no-victim` with the heaviest reader of any kind, which shows when the load is builds rather than scans.
+Score = seconds of block-IO wait over the last 10 s, plus MB read over the last 10 s divided by 4. Bytes alone would miss the `du`/`find` shape: `du -s ~/code/infra` on a cold cache read 7 MB but made about 6,100 IOs over 38 s. The wait figure is field 42 of `/proc/<pid>/stat`, which needs `kernel.task_delayacct = 1` (`/etc/sysctl.d/60-devvm-delayacct.conf`). A scanner also needs to have read at least 20 MB, or its cgroup to have made at least 1,000 disk reads (counted from the scope's `io.stat`), inside the same 10 s. Waiting alone does not qualify it: while other VMs keep the host disk busy, a small grep waits too, and on 2026-10-12 five repo greps that had read 0.0 to 2.3 MB each were stopped for that reason. The read count keeps the `du`/`find` shape eligible; the measured `du` above made about 160 reads/s, 1,600 in 10 s. The transcript grep stopped at 06:39 that day had read 29 MB. A score under 1.0 is not a victim either, and the guard logs `no-victim` with the heaviest reader of any kind, which shows when the load is builds rather than scans.
 
 ### What the agent sees
 
@@ -74,16 +76,16 @@ Before the signal, the guard appends a note to the command's output: for a Bash 
 Every decision is one journald line from `devvm-io-guard.service`, as `key=value` pairs. The lines do not contain the service name, so filter on Loki's `unit` label rather than with `|=`:
 
 ```
-action=would-kill dry_run=1 psi_full10=0.62 psi_full60=0.55 user=wizard pid=123 target=scope:run-u5001.scope read_mb=812.3 wait_s=7.9 window_s=10.0 cmd="ugrep -r foo /home"
+action=kill dry_run=0 psi_full10=0.62 psi_full60=0.55 user=wizard pid=123 target=scope:run-u5001.scope read_mb=812.3 rios=4210 wait_s=7.9 window_s=10.0 cmd="ugrep -r foo /home"
 ```
 
-`action` is one of `start`, `clamp`/`would-clamp`, `clamp-adjust`, `kill`/`would-kill`, `no-victim`, `release`/`would-release`, `stale-clamp-cleared` and `error`. Across the cluster:
+`action` is one of `start`, `clamp`/`would-clamp`, `skip-clamp`, `clamp-adjust`, `kill`/`would-kill`, `no-victim`, `release`/`would-release` (with `reason=quiet` or `reason=max`), `stale-clamp-cleared` and `error`. Across the cluster:
 
 ```sh
 homelab logs query '{job="devvm-journal", unit="devvm-io-guard.service"}' --since 3d
 ```
 
-Metrics go to `/var/lib/node_exporter/textfile/devvm_io_guard.prom`: `devvm_io_guard_clamp`, `devvm_io_guard_clamp_riops_per_slice`, `devvm_io_guard_dry_run`, `devvm_io_guard_decisions_total{action}`, `devvm_io_guard_pressure_full_avg10` and `devvm_io_guard_last_write_timestamp_seconds`.
+Metrics go to `/var/lib/node_exporter/textfile/devvm_io_guard.prom`: `devvm_io_guard_clamp`, `devvm_io_guard_clamp_riops_per_slice`, `devvm_io_guard_dry_run`, `devvm_io_guard_decisions_total{action}`, `devvm_io_guard_pressure_full_avg10`, `devvm_io_guard_own_read_iops` and `devvm_io_guard_last_write_timestamp_seconds`.
 
 ### Failure behaviour
 
@@ -102,16 +104,18 @@ Source: `scripts/workstation/claude-hooks/scan-guard.py`. Installed into every u
 
 It blocks, with exit code 2 and a message naming the alternative:
 
-- `grep`, `rg`, `ugrep`, `jq`, `cat`, `find` or `xargs grep` across `~/.claude/projects` (or `/home/*/.claude/projects`), whether by glob, directory, recursion, or a `cd` into it first. One named file is allowed, because some skills read their own transcript. `find` with `-maxdepth 2` or less and no `-exec` is allowed.
+- `grep`, `rg`, `ugrep`, `jq`, `cat`, `find` or `xargs grep` across `~/.claude/projects` (or `/home/*/.claude/projects`), whether by glob, directory, recursion, or a `cd` into it first. For the readers this includes `~/.claude` itself, which contains the projects directory; `find` there only lists names and follows the `-maxdepth` rule. One named file is allowed, because some skills read their own transcript. `find` with `-maxdepth 2` or less and no `-exec` is allowed.
 - `du` or `find` rooted at `/`, `~`, `$HOME` or `/home`. `find` with `-maxdepth 2` or less is allowed. `du` is not, because `--max-depth` only limits what it prints.
 - Recursive `grep`/`rg`, or `ls -R`, rooted at the same places.
 
-It works on shell tokens, so the same words inside a quoted pattern, a commit message or a heredoc body do not trigger it. There is no override: the guard daemon already leaves scans alone while the disk is quiet, and a transcript question has a cheaper tool (`homelab claude-usage`). Replayed against 2,854 real Bash commands from 14 recent sessions, it blocked 14 (0.5%): 8 `find /` or `find ~` searches for a screenshot, 5 walks or greps of `~/.claude/projects`, and 1 `find` of the home directory at depth 4.
+It follows a path through shell variables. A variable set from tmux's `@claude_transcript`, or to a path under `~/.claude/projects`, stands for that file; `dirname` of it stands for the whole project directory; and a `for` loop over a glob there stands for every file it matches. On 2026-10-12 a session ran `D=$(dirname "$T"); grep -rl ... "$D"` with `T` from `@claude_transcript`, which the first version did not see; `devvm-io-guard` stopped it after 29 MB.
+
+It works on shell tokens, so the same words inside a quoted pattern, a commit message or a heredoc body do not trigger it. There is no override: the guard daemon already leaves scans alone while the disk is quiet, and a transcript question has a cheaper tool (`homelab claude-usage`). Replayed against 2,854 real Bash commands from 14 recent sessions, it blocked 14 (0.5%): 8 `find /` or `find ~` searches for a screenshot, 5 walks or greps of `~/.claude/projects`, and 1 `find` of the home directory at depth 4. With the variable and `~/.claude` rules, a replay of 3,431 commands from the same sessions blocks the same 14.
 
 Tests: `python3 scripts/workstation/claude-hooks/test_scan_guard.py`.
 
 ## Open questions
 
-- The thresholds (0.5 trigger, 100 riops, 30 s before a kill) come from one day of data. The log-only hours had 5 would-clamps and no would-kills; most triggering readings sat between 0.50 and 0.56 while etcd fsync p99 stayed under 1 s, so the trigger may turn out to be lower than it needs to be. The `clamp` and `kill` lines from the first enforcing days are the data to check it against.
+- The thresholds (0.5 trigger, 100 riops, 30 s before a kill, 150 reads/s of the devvm's own, 20 MB or 1,000 reads for a kill) come from about a day and a half of data. The `skip-clamp`, `clamp` and `kill` lines from the next days are the data to check them against.
 - 4 of the 29 etcd stalls on 2026-10-11 had no matching devvm pressure. Those came from elsewhere on the host, and this guard does not address them.
 - Python loops and builds that read heavily are clamped but never stopped. If the log shows them as the main source of `no-victim` decisions, the clamp level is the setting to revisit.

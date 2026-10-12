@@ -18,18 +18,27 @@ share of time every runnable task here was stalled on IO; over 14 h on
 2026-10-11, full above 50% matched 25 of 29 etcd stalls over 1 s, with 4 false
 alarms and 4 misses (the misses were other VMs, which this cannot fix).
 
-  1. Clamp. Pressure above TRIGGER for TRIGGER_SECS: every user slice gets an
+  1. Clamp. Pressure above TRIGGER for TRIGGER_SECS, while the devvm itself
+     completes at least OWN_RIOPS reads a second: every user slice gets an
      io.max read ceiling of CLAMP_RIOPS split evenly between the slices that
      read in the last RANK_WINDOW seconds. A lone user is clamped too. More
      readers tighten the ceiling; fewer never loosen it before release. The
      per-slice value goes in /run/devvm-io-guard/clamp so the fairshare timer
      applies the same ceiling instead of undoing it two minutes later.
+     Pressure here also rises when other VMs keep the host disk busy; then
+     the devvm reads little, the clamp cannot help, and it is skipped
+     (logged once as skip-clamp). A clamp lasts at most CLAMP_MAX_SECS,
+     after which it is released and has to be earned again.
   2. Kill. Clamped for KILL_AFTER_SECS and pressure still above TRIGGER: the
      read-only scanner with the most disk wait plus bytes read over the last
-     RANK_WINDOW seconds is stopped, at most once every KILL_COOLDOWN seconds.
+     RANK_WINDOW seconds is stopped, at most once every KILL_COOLDOWN seconds,
+     provided it read at least KILL_MIN_MB or its scope made KILL_MIN_RIOS
+     disk reads in that window. Waiting alone is not enough: on a busy host a
+     small grep waits too, and stopping it does not help.
      A note is appended to the command's output first, so the agent reading it
      learns why and what to use instead.
-  3. Release. avg60 under RELEASE for RELEASE_SECS: the clamp file goes and
+  3. Release. avg60 under RELEASE for RELEASE_SECS, or CLAMP_MAX_SECS gone
+     by: the clamp file goes and
      devvm-io-fairshare.service runs once to put back whatever it wants.
 
 WHAT IT WILL KILL. Only a process whose argv0 is a read-only scanner: ugrep,
@@ -128,6 +137,16 @@ class Config:
         self.release = get("RELEASE", 0.2, float)
         self.release_secs = get("RELEASE_SECS", 60, float)
         self.clamp_riops = get("CLAMP_RIOPS", 100, int)
+        # The devvm's own read rate on its root disk, from /proc/diskstats,
+        # below which a clamp is skipped: on 2026-10-12 the real scans ran at
+        # 202-552 reads/s and host-driven pressure at 77-137.
+        self.own_riops = get("OWN_RIOPS", 150, float)
+        self.clamp_max_secs = get("CLAMP_MAX_SECS", 300, float)
+        # A scanner is stopped only if it read this much, or its scope made
+        # this many disk reads, inside RANK_WINDOW. The read count keeps du and
+        # find, which read few bytes in many small reads.
+        self.kill_min_mb = get("KILL_MIN_MB", 20, float)
+        self.kill_min_rios = get("KILL_MIN_RIOS", 1000, int)
         self.interval = get("INTERVAL", 2, float)
         self.rank_window = get("RANK_WINDOW", 10, float)
         self.read_unit_mb = get("READ_UNIT_MB", 4, float)
@@ -208,13 +227,14 @@ def eligible(argv, cgroup):
 
 class Proc:
     __slots__ = ("pid", "start", "ppid", "argv", "cgroup", "read_bytes",
-                 "ticks", "score", "mb", "wait")
+                 "ticks", "score", "mb", "wait", "rios")
 
     def __init__(self, pid, start, ppid, argv, cgroup, read_bytes, ticks):
         self.pid, self.start, self.ppid = pid, start, ppid
         self.argv, self.cgroup = argv, cgroup
         self.read_bytes, self.ticks = read_bytes, ticks
         self.score = self.mb = self.wait = 0.0
+        self.rios = 0
 
     @property
     def uid(self):
@@ -271,6 +291,10 @@ class Guard:
         self.procs = {}              # pid -> Proc from the latest sweep
         self.proc_hist = {}          # (pid, start) -> deque[(t, bytes, ticks)]
         self.slice_hist = {}         # uid -> deque[(t, rios)]
+        self.scope_hist = {}         # cgroup -> deque[(t, rios)]
+        self.disk_hist = collections.deque()   # [(t, reads completed)]
+        self.own = 0.0               # devvm reads/s over RANK_WINDOW
+        self.skip_logged = False
         self.psi = (0.0, 0.0)
         self.counters = collections.Counter()
         self.metrics_written = None
@@ -357,6 +381,23 @@ class Guard:
                 del self.proc_hist[key]
         self.procs = procs
 
+        # Disk reads per scope, only where a scanner lives: a Bash command has
+        # a scope of its own, so this counts what that command read.
+        scopes = {p.cgroup for p in procs.values() if eligible(p.argv, p.cgroup)}
+        for cgroup in scopes:
+            rios = self.cgroup_rios(cgroup)
+            hist = self.scope_hist.setdefault(cgroup, collections.deque())
+            hist.append((now, rios))
+            while hist and hist[0][0] < horizon:
+                hist.popleft()
+        for cgroup in list(self.scope_hist):
+            if cgroup not in scopes:
+                del self.scope_hist[cgroup]
+        for p in procs.values():
+            hist = self.scope_hist.get(p.cgroup)
+            if hist:
+                p.rios = hist[-1][1] - hist[0][1]
+
         for uid, rios in self.slice_rios().items():
             hist = self.slice_hist.setdefault(uid, collections.deque())
             hist.append((now, rios))
@@ -375,6 +416,42 @@ class Guard:
                 out.append((int(m.group(1)),
                             os.path.join(self.cfg.clamp_root, name)))
         return sorted(out)
+
+    def cgroup_rios(self, cgroup):
+        path = os.path.join(self.cfg.cgroup_root, cgroup.lstrip("/"), "io.stat")
+        try:
+            for line in read_file(path).splitlines():
+                if line.startswith(self.cfg.devnum + " "):
+                    for kv in line.split()[1:]:
+                        if kv.startswith("rios="):
+                            return int(kv[5:])
+        except (OSError, ValueError):
+            pass
+        return 0
+
+    def sample_disk(self, now):
+        """The devvm's own read rate on its root disk, from /proc/diskstats."""
+        major, _, minor = self.cfg.devnum.partition(":")
+        reads = None
+        try:
+            for line in read_file(os.path.join(self.cfg.proc_root,
+                                               "diskstats")).splitlines():
+                f = line.split()
+                if len(f) > 3 and f[0] == major and f[1] == minor:
+                    reads = int(f[3])
+                    break
+        except (OSError, ValueError):
+            pass
+        if reads is None:
+            # No reading means no evidence the devvm is idle: do not let a
+            # missing file switch the guard off.
+            self.own = float("inf")
+            return
+        self.disk_hist.append((now, reads))
+        while self.disk_hist and self.disk_hist[0][0] < now - self.cfg.rank_window:
+            self.disk_hist.popleft()
+        (t0, r0), (t1, r1) = self.disk_hist[0], self.disk_hist[-1]
+        self.own = (r1 - r0) / (t1 - t0) if t1 > t0 else 0.0
 
     def slice_rios(self):
         out = {}
@@ -440,10 +517,11 @@ class Guard:
             self.per_slice = per
         self.apply_clamp(per)   # also catches a slice that appeared since
 
-    def release(self):
+    def release(self, now, reason):
         action = "would-release" if self.cfg.dry_run else "release"
         self.counters[action] += 1
-        self.log(action, clamped_for=time_since(self.clamped_at, self.quiet_since))
+        self.log(action, reason=reason,
+                 clamped_for=time_since(self.clamped_at, now))
         self.clamped = False
         self.clamped_at = self.quiet_since = self.per_slice = None
         self.applied = {}
@@ -509,6 +587,8 @@ class Guard:
         self.last_decision = now
         pool = [p for p in self.procs.values()
                 if eligible(p.argv, p.cgroup)
+                and (p.mb >= self.cfg.kill_min_mb
+                     or p.rios >= self.cfg.kill_min_rios)
                 and (not self.cfg.only_cgroup or self.cfg.only_cgroup in p.cgroup)]
         victim = max(pool, key=lambda p: p.score, default=None)
         if victim is None or victim.score < self.cfg.min_score:
@@ -528,7 +608,7 @@ class Guard:
         self.log(action, user=self.uid_name(victim.uid), pid=victim.pid,
                  target=("scope:" + os.path.basename(scope)) if scope
                  else "pids:" + ",".join(str(p.pid) for p in targets),
-                 read_mb=victim.mb, wait_s=victim.wait,
+                 read_mb=victim.mb, rios=victim.rios, wait_s=victim.wait,
                  window_s=self.cfg.rank_window, cmd=victim.cmd())
         if self.cfg.dry_run:
             return
@@ -585,6 +665,8 @@ class Guard:
                 self.above_since = now
         else:
             self.above_since = None
+            self.skip_logged = False
+        self.sample_disk(now)
 
         if self.clamped or self.above_since is not None:
             self.sample(now)
@@ -593,6 +675,7 @@ class Guard:
             # the next spike, which leaves TRIGGER_SECS of it before a clamp.
             self.proc_hist.clear()
             self.slice_hist.clear()
+            self.scope_hist.clear()
             self.procs = {}
 
         self.finish_kill(now)
@@ -600,14 +683,27 @@ class Guard:
         if not self.clamped:
             if (self.above_since is not None
                     and now - self.above_since >= cfg.trigger_secs):
-                self.clamp_on(now)
+                if self.own >= cfg.own_riops:
+                    self.clamp_on(now)
+                elif not self.skip_logged:
+                    # The pressure comes from elsewhere on the host.
+                    self.skip_logged = True
+                    self.counters["skip-clamp"] += 1
+                    self.log("skip-clamp", own_riops="%.0f" % self.own,
+                             min_riops="%.0f" % cfg.own_riops)
+        elif now - self.clamped_at >= cfg.clamp_max_secs:
+            self.release(now, "max")
+            # It has to be earned again: TRIGGER_SECS more of pressure with
+            # the devvm itself reading hard.
+            self.above_since = now if high else None
+            self.skip_logged = False
         else:
             self.adjust_clamp()
             if self.psi[1] < cfg.release:
                 if self.quiet_since is None:
                     self.quiet_since = now
                 if now - self.quiet_since >= cfg.release_secs:
-                    self.release()
+                    self.release(now, "quiet")
             else:
                 self.quiet_since = None
             if (self.clamped and high
@@ -653,13 +749,16 @@ class Guard:
             "# TYPE devvm_io_guard_decisions_total counter",
         ]
         for action in ("clamp", "would-clamp", "release", "would-release",
-                       "kill", "would-kill", "no-victim"):
+                       "kill", "would-kill", "no-victim", "skip-clamp"):
             lines.append('devvm_io_guard_decisions_total{action="%s"} %d'
                          % (action, c[action]))
         lines += [
             "# HELP devvm_io_guard_pressure_full_avg10 IO pressure 'full' avg10 as a fraction, at the last metrics write.",
             "# TYPE devvm_io_guard_pressure_full_avg10 gauge",
             "devvm_io_guard_pressure_full_avg10 %.4f" % self.psi[0],
+            "# HELP devvm_io_guard_own_read_iops Reads per second the devvm's root disk completed over the last ranking window.",
+            "# TYPE devvm_io_guard_own_read_iops gauge",
+            "devvm_io_guard_own_read_iops %.1f" % (self.own if self.own != float("inf") else -1),
             "# HELP devvm_io_guard_last_write_timestamp_seconds When the guard last wrote this file.",
             "# TYPE devvm_io_guard_last_write_timestamp_seconds gauge",
             "devvm_io_guard_last_write_timestamp_seconds %d" % time.time(),

@@ -103,6 +103,15 @@
     devvm_io_guard_release: 0.2
     devvm_io_guard_release_secs: 60
     devvm_io_guard_clamp_riops: 100
+    # Gates added 2026-10-12 after the first enforcing hours clamped users for
+    # 2 h 40 min and stopped five small repo greps while other VMs, not the
+    # devvm, kept the host disk busy. A clamp needs the devvm itself reading
+    # (real scans: 202-552 reads/s; host-driven pressure: 77-137), lasts at
+    # most 5 min, and a kill needs 20 MB read or 1,000 disk reads in 10 s.
+    devvm_io_guard_own_riops: 150
+    devvm_io_guard_clamp_max_secs: 300
+    devvm_io_guard_kill_min_mb: 20
+    devvm_io_guard_kill_min_rios: 1000
     # Swap sized from measurement, not from a RAM ratio: system.slice peaked at
     # 8.4 GiB over the 30 days to 2026-09-02 (p50 2.7, p99 7.0) and two users at
     # 4G each add 8, so 24 GiB total leaves ~7.6 GiB spare. The old 14 GiB never
@@ -1566,6 +1575,13 @@
           DEVVM_IO_GUARD_RELEASE_SECS={{ devvm_io_guard_release_secs }}
           # Read IOPS shared between every user slice reading while clamped.
           DEVVM_IO_GUARD_CLAMP_RIOPS={{ devvm_io_guard_clamp_riops }}
+          # Reads/s the devvm's own disk must be doing for a clamp, and the
+          # longest a clamp lasts before it has to be earned again.
+          DEVVM_IO_GUARD_OWN_RIOPS={{ devvm_io_guard_own_riops }}
+          DEVVM_IO_GUARD_CLAMP_MAX_SECS={{ devvm_io_guard_clamp_max_secs }}
+          # What a scanner must have read in the ranking window to be stopped.
+          DEVVM_IO_GUARD_KILL_MIN_MB={{ devvm_io_guard_kill_min_mb }}
+          DEVVM_IO_GUARD_KILL_MIN_RIOS={{ devvm_io_guard_kill_min_rios }}
       notify: restart devvm-io-guard
 
     - name: Install the IO guard unit

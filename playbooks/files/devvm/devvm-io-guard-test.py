@@ -63,6 +63,12 @@ class Box:
         self.fairshare_runs = 0
         self.lines = []
         self.pressure(0.0, 0.0)
+        # Reads per second the whole devvm disk completes; run_until writes
+        # /proc/diskstats from it. Above the guard's OWN_RIOPS by default, so
+        # the devvm itself is the reader unless a test says otherwise.
+        self.disk_rate = 300
+        self.scope_rates = {}
+        self.disk(0)
 
     def close(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -74,6 +80,21 @@ class Box:
                      % (avg10 * 100, avg60 * 100))
             fh.write("full avg10=%.2f avg60=%.2f avg300=0.00 total=1\n"
                      % (avg10 * 100, avg60 * 100))
+
+    def disk(self, t):
+        with open(os.path.join(self.proc, "diskstats"), "w") as fh:
+            fh.write("   8       0 sda 9 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n")
+            fh.write(" 252       0 dm-0 %d 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+                     % int(self.disk_rate * t))
+        for cgroup, rate in self.scope_rates.items():
+            self.scope_rios(cgroup, int(rate * t))
+
+    def scope_rios(self, cgroup, rios):
+        d = os.path.join(self.cg, cgroup.lstrip("/"))
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "io.stat"), "w") as fh:
+            fh.write("252:0 rbytes=%d wbytes=0 rios=%d wios=0 dbytes=0 "
+                     "dios=0\n" % (rios * 4096, rios))
 
     def slice(self, uid, rios=0):
         d = os.path.join(self.cg, "user.slice", "user-%d.slice" % uid)
@@ -208,6 +229,7 @@ class Stages(unittest.TestCase):
         while t <= end:
             if before:
                 before(t)
+            self.box.disk(t)
             guard.step(t)
             t += every
         return t
@@ -348,6 +370,8 @@ class Stages(unittest.TestCase):
     def test_picks_the_heaviest_scanner_and_waits_out_the_cooldown(self):
         self.box.proc_add(601, ["ugrep", "small"], PANE_SCOPE, start=11)
         self.box.proc_add(602, ["bfs", "-S", "dfs", "/"], EMO_SCOPE, start=11)
+        # 2026-10-11: du read 7 MB in 6,100 disk reads over 38 s.
+        self.box.scope_rates[EMO_SCOPE] = 160
         g = self.box.guard()
         self.box.pressure(0.9, 0.9)
 
@@ -362,6 +386,73 @@ class Stages(unittest.TestCase):
         self.run_until(g, 52, 68, before=before)
         self.assertEqual([s for s in self.box.signals
                           if s[1] == signal.SIGTERM], [(602, signal.SIGTERM)])
+
+    def test_host_load_without_devvm_reads_does_not_clamp(self):
+        # 03:24-06:04 on 2026-10-12: pressure stayed high because other VMs
+        # kept the host disk busy, while the devvm read 45-137 times a second.
+        self.box.disk_rate = 80
+        g = self.box.guard()
+        self.box.pressure(0.9, 0.9)
+        rios = {"n": 0}
+
+        def before(t):
+            rios["n"] += 50
+            self.box.slice(1000, rios=rios["n"])
+        self.run_until(g, 0, 120, before=before)
+        self.assertFalse(g.clamped)
+        self.assertEqual(self.box.io_max(1000), "")
+        # Said once per episode, so the log shows why nothing happened.
+        self.assertEqual(len(self.box.logged("skip-clamp")), 1)
+        # The devvm starts reading hard: now it clamps.
+        self.box.disk_rate = 300
+        self.run_until(g, 122, 150, before=before)
+        self.assertTrue(g.clamped)
+
+    def test_small_scanners_are_spared(self):
+        # 04:23-04:31 on 2026-10-12: five repo greps killed after reading
+        # 0.0-2.3 MB each, for waiting on a disk other VMs kept busy.
+        self.box.proc_add(400, ["zsh", "-c", "grep -rn x ."], BASH_SCOPE,
+                          start=10)
+        self.box.proc_add(401, ["ugrep", "-rn", "structured_metadata", "."],
+                          BASH_SCOPE, ppid=400, start=11)
+        self.box.scope_rates[BASH_SCOPE] = 20
+        g = self.box.guard()
+        self.box.pressure(0.9, 0.9)
+        self.run_until(g, 0, 80, before=self.grow(401, 0.2 * MB, 80))
+        self.assertTrue(g.clamped)
+        self.assertEqual(self.box.signals, [])
+        self.assertTrue(self.box.logged("no-victim"))
+
+    def test_the_clamp_gives_up_after_five_minutes(self):
+        g = self.box.guard()
+        self.box.pressure(0.9, 0.9)
+        self.run_until(g, 0, 20)
+        self.assertTrue(g.clamped)
+        # The clamp holds the devvm down, but the host stays busy.
+        self.box.disk_rate = 60
+        self.run_until(g, 22, 318)
+        self.assertTrue(g.clamped)
+        self.run_until(g, 320, 322)
+        self.assertFalse(g.clamped)
+        self.assertEqual(len(self.box.logged("release")), 1)
+        self.assertIn("reason=max", self.box.logged("release")[0])
+        # The devvm is not the reader, so it stays released.
+        self.run_until(g, 324, 420)
+        self.assertFalse(g.clamped)
+        self.assertEqual(len(self.box.logged("clamp")), 1)
+
+    def test_after_five_minutes_a_busy_devvm_earns_the_clamp_again(self):
+        g = self.box.guard()
+        self.box.pressure(0.9, 0.9)
+        self.run_until(g, 0, 320)
+        self.assertFalse(g.clamped)
+        self.assertIn("reason=max", self.box.logged("release")[0])
+        # Users get TRIGGER_SECS unclamped before it comes back.
+        self.run_until(g, 322, 338)
+        self.assertFalse(g.clamped)
+        self.run_until(g, 340, 342)
+        self.assertTrue(g.clamped)
+        self.assertEqual(len(self.box.logged("clamp")), 2)
 
     def test_sigkill_skips_a_recycled_pid(self):
         self.box.proc_add(701, ["ugrep", "x"], PANE_SCOPE, start=11)
