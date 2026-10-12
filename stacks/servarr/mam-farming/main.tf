@@ -4,7 +4,7 @@ variable "namespace" {
 }
 
 locals {
-  python_image = "docker.io/library/python:3.12-alpine"
+  python_image = "docker.io/library/python:3.14-alpine"
   pip_prefix   = "pip install -q requests > /dev/null 2>&1; python3 /tmp/script.py"
 
   # Dry-run window was satisfied by a one-shot test on 2026-04-19 that
