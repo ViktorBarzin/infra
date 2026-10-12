@@ -243,6 +243,11 @@
       matchPackageNames: ["edoburu/pgbouncer", "docker.io/edoburu/pgbouncer"],
       versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-p(?<build>\\d+)$",
     },
+    {
+      description: "anisette-v3-server publishes monthly MM-YYYY tags (09-2026, 10-2026) beside :latest. Docker versioning would read 01-2027 as version 1 with an incompatible suffix and never offer it; read the year as major and the month as minor (2026-10-12)",
+      matchPackageNames: ["docker.io/dadoum/anisette-v3-server", "dadoum/anisette-v3-server"],
+      versioning: "regex:^(?<minor>\\d{2})-(?<major>\\d{4})$",
+    },
 
     // ---- Groups: versions that must move together ----
     {
@@ -381,12 +386,6 @@
       matchDatasources: ["helm"],
       matchPackageNames: ["kyverno"],
       allowedVersions: "<3.10.0",
-    },
-    {
-      description: "HELD: anisette digest-only pin. Its container image is still under ignore_changes (KEEL_IGNORE_IMAGE, Keel cutover B01), so a bump would change the string in git while the pod keeps the old bytes, and verify would pass on an unchanged pod. Release when the stack drops that ignore.",
-      matchDatasources: ["docker"],
-      matchPackageNames: ["docker.io/dadoum/anisette-v3-server", "dadoum/anisette-v3-server"],
-      enabled: false,
     },
   ],
 }
