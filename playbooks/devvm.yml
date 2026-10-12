@@ -53,6 +53,10 @@
     # and these are tools rather than build inputs.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
     terragrunt_url: https://github.com/gruntwork-io/terragrunt/releases/latest/download/terragrunt_linux_amd64
+    # Pinned, unlike the tools above: the iOS rig service depends on
+    # pymobiledevice3 internals (see the iOS rig tasks).
+    ios_rig_uv_version: "0.11.19"
+    ios_rig_pymobiledevice3_version: "11.28.2"
     # Containment caps. The absolute values are the ones tuned on the 31.3 GiB
     # devvm and reasoned about in the files themselves; the min() only keeps a
     # smaller machine sane, and reproduces 24/6/8 exactly on the real box.
@@ -488,6 +492,54 @@
         state: started
         daemon_reload: true
       when: not ansible_check_mode
+
+    # ---- iOS rig Wi-Fi service (added 2026-10-12) ---------------------------
+    # `homelab ios wifi-fg` (ios-rig-wifi.service, a user unit) drives the
+    # London iPhone over Wi-Fi with pymobiledevice3. Its tunnel needs Python
+    # 3.13+ for TLS-PSK; Ubuntu's 3.12 fails with NO_CIPHERS_AVAILABLE. uv
+    # provides a managed 3.13, kept under /opt/ios-rig so it does not shadow
+    # anyone's own uv. pymobiledevice3 is pinned because the service reaches
+    # into its userspace-tunnel internals: bump it on purpose, then run
+    # `homelab ios doctor`. Runbook: docs/runbooks/ios-test-rig.md.
+    - name: Create the iOS rig directory
+      ansible.builtin.file:
+        path: /opt/ios-rig/bin
+        state: directory
+        mode: "0755"
+
+    - name: Install uv for the iOS rig
+      ansible.builtin.unarchive:
+        src: "https://github.com/astral-sh/uv/releases/download/{{ ios_rig_uv_version }}/uv-x86_64-unknown-linux-gnu.tar.gz"
+        dest: /opt/ios-rig/bin
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        creates: /opt/ios-rig/bin/uv
+        mode: "0755"
+      # In check mode the directory above is only pretended into existence.
+      when: not ansible_check_mode
+
+    - name: Create the iOS rig venv on Python 3.13
+      ansible.builtin.command:
+        cmd: /opt/ios-rig/bin/uv venv --python 3.13 /opt/ios-rig/venv
+        creates: /opt/ios-rig/venv/bin/python
+      environment:
+        UV_PYTHON_INSTALL_DIR: /opt/ios-rig/python
+        UV_CACHE_DIR: /opt/ios-rig/cache
+
+    - name: Read the installed pymobiledevice3 version
+      ansible.builtin.command:
+        cmd: /opt/ios-rig/venv/bin/python -c "import importlib.metadata as m; print(m.version('pymobiledevice3'))"
+      register: ios_rig_pmd3
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install the pinned pymobiledevice3
+      ansible.builtin.command:
+        cmd: /opt/ios-rig/bin/uv pip install --python /opt/ios-rig/venv/bin/python "pymobiledevice3=={{ ios_rig_pymobiledevice3_version }}"
+      environment:
+        UV_CACHE_DIR: /opt/ios-rig/cache
+      when: ios_rig_pmd3.stdout | trim != ios_rig_pymobiledevice3_version
 
     # ---- meshagent: nightly restart (added 2026-10-02) ----------------------
     # The MeshCentral agent is installed by MeshCentral itself, not by this

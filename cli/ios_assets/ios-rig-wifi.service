@@ -1,0 +1,16 @@
+[Unit]
+Description=iOS test rig, Wi-Fi tunnel to the London iPhone (no Mac needed)
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/runbooks/ios-test-rig.md
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+# Holds the RemotePairing tunnel to the phone and serves the loopback API that
+# `homelab ios` calls. The phone drops off Wi-Fi now and then; restart forever
+# rather than entering a failed state that needs a human.
+ExecStart=/usr/local/bin/homelab ios wifi-fg
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
