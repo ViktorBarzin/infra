@@ -6,6 +6,11 @@
 # Pods use imagePullSecrets: [{name: registry-credentials}] to pull from
 # registry.viktorbarzin.me (or 10.0.20.10:5050 internally).
 
+locals {
+  # Namespaces the cloned-secret GeneratingPolicies skip (registry and TLS).
+  generate_skip_system_namespaces = "!(object.metadata.name in [\"kube-system\", \"kube-public\", \"kube-node-lease\"])"
+}
+
 data "vault_kv_secret_v2" "viktor" {
   mount = "secret"
   name  = "viktor"
@@ -88,50 +93,13 @@ resource "kubernetes_cluster_role_binding" "kyverno_background_secret_manager" {
 }
 
 resource "kubectl_manifest" "sync_registry_credentials" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "sync-registry-credentials"
-    }
-    spec = {
-      rules = [
-        {
-          name = "sync-registry-secret"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = ["kube-system", "kube-public", "kube-node-lease"]
-                }
-              }
-            ]
-          }
-          generate = {
-            apiVersion                     = "v1"
-            kind                           = "Secret"
-            name                           = "registry-credentials"
-            namespace                      = "{{request.object.metadata.name}}"
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            clone = {
-              namespace = "kyverno"
-              name      = "registry-credentials"
-            }
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/generate-clone-secret.yaml", { name = "sync-registry-credentials", secret = "registry-credentials", condition = local.generate_skip_system_namespaces })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 
   depends_on = [
     helm_release.kyverno,

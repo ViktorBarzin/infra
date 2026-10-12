@@ -87,8 +87,8 @@ check_kyverno() {
   if [ "$ready" -eq "$total" ]; then
     # Check policy count
     local policy_count
-    policy_count=$($KUBECTL get clusterpolicy --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    add_check "kyverno" "ok" "$ready/$total Kyverno pods running, $policy_count ClusterPolicies"
+    policy_count=$($KUBECTL get validatingpolicies.policies.kyverno.io,mutatingpolicies.policies.kyverno.io,generatingpolicies.policies.kyverno.io,deletingpolicies.policies.kyverno.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    add_check "kyverno" "ok" "$ready/$total Kyverno pods running, $policy_count Kyverno policies"
   else
     add_check "kyverno" "warn" "$ready/$total Kyverno pods running"
   fi

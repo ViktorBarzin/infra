@@ -1,0 +1,35 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: sync-tier-label-from-namespace
+  annotations:
+    policies.kyverno.io/title: Sync Tier Label from Namespace
+    policies.kyverno.io/description: "Adds the namespace tier label to Deployments, StatefulSets and DaemonSets that have no tier label."
+spec:
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets]
+    namespaceSelector:
+      matchExpressions:
+        - key: tier
+          operator: In
+          values: ${tiers}
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  matchConditions:
+    - name: no-tier-label
+      expression: "!('tier' in object.metadata.?labels.orValue({}))"
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              labels: {'tier': namespaceObject.metadata.labels['tier']}
+            }
+          }
