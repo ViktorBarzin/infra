@@ -171,11 +171,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -228,11 +229,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -285,11 +287,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -342,11 +345,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -399,11 +403,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -460,11 +465,12 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "LimitRange"
-            name        = "tier-defaults"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "LimitRange"
+            name                           = "tier-defaults"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 limits = [
@@ -548,11 +554,12 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "ResourceQuota"
-            name        = "tier-quota"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "ResourceQuota"
+            name                           = "tier-quota"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 hard = {
@@ -596,11 +603,12 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "ResourceQuota"
-            name        = "tier-quota"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "ResourceQuota"
+            name                           = "tier-quota"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 hard = {
@@ -644,11 +652,12 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "ResourceQuota"
-            name        = "tier-quota"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "ResourceQuota"
+            name                           = "tier-quota"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 hard = {
@@ -692,11 +701,12 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "ResourceQuota"
-            name        = "tier-quota"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "ResourceQuota"
+            name                           = "tier-quota"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 hard = {
@@ -740,11 +750,12 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
             ]
           }
           generate = {
-            synchronize = true
-            apiVersion  = "v1"
-            kind        = "ResourceQuota"
-            name        = "tier-quota"
-            namespace   = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
+            apiVersion                     = "v1"
+            kind                           = "ResourceQuota"
+            name                           = "tier-quota"
+            namespace                      = "{{request.object.metadata.name}}"
             data = {
               spec = {
                 hard = {

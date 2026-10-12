@@ -117,11 +117,12 @@ resource "kubectl_manifest" "sync_registry_credentials" {
             ]
           }
           generate = {
-            apiVersion  = "v1"
-            kind        = "Secret"
-            name        = "registry-credentials"
-            namespace   = "{{request.object.metadata.name}}"
-            synchronize = true
+            apiVersion                     = "v1"
+            kind                           = "Secret"
+            name                           = "registry-credentials"
+            namespace                      = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
             clone = {
               namespace = "kyverno"
               name      = "registry-credentials"
