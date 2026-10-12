@@ -143,7 +143,9 @@ resource "kubernetes_deployment" "android-emulator" {
               memory = "3Gi"
             }
             limits = {
-              memory           = "8Gi"
+              # Temporarily 14Gi (from 8Gi) while a second, read-only
+              # emulator instance runs beside the main one to test GPU modes.
+              memory           = "14Gi"
               "nvidia.com/gpu" = "1" # T4 time-slice
               # GPU VRAM budget (ADR-0016). Provisional until the GPU
               # renderer's real footprint is measured.
