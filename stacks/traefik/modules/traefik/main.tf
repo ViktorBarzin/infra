@@ -100,7 +100,7 @@ resource "helm_release" "traefik" {
       # a different namespace. Alert: TraefikQUICSocketDropping.
       additionalContainers = [{
         name  = "quic-socket-metrics"
-        image = "quay.io/prometheus/node-exporter:v1.7.0"
+        image = "quay.io/prometheus/node-exporter:v1.12.1"
         args = [
           # netstat is the only collector we want; the defaults would export
           # filesystem/cpu/etc for a namespace where they are meaningless.
