@@ -11,6 +11,9 @@ sessions on 2026-10-12, and the shapes that made Claude Code 2.1.296 ask in a
 scratch session started with --dangerously-skip-permissions. The allowed cases
 are ones that same session ran without asking, plus the ${VAR:?} rewrite the
 guard tells the agent to use.
+
+The cd-then-glob cases come from headless `claude -p
+--dangerously-skip-permissions` runs, where an ask comes back as an error.
 """
 import importlib.util
 import json
@@ -122,7 +125,85 @@ ALLOWED_SHELL_C = [
 ]
 
 
+# rm of a whole directory's contents (the last path part is exactly *) after a
+# cd Claude Code cannot follow. It says "This command changes directories
+# before the removal, so the relative glob target cannot be statically
+# resolved" and asks, even for rm -f. The first is from the renovate-upgrades
+# session's subagent on 2026-10-12 06:37, trimmed; it asked four times.
+BLOCKED_CD_GLOB = [
+    "S=/var/tmp/x/scratchpad/kt; cd $S && rm -f out/*; timeout 300 docker run --rm "
+    "-v $S:/w -w /w kyverno-cli apply rendered/a.yaml -o out/g.yaml",
+    "S=/tmp/kt; cd $S; rm -f out/*",
+    "S=/tmp/kt; cd \"$S\" && rm -f -- out/*",
+    "S=/tmp/kt; cd \"${S:?}\" && rm -f out/*",
+    "S=/tmp/kt; cd $S && rm -f ./out/*",
+    "S=/tmp/kt; cd $S/sub && rm -f ../out/*",
+    "S=/tmp/kt; cd $S && rm -rf out/*",
+    "S=/tmp/kt; cd $S && rm -f out/* out/a.yaml",
+    "S=/tmp/kt; cd $S || exit; rm -f out/*",
+    "S=/tmp/kt; cd $S && echo x && rm -f out/*",
+    "S=/tmp/kt; for f in a; do cd $S && rm -f out/*; done",
+    "S=/tmp/kt; cd $S && rm -f \"out\"/*",
+    "cd kt && rm -f out/*",
+    "pushd /tmp/kt && rm -f out/*",
+    "cd ~ && cd /tmp/kt && rm -f out/*",
+    "cd - >/dev/null; cd /tmp/kt && rm -f out/*",
+    # A bare * asks with or without a cd.
+    "rm -f *",
+    "cd /tmp/kt/out && rm -f *",
+    "cd /tmp/kt/out && rm -f ./*",
+    "cd /tmp/kt && cd sub && rm -f *",
+    # $PWD counts as possibly empty here.
+    "S=/tmp/kt; cd $S && rm -f \"$PWD\"/*",
+]
+
+# Ran without asking in the same runs.
+ALLOWED_CD_GLOB = [
+    "cd /tmp/kt && rm -f out/*",
+    "cd /tmp/kt && rm -f ./out/*",
+    "cd /tmp/kt && rm -rf out/*",
+    "cd /tmp/kt && rm -f sub/* && rm -f out/*",
+    "S=/tmp/kt; rm -f $S/out/*",
+    "S=/tmp/kt; rm -f $S/out/* ; cd $S && ls",
+    "S=/tmp/kt; cd $S && rm -f \"$S\"/out/*",
+    "rm -f kt/out/*",
+    "rm -f ./kt/out/*",
+    # Only a bare * as the last part counts.
+    "S=/tmp/kt; cd $S && rm -f out/*.yaml",
+    "S=/tmp/kt; cd $S && rm -f out/a*",
+    "S=/tmp/kt; cd $S && rm -f out/?.yaml",
+    "S=/tmp/kt; cd $S && rm -f out/{a,b}.yaml",
+    "cd /tmp/kt && rm -f */b",
+    "cd /tmp/kt/out && rm -f *.yaml",
+    "S=/tmp/kt; cd $S && rm -f out/a.yaml",
+    "S=/tmp/kt; cd $S && rm -rf out",
+    "S=/tmp/kt; cd $S && find out -mindepth 1 -delete",
+    # The rewrites the block message asks for.
+    "S=/tmp/kt; cd $S && rm -f \"${PWD:?}\"/out/*",
+    "S=/tmp/kt; cd $S && rm -f -- \"${PWD:?}\"/out/*",
+    "cd /tmp/kt/out && rm -f \"${PWD:?}\"/*",
+    "S=/tmp/kt; cd $S && rm -f \"${PWD:?}\"/*",
+    # Words in data, not a command.
+    "S=/tmp/kt; cd $S && echo 'rm -f out/*'",
+]
+
+
 class RmGuardTest(unittest.TestCase):
+    def test_blocked_cd_glob(self):
+        for cmd in BLOCKED_CD_GLOB:
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(check(cmd), "should block")
+
+    def test_allowed_cd_glob(self):
+        for cmd in ALLOWED_CD_GLOB:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(check(cmd), "should allow")
+
+    def test_cd_glob_message_names_the_fix(self):
+        msg = check("S=/tmp/kt; cd $S && rm -f out/*")
+        self.assertIn('rm -f "${PWD:?}"/out/*', msg)
+        self.assertIn('rm -f "${PWD:?}"/*', check("rm -f ./*"))
+
     def test_blocked_shell_c(self):
         for cmd in BLOCKED_SHELL_C:
             with self.subTest(cmd=cmd):
