@@ -57,13 +57,22 @@ uninstall your test app when done, and presence-claim
   lives on the `android-emulator-sdk` PVC (`proxmox-lvm`); the entrypoint
   installs it idempotently. **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
-- Rendering is CPU-only (`-gpu swiftshader_indirect`), and the pod requests
-  no GPU, so it schedules on any node with `/dev/kvm` (all of them).
-  From 2026-06 to 2026-10 it ran `-gpu host` on the T4 node. That mode was
-  not accelerated for GLES (GLX on Xvfb resolves to Mesa llvmpipe) and sent
-  only Vulkan to the T4, and it was the one mode that segfaulted (13 times in
-  4h on 2026-10-10). Real GPU GL would need an X server on the NVIDIA driver
-  in place of Xvfb. See the ADR-0001 amendment.
+- Rendering is on the T4 (`EMULATOR_GPU=host`, since 2026-10-12). The pod
+  requests a GPU time-slice and an 800 MiB VRAM seat, which places it on
+  k8s-node1. The emulator runs headless (`-no-window -gpu host`) with
+  `ANDROID_EGL_ON_EGL=1`, the NVIDIA EGL vendor forced, and the system
+  libEGL ahead of the emulator's bundled SwiftShader one. Check the renderer
+  with `adb shell dumpsys SurfaceFlinger | grep GLES:`; it should name the
+  Tesla T4.
+- The noVNC view shows a scrcpy window in Xvfb, not the emulator's own
+  window. scrcpy starts when a viewer connects to x11vnc and stops 30s after
+  the last one leaves, because its H.264 encoding runs in software inside the
+  guest and costs about 2.5 cores. The first frame takes a few seconds after
+  the page opens.
+- `EMULATOR_GPU=swiftshader` switches back to CPU rendering, windowed
+  straight into Xvfb, with no scrcpy. The older windowed `-gpu host` mode
+  (2026-06 to 2026-10) mixed Mesa llvmpipe GLES with NVIDIA Vulkan and
+  segfaulted; neither current mode does that. See the ADR-0001 amendments.
 
 ## Rebuilding the image
 
@@ -90,7 +99,11 @@ container start (a restart, or a wake from zero) runs the new build.
   ~4.8–5.2 Gi memory (limit 8 Gi, requests 3 Gi), ~100 MiB T4 VRAM. Boot
   bursts 5–9 cores for the first few minutes (dex2oat etc.).
 - Measured 2026-10-10 under continuous Chrome scrolling: ~8.3 cores with
-  CPU rendering against ~6.8 cores in GPU mode.
+  CPU rendering against ~6.8 cores in the old mixed GPU mode.
+- Measured 2026-10-12 in the current T4 mode, emulator process only: 1.17
+  cores on a static screen and 2.35 while scrolling Chrome. An open noVNC
+  view adds about 2.5 cores for scrcpy. VRAM peaked at 693 MiB over 10
+  minutes of Chrome scrolling.
 - **Disk**: ~7 G of the 30 Gi PVC.
 - Etiquette still applies for long sessions with animated content:
   `adb -s 10.0.20.200:5555 shell input keyevent KEYCODE_SLEEP` when done.

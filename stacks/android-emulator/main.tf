@@ -2,11 +2,12 @@
 # Agents drive it over adb (10.0.20.200:5555); humans watch the screen at
 # https://android-emulator.viktorbarzin.lan (noVNC). The SDK + system image +
 # AVD live on the PVC; the container image is just JDK + cmdline-tools + libs
-# (built manually from docker/, see README.md).
+# (built by GitHub Actions from docker/, see README.md).
 #
 # Decision record: docs/adr/0001-android-emulator-in-cluster.md
 # - privileged + /dev/kvm hostPath (namespace is on the Kyverno exclude list)
-# - swiftshader rendering — deliberately NOT on the contended T4 GPU node
+# - renders on the T4 (EMULATOR_GPU=host, headless; scrcpy feeds the noVNC
+#   view while a viewer is connected), 800 MiB VRAM seat
 
 resource "kubernetes_namespace" "android-emulator" {
   metadata {
