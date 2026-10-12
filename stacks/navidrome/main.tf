@@ -155,7 +155,7 @@ resource "kubernetes_deployment" "navidrome" {
       spec {
         container {
           name  = "navidrome"
-          image = "deluan/navidrome:0.64.2"
+          image = "deluan/navidrome:0.61.2"
           volume_mount {
             name       = "data"
             mount_path = "/data"
