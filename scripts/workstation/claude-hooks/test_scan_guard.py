@@ -153,6 +153,12 @@ class Blocks(unittest.TestCase):
                 self.assertIn("narrow", hit)
 
 
+    def test_a_variable_path_is_named_in_the_message(self):
+        hit = check('D=$(dirname "$(tmux show-options -v @claude_transcript)"); '
+                    'grep -rl foo "$D"')
+        self.assertIn("from-var-D", hit)
+
+
 class Allows(unittest.TestCase):
     def test_normal_work(self):
         for cmd in ALLOWED:
