@@ -151,6 +151,116 @@ resource "kubernetes_persistent_volume_claim" "archives" {
   }
 }
 
+# Hand database `linkwarden` to the `linkwarden` role. The database was
+# created by hand owned by `postgres`, so `linkwarden` owned its tables but had
+# no CREATE on schema public (PostgreSQL 15+ grants CREATE there only to the
+# database owner, via pg_database_owner). v2.16.3's Prisma migration
+# 20260602155952_add_uuid_to_user_model failed on that with "permission denied
+# for schema public" (42501). Every other app database on pg-cluster is owned by
+# its app role; this brings linkwarden in line. Idempotent, and re-runs only
+# when the SQL changes (the Job name carries its hash). Same shape as
+# uptime-kuma's pg_probe_role Job.
+data "vault_kv_secret_v2" "platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
+locals {
+  db_owner_sql = <<-SQL
+    ALTER DATABASE linkwarden OWNER TO linkwarden;
+  SQL
+}
+
+resource "kubernetes_secret" "db_owner" {
+  metadata {
+    name      = "linkwarden-db-owner"
+    namespace = kubernetes_namespace.linkwarden.metadata[0].name
+  }
+  data = {
+    # In secret/platform, dbaas_postgresql_root_password is the Postgres one
+    # (dbaas_root_password there is MySQL's).
+    ROOT_PASSWORD = data.vault_kv_secret_v2.platform.data["dbaas_postgresql_root_password"]
+    "owner.sql"   = local.db_owner_sql
+  }
+}
+
+resource "kubernetes_job" "db_owner" {
+  metadata {
+    name      = "linkwarden-db-owner-${substr(sha256(local.db_owner_sql), 0, 8)}"
+    namespace = kubernetes_namespace.linkwarden.metadata[0].name
+  }
+  spec {
+    backoff_limit = 3
+    template {
+      metadata {}
+      spec {
+        restart_policy = "Never"
+        container {
+          name    = "owner"
+          image   = "docker.io/library/postgres:16-alpine"
+          command = ["sh", "-c", "psql -v ON_ERROR_STOP=1 -f /sql/owner.sql && echo 'linkwarden owns its database'"]
+          env {
+            name  = "PGHOST"
+            value = "pg-cluster-rw.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "PGUSER"
+            value = "root"
+          }
+          env {
+            name  = "PGDATABASE"
+            value = "postgres"
+          }
+          env {
+            name = "PGPASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.db_owner.metadata[0].name
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+          volume_mount {
+            name       = "sql"
+            mount_path = "/sql"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "sql"
+          secret {
+            secret_name = kubernetes_secret.db_owner.metadata[0].name
+            items {
+              key  = "owner.sql"
+              path = "owner.sql"
+            }
+          }
+        }
+      }
+    }
+  }
+  # The deployment depends on this Job, so the new image's migrations never
+  # start before the ownership change lands. Fails the apply within 2 minutes
+  # if CNPG is unreachable.
+  wait_for_completion = true
+  timeouts {
+    create = "2m"
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno injects dns_config (ndots=2).
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 resource "kubernetes_deployment" "linkwarden" {
   metadata {
     name      = "linkwarden"
@@ -188,7 +298,7 @@ resource "kubernetes_deployment" "linkwarden" {
       }
       spec {
         container {
-          image = "ghcr.io/linkwarden/linkwarden:v2.14.1"
+          image = "ghcr.io/linkwarden/linkwarden:v2.16.3"
           name  = "linkwarden"
 
           port {
@@ -282,6 +392,8 @@ resource "kubernetes_deployment" "linkwarden" {
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
+  # v2.16.3 migrations need CREATE on schema public; see kubernetes_job.db_owner.
+  depends_on = [kubernetes_job.db_owner]
 }
 resource "kubernetes_service" "linkwarden" {
   metadata {
