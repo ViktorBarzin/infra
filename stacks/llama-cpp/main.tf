@@ -7,12 +7,13 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  # PINNED BY DIGEST (2026-08-21) = the 2026-08-20 :cuda rebuild, llama.cpp
-  # b10524. Terraform now owns this field again (the KEEL_IGNORE_IMAGE
-  # ignore_changes below is gone), because nothing else could select a build:
-  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations were
-  # Terraform-ignored, so :cuda + a node-cached layer had this pod serving
-  # llama.cpp b9879 from 2026-07-06 for six weeks of rollouts.
+  # PINNED tag@digest. v250-cuda-b10524 is the 2026-08-20 :cuda rebuild
+  # (llama.cpp b10524) that was pinned digest-only on 2026-08-21; the tag was
+  # added 2026-10-12 with the same digest, so Renovate can now see the pin.
+  # Terraform owns this field (no ignore_changes on the image), because
+  # nothing else could select a build: imagePullPolicy is Kyverno-owned, and
+  # :cuda + a node-cached layer had this pod serving llama.cpp b9879 from
+  # 2026-07-06 for six weeks of rollouts.
   #
   # Pinning an inference ENGINE is the safer default regardless of this probe.
   # Qwen3.8's Gated DeltaNet CUDA path was only correct from ~b10450 and a
@@ -22,11 +23,10 @@ locals {
   # reaches real consumers (paperless-ngx's native AI).
   # A digest also makes IfNotPresent safe.
   #
-  # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
-  # output on each model afterwards. Keel is retired (2026-10 Renovate
-  # cutover); Renovate cannot propose bumps for a digest-only pin, so this
-  # stays a hand-made change.
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
+  # Upgrades: Renovate proposes newer vNNN-cuda-bNNNNN tags (a packageRule in
+  # renovate.json5 reads the llama-swap release as major and the llama.cpp
+  # build as minor). After a bump, check generation output on each model.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:v250-cuda-b10524@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
   # Model set: one text-only LLM (qwen3-8b), for paperless-ngx's native AI
   # (paperless-ai until 2026-10-12, now scaled to 0). Since 2026-10-11

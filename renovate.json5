@@ -248,6 +248,11 @@
       matchPackageNames: ["docker.io/dadoum/anisette-v3-server", "dadoum/anisette-v3-server"],
       versioning: "regex:^(?<minor>\\d{2})-(?<major>\\d{4})$",
     },
+    {
+      description: "llama-swap tags are v<release>-cuda-b<llama.cpp build> (v250-cuda-b10524). Docker versioning treats cuda-b10524 as a compatibility suffix that changes every release, so no newer tag would ever be offered. Only the plain cuda variant matches (not -non-root, rocm, intel, musa) (2026-10-12)",
+      matchPackageNames: ["ghcr.io/mostlygeek/llama-swap"],
+      versioning: "regex:^v(?<major>\\d+)-cuda-b(?<minor>\\d+)$",
+    },
 
     // ---- Groups: versions that must move together ----
     {
