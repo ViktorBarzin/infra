@@ -155,6 +155,33 @@ if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
   fi
 fi
 
+# Root terragrunt.hcl pins each provider to one exact version, and Renovate
+# bumps those pins. Lockfiles are gitignored, so a workstation lockfile from
+# before a bump fails every plan with "locked provider ... does not match
+# configured version constraint". Re-init with -upgrade once when a pinned
+# provider's version differs from this stack's lockfile. CI clones have no
+# lockfile and skip this.
+provider_pins() { # "<namespace/type> <version>" per annotated pin in the root
+  awk '/# renovate: datasource=terraform-provider / {
+         for (i = 1; i <= NF; i++) if ($i ~ /^depName=/) { d = substr($i, 9) }
+         next
+       }
+       d != "" && /version *=/ { match($0, /"[^"]+"/); print d, substr($0, RSTART + 1, RLENGTH - 2); d = "" }' \
+    "$REPO_ROOT/terragrunt.hcl"
+}
+lock_versions() { # "<namespace/type> <version>" per provider in a lockfile
+  awk '/^provider "registry\.terraform\.io\// { p = $2; gsub(/"|registry\.terraform\.io\//, "", p); next }
+       p != "" && /^ *version *=/ { match($0, /"[^"]+"/); print p, substr($0, RSTART + 1, RLENGTH - 2); p = "" }' "$1"
+}
+if $is_tf_op && [ -f .terraform.lock.hcl ]; then
+  stale=$(join <(provider_pins | sort) <(lock_versions .terraform.lock.hcl | sort) | awk '$2 != $3 { print $1 " " $3 " -> " $2 }')
+  if [ -n "$stale" ]; then
+    echo "[tg] lockfile predates the provider pins in terragrunt.hcl; running init -upgrade:" >&2
+    echo "$stale" | sed 's/^/[tg]   /' >&2
+    terragrunt init -upgrade -input=false >/dev/null || { echo "[tg] terragrunt init -upgrade failed" >&2; exit 1; }
+  fi
+fi
+
 # Build the terragrunt invocation:
 #  - add -auto-approve right after `apply` for --non-interactive runs (CI)
 #  - add -lock-timeout for state-locking verbs (plan/apply/destroy/refresh) so
