@@ -106,8 +106,11 @@ resource "kubernetes_deployment" "changedetection" {
       }
       spec {
         container {
-          name              = "sockpuppetbrowser"
-          image             = "dgtlmoon/sockpuppetbrowser:latest"
+          name = "sockpuppetbrowser"
+          # Upstream's own compose runs sockpuppetbrowser:latest, and the newest
+          # version tag (0.0.3, 2025-08) is a year behind it, so pin
+          # latest@digest; Renovate bumps the digest.
+          image             = "dgtlmoon/sockpuppetbrowser:latest@sha256:1d8f72d2ce2085faed4232e5ae1e65c02efe5b831a18e127829b267c260b4fb2"
           image_pull_policy = "IfNotPresent"
           port {
             name           = "ws"
@@ -132,7 +135,7 @@ resource "kubernetes_deployment" "changedetection" {
 
         container {
           name  = "changedetection"
-          image = "ghcr.io/dgtlmoon/changedetection.io:latest" # latest is latest stable
+          image = "ghcr.io/dgtlmoon/changedetection.io:0.60.8@sha256:34df3680db1cbffc45ac1e9c1514bc0507dd0c5b5fde47d1992fe6f14a7b40e4"
           env {
             name  = "PLAYWRIGHT_DRIVER_URL"
             value = "ws://localhost:3000"
@@ -183,14 +186,6 @@ resource "kubernetes_deployment" "changedetection" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # IMAGE_SWAP_DEFERRED: Keel left the two images crossed on 2026-08-26
-      # (container sockpuppetbrowser runs ghcr.io/dgtlmoon/changedetection.io:0.55.8,
-      # container changedetection runs dgtlmoon/sockpuppetbrowser:0.0.3). Pinning
-      # either string here changes the pod, so both images stay ignored until a
-      # supervised session puts each image back in its own container
-      # (Keel to Renovate cutover, batch B08).
-      spec[0].template[0].spec[0].container[0].image, # IMAGE_SWAP_DEFERRED
-      spec[0].template[0].spec[0].container[1].image, # IMAGE_SWAP_DEFERRED
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
