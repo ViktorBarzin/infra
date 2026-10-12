@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) guard for three shapes that Claude Code's own rm checks ask
+"""PreToolUse(Bash) guard for four shapes that Claude Code's own rm checks ask
 a person about, even in a session started with --dangerously-skip-permissions.
 
 1. `rm -r` on a path an empty variable would turn into / or a top-level
@@ -8,7 +8,9 @@ a person about, even in a session started with --dangerously-skip-permissions.
    `kubectl exec $P -- sh -c '...'`, anywhere in a command that joins commands
    with && or ||. Described after the first.
 3. rm of a whole directory's contents by a relative path, such as
-   `cd $S && rm -f out/*`. Described last.
+   `cd $S && rm -f out/*`. Described third.
+4. A bash -c script Claude Code thinks may run rm but cannot read, such as a
+   function that uses "$1". Described last.
 
 Claude Code has its own check for this shape, and it asks a person even in a
 session started with --dangerously-skip-permissions. On 2026-10-12 that raised
@@ -81,6 +83,29 @@ did in headless `claude -p --dangerously-skip-permissions` runs:
 A cd inside a subshell, `(cd $S && rm -f out/*)`, ran there and is blocked
 here; the rewrite works in both places.
 
+The fourth shape asked five times on the evening of 2026-10-12, in a workflow
+in extending-tv-app-stream-search and in renovate-upgrades, with the same
+"could not check the script" reason as the second, for scripts like
+
+    bash -c 'chk(){ c=$(curl -s -o /dev/null -w "%{http_code}" "$1"); ...}; ...'
+
+None of them ran rm. Its rule is read from the Claude Code 2.1.296 source,
+and it asks when all three of these hold for the -c script:
+
+  - Qcn: it may run rm. The word rm, a brace expansion like {a,b}, or a $
+    straight after one of ; & | ( ) { } newline ` ! counts.
+  - uEr/Lcn: it cannot be read. It is over 2000 characters, or uses alias or
+    IFS, or uses $1, $@, $# or $* together with a single quote, a function
+    definition, eval, source, shift, trap or a $VAR in command position.
+  - Hwe: it runs rm. rm, or a word starting with $, in command position after
+    a plain split on ; & | ( ) { } and $( counts. That split is what turns
+    `-w "%{http_code}" "$1"` into a command named $1.
+
+Feeding the same script to bash on stdin (`bash <<'SCRIPT'`) has no -c, so
+Claude Code does not run this check; it ran all four scripts that way. The
+deeper cases the source also counts (nested shell -c, more than 8 cds, values
+set by read or eval) are left out.
+
 Exit codes: 0 = allow, 2 = block and return stderr to Claude.
 """
 import json
@@ -142,6 +167,25 @@ CD_GLOB_WHY = {
           "variable or a relative path, a pushd, or a second cd,",
     "pwd": "Claude Code treats $PWD as possibly empty, which makes the path /*,",
 }
+UNCHECKED_MSG = (
+    "BLOCKED by rm-guard: `{shell} {flag} '...'` passes a script that Claude Code\n"
+    "cannot check for rm, because {why}. Claude Code stops for a person's\n"
+    "approval on this even in bypass mode, so the session would sit waiting.\n"
+    "Feed the same script to bash on stdin instead, which it does not check\n"
+    "this way:\n"
+    "  bash <<'SCRIPT'\n"
+    "  ...the script, unchanged...\n"
+    "  SCRIPT\n"
+    "Pass values in with `bash -s \"$S\" <<'SCRIPT'` and read them as $1.\n"
+    "Claude Code runs that form without asking."
+)
+# Claude Code's g9e: words after which the next word is still a command.
+CMD_PREFIX = {"sudo", "doas", "exec", "command", "env", "nice", "nohup",
+              "busybox", "time", "timeout", "stdbuf", "setsid", "ionice",
+              "pkexec", "runuser", "eval", "xargs", "do", "then", "else",
+              "elif", "if", "while", "until", "!", "{", "coproc", "builtin",
+              "noglob", "toybox", "trap", "watch", "flock", "chroot", "script"}
+POSITIONAL = re.compile(r"\$(?:\{[!#@*0-9]|[#@*0-9])")
 PWD_GLOB = re.compile(r"^\$(PWD|\{PWD\})/\*$")
 
 
@@ -327,6 +371,136 @@ def _wrapped_shell_c(argv):
     return None
 
 
+def _words(script, protect=True):
+    """Claude Code's U$: the script split into simple commands, as word lists.
+
+    With protect, separators inside quotes do not split. The split is plain
+    text, so `"%{http_code}" "$1"` unprotected leaves `$1` as a command.
+    """
+    if protect:
+        script = re.sub(
+            r"\\[\s\S]|'[^']*'|\"(?:[^\"\\]|\\.)*\"",
+            lambda m: m.group(0) if m.group(0).startswith("\\")
+            else re.sub(r"[\s;&|()`{}!]", "\x00", m.group(0)), script)
+    script = re.sub(r"\d*[<>]&(?:\d+-?|-)(?![^\s;&|()])", " ", script)
+    script = re.sub(r"\d*[<>]&|&>>?|>\|", ">", script)
+    script = re.sub(r"\$(?=['\"])|['\"\\]", "", script)
+    out = []
+    for part in re.split(r"[;&|()`{}\n!]|\$\(", script):
+        s = [w for w in re.split(r"[ \t]+", part) if w]
+        out.append([h for y, h in enumerate(s)
+                    if not re.match(r"\d*[<>]", h)
+                    and not (y and re.fullmatch(r"\d*[<>]+", s[y - 1]))
+                    and not (re.match(r"\w+\+?=", h)
+                             and all(re.match(r"\w+\+?=", w) for w in s[:y]))])
+    return out
+
+
+def _may_run_rm(script):
+    """Claude Code's Qcn."""
+    n = re.sub(r"\$(?=['\"])|['\"\\]", "", script)
+    return bool(re.search(r"\{[^{}\s]*(?:,|\.\.)", n)
+                or re.search(r"(?:^|[^\w.-])rm(?:dir)?(?![\w.-])", n, re.I)
+                or re.search(r"(?:^|[;&|(){}\n`!])\s*(?:\w+\+?=\S*\s+)*\$", n))
+
+
+def _runs_rm(script):
+    """Claude Code's Hwe, without its brace-expansion branch."""
+    def is_rm(w):
+        w = os.path.basename(re.sub(r"\d*[<>].*$", "", w, flags=re.S))
+        return bool(re.match(r"^(?:\w*=)?rm(?:dir)?$", w, re.I))
+
+    def prefix(w):
+        return os.path.basename(w).lower() in CMD_PREFIX
+
+    for s in _words(script) + _words(script, False):
+        for y, h in enumerate(s):
+            if is_rm(h) and any(w != y and (prefix(o) or re.match(r"^-[A-Za-z]*c", o)
+                                            or re.match(r"^-(?:exec(?:dir)?|ok(?:dir)?)$", o))
+                                for w, o in enumerate(s)):
+                return True
+            if (is_rm(h) or h.startswith("$")) and (y == 0 or prefix(s[y - 1])):
+                return True
+            if re.match(r"^\w+=(?:\S*/)?rm(?:dir)?$", h, re.I):
+                return True
+    return False
+
+
+def _unreadable(script):
+    """Why Claude Code's uEr/Lcn cannot read the script, or None."""
+    if len(script) > 2000:
+        return "it is over 2000 characters"
+    if re.search(r"\balias\b", script):
+        return "it uses alias"
+    no_read = re.sub(r"(?:^|[;&|\n({]\s*)(?:(?:do|then|else|elif|if|while|until)\s+)?"
+                     r"IFS=(?:'[^']*'|\"[^\"]*\"|[^\s;&|'\"\\])*[ \t]+read\b", " read", script)
+    if re.search(r"\bIFS\b", no_read):
+        return "it sets IFS"
+    if not POSITIONAL.search(script):
+        return None
+    if re.search(r"\$\{(?![0-9]+(?:\}|:?\?[^}$`]*\})|[@*#]\})[!#@*0-9]", script):
+        return "it uses an argument expansion like ${#1}"
+    if "'" in script:
+        return "it uses $1 or $@ and holds a single quote"
+    if re.search(r"\bfunction\b|\w\s*\(\s*\)", script):
+        return "it uses $1 or $@ inside a function it defines"
+    for s in _words(script):
+        for y, h in enumerate(s):
+            if not all(w in CMD_PREFIX or re.match(r"^(?:-|\d+$)", w) for w in s[:y]):
+                break
+            if re.match(r"^(?:shift|source|\.|eval|trap)$", h):
+                return "it uses $1 or $@ with " + h
+            if re.match(r"^\$(?!\{?[0-9@*#])", h):
+                return "it uses $1 or $@ and runs a command named by a variable"
+    if re.search(r"(?:^|[\s;&|(){}])(?:argv|[0-9]+)(?:\[[^\]]*\])?=", script) \
+            or re.search(r"(?:^|[\s;&|(){}!])set\s[^;&|\n]*(?:\$\(|`)", script):
+        return "it uses $1 or $@ and sets the arguments"
+    return None
+
+
+def _shell_script(argv):
+    """(shell, flag, script) when argv runs `sh -c script`, else None."""
+    if not argv or os.path.basename(argv[0]) not in SHELLS:
+        return None
+    flag = None
+    for i, a in enumerate(argv[1:], 1):
+        if a in ("-", "--"):
+            i += 1
+            break
+        if not re.match(r"^[-+].", a):
+            break
+        if a.startswith("--"):
+            if a in ("--rcfile", "--init-file"):
+                return None    # rare; not worth following
+            continue
+        if a.startswith("-") and "c" in a:
+            flag = a
+    else:
+        return None
+    if flag is None or i >= len(argv):
+        return None
+    return os.path.basename(argv[0]), flag, argv[i].replace("\x00", "$")
+
+
+def _unchecked_shell_c(argv):
+    """The message for a -c script Claude Code would ask about, or None."""
+    if argv and os.path.basename(argv[0]) == "xargs":
+        k = 1
+        while k < len(argv) and argv[k].startswith("-"):
+            k += 2 if argv[k] in ("-P", "-n", "-I", "-L", "-d", "-s", "-a", "-E") else 1
+        argv = argv[k:]
+    hit = _shell_script(argv)
+    if not hit:
+        return None
+    shell, flag, script = hit
+    if not _may_run_rm(script):
+        return None
+    why = _unreadable(script)
+    if why is None or not _runs_rm(script):
+        return None
+    return UNCHECKED_MSG.format(shell=shell, flag=flag, why=why)
+
+
 def _cd_glob(rm_args, cd_followed):
     """The message for rm of a relative dir/*, or None.
 
@@ -357,8 +531,6 @@ def _cd_glob(rm_args, cd_followed):
 
 def check(cmd):
     """Return the block message for a command, or None to allow it."""
-    if "$" not in cmd and "*" not in cmd:
-        return None
     ops = []
     try:
         segs = _segments(cmd, ops)
@@ -383,6 +555,9 @@ def check(cmd):
             hit = _wrapped_shell_c(rest)
             if hit:
                 return hit
+        hit = _unchecked_shell_c(rest)
+        if hit:
+            return hit
         if rest and rest[0] in ("cd", "pushd"):
             cds += 1
             literal = (rest[0] == "cd" and len(rest) == 2 and rest[1].startswith("/")
