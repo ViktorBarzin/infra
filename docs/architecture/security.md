@@ -1049,27 +1049,36 @@ different ceiling gets its own Middleware, as f1-stream does.
 
 ### Kyverno Policy Example
 
+The policies use the CEL types from `policies.kyverno.io/v1` (Kyverno 1.20 removes the `kyverno.io/v1` ClusterPolicy). Each one lives in `stacks/kyverno/modules/kyverno/policies/`. A trimmed version of `inject-ndots.yaml`:
+
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: inject-ndots
 spec:
-  background: false
-  rules:
-  - name: inject-ndots
-    match:
-      resources:
-        kinds:
-        - Pod
-    mutate:
-      patchStrategicMerge:
-        spec:
-          dnsConfig:
-            options:
-            - name: ndots
-              value: "2"
+  failurePolicy: Ignore
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchConditions:
+    - name: no-ndots-option
+      expression: "!object.spec.?dnsConfig.?options.orValue([]).exists(o, o.name == 'ndots')"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          !has(object.spec.dnsConfig) ?
+            [JSONPatch{op: 'add', path: '/spec/dnsConfig', value: Object.spec.dnsConfig{options: [Object.spec.dnsConfig.options{name: 'ndots', value: '2'}]}}] : ...
 ```
+
+`controllers: []` matters for JSONPatch mutations: MutatingPolicy generates pod-controller variants by default, and those variants keep the `/spec/...` paths, so they would patch the Deployment itself.
 
 ## Decisions & Rationale
 
@@ -1144,7 +1153,7 @@ spec:
 **Fix**:
 1. Check policy reports: `kubectl get policyreport -A`
 2. Verify `failurePolicy=Ignore` is set (should never block)
-3. If blocking, temporarily disable policy: `kubectl annotate clusterpolicy <policy> kyverno.io/exclude=true`
+3. If blocking, switch the policy to audit: set `validationActions: [Audit]` in `stacks/kyverno/modules/kyverno/policies/<policy>.yaml` and apply the stack
 4. Investigate root cause, fix workload or update policy
 
 ### Anti-AI Service Down, Traffic Blocked

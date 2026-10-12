@@ -126,375 +126,57 @@ resource "kubernetes_priority_class" "tier_4_aux" {
 # Creates a LimitRange in each namespace based on its tier label.
 # Only affects containers WITHOUT explicit resource requests/limits.
 
-resource "kubectl_manifest" "generate_limitrange_by_tier" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "generate-limitrange-by-tier"
-      annotations = {
-        "policies.kyverno.io/title"       = "Generate LimitRange by Tier"
-        "policies.kyverno.io/description" = "Creates tier-appropriate LimitRange defaults in namespaces based on their tier label. Only affects containers without explicit resource specifications. Excludes namespaces with resource-governance/custom-limitrange label."
-      }
-    }
-    spec = {
-      generateExisting = true
-      rules = [
-        # Tier 0-core
-        {
-          name = "limitrange-tier-0-core"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "0-core"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-limitrange" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "256Mi"
-                    }
-                    defaultRequest = {
-                      cpu    = "100m"
-                      memory = "256Mi"
-                    }
-                    max = {
-                      memory = "8Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        # Tier 1-cluster
-        {
-          name = "limitrange-tier-1-cluster"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "1-cluster"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-limitrange" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "256Mi"
-                    }
-                    defaultRequest = {
-                      cpu    = "100m"
-                      memory = "256Mi"
-                    }
-                    max = {
-                      memory = "8Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        # Tier 2-gpu
-        {
-          name = "limitrange-tier-2-gpu"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "2-gpu"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-limitrange" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "1Gi"
-                    }
-                    defaultRequest = {
-                      cpu    = "200m"
-                      memory = "1Gi"
-                    }
-                    max = {
-                      memory = "16Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        # Tier 3-edge — Burstable QoS: request < limit to reduce scheduler pressure
-        {
-          name = "limitrange-tier-3-edge"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "3-edge"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-limitrange" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "256Mi"
-                    }
-                    defaultRequest = {
-                      cpu    = "50m"
-                      memory = "128Mi"
-                    }
-                    max = {
-                      memory = "8Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        # Tier 4-aux — Burstable QoS: request < limit to reduce scheduler pressure
-        {
-          name = "limitrange-tier-4-aux"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "4-aux"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-limitrange" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "256Mi"
-                    }
-                    defaultRequest = {
-                      cpu    = "50m"
-                      memory = "64Mi"
-                    }
-                    max = {
-                      memory = "4Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        # Fallback: namespaces without a tier label get aux-level defaults
-        # requests = limits to prevent memory overcommit (2026-03-14 node2 OOM incident)
-        {
-          name = "limitrange-no-tier-fallback"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchExpressions = [
-                      {
-                        key      = "tier"
-                        operator = "Exists"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                resources = {
-                  namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "LimitRange"
-            name                           = "tier-defaults"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                limits = [
-                  {
-                    type = "Container"
-                    default = {
-                      memory = "192Mi"
-                    }
-                    defaultRequest = {
-                      cpu    = "50m"
-                      memory = "128Mi"
-                    }
-                    max = {
-                      memory = "4Gi"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-      ]
-    }
+locals {
+  # One GeneratingPolicy per entry. The fallback covers namespaces without a
+  # tier label, except the governance-excluded set; as with the ClusterPolicy
+  # rule, it does not look at resource-governance/custom-limitrange.
+  # 3-edge and 4-aux are Burstable (request < limit) to reduce scheduler
+  # pressure; the rest keep request = limit (2026-03-14 node2 OOM incident).
+  limitrange_policies = {
+    "0-core"    = { default_memory = "256Mi", request_cpu = "100m", request_memory = "256Mi", max_memory = "8Gi" }
+    "1-cluster" = { default_memory = "256Mi", request_cpu = "100m", request_memory = "256Mi", max_memory = "8Gi" }
+    "2-gpu"     = { default_memory = "1Gi", request_cpu = "200m", request_memory = "1Gi", max_memory = "16Gi" }
+    "3-edge"    = { default_memory = "256Mi", request_cpu = "50m", request_memory = "128Mi", max_memory = "8Gi" }
+    "4-aux"     = { default_memory = "256Mi", request_cpu = "50m", request_memory = "64Mi", max_memory = "4Gi" }
+    "no-tier"   = { default_memory = "192Mi", request_cpu = "50m", request_memory = "128Mi", max_memory = "4Gi" }
+  }
+}
+
+# Replaces the generate-limitrange-by-tier ClusterPolicy (one rule per tier).
+resource "kubectl_manifest" "generate_limitrange" {
+  for_each = local.limitrange_policies
+  yaml_body = templatefile("${path.module}/policies/generate-from-data.yaml", {
+    name        = "generate-limitrange-${each.key}"
+    title       = "Generate LimitRange for ${each.key == "no-tier" ? "namespaces without a tier" : "tier ${each.key}"}"
+    kind        = "LimitRange"
+    object_name = "tier-defaults"
+    selector = each.key == "no-tier" ? jsonencode([
+      { key = "tier", operator = "DoesNotExist" },
+      ]) : jsonencode([
+      { key = "tier", operator = "In", values = [each.key] },
+      { key = "resource-governance/custom-limitrange", operator = "NotIn", values = ["true"] },
+    ])
+    condition = each.key == "no-tier" ? "!(object.metadata.name in ${jsonencode(local.excluded_namespaces)})" : "true"
+    spec = jsonencode({
+      limits = [{
+        type           = "Container"
+        default        = { memory = each.value.default_memory }
+        defaultRequest = { cpu = each.value.request_cpu, memory = each.value.request_memory }
+        max            = { memory = each.value.max_memory }
+      }]
+    })
   })
+  depends_on = [helm_release.kyverno]
+}
+
+# The kyverno.io ClusterPolicy is deleted by this removal. Its rules carry
+# orphanDownstreamOnPolicyDelete, so the LimitRanges stay and the
+# GeneratingPolicies above adopt them.
+removed {
+  from = kubectl_manifest.generate_limitrange_by_tier
+  lifecycle {
+    destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -507,270 +189,46 @@ resource "kubectl_manifest" "generate_limitrange_by_tier" {
 # IMPORTANT: LimitRange (Layer 2) must exist before ResourceQuota takes effect,
 # because ResourceQuota requires all pods to have resource requests set.
 
-resource "kubectl_manifest" "generate_resourcequota_by_tier" {
-  depends_on = [kubectl_manifest.generate_limitrange_by_tier]
+locals {
+  resourcequota_policies = {
+    "0-core"    = { limits_memory = "64Gi", pods = "100", requests_cpu = "8", requests_memory = "8Gi" }
+    "1-cluster" = { limits_memory = "32Gi", pods = "30", requests_cpu = "4", requests_memory = "4Gi" }
+    "2-gpu"     = { limits_memory = "32Gi", pods = "40", requests_cpu = "8", requests_memory = "12Gi" }
+    "3-edge"    = { limits_memory = "32Gi", pods = "30", requests_cpu = "4", requests_memory = "4Gi" }
+    "4-aux"     = { limits_memory = "16Gi", pods = "20", requests_cpu = "2", requests_memory = "3Gi" }
+  }
+}
 
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "generate-resourcequota-by-tier"
-      annotations = {
-        "policies.kyverno.io/title"       = "Generate ResourceQuota by Tier"
-        "policies.kyverno.io/description" = "Creates tier-appropriate ResourceQuota in namespaces based on their tier label. Excludes namespaces with resource-governance/custom-quota label."
+# Replaces the generate-resourcequota-by-tier ClusterPolicy.
+resource "kubectl_manifest" "generate_resourcequota" {
+  for_each = local.resourcequota_policies
+  yaml_body = templatefile("${path.module}/policies/generate-from-data.yaml", {
+    name        = "generate-resourcequota-${each.key}"
+    title       = "Generate ResourceQuota for tier ${each.key}"
+    kind        = "ResourceQuota"
+    object_name = "tier-quota"
+    selector = jsonencode([
+      { key = "tier", operator = "In", values = [each.key] },
+      { key = "resource-governance/custom-quota", operator = "NotIn", values = ["true"] },
+    ])
+    condition = "true"
+    spec = jsonencode({
+      hard = {
+        "limits.memory"   = each.value.limits_memory
+        pods              = each.value.pods
+        "requests.cpu"    = each.value.requests_cpu
+        "requests.memory" = each.value.requests_memory
       }
-    }
-    spec = {
-      generateExisting = true
-      rules = [
-        # Tier 0-core
-        {
-          name = "quota-tier-0-core"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "0-core"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-quota" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "ResourceQuota"
-            name                           = "tier-quota"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                hard = {
-                  "requests.cpu"    = "8"
-                  "requests.memory" = "8Gi"
-                  "limits.memory"   = "64Gi"
-                  pods              = "100"
-                }
-              }
-            }
-          }
-        },
-        # Tier 1-cluster
-        {
-          name = "quota-tier-1-cluster"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "1-cluster"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-quota" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "ResourceQuota"
-            name                           = "tier-quota"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                hard = {
-                  "requests.cpu"    = "4"
-                  "requests.memory" = "4Gi"
-                  "limits.memory"   = "32Gi"
-                  pods              = "30"
-                }
-              }
-            }
-          }
-        },
-        # Tier 2-gpu
-        {
-          name = "quota-tier-2-gpu"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "2-gpu"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-quota" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "ResourceQuota"
-            name                           = "tier-quota"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                hard = {
-                  "requests.cpu"    = "8"
-                  "requests.memory" = "12Gi"
-                  "limits.memory"   = "32Gi"
-                  pods              = "40"
-                }
-              }
-            }
-          }
-        },
-        # Tier 3-edge
-        {
-          name = "quota-tier-3-edge"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "3-edge"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-quota" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "ResourceQuota"
-            name                           = "tier-quota"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                hard = {
-                  "requests.cpu"    = "4"
-                  "requests.memory" = "4Gi"
-                  "limits.memory"   = "32Gi"
-                  pods              = "30"
-                }
-              }
-            }
-          }
-        },
-        # Tier 4-aux
-        {
-          name = "quota-tier-4-aux"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "4-aux"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      "resource-governance/custom-quota" = "true"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          generate = {
-            synchronize                    = true
-            orphanDownstreamOnPolicyDelete = true
-            apiVersion                     = "v1"
-            kind                           = "ResourceQuota"
-            name                           = "tier-quota"
-            namespace                      = "{{request.object.metadata.name}}"
-            data = {
-              spec = {
-                hard = {
-                  "requests.cpu"    = "2"
-                  "requests.memory" = "3Gi"
-                  "limits.memory"   = "16Gi"
-                  pods              = "20"
-                }
-              }
-            }
-          }
-        },
-      ]
-    }
+    })
   })
+  depends_on = [kubectl_manifest.generate_limitrange]
+}
+
+removed {
+  from = kubectl_manifest.generate_resourcequota_by_tier
+  lifecycle {
+    destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -781,72 +239,13 @@ resource "kubectl_manifest" "generate_resourcequota_by_tier" {
 # Uses namespaceSelector instead of API calls — no round-trip to the API server.
 
 resource "kubectl_manifest" "mutate_priority_from_tier" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "inject-priority-class-from-tier"
-      annotations = {
-        "policies.kyverno.io/title"       = "Inject PriorityClass from Tier"
-        "policies.kyverno.io/description" = "Sets priorityClassName on Pods based on the namespace tier label. Skips pods that already have a priorityClassName."
-      }
-    }
-    spec = {
-      rules = [for tier in local.governance_tiers : {
-        name = "inject-priority-${tier}"
-        match = {
-          any = [
-            {
-              resources = {
-                kinds      = ["Pod"]
-                operations = ["CREATE"]
-                namespaceSelector = {
-                  matchLabels = {
-                    tier = tier
-                  }
-                }
-              }
-            }
-          ]
-        }
-        exclude = {
-          any = [
-            {
-              resources = {
-                namespaces = local.excluded_namespaces
-              }
-            }
-          ]
-        }
-        preconditions = {
-          all = [
-            {
-              key      = "{{request.object.spec.priorityClassName || ''}}"
-              operator = "Equals"
-              value    = ""
-            }
-          ]
-        }
-        mutate = {
-          patchesJson6902 = yamlencode([
-            {
-              op   = "remove"
-              path = "/spec/priority"
-            },
-            {
-              op   = "remove"
-              path = "/spec/preemptionPolicy"
-            },
-            {
-              op    = "add"
-              path  = "/spec/priorityClassName"
-              value = "tier-${tier}"
-            }
-          ])
-        }
-      }]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/inject-priority-class-from-tier.yaml", { tiers = jsonencode(local.governance_tiers), exclude = jsonencode(local.excluded_namespaces), gpu_exclude = jsonencode(local.gpu_priority_excluded_namespaces) })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 
@@ -856,74 +255,13 @@ resource "kubectl_manifest" "mutate_priority_from_tier" {
 # on all pods to reduce NxDomain flood while still allowing short-name service
 # resolution (e.g. "redis.redis" has 1 dot, so it still expands).
 resource "kubectl_manifest" "mutate_ndots" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "inject-ndots"
-      annotations = {
-        "policies.kyverno.io/title"       = "Inject ndots:2 DNS Config"
-        "policies.kyverno.io/description" = "Sets ndots:2 on all Pods to reduce NxDomain query flood from search domain expansion. Skips pods that already have ndots configured."
-      }
-    }
-    spec = {
-      rules = [
-        {
-          name = "inject-ndots-2"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Pod"]
-                  # CREATE-only: dnsConfig is immutable post-create, so mutating
-                  # on UPDATE is pure downside. A pod created while this webhook
-                  # was DOWN (e.g. cold boot / outage recovery) stores
-                  # dnsConfig=null; without this scope, the recovered webhook
-                  # then tries to inject dnsConfig on the job-controller's
-                  # finalizer-removal UPDATE, which the apiserver rejects as a
-                  # forbidden pod-spec change -> pod stuck Terminating forever,
-                  # uncleanable via API (2026-07-18 outage; reboot self-heal).
-                  operations = ["CREATE"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
-                }
-              }
-            ]
-          }
-          preconditions = {
-            all = [
-              {
-                key      = "{{ request.object.spec.dnsConfig.options || `[]` | [?name == 'ndots'] | length(@) }}"
-                operator = "Equals"
-                value    = "0"
-              }
-            ]
-          }
-          mutate = {
-            patchStrategicMerge = {
-              spec = {
-                dnsConfig = {
-                  options = [
-                    {
-                      name  = "ndots"
-                      value = "2"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/inject-ndots.yaml", { exclude = jsonencode(local.excluded_namespaces) })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -935,84 +273,13 @@ resource "kubectl_manifest" "mutate_ndots" {
 # Runs after Layer 4 (tier injection), so it overrides the tier-based priority.
 
 resource "kubectl_manifest" "mutate_gpu_priority" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "inject-gpu-workload-priority"
-      annotations = {
-        "policies.kyverno.io/title"       = "Inject GPU Workload Priority"
-        "policies.kyverno.io/description" = "Overrides priorityClassName to gpu-workload for pods requesting nvidia.com/gpu resources. Runs after tier-based injection."
-      }
-    }
-    spec = {
-      rules = [
-        {
-          name = "gpu-priority-override"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds      = ["Pod"]
-                  operations = ["CREATE"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  # tts added so Chatterbox-TTS keeps tier-2-gpu priority (it's a
-                  # best-effort off-peak batch tenant — must be evicted first,
-                  # not promoted to immich-equal gpu-workload). See locals above.
-                  namespaces = local.gpu_priority_excluded_namespaces
-                }
-              }
-            ]
-          }
-          preconditions = {
-            any = [
-              {
-                key      = "{{ request.object.spec.containers[].resources.requests.\"nvidia.com/gpu\" || '' }}"
-                operator = "NotEquals"
-                value    = ""
-              },
-              {
-                key      = "{{ request.object.spec.containers[].resources.limits.\"nvidia.com/gpu\" || '' }}"
-                operator = "NotEquals"
-                value    = ""
-              }
-            ]
-          }
-          mutate = {
-            # `op=add` (not replace) — incoming pods often lack the
-            # `/spec/priorityClassName` key entirely; replace fails with
-            # "doc is missing key" and aborts the mutation chain BEFORE
-            # Layer 4 (tier injection) can fall back. add works whether
-            # the path exists or not. Verified 2026-05-26 on frigate.
-            patchesJson6902 = yamlencode([
-              {
-                op    = "add"
-                path  = "/spec/priorityClassName"
-                value = "gpu-workload"
-              },
-              {
-                op    = "add"
-                path  = "/spec/priority"
-                value = 1200000
-              },
-              {
-                op    = "add"
-                path  = "/spec/preemptionPolicy"
-                value = "PreemptLowerPriority"
-              }
-            ])
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/inject-gpu-workload-priority.yaml", { gpu_exclude = jsonencode(local.gpu_priority_excluded_namespaces) })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -1058,38 +325,13 @@ resource "kubernetes_cluster_role_binding_v1" "kyverno_cleanup_pods" {
 }
 
 resource "kubectl_manifest" "cleanup_failed_pods" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v2"
-    kind       = "ClusterCleanupPolicy"
-    metadata = {
-      name = "cleanup-failed-pods"
-      annotations = {
-        "policies.kyverno.io/title"       = "Cleanup Failed Pods"
-        "policies.kyverno.io/description" = "Automatically deletes pods in Failed phase (evicted, error, completed CronJob failures)."
-      }
-    }
-    spec = {
-      match = {
-        any = [
-          {
-            resources = {
-              kinds = ["Pod"]
-            }
-          }
-        ]
-      }
-      conditions = {
-        any = [
-          {
-            key      = "{{ request.object.status.phase }}"
-            operator = "Equals"
-            value    = "Failed"
-          }
-        ]
-      }
-      schedule = "15 * * * *"
-    }
-  })
+  yaml_body = file("${path.module}/policies/cleanup-failed-pods.yaml")
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -1109,115 +351,13 @@ resource "kubectl_manifest" "cleanup_failed_pods" {
 # the mutation so pods without CPU limits pass through untouched.
 
 resource "kubectl_manifest" "mutate_strip_cpu_limits" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "strip-cpu-limits"
-      annotations = {
-        "policies.kyverno.io/title" = "Strip CPU Limits"
-        "policies.kyverno.io/description" = join("", [
-          "Removes resources.limits.cpu from every container and initContainer ",
-          "at pod admission. Memory limits are preserved. Cluster policy: CFS ",
-          "throttling causes more harm than good for bursty single-threaded ",
-          "workloads (Node.js, Python apps).",
-        ])
-      }
-    }
-    spec = {
-      background = false
-      rules = [
-        {
-          name = "strip-container-cpu-limit"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds      = ["Pod"]
-                  operations = ["CREATE"]
-                }
-              }
-            ]
-          }
-          preconditions = {
-            all = [
-              {
-                key      = "{{ request.object.spec.containers[?resources.limits.cpu != null] | length(@) }}"
-                operator = "GreaterThan"
-                value    = 0
-              }
-            ]
-          }
-          mutate = {
-            foreach = [
-              {
-                list = "request.object.spec.containers"
-                preconditions = {
-                  all = [
-                    {
-                      key      = "{{ element.resources.limits.cpu || '' }}"
-                      operator = "NotEquals"
-                      value    = ""
-                    }
-                  ]
-                }
-                patchesJson6902 = yamlencode([
-                  {
-                    op   = "remove"
-                    path = "/spec/containers/{{ elementIndex }}/resources/limits/cpu"
-                  }
-                ])
-              }
-            ]
-          }
-        },
-        {
-          name = "strip-initcontainer-cpu-limit"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds      = ["Pod"]
-                  operations = ["CREATE"]
-                }
-              }
-            ]
-          }
-          preconditions = {
-            all = [
-              {
-                key      = "{{ request.object.spec.initContainers[?resources.limits.cpu != null] || `[]` | length(@) }}"
-                operator = "GreaterThan"
-                value    = 0
-              }
-            ]
-          }
-          mutate = {
-            foreach = [
-              {
-                list = "request.object.spec.initContainers"
-                preconditions = {
-                  all = [
-                    {
-                      key      = "{{ element.resources.limits.cpu || '' }}"
-                      operator = "NotEquals"
-                      value    = ""
-                    }
-                  ]
-                }
-                patchesJson6902 = yamlencode([
-                  {
-                    op   = "remove"
-                    path = "/spec/initContainers/{{ elementIndex }}/resources/limits/cpu"
-                  }
-                ])
-              }
-            ]
-          }
-        },
-      ]
-    }
-  })
+  yaml_body = file("${path.module}/policies/strip-cpu-limits.yaml")
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Apply re-trigger 2026-06-11: 87702bdc landed with [ci skip], so this stack was
@@ -1264,90 +404,11 @@ resource "kubectl_manifest" "mutate_strip_cpu_limits" {
 # excluded by namespace rather than given seats, which is the disposition the
 # bead asked for. Their reasons are on local.gpumem_excluded_namespaces.
 resource "kubectl_manifest" "validate_gpumem_declared" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "require-gpumem-declaration"
-      annotations = {
-        "policies.kyverno.io/title"       = "Require GPU VRAM Budget Declaration"
-        "policies.kyverno.io/description" = "Pods requesting nvidia.com/gpu must also declare viktorbarzin.me/gpumem so the scheduler counts their VRAM and the gpu-vram-watchdog can hold them to a contract (ADR-0016). Enforce mode; namespaces holding a deliberately seatless tenant are excluded."
-        "policies.kyverno.io/severity"    = "medium"
-      }
-    }
-    spec = {
-      validationFailureAction = "Enforce"
-      background              = true
-      rules = [
-        {
-          name = "gpu-pods-declare-gpumem"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Pod"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = local.gpumem_excluded_namespaces
-                }
-              }
-            ]
-          }
-          # A `pattern` with conditional anchors, NOT a deny/preconditions pair
-          # using request.object (2026-08-31): background scanning has no
-          # AdmissionRequest, so a rule built on `request.object` is skipped
-          # during background evaluation and the policy reports nothing about
-          # pods that already exist — which is exactly what this needs to see.
-          # The first shipped version made that mistake and produced zero
-          # results against three known-seatless GPU pods.
-          #
-          # Reading the anchors: for any container where limits."nvidia.com/gpu"
-          # is set, limits."viktorbarzin.me/gpumem" must be present and
-          # non-empty ("?*"). Containers with no GPU request are not matched by
-          # the anchor and so are not constrained. Same "?*" idiom the tier
-          # label check uses.
-          #
-          # `=(resources)` and `=(limits)` are EXISTENCE anchors, not conditional
-          # ones, and the difference is the whole rule (fixed 2026-09-04, bead
-          # code-0twf). A conditional `()` anchor treats a sub-pattern that does
-          # NOT match as a SKIP, so nesting the real requirement two conditionals
-          # deep inverted every failure into a pass: `(limits)` saw the inner map
-          # fail, called itself unmatched, skipped, and `(resources)` skipped in
-          # turn. The policy shipped that way on 2026-08-31 and could never fail
-          # anything, in Audit or Enforce. An existence anchor instead means "if
-          # this key is present its value MUST match", so the failure propagates.
-          # Measured with kyverno-cli 1.18.2 (same build as the cluster) over six
-          # pod shapes: the old pattern gave pass 1 / fail 0 / skip 5, including a
-          # skip for a GPU container with no gpumem; the new one fails exactly the
-          # two GPU-without-gpumem shapes (single-container and one with a
-          # sidecar) and passes a non-GPU container, a container with no
-          # `resources` block at all, and one with requests but no limits.
-          # Re-run that before touching the anchors again.
-          validate = {
-            message = "Pod requests nvidia.com/gpu but declares no viktorbarzin.me/gpumem budget. The scheduler cannot count its VRAM and the gpu-vram-watchdog cannot hold it to a contract (ADR-0016). Add resources.limits.\"viktorbarzin.me/gpumem\" set from measured use, or record why it is deliberately seatless."
-            pattern = {
-              spec = {
-                containers = [
-                  {
-                    "=(resources)" = {
-                      "=(limits)" = {
-                        "(nvidia.com/gpu)"       = "?*"
-                        "viktorbarzin.me/gpumem" = "?*"
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/require-gpumem-declaration.yaml", { exclude = jsonencode(local.gpumem_excluded_namespaces) })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }

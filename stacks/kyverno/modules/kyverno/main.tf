@@ -30,10 +30,10 @@ resource "helm_release" "kyverno" {
   # 3.8.1 (1.18.1) -> 3.9.1 (1.19.1) on 2026-10-10: no values change; the rendered
   # diff only adds --excludeBootstrapResources=false / --maxGlobalContextEntries=0
   # (both defaults) and flags the kyverno.io/v1 ClusterPolicy and v2 CleanupPolicy
-  # CRD versions deprecated. Kyverno 1.20 removes those types, so all ClusterPolicies
-  # here and cleanup-failed-pods must move to the CEL policy types
-  # (ValidatingPolicy/MutatingPolicy/GeneratingPolicy/DeletingPolicy) and run
-  # `kyverno migrate` before the next minor.
+  # CRD versions deprecated. Kyverno 1.20 removes those types. On 2026-10-12 every
+  # policy moved to the CEL types (policies/*.yaml, loaded by the kubectl_manifest
+  # resources in this module), so nothing here uses kyverno.io/v1 or v2 any more.
+  # Before 3.10: confirm `kubectl get cpol,ccleanpol,polex.kyverno.io -A` is empty.
   version = "3.9.1"
 
   values = [yamlencode({
@@ -217,50 +217,13 @@ resource "helm_release" "kyverno" {
 # Uses namespaceSelector to match tiers — no API call needed.
 # One rule per tier so Kyverno resolves the tier value from its informer cache.
 resource "kubectl_manifest" "mutate_tier_from_namespace" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "sync-tier-label-from-namespace"
-    }
-    spec = {
-      rules = [for tier in local.governance_tiers : {
-        name = "sync-tier-${tier}"
-        match = {
-          any = [
-            {
-              resources = {
-                kinds = ["Deployment", "StatefulSet", "DaemonSet"]
-                namespaceSelector = {
-                  matchLabels = {
-                    tier = tier
-                  }
-                }
-              }
-            }
-          ]
-        }
-        exclude = {
-          any = [
-            {
-              resources = {
-                namespaces = ["kube-system", "metallb-system", "n8n"]
-              }
-            }
-          ]
-        }
-        mutate = {
-          patchStrategicMerge = {
-            metadata = {
-              labels = {
-                "+(tier)" = tier
-              }
-            }
-          }
-        }
-      }]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/sync-tier-label-from-namespace.yaml", { tiers = jsonencode(local.governance_tiers), exclude = jsonencode(["kube-system", "metallb-system", "n8n"]) })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # resource "kubectl_manifest" "enforce_pod_tier_label" {

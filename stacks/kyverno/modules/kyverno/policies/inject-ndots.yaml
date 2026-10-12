@@ -1,0 +1,42 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: inject-ndots
+  annotations:
+    policies.kyverno.io/title: "Inject ndots:2 DNS Config"
+    policies.kyverno.io/description: "Sets dnsConfig option ndots=2 on pods that do not set ndots themselves."
+spec:
+  failurePolicy: Ignore
+  # No pod-controller variants. MutatingPolicy autogen is on by default for
+  # pod policies, and it does not rewrite JSONPatch paths, so a variant would
+  # write /spec/... onto the Deployment itself (seen with kyverno-cli 1.19.1).
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  matchConditions:
+    - name: no-ndots-option
+      expression: "!object.spec.?dnsConfig.?options.orValue([]).exists(o, o.name == 'ndots')"
+  mutations:
+    # Appends to dnsConfig.options when the pod already has other options.
+    # (The ClusterPolicy's strategic-merge patch replaced the list; no pod in
+    # the cluster had other options on 2026-10-12.) dnsConfig.options is an
+    # atomic list, so an ApplyConfiguration cannot set it.
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          !has(object.spec.dnsConfig) ?
+            [JSONPatch{op: 'add', path: '/spec/dnsConfig', value: Object.spec.dnsConfig{options: [Object.spec.dnsConfig.options{name: 'ndots', value: '2'}]}}] :
+          !has(object.spec.dnsConfig.options) ?
+            [JSONPatch{op: 'add', path: '/spec/dnsConfig/options', value: [Object.spec.dnsConfig.options{name: 'ndots', value: '2'}]}] :
+            [JSONPatch{op: 'add', path: '/spec/dnsConfig/options/-', value: Object.spec.dnsConfig.options{name: 'ndots', value: '2'}}]

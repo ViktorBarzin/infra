@@ -1,0 +1,34 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: deny-privileged-containers
+  annotations:
+    policies.kyverno.io/title: "Deny Privileged Containers"
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: "Privileged containers have full host access. Deny unless explicitly exempted."
+spec:
+  validationActions: [Deny]
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  validations:
+    - message: Privileged containers are not allowed. Use specific capabilities instead.
+      expression: >-
+        (object.spec.containers + object.spec.?initContainers.orValue([])).all(c,
+          !c.?securityContext.?privileged.orValue(false))

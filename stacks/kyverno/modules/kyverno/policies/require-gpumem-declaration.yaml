@@ -1,0 +1,34 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-gpumem-declaration
+  annotations:
+    policies.kyverno.io/title: Require GPU VRAM Budget Declaration
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: "A container with an nvidia.com/gpu limit must also declare a viktorbarzin.me/gpumem limit (ADR-0016)."
+spec:
+  validationActions: [Deny]
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  validations:
+    - message: 'Pod requests nvidia.com/gpu but declares no viktorbarzin.me/gpumem budget. The scheduler cannot count its VRAM and the gpu-vram-watchdog cannot hold it to a contract (ADR-0016). Add resources.limits."viktorbarzin.me/gpumem" set from measured use, or record why it is deliberately seatless.'
+      expression: >-
+        object.spec.containers.all(c,
+          !('nvidia.com/gpu' in c.?resources.?limits.orValue({})) ||
+          'viktorbarzin.me/gpumem' in c.resources.limits)
