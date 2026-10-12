@@ -23,6 +23,13 @@ verify_component() {
   for d in kubernetes-dashboard-api kubernetes-dashboard-auth kubernetes-dashboard-kong kubernetes-dashboard-web kubernetes-dashboard-metrics-scraper dashboard-token-injector oauth2-proxy; do
     check "$d converged" retry 300 10 workload_ready kubernetes-dashboard "deployment/$d"
   done
+  # Sablier parks the whole group at 0 replicas when idle (ADR-0022), and the
+  # verify user agent never wakes it, so the HTTP checks only run while it is
+  # awake. Pipeline 2349 reverted an nginx bump because they ran while parked.
+  if [ "$(k get -n kubernetes-dashboard deployment/kubernetes-dashboard-web -o jsonpath='{.spec.replicas}')" = 0 ]; then
+    echo "dashboard parked by Sablier (0 replicas); HTTP checks skipped"
+    return 0
+  fi
   check "web serves the dashboard UI" _web_html
   check "api issues a CSRF token" _csrf
   check "kong -> auth -> api lists namespaces with a bearer token" _api_through_kong
