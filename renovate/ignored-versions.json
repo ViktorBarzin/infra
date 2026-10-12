@@ -78,6 +78,17 @@
       ],
       "matchNewValue": "3.14-alpine",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2380: stack resume failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 775df6d8)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "amruthpillai/reactive-resume"
+      ],
+      "matchNewValue": "v6.0.2",
+      "enabled": false
     }
   ]
 }
