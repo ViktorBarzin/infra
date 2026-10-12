@@ -96,7 +96,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
       spec {
         init_container {
           name  = "sysctl"
-          image = "busybox:1.38"
+          image = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = [
             "sh", "-c",
             "sysctl -w fs.inotify.max_user_watches=1048576 && sysctl -w fs.inotify.max_user_instances=8192 && sysctl -w fs.inotify.max_queued_events=1048576"
