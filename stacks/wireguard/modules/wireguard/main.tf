@@ -116,7 +116,7 @@ resource "kubernetes_deployment" "wireguard" {
       spec {
         init_container {
           name    = "sysctl-setup"
-          image   = "busybox"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["/bin/sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"]
 
           security_context {
@@ -124,7 +124,9 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
         container {
-          image = "sclevine/wg:latest"
+          # sclevine/wg publishes only :latest, so both containers pin
+          # latest@digest: immutable, and Renovate bumps the digest.
+          image = "sclevine/wg:latest@sha256:52af4627e6cd0fb11ee47ad3a8e3e35a5909391d872594371561abfad51364c4"
           name  = "wireguard"
           lifecycle {
             post_start {
@@ -203,7 +205,7 @@ resource "kubernetes_deployment" "wireguard" {
         # own 10.3.5.0/24, and the ownership check below is the backstop.
         container {
           name  = "wg-peer-sync"
-          image = "sclevine/wg:latest"
+          image = "sclevine/wg:latest@sha256:52af4627e6cd0fb11ee47ad3a8e3e35a5909391d872594371561abfad51364c4"
           command = ["/bin/sh", "-c", <<-EOT
             set -u
             STATE=/run/wg-managed/managed.list
@@ -339,11 +341,7 @@ resource "kubernetes_deployment" "wireguard" {
     # dns_config is declared explicitly above (ndots=2), so it already matches
     # what Kyverno injects — no KYVERNO_LIFECYCLE_V1 line needed here.
     ignore_changes = [
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      # FLOATING_TAG_DEFERRED: sclevine/wg:latest has no version tag; a
-      # tag@digest pin restarts the VPN pod.
-      spec[0].template[0].spec[0].container[0].image,
-      spec[0].template[0].spec[0].container[1].image,
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
