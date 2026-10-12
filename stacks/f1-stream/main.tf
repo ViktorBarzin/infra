@@ -250,7 +250,10 @@ resource "kubernetes_deployment" "f1-stream" {
     }
   }
   spec {
-    replicas = 1
+    # Zero from the first step of the ADR-0029 cutover: the copy Job below
+    # moves /data into f1-stream-data while nothing writes it, and the next
+    # push replaces this Deployment with the Edge, Transcoder and Worker.
+    replicas = 0
     # RollingUpdate with NO surge, which at one replica behaves exactly as
     # Recreate did and is simply the conventional spelling.
     #
@@ -900,6 +903,103 @@ resource "kubernetes_deployment" "f1-stream" {
   }
 }
 
+
+# One-shot copy of the old RWO volume into the RWX claim, at the cutover. 18 GiB
+# on 2026-10-11, almost all of it the replay library; the duration on the shared
+# HDD pool has not been measured.
+#
+# It lands one push before the Roles (the cutover in the app repo's rolling
+# deploys plan, steps 3 to 5): the commit on wizard/f1-stream-b0 scales the old
+# Deployment to zero and creates this Job, and the Roles land once the Job has
+# completed and written its marker. Nothing in an apply waits for the copy,
+# and the Roles carry no depends_on on it, so landing them early would start
+# the Worker on a half-copied volume. A CI apply that waited on a copy of
+# unknown length would be killed by the next infra push, losing its state
+# write; split this way, the copy runs while no apply is open, and the Roles'
+# apply lasts as long as their rollout.
+#
+# The script first waits out the old pod's 30 s termination grace period: the
+# Deployment reports zero replicas while that pod is still shutting down, and
+# it may write /data until the kubelet kills it.
+#
+# The marker file makes a re-run harmless: if this Job is ever recreated after
+# the cutover it must not copy the old volume over newer data. No
+# ttl_seconds_after_finished, because a Job that deletes itself is planned for
+# re-creation on the next apply. It goes, with module.nfs_data_host, in the
+# cleanup two weeks after the cutover.
+#
+# The old claim mounts beside the new one from any node: the NFS CSIDriver has
+# attachRequired: false, so RWO is not enforced across nodes. The export is
+# no_root_squash (the app's files are owned by uid 0), so `cp -a` keeps owners.
+resource "kubernetes_job_v1" "f1_stream_data_copy" {
+  metadata {
+    name      = "f1-stream-data-copy"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    labels    = { app = "f1-stream-data-copy" }
+  }
+  spec {
+    backoff_limit = 0
+    template {
+      metadata {
+        # Not app=f1-stream, so the Prometheus pod job and the deploy
+        # pipeline's label selector never pick this pod up.
+        labels = { app = "f1-stream-data-copy" }
+      }
+      spec {
+        restart_policy = "Never"
+        container {
+          name  = "copy"
+          image = "docker.io/library/busybox:1.37.0"
+          command = ["/bin/sh", "-c", <<-EOT
+            set -eu
+            if [ -e /new/.copied-from-rwo ]; then
+              echo "already copied on $(cat /new/.copied-from-rwo)"; exit 0
+            fi
+            sleep 45
+            cp -a /old/. /new/
+            date -u > /new/.copied-from-rwo
+            echo "copied: $(du -sh /new | cut -f1)"
+          EOT
+          ]
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "256Mi" }
+          }
+          volume_mount {
+            name       = "old"
+            mount_path = "/old"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "new"
+            mount_path = "/new"
+          }
+        }
+        volume {
+          name = "old"
+          persistent_volume_claim {
+            claim_name = module.nfs_data_host.claim_name
+            read_only  = true
+          }
+        }
+        volume {
+          name = "new"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim_v1.f1_stream_data.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  wait_for_completion = false
+  # Starts once this apply has scaled the old Deployment to zero.
+  depends_on = [kubernetes_deployment.f1-stream]
+  lifecycle {
+    # Without it every apply plans a replace and re-runs the Job
+    # (docs/agents/kyverno-drift.md, "kubernetes_job matters more").
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
 
 resource "kubernetes_service" "f1-stream" {
   metadata {
