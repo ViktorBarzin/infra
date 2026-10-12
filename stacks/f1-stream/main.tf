@@ -275,8 +275,8 @@ resource "kubernetes_persistent_volume_claim_v1" "f1_stream_data" {
 #
 # GPU seats on k8s-node1 (advertises 15000 gpumem): 12148 declared on
 # 2026-10-11, of which this namespace held 2848. Steady state with the split is
-# 2848 + 1200 = 4048 (node 13348); a Transcoder surge adds 1200 for the length
-# of a handover (node 14548). The Worker is Recreate, so its seat never
+# Worker 2000 + Transcoder 1850 = 3850 (node 13150); a Transcoder surge adds
+# 1850 for the length of a handover (node 15000, the whole budget). The Worker is Recreate, so its seat never
 # doubles. If a parked GPU tenant comes back first, the surge Transcoder waits
 # Pending and the old one keeps serving.
 # ---------------------------------------------------------------------------
@@ -869,7 +869,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
   }
   spec {
     replicas = 1
-    # The surge pod takes a second 1200 gpumem seat for the length of a
+    # The surge pod takes a second 1850 gpumem seat for the length of a
     # handover; see the GPU seat note above the locals.
     strategy {
       type = "RollingUpdate"
@@ -920,13 +920,14 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
               "nvidia.com/gpu" = "1"
               # GPU VRAM seat (ADR-0016). Live sessions measured 139-297 MiB
               # each for SDR sources, and TRANSCODE_MAX_SESSIONS is 2 (the warm
-              # encoder takes one of those slots), so 1200 covers two at the top
-              # of that range (594) with room to spare. A 2160p HDR live
-              # session is inferred at about 1,800 MiB and would put this pod
-              # over its seat, which the gpu-vram-watchdog answers by deleting
-              # the pod at the next contention event; TRANSCODE_LIVE_HDR=0
-              # below refuses those sources instead. Raise both together.
-              "viktorbarzin.me/gpumem" = "1200"
+              # encoder takes one of those slots). A 2160p HDR live session is
+              # inferred at about 1,800 MiB. Viktor chose (2026-10-12) to size
+              # the seat for HDR live sessions rather than refuse them: 1850
+              # here plus the Worker's 2000 fits the 5,700 this namespace can
+              # hold during a surge exactly. If a parked GPU tenant comes back
+              # first, the surge pod waits Pending and the old one keeps
+              # serving. Measure an HDR session at cutover.
+              "viktorbarzin.me/gpumem" = "1850"
               # Two encoders at about 360 MB RSS each, the app, and the 256Mi
               # memory emptyDir, which counts against this limit.
               memory = "2Gi"
@@ -995,12 +996,12 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
             name  = "TRANSCODE_MAX_SESSIONS"
             value = "2"
           }
-          # Refuse HDR and 10-bit live sources (503, and the client plays the
-          # source) until the gpumem seat above is sized for them. The app
-          # default, 1, is the behaviour before the split.
+          # HDR and 10-bit live sources are transcoded, as before the split;
+          # the gpumem seat above is sized for them. Set 0 to refuse them
+          # (503, and the client plays the source) if the seat must shrink.
           env {
             name  = "TRANSCODE_LIVE_HDR"
-            value = "0"
+            value = "1"
           }
           # The warm encoder reads its source through an Edge; loopback no
           # longer reaches one.
@@ -1076,7 +1077,7 @@ resource "kubernetes_deployment_v1" "f1_worker" {
   spec {
     replicas = 1
     # Recreate, so the old Worker has stopped before the new one starts: no
-    # two schedulers, no two writers of /data, and no second 2848 gpumem seat,
+    # two schedulers, no two writers of /data, and no second Worker gpumem seat,
     # which node1 does not have. Viewers keep playing from the Edges while it
     # restarts; the stream cache in Redis stays fresh through the Edge-leased
     # re-verify.
@@ -1206,12 +1207,12 @@ resource "kubernetes_deployment_v1" "f1_worker" {
               # and llama-swap (seatless) is then the one recycled; Viktor
               # chose this knowing that.
               #
-              # KEPT at 2848 when ADR-0029 moved the live transcodes to the
-              # Transcoder, which declares its own 1200. The Worker's own worst
-              # case is now an Early copy beside a ladder build; a smaller seat
-              # here (for example 2000, which would let the Transcoder take
-              # 1850 and run HDR live sessions) waits for a measurement.
-              "viktorbarzin.me/gpumem" = "2848"
+              # LOWERED to 2000 when ADR-0029 moved the live transcodes (the
+              # 2 x 291 above) to the Transcoder, so the Transcoder can take
+              # 1850 and run HDR live sessions (Viktor, 2026-10-12). One Early
+              # copy at 1782 fits; an Early copy beside a 4K ladder build
+              # (1782 + 1707) never fit, at 2848 either.
+              "viktorbarzin.me/gpumem" = "2000"
               # 2Gi -> 4Gi on 2026-09-27: a 4K HDR replay ladder build was
               # OOM-killed at 99% after ~4.5 h. Measured on a 2-minute excerpt,
               # the HDR ladder's ffmpeg alone peaks at 1405 MiB RSS, and it shares
