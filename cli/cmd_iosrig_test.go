@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -490,5 +491,38 @@ func TestIosDiscoveryFailureMarkerRoundTrip(t *testing.T) {
 	os.WriteFile(path, []byte("not a timestamp"), 0o644)
 	if got := iosReadFailureMarker(path); !got.IsZero() {
 		t.Errorf("an unparseable marker must read as zero, got %v", got)
+	}
+}
+
+// Meta's device management replaces Xcode in place (26.6 vanished on
+// 2026-10-12, leaving 27.0 and 27.1), so a pinned path breaks the rig without
+// warning. The default picks the newest installed Xcode instead. sort -V is
+// what makes 27.1 beat 27.0 and 26.6, and 26 beat 9.
+func TestNewestXcodeExprPicksTheHighestVersion(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"Xcode_9.4.1.app",
+		"Xcode_26.6.0_17F113_fb.app",
+		"Xcode_27.1.0_27A9275_fb.app",
+		"Xcode_27.0.0_27A266a_fb.app",
+	} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := exec.Command("bash", "-c", "printf %s "+iosNewestXcodeExpr(dir)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("expression failed: %v: %s", err, out)
+	}
+	want := filepath.Join(dir, "Xcode_27.1.0_27A9275_fb.app") + "/Contents/Developer"
+	if string(out) != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+func TestDeveloperDirDefaultsToNewestXcode(t *testing.T) {
+	t.Setenv("IOS_RIG_DEVELOPER_DIR", "")
+	if got, want := iosDefaults().DeveloperDir, iosNewestXcodeExpr("/Applications"); got != want {
+		t.Errorf("default DeveloperDir = %q, want the newest-Xcode expression %q", got, want)
 	}
 }

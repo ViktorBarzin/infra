@@ -635,13 +635,20 @@ echo "appium $(appium --version)"`); err != nil {
 		"me.viktorbarzin.wda-resign",
 		"me.viktorbarzin.ios-rig-build",
 	}
+	devDir := c.DeveloperDir
+	if !dry {
+		var err error
+		if devDir, err = c.resolvedDeveloperDir(); err != nil {
+			return err
+		}
+	}
 	for _, label := range agents {
 		tmpl, err := iosAssets.ReadFile("ios_assets/launchagents/" + label + ".plist.tmpl")
 		if err != nil {
 			return err
 		}
 		rendered := strings.NewReplacer(
-			"@DEVELOPER_DIR@", c.DeveloperDir,
+			"@DEVELOPER_DIR@", devDir,
 			"@APPIUM_PORT@", c.AppiumPort,
 		).Replace(string(tmpl))
 		fmt.Printf("==> %s\n", label)
