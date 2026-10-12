@@ -8,12 +8,10 @@
 #
 # Image: Dadoum/anisette-v3-server — the de-facto standard anisette-v3 server
 # for SideStore/AltStore (the same project SideStore's own docs point at).
-# Upstream publishes ONLY a mutable :latest tag (no GitHub releases, no semver,
-# no date/sha tags — verified 2026-06-14), so we pin by MANIFEST DIGEST instead
-# (immutable, honours the "never :latest" rule). DockerHub is pulled
+# Upstream now publishes monthly MM-YYYY tags (09-2026, 10-2026) next to
+# :latest, so we pin tag@digest and Renovate bumps it (a packageRule in
+# renovate.json5 reads MM-YYYY as a version). DockerHub is pulled
 # transparently via the registry-VM pull-through cache, same as echo/cyberchef.
-# To bump: `docker buildx imagetools inspect dadoum/anisette-v3-server:latest`,
-# then replace the digest below.
 #
 # Stateless: the container caches Apple provisioning libraries under
 # /home/Alcoholic/.config/anisette-v3/lib (a regenerable download — re-fetched
@@ -83,7 +81,7 @@ resource "kubernetes_deployment" "anisette" {
       }
       spec {
         container {
-          # Pinned by digest — upstream ships only a mutable :latest (no tags).
+          # Pinned tag@digest; Renovate owns the bump.
           # The `docker.io/` prefix is REQUIRED, not cosmetic: the Kyverno
           # require-trusted-registries policy allowlists `docker.io/*` but NOT a
           # bare `dadoum/*` prefix (only enumerated DockerHub user repos like
@@ -92,7 +90,7 @@ resource "kubernetes_deployment" "anisette" {
           # `dadoum/anisette-v3-server@...` is denied at admission; the explicit
           # docker.io/ registry matches the allowlist and still pulls via the
           # 10.0.20.10 pull-through cache.
-          image = "docker.io/dadoum/anisette-v3-server@sha256:1e20384985d3c49965f444bef39d627768dacc39ea0dca91f2a535edb7591ba3"
+          image = "docker.io/dadoum/anisette-v3-server:10-2026@sha256:8577c27cb7592900947960799bf03c79a53bf857ed951e4c48ef6e06c6e0f488"
           name  = "anisette"
           port {
             name           = "http"
@@ -148,7 +146,6 @@ resource "kubernetes_deployment" "anisette" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
     ]
   }
 }
