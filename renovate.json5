@@ -333,12 +333,6 @@
     // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
     // Remove a rule to release that component to the rails.
     {
-      description: "HELD: CNPG operator chart (supervised upgrade pending)",
-      matchDatasources: ["helm"],
-      matchPackageNames: ["cloudnative-pg"],
-      enabled: false,
-    },
-    {
       description: "HELD: Nextcloud chart and image (major stepping needs a supervised run first)",
       matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
       enabled: false,

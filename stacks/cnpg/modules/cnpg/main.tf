@@ -30,7 +30,11 @@ resource "helm_release" "cnpg" {
 
   repository = "https://cloudnative-pg.github.io/charts"
   chart      = "cloudnative-pg"
-  version    = "0.27.1"
+  # 0.27.1 (operator 1.28.1) -> 0.29.1 (operator 1.30.1), 2026-10-12. Direct
+  # jump: upstream lists no required intermediate release, and the only 1.29
+  # chart (0.28.3, operator 1.29.1) lacks the June CVE fixes. CRDs are chart
+  # templates (crds.create), so helm upgrades them; 0.29 adds DatabaseRole.
+  version = "0.29.1"
 
   values = [yamlencode({
     crds = {
@@ -53,9 +57,18 @@ resource "helm_release" "cnpg" {
     # which leaves no buffer when the cluster-health check (#22) flags
     # certs at <30d. Bump to 30 days so the operator rotates well before
     # external monitoring notices. Cert lifetime stays at chart default 90d.
+    #
+    # ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES: on an operator upgrade, push the
+    # new instance manager binary into each running Postgres pod (re-exec,
+    # postmaster adopted) instead of the default rolling update. pg-cluster runs
+    # primaryUpdateStrategy=unsupervised + primaryUpdateMethod=restart, so the
+    # default path would delete and recreate every instance, the primary
+    # included, with a write outage on the DB that holds Terraform state and
+    # Woodpecker. This is operator config only; the Cluster spec is unchanged.
     config = {
       data = {
-        EXPIRING_CHECK_THRESHOLD = "30"
+        EXPIRING_CHECK_THRESHOLD                = "30"
+        ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES = "true"
       }
     }
   })]
