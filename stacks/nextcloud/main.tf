@@ -8,8 +8,14 @@ variable "mysql_host" { type = string }
 
 # Nextcloud image tag, read by Renovate (docker.io/library/nextcloud). Majors
 # step one at a time (32 -> 33 -> 34 -> 35): the image entrypoint refuses to
-# skip a major. Before each hop: mysqldump of the nextcloud DB, a copy of
-# config/ and data/, maintenance mode on, then occ upgrade after the roll.
+# skip a major. Majors are held in renovate.json5 and applied by hand. Before
+# each hop: suspend the watchdog CronJob, maintenance mode on, a mysqldump of
+# the nextcloud DB, and thin LVM snapshots of the data and MySQL PVCs
+# (`lvcreate -s` on the Proxmox host, named <lv>_snap_<YYYYMMDD_HHMM> so the
+# nightly prune removes them). The entrypoint runs occ upgrade and keeps the
+# maintenance flag; after the last hop: maintenance off, occ app:update --all,
+# and compare the enabled apps with the dump (32 -> 35 on 2026-10-12 took four
+# minutes per hop, and the whiteboard app had to be reinstalled).
 # Never set this below the version in the DB; Nextcloud refuses a downgrade.
 variable "nextcloud_image_tag" {
   type = string
@@ -534,10 +540,6 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
   }
 
   spec {
-    # Suspended while the 32 -> 35 major hops run (2026-10-12): its F1 branch
-    # would start a second `occ upgrade` next to the entrypoint's, and F3 would
-    # clear a maintenance flag the upgrade still needs.
-    suspend = true
     # */30 since 2026-08-16 (was */5). At 5-minute granularity this was 288 pod
     # creations a day, and on this host that is not free — each pod create and
     # destroy writes containerd overlay layers, a kubelet pod dir, /var/log/pods

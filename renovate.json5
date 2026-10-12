@@ -332,8 +332,9 @@
     // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
     // Remove a rule to release that component to the rails.
     {
-      description: "HELD: Nextcloud chart and image (major stepping needs a supervised run first)",
+      description: "HELD: Nextcloud majors (chart and image). A major runs a one-way occ upgrade and can disable apps, so it gets a supervised run with an LVM snapshot first; minors and patches go through the rails",
       matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
+      matchUpdateTypes: ["major"],
       enabled: false,
     },
     {
