@@ -142,19 +142,23 @@ resource "kubectl_manifest" "wave1_egress_observe_tier34" {
 # plane (calico-node). Adopted in place at the running 3.26.1 (existing operator
 # Deployment/SA/ClusterRole/ClusterRoleBinding pre-stamped with Helm ownership
 # metadata 2026-06-19 — a transient migration step), then upgraded by bumping
-# `version` one step at a time: 3.26 -> 3.28 -> 3.30 (restores a SUPPORTED k8s
-# 1.34 pairing) -> 3.32 (supports k8s 1.36). The ~22 Calico CRDs live in the
-# chart's crds/ dir, which `helm upgrade` never modifies (pre-3.32). resources
-# preserves the operator's existing 256Mi limit. Apply MANUALLY + supervised
-# (watch calico-node roll, maxUnavailable:1); gate each hop on tigerastatus +
-# calico-node 7/7 + cross-pod connectivity. See docs/runbooks/k8s-version-upgrade.md.
+# `version` one minor at a time: 3.26 -> 3.28 -> 3.30 (restores a SUPPORTED k8s
+# 1.34 pairing) -> 3.31 -> 3.32 (supports k8s 1.36) -> 3.33 (supports k8s 1.37).
+# CRDs: `helm upgrade` never touches the chart's crds/ dir (and from 3.32 the
+# chart ships no CRDs at all), but the operator runs with -manage-crds=true
+# (chart default manageCRDs), so the new operator applies its own Calico and
+# operator.tigera.io CRDs on start. Upstream still recommends applying the new
+# CRDs first (server-side, --force-conflicts); each hop's commit lists the
+# command. Apply MANUALLY + supervised (watch calico-node roll,
+# maxUnavailable:1); gate each hop on tigerastatus + calico-node 6/6 + new-pod
+# networking (scripts/verify/run calico).
 resource "helm_release" "tigera_operator" {
   name             = "calico"
   namespace        = kubernetes_namespace.tigera_operator.metadata[0].name
   create_namespace = false
   repository       = "https://docs.tigera.io/calico/charts"
   chart            = "tigera-operator"
-  version          = "v3.30.7"
+  version          = "v3.31.7"
   atomic           = true
   cleanup_on_fail  = true
 
