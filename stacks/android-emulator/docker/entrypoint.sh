@@ -123,6 +123,11 @@ SUPERVISED[$!]=websockify
 EMULATOR_GPU="${EMULATOR_GPU:-swiftshader}"
 echo "Emulator GPU mode: ${EMULATOR_GPU}"
 if [ "$EMULATOR_GPU" = host ]; then
+  # With DISPLAY set, glvnd hands EGL to Mesa for the Xvfb display and GLES
+  # lands on llvmpipe. Clear it and name the NVIDIA vendor outright, so a
+  # missing driver fails at startup instead of quietly rendering on the CPU.
+  env -u DISPLAY \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
   ANDROID_EGL_ON_EGL=1 \
   ANDROID_EMULATOR_LAUNCHER_DIR=/sdk/emulator \
   LD_LIBRARY_PATH=/opt/egl-system:/sdk/emulator/lib64/libstdc++:/sdk/emulator/lib64/vulkan:/sdk/emulator/lib64 \
