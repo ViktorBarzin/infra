@@ -11,11 +11,13 @@
 # that apply it are in terminal_api.tf.
 locals {
   devvm_lobby_network      = "10.0.10.10/32"
-  devvm_lobby_port_numbers = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 8710]
+  devvm_lobby_port_numbers = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7690, 8710]
+  # 7690 is tl-t3-view, the lobby's T3 view (terminal-lobby ADR-0044).
 
   devvm_lobby_ports = [
     { portNumber = { protocol = "TCP", port = 7681 } },
     { portRange = { protocol = "TCP", start = 7683, end = 7688 } },
+    { portNumber = { protocol = "TCP", port = 7690 } },
     { portNumber = { protocol = "TCP", port = 8710 } },
   ]
 

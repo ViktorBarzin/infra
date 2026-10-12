@@ -2058,10 +2058,18 @@
               tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 8710 drop
 
+              # tl-t3-view, the lobby's T3 view (terminal-lobby ADR-0044), for
+              # t3view.viktorbarzin.me. It checks the proxy secret itself; this
+              # keeps the LAN and the tunnels off it too. Same sources as ttyd,
+              # and the same AdminNetworkPolicy keeps pods other than traefik's
+              # off it.
+              tcp dport 7690 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 7690 drop
+
               # Traefik reaches the lobby over IPv4 only. The services listen on
               # every interface, which includes this box's global IPv6 address;
               # nothing legitimate arrives that way, so close it.
-              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 8710 } drop
+              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 7690, 8710 } drop
             }
 
             # Ports published with `docker run -p` stay on this box. dockerd
