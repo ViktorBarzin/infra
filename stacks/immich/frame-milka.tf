@@ -130,7 +130,7 @@ resource "kubernetes_deployment" "immich-frame-milka" {
         container {
           # Pinned: releases <= v1.0.33.0 crash on Immich v3 API responses, and
           # album filtering needs >= v1.0.34.0.
-          image = "ghcr.io/immichframe/immichframe:v1.0.35.0"
+          image = "ghcr.io/immichframe/immichframe:v1.0.39.0"
           # IfNotPresent, deliberately NOT "Always" like frame-emo: the Kyverno
           # set-image-pull-policy ClusterPolicy rewrites pinned tags to
           # IfNotPresent at admission, so declaring "Always" makes Terraform
@@ -154,11 +154,30 @@ resource "kubernetes_deployment" "immich-frame-milka" {
             protocol       = "TCP"
             name           = "http"
           }
+          # From v1.0.38 ImmichFrame keeps its settings in a SQLite DB
+          # (immichframe.db) in /app/Config and imports Settings.yml into it
+          # only when the DB is empty. A read-only ConfigMap mount there
+          # crash-looped v1.0.39.0 ("Cannot open the settings database in
+          # '/app/Config'"). The directory is now a writable emptyDir with
+          # Settings.yml mounted into it. Every new pod starts with an empty DB
+          # and re-imports the file, so the ConfigMap stays the source of
+          # truth (reloader restarts the pod when it changes) and nothing set
+          # in the /admin UI survives a restart. Having imported a config, the
+          # admin UI stays disabled because IMMICHFRAME_ADMIN_PASSWORD is unset.
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/Config"
+          }
           volume_mount {
             name       = "config"
-            mount_path = "/app/Config"
+            mount_path = "/app/Config/Settings.yml"
+            sub_path   = "Settings.yml"
             read_only  = true
           }
+        }
+        volume {
+          name = "data"
+          empty_dir {}
         }
         volume {
           name = "config"
