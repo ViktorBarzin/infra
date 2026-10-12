@@ -66,3 +66,15 @@ def test_launch_failure_reason_points_at_the_signature():
     msg = "The request to open \"x\" failed. : Failed to launch process with bundle identifier 'x'."
     assert "signature has most likely expired" in launch_failure_reason("x", msg)
     assert launch_failure_reason("x", "something else") == "something else"
+
+
+def test_resolve_phone_falls_back_to_the_pinned_address():
+    import socket
+
+    from ios_rig_wifi import resolve_phone
+
+    def broken(_host):
+        raise socket.gaierror("no such name")
+
+    assert resolve_phone("iphone-london.viktorbarzin.lan", "192.168.9.205", broken) == "192.168.9.205"
+    assert resolve_phone("iphone-london.viktorbarzin.lan", "192.168.9.205", lambda h: "10.1.2.3") == "10.1.2.3"

@@ -42,6 +42,7 @@ WDA_PORT = 8100
 class Config:
     udid: str
     host: str
+    fallback_ip: str
     listen: str
     wda_bundle_id: str
     state_dir: Path
@@ -53,6 +54,9 @@ class Config:
         return cls(
             udid=env("IOS_RIG_UDID", "00008110-001614D03442801E"),
             host=env("IOS_RIG_PHONE_HOST", "iphone-london.viktorbarzin.lan"),
+            # The Flint's static lease (scripts/london-flint/provision.sh), used
+            # when the name does not resolve.
+            fallback_ip=env("IOS_RIG_PHONE_ADDR", "192.168.9.205"),
             listen=env("IOS_RIG_WIFI_LISTEN", "127.0.0.1:8102"),
             wda_bundle_id=env("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda") + ".xctrunner",
             state_dir=Path(env("IOS_RIG_STATE_DIR", str(Path.home() / ".local/state/ios-rig"))),
@@ -61,6 +65,15 @@ class Config:
 
 
 # ---------------------------------------------------------------- pure logic
+
+
+def resolve_phone(host: str, fallback_ip: str, resolver: Callable[[str], str] = socket.gethostbyname) -> str:
+    """The phone's address by name, or the pinned lease when DNS has no
+    answer, so a Technitium outage does not take the rig with it."""
+    try:
+        return resolver(host)
+    except OSError:
+        return fallback_ip
 
 
 def candidate_ports(cached: int | None, scanned: list[int]) -> list[int]:
@@ -156,7 +169,7 @@ class Rig:
     # -- addressing
 
     def _phone_ip(self) -> str:
-        return socket.gethostbyname(self.cfg.host)
+        return resolve_phone(self.cfg.host, self.cfg.fallback_ip)
 
     def _read_state(self, name: str) -> str | None:
         try:
