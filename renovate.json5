@@ -395,12 +395,6 @@
       enabled: false,
     },
     {
-      description: "HELD: Loki chart (grafana repo stops at 7.3.0; the move to grafana-community/loki 18.x is a supervised repository switch)",
-      matchDatasources: ["helm"],
-      matchPackageNames: ["loki"],
-      enabled: false,
-    },
-    {
       description: "HELD: Forgejo (11 -> 16 cannot be downgraded, and Forgejo hosts this repo, the bot and the webhook the rails use). All Forgejo updates wait for a supervised session.",
       matchPackageNames: ["codeberg.org/forgejo/forgejo", "forgejo", "forgejo/forgejo"],
       enabled: false,
