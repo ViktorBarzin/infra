@@ -371,11 +371,6 @@
       enabled: false,
     },
     {
-      description: "HELD: Woodpecker chart and images (the rails run on Woodpecker)",
-      matchPackageNames: ["ghcr.io/woodpecker-ci/helm/woodpecker", "woodpeckerci/woodpecker-server", "woodpeckerci/woodpecker-agent", "docker.io/woodpeckerci/**"],
-      enabled: false,
-    },
-    {
       description: "HELD: Postgres majors for pg-cluster and its backup clients (needs the cnpg-postgis-pgvector image for the new major first)",
       matchDatasources: ["docker"],
       matchPackageNames: ["postgres", "library/postgres", "docker.io/library/postgres", "ghcr.io/cloudnative-pg/postgis", "ghcr.io/cloudnative-pg/postgresql"],
