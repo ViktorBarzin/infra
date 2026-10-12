@@ -553,7 +553,9 @@ resource "cloudflare_record" "git" {
 # the module's own allow-non-get-methods covers every write method. Nothing that
 # CI does reaches the challenge.
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
+  source = "../../modules/kubernetes/anubis_instance"
+  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
+  image_tag  = "v1.25.0"
   name       = "forgejo"
   namespace  = kubernetes_namespace.forgejo.metadata[0].name
   target_url = "http://${kubernetes_service.forgejo.metadata[0].name}.${kubernetes_namespace.forgejo.metadata[0].name}.svc.cluster.local"

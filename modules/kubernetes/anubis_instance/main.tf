@@ -67,8 +67,10 @@ variable "cookie_expiration_hours" {
 }
 
 variable "image_tag" {
-  type        = string
-  default     = "v1.25.0"
+  type = string
+  # No default: each caller pins the tag with a "# renovate:" annotation, so
+  # Renovate bumps one stack per commit and the rails verify and revert it on
+  # its own. A default here would be a shared pin that re-applies every caller.
   description = "ghcr.io/techarohq/anubis tag — pin to a release, never :latest."
 }
 
