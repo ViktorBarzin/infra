@@ -5,7 +5,7 @@ Four automation paths keep the cluster current. Each owns a distinct set of vers
 | What | Path | Section |
 |---|---|---|
 | Third-party versions in this repo: image pins in `.tf`, Helm values tags, `helm_release` chart versions | Renovate commits a bump to master; the Woodpecker rails apply it, verify it, and revert it on failure | "Third-party versions: Renovate and the CI rails" |
-| First-party images (our own apps) | Each app's CI builds the image and rolls its Deployment (`docs/architecture/ci-cd.md`) | "First-party images without a deploy step" lists the ones that have no deploy step yet |
+| First-party images (our own apps) | Each app's CI builds the image and rolls its Deployment (`docs/architecture/ci-cd.md`) | "First-party images Keel used to deploy" covers the seven that moved off Keel last |
 | OS packages on the K8s nodes | `unattended-upgrades` + `kured` with a sentinel gate and Prometheus halt-on-alert | "K8s Node OS Upgrades", runbook `docs/runbooks/k8s-node-auto-upgrades.md` |
 | kubeadm, kubelet, kubectl | Daily detection CronJob, then a chain of phase Jobs | "K8s Version Upgrades", runbook `docs/runbooks/k8s-version-upgrade.md` |
 
@@ -73,21 +73,31 @@ These stayed on their previous strings during the cutover, each with its ignore 
 - changedetection, whose two images run in each other's containers (`# IMAGE_SWAP_DEFERRED`).
 - Nextcloud, whose tag comes from a live-tag lookup that Renovate cannot read.
 
-## First-party images without a deploy step
+## First-party images Keel used to deploy
 
-Keel was the only rollout for seven first-party apps. With Keel parked they keep running their current image, and a new build does not reach the cluster until someone rolls the Deployment:
+Keel was the only rollout for seven first-party apps until it was parked. Each build workflow now ends by triggering one shared Woodpecker pipeline, `.woodpecker/first-party-deploy.yml` (manual event, `PIPELINE=first-party-deploy`, on Woodpecker repo 1, the infra GitHub mirror), which runs `scripts/first-party-deploy.sh`. The trigger names the app and the tag; the script maps the app to its namespace, Deployments and containers and runs `kubectl set image`, then `rollout status`. Each Deployment keeps its image under `ignore_changes` as `# CI_SETS_IMAGE`, and the Terraform value is the build that was running on 2026-10-12, used only on a recreate.
 
-| App | Image | What Keel did | What it needs |
+The pipeline lives in infra, rather than as a `.woodpecker/deploy.yml` in each app repo (the `offinfra-onboard` layout), because four of the apps build from this repo and the other three are GitHub-canonical repos with no Woodpecker registration of their own.
+
+| App | Image | Build workflow | Tag it deploys |
 |---|---|---|---|
-| excalidraw | `ghcr.io/viktorbarzin/excalidraw-library:latest` | `force`, digest tracking every 5 min | a rollout step in `.github/workflows/build-excalidraw.yml` |
-| interview-prep-app | `ghcr.io/viktorbarzin/interview-prep-app:latest` | `force`, digest tracking every 5 min | a rollout step in its build workflow |
-| k8s-portal | `ghcr.io/viktorbarzin/k8s-portal:latest` | `force`, digest tracking every 5 min | a rollout step in `.github/workflows/build-k8s-portal.yml` |
-| pages-publish | `ghcr.io/viktorbarzin/pages-publish:latest` | `force` + `match-tag`, digest tracking every 5 min | a rollout step in `.github/workflows/build-pages-publish.yml` |
-| repowise | `ghcr.io/viktorbarzin/repowise` | `patch` over the daily upstream rebuild | a rollout step in `.github/workflows/build-repowise.yml` |
-| learning | `ghcr.io/viktorbarzin/learning` semver tags | `patch` ("pushing a new patch tag is the whole of the rollout") | a `kubectl set image` step in learning's build workflow |
-| trading-bot | `ghcr.io/viktorbarzin/trading-bot-service`, `-dashboard` | `patch`, hourly poll | a deploy step in trading-bot's `build.yml` |
+| excalidraw | `ghcr.io/viktorbarzin/excalidraw-library` | infra `.github/workflows/build-excalidraw.yml` | commit SHA |
+| interview-prep-app | `ghcr.io/viktorbarzin/interview-prep-app` | `ViktorBarzin/interview-prep-app` `.github/workflows/build.yml` | commit SHA |
+| k8s-portal | `ghcr.io/viktorbarzin/k8s-portal` | infra `.github/workflows/build-k8s-portal.yml` | commit SHA |
+| learning | `ghcr.io/viktorbarzin/learning` | `ViktorBarzin/learning` `.github/workflows/build.yml` | commit SHA (the `v<version>` tag is still pushed) |
+| pages-publish | `ghcr.io/viktorbarzin/pages-publish` | infra `.github/workflows/build-pages-publish.yml` | commit SHA |
+| repowise | `ghcr.io/viktorbarzin/repowise` | infra `.github/workflows/build-repowise.yml` (daily, newest PyPI release) | `<version>@<digest>`, on the init container and all three containers |
+| trading-bot | `ghcr.io/viktorbarzin/trading-bot-service`, `-dashboard` | Forgejo `viktor/trading` (mirrored to `ViktorBarzin/trading`) `.github/workflows/build.yml` | `0.1.N`, on both Deployments |
 
-Their stacks keep the Keel lines (`KEEL_IGNORE_IMAGE`, the `keel.sh/*` ignores and the `keel.sh/enrolled` namespace label), which are inert now. `stacks/keel` is kept with `local.keel_enabled = false` (0 pods) rather than deleted. Once each app has a deploy step, migrate its stack like the other cutover batches, then delete `stacks/keel` and the `ghcr.io/viktorbarzin/keel` fork image. Until then, roll one of these apps by hand: `kubectl -n <ns> rollout restart deploy/<name>` for a `:latest` image pulled with `imagePullPolicy: Always`, or `kubectl -n <ns> set image` to the new tag.
+Every workflow calls the Woodpecker API with its `WOODPECKER_TOKEN` repository secret, the same token as Vault `secret/ci/global` `woodpecker_api_token`. To roll one of these apps by hand, send the same request the workflow sends:
+
+```sh
+curl -X POST -H "Authorization: Bearer $(vault kv get -field=woodpecker_api_token secret/ci/global)" \
+  -H 'Content-Type: application/json' https://ci.viktorbarzin.me/api/repos/1/pipelines \
+  -d '{"branch":"master","variables":{"PIPELINE":"first-party-deploy","APP":"<app>","IMAGE_TAG":"<tag>"}}'
+```
+
+Tests for the script: `python3 scripts/first_party_deploy_test.py`.
 
 ## CVE signal: Trivy
 
@@ -134,7 +144,8 @@ Each later batch pinned every third-party image in its stacks to the exact strin
 | B14 | dbaas. pgadmin moved from the bare `dpage/pgadmin4` to the live `dpage/pgadmin4:9.16`; phpmyadmin (`phpmyadmin/phpmyadmin:5.2.3`), mysql-standalone (`mysql:8.4.8`) and mysqld-exporter (`prom/mysqld-exporter:v0.20.0`) were already pinned to the live string. The image ignores and `keel.sh/policy|trigger|pollSchedule|match-tag` annotation ignores go, as do the explicit `keel.sh/policy = "never"` annotations on mysql-standalone and mysqld-exporter; the MySQL pin itself is what holds the version now, and Renovate holds MySQL majors. pgadmin keeps `keel.sh/update-time` on its pod template as `LEGACY_TEMPLATE_ANNOTATIONS`, since removing it rolls the pod template. The dbaas namespace never carried `keel.sh/enrolled` | 2026-10-11 |
 | B15 | authentik. pgbouncer moved from `edoburu/pgbouncer:latest` to the live `edoburu/pgbouncer:v1.25.2-p0`, and its `image_pull_policy` from `Always` to the live `IfNotPresent`; both ignores go. The explicit `keel.sh/policy|trigger|pollSchedule` annotations on the pgbouncer Deployment and the `keel.sh/match-tag` ignore are removed. pgbouncer keeps `keel.sh/update-time` on its pod template as `LEGACY_TEMPLATE_ANNOTATIONS`, since removing it rolls the pods. renovate.json5 gained regex versioning for pgbouncer (`vX.Y.Z-pN`). goauthentik-server and -worker stay with the chart: the `helm_release` version is the authentik version, the values carry no image override, and the `diun.*` pod annotations in `values.yaml` stay, since removing them restarts the server pods. The authentik namespace never carried `keel.sh/enrolled`; the outposts (`ak-outpost-*`) are set by the outpost controller | 2026-10-11 |
 | B16 | traefik. error-pages moved from `ghcr.io/tarampampam/error-pages:3` to the live `:3.0.1`; the explicit `keel.sh/policy = "never"` opt-out on authfix, the `keel.sh/*` annotation ignores on auth-proxy, authfix, bot-block-proxy, error-pages and x402-gateway, and the namespace label go. auth-proxy (`nginx:1-alpine`) and bot-block-proxy (`openresty/openresty:alpine`) keep their image ignore as `# FLOATING_TAG_DEFERRED` (each has 2 pods on different digests); authfix stays on `python:3.13-alpine` for the same reason; x402-gateway keeps `# CI_SETS_IMAGE`. The traefik Deployment stays with its chart | 2026-10-11 |
-| B17 | Retirement. DIUN (`stacks/diun`, its PVC, the Keel release watch and the n8n webhook notifier), the n8n "DIUN Upgrade Agent" workflow and its backup JSON, `build-diun.yml`, the service-upgrade agent and `upgrade-config.json`, `scripts/audit-keel-image-ownership.py` and the `KeelUpdateFailing` Loki rule are removed; `/upgrade-state` reports Renovate instead of Keel; `keel` leaves the Kyverno security-policy exclude list; n8n drops its Keel ignores and namespace label. `stacks/keel` stays parked at 0 pods (see "First-party images without a deploy step") | 2026-10-11 |
+| B17 | Retirement. DIUN (`stacks/diun`, its PVC, the Keel release watch and the n8n webhook notifier), the n8n "DIUN Upgrade Agent" workflow and its backup JSON, `build-diun.yml`, the service-upgrade agent and `upgrade-config.json`, `scripts/audit-keel-image-ownership.py` and the `KeelUpdateFailing` Loki rule are removed; `/upgrade-state` reports Renovate instead of Keel; `keel` leaves the Kyverno security-policy exclude list; n8n drops its Keel ignores and namespace label. `stacks/keel` stays parked at 0 pods until the seven apps Keel deployed have a CI deploy step (see "First-party images Keel used to deploy") | 2026-10-11 |
+| B18 | excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot, the seven apps Keel deployed. Each build workflow gained a trigger for the shared `.woodpecker/first-party-deploy.yml` pipeline (see "First-party images Keel used to deploy"). Their image ignores became `# CI_SETS_IMAGE`, and the Terraform values moved from `:latest` (or repowise's `0.42.0`, trading-bot's `:latest`) to the build running on 2026-10-12: commit-SHA tags, `v0.1.1` for learning, `0.1.108` for trading-bot, `0.55.0` for repowise, whose last-run digest is pruned from ghcr. The explicit `keel.sh/*` deployment annotations, their ignores and the namespace labels go; `keel.sh/update-time` stays as `# LEGACY_TEMPLATE_ANNOTATIONS` on learning, pages-publish and trading-bot, the three whose pod templates carry it. repowise's init container joins the CI-set images, and the trading-bot migrations Job keeps `:latest`, because a new string would replace the Job and re-run it | 2026-10-12 |
 
 From 2026-10-08 until it was parked, the cluster ran a patched Keel 0.22.4 (`ghcr.io/viktorbarzin/keel`, built from `github.com/ViktorBarzin/keel`, branch `homelab`) that added `keel.sh/pollTagsAfterCurrent`: list only the tags pushed after the running tag, using the registry's `last` cursor. Stock Keel listed all of `ghcr.io/immich-app/immich-machine-learning`'s 150,000+ tags on every poll, and ghcr returned HTTP 429 from 2026-08 to 2026-10, so the ML deployment drifted behind immich-api. Upstream: issue keel-hq/keel#942, PR keel-hq/keel#943 (merged 2026-10-08). Renovate now takes the Immich version from the immich-server tags, a lookup of about 260 tags.
 

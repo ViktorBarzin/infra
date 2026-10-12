@@ -10,8 +10,7 @@ resource "kubernetes_namespace" "excalidraw" {
     name = "excalidraw"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -53,15 +52,6 @@ resource "kubernetes_deployment" "excalidraw" {
       # propagation so the first forwarded request never hits a 503 race.
       "sablier.ready-after" = "5s"
     }
-    # Keel rolls new ghcr:latest digests (k8s-portal pattern). Values here are
-    # recreate-correct seeds only — the keys are in ignore_changes below, so
-    # the live annotations win on an existing deployment.
-    annotations = {
-      "keel.sh/policy"       = "force"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/match-tag"    = "true"
-      "keel.sh/pollSchedule" = "@every 5m"
-    }
   }
   spec {
     replicas = 1
@@ -93,9 +83,12 @@ resource "kubernetes_deployment" "excalidraw" {
         }
         container {
           # ADR-0002: GHA-built (.github/workflows/build-excalidraw.yml),
-          # PRIVATE ghcr; Keel rolls new :latest digests. DockerHub
+          # PRIVATE ghcr. The build's last step runs
+          # .woodpecker/first-party-deploy.yml, which sets this to the :<sha>
+          # tag (CI_SETS_IMAGE below); the value here is the build that was
+          # running on 2026-10-12, used only on a recreate. DockerHub
           # viktorbarzin/excalidraw-library:v4 is the frozen rollback image.
-          image             = "ghcr.io/viktorbarzin/excalidraw-library:latest"
+          image             = "ghcr.io/viktorbarzin/excalidraw-library:91d0213d1ae0f00b6a9b326474e3eb70b3686bca"
           image_pull_policy = "Always"
           name              = "excalidraw"
           port {
@@ -135,15 +128,10 @@ resource "kubernetes_deployment" "excalidraw" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
+      spec[0].replicas, # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }

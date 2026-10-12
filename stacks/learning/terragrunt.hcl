@@ -15,7 +15,8 @@ dependency "kyverno" {
 }
 
 inputs = {
-  # v0.1.0 — the first hand-pushed image. (App CI to auto-roll :latest + :<sha>
-  # on push is a follow-up; until then, bump this tag to deploy a new build.)
-  image_tag = "v0.1.0"
+  # The build running on 2026-10-12. The image is CI_SETS_IMAGE: learning's
+  # GHA build ends by triggering .woodpecker/first-party-deploy.yml, which
+  # sets the :<sha> tag, so this value is used only on a recreate.
+  image_tag = "v0.1.1"
 }
