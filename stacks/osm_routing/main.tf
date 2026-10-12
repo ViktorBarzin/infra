@@ -80,8 +80,16 @@ resource "kubernetes_deployment" "osrm-foot" {
     # of the 2026-03-14 OOM) to 1Gi; observed peak during the graph build was
     # ~1.3GB for extract, and serving MLD needs far less.
     replicas = 1
+    # Rolling, not Recreate (changed at the v26 cut-over): the new pod must load
+    # its graph and pass readiness before the old one goes, so a bad image or a
+    # graph that is not built yet costs no routing. NFS volume, no RWO conflict;
+    # the surge pod briefly adds one 640Mi request.
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = "1"
+        max_unavailable = "0"
+      }
     }
     selector {
       match_labels = {
@@ -98,7 +106,7 @@ resource "kubernetes_deployment" "osrm-foot" {
         container {
           name    = "osrm-foot"
           image   = local.osrm_image
-          command = ["osrm-routed", "--algorithm", "MLD", "/data/foot/greater-london-latest.osrm"]
+          command = ["osrm-routed", "--algorithm", "MLD", "${local.osrm_graph_dir}/foot/greater-london-latest.osrm"]
           port {
             name           = "http"
             container_port = 5000
@@ -107,6 +115,16 @@ resource "kubernetes_deployment" "osrm-foot" {
           volume_mount {
             name       = "osrm-data"
             mount_path = "/data"
+          }
+          # osrm-routed opens the port only after the graph has loaded, so a
+          # pod whose graph is missing or from another osrm version never
+          # becomes ready and the rolling update keeps the old pod serving.
+          readiness_probe {
+            tcp_socket {
+              port = 5000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
           }
           # requests 1Gi -> 640Mi on 2026-09-04 (bead code-hn6k). Measured
           # peak working set over 30 days is 391Mi, so the old request reserved
@@ -188,8 +206,16 @@ resource "kubernetes_deployment" "osrm-bicycle" {
     # of the 2026-03-14 OOM) to 1Gi; observed peak during the graph build was
     # ~1.3GB for extract, and serving MLD needs far less.
     replicas = 1
+    # Rolling, not Recreate (changed at the v26 cut-over): the new pod must load
+    # its graph and pass readiness before the old one goes, so a bad image or a
+    # graph that is not built yet costs no routing. NFS volume, no RWO conflict;
+    # the surge pod briefly adds one 640Mi request.
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = "1"
+        max_unavailable = "0"
+      }
     }
     selector {
       match_labels = {
@@ -206,7 +232,7 @@ resource "kubernetes_deployment" "osrm-bicycle" {
         container {
           name    = "osrm-bicycle"
           image   = local.osrm_image
-          command = ["osrm-routed", "--algorithm", "MLD", "/data/bicycle/greater-london-latest.osrm"]
+          command = ["osrm-routed", "--algorithm", "MLD", "${local.osrm_graph_dir}/bicycle/greater-london-latest.osrm"]
           port {
             name           = "http"
             container_port = 5000
@@ -215,6 +241,16 @@ resource "kubernetes_deployment" "osrm-bicycle" {
           volume_mount {
             name       = "osrm-data"
             mount_path = "/data"
+          }
+          # osrm-routed opens the port only after the graph has loaded, so a
+          # pod whose graph is missing or from another osrm version never
+          # becomes ready and the rolling update keeps the old pod serving.
+          readiness_probe {
+            tcp_socket {
+              port = 5000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
           }
           # requests 1Gi -> 640Mi on 2026-09-04 (bead code-hn6k). Measured
           # peak working set over 30 days is 401Mi, so the old request reserved
@@ -399,8 +435,8 @@ resource "kubernetes_service" "otp" {
 # no graph to load — the serving pods could not have worked even at replicas>0.
 # These build the Greater London graphs the deployments load, into
 # local.osrm_graph_dir (/data/<osrm version>/<profile>). The v6.0.0 graphs from
-# before the v26 cut-over stay at /data/foot and /data/bicycle until v26 is
-# verified.
+# before the v26 cut-over are at /data/foot and /data/bicycle; nothing reads
+# them after the cut-over, and they can be deleted once v26 is verified.
 #
 # Staging + swap: each profile builds into <profile>.new and is moved into place
 # only once complete, so a refresh never corrupts a graph being served. The build
@@ -409,18 +445,15 @@ resource "kubernetes_service" "otp" {
 #
 # Design: realestate-crawler/docs/plans/2026-08-04-routing-backends-design.md
 locals {
-  # Serving image. Stays on v6.0.0 until the v26 graph exists; the second
-  # landing of the v26 cut-over moves it.
-  osrm_image = "ghcr.io/project-osrm/osrm-backend:v6.0.0"
-
-  # Build image, ahead of the serving image during the v26 cut-over. osrm-routed
-  # refuses a graph prepared by a different major.minor
-  # (util::FingerPrint::IsDataCompatible), so the v26 graph is built next to the
-  # v6 one instead of over it: graphs live in a directory named after the osrm
-  # version that built them. The v6 pods keep reading /data/foot and
-  # /data/bicycle, which this job no longer touches.
-  osrm_build_image = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
-  osrm_graph_dir   = "/data/${element(split(":", local.osrm_build_image), 1)}"
+  # One image for build and serve. osrm-routed refuses a graph prepared by a
+  # different major.minor (util::FingerPrint::IsDataCompatible), so graphs live
+  # in a directory named after the osrm version that built them. A version bump
+  # therefore points the serving pods at a directory that is empty until
+  # osrm-refresh has run with the new image: build first (bump only the CronJob
+  # image, run it once), then move the serving pods. The rolling update with a
+  # readiness probe keeps the old pod serving if a new one cannot load its graph.
+  osrm_image     = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
+  osrm_graph_dir = "/data/${element(split(":", local.osrm_image), 1)}"
 
   # Shared by the one-off Job and the monthly CronJob so the two can never drift.
   # GRAPH_DIR comes from the container env (local.osrm_graph_dir).
@@ -500,7 +533,7 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
             restart_policy = "Never"
             container {
               name    = "build"
-              image   = local.osrm_build_image
+              image   = local.osrm_image
               command = ["/bin/sh", "-c"]
               args    = [local.osrm_build_script]
               env {
