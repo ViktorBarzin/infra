@@ -78,6 +78,17 @@
       ],
       "matchNewValue": "4.2.6",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2284: stack vault failed after this bump: its terragrunt apply failed (commit edaa9ef9)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "busybox"
+      ],
+      "matchNewValue": "1.38",
+      "enabled": false
     }
   ]
 }
