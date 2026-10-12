@@ -113,7 +113,7 @@ Rules that keep these scripts useful:
 - Anything slow (backup runs, PVC smoke tests, model loads) goes behind `[ "${VERIFY_QUICK:-0}" = 1 ] || ...`.
 - Create things only in the `verify` namespace, through `run_pod`, and name them through the helpers, so the owner reference is set.
 
-Helpers in `lib.sh` (each prints what it saw and returns 0/1): `check`, `retry`, `workload_ready`, `expect_workload_image`, `expect_prom`, `expect_series`, `prom_value`, `expect_http`, `expect_body`, `expect_ingress`, `via_traefik`, `tcp_open`, `expect_no_log_errors`, `expect_alert_inactive`, `expect_dry_run_denied`, `run_pod`, `run_cronjob`, `pod_of`.
+Helpers in `lib.sh` (each prints what it saw and returns 0/1): `check`, `retry`, `workload_ready`, `expect_workload_image`, `expect_prom`, `expect_series`, `prom_value`, `expect_http`, `expect_body`, `expect_ingress`, `via_traefik`, `tcp_open`, `expect_no_log_errors`, `expect_no_log_errors_after_start` (same, but ignores lines from a container's first N seconds, for startup-only errors), `expect_alert_inactive`, `expect_dry_run_denied`, `run_pod`, `run_cronjob`, `pod_of`.
 
 Probe pods that mount a PVC are started with `run_pod ... rm=1`, which deletes the pod once its log is read: a Completed pod still holds its PVC against deletion.
 

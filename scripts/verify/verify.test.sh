@@ -2,7 +2,9 @@
 # Tests for the verify floor's namespace scope: scripts/verify/stack-namespaces
 # (which namespaces a stack without verify.sh is checked in) and floor_scope /
 # floor_rollout in scripts/verify/lib.sh (a floor that finds nothing to check
-# fails instead of passing). kubectl is replaced by a stub; no cluster access.
+# fails instead of passing), and expect_no_log_errors_after_start (log errors
+# from a container's startup window are ignored, later ones fail). kubectl is
+# replaced by a stub; no cluster access.
 # Run: bash scripts/verify/verify.test.sh
 set -uo pipefail
 
@@ -137,6 +139,47 @@ eq "CronJob-only namespace passes" "passed=2 failed=0 ns=[cj]" "$(tail -1 <<<"$o
 out=$(EXIST="claude-agent" VERIFY_NAMESPACES="claude-agent" OBJS_claude_agent="$DEP" run_floor floor_rollout)
 eq "namespace with a workload passes" "passed=2 failed=0 ns=[claude-agent]" "$(tail -1 <<<"$out")"
 grep -q "1 workloads converged in claude-agent" <<<"$out" && ok "rollout counts the workload" || bad "rollout count: $out"
+
+# --- expect_no_log_errors_after_start -----------------------------------------
+# The stub serves one Traefik pod whose traefik container started at 00:03:46
+# and returns $LOGS (kubectl logs --prefix --timestamps format) for "logs".
+run_after_start() { # <regex> <grace> -> prints the helper output, then "rc=N"
+  (
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    k() {
+      case "$1" in
+        get) echo '{"items":[{"metadata":{"name":"traefik-a"},"status":{"containerStatuses":[
+          {"name":"traefik","state":{"running":{"startedAt":"2026-10-12T00:03:46Z"}}},
+          {"name":"node-exporter","state":{"running":{"startedAt":"2026-10-12T00:03:40Z"}}}]}}]}' ;;
+        logs) printf '%s\n' "$LOGS" ;;
+        *) return 1 ;;
+      esac
+    }
+    expect_no_log_errors_after_start traefik app=traefik "$1" "$2"
+    echo "rc=$?"
+  )
+}
+L_START='[pod/traefik-a/traefik] 2026-10-12T00:03:46.512Z ERR error="middleware \"traefik-anti-ai-headers@kubernetescrd\" does not exist"'
+L_EDGE='[pod/traefik-a/traefik] 2026-10-12T00:04:45.900Z ERR error="middleware \"traefik-csp-headers@kubernetescrd\" does not exist"'
+L_LATE='[pod/traefik-a/traefik] 2026-10-12T00:09:02.100Z ERR error="middleware \"traefik-broken@kubernetescrd\" does not exist"'
+L_OTHER='[pod/traefik-b/traefik] 2026-10-12T00:03:47.000Z ERR error="middleware \"traefik-x@kubernetescrd\" does not exist"'
+L_INFO='[pod/traefik-a/traefik] 2026-10-12T00:09:03.000Z INF Configuration loaded'
+RE='middleware.*does not exist'
+
+out=$(LOGS="$L_START"$'\n'"$L_EDGE"$'\n'"$L_INFO" run_after_start "$RE" 60)
+eq "errors inside the startup grace window pass" "rc=0" "$(tail -1 <<<"$out")"
+
+out=$(LOGS="$L_START"$'\n'"$L_LATE" run_after_start "$RE" 60)
+eq "an error after the grace window fails" "rc=1" "$(tail -1 <<<"$out")"
+grep -q "traefik-broken" <<<"$out" && ok "the late error is reported" || bad "late error output: $out"
+grep -q "anti-ai-headers" <<<"$out" && bad "startup error reported: $out" || ok "the startup error is not reported"
+
+out=$(LOGS="$L_OTHER" run_after_start "$RE" 60)
+eq "a container with no known start time is not excused" "rc=1" "$(tail -1 <<<"$out")"
+
+out=$(LOGS="$L_START" run_after_start "$RE" 0)
+eq "grace 0 behaves like expect_no_log_errors" "rc=1" "$(tail -1 <<<"$out")"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi
