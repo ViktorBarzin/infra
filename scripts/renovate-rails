@@ -59,9 +59,20 @@ pending_commits() {
 
 # Terragrunt stacks a commit changes. verify.sh is read by the verify runner,
 # not by Terraform, so a commit touching only that file applies nothing.
+# A file under modules/ maps to the stacks whose HCL references that module
+# root, the same fan-out .woodpecker/default.yml applies, so a shared-module
+# bump is verified (and reverted) in every stack it re-applies.
 commit_stacks() {
-  git diff-tree --no-commit-id --name-only -r "$1" | grep '^stacks/' |
-    grep -Ev '^stacks/[^/]+/verify\.sh$' | cut -d/ -f2 | sort -u |
+  local files mroot
+  files=$(git diff-tree --no-commit-id --name-only -r "$1")
+  {
+    grep '^stacks/' <<<"$files" | grep -Ev '^stacks/[^/]+/verify\.sh$' | cut -d/ -f2
+    for mroot in $(grep '^modules/' <<<"$files" |
+      awk -F/ 'NF>=3 {print $1"/"$2"/"$3} NF>=2 {print $1"/"$2}' | sort -u); do
+      [ -d "$mroot" ] || continue
+      grep -rl "$mroot\"" stacks/ 2>/dev/null | cut -d/ -f2
+    done
+  } | sort -u |
     while read -r s; do [ -f "stacks/$s/terragrunt.hcl" ] && echo "$s"; done
   return 0
 }

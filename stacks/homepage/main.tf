@@ -154,7 +154,9 @@ resource "kubernetes_service" "cache_proxy" {
 }
 
 module "anubis" {
-  source           = "../../modules/kubernetes/anubis_instance"
+  source = "../../modules/kubernetes/anubis_instance"
+  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
+  image_tag        = "v1.25.0"
   name             = "homepage"
   namespace        = kubernetes_namespace.homepage.metadata[0].name
   target_url       = "http://${kubernetes_service.cache_proxy.metadata[0].name}.${kubernetes_namespace.homepage.metadata[0].name}.svc.cluster.local"
