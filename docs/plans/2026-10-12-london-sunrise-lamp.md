@@ -10,7 +10,7 @@ runs from Home Assistant on ha-london, and follows the alarms he already sets
 on his iPhone.
 
 ```stats
-£50–60 | hardware cost
+£55–75 | hardware cost
 30 min | fade before the alarm
 1 | new radio (Zigbee) in London
 0 | new hubs or subscriptions
@@ -24,7 +24,7 @@ Measured or found on 2026-10-12:
 |---|---|
 | ha-london | HAOS on a Raspberry Pi 4, static lease 192.168.8.103. Offline since 2026-09-19 (502 today, FAILED in the Flint's neighbour table). Its newest backup (2026-09-18) is on the Pi's own SD card. Revival is tracked separately in `code-y6w2` |
 | Radios | London has no Zigbee, Z-Wave, Thread or Matter coordinator; every device is Wi-Fi. The Pi 4 has onboard Bluetooth |
-| Bedside lamp | A simple on/off IKEA night lamp, about £10, already behind one of the five Kasa KP115 plugs. Socket type not yet checked |
+| Bedside lamp | An IKEA NÄVLINGE LED work lamp behind one of the five Kasa KP115 plugs. Its LED is built in (1.9 W, 220 lm, 2700 K), cannot be replaced, and is not dimmable, so it cannot fade |
 | Pi placement | Across the flat from the bedroom |
 | iPhone alarms | The iOS Companion app has no next-alarm sensor (Android has one). Community Shortcuts that sync Clock alarms to HA exist; several users report them breaking on iOS 18 and iOS 26 |
 
@@ -33,8 +33,8 @@ Measured or found on 2026-10-12:
 | decision | choice | why |
 |---|---|---|
 | Who it wakes | Viktor only | Anca keeps her own wake time |
-| Lamp | Keep the existing IKEA night lamp; one-week trial | No extra cost. If it glows too widely for Anca, lower the peak or swap to a directional lamp |
-| Bulb | Philips Hue White Ambiance (likely E14, confirmed at order time) | Dims very low, goes warm (2200K), pairs directly with HA over Zigbee without a Hue Bridge |
+| Lamp | IKEA TERTIAL work lamp (E27, adjustable arm and head) replaces the NÄVLINGE | Same aimable shape as the NÄVLINGE, so the light points at Viktor's pillow; takes a standard bulb. About £15–25 |
+| Bulb | Philips Hue White Ambiance E27 | Dims very low, goes warm (2200K), pairs directly with HA over Zigbee without a Hue Bridge |
 | Radio | SONOFF ZBDongle-E on the Pi, using HA's ZHA integration | HA reconnects Zigbee devices on its own; the Bluetooth path (`hue_ble`) does not retry after a long dropout. Also gives London a Zigbee network for later devices |
 | Range | Move the Pi to within one wall of the bedroom during its revival | The Pi only needs power and Wi-Fi, and a single bulb has no other Zigbee devices to relay through |
 | Trigger | The iPhone alarm, through a Shortcut; no HA schedule | Viktor sets alarms in the Clock app already. No alarm means no sunrise |
@@ -46,7 +46,7 @@ Measured or found on 2026-10-12:
 | Daily control | HA tile in iPhone Control Center; the lamp's own switch stays on | The bulb dims itself, so an on/off lamp is fine; only cutting power stops the sunrise |
 | Manual override | Any change to the lamp during the fade stops it for that morning | A person acting on the lamp wins over the automation |
 | Warnings | One push at 23:00, only when tomorrow's sunrise is at risk | Quiet on normal nights |
-| Purchase | After ha-london answers again | Nothing to pair the hardware with until then |
+| Purchase | Lamp, bulb and Zigbee stick, after ha-london answers again | Nothing to pair the hardware with until then |
 
 ## How it works
 
@@ -94,22 +94,21 @@ repeat days, plus a sync timestamp.
 ## Build steps
 
 1. ha-london revived and moved within one wall of the bedroom (`code-y6w2`, separate task).
-2. Viktor checks the lamp: socket type, and that the bulb unscrews. If the
-   lamp has a built-in LED with no bulb, a LAMPAN (E14, about £5) replaces it.
-3. Buy the Hue White Ambiance bulb and the SONOFF ZBDongle-E.
-4. Update the bulb's firmware once from the Hue app over Bluetooth. Philips
+2. Buy an IKEA TERTIAL, a Hue White Ambiance E27 bulb and the SONOFF
+   ZBDongle-E. The NÄVLINGE is freed for use elsewhere.
+3. Update the bulb's firmware once from the Hue app over Bluetooth. Philips
    ships Zigbee firmware only through its Bridge, so the bulb gets no updates
    after it joins ZHA.
-5. Plug the dongle into the Pi on a short USB extension, add ZHA, pair the bulb,
+4. Plug the dongle into the Pi on a short USB extension, add ZHA, pair the bulb,
    set its power-on behaviour to "off".
-6. Identify the bedside Kasa plug by its power draw while Viktor switches the
+5. Identify the bedside Kasa plug by its power draw while Viktor switches the
    lamp on and off.
-7. Write and install the Shortcut and its two automations on Viktor's iPhone.
-8. Build the HA helpers, sensor, automations and dashboard card.
-9. Verify: a test alarm 35 minutes out, watched through the plug turning on,
+6. Write and install the Shortcut and its two automations on Viktor's iPhone.
+7. Build the HA helpers, sensor, automations and dashboard card.
+8. Verify: a test alarm 35 minutes out, watched through the plug turning on,
    the fade, the hold and the turn-off; a manual change mid-fade; a stale sync
    producing the 23:00 push.
-10. One-week trial, then tune the peak brightness with Anca.
+9. One-week trial, then tune the peak brightness with Anca.
 
 ## Open questions
 
@@ -120,5 +119,4 @@ repeat days, plus a sync timestamp.
   signal; repairs are expected maintenance.
 - Zigbee range from the Pi's new position. If the bulb drops out, a Zigbee
   smart plug (about £10) halfway between them relays the signal.
-- Lamp socket and whether the bulb is removable (step 2).
 - UK prices are from undated comparison listings; check at order time.
