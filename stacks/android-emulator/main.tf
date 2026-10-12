@@ -112,6 +112,13 @@ resource "kubernetes_deployment" "android-emulator" {
             name  = "NVIDIA_DRIVER_CAPABILITIES"
             value = "all"
           }
+          env {
+            # host: headless emulator rendering GLES and Vulkan on the T4,
+            # mirrored into the noVNC view by scrcpy. swiftshader: CPU
+            # rendering, windowed into Xvfb. See docker/entrypoint.sh.
+            name  = "EMULATOR_GPU"
+            value = "host"
+          }
 
           port {
             name           = "adb"
