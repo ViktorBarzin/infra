@@ -57,8 +57,9 @@ func iosDefaults() iosConfig {
 		TeamID:  envOr("IOS_RIG_TEAM_ID", "26NB4W97WL"),
 		// The .xctrunner suffix is appended by Xcode, so the installed bundle
 		// is me.viktorbarzin.wda.xctrunner while this is what we sign as.
-		WDABundleID:  envOr("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda"),
-		DeveloperDir: envOr("IOS_RIG_DEVELOPER_DIR", "/Applications/Xcode_26.6.0_17F113_fb.app/Contents/Developer"),
+		WDABundleID: envOr("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda"),
+		// A shell expression, expanded on the Mac, unless overridden.
+		DeveloperDir: envOr("IOS_RIG_DEVELOPER_DIR", iosNewestXcodeExpr("/Applications")),
 		AppiumPort:   envOr("IOS_RIG_APPIUM_PORT", "4723"),
 		SSHPort:      envOr("IOS_RIG_SSH_PORT", "22"),
 		MacSubnet:    envOr("IOS_RIG_MAC_SUBNET", "192.168.8.0/24"),
@@ -67,6 +68,27 @@ func iosDefaults() iosConfig {
 		// change, which is what makes discovery trustworthy.
 		MacHWAddr: envOr("IOS_RIG_MAC_HW_ADDR", "84:2f:57:39:9a:d9"),
 	}
+}
+
+// iosNewestXcodeExpr is a shell expression naming the Developer directory of
+// the newest Xcode under appsDir. Meta's device management swaps Xcode
+// versions in place, so a pinned path stops existing without notice.
+// The resign, run and build scripts carry the same expression.
+func iosNewestXcodeExpr(appsDir string) string {
+	return `"$(ls -d ` + appsDir + `/Xcode*.app 2>/dev/null | sort -V | tail -n 1)/Contents/Developer"`
+}
+
+// resolvedDeveloperDir expands DeveloperDir on the Mac, for places that cannot
+// run a shell expression, such as a launchd plist.
+func (c iosConfig) resolvedDeveloperDir() (string, error) {
+	out, err := c.onMac("printf %s " + c.DeveloperDir)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(out, "/") || strings.HasPrefix(out, "/Contents") {
+		return "", fmt.Errorf("no Xcode found on the Mac (got %q)", out)
+	}
+	return out, nil
 }
 
 func envOr(key, def string) string {

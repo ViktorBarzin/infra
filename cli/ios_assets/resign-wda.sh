@@ -17,7 +17,8 @@ set -uo pipefail
 UDID="${IOS_RIG_UDID:-00008110-001614D03442801E}"
 TEAM_ID="${IOS_RIG_TEAM_ID:-26NB4W97WL}"
 WDA_BUNDLE_ID="${IOS_RIG_WDA_BUNDLE_ID:-me.viktorbarzin.wda}"
-DEVELOPER_DIR="${IOS_RIG_DEVELOPER_DIR:-/Applications/Xcode_26.6.0_17F113_fb.app/Contents/Developer}"
+# Newest installed Xcode: device management replaces versions in place.
+DEVELOPER_DIR="${IOS_RIG_DEVELOPER_DIR:-$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)/Contents/Developer}"
 export DEVELOPER_DIR
 export PATH="/opt/homebrew/bin:$HOME/.npm-global/bin:$PATH"
 
