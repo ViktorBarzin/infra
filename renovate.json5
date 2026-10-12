@@ -423,11 +423,5 @@
       matchPackageNames: ["telmate/proxmox"],
       enabled: false,
     },
-    {
-      description: "HELD: Kyverno 1.20 (chart 3.10) needs a policy migration; 3.9.x patches still land",
-      matchDatasources: ["helm"],
-      matchPackageNames: ["kyverno"],
-      allowedVersions: "<3.10.0",
-    },
   ],
 }
