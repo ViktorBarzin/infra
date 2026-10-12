@@ -1,0 +1,35 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: deny-host-namespaces
+  annotations:
+    policies.kyverno.io/title: "Deny Host Namespaces"
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: "Sharing host namespaces enables container escapes. Deny hostNetwork, hostPID, hostIPC."
+spec:
+  validationActions: [Deny]
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  validations:
+    - message: Host namespaces (hostNetwork, hostPID, hostIPC) are not allowed.
+      expression: >-
+        !object.spec.?hostNetwork.orValue(false) &&
+        !object.spec.?hostPID.orValue(false) &&
+        !object.spec.?hostIPC.orValue(false)

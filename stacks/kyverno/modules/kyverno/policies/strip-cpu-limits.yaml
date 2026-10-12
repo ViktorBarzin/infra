@@ -1,0 +1,34 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: strip-cpu-limits
+  annotations:
+    policies.kyverno.io/title: Strip CPU Limits
+    policies.kyverno.io/description: "Removes resources.limits.cpu from every container and init container (CFS throttling; see resource-governance.tf)."
+spec:
+  failurePolicy: Ignore
+  # No pod-controller variants. MutatingPolicy autogen is on by default for
+  # pod policies, and it does not rewrite JSONPatch paths, so a variant would
+  # write /spec/... onto the Deployment itself (seen with kyverno-cli 1.19.1).
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchConditions:
+    - name: has-a-cpu-limit
+      expression: >-
+        (object.spec.containers + object.spec.?initContainers.orValue([])).exists(c,
+          'cpu' in c.?resources.?limits.orValue({}))
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          object.spec.containers.filter(c, 'cpu' in c.?resources.?limits.orValue({})).map(c,
+            JSONPatch{op: 'remove', path: '/spec/containers/' + string(object.spec.containers.indexOf(c)) + '/resources/limits/cpu'}) +
+          object.spec.?initContainers.orValue([]).filter(c, 'cpu' in c.?resources.?limits.orValue({})).map(c,
+            JSONPatch{op: 'remove', path: '/spec/initContainers/' + string(object.spec.initContainers.indexOf(c)) + '/resources/limits/cpu'})

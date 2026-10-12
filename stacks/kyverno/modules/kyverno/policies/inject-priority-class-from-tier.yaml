@@ -1,0 +1,49 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: inject-priority-class-from-tier
+  annotations:
+    policies.kyverno.io/title: Inject PriorityClass from Tier
+    policies.kyverno.io/description: "Sets priorityClassName tier-<tier> from the namespace tier label on pods that set none."
+spec:
+  failurePolicy: Ignore
+  # No pod-controller variants. MutatingPolicy autogen is on by default for
+  # pod policies, and it does not rewrite JSONPatch paths, so a variant would
+  # write /spec/... onto the Deployment itself (seen with kyverno-cli 1.19.1).
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: tier
+          operator: In
+          values: ${tiers}
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  matchConditions:
+    - name: no-priority-class
+      expression: "object.spec.?priorityClassName.orValue('') == ''"
+    # GPU pods outside the gpu-priority exclude list get gpu-workload from
+    # inject-gpu-workload-priority. The ClusterPolicies relied on alphabetical
+    # policy order for this; MutatingPolicy order is not deterministic, so the
+    # two policies are made disjoint instead.
+    - name: not-a-gpu-workload
+      expression: >-
+        request.namespace in ${gpu_exclude} ||
+        !object.spec.containers.exists(c,
+          'nvidia.com/gpu' in c.?resources.?requests.orValue({}) ||
+          'nvidia.com/gpu' in c.?resources.?limits.orValue({}))
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.priority) ? [JSONPatch{op: 'remove', path: '/spec/priority'}] : []) +
+          (has(object.spec.preemptionPolicy) ? [JSONPatch{op: 'remove', path: '/spec/preemptionPolicy'}] : []) +
+          [JSONPatch{op: 'add', path: '/spec/priorityClassName', value: 'tier-' + namespaceObject.metadata.labels['tier']}]
