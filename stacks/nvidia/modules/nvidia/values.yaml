@@ -24,7 +24,12 @@ driver:
   # so the host kernel needs to be rolled back to 6.8.0-117-generic
   # (still installed in /boot) before the driver can come up.
   # See post-mortem 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
-  version: "570.195.03" # CUDA 12.8 — pinned until NVIDIA ships ubuntu26.04 images
+  # 2026-10-12: 570 -> 580 LTSB (supported to 2028-06; CUDA 13.0). 570 is
+  # outside the gpu-operator v26.x matrix. The node reports Ubuntu 24.04 and
+  # kernel 6.8.0-117 (held), so the operator pulls 580.178.04-ubuntu24.04 and
+  # compiles the open kernel module against those headers, as 570 did.
+  # NVIDIA also publishes a precompiled 580-6.8.0-117-generic-ubuntu24.04.
+  version: "580.178.04"
   upgradePolicy:
     autoUpgrade: false
 
