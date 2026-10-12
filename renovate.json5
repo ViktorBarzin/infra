@@ -181,7 +181,7 @@
 
     // ---- Scope: what Renovate does not touch ----
     {
-      description: "Terraform providers and required_version are out of scope (not in the ownership table; pinned in root terragrunt.hcl)",
+      description: "The terraform manager's own provider/module extraction stays off. Provider versions are owned by the annotated exact pins in root terragrunt.hcl (custom manager shape B, datasource terraform-provider); the required_providers blocks inside stack modules (cloudflare ~> 4, kubectl ~> 1.14) only bound the major and move with a supervised major",
       matchManagers: ["terraform"],
       matchDepTypes: ["provider", "required_provider", "required_version", "module", "terraform"],
       enabled: false,
@@ -314,6 +314,15 @@
       schedule: ["* 0-3 * * 1"],
     },
 
+    {
+      description: "Terraform providers (root terragrunt.hcl). A change there makes CI re-apply all 32 platform stacks; the rails do not verify that commit (scripts/renovate-rails maps only stacks/ and modules/ paths), so a failed apply turns the pipeline red without a revert. Land at most one provider a week, in a Wednesday 00:00-03:59 window, with its own subject prefix",
+      matchFileNames: ["terragrunt.hcl"],
+      matchDatasources: ["terraform-provider"],
+      commitMessagePrefix: "providers:",
+      additionalBranchPrefix: "providers-",
+      schedule: ["* 0-3 * * 3"],
+    },
+
     // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
     // Remove a rule to release that component to the rails.
     {
@@ -399,6 +408,33 @@
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
       matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: hashicorp/vault provider 4 -> 5 (2026-10-12). v5 is a breaking release used by every stack that reads Vault (vault_kv_secret_v2 and friends); it needs a plan of each consumer and the stacks/vault apply working again (bead code-f2u0). 4.x minor/patch still land.",
+      matchDatasources: ["terraform-provider"],
+      matchPackageNames: ["hashicorp/vault"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: cloudflare provider 4 -> 5 (2026-10-12). v5 is a rewrite generated from the OpenAPI schema: cloudflare_record becomes cloudflare_dns_record and many attributes change, so cloudflared, reverse-proxy, forgejo and other stacks need state moves. The stack modules also bound it with ~> 4. 4.x patches still land.",
+      matchDatasources: ["terraform-provider"],
+      matchPackageNames: ["cloudflare/cloudflare"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: goauthentik provider 2025.x -> 2026.x (2026-10-12). Four stacks use it and two of them gate cluster access (rbac, k8s-dashboard); the 2025.8 bump was landed only after a plan of the authentik stack and a schema diff for the types the other three use (root terragrunt.hcl comment). Repeat that measurement, then drop this rule. 2025.x patches still land.",
+      matchDatasources: ["terraform-provider"],
+      matchPackageNames: ["goauthentik/authentik"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: telmate/proxmox provider, all updates (2026-10-12). Only stacks/infra uses it (the k8s node VMs and the registry VM), CI does not re-apply that stack on a root change, and stacks/infra/main.tf works around rc07 disk-block defects; a newer rc (rc10 is out) can plan disk or VM replacement. Plan stacks/infra with the new rc in a supervised session.",
+      matchDatasources: ["terraform-provider"],
+      matchPackageNames: ["telmate/proxmox"],
       enabled: false,
     },
     {

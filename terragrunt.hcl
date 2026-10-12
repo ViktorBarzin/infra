@@ -60,22 +60,36 @@ generate "k8s_providers" {
   contents  = <<EOF
 terraform {
   required_providers {
-    # Floor, not pin: hashicorp/kubernetes 3.0.x–3.1.x ship a provider-side
-    # resource-identity bug ("Missing Resource Identity After Update") that
-    # failed redis/dbaas on every CI apply that touched a resource (issue
-    # #68); fixed upstream in 3.2.1. Lockfiles are gitignored, so without a
-    # floor any environment can resolve back into the broken range.
+    # Every provider is pinned to one exact version, and Renovate owns the
+    # pin (the "# renovate:" line above each one; renovate.json5 holds the
+    # majors that need a supervised migration). Lockfiles are gitignored, so
+    # the pin is what CI resolves: each version below is what an unpinned CI
+    # init resolved on 2026-10-12, so pinning changed nothing that runs.
+    # scripts/tg re-inits a workstation whose local lockfile predates a bump.
+    #
+    # hashicorp/kubernetes 3.0.x-3.1.x ship a provider-side resource-identity
+    # bug ("Missing Resource Identity After Update") that failed redis/dbaas
+    # on every CI apply that touched a resource (issue #68); fixed upstream
+    # in 3.2.1. Never pin below 3.2.1.
     kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 3.2.1"
+      source = "hashicorp/kubernetes"
+      # renovate: datasource=terraform-provider depName=hashicorp/kubernetes
+      version = "3.3.0"
+    }
+    helm = {
+      source = "hashicorp/helm"
+      # renovate: datasource=terraform-provider depName=hashicorp/helm
+      version = "3.3.0"
     }
     vault = {
-      source  = "hashicorp/vault"
-      version = "~> 4.0"
+      source = "hashicorp/vault"
+      # renovate: datasource=terraform-provider depName=hashicorp/vault
+      version = "4.8.0"
     }
     cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4"
+      source = "cloudflare/cloudflare"
+      # renovate: datasource=terraform-provider depName=cloudflare/cloudflare
+      version = "4.52.9"
     }
     authentik = {
       source = "goauthentik/authentik"
@@ -97,17 +111,20 @@ terraform {
       # Note authentik_provider_oauth2 does drop `redirect_uris` in 2025.8, but
       # nothing here uses it — all four stacks already use
       # allowed_redirect_uris, which 2024.12.1 also has.
-      version = "~> 2025.8"
+      # renovate: datasource=terraform-provider depName=goauthentik/authentik
+      version = "2025.12.1"
     }
     # kubectl (gavinbunney) — workaround for hashicorp/kubernetes
     # `kubernetes_manifest` panics on Kyverno CRDs. See beads code-e2dp.
     # Declared for all stacks but only used where opted-in.
     kubectl = {
-      source  = "gavinbunney/kubectl"
-      version = "~> 1.14"
+      source = "gavinbunney/kubectl"
+      # renovate: datasource=terraform-provider depName=gavinbunney/kubectl
+      version = "1.19.0"
     }
     proxmox = {
-      source  = "telmate/proxmox"
+      source = "telmate/proxmox"
+      # renovate: datasource=terraform-provider depName=telmate/proxmox
       version = "3.0.2-rc07"
     }
   }
