@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "1.31.6-alpine",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2349: stack navidrome failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit c9e6d271)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "deluan/navidrome"
+      ],
+      "matchNewValue": "0.64.2",
+      "enabled": false
     }
   ]
 }
