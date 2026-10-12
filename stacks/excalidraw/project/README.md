@@ -21,8 +21,9 @@ ghcr.io/viktorbarzin/excalidraw-library:latest
 Built by GitHub Actions (`.github/workflows/build-excalidraw.yml` in the infra
 repo, ADR-0002) on every master push touching `stacks/excalidraw/project/**`;
 tags `:latest` + `:<git-sha>`. The package is PRIVATE — cluster pulls use the
-Kyverno-synced `ghcr-credentials` secret. Keel polls `:latest` and rolls the
-deployment on digest change.
+Kyverno-synced `ghcr-credentials` secret. The workflow's last step triggers
+`.woodpecker/first-party-deploy.yml`, which sets the deployment to the
+`:<git-sha>` tag.
 
 The legacy manually-built DockerHub image `viktorbarzin/excalidraw-library:v4`
 is frozen as the rollback target; nothing pushes to it anymore.

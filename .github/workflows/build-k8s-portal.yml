@@ -1,8 +1,9 @@
 name: Build k8s-portal
 
 # ADR-0002 / no-local-builds: k8s-portal (infra-owned Go portal) builds off-infra
-# on GHA → public ghcr; Keel polls ghcr:latest and rolls the deployment. Replaces
-# the in-cluster .woodpecker/k8s-portal.yml build.
+# on GHA → public ghcr, then the last step triggers
+# .woodpecker/first-party-deploy.yml to roll the deployment onto the :<sha> tag.
+# Replaces the in-cluster .woodpecker/k8s-portal.yml build.
 on:
   push:
     branches: [master]
@@ -34,3 +35,27 @@ jobs:
           tags: |
             ghcr.io/viktorbarzin/k8s-portal:latest
             ghcr.io/viktorbarzin/k8s-portal:${{ github.sha }}
+      # Roll the cluster onto this build: Woodpecker repo 1 (this repo's GitHub
+      # mirror) runs .woodpecker/first-party-deploy.yml, which does kubectl set
+      # image in-cluster. The Deployment image is CI_SETS_IMAGE in Terraform.
+      # Master only, so a workflow_dispatch on a branch builds but never deploys.
+      - name: Trigger the Woodpecker deploy
+        if: github.ref == 'refs/heads/master'
+        env:
+          WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_DIGEST: ''
+        run: |
+          body=$(jq -nc --arg tag "$IMAGE_TAG" --arg digest "$IMAGE_DIGEST" \
+            '{branch: "master", variables: {PIPELINE: "first-party-deploy", APP: "k8s-portal", IMAGE_TAG: $tag, IMAGE_DIGEST: $digest}}')
+          for attempt in 1 2 3; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              https://ci.viktorbarzin.me/api/repos/1/pipelines \
+              -H "Authorization: Bearer $WOODPECKER_TOKEN" \
+              -H 'Content-Type: application/json' -d "$body")
+            if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+              echo "Woodpecker deploy triggered (HTTP $status)"; exit 0
+            fi
+            echo "attempt $attempt: HTTP $status, retrying in 30s"; sleep 30
+          done
+          echo "could not trigger the Woodpecker deploy"; exit 1
