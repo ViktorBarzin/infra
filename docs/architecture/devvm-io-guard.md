@@ -39,7 +39,7 @@ Every 2 s it reads the `full` line of `/proc/pressure/io`: the share of time eve
 
 | Stage | Condition | Action |
 |---|---|---|
-| Clamp | `full avg10` > 0.5 for 20 s | Every user slice gets `io.max riops` = 100 divided by the number of slices that read in the last 10 s. A lone user is clamped too. The per-slice value goes in `/run/devvm-io-guard/clamp` |
+| Clamp | `full avg10` > 0.5 for 20 s | Every user slice gets `io.max riops` = 100 divided by the number of slices that read in the last 10 s. A lone user is clamped too. When more slices start reading, the value drops (`clamp-adjust`); it does not rise again until release, so it doesn't swing each time the reader count changes. The per-slice value goes in `/run/devvm-io-guard/clamp` |
 | Kill | Clamped for 30 s and `full avg10` still > 0.5 | Stop the eligible process with the highest score. At most one decision every 20 s |
 | Release | `full avg60` < 0.2 for 60 s | Remove the clamp file and run `devvm-io-fairshare.service` once to restore its own caps |
 

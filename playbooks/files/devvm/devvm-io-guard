@@ -20,7 +20,8 @@ alarms and 4 misses (the misses were other VMs, which this cannot fix).
 
   1. Clamp. Pressure above TRIGGER for TRIGGER_SECS: every user slice gets an
      io.max read ceiling of CLAMP_RIOPS split evenly between the slices that
-     read in the last RANK_WINDOW seconds. A lone user is clamped too. The
+     read in the last RANK_WINDOW seconds. A lone user is clamped too. More
+     readers tighten the ceiling; fewer never loosen it before release. The
      per-slice value goes in /run/devvm-io-guard/clamp so the fairshare timer
      applies the same ceiling instead of undoing it two minutes later.
   2. Kill. Clamped for KILL_AFTER_SECS and pressure still above TRIGGER: the
@@ -430,7 +431,10 @@ class Guard:
                                   for u in self.reading_slices()) or "-")
 
     def adjust_clamp(self):
-        per = self.clamp_value()
+        # Only tighten while clamped. The reader count flips between 1 and 2
+        # every few seconds under real load, and following it would rewrite
+        # io.max each time; the release resets the ceiling.
+        per = min(self.per_slice, self.clamp_value())
         if per != self.per_slice:
             self.log("clamp-adjust", riops_per_slice=per, was=self.per_slice)
             self.per_slice = per

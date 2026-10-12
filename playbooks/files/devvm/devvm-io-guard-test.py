@@ -254,6 +254,41 @@ class Stages(unittest.TestCase):
         self.run_until(g, 0, 20, before=before)
         self.assertEqual(self.box.io_max(1000), "252:0 riops=100")
 
+    def test_the_ceiling_only_tightens_while_clamped(self):
+        # Live on 2026-10-12 the reader count flipped between 1 and 2 every
+        # few seconds, and the ceiling flipped 50 <-> 100 with it. Hold the
+        # tightest value until release instead.
+        g = self.box.guard()
+        self.box.pressure(0.9, 0.9)
+        rios = {"a": 0, "b": 0}
+
+        def both(t):
+            rios["a"] += 50
+            rios["b"] += 50
+            self.box.slice(1000, rios=rios["a"])
+            self.box.slice(1002, rios=rios["b"])
+
+        def one(t):
+            rios["a"] += 50
+            self.box.slice(1000, rios=rios["a"])
+        t = self.run_until(g, 0, 20, before=both)
+        self.assertEqual(self.box.io_max(1000), "252:0 riops=50")
+        t = self.run_until(g, t, t + 30, before=one)
+        self.assertEqual(g.reading_slices(), [1000])
+        self.assertEqual(self.box.io_max(1000), "252:0 riops=50")
+        self.assertEqual(self.box.logged("clamp-adjust"), [])
+        # A third reader still tightens it.
+        self.box.slice(1003, rios=0)
+        rios["c"] = 0
+
+        def three(t):
+            both(t)
+            rios["c"] += 50
+            self.box.slice(1003, rios=rios["c"])
+        self.run_until(g, t, t + 12, before=three)
+        self.assertEqual(self.box.io_max(1003), "252:0 riops=33")
+        self.assertEqual(len(self.box.logged("clamp-adjust")), 1)
+
     def test_scanner_is_killed_after_the_clamp_fails_to_help(self):
         self.box.proc_add(400, ["zsh", "-c", "source snap; grep -r x ~"],
                           BASH_SCOPE, ppid=1, start=10, stderr=self.out)
