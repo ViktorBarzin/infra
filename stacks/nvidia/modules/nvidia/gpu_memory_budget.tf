@@ -280,7 +280,7 @@ resource "kubernetes_deployment" "gpu_vram_watchdog" {
         service_account_name = kubernetes_service_account.gpu_vram_watchdog.metadata[0].name
         container {
           name    = "watchdog"
-          image   = "library/python:3.14.8-alpine"
+          image   = "library/python:3.12.15-alpine"
           command = ["python3", "/scripts/watchdog.py"]
           env {
             name  = "GPUMEM_RESOURCE"

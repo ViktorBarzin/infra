@@ -45,6 +45,28 @@
       ],
       "matchNewValue": "3.14-slim",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2376: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 922a6914)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "library/python"
+      ],
+      "matchNewValue": "3.14.8-slim",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2376: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 922a6914)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "library/python"
+      ],
+      "matchNewValue": "3.14.8-alpine",
+      "enabled": false
     }
   ]
 }
