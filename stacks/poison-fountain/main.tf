@@ -102,7 +102,7 @@ resource "kubernetes_deployment" "poison_fountain" {
         }
         container {
           name    = "poison-fountain"
-          image   = "library/python:3.12.15-slim"
+          image   = "library/python:3.14.8-slim"
           command = ["python", "/app/server.py"]
 
           port {
