@@ -17,6 +17,13 @@ const hostRules = [
   // refuse", seen in the 2026-10-10 dry run) and the default becomes `block`
   // in a future major, which would stop Renovate cold.
   { matchHost: 'forgejo.viktorbarzin.me', allowInternal: true },
+  // Docker Hub (index.docker.io, auth.docker.io): one image used in several
+  // stacks is looked up once per stack, in parallel, and each lookup asks
+  // auth.docker.io for a token. On 2026-10-11 those bursts got 429 "too many
+  // failed login attempts for username or IP address" for library/nginx and
+  // actualbudget/actual-server although the credentials are valid. Two
+  // requests at a time, at most 5 per second, spreads the token requests out.
+  { matchHost: 'docker.io', concurrentRequestLimit: 2, maxRequestsPerSecond: 5 },
 ];
 if (process.env.DOCKERHUB_USERNAME && process.env.DOCKERHUB_TOKEN) {
   hostRules.push({

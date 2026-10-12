@@ -59,6 +59,14 @@ DRY_RUN="${DEVVM_IO_FAIRSHARE_DRY_RUN:-0}"
 # behaviour cannot be exercised on demand: it needs two people working at once,
 # and waiting for that to happen is not a test.
 CG="${DEVVM_IO_FAIRSHARE_CGROUP_ROOT:-/sys/fs/cgroup/user.slice}"
+# devvm-io-guard writes a per-slice read ceiling here while the disk is
+# saturated, and removes it when the disk recovers. While it exists it wins
+# over everything below, including the lone-user "no caps" rule; otherwise
+# this timer would lift the guard's clamp within two minutes.
+CLAMP_FILE="${DEVVM_IO_GUARD_CLAMP_FILE:-/run/devvm-io-guard/clamp}"
+clamp=""
+[[ -r "$CLAMP_FILE" ]] && read -r clamp < "$CLAMP_FILE"
+[[ "$clamp" =~ ^[1-9][0-9]*$ ]] || clamp=""
 
 # The backing device as io.max names it. dm-0 is what the guest's filesystems
 # actually sit on; 8:0 is sda underneath it. Limits are written for the dm
@@ -112,20 +120,26 @@ apply() { # uid, value
 
 # A lone user, or nobody, gets the whole device. This is the half io.max cannot
 # do by itself and the reason this script exists.
+# The riops value for an otherwise uncapped slice: max, unless the guard is
+# clamping.
+free_riops="${clamp:-max}"
 if (( n <= 1 )); then
   for d in "$CG"/user-*.slice; do
     uid="${d##*/user-}"; uid="${uid%.slice}"
-    [[ "$uid" -ge 1000 ]] 2>/dev/null && apply "$uid" "riops=max rbps=max wbps=max"
+    [[ "$uid" -ge 1000 ]] 2>/dev/null && apply "$uid" "riops=$free_riops rbps=max wbps=max"
   done
   msg="io fairshare: ${n} active, no caps (whole device available)"
+  share_riops=0
 else
   share_riops=$(( DEVICE_RIOPS / n )); share_rbps=$(( DEVICE_RBPS / n )); share_wbps=$(( DEVICE_WBPS / n ))
+  [[ -n "$clamp" ]] && (( clamp < share_riops )) && share_riops=$clamp
   for uid in "${active[@]}"; do apply "$uid" "riops=$share_riops rbps=$share_rbps wbps=$share_wbps"; done
   # An idle user is not competing, so capping them buys nothing and would only
   # make their next keystroke slow. They are lifted the moment they act.
-  for uid in "${idle[@]}"; do apply "$uid" "riops=max rbps=max wbps=max"; done
+  for uid in "${idle[@]}"; do apply "$uid" "riops=$free_riops rbps=max wbps=max"; done
   msg="io fairshare: ${n} active, ${share_riops} riops + $(( share_rbps / 1048576 )) MB/s each"
 fi
+[[ -n "$clamp" ]] && { msg="$msg; devvm-io-guard clamp ${clamp} riops per user"; (( share_riops == 0 )) && share_riops=$clamp; }
 echo "$msg"
 
 if [[ -n "$TEXTFILE_DIR" && -d "$TEXTFILE_DIR" && "$DRY_RUN" != "1" ]]; then
@@ -134,9 +148,9 @@ if [[ -n "$TEXTFILE_DIR" && -d "$TEXTFILE_DIR" && "$DRY_RUN" != "1" ]]; then
     echo "# HELP devvm_io_active_users Users counted as competing for the disk this interval."
     echo "# TYPE devvm_io_active_users gauge"
     echo "devvm_io_active_users $n"
-    echo "# HELP devvm_io_share_riops Read IOPS each active user is currently allowed; 0 means uncapped."
+    echo "# HELP devvm_io_share_riops Read IOPS each active user is currently allowed, including a devvm-io-guard clamp; 0 means uncapped."
     echo "# TYPE devvm_io_share_riops gauge"
-    echo "devvm_io_share_riops $(( n <= 1 ? 0 : DEVICE_RIOPS / n ))"
+    echo "devvm_io_share_riops $share_riops"
     echo "# HELP devvm_io_fairshare_last_run_timestamp_seconds When this last completed."
     echo "# TYPE devvm_io_fairshare_last_run_timestamp_seconds gauge"
     echo "devvm_io_fairshare_last_run_timestamp_seconds $(date +%s)"

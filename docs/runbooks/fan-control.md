@@ -151,7 +151,8 @@ with a `value` inside the output limits (what the AUTO script does).
 **Tuning basis (2026-10-05):** a step test (Lock at 30 → 38 → 30 → 38 → 30 %, 15 min
 each, garage closed) showed the CPU temperature falling about 0.40 K per % duty, a time
 constant of about 160 s, a dead time of about 90 s, and a rise of about 0.15–0.20 K per %
-of CPU load. Chosen: Kp −0.5 %/K, Ki −0.001 %/(K·s) (Ti ≈ 500 s). A closed-loop model
+of CPU load. Chosen then: Kp −0.5 %/K, Ki −0.001 %/(K·s) (Ti ≈ 500 s); retuned on
+2026-10-11, see below. A closed-loop model
 calibrated to the old curve controller (24.7 writes/h, σ 2.3 K) predicted about 2 IPMI
 writes per hour, an average duty of ~30 %, and the CPU held at 60 °C with a 99th
 percentile around 66 °C.
@@ -176,6 +177,24 @@ duty) reproduces the measurements and shows that higher Kp/Ki lower the 5-min pe
 1–2 K at 2.6–7 writes per hour without moving the raw peak; a lower setpoint does move it
 (58 °C: raw ≈ 73 °C, 5-min ≈ 67 °C, duty about 5 % higher). The iDRAC upper non-critical
 threshold for CPU1 is 88 °C; the daemon's own ceiling is 83 °C.
+
+**Retune (2026-10-11): Kp −1.0 %/K, Ki −0.002 %/(K·s), Ti still ≈ 500 s.** The CPU load
+grew day by day after the first tuning (daily mean 29.7 → 34.7 → 46.3 → 51.7 % on
+10-08..10-11), and the share of time the 5-min mean spent outside 60 ± 2 °C grew with it
+(15 → 24 → 36 → 43 %), while the daily average stayed at 60.0–60.2 °C. On 10-11 the
+host went from about 16 to 27–32 busy cores when benchmark pods (`embed-bench-cpu`,
+`embed-bench-cpu8`) ran from about 10:30 to 15:10 local; the 5-min mean peaked at
+70.3 °C (raw 72 °C) at 10:44 and the duty took about 75 minutes to climb from 33 to
+57 %; when the pods stopped it dipped to 53.7 °C at 15:34 while the duty came back from
+65 to 51 %. A replay of that day (the PV replica matched the Statistics sensor exactly
+and the simple-pid replica matched the PID output within 0.14 % on average) estimated,
+for Kp −1.0 / Ki −0.002: about 20 % less time outside the band (182 instead of 228 min
+above 62 °C, 161 instead of 193 min below 58 °C), a peak 0.6 K lower, and about twice
+the IPMI writes (10.6 instead of 5.4 per hour). Emil chose to try it. The change was
+made in AUTO without a bump: set Kp and Ki, then `set_output(out_before − Kp_new ×
+(SP − PV))` within the same PID sample, so the next computed output equalled the
+previous one (52.11 % before and after, P 1.9 at a −1.9 K error). A 24-hour comparison
+against the previous tuning is the next check; the previous values are the way back.
 
 **Manual override (MAN on the faceplate):** `input_boolean.r730_fan_lock` +
 `input_number.r730_fan_manual_pct` (Override %). While unlocked, the automation

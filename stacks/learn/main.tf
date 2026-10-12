@@ -21,6 +21,7 @@
 # handed to the other one resolves instead of 404ing). A Pages Reader reads only
 # their own space — added 2026-09-03 for Anca, whose prep page lives in
 # pages/anca/ and who should not inherit the admins' 100+ published pages.
+# Valia (2026-10-11) reads her own pages/valia/ plus pages/shared/.
 # pages/<user>/ is an authoring namespace, not an access boundary; unlisted
 # identities still get 403. Before that date each identity was pinned to its
 # own directory, which meant a page URL handed to the other person resolved
@@ -187,7 +188,7 @@ resource "kubernetes_config_map" "caddyfile" {
       	@pages_shared {
       		host pages.viktorbarzin.me
       		path /shared/*
-      		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin)(@.*)?$
+      		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin|valentinakolevabarzina)(@.*)?$
       	}
       	handle @pages_shared {
       		root * /repo/src/current/pages
@@ -236,6 +237,37 @@ resource "kubernetes_config_map" "caddyfile" {
       		root * /repo/src/current/pages/anca
       		try_files {path} {path}index.html
       		file_server
+      	}
+      	# Valia (valentinakolevabarzina@gmail.com, verified against the live
+      	# Authentik user list 2026-10-11). A Pages Reader like Anca, but with two
+      	# spaces: her own pages/valia/ first, then pages/shared/, which is where
+      	# pages written for the family in Sofia live (/shared/* URLs reach her
+      	# through @pages_shared above). Each space gets its OWN pinned root, the
+      	# same control as Anca's handle, rather than one root over the pages tree
+      	# with prefixed try_files. The prefixed form leaked twice when tested
+      	# against caddy 2.10.2 before landing: with no match, try_files leaves the
+      	# path unchanged, and {path} is decoded but not cleaned, so
+      	# /%2e%2e/wizard/<page>.html turned /valia{path} into a path outside her
+      	# space. A pinned root is joined safely, so neither case resolves.
+      	@pages_valia {
+      		host pages.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^valentinakolevabarzina(@.*)?$
+      	}
+      	handle @pages_valia {
+      		@pages_valia_own file {
+      			root /repo/src/current/pages/valia
+      			try_files {path} {path}index.html
+      		}
+      		handle @pages_valia_own {
+      			root * /repo/src/current/pages/valia
+      			rewrite {file_match.relative}
+      			file_server
+      		}
+      		handle {
+      			root * /repo/src/current/pages/shared
+      			try_files {path} {path}index.html =404
+      			file_server
+      		}
       	}
       	@pages_emo {
       		host pages.viktorbarzin.me
@@ -328,7 +360,7 @@ resource "kubernetes_deployment" "learn" {
 
         container {
           name  = "caddy"
-          image = "docker.io/library/caddy:2.10.2-alpine"
+          image = "docker.io/library/caddy:2.11.7-alpine"
           port {
             container_port = 8080
             name           = "http"
@@ -432,20 +464,13 @@ module "ingress_pages" {
   service_name    = "learn"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
-  # "Pages Readers" (stacks/authentik/pages-readers.tf) is a read-only door for
-  # one person at a time: the Caddyfile above still decides WHICH space each
-  # identity sees, and a Pages Reader with no handle of their own falls through
-  # to the 403. Admins keep passing via the break-glass branch regardless.
-  #
-  # Two things about naming a group here, both learned the hard way on
-  # 2026-09-03. scripts/check-allowed-groups.py is a STATIC guard: it scans the
-  # repo for authentik_group names, so the group's Terraform has to be in the
-  # same commit or CI fails this stack before apply. And stacks/authentik has to
-  # be applied AGAIN after this stack, because its authorization table is
-  # generated from live ingress annotations at apply time — applied in the same
-  # pipeline it runs first, rebuilding the table from the annotation this apply
-  # is about to replace, which grants the new group nothing.
-  allowed_groups = ["Home Server Admins", "Pages Readers"]
+  # "Home Users" (stacks/authentik/home-users.tf) gets past Authentik here, and
+  # the Caddyfile above still decides WHICH space each identity sees: a Home
+  # User with no handle of their own falls through to the 403. The host has its
+  # own forward_single application listed in
+  # stacks/authentik/forward-auth-apps.json, which must name the same groups
+  # (scripts/check-allowed-groups.py enforces that before plan).
+  allowed_groups = ["Home Server Admins", "Home Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Pages"

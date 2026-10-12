@@ -920,7 +920,7 @@ resource "kubernetes_cron_job_v1" "webterminal_probe" {
             restart_policy = "OnFailure"
             container {
               name              = "probe"
-              image             = "docker.io/library/alpine:3.20"
+              image             = "docker.io/library/alpine:3.24"
               image_pull_policy = "IfNotPresent"
               resources {
                 requests = {

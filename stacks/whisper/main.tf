@@ -73,7 +73,7 @@ resource "kubernetes_deployment" "whisper" {
 
         container {
           name  = "whisper"
-          image = "rhasspy/wyoming-whisper:3.1.0"
+          image = "rhasspy/wyoming-whisper:3.8.1"
           args  = ["--model", "small-int8", "--language", "en", "--beam-size", "1"]
 
           port {
@@ -199,7 +199,7 @@ resource "kubernetes_deployment" "piper" {
 
         container {
           name  = "piper"
-          image = "rhasspy/wyoming-piper:2.2.2"
+          image = "rhasspy/wyoming-piper:2.5.2"
           args  = ["--voice", "en_US-lessac-medium"]
 
           port {

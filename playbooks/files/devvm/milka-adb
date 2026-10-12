@@ -12,6 +12,14 @@ IP=${1:-192.168.0.193}
 try() { timeout 8 adb connect "$IP:$1" >/dev/null 2>&1; sleep 2
   [ "$(adb devices | awk -v d="$IP:$1" '$1==d{print $2}')" = device ] && { echo "$IP:$1"; exit 0; }
   adb disconnect "$IP:$1" >/dev/null 2>&1; }
-try 5555
-for p in $(nmap -Pn -p 30000-50000 -T4 --max-retries 3 "$IP" 2>/dev/null | grep -oE '^[0-9]+/tcp open' | cut -d/ -f1); do try "$p"; done
+# A sleeping phone answers in hundreds of ms and its first TLS handshake can fail (seen
+# 2026-10-11: "Handshake failed in SSL_accept" on the right port, which worked a minute later),
+# so wake its Wi-Fi with a few pings and go over the open ports up to three times.
+wake() { ping -c 3 -W 2 "$IP" >/dev/null 2>&1; }
+wake; try 5555
+ports=$(nmap -Pn -p 30000-50000 -T4 --max-retries 3 "$IP" 2>/dev/null | grep -oE '^[0-9]+/tcp open' | cut -d/ -f1)
+for pass in 1 2 3; do
+  [ "$pass" = 1 ] || wake
+  for p in $ports; do try "$p"; done
+done
 echo "no adb on $IP (phone off, not yet unlocked since boot, or on another network)" >&2; exit 1

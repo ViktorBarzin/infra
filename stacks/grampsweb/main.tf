@@ -133,6 +133,13 @@ locals {
       value = "True"
     },
     {
+      # The image defaults to 8 gunicorn workers, which OOMs the 512Mi web
+      # container on 26.5.3 (crash-looped on every wake from 2026-10-11).
+      # A family tree for a handful of readers needs 2.
+      name  = "GUNICORN_NUM_WORKERS"
+      value = "2"
+    },
+    {
       name  = "GRAMPSWEB_EMAIL_HOST"
       value = var.mail_host
     },
@@ -203,7 +210,7 @@ resource "kubernetes_deployment" "grampsweb" {
       spec {
         container {
           name  = "grampsweb"
-          image = "ghcr.io/gramps-project/grampsweb:26.5.3"
+          image = "ghcr.io/gramps-project/grampsweb:26.10.1"
 
           port {
             container_port = 5000
@@ -271,8 +278,8 @@ resource "kubernetes_deployment" "grampsweb" {
 
         container {
           name    = "grampsweb-celery"
-          image   = "ghcr.io/gramps-project/grampsweb:26.5.3"
-          command = ["celery", "-A", "gramps_webapi.celery", "worker", "--loglevel=INFO", "--concurrency=2"]
+          image   = "ghcr.io/gramps-project/grampsweb:26.10.1"
+          command = ["celery", "-A", "gramps_webapi.celery", "worker", "--loglevel=INFO", "--concurrency=1"]
 
           dynamic "env" {
             for_each = local.common_env
@@ -326,10 +333,10 @@ resource "kubernetes_deployment" "grampsweb" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "256Mi"
+              memory = "384Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "384Mi"
             }
           }
         }
@@ -387,6 +394,7 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
   auth            = "required"
+  allowed_groups  = ["Home Server Admins", "Home Users"]
   # Internal-only: with the * wildcard CNAME live, a name without an explicit
   # record would resolve through Cloudflare and become publicly reachable.
   # The internal A record shadows the wildcard (outsiders resolve 10.0.20.203,
