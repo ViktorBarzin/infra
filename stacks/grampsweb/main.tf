@@ -210,7 +210,7 @@ resource "kubernetes_deployment" "grampsweb" {
       spec {
         container {
           name  = "grampsweb"
-          image = "ghcr.io/gramps-project/grampsweb:26.10.0"
+          image = "ghcr.io/gramps-project/grampsweb:26.10.1"
 
           port {
             container_port = 5000
@@ -278,7 +278,7 @@ resource "kubernetes_deployment" "grampsweb" {
 
         container {
           name    = "grampsweb-celery"
-          image   = "ghcr.io/gramps-project/grampsweb:26.10.0"
+          image   = "ghcr.io/gramps-project/grampsweb:26.10.1"
           command = ["celery", "-A", "gramps_webapi.celery", "worker", "--loglevel=INFO", "--concurrency=1"]
 
           dynamic "env" {

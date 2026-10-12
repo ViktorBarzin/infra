@@ -56,6 +56,28 @@
       ],
       "matchNewValue": "v1.0.39.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2282: stack traefik failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 36ac74f5)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "quay.io/prometheus/node-exporter"
+      ],
+      "matchNewValue": "v1.12.1",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2282: stack traefik failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit f63dc782)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/tarampampam/error-pages"
+      ],
+      "matchNewValue": "4.2.6",
+      "enabled": false
     }
   ]
 }
