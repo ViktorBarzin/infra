@@ -428,7 +428,7 @@ resource "kubernetes_deployment" "mailserver" {
       spec {
         container {
           name              = "docker-mailserver"
-          image             = "mailserver/docker-mailserver:15.1.0"
+          image             = "mailserver/docker-mailserver:16.0.1"
           image_pull_policy = "IfNotPresent"
           # NET_ADMIN was originally required by docker-mailserver's
           # Fail2ban (iptables ban actions). Fail2ban is DISABLED in this
