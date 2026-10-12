@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
         container {
           # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
           # full story; repin to a versioned tag once upstream releases v3 support.
-          image = "ghcr.io/immichframe/immichframe:v1.0.35.0"
+          image = "ghcr.io/immichframe/immichframe:v1.0.39.0"
           # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
           # before Immich-v3 album loading was fixed) and IfNotPresent kept
           # reusing it, breaking ExcludedAlbums. Force a fresh pull.
@@ -98,11 +98,30 @@ resource "kubernetes_deployment" "immich-frame-emo" {
             protocol       = "TCP"
             name           = "http"
           }
+          # From v1.0.38 ImmichFrame keeps its settings in a SQLite DB
+          # (immichframe.db) in /app/Config and imports Settings.yml into it
+          # only when the DB is empty. A read-only ConfigMap mount there
+          # crash-looped v1.0.39.0 ("Cannot open the settings database in
+          # '/app/Config'"). The directory is now a writable emptyDir with
+          # Settings.yml mounted into it. Every new pod starts with an empty DB
+          # and re-imports the file, so the ConfigMap stays the source of
+          # truth (reloader restarts the pod when it changes) and nothing set
+          # in the /admin UI survives a restart. Having imported a config, the
+          # admin UI stays disabled because IMMICHFRAME_ADMIN_PASSWORD is unset.
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/Config"
+          }
           volume_mount {
             name       = "config"
-            mount_path = "/app/Config"
+            mount_path = "/app/Config/Settings.yml"
+            sub_path   = "Settings.yml"
             read_only  = true
           }
+        }
+        volume {
+          name = "data"
+          empty_dir {}
         }
         volume {
           name = "config"
