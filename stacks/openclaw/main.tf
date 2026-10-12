@@ -455,7 +455,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Init 0: fix /workspace ownership so node user can write
         init_container {
           name    = "fix-workspace-perms"
-          image   = "busybox:1.38"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", "chown 1000:1000 /workspace"]
           volume_mount {
             name       = "workspace"
@@ -466,7 +466,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Init 1: copy openclaw.json from ConfigMap into writable NFS home
         init_container {
           name    = "copy-config"
-          image   = "busybox:1.38"
+          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", "cp /config/openclaw.json /home/node/.openclaw/openclaw.json && chown 1000:1000 /home/node/.openclaw/openclaw.json"]
           volume_mount {
             name       = "openclaw-config"
@@ -484,7 +484,7 @@ resource "kubernetes_deployment" "openclaw" {
         # long-dead pod and kubectl returns "must be logged in to the server".
         init_container {
           name  = "setup-kubeconfig"
-          image = "busybox:1.38"
+          image = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", <<-EOT
             cat > /home/node/.openclaw/kubeconfig <<'KUBECONFIG_EOF'
             apiVersion: v1
@@ -561,7 +561,7 @@ resource "kubernetes_deployment" "openclaw" {
         # older NFS snapshot from silently restoring the plugin on a restart.
         init_container {
           name  = "remove-nextcloud-todos-plugin"
-          image = "busybox:1.38"
+          image = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", <<-EOT
             set -eu
             rm -rf /home/node/.openclaw/extensions/nextcloud-todos-api
@@ -589,7 +589,7 @@ resource "kubernetes_deployment" "openclaw" {
         # See docs/plans/2026-05-22-openclaw-devvm-access-design.md.
         init_container {
           name  = "install-host-tools"
-          image = "debian:bookworm-slim"
+          image = "debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
           command = ["bash", "-c", <<-EOT
             set -euo pipefail
             DEST=/tools/host-tools
@@ -675,7 +675,7 @@ resource "kubernetes_deployment" "openclaw" {
         # ssh-keyscan works without LD_LIBRARY_PATH gymnastics.
         init_container {
           name  = "setup-ssh-config"
-          image = "debian:bookworm-slim"
+          image = "debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
           command = ["bash", "-c", <<-EOT
             set -euo pipefail
             SSH=/home/node/.openclaw/.ssh
@@ -759,7 +759,7 @@ resource "kubernetes_deployment" "openclaw" {
         # entry-point (skill).
         init_container {
           name  = "seed-devvm-memory-note"
-          image = "busybox:1.38"
+          image = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
           command = ["sh", "-c", <<-EOT
             set -eu
 
@@ -1895,7 +1895,7 @@ resource "kubernetes_cron_job_v1" "task_processor" {
 
             container {
               name  = "task-processor"
-              image = "bitnami/kubectl:latest"
+              image = "bitnami/kubectl:latest@sha256:999d5eb28f404b45f15117f2a110ff23c6164f76edac261d75d783b6e88252b7"
               command = ["bash", "-c", <<-EOF
                 # Find the openclaw pod
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
@@ -2026,7 +2026,7 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
 
             container {
               name  = "memory-sync"
-              image = "bitnami/kubectl:latest"
+              image = "bitnami/kubectl:latest@sha256:999d5eb28f404b45f15117f2a110ff23c6164f76edac261d75d783b6e88252b7"
               command = ["bash", "-c", <<-EOF
                 set -eu
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}')
