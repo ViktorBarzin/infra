@@ -22,9 +22,6 @@ resource "kubernetes_namespace" "calico_system" {
     name = "calico-system"
     labels = {
       name = "calico-system"
-      # calico-system namespace is managed by tigera-operator — auto-update is
-      # incompatible (operator reverts DaemonSet image from its Installation CR).
-      # "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -158,7 +155,7 @@ resource "helm_release" "tigera_operator" {
   create_namespace = false
   repository       = "https://docs.tigera.io/calico/charts"
   chart            = "tigera-operator"
-  version          = "v3.32.2"
+  version          = "v3.33.0"
   atomic           = true
   cleanup_on_fail  = true
 
