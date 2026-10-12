@@ -188,7 +188,78 @@ ALLOWED_CD_GLOB = [
 ]
 
 
+# A bash -c script that Claude Code thinks may run rm but cannot read, which
+# it asks about with "This command passes a shell -c script that runs rm, and
+# Claude Code could not check the script". The rule is read from the 2.1.296
+# source (Qcn, uEr/Lcn, Hwe). The first four are from 2026-10-12: three from a
+# workflow in extending-tv-app-stream-search (20:36-20:42), one from
+# renovate-upgrades (18:17), with hosts and paths trimmed. None runs rm.
+BLOCKED_UNCHECKED = [
+    "bash -c '\nchk(){ c=$(curl -sL -m 10 -o /dev/null -w \"%{http_code}\" \"$1\"); "
+    "[ \"$c\" = 200 ] && echo \"200 $1\"; }\nexport -f chk\n"
+    "{ for i in $(seq -w 1 20); do echo https://h/live2_sdi$i/x.m3u8; done; } "
+    "| xargs -P 16 -I{} bash -c \"chk {}\" | sort'",
+    "bash -c 'D=/var/tmp/x/antenaplay-api; cd $D\n"
+    "grab3(){ local M=\"$1\" out=\"$2\"; local base=$(dirname \"$M\")\n"
+    "  rm -f cat.ts; for s in $(grep -vE \"^#\" ch.m3u8|grep ts|tail -3); do curl -s \"$base/$s\" >> cat.ts; done\n"
+    "  echo \"$out\"; }\ngrab3 \"https://h/promo/nhl/playlist.m3u8\" frames/nhl.png'",
+    "bash -c 'chk(){ c=$(curl -s -o /dev/null -m 8 -w \"%{http_code}\" \"$1\"); [ \"$c\" != \"404\" ] "
+    "&& [ \"$c\" != \"000\" ] && echo \"$c $1\"; }; H=https://h; for i in $(seq -w 1 30); "
+    "do chk $H/live2_aws4_sdi$i/x.m3u8 & done; wait' 2>&1 | sort",
+    "cd ~/code/infra/.worktrees/tg-no-join; f=$(find ~/code/infra/stacks -name .terraform.lock.hcl | head -1); "
+    "bash -c 'source <(sed -n \"/^provider_pins()/,/^}/p\" scripts/tg); REPO_ROOT=$PWD; f='\"$f\"'; "
+    "echo \"awk:\"; awk '\"'\"'NR == FNR { pin[$1] = $2; next } ($1 in pin) { print $1 }'\"'\"' <(provider_pins) $f'",
+    # Minimal shapes that asked in headless bypass runs.
+    "bash -c 'chk(){ c=$(curl -s -o /dev/null -m 2 -w \"%{http_code}\" \"$1\"); [ \"$c\" != \"404\" ] && echo \"$c $1\"; }; chk x'",
+    "S=/tmp/x; bash -c 'f='\"$S\"'/x; awk '\"'\"'{print $1}'\"'\"' $f'",
+    "sudo bash -c 'g(){ rm -f \"$1\"; }; g x'",
+    "bash -lc 'g(){ rm -f \"$1\"; }; g x'",
+]
+
+# Ran without asking in the same runs, plus the rewrite the block asks for.
+ALLOWED_UNCHECKED = [
+    "bash -c 'chk(){ echo \"$1\"; }; chk x'",
+    "bash -c 'echo $(echo hi)'",
+    "bash -c 'x=1\necho $x'",
+    "bash -c 'for i in 1 2; do echo $i & done; wait'",
+    "bash -c 'echo a | xargs -I{} bash -c \"echo {}\"'",
+    "bash -c 'rm -f /tmp/x/nofile'",
+    "bash -c 'D=/tmp/x; cd $D; rm -f cat.ts'",
+    "bash -c 'f() { local x=1; echo $x; }; f'",
+    "bash -c '[ a != b ] && echo y'",
+    "S=/tmp/x; bash -c 'f='\"$S\"'/x; echo $f'",
+    "bash -c 'awk '\"'\"'{print $1}'\"'\"' /etc/hostname'",
+    "bash -c 'chk(){ c=$(echo 1); echo \"$c $1\"; }; chk x'",
+    "bash -c 'chk(){ echo \"$1\"; }; for i in $(seq 1 2); do chk $i; done'",
+    "bash -c 'c=$(curl -s -m 1 -w \"%{http_code}\" http://127.0.0.1:9); echo $c'",
+    "bash -c 'chk(){ [ \"$1\" != \"4\" ] && echo \"$1\"; }; chk x'",
+    "bash -c 'g(){ rm -f cat.ts; }; g'",
+    "bash -c 'g(){ local b=$(dirname \"$1\"); echo $b; }; g /a/b'",
+    "bash -c 'chk(){ echo \"$1\"; }; export -f chk; echo a | xargs -I{} bash -c \"chk {}\"'",
+    "bash -c '{ for i in $(seq 1 2); do echo $i; done; } | sort'",
+    "f=$(ls /tmp | head -1); bash -c 'f='\"$f\"'; echo \"got $f\"'",
+    # The rewrite: the same script on bash's stdin.
+    "bash <<'SCRIPT'\nchk(){ c=$(curl -s -o /dev/null -m 2 -w \"%{http_code}\" \"$1\"); echo \"$c $1\"; }\nchk x\nSCRIPT",
+    "S=/tmp/x; bash -s \"$S\" <<'SCRIPT'\nf=$1/fake.txt; awk '{ print $1 \" \" $2 }' $f\nSCRIPT",
+    "bash <<'SCRIPT' 2>&1 | sort\ng(){ rm -f \"$1\"; }; g x\nSCRIPT",
+]
+
+
 class RmGuardTest(unittest.TestCase):
+
+    def test_blocked_unchecked_shell_c(self):
+        for cmd in BLOCKED_UNCHECKED:
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(check(cmd), "should block")
+
+    def test_allowed_unchecked_shell_c(self):
+        for cmd in ALLOWED_UNCHECKED:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(check(cmd), "should allow")
+
+    def test_unchecked_message_names_the_fix(self):
+        msg = check("sudo bash -c 'g(){ rm -f \"$1\"; }; g x'")
+        self.assertIn("bash <<'SCRIPT'", msg)
     def test_blocked_cd_glob(self):
         for cmd in BLOCKED_CD_GLOB:
             with self.subTest(cmd=cmd):
