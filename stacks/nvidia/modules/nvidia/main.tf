@@ -616,7 +616,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
 
         container {
           name  = "exporter"
-          image = "library/python:3.11.16-slim"
+          image = "library/python:3.14.8-slim"
 
           command = ["/bin/bash", "-c"]
           args = [

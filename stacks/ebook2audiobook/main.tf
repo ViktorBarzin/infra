@@ -85,7 +85,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
 
         container {
           name  = "ebook2audiobook"
-          image = "athomasson2/ebook2audiobook:v25.12.33-cu128"
+          image = "athomasson2/ebook2audiobook:v26.4.28-cu128"
 
           tty   = true
           stdin = true

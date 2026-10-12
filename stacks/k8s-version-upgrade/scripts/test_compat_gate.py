@@ -187,30 +187,51 @@ def test_exit_code_mapping():
     assert cg.exit_code(["[ACTIONABLE] x", "[WAITING] y"]) == 4
 
 
-def test_real_matrix_136_is_held(monkeypatch):
-    """Regression guard on the SHIPPED addon-compat.json: at today's running
-    versions a 1.36 jump must be HELD (exit 4) — calico ACTIONABLE (3.32 in the
-    matrix), ESO+kyverno WAITING (no 1.36 release), gpu-operator clear (26.7
-    supports up to 1.37; unpinned 2026-10-10). Catches a matrix edit that
-    silently turns the quiet held state into a nightly alert."""
+def _real_matrix_reasons(monkeypatch, imgs, tgt):
     import json as _json
     matrix = _json.loads((HERE / "addon-compat.json").read_text())
-    running_imgs = {
-        "calico-system": "quay.io/calico/node:v3.30.7",
-        "external-secrets": "ghcr.io/external-secrets/external-secrets:v2.6.0",
-        "kyverno": "ghcr.io/kyverno/kyverno:v1.18.1",
-        "nvidia": "nvcr.io/nvidia/gpu-operator:v26.7.1",
-    }
 
     def fake_kget(args):
         ns = args[args.index("-n") + 1] if "-n" in args else ""
-        return running_imgs.get(ns, "")
+        return imgs.get(ns, "")
 
     monkeypatch.setattr(cg, "kget", fake_kget)
-    reasons = cg.check_addons(matrix, (1, 36), (1, 35))
+    return cg.check_addons(matrix, tgt, (1, 35))
+
+
+# Running versions on 2026-10-12 (live cluster, k8s 1.35.9).
+LIVE_2026_10_12 = {
+    "calico-system": "quay.io/calico/node:v3.30.7",
+    "external-secrets": "ghcr.io/external-secrets/external-secrets:v2.12.0",
+    "kyverno": "reg.kyverno.io/kyverno/kyverno:v1.19.1",
+    "nvidia": "nvcr.io/nvidia/gpu-operator:v26.7.1",
+}
+
+
+def test_real_matrix_136_is_held(monkeypatch):
+    """Regression guard on the SHIPPED addon-compat.json: at the 2026-10-12
+    running versions a 1.36 jump must be HELD (exit 4) — calico ACTIONABLE
+    (3.32 in the matrix), kyverno WAITING (1.19 tops out at 1.35, 1.20 not
+    released), ESO 2.12 and gpu-operator 26.7 clear. Catches a matrix edit
+    that silently turns the quiet held state into a nightly alert."""
+    reasons = _real_matrix_reasons(monkeypatch, LIVE_2026_10_12, (1, 36))
     pick = lambda name: next(r for r in reasons if name in r)
     assert pick("calico").startswith("[ACTIONABLE]"), reasons
-    assert pick("external-secrets").startswith("[WAITING]"), reasons
     assert pick("kyverno").startswith("[WAITING]"), reasons
+    assert not any("external-secrets" in r for r in reasons), reasons
     assert not any("gpu-operator" in r for r in reasons), reasons
     assert cg.exit_code(reasons) == 4  # held wins
+
+
+def test_real_matrix_after_calico_333(monkeypatch):
+    """After the supervised Calico 3.33 upgrade, Kyverno is the only addon
+    holding 1.36, and Kyverno plus ESO hold 1.37 (no released version of
+    either supports it on 2026-10-12)."""
+    imgs = dict(LIVE_2026_10_12, **{"calico-system": "quay.io/calico/node:v3.33.0"})
+    r136 = _real_matrix_reasons(monkeypatch, imgs, (1, 36))
+    assert [r for r in r136 if not r.startswith("[WAITING] addon kyverno")] == [], r136
+    assert cg.exit_code(r136) == 4
+    r137 = _real_matrix_reasons(monkeypatch, imgs, (1, 37))
+    assert sorted(r.split()[2] for r in r137) == ["external-secrets", "kyverno"], r137
+    assert all(r.startswith("[WAITING]") for r in r137), r137
+    assert cg.exit_code(r137) == 4

@@ -25,12 +25,17 @@ const hostRules = [
   // requests at a time, at most 5 per second, spreads the token requests out.
   { matchHost: 'docker.io', concurrentRequestLimit: 2, maxRequestsPerSecond: 5 },
 ];
-if (process.env.DOCKERHUB_USERNAME && process.env.DOCKERHUB_TOKEN) {
+// Trimmed: until 2026-10-12 both Vault values ended in a newline, every login
+// failed, and Docker Hub locked the home IP out ("too many failed login
+// attempts"), so every run aborted on 429s.
+const dockerhubUser = (process.env.DOCKERHUB_USERNAME || '').trim();
+const dockerhubToken = (process.env.DOCKERHUB_TOKEN || '').trim();
+if (dockerhubUser && dockerhubToken) {
   hostRules.push({
     hostType: 'docker',
     matchHost: 'docker.io',
-    username: process.env.DOCKERHUB_USERNAME,
-    password: process.env.DOCKERHUB_TOKEN,
+    username: dockerhubUser,
+    password: dockerhubToken,
   });
 }
 

@@ -1,0 +1,20 @@
+apiVersion: policies.kyverno.io/v1
+kind: DeletingPolicy
+metadata:
+  name: cleanup-failed-pods
+  annotations:
+    policies.kyverno.io/title: Cleanup Failed Pods
+    policies.kyverno.io/description: "Deletes pods in phase Failed once an hour."
+spec:
+  schedule: "15 * * * *"
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: ["*"]
+        resources: [pods]
+  # The ClusterCleanupPolicy tested request.object.status.phase, which is
+  # empty during a scheduled cleanup run, so it never matched a pod.
+  conditions:
+    - name: phase-failed
+      expression: "object.?status.?phase.orValue('') == 'Failed'"

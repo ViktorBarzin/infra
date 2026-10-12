@@ -16,6 +16,11 @@ Two paths feed Paperless from email:
 | 18 `auto: Emo (Gmail All Mail)` | 4, `emil.barzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | emo (id 7) |
 | 19 `auto: Viktor (Gmail All Mail)` | 5, `vbarzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | root (id 3) |
 | 20 `auto: Viktor (me@ INBOX)` | 1, `me@viktorbarzin.me` | `INBOX` | root (id 3) |
+| 51 `auto: Anca (Gmail All Mail)` | 37, `ancaelena98@gmail.com` (imap.gmail.com) | `[Gmail]/Toate mesajele` | anca (id 4) |
+
+Anca's Gmail is set to Romanian, so its All Mail folder has a localized name.
+For any new Gmail account, find the folder carrying the `\All` flag in the IMAP
+`LIST` output rather than assuming `[Gmail]/All Mail`.
 
 Shared settings: `attachment_type=2` (inline parts included),
 `filter_attachment_filename_include=*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`,
@@ -26,7 +31,8 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
 
 - **Credentials:** the Gmail app passwords live in the Paperless DB. Their
   sources are Vault `secret/recruiter-responder` `gmail_imap_pass` (Viktor's,
-  shared with recruiter-responder) and Emo's Vaultwarden item
+  shared with recruiter-responder), Vault `secret/paperless-ngx`
+  `anca_gmail_app_password` (Anca's), and Emo's Vaultwarden item
   `accounts.google.com (emil.barzin@gmail.com)`, custom field
   `claude app password` (read as emo: `sudo -u emo -i homelab vault get
   59a3cb8b-0667-4e47-847e-f29a5e323813 --all`). If an app password is revoked,
@@ -37,8 +43,11 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
   UIDs. Google documents a 2,500 MB/day IMAP download limit for Workspace; if
   Gmail suspends IMAP, the poll errors and retries every 10 minutes.
 - **Backfill (done 2026-10-10 03:45 UTC):** tag 5227 has been removed from
-  rules 18-20, so new mail gets only `email-ingest`. To revert the historical
-  batch, bulk-delete documents tagged `email-backfill`.
+  rules 18-20, so new mail gets only `email-ingest`. As of 2026-10-12 tag 5227
+  no longer exists in Paperless, so the 2026-10-09/10 batch can only be
+  selected as `email-ingest` documents added on those two days. For a new
+  mailbox, create an `email-backfill` tag, put it on that rule for the first
+  pass, and take it off once the pass drains.
 - **Task workers for a big first pass:** Paperless runs one celery worker by
   default (`PAPERLESS_TASK_WORKERS` unset), and a long mail run holds it, so
   queued consume tasks wait until the crawl ends. For a large new mailbox, set
@@ -193,9 +202,10 @@ The map lives in **two places by design** — keep them in sync:
 
 ## Rollback
 
-Mailbox poll: delete rules 18-20 and mail accounts 4 and 5. Documents already
-consumed stay; bulk-delete by tag `email-backfill` to remove the historical
-batch.
+Mailbox poll: delete rules 18-20 and 51 and mail accounts 4, 5 and 37. Documents already
+consumed stay. The original `email-backfill` tag was removed on 2026-10-12;
+select the historical batch as `email-ingest` documents added on 2026-10-09
+and 2026-10-10.
 
 Manual forward:
 

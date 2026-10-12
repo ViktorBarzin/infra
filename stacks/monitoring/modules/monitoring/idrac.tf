@@ -77,9 +77,11 @@ resource "kubernetes_deployment" "idrac-redfish" {
         priority_class_name = "tier-1-cluster"
         container {
           # https://github.com/mrlhansen/idrac_exporter?tab=readme-ov-file
-          # Patched v2.4.1 - restored missing idrac_power_supply_input_voltage metric
-          # See: https://github.com/mrlhansen/idrac_exporter/issues/176
-          image = "viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix"
+          # Upstream emits idrac_power_supply_input_voltage from the legacy Power
+          # resource again since v2.6.0 (commit 46f4ff6), which retires the
+          # viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix rebuild.
+          # Upstream publishes to GHCR since v2.3.0.
+          image = "ghcr.io/mrlhansen/idrac_exporter:2.6.3"
           name  = "redfish-exporter"
           port {
             container_port = 9610
@@ -110,7 +112,6 @@ resource "kubernetes_deployment" "idrac-redfish" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image,                                          # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]

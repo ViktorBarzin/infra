@@ -56,7 +56,7 @@ resource "kubernetes_cron_job_v1" "frame-sync-emo" {
               name = "sync"
               # Pure-stdlib script on a stock image — never pip/apk install at
               # runtime in a CronJob (writes the node container layer every run).
-              image   = "docker.io/library/python:3.12-alpine"
+              image   = "docker.io/library/python:3.14-alpine"
               command = ["python3", "/app/frame_sync.py"]
               env {
                 name  = "IMMICH_URL"

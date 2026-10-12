@@ -106,6 +106,22 @@ else
 	echo "dnsmasq settings present"
 fi
 
+# Static lease for the iOS test rig phone ("Empress Anca"), so the devvm can
+# reach it over Wi-Fi at a known address (docs/runbooks/ios-test-rig.md). It
+# joins the guest SSID "5G-Tower" with a fixed private Wi-Fi address; if that
+# address changes on the phone, update the MAC here.
+if [ "$(uci -q get dhcp.iphone_london.ip)" != 192.168.9.205 ] || [ "$(uci -q get dhcp.iphone_london.mac)" != 6e:b1:68:39:7b:22 ]; then
+	uci set dhcp.iphone_london=host
+	uci set dhcp.iphone_london.name='iphone-london'
+	uci set dhcp.iphone_london.mac='6e:b1:68:39:7b:22'
+	uci set dhcp.iphone_london.ip='192.168.9.205'
+	uci commit dhcp
+	/etc/init.d/dnsmasq reload
+	echo "dhcp: iphone-london -> 192.168.9.205"
+else
+	echo "dhcp: iphone-london lease present"
+fi
+
 # System log: an 8 MB ring in RAM (was 512 KB, which the DNS query log filled
 # in 3 to 14 minutes). The drop probe backfills tunnel outages from this ring,
 # so its size is how long an outage can be and still arrive in Loki whole.

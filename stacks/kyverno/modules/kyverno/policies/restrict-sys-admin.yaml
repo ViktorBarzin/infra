@@ -1,0 +1,34 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-sys-admin
+  annotations:
+    policies.kyverno.io/title: "Restrict SYS_ADMIN Capability"
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: "SYS_ADMIN is nearly equivalent to root. Restrict to explicitly exempted namespaces."
+spec:
+  validationActions: [Deny]
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [daemonsets, deployments, jobs, statefulsets, replicasets, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ${exclude}
+  validations:
+    - message: Adding SYS_ADMIN capability is not allowed.
+      expression: >-
+        !object.spec.containers.exists(c,
+          'SYS_ADMIN' in c.?securityContext.?capabilities.?add.orValue([]))

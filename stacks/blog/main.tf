@@ -123,7 +123,7 @@ resource "kubernetes_service" "blog" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.25.0"
+  image_tag        = "v1.28.1"
   name             = "blog"
   namespace        = kubernetes_namespace.website.metadata[0].name
   target_url       = "http://${kubernetes_service.blog.metadata[0].name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local"

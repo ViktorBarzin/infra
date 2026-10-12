@@ -85,7 +85,7 @@ func getAndUpdateIP(gitFs *GitFS, fileName string) (string, error) {
 	content := strings.TrimSpace(string(bytes))
 	lines := strings.Split(content, "\n")
 	if len(lines) != 1 {
-		return "", fmt.Errorf(errPrefix + fmt.Sprintf("expected 1 line got %d", len(lines)))
+		return "", fmt.Errorf("%sexpected 1 line got %d", errPrefix, len(lines))
 	}
 	lineSplit := strings.Split(lines[0], " ")
 	if len(lineSplit) < 1 {

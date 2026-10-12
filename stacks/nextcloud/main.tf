@@ -8,13 +8,19 @@ variable "mysql_host" { type = string }
 
 # Nextcloud image tag, read by Renovate (docker.io/library/nextcloud). Majors
 # step one at a time (32 -> 33 -> 34 -> 35): the image entrypoint refuses to
-# skip a major. Before each hop: mysqldump of the nextcloud DB, a copy of
-# config/ and data/, maintenance mode on, then occ upgrade after the roll.
+# skip a major. Majors are held in renovate.json5 and applied by hand. Before
+# each hop: suspend the watchdog CronJob, maintenance mode on, a mysqldump of
+# the nextcloud DB, and thin LVM snapshots of the data and MySQL PVCs
+# (`lvcreate -s` on the Proxmox host, named <lv>_snap_<YYYYMMDD_HHMM> so the
+# nightly prune removes them). The entrypoint runs occ upgrade and keeps the
+# maintenance flag; after the last hop: maintenance off, occ app:update --all,
+# and compare the enabled apps with the dump (32 -> 35 on 2026-10-12 took four
+# minutes per hop, and the whiteboard app had to be reinstalled).
 # Never set this below the version in the DB; Nextcloud refuses a downgrade.
 variable "nextcloud_image_tag" {
   type = string
   # renovate: datasource=docker depName=docker.io/library/nextcloud
-  default = "32.0.14"
+  default = "35.0.1"
 }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -160,15 +166,15 @@ resource "helm_release" "nextcloud" {
   namespace = kubernetes_namespace.nextcloud.metadata[0].name
   name      = "nextcloud"
 
-  repository      = "https://nextcloud.github.io/helm/"
-  chart           = "nextcloud"
+  repository = "https://nextcloud.github.io/helm/"
+  chart      = "nextcloud"
   # Not atomic: the image entrypoint runs `occ upgrade` before Apache starts,
   # so a failed rollout has usually migrated the DB already. An atomic rollback
   # would put the previous image on that DB, and Nextcloud refuses to start on
   # a newer schema. A failed release stays on the new image to fix forward.
   atomic          = false
   cleanup_on_fail = false
-  version         = "8.8.1"
+  version         = "9.4.0"
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
   timeout    = 6000
@@ -290,7 +296,14 @@ module "ingress" {
   # device). This middleware answers discovery at the ingress with a clean
   # https redirect, before the request reaches Nextcloud. See
   # kubernetes_manifest.wellknown_dav_redirect below.
-  extra_middlewares = ["nextcloud-wellknown-dav@kubernetescrd"]
+  extra_middlewares = [
+    "nextcloud-wellknown-dav@kubernetescrd",
+    # The Files app's cold-load chunk burst overruns the default 10/50
+    # limiter (blank page, 429s). Dedicated per-client 100/1000 chain defined
+    # in stacks/traefik/modules/traefik/middleware.tf.
+    "traefik-nextcloud-rate-limit@kubernetescrd",
+  ]
+  skip_default_rate_limit = true
   extra_annotations = {
     "gethomepage.dev/enabled"         = "true"
     "gethomepage.dev/name"            = "Nextcloud"
@@ -534,10 +547,6 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
   }
 
   spec {
-    # Suspended while the 32 -> 35 major hops run (2026-10-12): its F1 branch
-    # would start a second `occ upgrade` next to the entrypoint's, and F3 would
-    # clear a maintenance flag the upgrade still needs.
-    suspend = true
     # */30 since 2026-08-16 (was */5). At 5-minute granularity this was 288 pod
     # creations a day, and on this host that is not free — each pod create and
     # destroy writes containerd overlay layers, a kubelet pod dir, /var/log/pods

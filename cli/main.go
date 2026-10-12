@@ -129,7 +129,7 @@ func run() error {
 		}
 		output, err := SetOpenWRTDNS(key, *openWRTNewDNS)
 		if err != nil {
-			return errors.Wrapf(err, fmt.Sprintf("cmd output: %s", output))
+			return errors.Wrapf(err, "cmd output: %s", output)
 		}
 		if *printResultOnly {
 			println(fmt.Sprintf("Successfully set DNS server to '%s'", *openWRTNewDNS))

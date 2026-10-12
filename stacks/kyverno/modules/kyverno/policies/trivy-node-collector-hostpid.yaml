@@ -1,0 +1,15 @@
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: trivy-node-collector-hostpid
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: deny-host-namespaces
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: trivy-node-collector
+      expression: >-
+        request.namespace == 'trivy-system' &&
+        (object.metadata.?name.orValue('').startsWith('node-collector-') ||
+         object.metadata.?generateName.orValue('').startsWith('node-collector-'))

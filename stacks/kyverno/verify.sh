@@ -6,13 +6,27 @@ VERIFY_GROUP="chart"
 VERIFY_NAMESPACES="kyverno"
 
 _policies_ready() {
+  # The CEL policy types replaced the kyverno.io ClusterPolicies (Kyverno 1.20
+  # removes them). Expect 28: 5 validating, 8 mutating, 14 generating,
+  # 1 deleting. Kyverno 1.19.1 left the DeletingPolicy without any status for
+  # the first hour after the 2026-10-12 migration, while every other kind
+  # reported Ready, so that kind only has to exist.
   local out
-  out=$(kubectl get clusterpolicies.kyverno.io -o json 2>/dev/null | jq -r '
-    [.items[] | {n:.metadata.name, r:([.status.conditions[]? | select(.type=="Ready")][0].status // "Unknown")}] as $a
-    | [$a[] | select(.r != "True") | .n] as $bad
-    | "clusterpolicies=\($a|length) not ready=\($bad)", (if ($a|length) > 0 and ($bad|length)==0 then 0 else 1 end)')
+  out=$(kubectl get validatingpolicies.policies.kyverno.io,mutatingpolicies.policies.kyverno.io,generatingpolicies.policies.kyverno.io,deletingpolicies.policies.kyverno.io -o json 2>/dev/null | jq -r '
+    [.items[] | {n:(.kind + "/" + .metadata.name), r:(if .kind == "DeletingPolicy" then true else (.status.conditionStatus.ready // false) end)}] as $a
+    | [$a[] | select(.r != true) | .n] as $bad
+    | "cel policies=\($a|length) not ready=\($bad)", (if ($a|length) >= 28 and ($bad|length)==0 then 0 else 1 end)')
   head -1 <<<"$out"
   [ "$(tail -1 <<<"$out")" = 0 ]
+}
+
+_no_legacy_policies() {
+  local a b c
+  a=$(kubectl get clusterpolicies.kyverno.io --no-headers 2>/dev/null | wc -l)
+  b=$(kubectl get clustercleanuppolicies.kyverno.io --no-headers 2>/dev/null | wc -l)
+  c=$(kubectl get policyexceptions.kyverno.io -A --no-headers 2>/dev/null | wc -l)
+  echo "clusterpolicies=$a clustercleanuppolicies=$b legacy policyexceptions=$c"
+  [ "$a" -eq 0 ] && [ "$b" -eq 0 ] && [ "$c" -eq 0 ]
 }
 
 _denies_privileged() {
@@ -39,14 +53,6 @@ _reports_off() {
   [ "$a" -lt 100 ] && [ "$b" -lt 100 ]
 }
 
-_no_keel_policy() {
-  # inject-keel-annotations was deleted in the Keel cutover (2026-10-10).
-  local n
-  n=$(kubectl get clusterpolicies.kyverno.io inject-keel-annotations --no-headers 2>/dev/null | wc -l)
-  echo "inject-keel-annotations present=$n"
-  [ "$n" -eq 0 ]
-}
-
 _updaterequests_bounded() {
   local n
   n=$(kubectl get updaterequests.kyverno.io -A --no-headers 2>/dev/null | wc -l)
@@ -58,11 +64,11 @@ verify_component() {
   check "admission controller converged" retry 300 10 workload_ready kyverno deployment/kyverno-admission-controller
   check "background controller converged" retry 300 10 workload_ready kyverno deployment/kyverno-background-controller
   check "cleanup controller converged" retry 300 10 workload_ready kyverno deployment/kyverno-cleanup-controller
-  check "every ClusterPolicy is Ready" _policies_ready
+  check "every CEL policy is Ready" _policies_ready
+  check "no kyverno.io ClusterPolicy, cleanup policy or exception is left" _no_legacy_policies
   check "a privileged pod is denied (dry run)" _denies_privileged
   check "a plain pod gets the tier priority and ndots=2 (dry run)" _mutates
   check "policy reports stay off" _reports_off
-  check "the Keel annotation policy stays deleted" _no_keel_policy
   check "background update requests are bounded" _updaterequests_bounded
   check "no panics in Kyverno logs (15m)" expect_no_log_errors kyverno app.kubernetes.io/instance=kyverno 'panic|fatal'
 }

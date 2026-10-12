@@ -106,7 +106,7 @@ resource "kubernetes_service" "kms-web-page" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.25.0"
+  image_tag        = "v1.28.1"
   name             = "kms"
   namespace        = kubernetes_namespace.kms.metadata[0].name
   target_url       = "http://${kubernetes_service.kms-web-page.metadata[0].name}.${kubernetes_namespace.kms.metadata[0].name}.svc.cluster.local"
@@ -212,7 +212,7 @@ resource "kubernetes_deployment" "kms_diag" {
           }
         }
         container {
-          image   = "library/python:3.12.15-alpine"
+          image   = "library/python:3.14.8-alpine"
           name    = "diag-collector"
           command = ["python3", "/app/diag-collector.py"]
           resources {
@@ -428,7 +428,7 @@ resource "kubernetes_deployment" "windows_kms" {
           }
         }
         container {
-          image   = "library/python:3.12.15-alpine"
+          image   = "library/python:3.14.8-alpine"
           name    = "slack-notifier"
           command = ["python3", "-u", "/scripts/notifier.py"]
           env {
