@@ -6,14 +6,15 @@ variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
 
-# FLOOR only — Keel bumps the LIVE image tag upward (minor policy); the
-# data source below renders the current live tag so a helm apply never
-# downgrades below what Keel installed. This floor only wins on a fresh
-# install / DR (no live Deployment) or after deliberately restoring an
-# OLDER DB snapshot (bump this to match — see comment on the data source).
-variable "nextcloud_image_tag_floor" {
-  type    = string
-  default = "32.0.9"
+# Nextcloud image tag, read by Renovate (docker.io/library/nextcloud). Majors
+# step one at a time (32 -> 33 -> 34 -> 35): the image entrypoint refuses to
+# skip a major. Before each hop: mysqldump of the nextcloud DB, a copy of
+# config/ and data/, maintenance mode on, then occ upgrade after the roll.
+# Never set this below the version in the DB; Nextcloud refuses a downgrade.
+variable "nextcloud_image_tag" {
+  type = string
+  # renovate: datasource=docker depName=docker.io/library/nextcloud
+  default = "32.0.14"
 }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -21,45 +22,8 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "nextcloud"
 }
 
-# Render the CURRENT live image tag so helm upgrades are image-no-ops and
-# can NEVER downgrade below the Keel-bumped live tag (failure mode F2: the
-# 2026-06-01 CrashLoop where a pinned 32.0.3 re-render lost to live 32.0.9).
-# Helm-managed workloads can't use the raw-Deployment KEEL_IGNORE_IMAGE
-# `lifecycle.ignore_changes` trick (immich/freshrss main.tf), so we feed the
-# live tag back into the chart instead.
-#
-# Use the PLURAL `kubernetes_resources` (field-selected to name=nextcloud), NOT
-# the singular `kubernetes_resource`: in kubernetes provider 3.1.0 the singular
-# data source ERRORS ("Provider produced null object") when the target is
-# absent, and try() can't rescue it (the failure is at the provider read, not
-# the expression). The plural returns an empty `objects` list on no match, so
-# objects[0] + try() cleanly falls back to var.nextcloud_image_tag_floor on
-# fresh install / DR. (Verified empirically against provider 3.1.0.)
-#
-# namespace is the LITERAL "nextcloud", NOT
-# kubernetes_namespace.nextcloud.metadata[0].name, on purpose: referencing the
-# namespace resource makes Terraform defer this data read to apply time
-# whenever the namespace has a pending change (e.g. the keel.sh/enrolled label
-# add) — "(depends on a resource ... with changes pending)" — which leaves the
-# tag unknown at plan, turning every helm plan into an unverifiable
-# (known after apply) values churn. A static namespace decouples the read so it
-# resolves at plan time.
-data "kubernetes_resources" "nextcloud_live" {
-  api_version    = "apps/v1"
-  kind           = "Deployment"
-  namespace      = "nextcloud"
-  field_selector = "metadata.name=nextcloud"
-}
-
 locals {
   homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
-
-  _live_image = try(data.kubernetes_resources.nextcloud_live.objects[0].spec.template.spec.containers[0].image, "")
-  # Last colon-segment is the tag (handles registry:port/repo:tag); strip the
-  # optional `-apache` flavor suffix so it round-trips through the chart's
-  # `image.flavor=apache` (which renders the bare apache-default tag).
-  _live_tag           = try(replace(element(split(":", local._live_image), length(split(":", local._live_image)) - 1), "-apache", ""), "")
-  nextcloud_image_tag = local._live_tag != "" ? local._live_tag : var.nextcloud_image_tag_floor
 }
 
 
@@ -77,32 +41,6 @@ resource "kubernetes_namespace" "nextcloud" {
       tier                                    = local.tiers.edge
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
-      # Keel re-enabled 2026-06-01 (was disabled after the 2026-05-26 bump
-      # 32.0.3→32.0.9 stuck the pod in maintenance mode for ~22h). Three
-      # safeguards make auto-upgrade safe, one per known failure mode:
-      #   F1 — interrupted `occ upgrade` (entrypoint copies version.php before
-      #        occ upgrade finishes, so a probe-restart mid-upgrade leaves the
-      #        DB half-migrated → 503): the nextcloud-watchdog CronJob below
-      #        self-heals by running `occ upgrade` when occ reports
-      #        needsDbUpgrade=true.
-      #   F2 — helm re-renders a tag BELOW the Keel-bumped live image →
-      #        Nextcloud refuses the downgrade → CrashLoop (the 2026-06-01
-      #        incident): chart_values renders the live tag with a floor, so a
-      #        re-render is never below live.
-      #   F3 — `occ upgrade` SUCCEEDS but maintenance mode is never cleared
-      #        (maintenance=true + needsDbUpgrade=false → every client 503s,
-      #        the 2026-08-15 ~20.5h incident; F1's gate does not cover this
-      #        quadrant and /status.php returns 200 in maintenance mode so the
-      #        probes stay green): the watchdog clears the flag once it has
-      #        been set longer than its grace period. See the F3 block below.
-      # Scope: the shared Kyverno `inject-keel-annotations` policy stamps
-      # keel.sh/policy=patch (+ trigger=poll + pollSchedule) on enrolled
-      # workloads. For Nextcloud patch == minor in practice — it only ships
-      # 32.0.x maintenance releases (never 32.1.x), and major 33 needs `major`
-      # policy and stays manual (the entrypoint's +1-major limit enforces that
-      # anyway). We deliberately do NOT override the policy per-workload — see
-      # the note where the old override resources used to live, below.
-      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -110,25 +48,6 @@ resource "kubernetes_namespace" "nextcloud" {
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
   }
 }
-
-# No per-workload Keel override resources here, on purpose. Nextcloud is
-# enrolled via the namespace label above; the shared Kyverno
-# `inject-keel-annotations` policy then stamps keel.sh/policy=patch +
-# trigger=poll + pollSchedule, and Keel auto-upgrades within 32.0.x.
-#
-# This stack used to carry kubernetes_labels + kubernetes_annotations
-# resources forcing keel.sh/policy=minor (and before that =never, for the
-# opt-out). Both were removed 2026-06-01 after re-enabling Keel because each
-# produced perpetual drift:
-#   - Kyverno's background-controller overwrites a TF-set policy back to
-#     `patch` despite the policy's `+(keel.sh/policy)` add-if-missing anchor
-#     (observed live: the annotation's field manager was background-controller
-#     with value patch right after a Keel-bump admission).
-#   - The helm release strips the deployment's keel.sh/policy LABEL on every
-#     roll, so TF re-added it on every apply.
-# patch == minor for Nextcloud (32.0.x only; major 33 needs `major` and stays
-# manual), so letting Kyverno own the keel annotations — exactly like every
-# other enrolled workload (immich, freshrss) — is both correct and drift-free.
 
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
@@ -247,7 +166,7 @@ resource "helm_release" "nextcloud" {
   cleanup_on_fail = true
   version         = "8.8.1"
 
-  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = local.nextcloud_image_tag })]
+  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
   timeout    = 6000
   depends_on = [kubernetes_manifest.db_external_secret]
 }
@@ -555,8 +474,8 @@ resource "kubernetes_config_map" "backup-script" {
 # Watchdog: runs every 5 minutes with two jobs:
 #  1. Apache runaway recovery — if >40 workers (normal 5-15), rollout-restart
 #     to recover node CPU.
-#  2. F1 Keel self-heal — if occ reports needsDbUpgrade=true (an interrupted
-#     `occ upgrade` after a Keel image bump left the app in maintenance mode),
+#  2. F1 self-heal — if occ reports needsDbUpgrade=true (an interrupted
+#     `occ upgrade` after an image bump left the app in maintenance mode),
 #     re-run `occ upgrade` and clear maintenance mode.
 resource "kubernetes_service_account" "nextcloud_watchdog" {
   metadata {
@@ -679,7 +598,7 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
                   echo "Apache workers within normal range ($WORKERS <= 40)"
                 fi
 
-                # F1 self-heal: a Keel image bump runs `occ upgrade` in the
+                # F1 self-heal: an image bump runs `occ upgrade` in the
                 # entrypoint, but if that's interrupted (e.g. a probe restart
                 # mid-upgrade) occ reports needsDbUpgrade=true and the app sits
                 # in maintenance mode (503). Re-run the upgrade and clear
@@ -698,7 +617,7 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
                 # F3 self-heal: maintenance mode stuck ON while the DB upgrade
                 # is already COMPLETE (maintenance=true + needsDbUpgrade=false).
                 # F1 above gates on needsDbUpgrade, so this quadrant had no
-                # cover: on 2026-08-15 a Keel bump finished its occ upgrade but
+                # cover: on 2026-08-15 an image bump finished its occ upgrade but
                 # never cleared maintenance mode, and every client 503'd for
                 # ~20.5h while this watchdog logged "healthy" every 5 min. The
                 # probes did not catch it either — all three hit /status.php,
