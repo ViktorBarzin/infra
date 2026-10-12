@@ -313,6 +313,17 @@
       enabled: false,
     },
     {
+      description: "HELD: osrm-backend majors (2026-10-12). The serving pods cannot read graphs built by another osrm version, so a major needs the graph rebuilt with the new image first (osm_routing osrm-refresh). Land it in a supervised run.",
+      matchPackageNames: ["ghcr.io/project-osrm/osrm-backend"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: every update in stacks/vault until its CI apply works again (2026-10-12). terragrunt apply fails with 'Invalid for_each argument' at stacks/vault/main.tf:1622 (local.user_namespaces unknown at plan time), so any vault bump is reverted by the rails and leaves a global ignore entry. Tracked in bead code-f2u0.",
+      matchFileNames: ["stacks/vault/**"],
+      enabled: false,
+    },
+    {
       description: "HELD: image pins in prometheus_chart_values.tpl (2026-10-11). Images there land in the prometheus-server pod (e.g. the prometheus-backup sidecar), so a bump replaces the pod; its WAL is tmpfs, a restart drops up to 2 h of head data and resets alert for-state, and the verify checks of every stack that query Prometheus fail while it restarts (all six traefik and monitoring bumps were reverted for that in pipeline 2280). Bump these by hand in a chosen window.",
       matchFileNames: ["stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl"],
       enabled: false,
