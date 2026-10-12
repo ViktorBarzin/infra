@@ -390,6 +390,13 @@
       enabled: false,
     },
     {
+      description: "HELD: n8n majors (2026-10-12). The direct 1.123.84 -> 2.43.4 jump failed mid-migration (AddProjectIdToInstanceAiThread1784000000028: column u.roleSlug does not exist) and n8n was restored from a pg_dump. Needs a supervised stepped upgrade through an intermediate 2.x release, with a fresh dump first. 1.x patch/minor still land.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["docker.n8n.io/n8nio/n8n", "n8nio/n8n"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
       description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run). 15.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
