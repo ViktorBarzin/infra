@@ -1505,10 +1505,17 @@ resource "vault_kubernetes_secret_backend_role" "local_admin" {
 # All resources below are auto-generated from the k8s_users map in Vault KV.
 # Adding a new user requires only a JSON entry in secret/platform → k8s_users.
 
+# No depends_on on helm_release.vault: with it, any pending change to the
+# release (an image bump in its values, say) defers this read to apply time,
+# every for_each over local.user_namespaces becomes unknown, and the plan
+# fails with "Invalid for_each argument" (pipeline #2284, busybox 1.37 ->
+# 1.38). The provider
+# already needs a running Vault to plan this stack, so the read can happen at
+# plan time. A from-scratch bootstrap applies helm_release.vault first and
+# seeds secret/platform by hand anyway.
 data "vault_kv_secret_v2" "platform" {
-  mount      = "secret"
-  name       = "platform"
-  depends_on = [helm_release.vault]
+  mount = "secret"
+  name  = "platform"
 }
 
 locals {
