@@ -1,11 +1,72 @@
 # Runbook: iOS test rig
 
-A personal iPhone, permanently cabled to the London MacBook, driven from the
-devvm over the WireGuard tunnel. Sideloads and drives custom builds with a free
+A personal iPhone in London, on a charger, driven from the devvm. Since
+2026-10-12 the devvm reaches it directly over Wi-Fi, so day-to-day testing
+works with the MacBook away. The Mac is still where apps are built and where
+WebDriverAgent is re-signed. Sideloads and drives custom builds with a free
 Apple ID, no paid Apple Developer Program membership.
 
-Built 2026-09-12. Every number and error message here was measured on the real
-rig that day.
+Built 2026-09-12 around the Mac; the Wi-Fi path was added 2026-10-12. Every
+number and error message here was measured on the real rig on those days.
+
+## Wi-Fi path (no Mac needed)
+
+`ios-rig-wifi.service` (a `systemd --user` unit running `homelab ios wifi-fg`)
+holds an Apple RemotePairing tunnel to the phone with
+[pymobiledevice3](https://github.com/doronz88/pymobiledevice3), in userspace,
+with no root. It keeps the developer disk image mounted, keeps WebDriverAgent
+running while its signature is valid, and serves a small HTTP API on
+`127.0.0.1:8102` that `homelab ios` calls.
+
+```mermaid
+flowchart LR
+  CLI["homelab ios<br/>devvm"] -->|HTTP, loopback| SVC["ios-rig-wifi.service<br/>pymobiledevice3"]
+  SVC -->|RemotePairing tunnel, TCP 49152<br/>over WireGuard| P["iPhone<br/>iphone-london, 192.168.9.205"]
+  CLI -->|W3C WebDriver, taps| WDA["WebDriverAgent :8100<br/>on the phone"]
+  MAC["MacBook<br/>when present"] -.->|USB: build apps,<br/>re-sign WDA| P
+```
+
+| Works with the Mac away | Verb |
+|---|---|
+| Screenshots | `homelab ios shot out.png` |
+| Real Safari: open a page, read title and URL, run JavaScript | `homelab ios shot out.png --url <u>`, `homelab ios safari <u> [--js ...]` |
+| Launch any installed app | `homelab ios launch <bundle-id>`, `homelab ios shot out.png --app <bundle-id>` |
+| Install a signed `.ipa` | `homelab ios install app.ipa` |
+| Simulate GPS position | `homelab ios location 51.5,-0.12`, `homelab ios location clear` |
+| Taps, while WDA's 7-day signature is valid | `homelab ios shot out.png --tap X,Y` |
+| List apps, battery and charger state | `homelab ios apps`, `homelab ios doctor` |
+
+Still needs the Mac: building an Xcode project (`homelab ios install <dir>`)
+and re-signing WebDriverAgent. Once WDA's signature lapses, taps stop until the
+Mac re-signs it; everything else in the table keeps working.
+
+**How the pairing works.** The phone accepts a RemotePairing connection only
+from a host it has paired with. The record was created on the Mac over the
+cable, promptlessly, with `pymobiledevice3 lockdown remotepairing --pair`, and
+copied to the devvm. The phone stores the host under the id of the machine
+that paired it, `uuid3(NAMESPACE_DNS, <hostname>)`, so the devvm's copy carries
+`host_identifier` = the Mac's id (`D757B748-2247-3FF8-A777-B9E222BD5591`).
+Without that key, pair-verify fails and the phone logs
+`PairVerify server M3 find peer failed ... kNotFoundErr`. Both records live in
+Vault at `secret/ios-rig` (base64), and `homelab ios bootstrap --units-only`
+restores any that are missing into `~/.pymobiledevice3/` at mode 600.
+
+**Things that did not work, so they are not used.** Classic lockdown over
+Wi-Fi (port 62078): iOS 26 resets the connection at the first request even
+with a valid pair record. Accessibility "press" to tap without WDA: the focus
+moves, but iOS only performs the action for debuggable apps, so it does
+nothing in Settings or other Apple apps.
+
+**Requirements on the phone.** Auto-Lock set to Never; on the guest SSID
+`5G-Tower` with Private Wi-Fi Address set to Fixed, so the static lease
+(`scripts/london-flint/provision.sh`) keeps matching; for Safari, Settings >
+Apps > Safari > Advanced > Web Inspector and Remote Automation switched on.
+
+**Python.** The tunnel's TLS-PSK needs Python 3.13 or later (3.12 fails with
+`NO_CIPHERS_AVAILABLE`). The devvm playbook builds `/opt/ios-rig/venv` on a
+uv-managed 3.13 and pins pymobiledevice3, because the service reaches into its
+userspace-tunnel internals. Bump the pin on purpose and re-run `homelab ios
+doctor`.
 
 ## At a glance
 
@@ -17,7 +78,8 @@ rig that day.
 | `me.viktorbarzin.wda-resign` | Mac LaunchAgent, every 48h | re-signs WebDriverAgent before its 7-day certificate lapses |
 | `me.viktorbarzin.ios-rig-build` | Mac LaunchAgent, on demand | builds an Xcode project with the free team and installs it |
 | `me.viktorbarzin.ios-rig-awake` | Mac LaunchAgent, KeepAlive | `caffeinate -s`, stops the laptop sleeping the rig away |
-| `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 |
+| `ios-rig-wifi.service` | devvm, `systemd --user` | the Wi-Fi path: RemotePairing tunnel to the phone, loopback API on 8102 |
+| `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 (Mac path) |
 | `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link; reports by exit code, see below |
 | `homelab ios` | this repo, `cli/` | every verb; the Mac-side assets are embedded in the binary |
 
@@ -116,14 +178,29 @@ those install and run but lose the feature.
 **The build host is a corporate machine, and it travels.** It is DEP-enrolled
 and MDM-managed, runs an internally packaged Xcode, and `xcode-select` points
 at CommandLineTools. Changing that needs sudo we do not have, so every Xcode
-call sets `DEVELOPER_DIR` explicitly. When the laptop leaves, the rig stops.
-That is expected rather than a fault.
+call sets `DEVELOPER_DIR` explicitly, defaulting to the newest
+`/Applications/Xcode*.app` because device management replaces Xcode versions
+in place (26.6 was swapped for 27.0 and 27.1 on 2026-10-12, which broke a
+pinned path). Each new Xcode needs its license accepted once with `sudo
+<Xcode>/Contents/Developer/usr/bin/xcodebuild -license accept`; until then
+`xcodebuild` refuses to run, though `devicectl` still works. When the laptop
+leaves, building and re-signing wait for it; the Wi-Fi path carries on.
 
-**Signing cannot move to Linux.** Investigated 2026-09-12, no working path for
-iOS 26: exporting a free-team P12 and profile as files is an open upstream
-issue, `AltServer-Linux` has been unmaintained since 2022, and
-nested-framework signing fails on the `.xctrunner` shape WebDriverAgent has.
-If that changes, the re-sign job is the only piece that would move.
+**Signing on Linux: a working toolchain exists, and Apple's login is the open
+question.** Re-investigated 2026-10-12. plumesign (from
+[Impactor](https://github.com/claration/impactor), v2.6.5) covers the free
+Apple ID login, certificates, 7-day profiles and nested-bundle signing on
+Linux, and Appium publishes an unsigned prebuilt WebDriverAgent with every
+release. Two default behaviours needed small patches: it revokes a
+certificate without asking when Apple reports too many, and its anisette
+server address is hardcoded. On 2026-10-12 every login attempt failed at
+Apple's first GrandSlam step with `-80045 This action cannot be completed at
+this time`, from the devvm with a self-hosted anisette server and from the Mac
+with its own native identity, with a password that worked in a browser.
+Another tool hit the same error that day
+([iloader#857](https://github.com/nab138/iloader/issues/857)), so this looks
+like a change on Apple's side rather than this account. Until the login works,
+WebDriverAgent re-signing stays on the Mac.
 
 ## Where the code lives
 
@@ -151,7 +228,9 @@ while all of it holds, and two of them are human-dependent by design.
 | Link | Held by | Fails when |
 |---|---|---|
 | WireGuard Sofia to London | pfSense and the Flint | tunnel down |
-| Mac reachable | Flint static lease, Technitium record | it leaves the London LAN |
+| Phone on Wi-Fi | Flint static lease `iphone-london`, `ios-rig-wifi.service` | it changes SSID or its private address, or drops off Wi-Fi |
+| Phone on the charger | the charger | unplugged; `doctor` reports `power` |
+| Mac reachable (building and re-signing only) | Flint static lease, Technitium record | it leaves the London LAN |
 | Mac **awake** | `me.viktorbarzin.ios-rig-awake` running `caffeinate -s` | on battery, where the assertion deliberately does not apply |
 | Mac **logged in** | a human, once per boot | **any reboot**, see below |
 | Phone cabled and booted | the cable | unplugged |
@@ -553,7 +632,40 @@ expected occasionally, and it is the likeliest cause of a sudden break.
 `doctor` reports the current version on every run. Check that the Appium
 `xcuitest` driver supports the new version before debugging anything else.
 
+### `doctor` says `phone-wifi` has no tunnel
+
+The service cannot complete RemotePairing with the phone. Check, in order:
+
+1. `getent hosts iphone-london.viktorbarzin.lan` gives `192.168.9.205`, and
+   `ssh root@10.3.2.6 'grep -i 6e:b1:68:39:7b:22 /tmp/dhcp.leases'` shows the
+   phone holding that lease. If the MAC is missing, the phone changed its
+   private Wi-Fi address or joined another SSID; set it back to Fixed on
+   `5G-Tower`, or update the MAC in `scripts/london-flint/provision.sh` and
+   re-run it.
+2. `journalctl --user -u ios-rig-wifi -n 50`. `PairVerify ... kNotFoundErr` on
+   the phone side, or a reset right after the handshake, means the pairing
+   record is wrong: check `host_identifier` in
+   `~/.pymobiledevice3/remote_<UDID>.plist` (see the Wi-Fi section).
+3. If the phone moved its pairing port off 49152, the service scans
+   49152-65535 once, then waits 5 minutes before scanning again
+   (`IOS_RIG_SCAN_COOLDOWN_SECONDS`). `curl -X POST 127.0.0.1:8102/reconnect`
+   forces a fresh attempt.
+
+### `doctor` says `wda-wifi` is not running
+
+Screenshots, Safari, launch and installs still work; only taps need WDA. The
+detail names the cause. "signature has most likely expired" means WDA's 7-day
+free-team profile lapsed: plug the phone into the Mac and run
+`launchctl kickstart gui/$(id -u)/me.viktorbarzin.wda-resign` there. The
+service retries the launch with a growing delay, capped at 30 minutes, and
+picks up the fresh signature without a restart.
+
 ## Security notes
+
+The Wi-Fi service listens on the devvm's loopback only (`127.0.0.1:8102`), so
+it is reachable by any account on the devvm and nothing off the box. The
+pairing records it uses grant full developer access to the phone; they are
+mode 600 in `~/.pymobiledevice3/` and in Vault at `secret/ios-rig`.
 
 Appium listens on `127.0.0.1` only. It bound to `0.0.0.0` until 2026-09-12,
 which exposed full device control to anyone on the shared guest network the

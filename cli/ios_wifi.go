@@ -12,11 +12,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -417,4 +419,41 @@ func iosWifiFg(args []string) error {
 	}
 	// exec, so systemd supervises the service process itself.
 	return syscall.Exec(python, []string{python, "-I", script}, os.Environ())
+}
+
+// iosRestorePairRecords writes any missing pairing record from Vault
+// (secret/ios-rig, base64 values). Pairing again would need the Mac and the
+// phone on a cable, so a rebuilt devvm restores instead. Existing files win.
+func iosRestorePairRecords(dir, udid string, fetch func(field string) (string, error)) ([]string, error) {
+	var wrote []string
+	for _, r := range []struct{ file, field string }{
+		{"remote_" + udid + ".plist", "remote_pair_record"},
+		{udid + ".plist", "lockdown_pair_record"},
+	} {
+		path := filepath.Join(dir, r.file)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		b64, err := fetch(r.field)
+		if err != nil {
+			return wrote, fmt.Errorf("reading %s from Vault: %w", r.field, err)
+		}
+		raw, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(strings.TrimSpace(b64), "="))
+		if err != nil {
+			return wrote, fmt.Errorf("%s is not base64: %w", r.field, err)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return wrote, err
+		}
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			return wrote, err
+		}
+		wrote = append(wrote, path)
+	}
+	return wrote, nil
+}
+
+func iosVaultField(field string) (string, error) {
+	out, err := exec.Command("vault", vaultKVGetFieldArgs("secret/ios-rig", field)...).Output()
+	return string(out), err
 }
