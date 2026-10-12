@@ -52,7 +52,9 @@ Mac re-signs it; everything else in the table keeps working.
 **How the pairing works.** The phone accepts a RemotePairing connection only
 from a host it has paired with. The record was created on the Mac over the
 cable, promptlessly, with `pymobiledevice3 lockdown remotepairing --pair`, and
-copied to the devvm. The phone stores the host under the id of the machine
+copied to the devvm. That command needs pymobiledevice3 11 or later; the Mac
+keeps one at `~/.cache/pmd3-rig/bin/pymobiledevice3` for re-pairing, separate
+from the older copy in `~/.local/bin`. The phone stores the host under the id of the machine
 that paired it, `uuid3(NAMESPACE_DNS, <hostname>)`, so the devvm's copy carries
 `host_identifier` = the Mac's id (`D757B748-2247-3FF8-A777-B9E222BD5591`).
 Without that key, pair-verify fails and the phone logs
@@ -66,7 +68,10 @@ with a valid pair record. Accessibility "press" to tap without WDA: the focus
 moves, but iOS only performs the action for debuggable apps, so it does
 nothing in Settings or other Apple apps.
 
-**Requirements on the phone.** Auto-Lock set to Never; on the guest SSID
+**Requirements on the phone.** Auto-Lock set to Never: a locked phone refuses
+every developer service, and the service reports "the phone is locked"
+(measured 2026-10-12, when the phone locked after coming off the cable). On
+the guest SSID
 `5G-Tower` with Private Wi-Fi Address set to Fixed, so the static lease
 (`scripts/london-flint/provision.sh`) keeps matching; for Safari, Settings >
 Apps > Safari > Advanced > Web Inspector and Remote Automation switched on.
