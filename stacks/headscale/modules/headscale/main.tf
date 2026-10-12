@@ -208,7 +208,7 @@ resource "kubernetes_deployment" "headscale" {
         #   }
         # }
         container {
-          image = "ghcr.io/gurucomputing/headscale-ui@sha256:015f5ba04bcbd5ee03178540a1dbbfc97b6896d7411032e3bf33c2f3e08f8b6f"
+          image = "ghcr.io/gurucomputing/headscale-ui:2026.03.17@sha256:015f5ba04bcbd5ee03178540a1dbbfc97b6896d7411032e3bf33c2f3e08f8b6f"
           # image = "ghcr.io/tale/headplane:0.3.2"
           name = "headscale-ui"
 
@@ -259,7 +259,6 @@ resource "kubernetes_deployment" "headscale" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[1].image,                                          # DIGEST_PIN_DEFERRED: headscale-ui is a digest-only pin Renovate cannot bump
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
     ]
