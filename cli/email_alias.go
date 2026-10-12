@@ -21,10 +21,10 @@ const (
 
 func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	if err := checkmail.ValidateFormat(to); err != nil {
-		return "", errors.Wrapf(err, fmt.Sprintf("failed to create new email aliases because invalid input format: %s", to))
+		return "", errors.Wrapf(err, "failed to create new email aliases because invalid input format: %s", to)
 	}
 	if err := checkmail.ValidateHost(to); err != nil {
-		return "", errors.Wrapf(err, fmt.Sprintf("failed to create new email aliases because domain for %s does not exist", to))
+		return "", errors.Wrapf(err, "failed to create new email aliases because domain for %s does not exist", to)
 	}
 	aliasEmail := generateRandomEmail(fromDomain)
 	glog.Infof("adding %s -> %s alias to %s", aliasEmail, to, emailAliasesConfigFileRelative)
