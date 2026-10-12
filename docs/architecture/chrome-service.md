@@ -168,7 +168,7 @@ Chromium — via different images since 2026-08-11:
 - **Master:** the stock upstream `ghcr.io/m1k1o/neko/google-chrome` image (see
   "Display — neko WebRTC" below). Chrome at `/usr/bin/google-chrome`.
 - **Pool workers:** the infra-owned `ghcr.io/viktorbarzin/chrome-service-browser`
-  (`files/chrome/Dockerfile` = `mcr.microsoft.com/playwright:v1.48.0-noble` +
+  (`files/chrome/Dockerfile` = `mcr.microsoft.com/playwright:v1.64.0-noble` +
   `google-chrome-stable`, built by
   `.github/workflows/build-chrome-service-browser.yml`). Its launcher resolves
   `CHROMIUM=/opt/google/chrome/chrome`. That image and its workflow stay — the
