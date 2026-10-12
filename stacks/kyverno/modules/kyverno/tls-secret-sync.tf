@@ -56,11 +56,12 @@ resource "kubectl_manifest" "sync_tls_secret" {
             ]
           }
           generate = {
-            apiVersion  = "v1"
-            kind        = "Secret"
-            name        = "tls-secret"
-            namespace   = "{{request.object.metadata.name}}"
-            synchronize = true
+            apiVersion                     = "v1"
+            kind                           = "Secret"
+            name                           = "tls-secret"
+            namespace                      = "{{request.object.metadata.name}}"
+            synchronize                    = true
+            orphanDownstreamOnPolicyDelete = true
             clone = {
               namespace = "kyverno"
               name      = "tls-secret"
