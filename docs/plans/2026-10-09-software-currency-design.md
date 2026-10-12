@@ -298,7 +298,6 @@ Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HEL
 | Woodpecker chart and images | woodpecker | the rails run on Woodpecker. A CI self-apply ends its own pipeline and can leave the helm release in pending-upgrade | apply from the main checkout first, then push |
 | NVIDIA driver majors | nvidia | the driver stays on 570.195.03, which is outside the gpu-operator v26.x documented matrix and no longer on NVIDIA's active driver list. It compiles against the held GPU node kernel 6.8.0-117 | a supervised hop to 580.173.02 (LTSB, supported to June 2028) or 595.91.07 (the chart default) |
 | Loki chart | monitoring | the grafana repository stops at 7.3.0; newer charts are in grafana-community/loki (18.x) | a supervised repository switch |
-| Kyverno chart 3.10 and later (Kyverno 1.20) | kyverno | 1.20 removes `kyverno.io/v1` ClusterPolicy and `v2` ClusterCleanupPolicy. The 18 ClusterPolicies and `cleanup-failed-pods` must move to the CEL policy types first. 3.9.x patches still land | migrate the policies and run `kyverno migrate`, then drop the rule |
 | Forgejo | forgejo | 11 to 16 cannot be downgraded, and Forgejo hosts this repository, the bot account and the webhook the rails use. Held entirely, including the 11.0.14 to 11.0.16 patch | a supervised session; afterwards narrow the rule to majors |
 | Technitium 14 to 15 | technitium | home DNS. 14.x patch and minor releases still land | a supervised major upgrade |
 
@@ -349,7 +348,7 @@ Most of these are images where any pin that Renovate can read would restart the 
 
 ### Other findings from the run
 
-The Kyverno 1.20 migration and the GPU driver are in the held group above.
+The GPU driver is in the held group above. The Kyverno policies moved to the CEL types on 2026-10-12 (DeletingPolicy `cleanup-failed-pods` now tests `object.status.phase`), and the Kyverno hold was dropped so Renovate lands chart 3.10 (Kyverno 1.20) when it is published.
 
 | Component | Stack | Why | What it needs |
 |---|---|---|---|
@@ -357,7 +356,6 @@ The Kyverno 1.20 migration and the GPU driver are in the held group above.
 | Wrong certificate for helm.ngc.nvidia.com | nvidia, woodpecker | from pods on k8s-node2, where `woodpecker-agent-0` runs, some requests got a certificate for `*.development.minervaproject.com`. CI pipeline #2140 failed on it and the nvidia apply was done from the main checkout | find the DNS or egress path on k8s-node2 that answers for that name |
 | CoreDNS version | kube-system | not in the ownership table, so neither Renovate nor the rails track it | choose an owner (the Kubernetes version chain or a Renovate custom manager) |
 | kured Slack webhook | kured | `notifyUrl` from Vault (`slack_kured_webhook`) is rendered into the DaemonSet args as `--notify-url`, readable by anyone who can read DaemonSets in `kured` | pass it from a Secret instead of an argument, then rotate the webhook |
-| Kyverno `cleanup-failed-pods` | kyverno | its condition uses `request.object.status.phase`, which fails on every pod, so it likely never cleans anything (already true on 1.18.1) | fix with the 1.20 policy migration |
 | Stray-workload false positive | monitoring | `StrayWorkloadDetected` fires since 2026-10-11 07:06 for `dbaas/mysqld-exporter` (added in wave 3); `declared_tier0.json` was not regenerated | run `scripts/gen-tier0-workload-inventory.py` from the main checkout and commit the result |
 | Control-plane restarts | cluster | four episodes since 2026-10-10 15:40 (about 16:55, 18:55, 22:25 and 07:18) with leader-election restarts and kube-apiserver restarts; etcd WAL fsync p99 reached 8.2 s (5-minute window) at 07:20, with `sdc` writes at 30 to 90 MB/s in each episode. The writers are not identified | find the `sdc` writers (pve-nfs-data and the k8s-node1 disk are the leads) |
 | Trivy image-secret alerts | trivy-operator | 12 images flagged; tripit is a false positive (a public AWS key ID in yt-dlp), the others are not reviewed | review, and silence false positives |
