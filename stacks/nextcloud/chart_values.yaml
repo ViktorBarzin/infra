@@ -1,11 +1,5 @@
-# image.tag is rendered dynamically (templatefile var `image_tag`) from the
-# CURRENT live Deployment tag, falling back to var.nextcloud_image_tag_floor
-# (32.0.9) on fresh install / DR — see stacks/nextcloud/main.tf
-# `data.kubernetes_resource.nextcloud_live` + locals. This makes helm upgrades
-# image-no-ops in steady state and means a re-render can NEVER downgrade below
-# the Keel-bumped live tag (the 2026-06-01 CrashLoop: a pinned 32.0.3 lost to
-# live 32.0.9 and Nextcloud refused the downgrade). Keel (keel.sh/policy=minor)
-# bumps the live tag upward within major 32; the next apply just follows it.
+# image.tag comes from var.nextcloud_image_tag in main.tf, a literal pin that
+# Renovate bumps one major at a time.
 # flavor=apache renders the bare apache-default tag (live image is
 # `nextcloud:<tag>`, no -apache suffix).
 image:
