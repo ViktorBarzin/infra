@@ -438,7 +438,7 @@ resource "kubernetes_cron_job_v1" "stray_workload_detect" {
 
             container {
               name              = "reconcile"
-              image             = "docker.io/library/python:3.12-alpine"
+              image             = "docker.io/library/python:3.14-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/stray_workload_detect.py"]
               volume_mount {
