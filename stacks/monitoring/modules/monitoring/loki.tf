@@ -11,7 +11,10 @@ resource "helm_release" "loki" {
   create_namespace = true
   name             = "loki"
 
-  repository = "https://grafana.github.io/helm-charts"
+  # grafana-community repository since 2026-10-12: grafana.github.io stops at
+  # loki 7.3.0 (Loki 3.6.x, tracks Grafana Enterprise Logs); the maintained
+  # chart moved to grafana-community, like the grafana chart did on 2026-10-10.
+  repository = "https://grafana-community.github.io/helm-charts"
   chart      = "loki"
   # Pin to the deployed chart version (same rationale as the traefik pin):
   # unpinned, a refreshed helm repo index silently upgrades to the latest
@@ -19,9 +22,12 @@ resource "helm_release" "loki" {
   # `loki.ruler` values key (chart consumes `loki.rulerConfig`). Bump
   # deliberately, with values migration. 2026-10-10: 7.0.0 -> 7.3.0 (Loki
   # 3.6.11, canary 3.6.12), rendered manifests differ only in image tags and
-  # labels. grafana/loki 7.x now tracks Grafana Enterprise Logs and stays on
-  # Loki 3.6.x; Loki 3.7+ needs the grafana-community/loki chart (repo switch).
-  version = "7.3.0"
+  # labels. 2026-10-12: grafana/loki 7.3.0 -> grafana-community/loki 18.15.1
+  # (Loki 3.7.8). The community README "Upgrading" notes for majors 8-18 touch
+  # nothing we set; the StatefulSet keeps its name, selector, serviceName and
+  # the `storage` volumeClaimTemplate, so helm patches it in place and
+  # storage-loki-0 keeps its data.
+  version = "18.15.1"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
