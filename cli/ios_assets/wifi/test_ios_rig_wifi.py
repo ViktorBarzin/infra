@@ -5,6 +5,7 @@ import pytest
 from ios_rig_wifi import (
     DEFAULT_PAIRING_PORT,
     candidate_ports,
+    launch_failure_reason,
     should_scan,
     summarise_battery,
     wda_failure_reason,
@@ -59,3 +60,9 @@ def test_summarise_battery_handles_no_data():
 )
 def test_wda_failure_reason_names_the_fix(message, needle):
     assert needle in wda_failure_reason(message)
+
+
+def test_launch_failure_reason_points_at_the_signature():
+    msg = "The request to open \"x\" failed. : Failed to launch process with bundle identifier 'x'."
+    assert "signature has most likely expired" in launch_failure_reason("x", msg)
+    assert launch_failure_reason("x", "something else") == "something else"
