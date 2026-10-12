@@ -29,11 +29,17 @@ func iosCommands() []Command {
 		{Path: []string{"ios"}, Tier: TierRead,
 			Summary: "drive the iPhone test rig (run `ios --help`)", Run: iosTopHelp},
 		{Path: []string{"ios", "doctor"}, Tier: TierRead,
-			Summary: "check every link: Mac, cable, Developer Mode, Appium, WebDriverAgent, lock state", Run: iosDoctor},
+			Summary: "check every link: Wi-Fi path, charger, WebDriverAgent, then the Mac side", Run: iosDoctor},
 		{Path: []string{"ios", "shot"}, Tier: TierWrite,
 			Summary: "screenshot the phone, optionally driving it first: ios shot <out.png> [--url U] [--tap X,Y] [--app BUNDLE]", Run: iosShot},
 		{Path: []string{"ios", "install"}, Tier: TierWrite,
-			Summary: "build an Xcode project with the free team and install it: ios install <dir> [--scheme S] [--bundle-id B] [--no-launch]", Run: iosInstall},
+			Summary: "install a signed .ipa over Wi-Fi, or build an Xcode project on the Mac and install it: ios install <app.ipa | dir> [--scheme S] [--bundle-id B] [--no-launch]", Run: iosInstall},
+		{Path: []string{"ios", "safari"}, Tier: TierWrite,
+			Summary: "open a URL in real Safari over Wi-Fi and report title, URL and an optional JS result: ios safari <url> [--js SCRIPT] [--settle S]", Run: iosSafari},
+		{Path: []string{"ios", "launch"}, Tier: TierWrite,
+			Summary: "launch an installed app over Wi-Fi: ios launch <bundle-id> [args...]", Run: iosLaunch},
+		{Path: []string{"ios", "location"}, Tier: TierWrite,
+			Summary: "simulate the phone's GPS position over Wi-Fi: ios location <LAT,LON | clear>", Run: iosLocation},
 		{Path: []string{"ios", "apps"}, Tier: TierRead,
 			Summary: "list sideloaded apps (the free tier allows 3, WebDriverAgent holds one)", Run: iosApps},
 		{Path: []string{"ios", "wda-url"}, Tier: TierRead,
@@ -42,6 +48,8 @@ func iosCommands() []Command {
 			Summary: "provision the Mac agents and the devvm units; idempotent, safe to re-run", Run: iosBootstrap},
 		{Path: []string{"ios", "tunnel-fg"}, Tier: TierRead,
 			Summary: "run the Appium SSH tunnel in the foreground (ios-rig-tunnel.service runs this)", Run: iosTunnelFg},
+		{Path: []string{"ios", "wifi-fg"}, Tier: TierRead,
+			Summary: "run the Wi-Fi service in the foreground (ios-rig-wifi.service runs this)", Run: iosWifiFg},
 	}
 }
 
@@ -50,12 +58,22 @@ func iosTopHelp(args []string) error { fmt.Print(iosHelp()); return nil }
 func iosHelp() string {
 	return `homelab ios — drive the iPhone test rig
 
+The phone sits on a charger in London and is driven over Wi-Fi from this box
+(ios-rig-wifi.service). The Mac is only needed to build apps and to re-sign
+WebDriverAgent, whose free-team signature lasts 7 days.
+
   ios doctor                       check every link in the chain
   ios shot <out.png> [flags]       screenshot, optionally driving the phone first
-        --url <url>                open it in Safari and wait for Safari to be frontmost
-        --tap <X,Y>                tap at those screen coordinates
-        --app <bundle-id>          launch that app for the session instead
-  ios install <dir> [flags]        build an Xcode project and put it on the phone
+        --url <url>                open it in real Safari first
+        --tap <X,Y>                tap at those screen coordinates (needs WDA)
+        --app <bundle-id>          launch that app first
+  ios safari <url> [flags]         open a URL in Safari and print title and URL
+        --js <script>              also run this JavaScript and print its result
+        --settle <seconds>         wait after load before reading (default 2)
+  ios launch <bundle-id> [args]    launch an installed app
+  ios location <LAT,LON | clear>   simulate the GPS position
+  ios install <app.ipa>            install a signed .ipa over Wi-Fi
+  ios install <dir> [flags]        build an Xcode project on the Mac and install it
         --scheme <name>            xcodebuild scheme (default: directory name)
         --bundle-id <id>           sign as this (default: me.viktorbarzin.<dir>)
         --no-launch                install without launching
@@ -63,13 +81,15 @@ func iosHelp() string {
   ios wda-url                      where WebDriverAgent is listening
   ios bootstrap [--dry-run]        provision the Mac and this box
         --units-only               rewrite this box's systemd units only,
-                                   which needs no Mac and repairs the tunnel
+                                   which needs no Mac and repairs the services
 
-Two things the rig cannot do for itself, both by design:
+What the rig cannot do for itself:
   - the phone must stay UNLOCKED. Set Auto-Lock to Never. A locked phone can be
     screenshotted and nothing else, and WebDriverAgent cannot unlock it.
+  - Safari driving needs Settings > Apps > Safari > Advanced > Web Inspector
+    and Remote Automation switched on, once.
   - a Mac reboot needs a human, because FileVault holds the disk until someone
-    types the password. No agent, no SSH, no rig until then.
+    types the password. Only building and re-signing wait on that.
 
 Free Apple ID limits: certificates last 7 days, 3 apps installed at once
 (WebDriverAgent permanently holds one), 10 new App IDs per week. Reusing a
@@ -114,10 +134,28 @@ func iosDoctor(args []string) error {
 		c.MacHost = host
 	}
 
-	fmt.Printf("iOS rig via %s, %s\n\n", c.target(), time.Now().UTC().Format(time.RFC3339))
+	fmt.Printf("iOS rig, %s\n\n", time.Now().UTC().Format(time.RFC3339))
+
+	wifiOK := iosWifiChecks(add)
+
+	// With the Wi-Fi path up, the Mac is only needed for building apps and
+	// re-signing WebDriverAgent, so its failures are warnings, not outages.
+	base := add
+	add = func(level int, name, detail string) {
+		if wifiOK && level == 2 {
+			level = 1
+			detail += " (Mac path only)"
+		}
+		base(level, name, detail)
+	}
 
 	if _, err := c.onMac("true"); err != nil {
-		add(2, "ssh", fmt.Sprintf("cannot reach %s: %v", c.target(), err))
+		if wifiOK {
+			add(1, "mac", fmt.Sprintf("%s is away (%v). Building apps and re-signing WDA wait for it; "+
+				"everything else works over Wi-Fi", c.target(), err))
+		} else {
+			add(2, "ssh", fmt.Sprintf("cannot reach %s: %v", c.target(), err))
+		}
 		return iosReport(checks)
 	}
 	add(0, "ssh", c.target())
@@ -126,6 +164,15 @@ func iosDoctor(args []string) error {
 		add(1, "mac-address", fmt.Sprintf("%s does not answer; found the Mac at %s by hardware address %s. "+
 			"The Wi-Fi private address rotated again: set Private Wi-Fi Address to Off for this SSID, "+
 			"or move the reservation", configured, c.MacHost, c.MacHWAddr))
+	}
+
+	if out, _ := c.onMac(c.DeveloperDir + "/usr/bin/xcodebuild -showsdks 2>&1 | head -3"); iosXcodeLicensePending(out) {
+		dir, _ := c.resolvedDeveloperDir()
+		add(2, "xcode", "the license of the newest Xcode is not accepted, so building and re-signing fail "+
+			"and devicectl lists no apps. On the Mac: sudo "+dir+"/usr/bin/xcodebuild -license accept")
+	} else {
+		dir, _ := c.resolvedDeveloperDir()
+		add(0, "xcode", dir)
 	}
 
 	details, err := c.deviceDetails()
@@ -206,10 +253,14 @@ func iosDoctor(args []string) error {
 		add(2, "wda-installed", "not installed; launchctl kickstart gui/$(id -u)/me.viktorbarzin.wda-resign")
 	}
 
-	if u, err := c.wdaURL(); err == nil {
-		add(0, "wda-reachable", u)
-	} else {
-		add(2, "wda-reachable", err.Error())
+	// wdaURL restarts the Mac's WDA runner and waits up to 3 minutes. With the
+	// Wi-Fi path up, wda-wifi above already answers whether WDA is usable.
+	if !wifiOK {
+		if u, err := c.wdaURL(); err == nil {
+			add(0, "wda-reachable", u)
+		} else {
+			add(2, "wda-reachable", err.Error())
+		}
 	}
 
 	if st, _ := c.onMac("cat ~/.ios-rig-status.json 2>/dev/null"); st != "" {
@@ -246,6 +297,12 @@ func iosReport(checks []iosCheck) error {
 	return nil
 }
 
+// iosXcodeLicensePending spots xcodebuild refusing to run until someone
+// accepts a new Xcode's license with sudo.
+func iosXcodeLicensePending(out string) bool {
+	return strings.Contains(out, "not agreed to the Xcode license")
+}
+
 func afterKey(s, key string) string {
 	i := strings.Index(s, key)
 	if i < 0 {
@@ -263,10 +320,6 @@ func iosShot(args []string) error {
 			return fmt.Errorf("ios shot needs an output path")
 		}
 		return nil
-	}
-	c, err := iosResolved()
-	if err != nil {
-		return err
 	}
 	out := args[0]
 	var url, tap, bundle string
@@ -293,6 +346,13 @@ func iosShot(args []string) error {
 		}
 	}
 
+	if st := iosWifiStatusOrNil(); iosShotTransport(st, tap) == "wifi" {
+		return iosWifiShot(st, out, url, tap, bundle)
+	}
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
 	wda, err := c.wdaURL()
 	if err != nil {
 		return err
@@ -423,11 +483,14 @@ func iosInstall(args []string) error {
 		}
 		return nil
 	}
+	src := args[0]
+	if strings.HasSuffix(strings.ToLower(src), ".ipa") {
+		return iosWifiInstall(src)
+	}
 	c, err := iosResolved()
 	if err != nil {
 		return err
 	}
-	src := args[0]
 	scheme, bundle := "", ""
 	launch := "1"
 	for i := 1; i < len(args); i++ {
@@ -510,6 +573,9 @@ func iosApps(args []string) error {
 	if iosHelpWanted(args) {
 		fmt.Print(iosHelp())
 		return nil
+	}
+	if st := iosWifiStatusOrNil(); st != nil && st.Connected {
+		return iosWifiApps(st)
 	}
 	c, err := iosResolved()
 	if err != nil {
@@ -635,13 +701,20 @@ echo "appium $(appium --version)"`); err != nil {
 		"me.viktorbarzin.wda-resign",
 		"me.viktorbarzin.ios-rig-build",
 	}
+	devDir := c.DeveloperDir
+	if !dry {
+		var err error
+		if devDir, err = c.resolvedDeveloperDir(); err != nil {
+			return err
+		}
+	}
 	for _, label := range agents {
 		tmpl, err := iosAssets.ReadFile("ios_assets/launchagents/" + label + ".plist.tmpl")
 		if err != nil {
 			return err
 		}
 		rendered := strings.NewReplacer(
-			"@DEVELOPER_DIR@", c.DeveloperDir,
+			"@DEVELOPER_DIR@", devDir,
 			"@APPIUM_PORT@", c.AppiumPort,
 		).Replace(string(tmpl))
 		fmt.Printf("==> %s\n", label)
@@ -701,13 +774,20 @@ func iosInstallUnits(dry bool) error {
 		return err
 	}
 	dir := filepath.Join(home, ".config", "systemd", "user")
-	units := []string{"ios-rig-tunnel.service", "ios-rig-doctor.service", "ios-rig-doctor.timer"}
+	units := []string{"ios-rig-tunnel.service", "ios-rig-wifi.service", "ios-rig-doctor.service", "ios-rig-doctor.timer"}
 	if dry {
 		fmt.Printf("    would write %v into %s\n", units, dir)
 		return nil
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	wrote, err := iosRestorePairRecords(filepath.Join(home, ".pymobiledevice3"), iosDefaults().UDID, iosVaultField)
+	for _, w := range wrote {
+		fmt.Printf("    restored %s from Vault\n", w)
+	}
+	if err != nil {
+		fmt.Printf("    warning: %v; the Wi-Fi path needs the pairing (runbook: re-pair over the cable)\n", err)
 	}
 	for _, u := range units {
 		body, err := iosAssets.ReadFile("ios_assets/" + u)
@@ -721,8 +801,12 @@ func iosInstallUnits(dry bool) error {
 	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 		return err
 	}
-	return exec.Command("systemctl", "--user", "enable", "--now",
-		"ios-rig-tunnel.service", "ios-rig-doctor.timer").Run()
+	if err := exec.Command("systemctl", "--user", "enable", "--now",
+		"ios-rig-tunnel.service", "ios-rig-wifi.service", "ios-rig-doctor.timer").Run(); err != nil {
+		return err
+	}
+	// enable --now leaves an already-running service on the old script.
+	return exec.Command("systemctl", "--user", "restart", "ios-rig-wifi.service").Run()
 }
 
 // iosTunnelArgs builds the ssh invocation. It is separate from iosTunnelFg so

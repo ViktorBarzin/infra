@@ -40,7 +40,7 @@
     "containers": [
       {
         "name": "chrome",
-        "image": "ghcr.io/viktorbarzin/chrome-service-browser:latest",
+        "image": "ghcr.io/viktorbarzin/chrome-service-browser:d593d8266aaf3c82c625fd3263744f2f2788b151",
         "imagePullPolicy": "IfNotPresent",
         "command": ["bash", "/scripts/worker_entrypoint.sh"],
         "env": [

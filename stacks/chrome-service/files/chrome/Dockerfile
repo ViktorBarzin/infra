@@ -11,7 +11,12 @@
 # main.tf launches /opt/google/chrome/chrome instead of the bundled
 # /ms-playwright/chromium-*/chrome. connect_over_cdp callers (tripit fare scrape,
 # homelab browser, snapshot-harvester) attach to whatever Chrome runs here.
-FROM mcr.microsoft.com/playwright:v1.48.0-noble
+#
+# The base tag does not have to match callers' `playwright==X.Y.Z`: workers run
+# google-chrome-stable (latest at build time), never the bundled Chromium, so the
+# base only supplies Xvfb, python3, system libs and fonts. Keep it on the newest
+# tag so its Ubuntu packages and bundled npm stay patched (Trivy CVEs).
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends wget gnupg ca-certificates \

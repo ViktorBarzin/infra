@@ -194,7 +194,7 @@ resource "kubernetes_cron_job_v1" "check" {
 
             container {
               name              = "check"
-              image             = "docker.io/library/python:3.12-alpine"
+              image             = "docker.io/library/python:3.14-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/check.py"]
 
@@ -338,7 +338,7 @@ resource "kubernetes_cron_job_v1" "digest" {
 
             container {
               name              = "digest"
-              image             = "docker.io/library/python:3.12-alpine"
+              image             = "docker.io/library/python:3.14-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/check.py"]
 

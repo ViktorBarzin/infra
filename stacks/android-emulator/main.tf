@@ -87,6 +87,14 @@ resource "kubernetes_deployment" "android-emulator" {
         labels = { app = "android-emulator" }
       }
       spec {
+        # The nvidia.com/gpu request below already limits scheduling to the
+        # one GPU node; the toleration lets it past that node's taint.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         image_pull_secrets {
           name = "registry-credentials"
         }
@@ -96,6 +104,20 @@ resource "kubernetes_deployment" "android-emulator" {
 
           security_context {
             privileged = true # /dev/kvm access
+          }
+
+          env {
+            # The GPU operator injects only compute,utility by default. GL/EGL
+            # rendering needs the graphics libraries too.
+            name  = "NVIDIA_DRIVER_CAPABILITIES"
+            value = "all"
+          }
+          env {
+            # host: headless emulator rendering GLES and Vulkan on the T4,
+            # mirrored into the noVNC view by scrcpy. swiftshader: CPU
+            # rendering, windowed into Xvfb. See docker/entrypoint.sh.
+            name  = "EMULATOR_GPU"
+            value = "host"
           }
 
           port {
@@ -128,7 +150,11 @@ resource "kubernetes_deployment" "android-emulator" {
               memory = "3Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory           = "8Gi"
+              "nvidia.com/gpu" = "1" # T4 time-slice
+              # GPU VRAM budget (ADR-0016). Provisional until the GPU
+              # renderer's real footprint is measured.
+              "viktorbarzin.me/gpumem" = "300"
             }
           }
 

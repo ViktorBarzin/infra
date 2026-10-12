@@ -112,12 +112,15 @@ SP min..SP max, OP within Output min..100 % and only in MAN).
 `last_updated` moving, so the daemon's `STALE_SECS` check never trips on a value that
 is legitimately constant (smoothed output, or Lock, which previously fell to Dell auto
 after ~35 min). The daemon truncates decimals, so the pulse never causes an IPMI write.
-The daemon's `MIN_STEP` is the only deadband: 2 % since 2026-10-07, set in
-`/etc/fan-control.env` (the script default is 3). A replay of the two measured days
-put the 5-min mean within ±1 K of the setpoint 61 % / 51 % of the time at 2 %, against
-50 % / 40 % at 3 %, for 3–4 writes per hour instead of 1.5. A 1 % step added little
-more and made the duty flip between neighbouring values (77–93 quick reversals a day),
-because the daemon truncates and has no other deadband.
+The daemon's `MIN_STEP` is the only deadband: 3 % since 2026-10-12 18:04, set
+explicitly in `/etc/fan-control.env` (3 is also the script default). From 2026-10-07 to
+2026-10-12 it was 2 %: with the first tuning, a replay of the two measured days put the
+5-min mean within ±1 K of the setpoint 61 % / 51 % of the time at 2 %, against
+50 % / 40 % at 3 %, for 3–4 writes per hour instead of 1.5. With the doubled gains of the
+2026-10-11 retune that difference went away (see "24-hour check" below), so the step
+went back to 3 %. A 1 % step added little more and made the duty flip between
+neighbouring values (77–93 quick reversals a day), because the daemon truncates and has
+no other deadband.
 
 **Freshness guard:** when not locked, if `sensor.r730_cpu_temperature` has no value or
 its `last_reported` is older than 150 s, the command is `-1` (step 3 above). This
@@ -193,8 +196,33 @@ above 62 °C, 161 instead of 193 min below 58 °C), a peak 0.6 K lower, and abou
 the IPMI writes (10.6 instead of 5.4 per hour). Emil chose to try it. The change was
 made in AUTO without a bump: set Kp and Ki, then `set_output(out_before − Kp_new ×
 (SP − PV))` within the same PID sample, so the next computed output equalled the
-previous one (52.11 % before and after, P 1.9 at a −1.9 K error). A 24-hour comparison
-against the previous tuning is the next check; the previous values are the way back.
+previous one (52.11 % before and after, P 1.9 at a −1.9 K error).
+
+**24-hour check (2026-10-12).** The 24 hours before and after the change, with a
+similar CPU load (mean 53.1 / 52.4 %, σ 17.3 / 16.9):
+
+| | Before (Kp −0.5, Ki −0.001) | After (Kp −1.0, Ki −0.002) |
+|---|---|---|
+| Time outside 60 ± 2 °C | 41.8 % | 27.2 % |
+| σ of the 5-min mean | 2.84 K | 1.84 K |
+| 5-min mean, max / min | 70.3 / 52.2 °C | 66.3 / 55.1 °C |
+| IPMI writes per hour | 5.4 | 10.6 (predicted 10.6) |
+| Reversals within 5 min | 8 | 53 |
+
+The load had the same mean but a different shape (the benchmark pods fell in the day
+before), so most of that difference comes from the load. Replaying both tunings on the
+same day puts the tuning's share at about 4 percentage points (31.1 → 26.9 % on the day
+after, 42.2 → 35.6 % on the day before), pairing hours of similar load gives −3.9 points,
+and the 5-min peak stays within 0.7 K. The replay matched the measured day after within
+0.4 points on the band, with 9.7 writes per hour against the measured 10.6; it counts
+fewer quick reversals than the journal (35 against 53). There is no oscillation: neither
+the 5-min mean nor the PID output shows a spectral peak or a periodic autocorrelation
+between 5 and 20 minutes, and the 5-min mean carried about 0.9 K rms in that band on
+both days. Emil kept the new gains, and `MIN_STEP` went back from 2 to 3 % on
+2026-10-12 at 18:04. The replay puts that at 27.5 % outside the band on the day after,
+the same time within ±1 K (46 %), and 4.9 writes per hour; applying a 3 % step to that
+day's recorded command gives 119 writes and 13 quick reversals instead of 252 and 42.
+The previous values (Kp −0.5, Ki −0.001, `MIN_STEP` 2) are the way back.
 
 **Manual override (MAN on the faceplate):** `input_boolean.r730_fan_lock` +
 `input_number.r730_fan_manual_pct` (Override %). While unlocked, the automation
@@ -237,7 +265,11 @@ Loop every ~15 s, using only the existing IPMI + HA-REST methods:
 
 **Anti-flap:** on a missing/stale command it **holds the last applied %** for up
 to `HA_GRACE_SECS` (300 s) instead of falling back; only sustained loss hands the
-fans to Dell auto.
+fans to Dell auto. `HA_GRACE_SECS` stays at the 300 s default by Emil's choice
+(2026-10-12): 600 s would have ridden out the three Prometheus-restart gaps on
+2026-10-10 and 2026-10-12, when the CPU reading was missing for 6–7 minutes and the
+fans spent 21–74 s on Dell auto, but he prefers Dell auto after five minutes without a
+valid command.
 
 ## Safety (on the host, independent of HA)
 `CPU ≥ CEILING (83 °C)`, repeated IPMI failures, sustained HA loss, or daemon

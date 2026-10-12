@@ -169,7 +169,7 @@ securityContext:
   fsGroupChangePolicy: OnRootMismatch
 
 collabora:
-  enabled: false # No document server (onlyoffice decommissioned 2026-07-01)
+  enabled: false # Office documents open in Euro-Office (stacks/eurooffice, eurooffice app), not Collabora
 
 resources:
   limits:

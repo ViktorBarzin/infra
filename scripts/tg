@@ -174,7 +174,10 @@ lock_versions() { # "<namespace/type> <version>" per provider in a lockfile
        p != "" && /^ *version *=/ { match($0, /"[^"]+"/); print p, substr($0, RSTART + 1, RLENGTH - 2); p = "" }' "$1"
 }
 if $is_tf_op && [ -f .terraform.lock.hcl ]; then
-  stale=$(join <(provider_pins | sort) <(lock_versions .terraform.lock.hcl | sort) | awk '$2 != $3 { print $1 " " $3 " -> " $2 }')
+  # awk, not join(1): the CI image has no coreutils join, and a missing
+  # command here failed every Renovate rails rollback (pipeline 2349).
+  stale=$(awk 'NR == FNR { pin[$1] = $2; next } ($1 in pin) && pin[$1] != $2 { print $1 " " $2 " -> " pin[$1] }' \
+    <(provider_pins) <(lock_versions .terraform.lock.hcl))
   if [ -n "$stale" ]; then
     echo "[tg] lockfile predates the provider pins in terragrunt.hcl; running init -upgrade:" >&2
     echo "$stale" | sed 's/^/[tg]   /' >&2

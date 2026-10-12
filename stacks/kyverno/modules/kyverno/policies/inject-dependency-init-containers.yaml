@@ -1,0 +1,51 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: inject-dependency-init-containers
+  annotations:
+    policies.kyverno.io/title: Inject Dependency Init Containers
+    policies.kyverno.io/description: "Injects wait-for init containers based on dependency.kyverno.io/wait-for pod annotation. Each comma-separated host:port entry becomes a busybox init container that blocks until the dependency is reachable via nc -z."
+spec:
+  failurePolicy: Ignore
+  # No pod-controller variants. MutatingPolicy autogen is on by default for
+  # pod policies, and it does not rewrite JSONPatch paths, so a variant would
+  # write /spec/... onto the Deployment itself (seen with kyverno-cli 1.19.1).
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchConditions:
+    - name: has-wait-for-annotation
+      expression: "object.metadata.?annotations[?'dependency.kyverno.io/wait-for'].orValue('') != ''"
+  variables:
+    - name: deps
+      expression: "object.metadata.annotations['dependency.kyverno.io/wait-for'].split(',')"
+    - name: existing
+      expression: "object.spec.?initContainers.orValue([]).map(i, i.name)"
+    - name: waits
+      expression: >-
+        variables.deps
+          .filter(d, !(('wait-for-' + d.split(':')[0].replace('.', '-')) in variables.existing))
+          .map(d, Object.spec.initContainers{
+            name: 'wait-for-' + d.split(':')[0].replace('.', '-'),
+            image: 'busybox:1.38',
+            command: ['sh', '-c', 'until nc -z ' + d.split(':')[0] + ' ' + d.split(':')[1] + '; do echo waiting for ' + d + '; sleep 2; done'],
+            resources: Object.spec.initContainers.resources{
+              requests: {'cpu': '5m', 'memory': '16Mi'},
+              limits: {'memory': '32Mi'}
+            }
+          })
+  mutations:
+    # Prepend, in annotation order, so the waits run before the workload's own
+    # init containers (e.g. fire-planner's alembic-migrate), as the
+    # strategic-merge patch of the ClusterPolicy did.
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.initContainers) ? [] : [JSONPatch{op: 'add', path: '/spec/initContainers', value: []}]) +
+          variables.waits.map(w, JSONPatch{op: 'add', path: '/spec/initContainers/' + string(variables.waits.indexOf(w)), value: w})

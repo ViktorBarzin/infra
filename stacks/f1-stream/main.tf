@@ -1356,7 +1356,7 @@ module "tls_secret" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.25.0"
+  image_tag        = "v1.28.1"
   name             = "f1"
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   target_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"

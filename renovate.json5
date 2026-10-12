@@ -332,13 +332,9 @@
     // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
     // Remove a rule to release that component to the rails.
     {
-      description: "HELD: Nextcloud chart and image (major stepping needs a supervised run first)",
+      description: "HELD: Nextcloud majors (chart and image). A major runs a one-way occ upgrade and can disable apps, so it gets a supervised run with an LVM snapshot first; minors and patches go through the rails",
       matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
-      enabled: false,
-    },
-    {
-      description: "HELD: Calico / tigera-operator",
-      matchPackageNames: ["tigera-operator", "quay.io/tigera/**", "calico/**", "quay.io/calico/**"],
+      matchUpdateTypes: ["major"],
       enabled: false,
     },
     {
@@ -382,18 +378,19 @@
       enabled: false,
     },
     {
-      description: "HELD: NVIDIA driver 570 -> 580 (kernel 6.8.0-117 held; see post-mortem 2026-05-17)",
+      description: "HELD: NVIDIA driver majors (580 LTSB since 2026-10-12; the next major needs a supervised run against the held GPU node kernel 6.8.0-117, see post-mortem 2026-05-17)",
       matchPackageNames: ["nvcr.io/nvidia/driver"],
       matchUpdateTypes: ["major"],
       enabled: false,
     },
     {
-      description: "HELD: Forgejo (11 -> 16 cannot be downgraded, and Forgejo hosts this repo, the bot and the webhook the rails use). All Forgejo updates wait for a supervised session.",
+      description: "HELD: Forgejo majors. Forgejo hosts this repo, the bot and the webhook the rails use, and its migrations are one-way, so a major gets a supervised run with an LVM snapshot first. Minors and patches go through the rails.",
       matchPackageNames: ["codeberg.org/forgejo/forgejo", "forgejo", "forgejo/forgejo"],
+      matchUpdateTypes: ["major"],
       enabled: false,
     },
     {
-      description: "HELD: Technitium 14 -> 15 major (home DNS). 14.x patch/minor still land.",
+      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run). 15.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
       matchUpdateTypes: ["major"],
@@ -425,12 +422,6 @@
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["telmate/proxmox"],
       enabled: false,
-    },
-    {
-      description: "HELD: Kyverno 1.20 (chart 3.10) needs a policy migration; 3.9.x patches still land",
-      matchDatasources: ["helm"],
-      matchPackageNames: ["kyverno"],
-      allowedVersions: "<3.10.0",
     },
   ],
 }

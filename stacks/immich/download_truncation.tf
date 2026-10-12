@@ -134,7 +134,7 @@ resource "kubernetes_cron_job_v1" "immich_download_truncation" {
             # Query Loki, join against the sizes, write exposition text.
             init_container {
               name    = "detect"
-              image   = "docker.io/library/python:3.12-alpine"
+              image   = "docker.io/library/python:3.14-alpine"
               command = ["python3", "/script/download_truncation_detect.py"]
               env {
                 name  = "LOKI_URL"

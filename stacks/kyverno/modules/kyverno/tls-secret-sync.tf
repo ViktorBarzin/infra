@@ -27,49 +27,13 @@ resource "kubernetes_secret" "tls_secret" {
 }
 
 resource "kubectl_manifest" "sync_tls_secret" {
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "sync-tls-secret"
-    }
-    spec = {
-      rules = [
-        {
-          name = "sync-tls-secret"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = ["kube-system", "kube-public", "kube-node-lease"]
-                }
-              }
-            ]
-          }
-          generate = {
-            apiVersion  = "v1"
-            kind        = "Secret"
-            name        = "tls-secret"
-            namespace   = "{{request.object.metadata.name}}"
-            synchronize = true
-            clone = {
-              namespace = "kyverno"
-              name      = "tls-secret"
-            }
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/generate-clone-secret.yaml", { name = "sync-tls-secret", secret = "tls-secret", condition = local.generate_skip_system_namespaces })
+
+  # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
+  # policy before deleting the old one, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
 
   depends_on = [
     helm_release.kyverno,

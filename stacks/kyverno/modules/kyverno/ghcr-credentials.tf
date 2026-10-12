@@ -132,47 +132,14 @@ resource "kubernetes_secret" "ghcr_credentials" {
 }
 
 resource "kubectl_manifest" "sync_ghcr_credentials" {
-  # Kyverno's validate-policy webhook DENIES in-place changes to a generate
-  # rule's spec ("changes of immutable fields ... is disallowed"), so any
-  # allowlist edit must delete+recreate the policy. Generated secrets survive
-  # policy deletion; generateExisting re-adopts them on recreate.
+  # Kyverno's validate-policy webhook denied in-place changes to a ClusterPolicy
+  # generate rule ("changes of immutable fields ... is disallowed"), so every
+  # allowlist edit deletes and recreates the policy. Kept for the
+  # GeneratingPolicy: orphanDownstreamOnPolicyDelete keeps the copies, and
+  # generateExisting re-adopts them on recreate. No create_before_destroy here,
+  # because the replacement has the same name and kind.
   force_new = true
-  yaml_body = yamlencode({
-    apiVersion = "kyverno.io/v1"
-    kind       = "ClusterPolicy"
-    metadata = {
-      name = "sync-ghcr-credentials"
-    }
-    spec = {
-      rules = [
-        {
-          name = "sync-ghcr-secret"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                  names = local.ghcr_private_namespaces
-                }
-              }
-            ]
-          }
-          generate = {
-            generateExisting = true
-            apiVersion       = "v1"
-            kind             = "Secret"
-            name             = "ghcr-credentials"
-            namespace        = "{{request.object.metadata.name}}"
-            synchronize      = true
-            clone = {
-              namespace = "kyverno"
-              name      = "ghcr-credentials"
-            }
-          }
-        }
-      ]
-    }
-  })
+  yaml_body = templatefile("${path.module}/policies/generate-clone-secret.yaml", { name = "sync-ghcr-credentials", secret = "ghcr-credentials", condition = "object.metadata.name in ${jsonencode(local.ghcr_private_namespaces)}" })
 
   depends_on = [
     helm_release.kyverno,

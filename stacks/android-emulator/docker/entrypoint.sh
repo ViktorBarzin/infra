@@ -105,19 +105,44 @@ websockify --web /usr/share/novnc 6080 localhost:5900 &
 SUPERVISED[$!]=websockify
 
 # --- emulator -----------------------------------------------------------------
-# CPU rendering (SwiftShader) for both GLES and Vulkan. `-gpu host` ran here
-# from 2026-06 to 2026-10 and was never accelerated: the emulator draws GLES
-# through GLX on Xvfb, which has no GPU, so GLES landed on Mesa llvmpipe while
-# Vulkan went to the NVIDIA T4. That mixed mode is the only one that crashed:
-# 13 segfaults in 4h on 2026-10-10, often 25s in and otherwise 2-40 min after
-# boot, against none in SwiftShader runs. Real GPU GL would need an X server on
-# the NVIDIA driver in place of Xvfb.
-echo "Emulator GPU mode: swiftshader_indirect"
-emulator -avd "$AVD_NAME" \
-  -gpu swiftshader_indirect -accel on \
-  -memory "$EMULATOR_RAM_MB" \
-  -no-audio -no-boot-anim \
-  &
+# EMULATOR_GPU picks the renderer:
+#
+#   host         GLES and Vulkan on the NVIDIA T4. The emulator runs headless
+#                (-no-window) and scrcpy mirrors its screen into Xvfb for the
+#                noVNC view. ANDROID_EGL_ON_EGL=1 moves the host GLES
+#                translator from GLX to EGL, which the NVIDIA driver serves
+#                without an X server. The `emulator` launcher puts its bundled
+#                SwiftShader libEGL first on LD_LIBRARY_PATH, so this mode
+#                starts the headless qemu binary directly with the system
+#                (glvnd) libEGL/libGLESv2 ahead of it.
+#   swiftshader  (default) CPU rendering, windowed straight into Xvfb.
+#
+# The earlier windowed `-gpu host` (2026-06 to 2026-10) drew GLES through GLX
+# on Xvfb, so GLES ran on Mesa llvmpipe while Vulkan went to the T4. That mixed
+# mode segfaulted 13 times in 4h on 2026-10-10. Neither mode here mixes them.
+EMULATOR_GPU="${EMULATOR_GPU:-swiftshader}"
+echo "Emulator GPU mode: ${EMULATOR_GPU}"
+if [ "$EMULATOR_GPU" = host ]; then
+  # With DISPLAY set, glvnd hands EGL to Mesa for the Xvfb display and GLES
+  # lands on llvmpipe. Clear it and name the NVIDIA vendor outright, so a
+  # missing driver fails at startup instead of quietly rendering on the CPU.
+  env -u DISPLAY \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  ANDROID_EGL_ON_EGL=1 \
+  ANDROID_EMULATOR_LAUNCHER_DIR=/sdk/emulator \
+  LD_LIBRARY_PATH=/opt/egl-system:/sdk/emulator/lib64/libstdc++:/sdk/emulator/lib64/vulkan:/sdk/emulator/lib64 \
+    /sdk/emulator/qemu/linux-x86_64/qemu-system-x86_64-headless -avd "$AVD_NAME" \
+    -no-window -gpu host -accel on \
+    -memory "$EMULATOR_RAM_MB" \
+    -no-audio -no-boot-anim -no-metrics \
+    &
+else
+  emulator -avd "$AVD_NAME" \
+    -gpu swiftshader_indirect -accel on \
+    -memory "$EMULATOR_RAM_MB" \
+    -no-audio -no-boot-anim \
+    &
+fi
 EMU_PID=$!
 
 SUPERVISED[$EMU_PID]=emulator
@@ -129,38 +154,60 @@ until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
 done
 echo "Boot completed."
 
-# --- fit the emulator window to the whole virtual display ---------------------
-# The emulator's Qt window opens small (it picks a conservative scale for a
-# headless display) and floats inside the 1080x2280 Xvfb, so noVNC's
-# resize=scale was scaling mostly black space. Background fitter: dismiss the
-# one-shot "nested virtualization" warning dialog, undecorate + fill the phone
-# window, and park the control strip off the right edge. Re-runs for a while to
-# catch the window/dialog appearing, then periodically in case they recreate.
-#
-# Cosmetic and best-effort, so it runs without the script's `set -e`: under it,
-# any one failing xdotool/wmctrl call in the loop below ended this subshell with
-# status 1, and the supervisor restarted the whole pod for it.
-( set +e
-  export DISPLAY=:0
-  fit_once() {
-    # auto-OK the nested-virt warning if it is up
-    for w in $(xdotool search --name "Nested Virtualization" 2>/dev/null); do
-      xdotool windowactivate --sync "$w" key --clearmodifiers Return 2>/dev/null || true
+# --- screen into Xvfb ---------------------------------------------------------
+if [ "$EMULATOR_GPU" = host ]; then
+  # Headless emulator: scrcpy mirrors the screen into Xvfb as a borderless
+  # window covering the display, and forwards noVNC's clicks and keys as
+  # touches and key presses. --no-power-on and no --stay-awake, so opening the
+  # view does not count as use for the idle sleeper. It restarts on exit and is
+  # not supervised: a viewer dying should not restart the phone.
+  ( set +e
+    export DISPLAY=:0 ADB=/sdk/platform-tools/adb
+    w=${SCREEN_GEOMETRY%%x*}; rest=${SCREEN_GEOMETRY#*x}; h=${rest%%x*}
+    while true; do
+      /opt/scrcpy/scrcpy --no-audio --no-power-on \
+        --render-driver=software --max-fps=30 --max-size="$h" \
+        --window-borderless --window-x=0 --window-y=0 \
+        --window-width="$w" --window-height="$h" \
+        --window-title="Android Emulator"
+      echo "scrcpy exited with status $?; restarting in 3s" >&2
+      sleep 3
     done
-    emu=$(wmctrl -l 2>/dev/null | awk "/Android Emulator - /{print \$1; exit}")
-    [ -z "$emu" ] && return 1
-    # fill the display minus a sliver for the control strip
-    xdotool windowmove "$emu" 0 0 2>/dev/null
-    xdotool windowsize "$emu" 1010 2280 2>/dev/null
-    for t in $(wmctrl -l 2>/dev/null | awk "{ if (\$4 == \"Emulator\") print \$1 }"); do
-      xdotool windowmove "$t" 1015 0 2>/dev/null || true
-    done
-    return 0
-  }
-  # aggressive for the first ~2 min (window + dialog timing), then keep tidy
-  for _ in $(seq 1 60); do fit_once && break; sleep 2; done
-  while true; do fit_once; sleep 30; done
-) &
+  ) &
+else
+  # Windowed emulator: fit its window to the whole virtual display.
+  # The emulator's Qt window opens small (it picks a conservative scale for a
+  # headless display) and floats inside the 1080x2280 Xvfb, so noVNC's
+  # resize=scale was scaling mostly black space. Background fitter: dismiss the
+  # one-shot "nested virtualization" warning dialog, undecorate + fill the phone
+  # window, and park the control strip off the right edge. Re-runs for a while to
+  # catch the window/dialog appearing, then periodically in case they recreate.
+  #
+  # Cosmetic and best-effort, so it runs without the script's `set -e`: under it,
+  # any one failing xdotool/wmctrl call in the loop below ended this subshell with
+  # status 1, and the supervisor restarted the whole pod for it.
+  ( set +e
+    export DISPLAY=:0
+    fit_once() {
+      # auto-OK the nested-virt warning if it is up
+      for w in $(xdotool search --name "Nested Virtualization" 2>/dev/null); do
+        xdotool windowactivate --sync "$w" key --clearmodifiers Return 2>/dev/null || true
+      done
+      emu=$(wmctrl -l 2>/dev/null | awk "/Android Emulator - /{print \$1; exit}")
+      [ -z "$emu" ] && return 1
+      # fill the display minus a sliver for the control strip
+      xdotool windowmove "$emu" 0 0 2>/dev/null
+      xdotool windowsize "$emu" 1010 2280 2>/dev/null
+      for t in $(wmctrl -l 2>/dev/null | awk "{ if (\$4 == \"Emulator\") print \$1 }"); do
+        xdotool windowmove "$t" 1015 0 2>/dev/null || true
+      done
+      return 0
+    }
+    # aggressive for the first ~2 min (window + dialog timing), then keep tidy
+    for _ in $(seq 1 60); do fit_once && break; sleep 2; done
+    while true; do fit_once; sleep 30; done
+  ) &
+fi
 
 # Expose the emulator's adbd (localhost:5555) to the pod network. Plain TCP,
 # no auth — reachable only inside the LAN via the MetalLB IP. Bind to the pod
