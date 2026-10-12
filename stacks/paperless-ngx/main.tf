@@ -348,6 +348,39 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_CONSUMER_DELETE_DUPLICATES"
             value = "true"
           }
+          # Native AI suggestions (3.x), replacing paperless-ai (scaled to 0
+          # 2026-10-12). Uses the local qwen3-8b on llama-swap so Emo's
+          # documents stay in the cluster. openai-like forces tool calling;
+          # no API key is needed (the client falls back to a placeholder).
+          # Context 8192 matches llama-swap's -c. No embedding backend: similar
+          # documents come from the Tantivy index, so no extra RAM in a pod
+          # that has OOMed at 8Gi. Output language unset so titles stay in the
+          # document's own language. A Document Added workflow (created in the
+          # UI/API, not here) applies the suggestions automatically.
+          env {
+            name  = "PAPERLESS_AI_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "PAPERLESS_AI_LLM_BACKEND"
+            value = "openai-like"
+          }
+          env {
+            name  = "PAPERLESS_AI_LLM_ENDPOINT"
+            value = "http://llama-swap.llama-cpp.svc.cluster.local:8080/v1"
+          }
+          env {
+            name  = "PAPERLESS_AI_LLM_MODEL"
+            value = "qwen3-8b"
+          }
+          env {
+            name  = "PAPERLESS_AI_LLM_REQUEST_TIMEOUT"
+            value = "180"
+          }
+          env {
+            name  = "PAPERLESS_AI_LLM_CONTEXT_SIZE"
+            value = "8192"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"

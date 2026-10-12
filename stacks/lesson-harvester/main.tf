@@ -17,7 +17,7 @@ locals {
   # (config.py env_prefix="LH_"). Secrets come via env_from (below).
   app_env = {
     # Extraction runs on claude-agent-service (Haiku, no-tools mode) since
-    # 2026-10-11; llama-swap is kept for paperless-ai only. The bearer is
+    # 2026-10-11; llama-swap is kept for paperless-ngx's native AI only. The bearer is
     # LH_LLM_API_KEY from the ExternalSecret below.
     LH_LLM_ENDPOINT = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
     LH_LLM_MODEL    = "haiku"

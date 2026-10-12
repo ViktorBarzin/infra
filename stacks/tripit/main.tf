@@ -75,7 +75,7 @@ locals {
     # Real LLM on the Deployment too (was fake): in-app reel-URL paste (#120) and
     # booking share run ingest in the web pod. Since 2026-10-11 every read goes to
     # claude-agent-service alone, in its no-tools mode, with no llama leg (tripit
-    # ADR-0067, superseding ADR-0033); llama-swap is kept for paperless-ai only.
+    # ADR-0067, superseding ADR-0033); llama-swap is kept for paperless-ngx's native AI only.
     LLM_MODE = "claude_agent"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
