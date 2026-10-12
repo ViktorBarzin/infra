@@ -1,6 +1,6 @@
 # ADR-0029: Paperless reads each person's mailbox directly for document attachments
 
-- Status: accepted, first pass complete 2026-10-10
+- Status: accepted, first pass complete 2026-10-10. Anca's mailbox added to scope 2026-10-12, waiting on her app password
 - Date: 2026-10-09
 - Related: `docs/runbooks/paperless-mail-ingest.md` (operations and the rule table), memory #7099 (the `docs@` forward path built 2026-07-03)
 
@@ -54,6 +54,7 @@ flowchart TD
   EG["emil.barzin@gmail.com<br/>All Mail"] -->|"account 4, rule 18"| P
   VG["vbarzin@gmail.com<br/>All Mail"] -->|"account 5, rule 19"| P
   ME["me@viktorbarzin.me<br/>INBOX"] -->|"account 1, rule 20"| P
+  AG["ancaelena98@gmail.com<br/>All Mail"] -.->|"planned 2026-10-12"| P
   P["Paperless mail task, every 10 min<br/>PDF + Office only<br/>labels source mail 'paperless'"] --> C["Consume + OCR<br/>owner from the rule"]
   C --> AI["paperless-ai (local model)<br/>daily RAG refresh"]
 ```
@@ -145,6 +146,40 @@ flowchart TD
   runbook has the recovery steps.
 - `email-backfill` was removed from rules 18-20 at the end; new mail carries
   `email-ingest` only.
+- As of 2026-10-12 tag 5227 `email-backfill` no longer exists. Paperless went
+  from about 1,448 tags to 86 that day, and the backfill tag was among those
+  removed, so the first-pass batch can no longer be selected by tag. Those
+  documents still carry `email-ingest` (4689, 2,016 documents on 2026-10-12)
+  and were all added on 2026-10-09 and 2026-10-10.
+
+## Anca's mailbox (decided 2026-10-12)
+
+Viktor asked for the same setup for Anca. She has agreed to Paperless reading
+her mailbox.
+
+- Mailbox: `ancaelena98@gmail.com` `[Gmail]/All Mail` only. Her Yahoo address
+  (`ancaelena98@yahoo.com`, which she uses to forward bookings) stays out of
+  scope; it can be added later as a second account if her documents turn out
+  to live there.
+- Rule: the same shape as rules 18 and 19 (all time, PDF and Office files,
+  `attachment_type=2`, Gmail label `paperless`, tag `email-ingest`). Mail
+  account and rule are owned by `anca` (id 4). She gets no mail-account or
+  mail-rule permissions in the UI; Viktor manages them.
+- First pass: a new `email-backfill` tag goes on her rule for the first pass
+  and comes off when the pass drains, so her historical batch can be reverted
+  by tag. Paperless stays on the default single task worker, which avoids the
+  duplicate race and the OOMKills seen with 3 workers.
+- Ownership: first owner wins, as for Emo. About 15 to 20 of Viktor's documents
+  concern Anca (full-text "Anca Milea" 14 hits, `ancaelena98` 6 hits, all owned
+  by Viktor), so a household document already in Viktor's account stays there
+  and Anca does not see it. Viktor chose to leave it that way.
+- Credential: no app password existed on 2026-10-12 (not in Viktor's vault, not
+  in Vault KV, and Anca has not set up `homelab vault` on the devvm). Anca
+  creates one at myaccount.google.com/apppasswords, and it is stored in Vault
+  `secret/paperless-ngx` field `anca_gmail_app_password` as well as in the
+  Paperless mail account.
+- Her mailbox size is not known yet; it can only be measured once the app
+  password exists.
 
 ## Alternatives considered
 

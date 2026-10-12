@@ -17,6 +17,10 @@ Two paths feed Paperless from email:
 | 19 `auto: Viktor (Gmail All Mail)` | 5, `vbarzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | root (id 3) |
 | 20 `auto: Viktor (me@ INBOX)` | 1, `me@viktorbarzin.me` | `INBOX` | root (id 3) |
 
+Planned (2026-10-12, ADR-0029): Anca's `ancaelena98@gmail.com` `[Gmail]/All Mail`,
+owner anca (id 4), same rule shape, once she has created an app password. Its
+source will be Vault `secret/paperless-ngx` field `anca_gmail_app_password`.
+
 Shared settings: `attachment_type=2` (inline parts included),
 `filter_attachment_filename_include=*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`,
 `maximum_age=0`, consumption scope attachments only, action TAG with parameter
@@ -37,8 +41,11 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
   UIDs. Google documents a 2,500 MB/day IMAP download limit for Workspace; if
   Gmail suspends IMAP, the poll errors and retries every 10 minutes.
 - **Backfill (done 2026-10-10 03:45 UTC):** tag 5227 has been removed from
-  rules 18-20, so new mail gets only `email-ingest`. To revert the historical
-  batch, bulk-delete documents tagged `email-backfill`.
+  rules 18-20, so new mail gets only `email-ingest`. As of 2026-10-12 tag 5227
+  no longer exists in Paperless, so the 2026-10-09/10 batch can only be
+  selected as `email-ingest` documents added on those two days. For a new
+  mailbox, create an `email-backfill` tag, put it on that rule for the first
+  pass, and take it off once the pass drains.
 - **Task workers for a big first pass:** Paperless runs one celery worker by
   default (`PAPERLESS_TASK_WORKERS` unset), and a long mail run holds it, so
   queued consume tasks wait until the crawl ends. For a large new mailbox, set
@@ -194,8 +201,9 @@ The map lives in **two places by design** — keep them in sync:
 ## Rollback
 
 Mailbox poll: delete rules 18-20 and mail accounts 4 and 5. Documents already
-consumed stay; bulk-delete by tag `email-backfill` to remove the historical
-batch.
+consumed stay. The original `email-backfill` tag was removed on 2026-10-12;
+select the historical batch as `email-ingest` documents added on 2026-10-09
+and 2026-10-10.
 
 Manual forward:
 

@@ -271,7 +271,7 @@ A person deliberately forwards a message to `docs@viktorbarzin.me`. The sieve al
 _Avoid_: "auto-forward" (nothing forwards automatically; see **Mailbox poll**).
 
 **Mailbox poll**:
-Paperless logs into a person's own mailbox (Viktor's and Emo's Gmail All Mail, Viktor's `me@` INBOX) and takes PDF and Office attachments from every message, marking each consumed message with the Gmail label or IMAP keyword `paperless`. The mailbox decides the owner. ADR-0029.
+Paperless logs into a person's own mailbox (Viktor's and Emo's Gmail All Mail, Viktor's `me@` INBOX; Anca's Gmail All Mail decided 2026-10-12, not yet live) and takes PDF and Office attachments from every message, marking each consumed message with the Gmail label or IMAP keyword `paperless`. The mailbox decides the owner. ADR-0029.
 _Avoid_: "forwarding"; "docs@" (a Mailbox poll never touches `docs@`).
 
 ### Secrets
