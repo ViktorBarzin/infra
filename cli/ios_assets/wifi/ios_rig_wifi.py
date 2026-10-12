@@ -16,6 +16,7 @@ that paired it.
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import socket
 import time
@@ -34,6 +35,10 @@ T = TypeVar("T")
 # The phone's RemotePairing control channel. 49152 is where iOS 26 put it on
 # the rig phone; it is not guaranteed, so a miss falls back to a port scan.
 DEFAULT_PAIRING_PORT = 49152
+# Seconds to bring the tunnel up and the disk image mounted. The first mount
+# downloads the image; later ones are cached, and a locked phone can make the
+# mount hang rather than fail, so this is the bound on that wait.
+CONNECT_TIMEOUT = 150
 SCAN_RANGE = (49152, 65535)
 WDA_PORT = 8100
 
@@ -123,6 +128,28 @@ def launch_failure_reason(bundle_id: str, message: str) -> str:
             "most likely expired (7 days); rebuild it with `homelab ios install <dir>`. Otherwise check "
             "the bundle id with `homelab ios apps`."
         )
+    return message
+
+
+LOCKED_HINT = (
+    "the phone is locked, so iOS refuses developer services: unlock it (no passcode is set) "
+    "and keep Settings > Display & Brightness > Auto-Lock on Never"
+)
+
+
+def means_port_moved(exc: BaseException) -> bool:
+    """Only a connection that never got an answer suggests the pairing port
+    moved. Anything else is the phone answering, and scanning other ports
+    would bury its reason (a locked phone read as a 150-second timeout)."""
+    if type(exc).__name__ == "ConnectionTerminatedError":  # pymobiledevice3: a port that is not RemotePairing
+        return True
+    return isinstance(exc, (OSError, TimeoutError, asyncio.IncompleteReadError))
+
+
+def connect_failure_reason(message: str) -> str:
+    """Name the fix for the connection failures a person can do something about."""
+    if "not been unlocked" in message.lower():
+        return LOCKED_HINT
     return message
 
 
@@ -238,7 +265,11 @@ class Rig:
                     self._write_state("pairing-port", str(port))
                     log.info("tunnel up to %s:%s (%s %s)", ip, port, rsd.product_type, rsd.product_version)
                     return rsd
-                except Exception as e:  # noqa: BLE001 - every failure means "try the next port"
+                except Exception as e:
+                    if not means_port_moved(e):
+                        # The phone answered (locked, unpaired, ...): its reason
+                        # is the useful part, and other ports will not change it.
+                        raise PhoneUnavailable(connect_failure_reason(str(e) or type(e).__name__)) from e
                     errors.append(f"{port}: {type(e).__name__} {e}"[:200])
             if round_ == 0:
                 ports = [p for p in candidate_ports(None, await self._scan(ip)) if p not in ports]
@@ -250,11 +281,22 @@ class Rig:
         async with self._lock:
             if self._rsd is None:
                 try:
-                    self._rsd = await self._open()
+                    # Bounded: a tunnel or mount that never answers would hold
+                    # this lock, and every request behind it, forever. The
+                    # mount can download the disk image, hence the long bound.
+                    async with asyncio.timeout(CONNECT_TIMEOUT):
+                        self._rsd = await self._open()
+                        await self._ensure_ddi()
                     self._last_error = None
-                    await self._ensure_ddi()
                 except Exception as e:
-                    self._last_error = str(e)
+                    self._last_error = connect_failure_reason(str(e) or type(e).__name__)
+                    log.warning("connecting to the phone failed: %s", self._last_error)
+                    tunnel, self._tunnel, self._rsd = self._tunnel, None, None
+                    if tunnel is not None:
+                        try:
+                            await tunnel.aclose()
+                        except Exception:
+                            log.debug("tunnel close failed", exc_info=True)
                     raise
             return self._rsd
 
@@ -267,12 +309,14 @@ class Rig:
                 except Exception:
                     log.debug("tunnel close failed", exc_info=True)
 
-    async def call(self, fn: Callable[[Any], Awaitable[T]]) -> T:
-        """Run fn(rsd); on a transport error rebuild the tunnel and retry once."""
+    async def call(self, fn: Callable[[Any], Awaitable[T]], timeout: float = 60) -> T:
+        """Run fn(rsd) with a deadline; on a transport error or a hang, rebuild
+        the tunnel and retry once. Without the deadline one call that never
+        returned left every later request waiting (seen 2026-10-12)."""
         for attempt in (0, 1):
             rsd = await self.rsd()
             try:
-                return await fn(rsd)
+                return await asyncio.wait_for(fn(rsd), timeout)
             except (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError) as e:
                 log.warning("device call failed (%s), rebuilding the tunnel", e)
                 await self.drop()
@@ -344,7 +388,7 @@ class Rig:
             async with InstallationProxyService(lockdown=rsd) as ip:
                 await ip.install_from_bytes(ipa)
 
-        await self.call(op)
+        await self.call(op, timeout=600)
 
     async def location(self, lat: float | None, lon: float | None) -> None:
         from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
@@ -392,7 +436,7 @@ class Rig:
             finally:
                 await inspector.close()
 
-        return await self.call(op)
+        return await self.call(op, timeout=180)
 
     async def battery(self) -> dict[str, Any] | None:
         from pymobiledevice3.services.diagnostics import DiagnosticsService
@@ -401,7 +445,7 @@ class Rig:
             async with DiagnosticsService(lockdown=rsd) as d:
                 return summarise_battery(await d.get_battery())
 
-        return await self.call(op)
+        return await self.call(op, timeout=15)
 
     # -- WebDriverAgent
 
@@ -441,7 +485,7 @@ class Rig:
                         self.wda.task = None
                         delay = min(1800.0, 30.0 * (2 ** min(self.wda.attempts, 6)))
                     elif task is None:
-                        await self.start_wda()
+                        await asyncio.wait_for(self.start_wda(), 120)
                 else:
                     self.wda.last_error = None
                     self.wda.attempts = 0
@@ -452,6 +496,11 @@ class Rig:
 
     async def status(self) -> dict[str, Any]:
         out: dict[str, Any] = {"host": self.cfg.host, "checked_at": datetime.now(UTC).isoformat()}
+        if self._rsd is None and self._lock.locked():
+            # Someone is already connecting; answer now rather than queue
+            # behind a connect that can take minutes (mount included).
+            out.update(connected=False, error="connecting to the phone, try again shortly")
+            return out
         try:
             rsd = await self.rsd()
             out.update(
@@ -461,7 +510,7 @@ class Rig:
                 ios=rsd.product_version,
             )
         except Exception as e:  # noqa: BLE001
-            out.update(connected=False, error=str(e) or self._last_error)
+            out.update(connected=False, error=connect_failure_reason(str(e)) or self._last_error)
             return out
         try:
             out["battery"] = await self.battery()
@@ -556,8 +605,20 @@ async def serve(cfg: Config) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=os.environ.get("IOS_RIG_LOG", "INFO"), format="%(levelname)s %(name)s: %(message)s")
-    asyncio.run(serve(Config.from_env()))
+    cfg = Config.from_env()
+    # User-unit journals are not kept on the devvm, so the service also logs to
+    # a small rotating file: ~/.local/state/ios-rig/service.log.
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(cfg.state_dir / "service.log", maxBytes=1_000_000, backupCount=2),
+    ]
+    logging.basicConfig(
+        level=os.environ.get("IOS_RIG_LOG", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
+    asyncio.run(serve(cfg))
 
 
 if __name__ == "__main__":
