@@ -344,11 +344,6 @@
       enabled: false,
     },
     {
-      description: "HELD: Nextcloud chart and image (major stepping needs a supervised run first)",
-      matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
-      enabled: false,
-    },
-    {
       description: "HELD: Calico / tigera-operator",
       matchPackageNames: ["tigera-operator", "quay.io/tigera/**", "calico/**", "quay.io/calico/**"],
       enabled: false,
