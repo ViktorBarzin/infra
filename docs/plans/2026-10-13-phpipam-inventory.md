@@ -32,18 +32,13 @@ MariaDB client cannot log in to MySQL 8.4 and the error was discarded.
 
 ```mermaid
 flowchart TD
-  subgraph Sources
-    OW[OpenWrt sites<br/>London, Valchedrym, Mladost 3<br/>leases, static leases, ARP]
-    PF[pfSense<br/>Kea leases + reservations<br/>ARP after LAN sweep<br/>WireGuard peers]
-    K8[Kubernetes<br/>nodes, LoadBalancer IPs]
-    HS[Headscale API<br/>tailnet nodes]
-    TD[Technitium<br/>existing names]
-  end
-  OW & PF & K8 & HS & TD --> IMP[phpipam-import<br/>every 5 min]
+  S["Sources<br/>site routers<br/>pfSense, Kubernetes<br/>Headscale, Technitium<br/>Home Assistant<br/>Proxmox, OUI"] --> IMP["phpipam-import<br/>every 5 min"]
   IMP -->|rows| DB[(phpIPAM)]
-  IMP -->|site lease names + hand-row names| TW[Technitium<br/>viktorbarzin.lan]
-  P[Person in phpIPAM UI] -->|hand rows| DB
+  IMP -->|names| TW[Technitium]
 ```
+
+People add and edit hand rows in the phpIPAM UI; the importer never changes
+what they wrote.
 
 ### Rows
 
