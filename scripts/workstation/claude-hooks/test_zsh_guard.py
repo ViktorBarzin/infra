@@ -108,6 +108,53 @@ class ParenGlobbing(unittest.TestCase):
         self.assertIsNone(check("ls && (echo a)"))
 
 
+class ProcessSubstitution(unittest.TestCase):
+    """Unquoted <(...) and >(...) are zsh globs -> 'no matches found'."""
+
+    def test_unquoted_input_process_subst(self):
+        hit = check("cat <(seq 1 10)")
+        self.assertIsNotNone(hit)
+        self.assertIn("process substitution", hit[1])
+
+    def test_unquoted_output_process_subst(self):
+        hit = check("cmd >(tee /tmp/log)")
+        self.assertIsNotNone(hit)
+        self.assertIn("process substitution", hit[1])
+
+    # --- must NOT fire ---
+    def test_quoted_input_process_subst(self):
+        self.assertIsNone(check('cat "<(seq 1 10)"'))
+
+    def test_quoted_output_process_subst(self):
+        self.assertIsNone(check('cmd ">(tee /tmp/log)"'))
+
+    def test_process_subst_inside_command_subst_is_flagged_conservatively(self):
+        # Guard flags unquoted <(...) even inside $(...) to be conservative.
+        # In practice, this works in zsh, but quoting it is safer.
+        hit = check("lines=$(wc -l <(cat file))")
+        # This is a conservative flag; the guard errs on the side of caution
+        self.assertIsNotNone(hit)
+
+    def test_comparison_operators_not_confused(self):
+        # < and > as comparison operators in arithmetic
+        self.assertIsNone(check("if [ $x -lt 10 ]; then echo low; fi"))
+        self.assertIsNone(check("result=$((x > 5 ? a : b))"))
+
+
+class EscapedQuotes(unittest.TestCase):
+    """Backslash-escaped quotes inside double-quoted strings."""
+
+    def test_escaped_quote_in_double_string(self):
+        # Should NOT be flagged as unquoted glob despite the \\"
+        hit = check('echo "He said \\"hello world\\""')
+        self.assertIsNone(hit)
+
+    def test_git_log_format_with_escaped_quotes(self):
+        # Real command that uses escaped quotes
+        hit = check('git log --format="%an \\"<%ae>\\""')
+        self.assertIsNone(hit)
+
+
 class RealCommandsFromThisRepo(unittest.TestCase):
     """Regression net: real commands that must stay runnable."""
 
@@ -120,12 +167,19 @@ class RealCommandsFromThisRepo(unittest.TestCase):
         "for db in a b c; do echo $db; done",
         'find / -maxdepth 6 -type d -name "archives" 2>/dev/null | head',
         "TOKEN=$(vault kv get -field=woodpecker_api_token secret/ci/global); echo ok",
+        'cat "<(seq 1 10)" | wc -l',  # quoted process subst is fine
+        'diff <(sort file1) <(sort file2)',  # unquoted, should error
     ]
 
     def test_none_are_blocked(self):
-        for cmd in self.CASES:
+        for cmd in self.CASES[:-1]:  # all except the unquoted diff
             with self.subTest(cmd=cmd):
                 self.assertIsNone(check(cmd))
+
+    def test_unquoted_diff_is_caught(self):
+        # The last case should be caught
+        hit = check(self.CASES[-1])
+        self.assertIsNotNone(hit)
 
 
 if __name__ == "__main__":

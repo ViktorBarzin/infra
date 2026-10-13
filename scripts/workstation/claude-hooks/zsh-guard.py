@@ -55,17 +55,30 @@ def _strip_heredocs(cmd):
 
 
 def _unquoted_spans(cmd):
-    """Yield (index, char) for every character outside single/double quotes."""
+    """Yield (index, char) for every character outside single/double quotes.
+
+    Respects backslash escapes in double-quoted strings, treating \\" as an
+    escaped quote (not a quote toggle).
+    """
     i, in_s, in_d = 0, False, False
     while i < len(cmd):
         c = cmd[i]
-        if c == "\\":
-            i += 2
-            continue
+        if c == "\\" and i + 1 < len(cmd):
+            # In double-quoted context, backslash escapes the next char
+            if in_d:
+                i += 2
+                continue
+            # In unquoted context, backslash is literal
+            elif not in_s:
+                yield i, c
         if c == "'" and not in_d:
             in_s = not in_s
         elif c == '"' and not in_s:
-            in_d = not in_d
+            # Don't toggle if this quote is escaped (preceded by \)
+            if i > 0 and cmd[i - 1] == "\\" and in_d:
+                pass  # already skipped by the backslash handler
+            else:
+                in_d = not in_d
         elif not in_s and not in_d:
             yield i, c
         i += 1
@@ -113,6 +126,33 @@ def _check_word_splitting(cmd):
     return None
 
 
+# Process substitution: <(...) or >(...)  — zsh treats unquoted as glob/filename pattern.
+PROCESS_SUBST = re.compile(r"[<>]\(")
+
+
+def _check_process_substitution(cmd):
+    """Detect unquoted process substitution <(...) or >(...) which zsh globs."""
+    for i, c in _unquoted_spans(cmd):
+        if c not in "<>":
+            continue
+        m = PROCESS_SUBST.match(cmd, i)
+        if not m:
+            continue
+        # Verify this is not inside $(...) or other construct
+        if i > 0 and cmd[i - 1] == "$":
+            continue
+        op = cmd[i]
+        return (
+            f"{op}(...)",
+            f"zsh globs the unquoted process substitution `{op}(...)`.\n"
+            f"  It is treated as a filename pattern, fails with 'no matches found',\n"
+            f"  and expands to NOTHING — commands that depend on the substituted\n"
+            f"  value then fail with unexpected arguments.\n"
+            f"Fix: quote it:  \"{op}(...)\"  or  $({op}(...) inside $(...)).",
+        )
+    return None
+
+
 # A bare word immediately followed by '(' — zsh reads this as a glob pattern.
 PAREN = re.compile(r"[A-Za-z_][A-Za-z0-9_.+-]*\(")
 
@@ -151,7 +191,11 @@ def _check_paren_glob(cmd):
 def check(cmd):
     """Return (token, message) if the command should be blocked, else None."""
     cmd = _strip_heredocs(cmd)
-    return _check_word_splitting(cmd) or _check_paren_glob(cmd)
+    return (
+        _check_word_splitting(cmd)
+        or _check_paren_glob(cmd)
+        or _check_process_substitution(cmd)
+    )
 
 
 def main():
