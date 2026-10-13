@@ -435,6 +435,29 @@ locals {
            evt.Parsed.traefik_router_name startsWith "terminal-tmux-api-") &&
           (evt.Unmarshaled.traefik?.OriginStatus ?? 0) != 0
     ---
+    name: viktor/homepage-api-whitelist
+    description: "Homepage dashboard's own API calls burst on every page load"
+    # Opening home.viktorbarzin.me fires one /api/kubernetes/status/<ns>/<app>
+    # call per tile plus the /api/services/proxy widget calls, all in parallel.
+    # On 2026-10-13 at 22:09:44 UTC that was about 50 non-static requests
+    # within 3 s from Viktor's London IPv6 (2a01:4b00:ab23:1200::/56): around
+    # 25 status lookups answered 404 (tiles whose app has no matching
+    # workload) and the default Traefik rate limit answered 6 with 429. That
+    # tripped http-crawl-non_statics, http-probing and http-429-abuse together
+    # and banned the address from every host for 4h.
+    #
+    # Every path under /api/ on this router is Homepage's own read-only API,
+    # reached only after Anubis's proof-of-work (an unsolved client gets the
+    # 200 challenge page instead). The rate limit still applies; this only
+    # stops those responses from counting toward a ban. The router name is the
+    # one in the live access log (homepage-homepage-home-viktorbarzin-me@kubernetes).
+    whitelist:
+      reason: "Homepage's per-tile API burst on page load is normal, not crawling or probing"
+      expression:
+        - >
+          evt.Parsed.traefik_router_name startsWith "homepage-homepage-home-viktorbarzin-me" &&
+          evt.Parsed.request startsWith "/api/"
+    ---
     name: viktor/bouncer-refusals-whitelist
     description: "Don't score the 403s our own Traefik bouncer returns"
     # A request the bouncer refuses is logged by Traefik like any other 403,
