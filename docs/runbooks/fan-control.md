@@ -224,6 +224,33 @@ the same time within ±1 K (46 %), and 4.9 writes per hour; applying a 3 % step 
 day's recorded command gives 119 writes and 13 quick reversals instead of 252 and 42.
 The previous values (Kp −0.5, Ki −0.001, `MIN_STEP` 2) are the way back.
 
+**24-hour check of `MIN_STEP` 3 (2026-10-13).** The 24 hours after the restart at 18:04
+against the 24 hours before it, both with Kp −1.0 and Ki −0.002. The day after had a
+lighter, calmer load (mean 39.4 against 50.6 %, σ 11.5 against 16.8), so the replay
+column compares the two steps on the same day:
+
+| | `MIN_STEP` 2, day before | `MIN_STEP` 3, day after | Replay of the day after, 2 % / 3 % |
+|---|---|---|---|
+| Time outside 60 ± 2 °C | 25.9 % | 17.2 % | 18.2 / 18.8 % |
+| Time within ±1 K | 47.9 % | 50.7 % | 51.0 / 51.6 % |
+| σ of the 5-min mean | 1.79 K | 1.63 K | 1.60 / 1.63 K |
+| 5-min mean, max / min | 66.3 / 55.1 °C | 66.1 / 55.2 °C | 66.0 / 55.1 and 66.0 / 55.0 °C |
+| IPMI writes per hour | 10.5 | 6.2 | 10.0 / 5.3 |
+| Reversals within 5 min | 52 | 16 | 39 / 17 |
+
+On the same day the step moves the band figure by 0.6 points, less than the replay's own
+error (18.8 % against the measured 17.2 %). Applying the daemon's rule to that day's
+recorded command gives 246 writes and 35 quick reversals at 2 %, and 147 and 14 at 3 %;
+the journal has 147 regular writes (146 of 3 %, one of 4 %) and 16 quick reversals. The
+4.9 writes per hour predicted on 2026-10-12 was for the busier day before, where the same
+rule at 3 % gives 4.8. In the calmest 4 hours of 2026-10-13 (10:04–14:04) the 5-min mean
+varied more than in the calmest 4 hours of the day before at a similar load (σ 1.37
+against 0.76 K). Those hours had more short CPU temperature peaks (15 against 2 minutes
+at 64 °C or more), and the replay at 2 % gives about the same σ there (1.33 K). A 4 % step
+would bring the writes to 3.9 per hour and the time within ±1 K down to 45 %. After the
+restart there were no misses, no Dell auto and no unavailable sensor values; the only
+Dell auto was the 4 s restart itself. The check supports keeping 3 %.
+
 **Manual override (MAN on the faceplate):** `input_boolean.r730_fan_lock` +
 `input_number.r730_fan_manual_pct` (Override %). While unlocked, the automation
 "R730 fan override — track live speed while unlocked" keeps Override % equal to the
