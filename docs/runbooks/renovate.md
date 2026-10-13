@@ -112,6 +112,10 @@ Single versions the rails or a person reverted live in `renovate/ignored-version
 
 A batch landed with a trailing `[ci skip]` commit is still inside the next pipeline's rails range: the rails verify every Renovate-authored commit between the marker and HEAD, so another session's push can verify, and revert, bumps that were applied by hand. On 2026-10-12 that reverted the Python 3.14 helper bumps of nvidia, llama-cpp and kyverno as collateral of the llama-swap failure; they were re-landed.
 
+A verify that fails for a reason outside the bump still reverts it, and the ignore entry the rails add matches the package name in every stack, not only the one that failed. On 2026-10-13 Kyverno webhook panics from the `inject-ndots` policy failed the kyverno verify twice; the rails reverted that stack's Python bumps and the `python` `3.15-alpine` ignore blocked the bump in every stack naming the image `python`. Read the failing check in the pipeline log before trusting an entry in `renovate/ignored-versions.json`.
+
+gpu-operator chart bumps cannot pass the rails alone: the driver DaemonSet is OnDelete with auto-upgrade off, so the ClusterPolicy stays notReady until the driver pod is deleted, which takes the GPU away for about 10 minutes. Land them by hand with that restart (see the comment above the chart pin in `stacks/nvidia/modules/nvidia/main.tf`).
+
 Not managed by Renovate at all: `modules/docker-registry/**` (synced to the registry VM by its own pipeline, outside the rails), `.woodpecker/**` (CI images), our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, `forgejo.viktorbarzin.me/*`), and `:latest` or untagged refs.
 
 Shared-module image pins live in the callers, not in the module default: the anubis tag is pinned in each of its eight stacks, so Renovate bumps one stack per commit. A pin left inside `modules/**` lands in a Tuesday 00:00-03:59 window, and the rails verify every stack that uses the module.

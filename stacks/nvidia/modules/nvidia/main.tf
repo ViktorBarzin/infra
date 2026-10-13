@@ -148,6 +148,10 @@ resource "helm_release" "nvidia-gpu-operator" {
   # in values.yaml. Bumping the driver is a separate step with its own GPU
   # outage. See docs/known-issues.md and post-mortem
   # 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
+  # Every chart bump also changes the helm.sh/chart label on the driver
+  # DaemonSet, which is OnDelete with driver.upgradePolicy.autoUpgrade off,
+  # so the ClusterPolicy stays notReady on state-driver until the driver pod
+  # is deleted by hand: about 10 minutes without GPU (v26.7.2, 2026-10-13).
   version = "v26.7.2"
   timeout = 6000
 
