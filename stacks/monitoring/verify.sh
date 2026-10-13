@@ -61,15 +61,20 @@ verify_component() {
   check "prometheus-server converged" retry 300 10 workload_ready monitoring deployment/prometheus-server
   check "Prometheus ready" expect_http "$P/-/ready" '200'
   check "rules loaded, none unhealthy" _rules_healthy
-  check "over 95% of scrape targets up" expect_prom 'count(up == 1) / count(up)' -gt 0.95
+  # A chart bump restarts prometheus-server, which then has no samples for
+  # the first scrape intervals: count(alloy_build_info) read 4 of 7 and the
+  # 5m Loki rate had no series on 2026-10-13, and the rails reverted
+  # prometheus 29.36.2 with Alloy and Loki untouched. The checks below read
+  # Prometheus, so they wait for it to refill.
+  check "over 95% of scrape targets up" retry 600 30 expect_prom 'count(up == 1) / count(up)' -gt 0.95
   check "26-week history still queryable" _history
   check "Alertmanager cluster ready" _alertmanager
   check "Grafana database ok" _grafana
   check "Loki ready" expect_body "$L/ready" '^ready'
-  check "Loki is ingesting" expect_prom 'sum(rate(loki_distributor_lines_received_total[5m]))' -gt 10
+  check "Loki is ingesting" retry 600 30 expect_prom 'sum(rate(loki_distributor_lines_received_total[5m]))' -gt 10
   check "recent logs are queryable in Loki" _loki_query
   check "Loki ruler has its rules" _loki_rules
-  check "Alloy runs on every node plus syslog" expect_prom 'count(alloy_build_info)' -ge 7
-  check "Alloy configs loaded" expect_prom 'min(alloy_config_last_load_successful)' -eq 1
+  check "Alloy runs on every node plus syslog" retry 600 30 expect_prom 'count(alloy_build_info)' -ge 7
+  check "Alloy configs loaded" retry 600 30 expect_prom 'min(alloy_config_last_load_successful)' -eq 1
   check "Alloy drops no log entries" expect_prom '(sum(rate(loki_write_dropped_entries_total[15m])) or vector(0))' -lt 1
 }
