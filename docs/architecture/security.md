@@ -452,6 +452,13 @@ forward-auth first, so a backend answer means a logged-in user; a request
 Authentik turns away has `OriginStatus` 0 and is still scored. Added
 2026-10-03 after the text view's 421 picture 404s in seven seconds tripped
 `crowdsecurity/http-probing` on Viktor's phone.
+`viktor/homepage-api-whitelist` drops everything under `/api/` on the
+Homepage router (`home.viktorbarzin.me`). Each page load sends one status
+call per tile plus the widget proxy calls in parallel, about 50 in 3 s, with
+many 404s from tiles that have no matching workload. On 2026-10-13 that
+tripped `http-crawl-non_statics`, `http-probing` and `http-429-abuse` at once
+and banned Viktor's London address. The paths sit behind Anubis, and the
+default rate limit still applies to them.
 `viktor/bouncer-refusals-whitelist` drops the 403s the Traefik bouncer returns
 itself (`OriginStatus` 0 in the access log), so a banned client's retries
 cannot renew its own ban; before it, one false positive stacked 24 decisions
