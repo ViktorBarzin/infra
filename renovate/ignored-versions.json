@@ -3,17 +3,6 @@
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
   "packageRules": [
     {
-      "description": "rails revert 2026-10-12 pipeline #2376: stack llama-cpp failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 8ff1fda6)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "ghcr.io/mostlygeek/llama-swap"
-      ],
-      "matchNewValue": "v264-cuda-b11561",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-10-12 pipeline #2380: stack resume failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 775df6d8)",
       "matchDatasources": [
         "docker"
