@@ -506,9 +506,12 @@ a blurred frame means the poll was skipped or timed out. It prints
 
 ### `doctor` says `ssh` failed
 
-The Mac is addressed as `mbp-london.viktorbarzin.lan`, which resolves through
-Technitium to its Flint static lease at `192.168.8.168`. If both go stale,
-point the rig somewhere else without touching code:
+The Mac is addressed as `mbp-london.viktorbarzin.lan`. Since 2026-10-13 the
+name follows whatever address the Mac currently leases, as long as the MAC it
+presents is listed in the `mbp-london` entry in
+`scripts/london-flint/provision.sh` (`docs/architecture/dns.md`, "London
+devices"); no address is pinned any more. If the name is stale, point the rig
+somewhere else without touching code:
 
 ```sh
 IOS_RIG_MAC_HOST=192.168.8.42 homelab ios doctor
@@ -579,8 +582,11 @@ the private address recorded for that network. It went stale once before
 `.168` stayed dark.
 
 The symptom is the whole rig looking absent: `mbp-london.viktorbarzin.lan`
-resolves to `.168`, nothing answers there, and it is easy to read that as the
-laptop being away. `networksetup -getmacaddress en0` reports the **hardware**
+does not resolve or points at an old address, and it is easy to read that as
+the laptop being away. Since 2026-10-13 a new private address shows up in DNS
+by itself under the name the Mac announces (`mac-<last four hex>` or similar);
+adding that MAC to the `mbp-london` entry in `provision.sh` and re-running it
+moves the name back within five minutes. `networksetup -getmacaddress en0` reports the **hardware**
 address and `ifconfig en0 | awk '/ether/{print $2}'` reports the one actually
 in use, so comparing the two names the cause in one command.
 
