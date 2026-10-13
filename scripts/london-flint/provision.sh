@@ -122,6 +122,83 @@ else
 	echo "dhcp: iphone-london lease present"
 fi
 
+# Device names (docs/architecture/dns.md, "London devices"). Every leased
+# device is named in viktorbarzin.lan by phpipam-remote-import, from the
+# hostname it announces. These entries give a chosen name to devices whose own
+# name is missing or shared (five Kasa plugs all say "KP115"). No IP is pinned,
+# so a name follows its device from one SSID to another. Kasa plugs are named
+# after their nickname in the Kasa app.
+# Each argument after the name is a MAC; a Mac on a private Wi-Fi address can
+# present one per SSID, so mbp-london lists all of them.
+dhcp_changed=0
+ensure_host() {
+	sec=$1 name=$2
+	shift 2
+	macs=$*
+	# Drop any other host section that claims this name or one of these MACs,
+	# such as the anonymous entries made in the GL UI before this existed.
+	for other in $(uci -X show dhcp | sed -n "s/^dhcp\.\([^.=]*\)=host$/\1/p"); do
+		[ "$other" = "$sec" ] && continue
+		o_name=$(uci -q get "dhcp.$other.name" || true)
+		o_macs=$(uci -q get "dhcp.$other.mac" | tr 'A-F' 'a-f' || true)
+		hit=0
+		[ "$o_name" = "$name" ] && hit=1
+		for m in $macs; do
+			case " $o_macs " in *" $m "*) hit=1 ;; esac
+		done
+		if [ "$hit" = 1 ]; then
+			uci delete "dhcp.$other"
+			dhcp_changed=1
+			echo "dhcp: removed $other ($o_name $o_macs), replaced by $sec"
+		fi
+	done
+	if [ "$(uci -q get "dhcp.$sec")" != host ] || [ "$(uci -q get "dhcp.$sec.name")" != "$name" ] ||
+		[ "$(uci -q get "dhcp.$sec.mac")" != "$macs" ] || uci -q get "dhcp.$sec.ip" >/dev/null; then
+		uci set "dhcp.$sec=host"
+		uci set "dhcp.$sec.name=$name"
+		uci set "dhcp.$sec.mac=$macs"
+		uci -q delete "dhcp.$sec.ip" || true
+		dhcp_changed=1
+		echo "dhcp: $name -> $macs"
+	fi
+}
+ensure_host plug_livia plug-livia 78:8c:b5:74:30:11
+ensure_host plug_jinx plug-jinx 78:8c:b5:74:38:23
+ensure_host plug_pikkachu plug-pikkachu 78:8c:b5:74:39:ce
+ensure_host plug_michelle plug-michelle 9c:53:22:2b:59:4b
+ensure_host plug_thor plug-thor 78:8c:b5:74:31:39
+ensure_host plug_tapo plug-tapo 78:8c:b5:fe:ae:c1
+ensure_host mbp_london mbp-london 84:2f:57:39:9a:d9 16:a8:3e:53:fe:6b 52:9f:c2:9a:64:ab
+ensure_host anca_mba_london anca-mba-london aa:1c:ce:36:58:a8
+ensure_host portal_london portal-london a4:0e:2b:0e:48:a3
+ensure_host projector_london projector-london f4:9d:8a:26:0b:18
+
+# Resolve every viktorbarzin.lan name (Sofia's and London's alike) and the
+# Sofia reverse zones at Technitium over the tunnel, so London clients get the
+# same answer Sofia does. dnsmasq keeps answering bare names and <name>.lan
+# from its own leases, and those keep working when the tunnel is down.
+# dnsmasq's TCP fallback is dropped by GL's tcp_dns_leak_drop rule, so an
+# answer over 1232 bytes fails; plain A lookups are far below that.
+for s in /viktorbarzin.lan/10.0.20.201 /1.168.192.in-addr.arpa/10.0.20.201 /10.in-addr.arpa/10.0.20.201; do
+	uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep -qxF "$s" || { uci add_list dhcp.@dnsmasq[0].server="$s"; dhcp_changed=1; echo "dnsmasq: server $s"; }
+done
+if [ "$dhcp_changed" = 1 ]; then
+	uci commit dhcp
+	/etc/init.d/dnsmasq restart
+else
+	echo "dhcp: device names and Technitium forwarding present"
+fi
+# Canary: a name only Technitium knows. The GL DNS page and the Tailscale
+# toggle both rewrite dnsmasq settings, so a run that finds this failing after
+# changing nothing means something else undid the forwarding.
+i=0
+until [ "$(dig +short +time=2 +tries=1 @127.0.0.1 openwrt-london.viktorbarzin.lan)" = 192.168.8.1 ]; do
+	i=$((i + 1))
+	[ "$i" -lt 10 ] || { echo "dnsmasq: openwrt-london.viktorbarzin.lan does not resolve via Technitium" >&2; exit 1; }
+	sleep 1
+done
+echo "dnsmasq: viktorbarzin.lan resolves via Technitium"
+
 # System log: an 8 MB ring in RAM (was 512 KB, which the DNS query log filled
 # in 3 to 14 minutes). The drop probe backfills tunnel outages from this ring,
 # so its size is how long an outage can be and still arrive in Loki whole.

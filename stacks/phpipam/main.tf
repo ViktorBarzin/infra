@@ -372,9 +372,11 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
                 fi
                 echo "Technitium auth verified"
 
-                # Query phpIPAM MySQL directly for hosts with hostnames
+                # Query phpIPAM MySQL directly for hosts with hostnames. London
+                # (192.168.8.0/23 = 3232237568..3232238079) is left out: the
+                # phpipam-remote-import job owns those names end to end.
                 mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
-                  "SELECT INET_NTOA(ip_addr), hostname FROM ipaddresses WHERE hostname != '' AND hostname IS NOT NULL AND subnetId >= 7" > /tmp/hosts.tsv
+                  "SELECT INET_NTOA(ip_addr), hostname FROM ipaddresses WHERE hostname != '' AND hostname IS NOT NULL AND subnetId >= 7 AND CAST(ip_addr AS UNSIGNED) NOT BETWEEN 3232237568 AND 3232238079" > /tmp/hosts.tsv
 
                 # Read from a file, not a pipeline: `... | while` runs the loop in a
                 # subshell, so the counters below never survived it.
@@ -412,7 +414,7 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
                 echo ""
                 echo "=== Reverse sync: DNS -> phpIPAM ==="
                 mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
-                  "SELECT id, INET_NTOA(ip_addr) FROM ipaddresses WHERE (hostname IS NULL OR hostname = '') AND subnetId >= 7" > /tmp/unnamed.tsv
+                  "SELECT id, INET_NTOA(ip_addr) FROM ipaddresses WHERE (hostname IS NULL OR hostname = '') AND subnetId >= 7 AND CAST(ip_addr AS UNSIGNED) NOT BETWEEN 3232237568 AND 3232238079" > /tmp/unnamed.tsv
 
                 while IFS=$$'\t' read -r ID IP; do
                   [ -z "$$ID" ] || [ -z "$$IP" ] && continue
@@ -707,116 +709,88 @@ PYEOF
   }
 }
 
-# CronJob: Import devices from remote sites (London + Valchedrym) via SSH
-# Runs hourly — these networks are mostly static
+# CronJob: name every London device in DNS (docs/architecture/dns.md, "London devices").
+# Reads the Flint's DHCP leases and curated static-lease names over the pfSense
+# SSH hop, records the devices in phpIPAM, and reconciles their A and PTR
+# records in Technitium. The logic and its tests live in files/london_import.py.
+# It is the only writer of London names: phpipam-dns-sync skips 192.168.8.0/23.
+resource "kubernetes_config_map" "london_import" {
+  metadata {
+    name      = "phpipam-london-import"
+    namespace = kubernetes_namespace.phpipam.metadata[0].name
+  }
+  data = {
+    "london_import.py" = file("${path.module}/files/london_import.py")
+  }
+}
+
 resource "kubernetes_cron_job_v1" "phpipam_remote_import" {
   metadata {
     name      = "phpipam-remote-import"
     namespace = kubernetes_namespace.phpipam.metadata[0].name
   }
   spec {
-    schedule                      = "0 * * * *"
+    schedule                      = "*/5 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
     job_template {
       metadata {}
       spec {
-        backoff_limit = 1
+        backoff_limit = 0
+        # With Forbid, one hung run (an apk fetch that never returns, as
+        # pfsense-import saw) would block every run after it.
+        active_deadline_seconds = 240
         template {
-          metadata {}
+          metadata {
+            annotations = {
+              "checksum/script" = sha1(file("${path.module}/files/london_import.py"))
+            }
+          }
           spec {
             restart_policy = "Never"
             container {
               name  = "import"
               image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
-                set -e
-                apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1
+                set -eu
+                apk add --no-cache -q openssh-client python3 py3-pymysql > /dev/null
 
                 mkdir -p /root/.ssh
                 cp /ssh/ssh_key /root/.ssh/id_rsa
                 chmod 600 /root/.ssh/id_rsa
                 echo "StrictHostKeyChecking no" > /root/.ssh/config
 
-                # Pull DHCP leases + ARP from Valchedrym via pfSense SSH hop
-                echo "=== Valchedrym (192.168.0.1 via pfSense) ==="
-                VALCHEDRYM=$$(ssh -o ConnectTimeout=10 admin@10.0.20.1 'timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@192.168.0.1 "cat /tmp/dhcp.leases 2>/dev/null; echo ---ARP---; cat /proc/net/arp 2>/dev/null" 2>/dev/null' 2>/dev/null || echo "")
+                # The lease file and the static-lease names, one ---UCI--- apart.
+                # A failed fetch leaves no marker, and the importer then changes
+                # nothing and exits non-zero.
+                ssh -o ConnectTimeout=10 admin@10.0.20.1 \
+                  'timeout 20 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@192.168.8.1 "cat /tmp/dhcp.leases; echo ---UCI---; uci -q show dhcp"' \
+                  > /tmp/flint.txt || true
 
-                echo "=== London (192.168.8.1 via pfSense) ==="
-                LONDON=$$(ssh -o ConnectTimeout=10 admin@10.0.20.1 'timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@192.168.8.1 "cat /tmp/dhcp.leases 2>/dev/null; echo ---ARP---; cat /proc/net/arp 2>/dev/null" 2>/dev/null' 2>/dev/null || echo "")
-
-                echo "=== Importing ==="
-                export LONDON_DATA="$$LONDON"
-                export VALCHEDRYM_DATA="$$VALCHEDRYM"
-                python3 << 'PYEOF'
-import os, re, subprocess
-
-db_host = os.environ["DB_HOST"]
-db_user = os.environ["DB_USER"]
-db_pass = os.environ["DB_PASS"]
-db_name = os.environ["DB_NAME"]
-
-def mysql_exec(sql):
-    subprocess.run(["mysql", "-h", db_host, "-u", db_user, f"-p{db_pass}", db_name, "-N", "-B", "-e", sql], capture_output=True, text=True)
-
-def get_existing():
-    r = subprocess.run(["mysql", "-h", db_host, "-u", db_user, f"-p{db_pass}", db_name, "-N", "-B", "-e",
-        "SELECT INET_NTOA(ip_addr), hostname, mac, subnetId FROM ipaddresses WHERE subnetId IN (11, 12)"],
-        capture_output=True, text=True)
-    existing = {}
-    for line in r.stdout.strip().split("\n"):
-        if not line: continue
-        parts = line.split("\t")
-        existing[parts[0]] = {"hostname": parts[1] if parts[1] != "NULL" else "", "mac": parts[2] if parts[2] != "NULL" else ""}
-    return existing
-
-def import_site(data, subnet_prefix, subnet_id, site_name):
-    if not data or "---ARP---" not in data:
-        print(f"  {site_name}: no data")
-        return 0
-    existing = get_existing()
-    dhcp_part, arp_part = data.split("---ARP---", 1)
-    imported = 0
-
-    # DHCP leases: timestamp mac ip hostname client_id
-    for line in dhcp_part.strip().split("\n"):
-        parts = line.split()
-        if len(parts) < 4: continue
-        mac, ip, hostname = parts[1], parts[2], parts[3]
-        if not ip.startswith(subnet_prefix): continue
-        short = hostname.split(".")[0] if hostname != "*" else ""
-        if ip not in existing:
-            mac_sql = f"'{mac}'" if mac else "NULL"
-            host_sql = f"'{short}'" if short else "''"
-            mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, hostname, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, {host_sql}, {mac_sql}, '-- {site_name} dhcp --', NOW())")
-            imported += 1
-            print(f"  NEW {ip} -> {short} mac={mac}")
-        else:
-            updates = ["lastSeen=NOW()"]
-            if mac and not existing[ip]["mac"]: updates.append(f"mac='{mac}'")
-            if short and not existing[ip]["hostname"]: updates.append(f"hostname='{short}'")
-            mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
-
-    # ARP table
-    for line in arp_part.strip().split("\n"):
-        m = re.match(r'(\d+\.\d+\.\d+\.\d+)\s+\S+\s+\S+\s+([0-9a-f:]+)\s+', line)
-        if not m: continue
-        ip, mac = m.group(1), m.group(2)
-        if not ip.startswith(subnet_prefix) or mac == "00:00:00:00:00:00": continue
-        if ip in existing: continue
-        mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, '{mac}', '-- {site_name} arp --', NOW())")
-        imported += 1
-        print(f"  NEW (arp) {ip} mac={mac}")
-    return imported
-
-london = import_site(os.environ.get("LONDON_DATA", ""), "192.168.8.", 11, "london")
-valchedrym = import_site(os.environ.get("VALCHEDRYM_DATA", ""), "192.168.0.", 12, "valchedrym")
-print(f"\nLondon: {london} new, Valchedrym: {valchedrym} new")
-PYEOF
-                echo "Remote import complete"
+                exec python3 /app/london_import.py
               EOT
               ]
+              env {
+                name  = "FLINT_DATA_FILE"
+                value = "/tmp/flint.txt"
+              }
+              env {
+                name  = "TECH_URL"
+                value = "http://technitium-web.technitium.svc.cluster.local:5380"
+              }
+              env {
+                name  = "TECH_USER"
+                value = local.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = local.technitium_password
+              }
+              env {
+                name  = "TECH_API_TOKEN"
+                value = local.technitium_api_token
+              }
               env {
                 name  = "DB_HOST"
                 value = var.mysql_host
@@ -843,6 +817,11 @@ PYEOF
                 mount_path = "/ssh"
                 read_only  = true
               }
+              volume_mount {
+                name       = "script"
+                mount_path = "/app"
+                read_only  = true
+              }
               resources {
                 requests = {
                   cpu    = "10m"
@@ -858,6 +837,12 @@ PYEOF
               secret {
                 secret_name  = "phpipam-pfsense-ssh"
                 default_mode = "0400"
+              }
+            }
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map.london_import.metadata[0].name
               }
             }
           }

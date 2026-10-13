@@ -46,27 +46,11 @@ locals {
     "terminal-api" = "10.0.20.203"
   }
 
-  # Same, for the internal-only viktorbarzin.lan zone — the household devices
-  # that live behind a remote site's own DHCP rather than Kea, so neither the
-  # ingress sync nor the phpIPAM/Technitium sync ever creates them. The London
-  # names that predate this (ha-london, rpi-london, openwrt-london) were added
-  # by hand in Technitium; declare new ones here so they survive a rebuild.
-  #
-  # mbp-london: Viktor's MacBook, which is the USB adb host for the London
-  # Portal (infra/scripts/provision-portal.sh, docs/runbooks/provision-portal.md).
-  # Pinned to .168 by a static lease on the London Flint covering BOTH its
-  # hardware MAC and its current macOS private Wi-Fi address — the previous
-  # reservation had gone stale because that private address rotated.
-  #
-  # projector-london: the Anker projector that plays the F1 stream. It sits on
-  # the Flint's GUEST network (192.168.9.0/24), not the LAN, and is pinned to
-  # .100 there by a static lease tagged projector-london. The Flint answers
-  # projector-london.lan for its own clients; this record is what lets Sofia,
-  # the cluster and the devvm reach it by name over the tunnel.
-  #
-  # iphone-london: the iOS test rig phone, on the Flint's GUEST network and
-  # pinned to .205 by a static lease (scripts/london-flint/provision.sh). The
-  # devvm drives it over Wi-Fi by this name (docs/runbooks/ios-test-rig.md).
+  # Same, for the internal-only viktorbarzin.lan zone: devices that live behind
+  # a remote site's own DHCP rather than Kea. London devices are not listed
+  # here: phpipam-remote-import names every London lease (stacks/phpipam,
+  # docs/architecture/dns.md "London devices"), including the curated names
+  # mbp-london, projector-london and iphone-london.
   #
   # health-test: the LAN-only, auth-free test host for the health app
   # (health ADR-0008). It points at the internal Traefik LB, the same address
@@ -82,9 +66,6 @@ locals {
   # by its WireGuard tunnel address and by its LAN address. The reverse-proxy
   # ingress for mladost3.viktorbarzin.me targets mladost3.viktorbarzin.lan.
   static_lan_a_records = {
-    "mbp-london"       = "192.168.8.168"
-    "projector-london" = "192.168.9.100"
-    "iphone-london"    = "192.168.9.205"
     "health-test"      = "10.0.20.203"
     "mladost3"         = "10.3.2.7"
     "mladost3-openwrt" = "192.168.3.1"
