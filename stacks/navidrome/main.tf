@@ -197,6 +197,14 @@ resource "kubernetes_deployment" "navidrome" {
             name  = "GOMEMLIMIT"
             value = "600MiB"
           }
+          # One worker was still OOMKilled at 768Mi on 2026-10-13, about 25s
+          # after each scan (the worker pauses during scans), with memory
+          # under 31Mi at every Prometheus scrape: a single cover decode
+          # spiking past the limit. Covers are decoded on request instead.
+          env {
+            name  = "ND_ENABLEARTWORKPRECACHE"
+            value = "false"
+          }
           port {
             name           = "http"
             container_port = 4533
