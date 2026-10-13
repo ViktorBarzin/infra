@@ -118,7 +118,7 @@
 | stirling-pdf | PDF editor + tools (v2: sign/draw/annotate/add-text + convert/OCR; LOCAL login `auth=app` — SSO/OIDC paywalled by Stirling) — stirling-pdf.viktorbarzin.me | stirling-pdf |
 | speedtest | Speed testing | speedtest |
 | freedify | Music streaming (factory pattern) | freedify |
-| phpipam | IP Address Management (IPAM) + auto-discovery | phpipam |
+| phpipam | Address inventory: every IPv4 address in use, filled by the `phpipam-import` CronJob (ADR-0032) | phpipam |
 | ~~netbox~~ | ~~Network documentation~~ (disabled, replaced by phpipam) | netbox |
 | infra-maintenance | Maintenance jobs | infra-maintenance |
 | ollama | LLM server (GPU) | ollama |

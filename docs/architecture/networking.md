@@ -128,7 +128,7 @@ Isolated camera segment for owned cameras at the Sofia site (first: `vermont-gar
 
 **Physical path (single switch, as-built)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1 trunk** (home LAN untagged + CCTV **tagged 30**) → the existing LAN1 cable → R730 `eno1` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE **replaced** the old garage TL-SG105E (retired to cold spare, PE inherited mgmt `192.168.1.6`) and carries everything on 5 ports — verified live 2026-07-03: **P1 = R730 eno1 trunk, P2 = 4G router, P3 = UPS, P4 = camera, P5 = apartment uplink** (ports assigned by a ping-burst test, NOT the diagrams' earlier illustrative order). 802.1Q: `tagMbrs [0x0,0x01]` (VLAN 30 tagged = P1 only), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]` — VLAN-30 membership is {P4 camera, P1 trunk} only, so tagged injection from any other port (incl. the apartment uplink) is dropped. `eno2`/`vmbr2` remain dormant as the fallback physical leg (rev 2).
 
-**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
+**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-import` records the leases in phpIPAM every 5 minutes.
 
 **Firewall** (all on pfSense):
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
@@ -725,10 +725,10 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - Stack: `stacks/phpipam/`
 - Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
 - Database: MySQL standalone (`mysql.dbaas.svc.cluster.local`)
-- Device import: CronJob `phpipam-pfsense-import` hourly — queries Kea DHCP leases + pfSense ARP table via SSH (no active scanning)
-- DNS sync: CronJob `phpipam-dns-sync` every 15min — bidirectional sync between phpIPAM and Technitium DNS (push named hosts → A+PTR, pull DNS hostnames → unnamed phpIPAM entries)
-- London import: CronJob `phpipam-remote-import` every 5 min names every London lease in phpIPAM and Technitium (see dns.md, "London devices"); `phpipam-dns-sync` skips 192.168.8.0/23
-- Subnets tracked: 10.0.10.0/24, 10.0.20.0/24, 192.168.1.0/24, 10.3.2.0/24, 192.168.8.0/24 (London LAN), 192.168.9.0/24 (London Guest), 192.168.0.0/24
+- Role: an auto-filled address inventory (ADR-0032, `docs/plans/2026-10-13-phpipam-inventory.md`). Kea, Terraform and the site routers stay authoritative; nothing assigns addresses from phpIPAM.
+- Import: CronJob `phpipam-import` every 5 min — Kea leases and reservations, pfSense ARP after a ping sweep of 192.168.1.0/24 (the TP-Link DHCP server has no readable API), WireGuard peers, the London/Valchedrym/Mladost 3 routers' leases, static leases and ARP (all via the pfSense SSH hop), k8s nodes and LoadBalancer IPs, Headscale nodes. DHCP/ARP rows expire 24 h after their device was last seen; declared rows stay while their source lists them; hand rows (description not starting with `-- `) are never touched.
+- DNS: publishes the OpenWrt sites' lease names and hand-row names to Technitium (dns.md, "London devices" and "DHCP → DNS Auto-Registration"); everything else is read from DNS.
+- Subnets tracked, with Locations Sofia / London / Valchedrym / Mladost 3 and VLANs 10/20/30: 192.168.1.0/24, 10.0.10.0/24, 10.0.20.0/24, 10.0.30.0/24, 10.3.2.0/24, 192.168.8.0/24 (London LAN), 192.168.9.0/24 (London Guest), 192.168.0.0/24 (Valchedrym), 192.168.3.0/24 (Mladost 3), 100.64.0.0/10 (Headscale). phpIPAM's own scan agent is off.
 - API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access
 
 **Traefik Middleware**:

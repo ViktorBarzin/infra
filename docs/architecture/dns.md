@@ -53,7 +53,7 @@ graph TB
             DNSOpt[dns-optimization<br/>every 6h]
             PassSync[password-sync<br/>every 6h]
             StaticRec[static-records<br/>hourly]
-            DNSSync[phpipam-dns-sync<br/>every 15min]
+            Import[phpipam-import<br/>every 5min]
         end
     end
 
@@ -244,7 +244,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | `1.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for LAN |
 | `2.3.10.in-addr.arpa` | Primary | PTR | Reverse DNS for VPN |
 | `0.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Valchedrym site |
-| `8.168.192.in-addr.arpa`, `9.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for the London LAN and guest networks (created and kept by `phpipam-remote-import`, see "London devices") |
+| `8.168.192.in-addr.arpa`, `9.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for the London LAN and guest networks (created and kept by `phpipam-import`, see "London devices"); `0.168.192` and `3.168.192` are kept by it too |
 | `3.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Mladost 3 site (created and kept by `technitium-static-records`, `static_ptr_records`) |
 | `emrsn.org` | Primary (stub) | — | Returns NXDOMAIN locally (avoids 27K+ daily corporate query floods) |
 
@@ -479,8 +479,7 @@ Devices get automatic DNS registration without manual intervention. See [network
 Summary:
 1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
 2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones.
-3. **phpipam-pfsense-import** CronJob (hourly) pulls Kea leases + ARP table into phpIPAM
-4. **phpipam-dns-sync** CronJob (15min) pushes named phpIPAM hosts → Technitium A + PTR, pulls Technitium PTR → phpIPAM hostnames. It skips London (192.168.8.0/23), which has its own writer (below).
+3. **phpipam-import** CronJob (every 5 min, ADR-0032) records every address in phpIPAM from Kea, pfSense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
 
 ### London devices
 
@@ -489,7 +488,7 @@ Every device that takes a lease from the London Flint (LAN 192.168.8.0/24, guest
 ```mermaid
 flowchart LR
   D[London device] -->|DHCP| F[Flint dnsmasq<br/>leases + curated names]
-  F -->|every 5 min, SSH via pfSense| I[phpipam-remote-import<br/>files/london_import.py]
+  F -->|every 5 min, SSH via pfSense| I[phpipam-import<br/>files/phpipam_import.py]
   I -->|one row per MAC| P[(phpIPAM<br/>London LAN / London Guest)]
   I -->|A + PTR, changes only| T[Technitium primary<br/>viktorbarzin.lan]
   T -->|AXFR| R[secondaries, pfSense Unbound]
@@ -498,9 +497,9 @@ flowchart LR
 ```
 
 - **Names.** A curated name wins: a Flint static lease (`uci` dhcp `host`) with a `name`, declared in `scripts/london-flint/provision.sh` (`ensure_host`), keyed by MAC with no pinned address so the name follows the device between SSIDs. Otherwise the hostname the device announces, lowercased to `[a-z0-9-]`. A name that already exists outside London (any record type, including Sofia's Kea DDNS names and the ingress CNAMEs) gets `-london`; a name several London devices announce gets each one's last four MAC hex digits (`kp115-3011`). A device that announces no name stays unnamed until it is given a curated one.
-- **Ownership.** `phpipam-remote-import` is the only writer of A records that point into London. It writes only what differs, and deletes London A records that no current device or hand-made row claims, so a renamed or moved device does not leave its old name behind. Rows it creates in phpIPAM carry the description `-- london dhcp (london_import) --`; hand-made rows (`ha-london`, `rpi-london`, `openwrt-london`) are read as fixed names and never changed. A departed device keeps its row and name for 24 hours.
+- **Ownership.** `phpipam-import` is the only writer of A records that point into London (and, by the same rules, into Valchedrym `192.168.0.0/24` and Mladost 3 `192.168.3.0/24`, with `-valchedrym` and `-mladost3` as the site suffixes). It writes only what differs, and deletes London A records that no current device or hand-made row claims, so a renamed or moved device does not leave its old name behind. Rows it creates in phpIPAM carry a description starting with `-- ` (`-- dhcp london --`, `-- reservation london --`, `-- arp london --`); hand-made rows (`ha-london`, `rpi-london`, `openwrt-london`) are read as fixed names and never changed. A departed device keeps its row and name for 24 hours.
 - **London clients.** The Flint forwards `viktorbarzin.lan`, `1.168.192.in-addr.arpa` and `10.in-addr.arpa` to `10.0.20.201` over the tunnel, so London clients see the same answers Sofia does. Bare names and `<name>.lan` are still answered by the Flint from its own leases, including while the tunnel is down. GL's firewall drops dnsmasq's TCP fallback (`tcp_dns_leak_drop`), so a forwarded answer larger than 1232 bytes fails; A lookups are far below that.
-- **Code and tests.** `stacks/phpipam/files/london_import.py`, tests in `test_london_import.py` next to it (`cd stacks/phpipam/files && python3 -m unittest test_london_import`). `DRY_RUN=1` prints every write instead of making it.
+- **Code and tests.** `stacks/phpipam/files/phpipam_import.py` and `fetch_sources.sh`, tests in `test_phpipam_import.py` next to them (`cd stacks/phpipam/files && python3 -m unittest test_phpipam_import`). `DRY_RUN=1` prints every write instead of making it.
 - **Before 2026-10-13** the remote import ran hourly with a MariaDB client that could not log in to MySQL 8.4 and discarded the error, so it had written nothing since 2026-04-10; London names were three hand-made records plus three in `technitium-static-records`. `phpipam-pfsense-import` (Sofia) uses the same client and has the same failure; Kea DDNS keeps Sofia's names in DNS independently of it.
 
 ## Automation CronJobs
@@ -512,9 +511,7 @@ flowchart LR
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
 | `technitium-static-records` | `35 * * * *` | technitium | Internal-only A records for names served by a LoadBalancer rather than an Ingress (currently `turn`) |
-| `phpipam-dns-sync` | `*/15 * * * *` | phpipam | Bidirectional phpIPAM ↔ Technitium DNS sync |
-| `phpipam-pfsense-import` | `0 * * * *` | phpipam | Import Kea DHCP leases + ARP from pfSense |
-| `phpipam-remote-import` | `*/5 * * * *` | phpipam | Name London devices: Flint leases → phpIPAM → Technitium A + PTR (see "London devices") |
+| `phpipam-import` | `*/5 * * * *` | phpipam | Address inventory (ADR-0032): every source → phpIPAM; site lease names and hand-row names → Technitium A + PTR. Alert `PhpipamImportStale` after 30 min without a success |
 
 ### Password Rotation Flow
 
@@ -650,9 +647,10 @@ Common causes:
 ### Adding a New DNS Record
 
 For internal `.viktorbarzin.lan` records:
-1. Add host in phpIPAM web UI (`phpipam.viktorbarzin.me`) with hostname
-2. Wait 15 minutes for `phpipam-dns-sync` to push to Technitium
-3. Or add directly in Technitium web UI (`technitium.viktorbarzin.me`)
+1. In the phpIPAM web UI (`phpipam.viktorbarzin.me`), set the hostname on the address and give it a description that does not start with `-- ` (that makes it a hand row, which the importer never changes)
+2. Within 5 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
+3. A London, Valchedrym or Mladost 3 device is better named with a static lease on its site router (`ensure_host` in `scripts/london-flint/provision.sh` for London)
+4. Or add directly in Technitium web UI (`technitium.viktorbarzin.me`), or declaratively in `technitium-static-records`
 
 For external `.viktorbarzin.me` records:
 1. Add `dns_type = "proxied"` (or `"non-proxied"`) to the `ingress_factory` module call in the service stack

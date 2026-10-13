@@ -229,6 +229,37 @@ _Avoid_: "disconnect" without saying which layer.
 The Flint's Wi-Fi chip resetting itself (MediaTek "SER") while clients stay associated, pausing their traffic. A closed-driver fault that settings cannot fix; tracked, and escalated to GL.iNet with evidence if it recurs.
 _Avoid_: "reboot" (the router stays up).
 
+### Address inventory
+
+**Address inventory**:
+phpIPAM as the read-only view of every IPv4 address in use across the sites, the k8s VLANs and the VPNs, filled every 5 minutes by the **Importer** (ADR-0032). Kea, Terraform and the site routers stay authoritative for configuration; nothing reads the inventory to assign an address.
+_Avoid_: "IPAM" for the configuration side (no address is allocated from phpIPAM); "source of truth" for phpIPAM.
+
+**Importer**:
+The `phpipam-import` CronJob (`stacks/phpipam/files/phpipam_import.py`): one run reads every **Source**, reconciles phpIPAM rows, and publishes the names it owns to `viktorbarzin.lan`.
+_Avoid_: "sync" (the retired `phpipam-dns-sync` pushed in the other direction); "scanner" (phpIPAM's own scan agent is off).
+
+**Source**:
+One place the Importer reads addresses from: a site router's leases and ARP table (London, Valchedrym, Mladost 3), pfSense (Kea leases and reservations, ARP after a sweep of the Sofia home LAN, WireGuard peers), Kubernetes (nodes and LoadBalancer addresses), Headscale. A Source that fails leaves its rows untouched for that run.
+_Avoid_: "reader" in prose (it is the code's word for the function that reads a Source).
+
+**Hand row**:
+A phpIPAM row whose description does not start with `-- `. Written by a person; the Importer never changes, renames or expires it, and publishes its name to DNS when the name is free. Editing an **Automation row**'s description in the UI turns it into a Hand row.
+_Avoid_: "manual entry", "static row".
+
+**Automation row**:
+A phpIPAM row whose description starts with `-- `, written and owned by the Importer. Either a **Dynamic row** or a **Declared row**.
+
+**Dynamic row**:
+An Automation row for a DHCP lease or an ARP entry. Keyed by MAC, so it follows its device to a new address; deleted 24 hours after the device was last seen.
+_Avoid_: "temporary row".
+
+**Declared row**:
+An Automation row for an address something else declares: a k8s node, a MetalLB address, a Kea reservation, a WireGuard peer, a Headscale node. Keyed by IP; it stays as long as its Source lists it, even while the device is off.
+
+**Site suffix**:
+The `-<site>` the Importer appends to a lease name at an OpenWrt site when the name is already used outside that site (`ancas-macbook-air-london`). A name two devices at the same site share gets the last four hex digits of each MAC instead (`kp115-3011`).
+
 ### Storage
 
 **proxmox-lvm-encrypted**:

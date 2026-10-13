@@ -1,0 +1,103 @@
+# phpIPAM as the address inventory
+
+- Status: approved 2026-10-13, executing
+- Decision record: `docs/adr/0032-phpipam-is-an-auto-filled-address-inventory.md`
+- Glossary: `CONTEXT.md`, "Address inventory"
+
+## Goal
+
+phpIPAM shows every IPv4 address in use across Sofia, London, Valchedrym,
+Mladost 3, the WireGuard tunnel network and Headscale, and keeps showing it
+without anyone typing it in. People still add notes and names by hand, and
+the automation leaves those rows alone.
+
+## Starting state (measured 2026-10-13)
+
+| Network | phpIPAM before | Live addresses | Best source |
+|---|---|---|---|
+| Sofia home LAN `192.168.1.0/24` | 44 rows, last written 2026-04-10 | 24 in pfSense ARP, about 42 reserved on the TP-Link | pfSense ARP after a ping sweep (the TP-Link has no readable API) |
+| Sofia mgmt `10.0.10.0/24` | 4 rows, April | 2 in ARP, 4 Kea reservations | Kea reservations and leases, ARP |
+| Sofia k8s `10.0.20.0/24` | 9 rows, April | about 18 | k8s nodes and LoadBalancer Services, Kea, ARP |
+| Sofia CCTV `10.0.30.0/24` | no subnet | 2 | Kea |
+| WireGuard `10.3.2.0/24` | 2 rows, April | 5 | `wg show tun_wg0` on pfSense |
+| London LAN and guest | current (rewritten earlier the same day) | 29 | Flint leases and static leases |
+| Valchedrym `192.168.0.0/24` | 6 hand rows, April | 4 leases, 17 ARP | OpenWrt leases and ARP |
+| Mladost 3 `192.168.3.0/24` | no subnet | 7 ARP | OpenWrt leases and ARP |
+| Headscale `100.64.0.0/10` | no subnet | 9 nodes | Headscale API |
+
+Two of the three phpIPAM jobs had written nothing since 2026-04-10: their
+MariaDB client cannot log in to MySQL 8.4 and the error was discarded.
+
+## Design
+
+```mermaid
+flowchart LR
+  subgraph Sources
+    OW[OpenWrt sites<br/>London, Valchedrym, Mladost 3<br/>leases, static leases, ARP]
+    PF[pfSense<br/>Kea leases + reservations<br/>ARP after LAN sweep<br/>WireGuard peers]
+    K8[Kubernetes<br/>nodes, LoadBalancer IPs]
+    HS[Headscale API<br/>tailnet nodes]
+    TD[Technitium<br/>existing names]
+  end
+  OW & PF & K8 & HS & TD --> IMP[phpipam-import<br/>every 5 min]
+  IMP -->|rows| DB[(phpIPAM)]
+  IMP -->|site lease names + hand-row names| TW[Technitium<br/>viktorbarzin.lan]
+  P[Person in phpIPAM UI] -->|hand rows| DB
+```
+
+### Rows
+
+| Kind | Description | Key | Lifetime |
+|---|---|---|---|
+| Hand row | anything not starting with `-- ` | IP | never touched by the importer |
+| Dynamic row | `-- dhcp <site> --`, `-- arp <site> --` | MAC | deleted 24 h after last seen |
+| Declared row | `-- k8s node --`, `-- k8s lb <ns>/<svc> --`, `-- kea reservation --`, `-- wireguard peer --`, `-- headscale --` | IP | while the source lists it |
+
+An address held by a hand row is never given a second row. Rows written before
+2026-10-13 with a `-- ` description (`-- autodiscovered --`, `-- wg tunnel
+scan --`) are adopted and expire unless a source sees them again.
+
+### Names
+
+Hand row, then reservation name, then lease hostname, then the existing DNS
+name. Names that come from DNS are not written back to DNS.
+
+### DNS writes
+
+| What | Owned records |
+|---|---|
+| OpenWrt site leases (London, Valchedrym, Mladost 3) | every A record pointing into the site's subnets, and the site reverse zones (London rules: curated name wins, `-<site>` on a clash with another site, `-<mac4>` inside a site) |
+| Hand rows anywhere | A and PTR records marked with the Technitium comment `phpipam`; a record without the mark is adopted only when it already has the same name and address |
+
+A hand-row name already used for a different address elsewhere is logged and
+not published. Kea DDNS, the ingress sync and `technitium-static-records` keep
+their own records.
+
+### Failure handling
+
+Every source is read before anything is written. A source that fails is
+logged; its rows are left as they are, and the run exits non-zero after the
+other sources are applied, so `JobFailed` fires and names the job.
+`PhpipamImportStale` fires when no run has succeeded for 30 minutes.
+
+## Rollout
+
+1. `stacks/phpipam/files/phpipam_import.py` with unit tests (the London module
+   generalised).
+2. Dry run (`DRY_RUN=1`) from the devvm against live phpIPAM, Technitium,
+   pfSense, the site routers, Kubernetes and Headscale.
+3. One Terraform change: `phpipam-import` replaces `phpipam-remote-import` and
+   `phpipam-pfsense-import`; `phpipam-dns-sync` is removed; a ServiceAccount
+   that can list nodes and Services; the Headscale key from `secret/platform`;
+   `mladost3-openwrt` moves from `technitium-static-records` to a hand row;
+   `PhpipamImportStale` in the monitoring stack.
+4. Watch the first runs, then check the phpIPAM UI and DNS from Sofia and
+   London.
+5. List the hand rows that disagree with live data for review.
+
+## Open questions
+
+- Whether a ping sweep every 5 minutes disturbs any Sofia LAN device. None is
+  known to.
+- Whether some Sofia LAN devices stay silent while idle and drop out after
+  24 hours. A hand row keeps any device that matters.

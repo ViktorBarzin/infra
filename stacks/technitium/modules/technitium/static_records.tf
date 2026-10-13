@@ -48,7 +48,7 @@ locals {
 
   # Same, for the internal-only viktorbarzin.lan zone: devices that live behind
   # a remote site's own DHCP rather than Kea. London devices are not listed
-  # here: phpipam-remote-import names every London lease (stacks/phpipam,
+  # here: phpipam-import names every London lease (stacks/phpipam,
   # docs/architecture/dns.md "London devices"), including the curated names
   # mbp-london, projector-london and iphone-london.
   #
@@ -62,22 +62,22 @@ locals {
   # it there is no way to drive the app on a real phone without going through
   # the Authentik SSO flow, which is what makes it worth a record.
   #
-  # mladost3 / mladost3-openwrt: the Mladost 3 site router (OpenWrt WDR4300),
-  # by its WireGuard tunnel address and by its LAN address. The reverse-proxy
-  # ingress for mladost3.viktorbarzin.me targets mladost3.viktorbarzin.lan.
+  # mladost3: the Mladost 3 site router (OpenWrt WDR4300) by its WireGuard
+  # tunnel address. The reverse-proxy ingress for mladost3.viktorbarzin.me
+  # targets mladost3.viktorbarzin.lan. Its LAN name, mladost3-openwrt
+  # (192.168.3.1), is a hand row in phpIPAM since 2026-10-13: phpipam-import
+  # owns every A and PTR record pointing into the site subnets (ADR-0032), so
+  # declaring it here as well would give that record two writers.
   static_lan_a_records = {
-    "health-test"      = "10.0.20.203"
-    "mladost3"         = "10.3.2.7"
-    "mladost3-openwrt" = "192.168.3.1"
+    "health-test" = "10.0.20.203"
+    "mladost3"    = "10.3.2.7"
   }
 
   # IPv4 address => PTR target. The job creates the /24 reverse zone on the
   # primary if it is missing (technitium-zone-sync then replicates it) and
-  # sets the PTR. 0.168.192.in-addr.arpa (Valchedrym) predates this and was
-  # made by hand.
-  static_ptr_records = {
-    "192.168.3.1" = "mladost3-openwrt.viktorbarzin.lan"
-  }
+  # sets the PTR. Empty since 2026-10-13: the one entry, 192.168.3.1, moved to
+  # phpipam-import with the rest of the Mladost 3 site.
+  static_ptr_records = {}
 }
 
 resource "kubernetes_cron_job_v1" "technitium_static_records" {
