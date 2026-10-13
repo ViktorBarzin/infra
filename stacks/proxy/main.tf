@@ -249,7 +249,7 @@ resource "kubernetes_deployment" "broker" {
         }
         container {
           name              = "broker"
-          image             = "library/python:3.14.8-slim"
+          image             = "library/python:3.15.0-slim"
           image_pull_policy = "IfNotPresent"
           command           = ["python3", "-u", "/broker/broker.py"]
           env {
