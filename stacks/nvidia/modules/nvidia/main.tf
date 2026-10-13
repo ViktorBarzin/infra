@@ -148,7 +148,7 @@ resource "helm_release" "nvidia-gpu-operator" {
   # in values.yaml. Bumping the driver is a separate step with its own GPU
   # outage. See docs/known-issues.md and post-mortem
   # 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
-  version = "v26.7.1"
+  version = "v26.7.2"
   timeout = 6000
 
   values     = [templatefile("${path.module}/values.yaml", {})]
