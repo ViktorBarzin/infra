@@ -615,7 +615,7 @@ resource "kubernetes_cron_job_v1" "post_boot_reconcile" {
             restart_policy       = "OnFailure"
             container {
               name    = "reconcile"
-              image   = "python:3.14-alpine"
+              image   = "python:3.12-alpine"
               command = ["python3", "/scripts/reconcile.py"]
               env {
                 name  = "GRACE_SECONDS"
