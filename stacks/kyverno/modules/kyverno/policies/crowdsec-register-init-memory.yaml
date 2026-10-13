@@ -1,0 +1,40 @@
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: crowdsec-register-init-memory
+  annotations:
+    policies.kyverno.io/title: CrowdSec LAPI Registration Init Memory
+    policies.kyverno.io/description: "Raises the memory limit of the crowdsec chart's wait-for-lapi-and-register init container from the hardcoded 50Mi to ${memory_limit}. The container runs cscli, a 110 MB binary, and at 50Mi it thrashes on page cache instead of finishing."
+spec:
+  failurePolicy: Ignore
+  # No pod-controller variants, for the same reason as
+  # crowdsec-agent-idempotent-register: autogen does not rewrite JSONPatch paths.
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: crowdsec
+    # Agent DaemonSet and appsec Deployment both carry this init container.
+    objectSelector:
+      matchLabels:
+        k8s-app: crowdsec
+  matchConditions:
+    - name: has-register-init-container
+      expression: "object.spec.?initContainers.orValue([]).exists(i, i.name == 'wait-for-lapi-and-register')"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          object.spec.initContainers.filter(i, i.name == 'wait-for-lapi-and-register').map(i,
+            JSONPatch{
+              op: 'replace',
+              path: '/spec/initContainers/' + string(object.spec.initContainers.indexOf(i)) + '/resources/limits/memory',
+              value: '${memory_limit}'
+            })
