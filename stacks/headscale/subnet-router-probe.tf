@@ -89,7 +89,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
             # pattern) — two plain containers would race the file.
             init_container {
               name  = "probe"
-              image = "ghcr.io/tailscale/tailscale:v1.102.5"
+              image = "ghcr.io/tailscale/tailscale:v1.104.1"
               command = ["/bin/sh", "-c"]
               args = [<<-EOT
                 set -u
