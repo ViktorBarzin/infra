@@ -1,6 +1,6 @@
 # phpIPAM as the address inventory
 
-- Status: approved 2026-10-13, executing
+- Status: approved 2026-10-13, executing (enrichment added the same day)
 - Decision record: `docs/adr/0032-phpipam-is-an-auto-filled-address-inventory.md`
 - Glossary: `CONTEXT.md`, "Address inventory"
 
@@ -79,6 +79,24 @@ Every source is read before anything is written. A source that fails is
 logged; its rows are left as they are, and the run exits non-zero after the
 other sources are applied, so `JobFailed` fires and names the job.
 `PhpipamImportStale` fires when no run has succeeded for 30 minutes.
+
+## Enrichment (amendment, 2026-10-13)
+
+Every row also carries a MAC, a vendor, a model, an OS and a state tag where a
+source knows them, and infrastructure addresses link to a phpIPAM Device.
+
+| Field | Source, in order of preference |
+|---|---|
+| MAC | the row, then the lease, reservation or ARP entry at its address |
+| Vendor | Home Assistant manufacturer, Proxmox ("Proxmox VE" for a VM NIC), IEEE OUI registry ("private MAC" for a randomised one) |
+| Model | Home Assistant model, Kubernetes node (vCPU, memory, GPU), Proxmox VM (vCPU, memory) |
+| OS | Kubernetes node (OS image, kernel, kubelet), Proxmox OS type, Home Assistant firmware version |
+| State | DHCP for a lease, Reserved for a reservation, Used, Offline for a hand row unseen for 24 h |
+| Device | `stacks/phpipam/files/devices.yaml`, matched by address or MAC |
+
+Hand rows only get empty fields filled. Vendor, Model and OS are phpIPAM
+custom fields (plain columns on `ipaddresses` and `devices`, as phpIPAM's own
+admin page adds them), created by the importer.
 
 ## Rollout
 
