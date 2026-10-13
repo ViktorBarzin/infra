@@ -239,7 +239,7 @@ resource "kubernetes_deployment" "n8n" {
         service_account_name = kubernetes_service_account.n8n.metadata[0].name
         container {
           name  = "n8n"
-          image = "docker.n8n.io/n8nio/n8n:1.123.84"
+          image = "docker.n8n.io/n8nio/n8n:2.43.4"
           env {
             name  = "N8N_PORT"
             value = "5678"
@@ -367,13 +367,15 @@ resource "kubernetes_deployment" "n8n" {
             container_port = 5678
             protocol       = "TCP"
           }
+          # 2.x adds a task-runner process; 2.43.4 idles at about 890Mi
+          # (main 738Mi + runner 151Mi, measured 2026-10-13).
           resources {
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1536Mi"
             }
           }
         }
