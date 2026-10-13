@@ -1727,6 +1727,31 @@ resource "null_resource" "pg_lesson_harvester_db" {
   }
 }
 
+# Create resume database for Reactive Resume (stacks/resume). The role
+# already existed with the password kept in Vault secret/resume
+# (database_url); the database itself was never created, so v5 and v6
+# could not start (found 2026-10-13).
+resource "null_resource" "pg_resume_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "resume"
+    username = "resume"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'resume'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE resume OWNER resume"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE resume TO resume"
+        '
+    EOT
+  }
+}
+
 # Create tripit database for the TripIt travel app (FastAPI + SvelteKit SPA).
 # Role password is managed by Vault Database Secrets Engine (static role
 # `pg-tripit`, 7d rotation). Tables live in schema `tripit` (alembic creates
