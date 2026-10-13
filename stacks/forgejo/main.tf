@@ -133,7 +133,7 @@ resource "kubernetes_deployment" "forgejo" {
           # tag-rewriting incident (memory id=1933). The pod crashlooped
           # because the DB had already been migrated to schema 305 by
           # 11.0.14 and v1.18 only knows up to migration 231.
-          image = "codeberg.org/forgejo/forgejo:16.0.5"
+          image = "codeberg.org/forgejo/forgejo:16.0.6"
           env {
             name  = "USER_UID"
             value = 1000
