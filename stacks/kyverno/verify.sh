@@ -44,6 +44,18 @@ _mutates() {
   [ "$p" = "tier-4-aux" ] && [ "$d" = "2" ]
 }
 
+_mutates_dnsconfig_without_options() {
+  # Woodpecker step pods set dnsConfig.searches only; this branch of
+  # inject-ndots panicked the webhook until 2026-10-13.
+  local out d
+  out=$(printf '%s' '{"apiVersion":"v1","kind":"Pod","metadata":{"name":"verify-kyverno-dns","namespace":"verify"},
+    "spec":{"dnsConfig":{"searches":["verify.svc.cluster.local"]},"containers":[{"name":"c","image":"docker.io/library/busybox:1.36"}]}}' | kubectl create --dry-run=server -o json -f - 2>&1)
+  d=$(jq -c '.spec.dnsConfig' <<<"$out" 2>/dev/null)
+  echo "dnsConfig=$d"
+  [ "$(jq -r '[.spec.dnsConfig.options[]? | select(.name=="ndots") | .value][0] // "none"' <<<"$out" 2>/dev/null)" = "2" ] &&
+    [ "$(jq -r '.spec.dnsConfig.searches[0] // "none"' <<<"$out" 2>/dev/null)" = "verify.svc.cluster.local" ]
+}
+
 _reports_off() {
   local a b
   a=$(kubectl get ephemeralreports.reports.kyverno.io -A --no-headers 2>/dev/null | wc -l)
@@ -68,6 +80,7 @@ verify_component() {
   check "no kyverno.io ClusterPolicy, cleanup policy or exception is left" _no_legacy_policies
   check "a privileged pod is denied (dry run)" _denies_privileged
   check "a plain pod gets the tier priority and ndots=2 (dry run)" _mutates
+  check "a pod with dnsConfig but no options gets ndots=2 (dry run)" _mutates_dnsconfig_without_options
   check "policy reports stay off" _reports_off
   check "background update requests are bounded" _updaterequests_bounded
   check "no panics in Kyverno logs (15m)" expect_no_log_errors kyverno app.kubernetes.io/instance=kyverno 'panic|fatal'
