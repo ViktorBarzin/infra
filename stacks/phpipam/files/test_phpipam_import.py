@@ -67,6 +67,17 @@ class NetworkTests(unittest.TestCase):
                 net = pi.network_of(ip)
                 self.assertEqual(net.cidr if net else None, want)
 
+    def test_router_addresses_are_tracked(self):
+        for site, ips in pi.SITE_ROUTERS.items():
+            for ip in ips:
+                with self.subTest(site=site, ip=ip):
+                    self.assertIsNotNone(pi.network_of(ip))
+
+    def test_router_addresses_match_the_fetch_script(self):
+        script = (Path(__file__).parent / "fetch_sources.sh").read_text()
+        for site in pi.SITES:
+            self.assertIn(f"{site}={pi.SITE_ROUTERS[site][0]}", script)
+
     def test_site_nets(self):
         self.assertEqual(
             sorted(n.cidr for n in pi.NETWORKS if n.publish == "london"),
