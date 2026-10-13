@@ -14,6 +14,50 @@
       "enabled": false
     },
     {
+      "description": "rails revert 2026-10-12 pipeline #2376: stack llama-cpp failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit e17c0e42)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchNewValue": "3.14-slim",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2376: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 922a6914)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "library/python"
+      ],
+      "matchNewValue": "3.14.8-slim",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2376: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 922a6914)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "library/python"
+      ],
+      "matchNewValue": "3.14.8-alpine",
+      "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-12 pipeline #2377: stack kyverno failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 5f4c8063)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchNewValue": "3.14-alpine",
+      "enabled": false
+    },
+    {
       "description": "rails revert 2026-10-12 pipeline #2380: stack resume failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 775df6d8)",
       "matchDatasources": [
         "docker"
