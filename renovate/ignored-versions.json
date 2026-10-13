@@ -45,6 +45,17 @@
       ],
       "matchNewValue": "v26.7.2",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-13 pipeline #2396: stack kyverno failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 23d85bba)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchNewValue": "3.15-alpine",
+      "enabled": false
     }
   ]
 }
