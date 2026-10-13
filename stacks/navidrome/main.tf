@@ -179,12 +179,14 @@ resource "kubernetes_deployment" "navidrome" {
             name  = "ND_SCANSCHEDULE"
             value = "0"
           }
-          # 0.64's background artwork worker runs max(2, NumCPU/2) decodes at
-          # once, with NumCPU read from the node (8 cores -> 4 workers), and
-          # each decode holds a full-size cover in memory (up to the 20MB
-          # MaxImageSize). That OOMKilled 0.64.2 at 384Mi and at 1Gi on
-          # 2026-10-12, right after its 4-second scan. One worker, two
-          # artwork requests, and a Go soft limit below the container limit.
+          # 0.64's artwork worker (core/artwork Worker.drain) decodes each
+          # cover at full size and builds a resize buffer: one large JPEG
+          # peaked at 872Mi (cgroup memory.peak + pprof, 2026-10-13). It runs
+          # max(2, NumCPU/2) workers with NumCPU read from the node, which
+          # OOMKilled 0.64.2 at 384Mi and 1Gi while it drained the backlog
+          # the 0.64 migration queued. One worker, two artwork requests, and
+          # headroom for one decode. EnableArtworkPrecache does not gate
+          # this worker. Idle after the drain: about 185Mi.
           env {
             name  = "ND_DEVARTWORKWORKERCONCURRENCY"
             value = "1"
@@ -195,20 +197,7 @@ resource "kubernetes_deployment" "navidrome" {
           }
           env {
             name  = "GOMEMLIMIT"
-            value = "600MiB"
-          }
-          # One worker was still OOMKilled at 768Mi on 2026-10-13, about 25s
-          # after each scan (the worker pauses during scans), with memory
-          # under 31Mi at every Prometheus scrape: a single cover decode
-          # spiking past the limit. Covers are decoded on request instead.
-          env {
-            name  = "ND_ENABLEARTWORKPRECACHE"
-            value = "false"
-          }
-          # TEMPORARY 2026-10-13: profiling the post-scan memory spike.
-          env {
-            name  = "ND_DEVENABLEPROFILER"
-            value = "true"
+            value = "1000MiB"
           }
           port {
             name           = "http"
@@ -221,7 +210,7 @@ resource "kubernetes_deployment" "navidrome" {
               memory = "256Mi"
             }
             limits = {
-              memory = "3Gi" # TEMPORARY 2026-10-13, see ND_DEVENABLEPROFILER
+              memory = "1280Mi"
             }
           }
         }
