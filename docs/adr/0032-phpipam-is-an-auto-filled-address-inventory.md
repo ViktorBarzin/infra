@@ -1,6 +1,6 @@
 # ADR-0032: phpIPAM is an auto-filled address inventory, fed by one importer
 
-- Status: accepted
+- Status: accepted; amended 2026-10-13 (enrichment, see "Amendment: a full inventory")
 - Date: 2026-10-13
 - Related: `docs/plans/2026-10-13-phpipam-inventory.md` (design and rollout), `docs/architecture/dns.md` ("London devices", "DHCP → DNS Auto-Registration")
 
@@ -82,6 +82,37 @@ configuration; nothing reads phpIPAM to assign an address.
   the network now", not "what was on .57 last month".
 - An ARP-only device on the Sofia LAN has no hostname unless DNS or a hand row
   names it.
+
+## Amendment: a full inventory (2026-10-13)
+
+Viktor asked for every field phpIPAM can hold to be filled, from MAC addresses
+to models, so the inventory is complete rather than a list of addresses. Agreed
+the same day:
+
+1. **Hand rows get empty fields filled.** The importer fills a hand row's MAC,
+   Vendor, Model, OS and Device link only where they are empty, and keeps its
+   state tag and last-seen time current. It still never changes the hostname,
+   description or note a person wrote. This narrows decision 3 above.
+2. **Fields.** MAC (from leases, ARP, reservations and Proxmox VM NICs);
+   Vendor, Model and OS as phpIPAM custom fields on addresses and Devices;
+   the state tag (DHCP for a lease, Reserved for a reservation, Used, and
+   Offline for a hand row not seen for 24 hours).
+3. **Sources.** The IEEE OUI registry (offline, in the job image) for a MAC's
+   vendor, with locally administered MACs shown as "private MAC"; the Home
+   Assistant device registries in Sofia and London, matched by MAC; Proxmox
+   (VM, cores, memory, OS type); Kubernetes node info (OS, kernel, CPU,
+   memory, GPU). Precedence: vendor from Home Assistant, then Proxmox, then
+   OUI; model from Home Assistant, then Kubernetes, then Proxmox; OS from
+   Kubernetes, then Proxmox, then Home Assistant firmware.
+4. **Devices for infrastructure only**, declared in
+   `stacks/phpipam/files/devices.yaml` (routers, switches, access points,
+   servers, VMs, storage, power, management controllers). The importer creates
+   or updates one phpIPAM Device per entry and links the listed addresses and
+   MACs to it. Phones, plugs and other clients stay as addresses with their
+   vendor and model. Devices made in the UI and not in the file are left alone.
+5. **Enrichment sources are optional.** They own no rows, so one that fails is
+   logged and skipped and its fields keep their last value; it does not fail
+   the run.
 
 ## Open questions
 

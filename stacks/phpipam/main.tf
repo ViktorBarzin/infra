@@ -4,6 +4,20 @@ variable "tls_secret_name" {
 }
 variable "mysql_host" { type = string }
 
+# Proxmox API token (terraform-prov@pve: has VM.Audit and VM.GuestAgent.Audit)
+# for the VM details in the address inventory.
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
+# Home Assistant long-lived tokens (Sofia and London), the same ones
+# `homelab ha token` reads, for the device registries in the address inventory.
+data "vault_kv_secret_v2" "openclaw" {
+  mount = "secret"
+  name  = "openclaw"
+}
+
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
   name  = "platform"
@@ -23,6 +37,9 @@ locals {
   # Read-only use of the Headscale API (GET /api/v1/node) by phpipam-import.
   # Minted 2026-10-13 with `headscale apikeys create --expiration 3650d`.
   headscale_api_key = data.vault_kv_secret_v2.secrets.data["phpipam_headscale_api_key"]
+  pve_token_id      = data.vault_kv_secret_v2.viktor.data["proxmox_pm_api_token_id"]
+  pve_token_secret  = data.vault_kv_secret_v2.viktor.data["proxmox_pm_api_token_secret"]
+  ha_tokens         = jsondecode(data.vault_kv_secret_v2.openclaw.data["skill_secrets"])
 }
 
 resource "kubernetes_namespace" "phpipam" {
@@ -292,7 +309,9 @@ resource "kubernetes_config_map" "phpipam_import" {
   }
   data = {
     "phpipam_import.py" = file("${path.module}/files/phpipam_import.py")
+    "phpipam_enrich.py" = file("${path.module}/files/phpipam_enrich.py")
     "fetch_sources.sh"  = file("${path.module}/files/fetch_sources.sh")
+    "devices.yaml"      = file("${path.module}/files/devices.yaml")
   }
 }
 
@@ -352,7 +371,7 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
         template {
           metadata {
             annotations = {
-              "checksum/script" = sha1(join("", [file("${path.module}/files/phpipam_import.py"), file("${path.module}/files/fetch_sources.sh")]))
+              "checksum/script" = sha1(join("", [for f in ["phpipam_import.py", "phpipam_enrich.py", "fetch_sources.sh", "devices.yaml"] : file("${path.module}/files/${f}")]))
             }
           }
           spec {
@@ -363,7 +382,7 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
               image = "alpine:3.24"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
-                apk add --no-cache -q openssh-client python3 py3-pymysql > /dev/null
+                apk add --no-cache -q openssh-client python3 py3-pymysql py3-netaddr py3-websockets py3-yaml > /dev/null
                 mkdir -p /root/.ssh
                 cp /ssh/ssh_key /root/.ssh/id_rsa
                 chmod 600 /root/.ssh/id_rsa
@@ -391,6 +410,41 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
               env {
                 name  = "TECH_API_TOKEN"
                 value = local.technitium_api_token
+              }
+              env {
+                name  = "DEVICES_FILE"
+                value = "/app/devices.yaml"
+              }
+              # Through Traefik like every other client; both ingresses forward
+              # websockets.
+              env {
+                name  = "HA_SOFIA_URL"
+                value = "https://ha-sofia.viktorbarzin.me"
+              }
+              env {
+                name  = "HA_SOFIA_TOKEN"
+                value = local.ha_tokens["home_assistant_sofia_token"]
+              }
+              env {
+                name  = "HA_LONDON_URL"
+                value = "https://ha-london.viktorbarzin.me"
+              }
+              env {
+                name  = "HA_LONDON_TOKEN"
+                value = local.ha_tokens["home_assistant_token"]
+              }
+              # The Proxmox host, the same target pve_exporter scrapes.
+              env {
+                name  = "PVE_URL"
+                value = "https://192.168.1.127:8006"
+              }
+              env {
+                name  = "PVE_TOKEN_ID"
+                value = local.pve_token_id
+              }
+              env {
+                name  = "PVE_TOKEN_SECRET"
+                value = local.pve_token_secret
               }
               env {
                 name  = "HEADSCALE_URL"

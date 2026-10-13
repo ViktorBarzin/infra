@@ -257,6 +257,13 @@ _Avoid_: "temporary row".
 **Declared row**:
 An Automation row for an address something else declares: a k8s node, a MetalLB address, a Kea reservation, a WireGuard peer, a Headscale node. Keyed by IP; it stays as long as its Source lists it, even while the device is off.
 
+**Enrichment**:
+The second half of each Importer run: filling a row's MAC, Vendor, Model, OS, state tag and Device link from the OUI registry, Home Assistant, Proxmox and Kubernetes. On a **Hand row** it only fills empty fields. An enrichment source that fails is skipped without failing the run, since it owns no rows.
+
+**Infrastructure device**:
+A phpIPAM Device declared in `stacks/phpipam/files/devices.yaml`: a router, switch, access point, server, VM, storage box, UPS or management controller, with its addresses and MACs linked to it. Clients (phones, laptops, plugs) are not Devices; they are addresses with a vendor and model.
+_Avoid_: "host" for a Device (a host has addresses; a Device is the phpIPAM record that groups them).
+
 **Site suffix**:
 The `-<site>` the Importer appends to a lease name at an OpenWrt site when the name is already used outside that site (`ancas-macbook-air-london`). A name two devices at the same site share gets the last four hex digits of each MAC instead (`kp115-3011`).
 

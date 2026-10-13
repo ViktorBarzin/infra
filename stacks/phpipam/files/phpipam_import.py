@@ -587,8 +587,8 @@ def read_openwrt(site: str, data: str) -> tuple[list[Lease], list[Host], list[tu
     return parse_leases(parts[""]), parse_uci_hosts(parts["UCI"]), parse_proc_arp(parts["ARP"])
 
 
-def read_k8s() -> list[tuple[str, str, str]]:
-    """(ip, kind, detail): node InternalIPs and LoadBalancer addresses."""
+def read_k8s() -> tuple[list[tuple[str, str, str]], dict]:
+    """(ip, kind, detail) for node InternalIPs and LoadBalancer addresses, and the raw node list."""
     dump = os.environ.get("K8S_DUMP_DIR")
     if dump:  # a dry run off the cluster: `kubectl get nodes/services -A -o json` saved as files
         nodes = json.loads(read_text(f"{dump}/nodes.json"))
@@ -618,7 +618,7 @@ def read_k8s() -> list[tuple[str, str, str]]:
         svcs.sort()
         detail = svcs[0] + (f" +{len(svcs) - 1}" if len(svcs) > 1 else "")
         out.append((ip, "lb", detail))
-    return out
+    return out, nodes
 
 
 def read_headscale(url: str, key: str) -> list[tuple[str, str]]:
@@ -693,8 +693,9 @@ def main() -> int:
         print(f"SOURCE FAILED sofia: {e}")
         failed.add("sofia")
 
+    k8s_nodes: dict | None = None
     try:
-        k8s = read_k8s()
+        k8s, k8s_nodes = read_k8s()
         for ip, kind, detail in k8s:
             if kind == "node":
                 obs_raw.append((ip, "declared", "", desc("k8s node"), detail, None, "k8s", 0))
@@ -855,6 +856,22 @@ def main() -> int:
             tech.write("/api/zones/records/delete", domain=f"{name}.{ZONE}", zone=ZONE, type="A", ipAddress=ip)
             zone.delete_a(name, ip)
     print(f"DNS hand rows: {len(writes)} written, {len(deletes)} removed, {len(conflicts)} conflicts")
+
+    # --- extra inventory data: MAC, vendor, model, OS, state, Devices ---------------
+    import phpipam_enrich  # next to this file in the ConfigMap
+
+    seen_mac_by_ip: dict[str, str] = {}
+    for o in sorted(seen, key=lambda o: o.tier):
+        if o.mac:
+            seen_mac_by_ip.setdefault(o.ip, o.mac)
+    enrich_failed = phpipam_enrich.run(
+        cur, db, subnet_ids=[i for i in subnet_ids.values() if i > 0], seen_mac_by_ip=seen_mac_by_ip,
+        # A reservation is listed whether or not its device is up, so it does not count as seen.
+        seen_ips={o.ip for o in seen if not o.desc.startswith("-- reservation")}, k8s_nodes=k8s_nodes, env=dict(os.environ), now=now, dry_run=dry_run,
+    )
+    if enrich_failed:
+        # Enrichment owns no rows, so a missing source only leaves its fields stale.
+        print(f"enrichment sources skipped this run: {enrich_failed}")
 
     if failed:
         print(f"FAILED sources: {sorted(failed)}; their rows were left as they were")

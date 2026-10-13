@@ -1,0 +1,153 @@
+# Infrastructure devices for the phpIPAM inventory (ADR-0032, "Devices").
+#
+# phpipam-import creates or updates one phpIPAM Device per entry, keyed by
+# `name`, and links the listed addresses (and any address whose row carries one
+# of the listed MACs) to it. Vendor, model and OS left out here are filled from
+# Proxmox, Kubernetes or Home Assistant when one of them knows the device.
+# Devices created in the phpIPAM UI and not listed here are left alone.
+#
+# Write only what is known. A blank field is better than a guessed model.
+#
+# type: one of Switch, Router, Firewall, Wireless, Server, Virtual machine,
+#       Storage, Power, Management, Other.
+
+# --- Sofia --------------------------------------------------------------------
+- name: pve
+  type: Server
+  location: Sofia
+  vendor: Dell
+  model: PowerEdge R730
+  os: Proxmox VE
+  description: Proxmox host for every Sofia VM
+  addresses: [192.168.1.127]
+- name: idrac-r730
+  type: Management
+  location: Sofia
+  vendor: Dell
+  model: iDRAC (PowerEdge R730)
+  addresses: [192.168.1.4]
+- name: pfsense
+  type: Firewall
+  location: Sofia
+  os: pfSense
+  description: Sofia gateway, DHCP (Kea) for VLANs 10/20/30, WireGuard hub; Proxmox VM 101
+  addresses: [192.168.1.2, 10.0.10.1, 10.0.20.1, 10.0.30.1, 10.3.2.1, 100.64.0.9]
+- name: main-router
+  type: Wireless
+  location: Sofia
+  vendor: TP-Link
+  model: Archer AX6000
+  description: Home LAN DHCP server and Wi-Fi
+  addresses: [192.168.1.1]
+- name: wifi-router-garaj
+  type: Wireless
+  location: Sofia
+  description: Wi-Fi in the garage
+  addresses: [192.168.1.7]
+- name: switch-garaj
+  type: Switch
+  location: Sofia
+  description: 5-port switch in the garage
+  addresses: [192.168.1.6]
+- name: huawei-ups
+  type: Power
+  location: Sofia
+  vendor: Huawei
+  addresses: [192.168.1.5]
+- name: synology-nas
+  type: Storage
+  location: Sofia
+  vendor: Synology
+  addresses: [192.168.1.13]
+- name: ha-sofia
+  type: Virtual machine
+  location: Sofia
+  os: Home Assistant OS
+  description: Home Assistant Sofia; Proxmox VM 103
+  addresses: [192.168.1.8]
+- name: devvm
+  type: Virtual machine
+  location: Sofia
+  description: Shared Claude Code workstation
+  addresses: [10.0.10.10]
+- name: registry
+  type: Virtual machine
+  location: Sofia
+  description: Docker registry pull-through cache
+  addresses: [10.0.20.10]
+- name: k8s-master
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes control plane
+  addresses: [10.0.20.100]
+- name: k8s-node1
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes worker (GPU)
+  addresses: [10.0.20.101]
+- name: k8s-node2
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes worker
+  addresses: [10.0.20.102]
+- name: k8s-node3
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes worker
+  addresses: [10.0.20.103]
+- name: k8s-node4
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes worker
+  addresses: [10.0.20.104]
+- name: k8s-node5
+  type: Virtual machine
+  location: Sofia
+  description: Kubernetes worker
+  addresses: [10.0.20.105]
+
+# --- London -------------------------------------------------------------------
+- name: flint-london
+  type: Router
+  location: London
+  vendor: GL.iNet
+  model: GL-MT6000 (Flint 2)
+  os: OpenWrt (GL firmware)
+  description: London router; WireGuard spoke to Sofia
+  addresses: [192.168.8.1, 192.168.9.1, 10.3.2.6]
+- name: ha-london
+  type: Server
+  location: London
+  vendor: Raspberry Pi
+  os: Home Assistant OS
+  description: Home Assistant London
+  macs: [b8:27:eb:e9:18:92]
+- name: rpi-london
+  type: Server
+  location: London
+  vendor: Raspberry Pi
+  macs: [b8:27:eb:de:b2:36]
+
+# --- Valchedrym -----------------------------------------------------------------
+- name: openwrt-valchedrym
+  type: Router
+  location: Valchedrym
+  os: OpenWrt
+  description: Valchedrym router; WireGuard spoke to Sofia
+  addresses: [192.168.0.1, 10.3.2.5]
+
+# --- Mladost 3 ------------------------------------------------------------------
+- name: mladost3-openwrt
+  type: Router
+  location: Mladost 3
+  vendor: TP-Link
+  model: TL-WDR4300
+  os: OpenWrt
+  description: Mladost 3 router; WireGuard spoke to Sofia
+  addresses: [192.168.3.1, 10.3.2.7]
+
+# --- Off site -------------------------------------------------------------------
+- name: backup-mx
+  type: Server
+  description: Backup MX, WireGuard peer of the Sofia hub
+  addresses: [10.3.2.10]
