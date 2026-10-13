@@ -123,7 +123,7 @@ else
 fi
 
 # Device names (docs/architecture/dns.md, "London devices"). Every leased
-# device is named in viktorbarzin.lan by phpipam-remote-import, from the
+# device is named in viktorbarzin.lan by phpipam-import, from the
 # hostname it announces. These entries give a chosen name to devices whose own
 # name is missing or shared (five Kasa plugs all say "KP115"). No IP is pinned,
 # so a name follows its device from one SSID to another. Kasa plugs are named
