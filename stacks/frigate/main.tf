@@ -110,7 +110,7 @@ resource "kubernetes_deployment" "frigate" {
         container {
           # image = "ghcr.io/blakeblackshear/frigate:stable"
           # image = "ghcr.io/blakeblackshear/frigate:stable-tensorrt"
-          image = "ghcr.io/blakeblackshear/frigate:0.18.0-tensorrt"
+          image = "ghcr.io/blakeblackshear/frigate:0.18.1-tensorrt"
           name  = "frigate"
 
           resources {
