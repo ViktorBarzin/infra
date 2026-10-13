@@ -87,7 +87,7 @@ resource "kubernetes_deployment" "gate" {
         service_account_name = kubernetes_service_account.gate.metadata[0].name
         container {
           name    = "gate"
-          image   = "library/python:3.14.8-alpine"
+          image   = "library/python:3.15.0-alpine"
           command = ["python", "/app/gate.py"]
           env {
             name  = "NAMESPACE"
