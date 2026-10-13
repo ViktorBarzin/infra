@@ -278,6 +278,16 @@ cache again; GHCR is no longer mirrored for Trivy
 (`stacks/trivy-operator/main.tf`), so it does not refill. The rest of the
 burst expires on its own on 2026-10-17.
 
+Done again on 2026-10-13 after the Renovate backlog and first-party image
+rebuilds of 10-11 to 10-13 filled the disk (61G used, 440 MB free, alert
+`NodeFilesystemFull`): every GHCR blob fetched more than an hour earlier
+(627 entries, 17.3 GB) plus the Docker Hub blobs under `viktorbarzin/`
+(232 entries, 8.0 GB; our own images, mostly superseded rebuilds). Free
+space went from 440 MB to 24 GB. The pre-edit schedules are kept as
+`/root/<cache>-scheduler-state.<timestamp>.bak`. A burst of that size
+refills about 25 GB, so the 61G root disk leaves little room for two
+bursts inside one 168h TTL window.
+
 ## Rollback
 
 A pre-change backup of `/etc/resolv.conf`, `/etc/systemd/resolved.conf`,
