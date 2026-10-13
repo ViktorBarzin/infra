@@ -173,6 +173,27 @@ ensure_host anca_mba_london anca-mba-london aa:1c:ce:36:58:a8
 ensure_host portal_london portal-london a4:0e:2b:0e:48:a3
 ensure_host projector_london projector-london f4:9d:8a:26:0b:18
 
+# The router's own traffic to 10.0.0.0/8 goes through the tunnel (table 1001),
+# ahead of GL's fwmark rules at 6000. dnsmasq copies each client query's mark
+# onto its upstream query (GL's conntrack option), and LAN traffic is marked
+# 0x8000, "use main". At priority 9950 this rule came after that, so lookups
+# forwarded to Technitium for London clients left via the WAN and were never
+# answered, while the router's own unmarked lookups worked (2026-10-13). With
+# the tunnel down, table 1001 holds only a blackhole, so this fails closed.
+if [ "$(uci -q get network.router_to_sofia_via_tunnel.priority)" != 5990 ] ||
+	[ "$(uci -q get network.router_to_sofia_via_tunnel.lookup)" != 1001 ]; then
+	uci set network.router_to_sofia_via_tunnel=rule
+	uci set network.router_to_sofia_via_tunnel.in='loopback'
+	uci set network.router_to_sofia_via_tunnel.dest='10.0.0.0/8'
+	uci set network.router_to_sofia_via_tunnel.lookup='1001'
+	uci set network.router_to_sofia_via_tunnel.priority='5990'
+	uci commit network
+	ubus call network reload
+	echo "network: router's 10.0.0.0/8 traffic -> tunnel at priority 5990"
+else
+	echo "network: router-to-tunnel rule present"
+fi
+
 # Resolve every viktorbarzin.lan name (Sofia's and London's alike) and the
 # Sofia reverse zones at Technitium over the tunnel, so London clients get the
 # same answer Sofia does. dnsmasq keeps answering bare names and <name>.lan
@@ -191,6 +212,9 @@ fi
 # Canary: a name only Technitium knows. The GL DNS page and the Tailscale
 # toggle both rewrite dnsmasq settings, so a run that finds this failing after
 # changing nothing means something else undid the forwarding.
+# It runs on the router, whose own lookups carry no GL mark, so it cannot see
+# a routing fault that only hits client lookups (the 9950 rule above). Check
+# one from a London client after changing routing.
 i=0
 until [ "$(dig +short +time=2 +tries=1 @127.0.0.1 openwrt-london.viktorbarzin.lan)" = 192.168.8.1 ]; do
 	i=$((i + 1))
