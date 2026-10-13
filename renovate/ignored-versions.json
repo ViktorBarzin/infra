@@ -34,17 +34,6 @@
       ],
       "matchNewValue": "0.64.2",
       "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-13 pipeline #2388: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 1d710e0e)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "gpu-operator"
-      ],
-      "matchNewValue": "v26.7.2",
-      "enabled": false
     }
   ]
 }
