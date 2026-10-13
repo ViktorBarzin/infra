@@ -130,10 +130,11 @@ instances — so it resolves by name LAN-wide. The **PVE host** promtail (see
 "External host: pve" below) uses the name directly, with **no `/etc/hosts` pin**.
 This HA sensor and the rpi-sofia promtail still pin the LB IP in their own configs
 and can drop to the name on next touch (`verify_ssl: false` / `insecure_skip_verify`
-stays — the internal `.lan` cert isn't publicly trusted). Per-host `.lan` CNAMEs
-are still added manually via the API; auto-managing them in
-`technitium-ingress-dns-sync` (today `.me`-only + the `ingress.viktorbarzin.lan`
-anchor) remains a follow-up.
+stays — the internal `.lan` cert isn't publicly trusted). **Update 2026-10-13:**
+`technitium-ingress-dns-sync` now creates the per-host `.lan` CNAMEs itself. Every
+single-label `*.viktorbarzin.lan` ingress host without a record gets a CNAME →
+`ingress.viktorbarzin.lan` within the hour. It only adds; existing records such as
+the static `health-test` A are left alone.
 
 ### External host: rpi-sofia (Sofia Raspberry Pi)
 
@@ -178,7 +179,7 @@ The R730 iDRAC (`192.168.1.4` / `idrac.viktorbarzin.lan`) is monitored by **two*
 
 - **`snmp-idrac` (FAST, primary, 1m / 30s):** snmp-exporter `dell_idrac` module against `:161` (v2c, community `Public0` = `auth=public_v2`). ~3.7s/scrape. Serves all dynamic + health + alerting metrics: `r730_idrac_temperatureProbeReading` (tenths-°C, ÷10), `coolingDeviceReading` (fan RPM, label `coolingDeviceLocationName`), `amperageProbeReading{amperageProbeLocationName="System Board Pwr Consumption"}` (watts), `powerSupplyCurrentInputVoltage`, `globalSystemStatus`, `systemPowerState`, `powerSupplyStatus`, `physicalDiskComponentStatus`, `systemStateMemoryDeviceStatusCombined`, etc.
 - **`redfish-idrac` (SLOW remnant, 10m / 45s):** the old mrlhansen exporter, trimmed, kept only for metrics SNMP can't serve (indicator LED, NIC Mbps, machine/BIOS info, per-drive storage table). Its `sensors` collector is now **vestigial** (HA moved off it — see next bullet) and could be dropped.
-- **HA Sofia R730 sensors → Prometheus SNMP (2026-06-05):** ha-sofia's 7 REST sensors (`/config/rest_resources/idrac_redfish_exporter.yaml` — CPU/exhaust/inlet temp, power, 2× PSU voltage, fan speed) were re-pointed from the slow on-demand Redfish exporter (`scan_interval: 120`, ~16-22s/fetch, intermittent `unavailable` blips) to a **fast Prometheus query of the SNMP values** (`scan_interval: 30`, instant): `https://prometheus-query.viktorbarzin.lan/api/v1/query?query={__name__=~"r730_idrac_…"}`, one query → JSON, each sensor filters by metric+label (temps ÷10). The `prometheus-query.viktorbarzin.lan` ingress is **local-only, `auth=none`, path-scoped to `/api/v1/query`** (added in `prometheus.tf`) so HA can query the API without the Authentik gate on `prometheus.viktorbarzin.me`. Its Technitium CNAME (→ `ingress.viktorbarzin.lan`) was added **manually via the API** — like the other `.lan` exporter hosts it is NOT auto-synced (the `technitium-ingress-dns-sync` CronJob only creates `.me` records; same gap as the Loki-sensor follow-up noted above). HA-side file is auto-version-controlled by the ha-sofia HomeAssistantVersionControl add-on; pre-migration copy saved at `/config/idrac_redfish_exporter.bak-pre-snmp`.
+- **HA Sofia R730 sensors → Prometheus SNMP (2026-06-05):** ha-sofia's 7 REST sensors (`/config/rest_resources/idrac_redfish_exporter.yaml` — CPU/exhaust/inlet temp, power, 2× PSU voltage, fan speed) were re-pointed from the slow on-demand Redfish exporter (`scan_interval: 120`, ~16-22s/fetch, intermittent `unavailable` blips) to a **fast Prometheus query of the SNMP values** (`scan_interval: 30`, instant): `https://prometheus-query.viktorbarzin.lan/api/v1/query?query={__name__=~"r730_idrac_…"}`, one query → JSON, each sensor filters by metric+label (temps ÷10). The `prometheus-query.viktorbarzin.lan` ingress is **local-only, `auth=none`, path-scoped to `/api/v1/query`** (added in `prometheus.tf`) so HA can query the API without the Authentik gate on `prometheus.viktorbarzin.me`. Its Technitium CNAME (→ `ingress.viktorbarzin.lan`) was added **manually via the API**, before `technitium-ingress-dns-sync` learned to create `.lan` CNAMEs on 2026-10-13 (see the Loki note above). HA-side file is auto-version-controlled by the ha-sofia HomeAssistantVersionControl add-on; pre-migration copy saved at `/config/idrac_redfish_exporter.bak-pre-snmp`.
 
 **Gotchas:**
 - **Enum values differ from the old Redfish metrics.** DellStatus: `3 = OK` (was Redfish `1`); `systemPowerState`: `4 = on` (was `2`). All iDRAC alert exprs were rewritten accordingly (`!= 3`, `!= 4`).
