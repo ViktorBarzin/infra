@@ -72,7 +72,7 @@ resource "kubernetes_cron_job_v1" "alert_digest" {
             restart_policy = "OnFailure"
             container {
               name              = "alert-digest"
-              image             = "docker.io/library/python:3.14-alpine"
+              image             = "docker.io/library/python:3.15-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/alert_digest.py"]
               env {

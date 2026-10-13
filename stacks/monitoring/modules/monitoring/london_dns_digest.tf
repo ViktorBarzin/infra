@@ -54,7 +54,7 @@ resource "kubernetes_cron_job_v1" "london_dns_digest" {
             restart_policy = "OnFailure"
             container {
               name              = "london-dns-digest"
-              image             = "docker.io/library/python:3.14-alpine"
+              image             = "docker.io/library/python:3.15-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/scripts/london_dns_digest.py"]
               env {
