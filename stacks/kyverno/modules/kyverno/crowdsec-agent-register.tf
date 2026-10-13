@@ -41,3 +41,20 @@ resource "kubectl_manifest" "crowdsec_agent_idempotent_register" {
     create_before_destroy = true
   }
 }
+
+# =============================================================================
+# CrowdSec register init container — memory limit
+# =============================================================================
+# The chart hardcodes `limits.memory: 50Mi` on wait-for-lapi-and-register (agent
+# DaemonSet and appsec Deployment, chart 0.24.2) with no values knob. The
+# container runs `cscli lapi register`, and cscli is a 110 MB binary, so at 50Mi
+# the cgroup keeps evicting the binary's own pages and reading them back. On
+# 2026-10-13 a new agent and a new appsec pod sat in Init:0/1 for over 45
+# minutes, process in D state on folio_wait_bit_common, memory.events max
+# 2.78M, ~100 GB of file refaults. Nothing errors, so the rollout just hangs
+# until the Helm wait times out and leaves the release in pending-upgrade.
+# CHART-VERSION-COUPLED like the policy above: re-check the init container's
+# resources on a chart bump.
+resource "kubectl_manifest" "crowdsec_register_init_memory" {
+  yaml_body = templatefile("${path.module}/policies/crowdsec-register-init-memory.yaml", { memory_limit = "256Mi" })
+}
