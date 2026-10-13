@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "netbox" {
       }
       spec {
         container {
-          image = "netboxcommunity/netbox:v4.7.2"
+          image = "netboxcommunity/netbox:v4.7.3"
           name  = "netbox"
           env {
             name  = "DB_USER"
