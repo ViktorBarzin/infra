@@ -176,7 +176,7 @@ resource "kubernetes_cron_job_v1" "ghost_reconcile" {
             restart_policy       = "Never"
             container {
               name              = "reconcile"
-              image             = "python:3.14-alpine"
+              image             = "python:3.15-alpine"
               image_pull_policy = "IfNotPresent"
               command           = ["python3", "/script/reconcile.py"]
               env {
