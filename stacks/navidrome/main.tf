@@ -205,6 +205,11 @@ resource "kubernetes_deployment" "navidrome" {
             name  = "ND_ENABLEARTWORKPRECACHE"
             value = "false"
           }
+          # TEMPORARY 2026-10-13: profiling the post-scan memory spike.
+          env {
+            name  = "ND_DEVENABLEPROFILER"
+            value = "true"
+          }
           port {
             name           = "http"
             container_port = 4533
@@ -216,7 +221,7 @@ resource "kubernetes_deployment" "navidrome" {
               memory = "256Mi"
             }
             limits = {
-              memory = "768Mi"
+              memory = "3Gi" # TEMPORARY 2026-10-13, see ND_DEVENABLEPROFILER
             }
           }
         }
