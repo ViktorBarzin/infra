@@ -594,7 +594,9 @@ def read_k8s() -> list[tuple[str, str, str]]:
         nodes = json.loads(read_text(f"{dump}/nodes.json"))
         services = json.loads(read_text(f"{dump}/services.json"))
     else:
-        base = "https://kubernetes.default.svc"
+        # The address kubelet injects, not kubernetes.default.svc: Kyverno sets
+        # ndots:2 and Alpine's resolver then never tries the search domains.
+        base = f"https://{os.environ['KUBERNETES_SERVICE_HOST']}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
         sa = "/var/run/secrets/kubernetes.io/serviceaccount"
         headers = {"Authorization": f"Bearer {read_text(sa + '/token').strip()}"}
         ctx = ssl.create_default_context(cafile=sa + "/ca.crt")
