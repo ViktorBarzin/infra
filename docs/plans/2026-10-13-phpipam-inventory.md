@@ -1,6 +1,6 @@
 # phpIPAM as the address inventory
 
-- Status: approved 2026-10-13, executing (enrichment added the same day)
+- Status: done 2026-10-13 (enrichment added the same day)
 - Decision record: `docs/adr/0032-phpipam-is-an-auto-filled-address-inventory.md`
 - Glossary: `CONTEXT.md`, "Address inventory"
 
@@ -31,7 +31,7 @@ MariaDB client cannot log in to MySQL 8.4 and the error was discarded.
 ## Design
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph Sources
     OW[OpenWrt sites<br/>London, Valchedrym, Mladost 3<br/>leases, static leases, ARP]
     PF[pfSense<br/>Kea leases + reservations<br/>ARP after LAN sweep<br/>WireGuard peers]
@@ -112,6 +112,26 @@ admin page adds them), created by the importer.
 4. Watch the first runs, then check the phpIPAM UI and DNS from Sofia and
    London.
 5. List the hand rows that disagree with live data for review.
+
+## Result (2026-10-13)
+
+```stats
+130 | addresses tracked
+103 | with a MAC
+93 | with a vendor
+23 | infrastructure Devices
+6 | sources, all answering
+```
+
+- `phpipam-import` runs every 5 minutes; a steady-state run writes no DNS
+  records and refreshes rows' last-seen times and state tags.
+- Nine hand rows are Offline, each a device that is not on the network
+  (TrueNAS, Emo's laptop and phone, the Valchedrym thermostat, rpi-london and
+  four others).
+- Three hand rows carry a MAC that differs from the device answering at that
+  address: `switch-garaj` (192.168.1.6), `tp-link-rpi` (192.168.1.16) and
+  `hydrawise` (192.168.1.230, now answered by a Proxmox VM MAC). The importer
+  leaves hand rows as written, so these are for a person to check.
 
 ## Open questions
 
