@@ -71,7 +71,16 @@ _PARSED = [(ipaddress.ip_network(n.cidr), n) for n in NETWORKS]
 LOCATIONS = ["Sofia", "London", "Valchedrym", "Mladost 3"]
 VLANS = {10: "Management", 20: "Kubernetes", 30: "CCTV"}
 DEMO_VLANS = {(2001, "IPv6 private 1"), (4001, "Servers DMZ")}
-SITES = ["london", "valchedrym", "mladost3"]  # publishing order; earlier sites keep a contested name
+SITES = ["london", "valchedrym", "mladost3"]
+# Each router's own addresses, which never appear in its own lease or ARP
+# table. A router that answered the fetch is up, so these count as seen. Keep
+# the LAN address in step with fetch_sources.sh.
+SITE_ROUTERS = {
+    "london": ["192.168.8.1", "192.168.9.1"],
+    "valchedrym": ["192.168.0.1"],
+    "mladost3": ["192.168.3.1"],
+    "sofia": ["10.3.2.1"],  # pfSense's WireGuard hub address
+}  # publishing order; earlier sites keep a contested name
 SOURCES = {"sofia", "london", "valchedrym", "mladost3", "k8s", "headscale"}
 DYNAMIC_KINDS = {"dhcp", "arp"}
 DECLARED_KINDS = {"reservation", "interface", "wireguard", "k8s", "headscale"}
@@ -665,6 +674,8 @@ def main() -> int:
         for ip, mac in arp:
             if mac not in leased:
                 obs_raw.append((ip, "dynamic", mac, desc(f"arp {site}"), None, None, site, 2))
+        for ip in SITE_ROUTERS[site]:
+            obs_raw.append((ip, "declared", "", desc(f"interface {site}"), None, None, site, 0))
         print(f"source {site}: {len(leases)} leases, {len(hosts)} static, {len(arp)} ARP")
 
     try:
@@ -688,6 +699,8 @@ def main() -> int:
                 obs_raw.append((ip, "dynamic", mac, desc("arp sofia"), None, None, "sofia", 2))
         for ip, routes in wg:
             obs_raw.append((ip, "declared", "", desc(f"wireguard peer {routes}".strip()), None, None, "sofia", 0))
+        for ip in SITE_ROUTERS["sofia"]:
+            obs_raw.append((ip, "declared", "", desc("interface sofia"), None, None, "sofia", 0))
         print(f"source sofia: {len(leases)} Kea leases, {len(res)} reservations, {len(arp)} ARP, {len(wg)} WireGuard peers")
     except Exception as e:
         print(f"SOURCE FAILED sofia: {e}")
