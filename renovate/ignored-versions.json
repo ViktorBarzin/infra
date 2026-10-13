@@ -23,17 +23,6 @@
       ],
       "matchNewValue": "v6.0.2",
       "enabled": false
-    },
-    {
-      "description": "2026-10-12: navidrome 0.64.2 OOMKilled during its post-upgrade library scan at 384Mi and again at 1Gi (6 restarts); reverted to 0.61.2 by hand. Retry with a memory-profiled run or a newer release.",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "deluan/navidrome"
-      ],
-      "matchNewValue": "0.64.2",
-      "enabled": false
     }
   ]
 }
