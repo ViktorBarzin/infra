@@ -1,17 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": [
-    {
-      "description": "rails revert 2026-10-12 pipeline #2380: stack resume failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 775df6d8)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "amruthpillai/reactive-resume"
-      ],
-      "matchNewValue": "v6.0.2",
-      "enabled": false
-    }
-  ]
+  "packageRules": []
 }
