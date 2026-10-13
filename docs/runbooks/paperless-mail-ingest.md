@@ -22,6 +22,9 @@ Anca's Gmail is set to Romanian, so its All Mail folder has a localized name.
 For any new Gmail account, find the folder carrying the `\All` flag in the IMAP
 `LIST` output rather than assuming `[Gmail]/All Mail`.
 
+Rule 51's first pass finished on 2026-10-13; its 439 historical documents carry
+`email-backfill` (5260), and the tag is no longer on the rule.
+
 Shared settings: `attachment_type=2` (inline parts included),
 `filter_attachment_filename_include=*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`,
 `maximum_age=0`, consumption scope attachments only, action TAG with parameter
@@ -57,6 +60,9 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
   attachments consumed seconds apart can both pass duplicate rejection; after
   the pass, look for same-owner pairs (`duplicate_documents` on
   `/api/documents/<id>/`) and trash the newer copy.
+- **30-minute limit:** `process_mail_accounts` has a Celery hard time limit of
+  1800 s, so a first pass over a large mailbox is stopped part way and resumed
+  by the next scheduled run. That is expected.
 - **Restarts during a crawl:** a pod or container restart wipes
   `/tmp/paperless/paperless-mail-*`. Queued consume tasks then fail with
   `File not found` and record FAILED `ProcessedMail` rows that are never

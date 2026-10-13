@@ -1,6 +1,6 @@
 # ADR-0029: Paperless reads each person's mailbox directly for document attachments
 
-- Status: accepted, first pass complete 2026-10-10. Anca's mailbox added 2026-10-12 (account 37, rule 51), first pass running
+- Status: accepted, first pass complete 2026-10-10. Anca's mailbox added 2026-10-12 (account 37, rule 51), first pass complete 2026-10-13
 - Date: 2026-10-09
 - Related: `docs/runbooks/paperless-mail-ingest.md` (operations and the rule table), memory #7099 (the `docs@` forward path built 2026-07-03)
 
@@ -190,6 +190,30 @@ her mailbox.
   is `[Gmail]/Toate mesajele`; the rule names that folder.
 - Mailbox size, measured over IMAP on 2026-10-12: 4,160 messages, 1.30 GB,
   438 messages with PDF/Office attachments all time, 56 in the last 12 months.
+
+### Results of Anca's first pass (2026-10-12 20:16 to 2026-10-13 02:25 UTC)
+
+| Emails checked | Emails with documents imported | Documents imported | Failed emails |
+|---|---|---|---|
+| 4,158 | 433 | 439 (owner anca; 356 PDF, 80 Word, 3 Excel) | 3 |
+
+- All 433 emails with imported documents carry the Gmail label `paperless`.
+- The 3 failures: 2 Office files that Gotenberg or Tika could not convert, and 1
+  email whose documents were imported but whose label step could not log in to
+  Gmail, so that email has no label.
+- The first run (20:16) stopped with Gmail returning `System Error` during a
+  bulk fetch, while other IMAP sessions were open on the same account. The next
+  run read the same 500 messages without error.
+- `process_mail_accounts` has a 30-minute hard time limit, and the 20:26 run was
+  stopped by it after about 1,900 messages. The next run continued from there,
+  because every message read already had a `ProcessedMail` row.
+- To see documents sooner, a temporary second Celery worker ran inside the pod
+  from 20:46 to 21:12 while the crawl held the main worker. Once the crawl task
+  ended, both workers consumed at once, and 3 same-owner duplicate pairs got
+  past duplicate rejection. The temporary worker was stopped and the newer copy
+  of each pair (16445, 16466, 16469) moved to the trash.
+- `email-backfill` (5260) was removed from rule 51 at 02:25 UTC; new mail carries
+  `email-ingest` only.
 
 ## Alternatives considered
 
