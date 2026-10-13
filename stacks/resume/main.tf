@@ -2,10 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "resume_database_url" {
-  type    = string
-  default = ""
-}
 variable "nfs_server" { type = string }
 variable "mail_host" { type = string }
 
@@ -239,7 +235,7 @@ resource "kubernetes_deployment" "resume" {
       spec {
         container {
           name  = "resume"
-          image = "amruthpillai/reactive-resume:v5.0.20"
+          image = "amruthpillai/reactive-resume:v6.0.2"
 
           port {
             container_port = 3000
@@ -250,17 +246,23 @@ resource "kubernetes_deployment" "resume" {
             name  = "APP_URL"
             value = local.app_url
           }
+          # Vault secret/resume database_url, synced by the resume-secrets
+          # ExternalSecret. The database is created in stacks/dbaas
+          # (null_resource.pg_resume_db).
           env {
-            name  = "DATABASE_URL"
-            value = var.resume_database_url
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "resume-secrets"
+                key  = "database_url"
+              }
+            }
           }
+          # v6 limits auth attempts per visitor from X-Forwarded-For, which it
+          # only trusts from these peers: Traefik's pod network.
           env {
-            name  = "PRINTER_ENDPOINT"
-            value = "ws://printer.${local.namespace}.svc.cluster.local:3000"
-          }
-          env {
-            name  = "PRINTER_APP_URL"
-            value = "http://resume.${local.namespace}.svc.cluster.local"
+            name  = "TRUSTED_PROXIES"
+            value = "10.10.0.0/16"
           }
           env {
             name = "AUTH_SECRET"
@@ -319,11 +321,12 @@ resource "kubernetes_deployment" "resume" {
           # reactive-resume v5 needs more to boot. Burstable, tier 4-aux.
           resources {
             requests = {
-              memory = "128Mi"
+              memory = "256Mi"
               cpu    = "15m"
             }
+            # v6.0.2 measured at about 307Mi after its first page render.
             limits = {
-              memory = "256Mi"
+              memory = "768Mi"
             }
           }
 
