@@ -34,6 +34,17 @@
       ],
       "matchNewValue": "0.64.2",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-13 pipeline #2419: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 3f4c2c6a)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "prometheus"
+      ],
+      "matchNewValue": "29.36.2",
+      "enabled": false
     }
   ]
 }
