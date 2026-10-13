@@ -74,13 +74,21 @@ def netaddr_lookup(mac: str) -> str | None:
         return None
 
 
+# What router integrations put on every Wi-Fi client they list: not data.
+_HA_PLACEHOLDERS = {"unknown", "wifi device", "generic", "none"}
+
+
+def _ha_value(value) -> str | None:
+    return None if value is None or str(value).strip().lower() in _HA_PLACEHOLDERS else _clip(str(value))
+
+
 def ha_by_mac(devices: list[dict]) -> dict[str, Info]:
     out: dict[str, Info] = {}
     for d in devices:
-        model = d.get("model")
+        model = _ha_value(d.get("model"))
         if model and d.get("model_id") and d["model_id"] != model:
             model = f"{model} ({d['model_id']})"
-        info = Info(_clip(d.get("manufacturer")), _clip(model), _clip(d.get("sw_version")))
+        info = Info(_ha_value(d.get("manufacturer")), _clip(model), _ha_value(d.get("sw_version")))
         if info == Info(None, None, None):
             continue
         for kind, value in d.get("connections") or []:
@@ -328,7 +336,9 @@ def run(cur, db, *, subnet_ids: list[int], seen_mac_by_ip: dict[str, str], seen_
     for rid, ip, mac, desc, last, state, switch, vendor, model, os_ in rows:
         is_hand = not desc.startswith("-- ")
         info = info_by_row[rid]
-        current = {"mac": mac, "Vendor": vendor, "Model": model, "OS": os_, "switch": int(switch or 0)}
+        # A placeholder stored by an earlier run ("Unknown", "WiFi Device") counts as empty.
+        current = {"mac": mac, "Vendor": _ha_value(vendor), "Model": _ha_value(model), "OS": os_,
+                   "switch": int(switch or 0)}
         new = {"mac": mac_by_row[rid] or None, "Vendor": info.vendor, "Model": info.model, "OS": info.os,
                "switch": device_ids.get(links.get(rid), 0)}
         changes = field_updates(is_hand, current, new)

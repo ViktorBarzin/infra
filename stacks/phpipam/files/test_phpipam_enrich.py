@@ -43,12 +43,16 @@ class HaTests(unittest.TestCase):
              "connections": [["mac", "50:14:79:76:c6:eb"], ["zigbee", "abc"]]},
             {"manufacturer": "Sun", "model": "Moon", "connections": [["zigbee", "00:11"]]},
             {"manufacturer": None, "model": None, "sw_version": None, "connections": [["mac", "00:00:00:00:00:01"]]},
+            # A router integration's client list: placeholders, not data.
+            {"manufacturer": "Unknown", "model": "WiFi Device", "sw_version": None,
+             "connections": [["mac", "b8:27:eb:de:b2:36"]]},
         ]
         got = pe.ha_by_mac(devices)
         self.assertEqual(got["78:8c:b5:74:30:11"], pe.Info(vendor="TP-Link", model="KP115(UK)", os="1.0.18"))
         self.assertEqual(got["50:14:79:76:c6:eb"].model, "s910840 (S9+)")
         self.assertEqual(len(got["50:14:79:76:c6:eb"].os), 128)
         self.assertNotIn("00:00:00:00:00:01", got)
+        self.assertNotIn("b8:27:eb:de:b2:36", got)
         self.assertEqual(len(got), 2)
 
 
