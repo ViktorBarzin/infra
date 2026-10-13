@@ -155,7 +155,7 @@ resource "kubernetes_deployment" "navidrome" {
       spec {
         container {
           name  = "navidrome"
-          image = "deluan/navidrome:0.61.2"
+          image = "deluan/navidrome:0.64.2"
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -179,6 +179,24 @@ resource "kubernetes_deployment" "navidrome" {
             name  = "ND_SCANSCHEDULE"
             value = "0"
           }
+          # 0.64's background artwork worker runs max(2, NumCPU/2) decodes at
+          # once, with NumCPU read from the node (8 cores -> 4 workers), and
+          # each decode holds a full-size cover in memory (up to the 20MB
+          # MaxImageSize). That OOMKilled 0.64.2 at 384Mi and at 1Gi on
+          # 2026-10-12, right after its 4-second scan. One worker, two
+          # artwork requests, and a Go soft limit below the container limit.
+          env {
+            name  = "ND_DEVARTWORKWORKERCONCURRENCY"
+            value = "1"
+          }
+          env {
+            name  = "ND_DEVARTWORKMAXREQUESTS"
+            value = "2"
+          }
+          env {
+            name  = "GOMEMLIMIT"
+            value = "600MiB"
+          }
           port {
             name           = "http"
             container_port = 4533
@@ -190,7 +208,7 @@ resource "kubernetes_deployment" "navidrome" {
               memory = "256Mi"
             }
             limits = {
-              memory = "384Mi"
+              memory = "768Mi"
             }
           }
         }
