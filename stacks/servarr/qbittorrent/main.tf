@@ -278,7 +278,7 @@ resource "kubernetes_cron_job_v1" "qbittorrent_ratio_monitor" {
           spec {
             container {
               name    = "ratio-monitor"
-              image   = "docker.io/library/python:3.14-alpine"
+              image   = "docker.io/library/python:3.15-alpine"
               command = ["/bin/sh", "-c", "set -euo pipefail; pip install -q requests > /dev/null 2>&1; python3 /tmp/monitor.py"]
               volume_mount {
                 name       = "script"
