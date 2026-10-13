@@ -32,11 +32,16 @@ spec:
     # (The ClusterPolicy's strategic-merge patch replaced the list; no pod in
     # the cluster had other options on 2026-10-12.) dnsConfig.options is an
     # atomic list, so an ApplyConfiguration cannot set it.
+    # A pod with dnsConfig but no options (Woodpecker step pods) gets an empty
+    # list, then the option appended. A list of objects as a patch value makes
+    # Kyverno 1.19's cel-go panic (reflect.Set: *structpb.Struct is not
+    # assignable to *structpb.Value) and the webhook skips the pod.
     - patchType: JSONPatch
       jsonPatch:
         expression: >-
           !has(object.spec.dnsConfig) ?
             [JSONPatch{op: 'add', path: '/spec/dnsConfig', value: Object.spec.dnsConfig{options: [Object.spec.dnsConfig.options{name: 'ndots', value: '2'}]}}] :
           !has(object.spec.dnsConfig.options) ?
-            [JSONPatch{op: 'add', path: '/spec/dnsConfig/options', value: [Object.spec.dnsConfig.options{name: 'ndots', value: '2'}]}] :
+            [JSONPatch{op: 'add', path: '/spec/dnsConfig/options', value: []},
+             JSONPatch{op: 'add', path: '/spec/dnsConfig/options/-', value: Object.spec.dnsConfig.options{name: 'ndots', value: '2'}}] :
             [JSONPatch{op: 'add', path: '/spec/dnsConfig/options/-', value: Object.spec.dnsConfig.options{name: 'ndots', value: '2'}}]
