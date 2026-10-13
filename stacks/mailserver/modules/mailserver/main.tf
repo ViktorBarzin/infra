@@ -967,7 +967,7 @@ resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
           spec {
             container {
               name  = "email-roundtrip"
-              image = "docker.io/library/python:3.14-alpine"
+              image = "docker.io/library/python:3.15-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check requests && python3 -c '
 import requests, imaplib, email, time, os, uuid, sys, ssl, json
