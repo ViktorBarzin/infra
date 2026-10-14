@@ -8,6 +8,13 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "platform"
 }
 
+# kea_ddns_tsig_secret lives with the other personal secrets
+# (docs/runbooks/pfsense-unbound.md, "Kea DHCP-DDNS TSIG").
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
 locals {
   homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
@@ -21,5 +28,6 @@ module "technitium" {
   technitium_username            = data.vault_kv_secret_v2.secrets.data["technitium_username"]
   technitium_password            = data.vault_kv_secret_v2.secrets.data["technitium_password"]
   dbaas_postgresql_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_postgresql_root_password"]
+  kea_ddns_tsig_secret           = data.vault_kv_secret_v2.viktor.data["kea_ddns_tsig_secret"]
   tier                           = local.tiers.core
 }
