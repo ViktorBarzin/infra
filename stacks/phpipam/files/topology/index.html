@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network topology</title>
+<style>
+:root { --bg: #ffffff; --fg: #1d1d1f; --muted: #5f6368; --line: #d9d9de; --link: #1a5fb4; --warn: #b3261e; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17181a; --fg: #e8e8ea; --muted: #a0a3a8; --line: #34363a; --link: #8ab4f8; --warn: #f2b8b5; }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p { margin: 0 0 12px; color: var(--muted); }
+a { color: var(--link); }
+#status { font-variant-numeric: tabular-nums; }
+#status.error { color: var(--warn); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2e9d5b; margin-right: 6px; vertical-align: 1px; }
+#status.error .dot { background: var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+.key { display: inline-block; width: 22px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 3px; }
+.up { border: 3px solid #2e9d5b; }
+.down { border: 3px dashed #d0453b; }
+.unknown { border: 2px solid #8a8a8a; }
+.diagram { border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; min-height: 200px; }
+#diagram { text-align: center; }
+#diagram svg { max-width: none; }
+/* mermaid 11.4.1 adds an arrowhead to undirected links; these links have no direction. */
+#diagram path.flowchart-link { marker-end: none !important; }
+</style>
+</head>
+<body>
+<main>
+<h1>Network topology</h1>
+<p id="status"><span class="dot"></span>Loading…</p>
+<p>Device status is a ping from the cluster on every refresh (every 30 seconds while this tab is open); dotted
+tunnel links show the round trip. Subnets and address counts come from phpIPAM, which imports every 5 minutes.
+Click a subnet to open it. <a href="/subnets/">All subnets</a> &middot; <a href="/tools/locations/">Locations map</a></p>
+<div class="legend">
+<span><span class="key up"></span>answers ping</span>
+<span><span class="key down"></span>no answer</span>
+<span><span class="key unknown"></span>could not be checked</span>
+<span>Subnets outside the site boxes join more than one site.</span>
+</div>
+<div class="diagram"><div id="diagram"></div></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script src="topology.js"></script>
+<script>
+"use strict";
+const REFRESH_MS = 30000;
+const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({
+  startOnLoad: false, securityLevel: "loose", theme: dark ? "dark" : "default",
+  flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 30, rankSpacing: 60, useMaxWidth: false },
+});
+
+const statusEl = document.getElementById("status");
+const diagramEl = document.getElementById("diagram");
+let lastText = "";
+let lastOk = null;
+let renders = 0;
+let timer = null;
+
+function setStatus() {
+  if (!lastOk) return;
+  const ago = Math.round((Date.now() - lastOk.at) / 1000);
+  statusEl.className = lastOk.error ? "error" : "";
+  const checked = new Date(lastOk.at).toLocaleTimeString();
+  statusEl.innerHTML = lastOk.error
+    ? `<span class="dot"></span>Last refresh failed (${lastOk.error}). Showing the check from ${checked}.`
+    : `<span class="dot"></span>Live. Checked at ${checked} (${ago}s ago), ${lastOk.probes} addresses answered the probe service.`;
+}
+
+async function refresh() {
+  try {
+    const resp = await fetch("data.php", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const text = buildMermaid(data);
+    if (text !== lastText) {
+      const { svg, bindFunctions } = await mermaid.render(`topology-${renders++}`, text);
+      diagramEl.innerHTML = svg;
+      bindFunctions?.(diagramEl);
+      lastText = text;
+    }
+    lastOk = { at: Date.now(), probes: data.probes, error: null };
+  } catch (err) {
+    lastOk = lastOk ? { ...lastOk, error: err.message } : { at: Date.now(), probes: "0/0", error: err.message };
+  }
+  setStatus();
+}
+
+function schedule() {
+  clearInterval(timer);
+  timer = null;
+  if (document.visibilityState === "visible") {
+    refresh();
+    timer = setInterval(refresh, REFRESH_MS);
+  }
+}
+
+document.addEventListener("visibilitychange", schedule);
+setInterval(setStatus, 1000);
+schedule();
+</script>
+</body>
+</html>

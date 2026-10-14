@@ -166,8 +166,8 @@ resource "kubernetes_deployment" "phpipam_web" {
       tier = local.tiers.aux
     }
     annotations = {
-      # Named, not "auto": auto would also watch the phpipam-topology ConfigMap
-      # mounted below and restart phpIPAM every 5 minutes.
+      # Named, not "auto": the phpipam-topology ConfigMap mounted below is
+      # read on every request, so a change to it needs no restart.
       "secret.reloader.stakater.com/reload" = "phpipam-secrets"
     }
   }
@@ -227,8 +227,13 @@ resource "kubernetes_deployment" "phpipam_web" {
             name  = "IPAM_TRUST_X_FORWARDED"
             value = "true"
           }
-          # The topology page phpipam_topology.py writes; served at /topology/.
-          # Not a subPath mount, so ConfigMap updates reach the pod.
+          # The live topology page pings network devices through this.
+          env {
+            name  = "BLACKBOX_URL"
+            value = "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
+          }
+          # The live topology page (files/topology/), served at /topology/. Not a
+          # subPath mount, so ConfigMap updates reach the pod.
           volume_mount {
             name       = "topology"
             mount_path = "/phpipam/topology"
@@ -323,15 +328,14 @@ resource "kubernetes_config_map" "phpipam_import" {
     namespace = kubernetes_namespace.phpipam.metadata[0].name
   }
   data = {
-    "phpipam_import.py"   = file("${path.module}/files/phpipam_import.py")
-    "phpipam_enrich.py"   = file("${path.module}/files/phpipam_enrich.py")
-    "phpipam_topology.py" = file("${path.module}/files/phpipam_topology.py")
-    "fetch_sources.sh"    = file("${path.module}/files/fetch_sources.sh")
-    "devices.yaml"        = file("${path.module}/files/devices.yaml")
+    "phpipam_import.py" = file("${path.module}/files/phpipam_import.py")
+    "phpipam_enrich.py" = file("${path.module}/files/phpipam_enrich.py")
+    "fetch_sources.sh"  = file("${path.module}/files/fetch_sources.sh")
+    "devices.yaml"      = file("${path.module}/files/devices.yaml")
   }
 }
 
-# Reads node addresses and LoadBalancer addresses, and writes the topology page.
+# Reads node addresses and LoadBalancer addresses; nothing else.
 resource "kubernetes_service_account" "phpipam_import" {
   metadata {
     name      = "phpipam-import"
@@ -366,50 +370,17 @@ resource "kubernetes_cluster_role_binding" "phpipam_import" {
   }
 }
 
-# The network topology page (files/phpipam_topology.py). phpipam-import
-# replaces index.html on every run; Terraform creates the ConfigMap with a
-# placeholder and leaves its data alone afterwards.
+# The live network topology page (files/topology/, design in
+# docs/plans/2026-10-13-phpipam-inventory.md). index.html polls data.php every
+# 30 s; data.php reads phpIPAM's database and pings each network device through
+# the blackbox exporter; topology.js draws the diagram in the browser.
 resource "kubernetes_config_map" "phpipam_topology" {
   metadata {
     name      = "phpipam-topology"
     namespace = kubernetes_namespace.phpipam.metadata[0].name
   }
   data = {
-    "index.html" = "<!doctype html><title>Network topology</title><p>Not drawn yet; phpipam-import draws it every 5 minutes.</p>"
-  }
-  lifecycle {
-    ignore_changes = [data]
-  }
-}
-
-# Lets the import job replace that one ConfigMap and nothing else.
-resource "kubernetes_role" "phpipam_topology" {
-  metadata {
-    name      = "phpipam-topology-writer"
-    namespace = kubernetes_namespace.phpipam.metadata[0].name
-  }
-  rule {
-    api_groups     = [""]
-    resources      = ["configmaps"]
-    resource_names = [kubernetes_config_map.phpipam_topology.metadata[0].name]
-    verbs          = ["get", "patch"]
-  }
-}
-
-resource "kubernetes_role_binding" "phpipam_topology" {
-  metadata {
-    name      = "phpipam-topology-writer"
-    namespace = kubernetes_namespace.phpipam.metadata[0].name
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.phpipam_topology.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.phpipam_import.metadata[0].name
-    namespace = kubernetes_namespace.phpipam.metadata[0].name
+    for f in ["index.html", "topology.js", "data.php"] : f => file("${path.module}/files/topology/${f}")
   }
 }
 
@@ -434,7 +405,7 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
         template {
           metadata {
             annotations = {
-              "checksum/script" = sha1(join("", [for f in ["phpipam_import.py", "phpipam_enrich.py", "phpipam_topology.py", "fetch_sources.sh", "devices.yaml"] : file("${path.module}/files/${f}")]))
+              "checksum/script" = sha1(join("", [for f in ["phpipam_import.py", "phpipam_enrich.py", "fetch_sources.sh", "devices.yaml"] : file("${path.module}/files/${f}")]))
             }
           }
           spec {
@@ -451,13 +422,7 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
                 chmod 600 /root/.ssh/id_rsa
                 echo "StrictHostKeyChecking no" > /root/.ssh/config
                 sh /app/fetch_sources.sh /tmp/sources
-                rc=0
-                python3 /app/phpipam_import.py || rc=$?
-                # Drawn even when a Source failed: the page then shows that
-                # site's router as not seen. A failed drawing leaves the last
-                # page up, with its timestamp, and does not fail the import.
-                python3 /app/phpipam_topology.py || echo "topology failed"
-                exit $rc
+                exec python3 /app/phpipam_import.py
               EOT
               ]
               env {
