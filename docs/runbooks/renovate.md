@@ -43,38 +43,48 @@ flowchart TD
   G -->|no| H[revert, no ignore entry<br/>Slack: held]
   G -->|yes| S[run the stack's backup CronJobs<br/>+ etcd snapshot for a chart bump]
   S -->|failed| H
-  S --> A2[apply]
+  S --> B[baseline: verify --baseline<br/>which checks already fail]
+  B --> A2[apply]
   A2 --> V[scripts/verify/run per stack]
-  V -->|pass| M[move marker]
-  V -->|fail, or apply failed| F[revert + ignore entry,<br/>apply reverted tree,<br/>Slack names the snapshot]
-  F --> M
+  V -->|pass, or only checks<br/>that failed in the baseline| M[move marker]
+  V -->|a check that passed in the baseline fails,<br/>or apply failed| F[revert + ignore entry,<br/>apply reverted tree]
+  F --> W{previous version's new pods<br/>healthy for 2 min?}
+  W -->|yes| FS[Slack names the snapshot]
+  W -->|no: restarts or crash loop| RF[roll forward: bump back,<br/>ignore entry removed,<br/>apply, Slack: human needed]
+  FS --> M
+  RF --> M
   H --> M
 ```
 
 | Stage | Command | What it does |
 |---|---|---|
-| prepare | `renovate-rails prepare`, after stack detection | Finds Renovate commits on master after the marker, minus ones a later commit reverted. Runs the gate, then the snapshot, and adds each commit's stack to the apply lists. |
+| prepare | `renovate-rails prepare`, after stack detection | Finds Renovate commits on master after the marker, minus ones a later commit reverted. Runs the gate, the snapshot, then a baseline `scripts/verify/run --baseline <stack>` (a few seconds per stack, in parallel), and adds each commit's stack to the apply lists. |
 | apply | the existing platform and app loops | Unchanged, except that a failed apply of a stack the rails are verifying no longer fails the step; the rails handle it. |
-| finish | `renovate-rails finish`, before the state push | Runs `scripts/verify/run --since <time before apply> <stack>` for each stack. On a failed apply or verify it reverts the commit, applies the reverted tree, posts to Slack and writes Pushgateway metrics. |
+| finish | `renovate-rails finish`, before the state push | Runs `scripts/verify/run --since <time before apply> <stack>` for each stack. On a failed apply, or a verify failure the baseline did not already show, it reverts the commit, applies the reverted tree, checks that the previous version runs (rolling forward if it does not), posts to Slack and writes Pushgateway metrics. |
 | push | the existing state push | Pushes the revert commit with any state commits. |
 | exit | `renovate-rails exit` | Turns the pipeline red when a bump was reverted or could not be handled. |
 
 The gate is the same opt-in allowlist the other unattended upgraders use. `renovate-rails` reads `UPGRADE_GATE_ALERTS` from `stacks/k8s-version-upgrade/scripts/upgrade-step.sh` (firing alerts with severity critical) and `alertFilterRegexp` from `stacks/kured/main.tf` (any firing alert), so there is one list to edit. It queries Prometheus directly, so an Alertmanager silence does not open it. If Prometheus does not answer, the gate counts as blocked. If the chain's list cannot be parsed, every firing critical blocks, as in the chain itself.
 
-The snapshot runs, once, every unsuspended CronJob whose name ends in `-backup` in the stack's namespaces (`VERIFY_NAMESPACES` in its `verify.sh`, else the stack name). `cnpg` also runs `dbaas/postgresql-backup`, and any Helm chart bump also runs `default/backup-etcd`, because a chart may change CRDs. The Jobs are named `rails-<cronjob>-<sha>-<n>` and kept for 24 hours. The Slack message and the revert commit name each Job and the NFS path it wrote to. No data is restored automatically.
+The snapshot runs, once, every unsuspended CronJob whose name ends in `-backup` in the stack's namespaces: `VERIFY_NAMESPACES` in its `verify.sh`, else the namespaces `scripts/verify/stack-namespaces` reads from the stack source (the same list the verify runner checks), else the stack name. Until 2026-10-14 the rails skipped the source step, so `servarr` resolved to `servarr` alone and the `aiostreams` backups never ran. `cnpg` also runs `dbaas/postgresql-backup`, and any Helm chart bump also runs `default/backup-etcd`, because a chart may change CRDs. The Jobs are named `rails-<cronjob>-<sha>-<n>` and kept for 24 hours. The Slack message and the revert commit name each Job and the NFS path it wrote to. No data is restored automatically.
 
 A failed bump becomes one commit by `Woodpecker CI <ci@viktorbarzin.me>`: `Revert "<stack>: bump ..."`, with that exact version added to `renovate/ignored-versions.json`. For a digest-only pin the entry disables digest updates for the package instead (`matchUpdateTypes: ["digest"]`), and stays until someone removes it. The revert is pushed without `[CI SKIP]`, so the pipeline it starts applies the reverted tree a second time; that run is a no-op when the rollback apply in the rails already succeeded, and the retry when it did not.
+
+Which failures count. Before the apply, the rails run each stack's checks once with `--baseline`: quick, no alert window, no rollout or ingress waits. The checks that fail there were failing before the bump. After the apply, a failed verify reverts the bump only when a check fails that passed in the baseline. When every failed check also failed in the baseline, the bump counts as verified and the log names the pre-existing failures. Of the 27 reverts between 2026-10-10 and 2026-10-14, 22 were not caused by the bump; at least 9 of those were checks already failing before it (Kyverno webhook panics, a crash-looping immichframe, `resume` not running since July). The comparison uses check names, which name the workload or route (`floor: rollout immich/Deployment/immich-frame`, `floor: ingress aiostreams/aiostreams`). If the baseline produced no result, or the failed verify names no check, every failure counts, as before. `RAILS_BASELINE=0` in the pipeline environment turns the baseline off.
+
+Rollback check and roll forward. After applying the reverted tree, the rails watch the stack's namespaces for 2 minutes (`RAILS_ROLLBACK_WATCH`). A pod created after the rollback apply started that restarts twice, or waits in `CrashLoopBackOff`, an image-pull error or a config error, means the previous version does not run. That happens when the bump changed state the old version cannot read: a database migration, a data format, a CRD. The rails then roll forward: a CI commit `Roll forward "<subject>"` re-applies the bump and removes its ignore entry, the stack is applied again, and the Slack message says both versions failed and a human needs to look (outcome 4). On 2026-10-14 AIOStreams v2.36.0 applied migrations 43 to 46, a verify probe caught it mid-startup, and the revert to v2.35.9 crash-looped for 20 hours on "Database is at migration 46 but this build only knows up to 42"; linkwarden's revert hit the same class on 2026-10-11 (Prisma P3009). A broken rollback costs the terraform rollout wait (up to 10 minutes for a Deployment that never becomes ready) plus the watch. The pods the failed bump created are older than the rollback, so their restarts do not count while they terminate.
 
 A held bump (gate blocked, or the snapshot failed) is reverted the same way but without an ignore entry, so Renovate offers it again after the 2-hour cool-down. The pipeline stays green.
 
 Cancellation: a push to master cancels the running pipeline, so a human push can stop the rails between apply and verify. The marker covers that. ConfigMap `woodpecker/renovate-rails`, key `last_handled`, holds the newest master commit up to which every Renovate commit was verified or reverted. The next pipeline, whoever pushed it, starts from the marker, finds the unverified Renovate commit, applies its stack again (a no-op if it was applied) and verifies it. The marker only moves forward along master, so a restarted older pipeline cannot move it back. If it is missing or not an ancestor of the commit being built, the rails fall back to the pipeline's diff base.
 
-Metrics (Pushgateway, `job="renovate-rails"`): `renovate_rails_last_run_timestamp_seconds`, `renovate_rails_last_outcome` (0 verified, 1 reverted, 2 held, 3 not fully handled), `renovate_rails_last_revert_timestamp_seconds`, `renovate_rails_hold_timestamp_seconds`.
+Metrics (Pushgateway, `job="renovate-rails"`): `renovate_rails_last_run_timestamp_seconds`, `renovate_rails_last_outcome` (0 verified, 1 reverted, 2 held, 3 not fully handled, 4 reverted and rolled forward), `renovate_rails_last_revert_timestamp_seconds` (outcomes 1 and 4), `renovate_rails_roll_forward_timestamp_seconds`, `renovate_rails_hold_timestamp_seconds`.
 
 Working with the rails:
 
 - Read what a run did: `homelab logs query '{namespace="woodpecker"} |= "[rails]"' --since 2h`.
 - Retry a reverted version: delete its entry from `renovate/ignored-versions.json` and land that change.
+- After a roll forward (Slack ":rotating_light:", outcome 4): the stack runs the bumped version that failed its checks. Read the newly failing checks in the revert commit's `Why:` line and fix forward. Do not pin the old version again unless you restore the data the bump migrated (the snapshot named in the message).
 - See or move the marker: `kubectl -n woodpecker get cm renovate-rails -o yaml`. Deleting it makes the next pipeline consider only its own diff.
 - Unit tests: `bash scripts/renovate-rails.test.sh` (temporary git repos, no cluster access) and `bash scripts/run-renovate.test.sh` for the CronJob wrapper (fake `renovate` and Pushgateway, needs `node`).
 
@@ -148,5 +158,5 @@ If another push lands on master while Renovate is running, its fast-forward is r
 - Docker Hub: about 240 Docker lookups per run. Renovate authenticates as the registry cache's Docker Hub account (`secret/registry-cache`, `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` in the `renovate-env` ExternalSecret), because anonymous manifest reads share the home IP's 100 per hour: two cold-cache dry runs used that up on 2026-10-11 and the second aborted with 429. The cache PVC keeps repeat lookups down. Requests to Docker Hub are capped at 2 at a time and 5 per second (`config.js` hostRule): an image used in several stacks is looked up once per stack, and the parallel token requests got 429 "too many failed login attempts" for `library/nginx` and `actualbudget/actual-server` even with valid credentials.
 - Renovate bumps its own image at most once a week (Mondays 00:00-03:59 UTC).
 - The Woodpecker guard keeps Renovate from cancelling other pipelines. A human or agent push can still cancel a Renovate pipeline; the next pipeline then verifies that bump (see "Rails").
-- The infra repo's Woodpecker timeout is 60 minutes. A rails run takes the gate wait (up to 10 minutes), the snapshot, the apply and the verify (about 10 minutes for most stacks, 28 for `dbaas`, up to an hour for `descheduler`). A bump to `dbaas` or `descheduler` can therefore run past the timeout; the next pipeline then verifies it again from the marker. Raising the repo timeout in Woodpecker's settings would remove that loop.
+- The infra repo's Woodpecker timeout is 60 minutes. A rails run takes the gate wait (up to 10 minutes), the snapshot, the baseline (seconds), the apply and the verify (about 10 minutes for most stacks, 28 for `dbaas`, up to an hour for `descheduler`). A bump to `dbaas` or `descheduler` can therefore run past the timeout; the next pipeline then verifies it again from the marker. Raising the repo timeout in Woodpecker's settings would remove that loop.
 - Pins under `modules/` and in `.woodpecker/*.yml` are outside Renovate (see "Holding a component").

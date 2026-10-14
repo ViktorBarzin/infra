@@ -145,7 +145,7 @@ collect_apps() {
     last_success=$(to_epoch_int "$(prom_scalar 'max(renovate_last_success_timestamp_seconds{job="renovate",instance="infra"})')")
     last_exit=$(prom_scalar 'max(renovate_last_run_exit_code{job="renovate",instance="infra"})')
     last_exit=${last_exit%%.*}
-    # Pushed by scripts/renovate-rails: 0 verified, 1 reverted, 2 held, 3 incomplete.
+    # Pushed by scripts/renovate-rails: 0 verified, 1 reverted, 2 held, 3 incomplete, 4 rolled forward.
     outcome=$(prom_scalar 'max(renovate_rails_last_outcome{job="renovate-rails"})')
     outcome=${outcome%%.*}
     last_revert=$(to_epoch_int "$(prom_scalar 'max(renovate_rails_last_revert_timestamp_seconds{job="renovate-rails"})')")
@@ -157,7 +157,7 @@ collect_apps() {
         age=-1
         APPS_LAST_CHECK="no successful run recorded"
     fi
-    APPS_UPDATES_LINE="last rails outcome: ${outcome:-none} (0 verified, 1 reverted, 2 held, 3 incomplete)"
+    APPS_UPDATES_LINE="last rails outcome: ${outcome:-none} (0 verified, 1 reverted, 2 held, 3 incomplete, 4 rolled forward)"
     if [[ "$last_revert" -gt 0 ]]; then
         APPS_ERROR_LINE="last revert $(human_age $(( NOW_EPOCH - last_revert ))); last run exit code: ${last_exit:-none}"
     else

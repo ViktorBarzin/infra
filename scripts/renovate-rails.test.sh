@@ -111,6 +111,68 @@ eq "conflict: no commit made" "$before" "$(git rev-parse HEAD)"
 eq "conflict: tree as before" "tag: v1.1.0-human" "$(cat stacks/app/values.yaml)"
 eq "conflict: unrelated uncommitted file kept" "uncommitted" "$(cat stacks/chart/notes.txt 2>/dev/null)"
 
+# --- roll_forward ------------------------------------------------------------
+# The rails reverted R1, then found the old version would not run: the bump
+# goes back on and its ignore entry comes out, in one CI commit.
+mkrepo
+revert_commit fail "$R1" "app failed its verify checks" "Snapshot: none" >/dev/null 2>&1 || bad "revert_commit fail returned non-zero"
+add_ignore_entries renovate/ignored-versions.json "$R2" "rails revert (commit ${R2:0:8})" && git commit -qam "another revert's entry"
+roll_forward "$R1" "the previous version did not run after the rollback" >/dev/null 2>&1 || bad "roll_forward returned non-zero"
+eq "roll forward: bump back on" "tag: v1.1.0" "$(cat stacks/app/values.yaml)"
+eq "roll forward: its ignore entry removed, others kept" "chart example/sidecar" "$(jq -r '[.packageRules[].matchPackageNames[0]] | join(" ")' renovate/ignored-versions.json)"
+eq "roll forward: authored by the CI identity" "ci@viktorbarzin.me" "$(git log -1 --format=%ae)"
+eq "roll forward: subject" "Roll forward \"app: bump ghcr.io/x/app v1.0.0 -> v1.1.0\"" "$(git log -1 --format=%s)"
+if git log -1 --format=%B | grep -q '^This reverts commit'; then bad "roll forward: must not read as a revert of a Renovate commit"; else ok "roll forward: no 'This reverts commit' line"; fi
+eq "roll forward: the Renovate commit stays handled (not pending)" "$R2" "$(pending_commits "$BASE" HEAD | tr '\n' ' ' | sed 's/ $//')"
+
+# --- stack_namespaces --------------------------------------------------------
+mkrepo
+eq "namespaces: no verify.sh, no namespace in source -> stack name" "app" "$(stack_namespaces app)"
+printf 'resource "kubernetes_namespace" "a" {\n  metadata {\n    name = "aiostreams"\n  }\n}\n' >stacks/app/aio.tf
+printf 'resource "kubernetes_namespace" "s" {\n  metadata {\n    name = "servarr"\n  }\n}\n' >stacks/app/main.tf
+eq "namespaces: no verify.sh -> namespaces read from the source, like the verify runner" "aiostreams servarr" "$(stack_namespaces app)"
+printf 'VERIFY_NAMESPACES="traefik"\n' >stacks/app/verify.sh
+eq "namespaces: verify.sh wins" "traefik" "$(stack_namespaces app)"
+
+# --- baseline: blame only checks the bump broke --------------------------------
+mkrepo
+printf '00:00:01 PASS  floor: scope\n00:00:02 failed: floor: ingress immich/frame\n00:00:02 failed: component: smtp\nVERIFY RESULT: FAIL app\n' >base.log
+printf '00:10:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n' >same.log
+printf '00:10:01 failed: floor: ingress immich/frame\n00:10:02 failed: floor: rollout immich/Deployment/server\nVERIFY RESULT: FAIL app\n' >new.log
+printf 'verify: job did not finish\n' >crashed.log
+failed_checks base.log >base.failed
+eq "failed_checks: names from the summary lines" "component: smtp|floor: ingress immich/frame" "$(failed_checks base.log | paste -sd'|' -)"
+eq "new_failures: none when every failure was there before" "" "$(new_failures base.failed same.log)"
+eq "new_failures: the check that newly fails" "floor: rollout immich/Deployment/server" "$(new_failures base.failed new.log)"
+eq "bump_caused: verify passed" "no" "$(bump_caused 0 same.log base.failed && echo yes || echo no)"
+eq "bump_caused: only pre-existing failures" "no" "$(bump_caused 1 same.log base.failed && echo yes || echo no)"
+eq "bump_caused: a new failure" "yes" "$(bump_caused 1 new.log base.failed && echo yes || echo no)"
+eq "bump_caused: no baseline -> every failure counts" "yes" "$(bump_caused 1 same.log /nonexistent && echo yes || echo no)"
+eq "bump_caused: verify crashed without a result -> counts" "yes" "$(bump_caused 1 crashed.log base.failed && echo yes || echo no)"
+eq "bump_caused: failed with no named check -> counts" "yes" "$(printf 'VERIFY RESULT: FAIL app\n' >noname.log; bump_caused 1 noname.log base.failed && echo yes || echo no)"
+
+# --- restarted_pods: is the rolled-back version running? ---------------------
+# since = 2026-10-14T00:45:00Z. Only pods created at or after it count, so the
+# failed bump's own pods (still crash-looping while they terminate) do not.
+since=$(jq -n '"2026-10-14T00:45:00Z" | fromdateiso8601')
+pods='{"items":[
+ {"metadata":{"name":"aiostreams-57595dbff6-2frkw","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:45:50Z","labels":{"pod-template-hash":"57595dbff6"},"ownerReferences":[{"kind":"ReplicaSet","name":"aiostreams-57595dbff6"}]},
+  "status":{"containerStatuses":[{"name":"aiostreams","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}},
+ {"metadata":{"name":"aiostreams-98bd79f58-abcde","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:34:48Z","labels":{"pod-template-hash":"98bd79f58"},"ownerReferences":[{"kind":"ReplicaSet","name":"aiostreams-98bd79f58"}]},
+  "status":{"containerStatuses":[{"name":"aiostreams","restartCount":5,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}},
+ {"metadata":{"name":"web-0","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:46:00Z","deletionTimestamp":"2026-10-14T00:47:00Z","ownerReferences":[{"kind":"StatefulSet","name":"web"}]},
+  "status":{"containerStatuses":[{"name":"web","restartCount":2,"state":{"running":{}}}]}},
+ {"metadata":{"name":"probe-28866860-x1","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:46:00Z","ownerReferences":[{"kind":"Job","name":"probe-28866860"}]},
+  "status":{"containerStatuses":[{"name":"p","restartCount":0,"state":{"terminated":{"reason":"Completed"}}}]}},
+ {"metadata":{"name":"db-0","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:46:10Z","ownerReferences":[{"kind":"StatefulSet","name":"db"}]},
+  "status":{"initContainerStatuses":[{"name":"init","restartCount":0,"state":{"waiting":{"reason":"ImagePullBackOff"}}}],"containerStatuses":[{"name":"db","restartCount":0,"state":{"waiting":{"reason":"PodInitializing"}}}]}},
+ {"metadata":{"name":"ok-5d8f7c9b4-zzzzz","namespace":"aiostreams","creationTimestamp":"2026-10-14T00:46:20Z","labels":{"pod-template-hash":"5d8f7c9b4"},"ownerReferences":[{"kind":"ReplicaSet","name":"ok-5d8f7c9b4"}]},
+  "status":{"containerStatuses":[{"name":"ok","restartCount":0,"state":{"running":{}}}]}}]}'
+eq "restarted_pods: new pods that restart or cannot start, by workload" \
+  "aiostreams/aiostreams container aiostreams: 3 restarts, CrashLoopBackOff|aiostreams/db container init: 0 restarts, ImagePullBackOff" \
+  "$(restarted_pods "$since" <<<"$pods" | paste -sd'|' -)"
+eq "restarted_pods: nothing new and broken" "" "$(restarted_pods "$since" <<<'{"items":[]}')"
+
 # --- marker base -------------------------------------------------------------
 mkrepo
 eq "base: marker that is an ancestor of HEAD" "$H1" "$(choose_base "$H1" "$R1" HEAD)"
@@ -134,7 +196,9 @@ gate_blocking() { echo "${STUB_GATE:-}"; }
 snapshot_targets() { :; }
 slack() { SLACKED=$1; }
 push_metrics() { METRIC=$1; }
-tg_apply() { echo "stub apply $1"; }
+tg_apply() { echo "stub apply $1"; APPLIED="${APPLIED:-} $1"; }
+# The rolled-back version runs unless a test says otherwise.
+rollback_broken() { [ -n "${STUB_ROLLBACK_BROKEN:-}" ] && { echo "$STUB_ROLLBACK_BROKEN"; return 0; }; return 1; }
 echo "$R1" >.diff_base; echo "" >.platform_stacks; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed
 CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
 eq "catch-up: renovate commit from the cancelled pipeline is pending" "$R1" "$(cat .rails_commits)"
@@ -205,6 +269,62 @@ eq "hold: nothing owned" "" "$(stage_owned)"
 CI_COMMIT_SHA=$R1 stage_finish >/dev/null
 eq "hold: outcome 2" "2" "$METRIC"
 eq "hold: pipeline stays green" "0" "$(stage_exit >/dev/null; echo $?)"
+
+# Baseline: the stack already failed a check before the bump. The same failure
+# after the apply is not the bump's fault: no revert, the bump is verified.
+stub_verify_with_baseline() { # writes a verify/run stub: baseline and post-apply output
+  mkdir -p scripts/verify
+  cat >scripts/verify/run <<STUB
+#!/bin/bash
+case " \$* " in
+  *" --baseline "*) printf '%b' "$1"; exit ${3:-1} ;;
+  *) printf '%b' "$2"; exit ${4:-1} ;;
+esac
+STUB
+}
+mkrepo; git reset -q --hard "$H1"
+stub_verify_with_baseline '00:00:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n' '00:10:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n'
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE MARKED="" METRIC="" SLACKED=""
+CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+CI_COMMIT_SHA=$H1 stage_finish >/dev/null
+eq "baseline: pre-existing failure only -> no revert" "$H1" "$(git rev-parse HEAD)"
+eq "baseline: pre-existing failure only -> outcome 0" "0" "$METRIC"
+eq "baseline: pre-existing failure only -> marker moves" "$H1" "$MARKED"
+eq "baseline: pre-existing failure only -> pipeline green" "0" "$(stage_exit >/dev/null; echo $?)"
+
+# A check that passed before the apply and fails after it is the bump's fault.
+mkrepo; git reset -q --hard "$H1"
+stub_verify_with_baseline '00:00:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n' '00:10:01 failed: floor: ingress immich/frame\n00:10:02 failed: floor: rollout app/Deployment/app\nVERIFY RESULT: FAIL app\n'
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE MARKED="" METRIC=""
+CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+CI_COMMIT_SHA=$H1 stage_finish >/dev/null
+eq "baseline: a new failure -> reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+eq "baseline: a new failure -> outcome 1" "1" "$METRIC"
+
+# RAILS_BASELINE=0 skips the baseline run: every failure counts, as before.
+mkrepo; git reset -q --hard "$H1"
+stub_verify_with_baseline '00:00:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n' '00:10:01 failed: floor: ingress immich/frame\nVERIFY RESULT: FAIL app\n'
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE METRIC=""
+RAILS_BASELINE=0 CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+CI_COMMIT_SHA=$H1 stage_finish >/dev/null
+eq "baseline off: same failure -> reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+
+# Rollback broken: the previous version does not run after the revert (it
+# refuses a database the bump migrated). The rails roll forward and page.
+mkrepo; git reset -q --hard "$H1"
+stub_verify_with_baseline 'VERIFY RESULT: PASS app\n' '00:10:01 failed: floor: ingress app/app\nVERIFY RESULT: FAIL app\n' 0 1
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE MARKED="" METRIC="" SLACKED="" APPLIED=""
+CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+CI_COMMIT_SHA=$H1 STUB_ROLLBACK_BROKEN="app/app container app: 3 restarts, CrashLoopBackOff" stage_finish >/dev/null
+eq "roll forward: HEAD is the roll-forward commit" "Roll forward \"app: bump ghcr.io/x/app v1.0.0 -> v1.1.0\"" "$(git log -1 --format=%s)"
+eq "roll forward: the revert is underneath" "This reverts commit $R1." "$(git log -1 --skip=1 --format=%B | grep '^This reverts')"
+eq "roll forward: app on the new tag again" "tag: v1.1.0" "$(cat stacks/app/values.yaml)"
+eq "roll forward: no ignore entry left" "0" "$(jq '.packageRules|length' renovate/ignored-versions.json)"
+eq "roll forward: rollback applied, then the bump again" " app app" "$APPLIED"
+case "$SLACKED" in *"rolled"*"forward"*"CrashLoopBackOff"*) ok "roll forward: Slack says so and names the broken pod" ;; *) bad "roll forward: Slack says so and names the broken pod" "$SLACKED" ;; esac
+eq "roll forward: outcome 4" "4" "$METRIC"
+eq "roll forward: pipeline red (a human must look)" "1" "$(stage_exit >/dev/null; echo $?)"
+eq "roll forward: marker moves (the commit is handled)" "$H1" "$MARKED"
 
 # No Renovate commits: nothing to do, marker moves.
 mkrepo; git reset -q --hard "$H1"; echo "$R1" >.diff_base; MARKER=$R1 MARKED=""

@@ -199,16 +199,22 @@ list_workloads() {
   done
 }
 
-# bad_pods <ns...> -> pods stuck in CrashLoopBackOff / image pull errors / Pending > 5m
+# bad_pods <ns...> -> "<ns>/<workload> container <c>: <reason>" for containers
+# stuck in CrashLoopBackOff, image pull errors or config errors. <workload> is
+# the owning Deployment (ReplicaSet name minus its pod-template-hash) or other
+# owner, else the pod name, so the name stays the same across pod restarts.
 bad_pods() {
   local ns
   for ns in "$@"; do
     k get pods -n "$ns" -o json 2>/dev/null | jq -r --arg ns "$ns" '
       .items[] |
       select(.metadata.labels["app.kubernetes.io/managed-by"] != "verify") |
-      [ (.status.containerStatuses // [] + (.status.initContainerStatuses // []))[]
+      (.metadata.labels["pod-template-hash"] // "") as $h |
+      (.metadata.ownerReferences[0] // {}) as $o |
+      (if $o.kind == "ReplicaSet" and $h != "" then ($o.name | sub("-" + $h + "$"; "")) else ($o.name // .metadata.name) end) as $wl |
+      [ ((.status.containerStatuses // []) + (.status.initContainerStatuses // []))[]
         | select(.state.waiting.reason? // "" | test("CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|InvalidImageName"))
-        | "\($ns)/\(.name) container \(.name): \(.state.waiting.reason)" ] as $w |
+        | "\($ns)/\($wl) container \(.name): \(.state.waiting.reason)" ] as $w |
       if ($w | length) > 0 then $w[] else empty end'
   done
 }
@@ -471,13 +477,17 @@ floor_scope() {
 }
 
 # floor_rollout: every Deployment/StatefulSet/DaemonSet in VERIFY_NAMESPACES is
-# converged within VERIFY_ROLLOUT_TIMEOUT (default 600 s), and no pod there is
-# in CrashLoopBackOff or an image-pull error. Namespaces holding no
+# converged within VERIFY_ROLLOUT_TIMEOUT (default 600 s; 0, one look, for a
+# --baseline run), and no pod there is in CrashLoopBackOff or an image-pull
+# error. Each failure is named by its workload ("floor: rollout <ns>/<kind/name>",
+# "floor: unhealthy pod <ns>/<workload>"): the Renovate rails compare failed
+# check names before and after a bump. Namespaces holding no
 # Deployment, StatefulSet, DaemonSet or CronJob fail the check, since the floor
 # then verified nothing; a stack that is meant to be empty sets
 # VERIFY_EMPTY_OK=1 in its verify.sh.
 floor_rollout() {
-  local timeout=${VERIFY_ROLLOUT_TIMEOUT:-600} deadline pending line ns obj out
+  local timeout deadline pending line ns obj out
+  if [ "${VERIFY_BASELINE:-0}" = 1 ]; then timeout=${VERIFY_ROLLOUT_TIMEOUT:-0}; else timeout=${VERIFY_ROLLOUT_TIMEOUT:-600}; fi
   # shellcheck disable=SC2086
   set -- $VERIFY_NAMESPACES
   deadline=$(($(date +%s) + timeout))
@@ -486,7 +496,7 @@ floor_rollout() {
     while read -r ns obj; do
       [ -n "$ns" ] || continue
       if [ -n "${VERIFY_ROLLOUT_SKIP:-}" ] && [[ "$ns/$obj" =~ $VERIFY_ROLLOUT_SKIP ]]; then continue; fi
-      out=$(workload_ready "$ns" "$obj") || pending+=("$out")
+      out=$(workload_ready "$ns" "$obj") || pending+=("$ns/$obj"$'\t'"$out")
     done < <(list_workloads "$@")
     if [ "${#pending[@]}" -eq 0 ] || [ "$(date +%s)" -ge "$deadline" ]; then break; fi
     sleep 10
@@ -506,23 +516,31 @@ floor_rollout() {
   elif [ "${#pending[@]}" -eq 0 ]; then
     pass "floor: $n workloads converged in $*"
   else
-    for line in "${pending[@]}"; do fail "floor: rollout" "$line"; done
+    for line in "${pending[@]}"; do fail "floor: rollout ${line%%$'\t'*}" "${line#*$'\t'}"; done
   fi
   local bad
   bad=$(bad_pods "$@")
   if [ -z "$bad" ]; then
     pass "floor: no crash-looping or image-pull-failing pods in $*"
   else
-    fail "floor: unhealthy pods" "$(printf '%s' "$bad" | _oneline 600)"
+    local wl
+    for wl in $(printf '%s\n' "$bad" | cut -d' ' -f1 | sort -u); do
+      fail "floor: unhealthy pod $wl" "$(printf '%s\n' "$bad" | grep "^$wl " | _oneline 600)"
+    done
   fi
 }
 
 # floor_ingress: every Ingress host in VERIFY_NAMESPACES answers through
 # Traefik with a status below 500 (redirects to Authentik, 401 and 404 are
-# fine; 000 and 5xx are not). VERIFY_INGRESS_SKIP is a regex over
+# fine; 000 and 5xx are not). A route that does not is retried every
+# VERIFY_INGRESS_INTERVAL seconds (10) for up to VERIFY_INGRESS_GRACE seconds
+# (180; 0, one look, for a --baseline run): an app with no readiness probe
+# counts as rolled out before it listens (aiostreams took ~45 s on
+# 2026-10-14 and was reverted on a 502). VERIFY_INGRESS_SKIP is a regex over
 # "<ns>/<ingress>" for routes known to be down independently of this stack.
 floor_ingress() {
-  local rows ns name host path code bad=0 n=0
+  local rows ns name host path code bad=0 n=0 grace deadline
+  if [ "${VERIFY_BASELINE:-0}" = 1 ]; then grace=${VERIFY_INGRESS_GRACE:-0}; else grace=${VERIFY_INGRESS_GRACE:-180}; fi
   _TRAEFIK_IP=$(traefik_ip)
   # shellcheck disable=SC2086
   rows=$(for ns in $VERIFY_NAMESPACES; do
@@ -540,10 +558,12 @@ floor_ingress() {
       continue
     fi
     n=$((n + 1))
-    for _ in 1 2 3; do
+    deadline=$(($(date +%s) + grace))
+    while :; do
       code=$(via_traefik "$host" "$path")
       [[ "$code" =~ ^[1-4][0-9][0-9]$ ]] && break
-      sleep 5
+      [ "$(date +%s)" -ge "$deadline" ] && break
+      sleep "${VERIFY_INGRESS_INTERVAL:-10}"
     done
     if [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]; then
       log "ok    ingress $ns/$name https://$host$path -> $code"

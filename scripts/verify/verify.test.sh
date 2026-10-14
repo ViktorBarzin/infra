@@ -181,5 +181,69 @@ eq "a container with no known start time is not excused" "rc=1" "$(tail -1 <<<"$
 out=$(LOGS="$L_START" run_after_start "$RE" 0)
 eq "grace 0 behaves like expect_no_log_errors" "rc=1" "$(tail -1 <<<"$out")"
 
+# --- check names carry the workload ----------------------------------------------
+# The Renovate rails compare failed check names before and after a bump, so a
+# name must say which workload failed, not only which floor.
+run_floor_broken() { # like run_floor, but app never converges and its pod crash-loops
+  (
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    log() { echo "$*"; }
+    k() {
+      local ns="" a
+      for a in "$@"; do [ "${prev:-}" = "-n" ] && ns=$a; prev=$a; done
+      case "$1 $2" in
+        "get deploy,statefulset,daemonset") echo "{\"items\":[$DEP]}" ;;
+        "get pods") echo '{"items":[{"metadata":{"name":"app-7d9f8c6b5-abcde","labels":{"pod-template-hash":"7d9f8c6b5"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-7d9f8c6b5"}]},
+          "status":{"containerStatuses":[{"name":"app","state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}' ;;
+        *) return 1 ;;
+      esac
+    }
+    workload_ready() { echo "$2 not converged"; return 1; }
+    export VERIFY_ROLLOUT_TIMEOUT=0
+    "$1"
+    printf 'check=%s\n' "${FAILED_CHECKS[@]}"
+  )
+}
+out=$(VERIFY_NAMESPACES="x" run_floor_broken floor_rollout)
+grep -qx "check=floor: rollout x/Deployment/app" <<<"$out" && ok "rollout failure names the workload" || bad "rollout failure name: $out"
+grep -qx "check=floor: unhealthy pod x/app" <<<"$out" && ok "crash-looping pod failure names its workload" || bad "unhealthy pod name: $out"
+
+# --- floor_ingress grace ------------------------------------------------------------
+# An app without a readiness probe answers 502 until it listens. The floor
+# retries for VERIFY_INGRESS_GRACE seconds before failing (aiostreams needed
+# ~45 s on 2026-10-14; the old 3 tries x 5 s gave it 15).
+run_ingress() { # prints the log, then "passed=N failed=M calls=C"
+  (
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    log() { echo "$*"; }
+    sleep() { :; }
+    k() {
+      case "$1 $2" in
+        "get ingress") echo '{"items":[{"metadata":{"name":"aiostreams"},"spec":{"rules":[{"host":"aiostreams.example","http":{"paths":[{"path":"/"}]}}]}}]}' ;;
+        *) return 1 ;;
+      esac
+    }
+    traefik_ip() { echo 10.0.0.1; }
+    backend_parked() { return 1; }
+    CALLS=$WORK/calls; : >"$CALLS"
+    # 502 for the first $BAD_CALLS requests, then 200. date advances 10 s per call.
+    via_traefik() { echo x >>"$CALLS"; [ "$(wc -l <"$CALLS")" -gt "${BAD_CALLS:-0}" ] && echo 200 || echo 502; }
+    date() { if [ "${1:-}" = +%s ]; then echo $((1000 + 10 * $(wc -l <"$CALLS"))); else command date "$@"; fi; }
+    VERIFY_NAMESPACES=aiostreams
+    floor_ingress
+    echo "passed=$PASS_COUNT failed=$FAIL_COUNT calls=$(wc -l <"$CALLS")"
+  )
+}
+out=$(BAD_CALLS=5 VERIFY_INGRESS_GRACE=180 run_ingress)
+eq "ingress: a slow starter passes inside the grace" "passed=1 failed=0 calls=6" "$(tail -1 <<<"$out")"
+out=$(BAD_CALLS=1000 VERIFY_INGRESS_GRACE=60 run_ingress)
+case "$(tail -1 <<<"$out")" in "passed=0 failed=1 calls="*) ok "ingress: still 502 after the grace fails" ;; *) bad "ingress grace exhausted: $out" ;; esac
+[ "$(tail -1 <<<"$out" | sed 's/.*calls=//')" -le 8 ] && ok "ingress: stops retrying at the grace deadline" || bad "ingress retried past the deadline: $out"
+grep -q "FAIL  floor: ingress aiostreams/aiostreams" <<<"$out" && ok "ingress failure names the route" || bad "ingress failure name: $out"
+out=$(BAD_CALLS=1000 VERIFY_BASELINE=1 run_ingress)
+eq "ingress: a baseline run looks once" "passed=0 failed=1 calls=1" "$(tail -1 <<<"$out")"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi

@@ -209,6 +209,7 @@ As built (2026-10-10): `scripts/renovate-rails`, called from the apply step of `
 - Snapshot: every `*-backup` CronJob in the stack's namespaces (this covers Vault raft, dbaas, Immich, Redis, the ClickHouse and Dolt backups from wave 3, and the app backups), plus `default/backup-etcd` for any chart bump.
 - A failed apply counts as a failed check, so a bump that never rolls out is reverted too. The revert commit is applied in the same pipeline and pushed without `[CI SKIP]`, so the next pipeline applies it again.
 - Cancellation: ConfigMap `woodpecker/renovate-rails` records the last master commit up to which every Renovate commit was verified or reverted. Any later pipeline verifies Renovate commits after it.
+- Added 2026-10-14, after a revert to AIOStreams v2.35.9 crash-looped for 20 hours on a database v2.36.0 had already migrated: a baseline run of the checks before the apply, so only checks that newly fail revert a bump (22 of the first 27 reverts were not caused by the bump); a 2-minute watch of the previous version's pods after the rollback apply, with a roll forward and a page when it does not run; a 180 s grace on the ingress floor; and snapshot namespaces read from the stack source. Details in the runbook, section "Rails".
 
 **Keel retirement** (one change)
 
