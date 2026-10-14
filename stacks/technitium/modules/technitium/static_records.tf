@@ -52,15 +52,9 @@ locals {
   # docs/architecture/dns.md "London devices"), including the curated names
   # mbp-london, projector-london and iphone-london.
   #
-  # health-test: the LAN-only, auth-free test host for the health app
-  # (health ADR-0008). It points at the internal Traefik LB, the same address
-  # the ingress sync writes for ingress.viktorbarzin.lan, because it is an
-  # ordinary Ingress rather than a device. It existed once and disappeared:
-  # Prometheus recorded 6,413 requests to its Traefik router over 90 days while
-  # the name returned NXDOMAIN on 2026-09-19, so it was created by hand and
-  # lost to a reconcile. Declared here so the next rebuild keeps it. Without
-  # it there is no way to drive the app on a real phone without going through
-  # the Authentik SSO flow, which is what makes it worth a record.
+  # health-test (the health app's LAN-only test host) used to be declared
+  # here. It is an ordinary Ingress, so since 2026-10-14 external-dns owns its
+  # record (external_dns.tf).
   #
   # mladost3: the Mladost 3 site router (OpenWrt WDR4300) by its WireGuard
   # tunnel address. The reverse-proxy ingress for mladost3.viktorbarzin.me
@@ -69,8 +63,7 @@ locals {
   # owns every A and PTR record pointing into the site subnets (ADR-0032), so
   # declaring it here as well would give that record two writers.
   static_lan_a_records = {
-    "health-test" = "10.0.20.203"
-    "mladost3"    = "10.3.2.7"
+    "mladost3" = "10.3.2.7"
   }
 
   # IPv4 address => PTR target. The job creates the /24 reverse zone on the
