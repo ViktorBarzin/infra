@@ -97,30 +97,40 @@ admin page adds them), created by the importer.
 
 phpIPAM shows addresses per subnet (an address grid for every /24 and smaller,
 usage bars, dashboard widgets) but has no view of how the subnets connect.
-`stacks/phpipam/files/phpipam_topology.py` draws one from phpIPAM's own data
-after every import:
+`phpipam.viktorbarzin.me/topology/` draws one, live:
 
 - one box per Location, holding its subnets and its network devices (types
   Router, Firewall, Wireless and Switch in `devices.yaml`);
 - a line from each network device to every subnet it holds an address in;
 - subnets with no Location, or with network devices from more than one site
-  (the WireGuard tunnels, the tailnet), drawn above the sites with dotted lines;
-- a green border on a device seen in the last 15 minutes, red dashed when not.
-  Only addresses in the device's own site count, because tunnel rows are
-  refreshed whenever the hub lists the peer.
+  (the WireGuard tunnels, the tailnet), drawn above the sites with dotted
+  lines labelled with the live round-trip time;
+- a green border on a device with any address answering ping, red dashed when
+  none answers, grey when the probe could not run.
 
 ```mermaid
 flowchart LR
-  job[phpipam-import CronJob] -->|import| db[(phpIPAM MySQL)]
-  db -->|phpipam_topology.py| cm[ConfigMap phpipam-topology]
-  cm -->|mounted at /phpipam/topology| web[phpipam-web]
-  web --> page[phpipam.viktorbarzin.me/topology/]
+  page[index.html in the browser] -->|every 30 s| php[data.php in phpipam-web]
+  php -->|subnets, devices, addresses| db[(phpIPAM MySQL)]
+  php -->|one ICMP probe per address, in parallel| bb[blackbox exporter]
+  page -->|topology.js + mermaid| svg[diagram]
 ```
 
-The page renders with mermaid in the browser and sits behind the same
-Authentik login as phpIPAM. The job draws it even when a Source fails, so the
-failed site's router shows red. The four Locations also get town-level
-coordinates, so phpIPAM's own Locations map shows a pin per site.
+The files live in `stacks/phpipam/files/topology/` (`index.html`,
+`topology.js` with tests in `topology.test.js`, `data.php`) and ship in the
+`phpipam-topology` ConfigMap, mounted into the web pod at `/phpipam/topology`.
+A refresh pings 16 addresses and takes about as long as the slowest reply;
+an address that does not answer gives up after 3 s. The page polls only while
+its tab is visible. Status comes from ping rather than the import's last-seen
+time because the import marks a WireGuard or tailnet row seen whenever the hub
+lists the peer, and a router whose SSH login fails would otherwise show as
+down while it answers ping. Through Traefik the page sits behind the same
+Authentik login as phpIPAM. Inside the cluster `data.php` answers without a
+login; it returns subnets, router addresses and reachability, and no
+credentials.
+
+The four Locations also get town-level coordinates where they have none, so
+phpIPAM's own Locations map shows a pin per site.
 
 ## Rollout
 
