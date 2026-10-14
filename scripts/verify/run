@@ -14,6 +14,9 @@
 #                     loads) and shorten the alert window to 60 s unless
 #                     --window is given. For iterating on a script, not for
 #                     landing an upgrade.
+#   --baseline        one look at the stack as it is now: --quick, no alert
+#                     window, no rollout or ingress waits. The Renovate rails
+#                     run it before an apply to learn which checks already fail.
 #   --timeout <sec>   Job deadline (default 3600)
 #   --keep            leave the Job, its pod and ConfigMap in place (no TTL)
 #   -j <n>            run up to n stacks at once (default 1)
@@ -43,16 +46,17 @@ IMAGE=${VERIFY_IMAGE:-ghcr.io/viktorbarzin/infra-ci@sha256:e886f14437dceb917c045
 # stack with a helm_release, plus the database and GPU stacks below.
 DB_GPU_STACKS="dbaas redis rybbit beads-server immich nvidia"
 
-SINCE="" WINDOW="" QUICK=0 TIMEOUT=3600 KEEP=0 JOBS=1 LOGDIR="" ALL=0 LIST=0
+SINCE="" WINDOW="" QUICK=0 BASELINE=0 TIMEOUT=3600 KEEP=0 JOBS=1 LOGDIR="" ALL=0 LIST=0
 STACKS=()
 
-usage() { sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --since) SINCE=$2; shift 2 ;;
     --window) WINDOW=$2; shift 2 ;;
     --quick) QUICK=1; shift ;;
+    --baseline) BASELINE=1; QUICK=1; WINDOW=0; shift ;;
     --timeout) TIMEOUT=$2; shift 2 ;;
     --keep) KEEP=1; shift ;;
     -j) JOBS=$2; shift 2 ;;
@@ -106,6 +110,7 @@ if [ "${#STACKS[@]}" -gt 1 ]; then
   echo "verify: ${#STACKS[@]} stacks, $JOBS at a time, logs in $LOGDIR"
   pass_args=(--since "$SINCE" --window "$WINDOW" --timeout "$TIMEOUT")
   [ "$QUICK" -eq 1 ] && pass_args+=(--quick)
+  [ "$BASELINE" -eq 1 ] && pass_args+=(--baseline)
   [ "$KEEP" -eq 1 ] && pass_args+=(--keep)
   running=0
   for s in "${STACKS[@]}"; do
@@ -222,6 +227,7 @@ spec:
             - { name: VERIFY_SINCE, value: "$SINCE" }
             - { name: VERIFY_ALERT_WINDOW, value: "$WINDOW" }
             - { name: VERIFY_QUICK, value: "$QUICK" }
+            - { name: VERIFY_BASELINE, value: "$BASELINE" }
             - { name: VERIFY_OWN_NS, value: "$NS" }
             - name: VERIFY_JOB_NAME
               valueFrom: { fieldRef: { fieldPath: "metadata.labels['batch.kubernetes.io/job-name']" } }

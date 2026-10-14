@@ -40,6 +40,7 @@ What we found on 2026-10-09:
 - Version drift on the Helm-managed layer stops depending on someone noticing. The first runs clear a backlog of about 20 components over roughly 3 days.
 - A failed bump costs one revert commit and one Slack page, and the next upstream release is tried automatically.
 - Unattended majors can include CRD or schema migrations that `git revert` cannot undo. Recovery from those is the pre-upgrade snapshot, restored by hand. Viktor accepted this.
+- Amended 2026-10-14: when the previous version does not run after a revert (it cannot read the migrated state), the rails roll the bump forward again and page instead of leaving the stack down; and a bump is reverted only for checks that passed before it. See `docs/runbooks/renovate.md`, "Rails".
 - Nextcloud steps one major at a time through Renovate, which its upgrader requires.
 - The first backlog (about 20 charts plus apps behind on minor or major) takes about 4 days at up to 48 bumps a day.
 - A failed database major has no automatic way back; recovery is a manual restore from the pre-upgrade dump, which is not restore-tested first. MySQL innovation releases cannot be downgraded.

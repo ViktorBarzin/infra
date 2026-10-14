@@ -287,7 +287,9 @@ steps:
       # waited on for up to 10 minutes; still blocked -> the bump is reverted
       # without an ignore entry and Renovate offers it again later. Snapshot:
       # the stack's *-backup CronJobs run once, plus the etcd snapshot for a
-      # chart bump. Then the stacks join the apply lists below. Design:
+      # chart bump. Baseline: the stack's checks run once (verify --baseline)
+      # to record what already fails. Then the stacks join the apply lists
+      # below. Design:
       # docs/runbooks/renovate.md "Rails", ADR-0030.
       - |
         bash scripts/renovate-rails prepare
@@ -432,11 +434,14 @@ steps:
 
       # ── Renovate rails, part 2: verify, revert on failure ──
       # For each stack of a Renovate commit: scripts/verify/run (the stack's
-      # verify.sh, or the floor checks on its namespace). On a failed apply or
-      # verify: git revert of that commit plus its exact version (Renovate-Dep
-      # trailer) in renovate/ignored-versions.json, in one commit as the CI
-      # identity; the reverted tree is applied at once, a Slack message names
-      # the snapshot, and the push below carries the revert to master. Moves
+      # verify.sh, or the floor checks on its namespace). On a failed apply, or
+      # a failed check that passed in the baseline: git revert of that commit
+      # plus its exact version (Renovate-Dep trailer) in
+      # renovate/ignored-versions.json, in one commit as the CI identity; the
+      # reverted tree is applied at once. If the previous version's new pods
+      # then crash-loop (it cannot read state the bump migrated), a second CI
+      # commit rolls the bump forward again. A Slack message names the
+      # snapshot, and the push below carries the commits to master. Moves
       # the ConfigMap woodpecker/renovate-rails marker once every Renovate
       # commit is verified or reverted.
       - |

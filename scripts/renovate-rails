@@ -6,14 +6,17 @@
 #
 #   renovate-rails prepare   after stack detection, before any apply:
 #                            find the Renovate commits to act on, run the
-#                            upgrade gate and the pre-upgrade snapshot, and add
-#                            their stacks to the apply lists
+#                            upgrade gate, the pre-upgrade snapshot and a
+#                            baseline verify (which checks already fail before
+#                            the bump), and add their stacks to the apply lists
 #   renovate-rails owned     prints the stacks whose apply failure the rails
 #                            handle (the apply loops do not fail the step for them)
 #   renovate-rails finish    after the apply loops, before the state push:
-#                            verify each stack; on failure revert the commit,
-#                            add the version to renovate/ignored-versions.json,
-#                            apply the reverted tree and post to Slack
+#                            verify each stack; when a check fails that passed
+#                            in the baseline, revert the commit, add the version
+#                            to renovate/ignored-versions.json, apply the
+#                            reverted tree, and roll forward again if the
+#                            previous version does not run; post to Slack
 #   renovate-rails exit      after the state push: non-zero when a bump failed
 #
 # Which commits: every commit authored by renovate-bot on master after the last
@@ -26,6 +29,7 @@
 # Unit tests: scripts/renovate-rails.test.sh. Sourcing this file defines the
 # functions without running anything.
 
+RAILS_HOME=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RENOVATE_LOGIN=${RENOVATE_LOGIN:-renovate-bot}
 RENOVATE_EMAIL=${RENOVATE_EMAIL:-renovate-bot@viktorbarzin.me}
 MARKER_NS=${RAILS_MARKER_NS:-woodpecker}
@@ -41,6 +45,8 @@ CI_NAME='Woodpecker CI'
 CI_EMAIL=ci@viktorbarzin.me
 # Stacks whose data lives in another namespace's backup CronJob.
 EXTRA_SNAPSHOTS="cnpg=dbaas/postgresql-backup"
+# How long to watch the previous version's new pods after a rollback apply.
+ROLLBACK_WATCH=${RAILS_ROLLBACK_WATCH:-120}
 
 log() { echo "[rails] $*"; }
 
@@ -153,6 +159,81 @@ Pipeline: ${CI_PIPELINE_URL:-local}
 EOF
 }
 
+# Re-apply a Renovate commit the rails reverted in this run, because the
+# previous version did not run after the rollback (it cannot read state the
+# bump already migrated: a database schema, a data format, a CRD). Removes the
+# commit's ignore entries. One commit as the CI identity; it must not contain a
+# "This reverts commit" line, so the Renovate commit stays handled.
+roll_forward() { # sha why
+  local sha=$1 why=$2 subject deps tmp
+  subject=$(git log -1 --format=%s "$sha")
+  if ! git cherry-pick --no-commit "$sha" >/dev/null 2>&1; then
+    git cherry-pick --abort 2>/dev/null || git reset -q --merge 2>/dev/null || true
+    log "cherry-pick of ${sha:0:8} did not apply cleanly; staying on the rollback"
+    return 1
+  fi
+  tmp=$(mktemp)
+  jq --arg c "(commit ${sha:0:8})" '.packageRules |= map(select((.description // "") | contains($c) | not))' "$IGNORE_FILE" >"$tmp" &&
+    mv "$tmp" "$IGNORE_FILE" && git add "$IGNORE_FILE"
+  deps=$(commit_deps "$sha" | sed 's/^/  /')
+  git -c user.name="$CI_NAME" -c user.email="$CI_EMAIL" commit -q -F - <<EOF
+Roll forward "$subject"
+
+Puts commit $sha back after the rails reverted it.
+
+Why: ${why}. Both versions failed their checks. The bumped one at least
+matches the state it migrated, so the rails put it back and removed its
+entry from ${IGNORE_FILE}. A human needs to look.
+
+Version:
+$deps
+Pipeline: ${CI_PIPELINE_URL:-local}
+EOF
+}
+
+# Check names a verify log reports as failed, from the summary's
+# "HH:MM:SS failed: <name>" lines, sorted and unique.
+failed_checks() { # log
+  sed -n 's/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9] failed: //p' "$1" 2>/dev/null | sort -u
+}
+
+# Failed checks in <log> that are not in the baseline file.
+new_failures() { # baseline-file log
+  failed_checks "$2" | comm -23 - <(sort -u "$1" 2>/dev/null)
+}
+
+# True when a verify result is the bump's doing: it failed, and either a check
+# failed that passed in the baseline, or there is nothing to compare (no
+# baseline, no result line, no named failed check). Fails safe: when in doubt
+# the bump is blamed, as it was before baselines.
+bump_caused() { # rc log baseline-file
+  [ "$1" -eq 0 ] && return 1
+  [ -f "$3" ] || return 0
+  grep -q '^VERIFY RESULT:' "$2" 2>/dev/null || return 0
+  [ -n "$(failed_checks "$2")" ] || return 0
+  [ -n "$(new_failures "$3" "$2")" ]
+}
+
+# From a pod list (kubectl get pods -o json) on stdin: containers of pods
+# created at or after <since> (and not terminating) that restarted twice or
+# more, or wait in a crash or image-pull state. One line per container,
+# named by its workload. The failed bump's own pods predate <since>, so they
+# do not count while they terminate.
+restarted_pods() { # since-epoch
+  jq -r --argjson since "$1" '
+    .items[]
+    | select(.metadata.deletionTimestamp == null)
+    | select((.metadata.creationTimestamp | fromdateiso8601) >= $since)
+    | (.metadata.labels["pod-template-hash"] // "") as $h
+    | (.metadata.ownerReferences[0] // {}) as $o
+    | (if $o.kind == "ReplicaSet" and $h != "" then ($o.name | sub("-" + $h + "$"; "")) else ($o.name // .metadata.name) end) as $w
+    | .metadata.namespace as $ns
+    | ((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[]
+    | select((.restartCount // 0) >= 2
+        or ((.state.waiting.reason // "") | test("CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName")))
+    | "\($ns)/\($w) container \(.name): \(.restartCount // 0) restarts, \(.state.waiting.reason // .state.terminated.reason // "running")"' | sort -u
+}
+
 # The marker if it is an ancestor of head, else the pipeline's diff base.
 choose_base() { # marker diffbase head
   local marker=$1 diffbase=$2 head=$3
@@ -240,13 +321,15 @@ slack() {
     log "WARN: Slack post failed"
 }
 
-push_metrics() { # outcome: 0 verified, 1 reverted, 2 held, 3 incomplete
+push_metrics() { # outcome: 0 verified, 1 reverted, 2 held, 3 incomplete, 4 rolled forward
   local now body
   now=$(date +%s)
   body="renovate_rails_last_run_timestamp_seconds $now
 renovate_rails_last_outcome $1
 "
-  [ "$1" = 1 ] && body="${body}renovate_rails_last_revert_timestamp_seconds $now
+  case "$1" in 1 | 4) body="${body}renovate_rails_last_revert_timestamp_seconds $now
+" ;; esac
+  [ "$1" = 4 ] && body="${body}renovate_rails_roll_forward_timestamp_seconds $now
 "
   [ "$1" = 2 ] && body="${body}renovate_rails_hold_timestamp_seconds $now
 "
@@ -254,11 +337,57 @@ renovate_rails_last_outcome $1
     log "WARN: Pushgateway push failed"
 }
 
-# Namespaces a stack's verify script checks, else the stack name.
+# Namespaces a stack's verify script checks, else the ones the verify runner
+# reads from the stack source (scripts/verify/stack-namespaces), else the
+# stack name. The same order as scripts/verify/run, so the snapshot covers the
+# namespaces the verify checks (servarr is aiostreams + servarr, not servarr).
 stack_namespaces() {
   local ns
   ns=$(sed -n 's/^VERIFY_NAMESPACES="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "stacks/$1/verify.sh" 2>/dev/null | head -1)
+  [ -n "$ns" ] || ns=$("$RAILS_HOME/verify/stack-namespaces" "stacks/$1" 2>/dev/null | xargs)
   echo "${ns:-$1}"
+}
+
+# Watch a stack's namespaces for up to ROLLBACK_WATCH seconds after a rollback
+# apply that started at <since>. Prints the broken containers and returns 0 as
+# soon as restarted_pods finds one; returns 1 when the watch ends clean.
+rollback_broken() { # stack since-epoch
+  local s=$1 since=$2 deadline found ns
+  deadline=$(($(date +%s) + ROLLBACK_WATCH))
+  while :; do
+    found=$(for ns in $(stack_namespaces "$s"); do kc get pods -n "$ns" -o json 2>/dev/null | restarted_pods "$since"; done)
+    if [ -n "$found" ]; then echo "$found"; return 0; fi
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    sleep 15
+  done
+}
+
+# Run the stacks' checks once before the apply (scripts/verify/run
+# --baseline: quick, no alert window). .rails_baseline_<stack> lists the
+# checks that already fail; it exists only when the run produced a result, so
+# a baseline that could not run blames every later failure on the bump.
+run_baselines() {
+  local s pids=()
+  if [ "${RAILS_BASELINE:-1}" = 0 ]; then log "baseline: skipped (RAILS_BASELINE=0)"; return 0; fi
+  for s in $(cat .rails_stacks); do
+    log "[$s] baseline: scripts/verify/run --baseline $s"
+    (
+      bash scripts/verify/run --baseline "$s" >".baseline_$s.log" 2>&1
+      grep -q '^VERIFY RESULT:' ".baseline_$s.log" && failed_checks ".baseline_$s.log" >".rails_baseline_$s"
+      rm -f ".baseline_$s.log"
+    ) &
+    pids+=($!)
+  done
+  for s in "${pids[@]}"; do wait "$s"; done
+  for s in $(cat .rails_stacks); do
+    if [ ! -f ".rails_baseline_$s" ]; then
+      log "[$s] baseline: no result; every failure after the apply counts"
+    elif [ -s ".rails_baseline_$s" ]; then
+      log "[$s] baseline: already failing before the apply: $(paste -sd';' ".rails_baseline_$s")"
+    else
+      log "[$s] baseline: every check passes"
+    fi
+  done
 }
 
 # Backup CronJobs to run before applying: every unsuspended "*-backup" CronJob
@@ -361,6 +490,7 @@ tg_apply() { # stack -> 0 ok
 
 stage_prepare() {
   : >.rails_commits; : >.rails_stacks; echo none >.rails_mode; : >.rails_exit; : >.rails_snapshots; : >.rails_reason
+  rm -f .rails_baseline_* .baseline_*.log
   date +%s >.rails_since
   local head diffbase marker base pending c s mode=verify reason="" blocking waited=0 helm=0
 
@@ -440,6 +570,8 @@ $(snapshot_text)"; then
     # was never applied, a rollback when a cancelled pipeline had applied it.
   else
     echo verify >.rails_mode
+    # 3. Baseline: which checks fail before the bump is applied.
+    run_baselines
   fi
   for s in $(cat .rails_stacks); do ensure_in_apply_lists "$s"; done
   date +%s >.rails_since
@@ -451,7 +583,7 @@ stage_owned() {
 }
 
 stage_finish() {
-  local mode head s c rc failed=() why=() verified=() incomplete=() reverted="" rollback="" msg
+  local mode head s c rc failed=() why=() verified=() incomplete=() reverted="" rollback="" msg news
   mode=$(cat .rails_mode 2>/dev/null || echo none)
   head=${CI_COMMIT_SHA:-$(git rev-parse HEAD)}
   case "$mode" in
@@ -502,12 +634,18 @@ stage_finish() {
     log "[$s] verify output:"
     sed "s/^/[$s] /" ".verify_$s.log" 2>/dev/null
     rc=$(cat ".verify_$s.rc" 2>/dev/null || echo 1)
-    rm -f ".verify_$s.log" ".verify_$s.rc"
     if [ "$rc" -eq 0 ]; then
       verified+=("$s")
+    elif ! bump_caused "$rc" ".verify_$s.log" ".rails_baseline_$s"; then
+      # Every failed check failed in the baseline too: the stack was already
+      # broken there, and reverting this bump would not fix it.
+      log "[$s] every failed check also failed before the apply ($(failed_checks ".verify_$s.log" | paste -sd';' -)); not caused by the bump"
+      verified+=("$s")
     else
-      failed+=("$s"); why+=("its verify checks failed (scripts/verify/run exit $rc)")
+      news=$(new_failures ".rails_baseline_$s" ".verify_$s.log" | paste -sd';' - | cut -c1-200)
+      failed+=("$s"); why+=("its verify checks failed (scripts/verify/run exit $rc${news:+; newly failing: $news})")
     fi
+    rm -f ".verify_$s.log" ".verify_$s.rc"
   done
 
   local i stack_why
@@ -528,15 +666,51 @@ $(snapshot_text)"; then
   reverted=$(awk 'NF' <<<"$reverted")
 
   if [ -n "$reverted" ]; then
-    # Apply the reverted tree now, so this pipeline confirms the rollback.
+    # Apply the reverted tree now, so this pipeline confirms the rollback. Then
+    # watch the previous version's new pods: a version that cannot read state
+    # the bump migrated (a database schema, a data format, a CRD) crash-loops,
+    # and leaving it there is worse than the bump (aiostreams, 2026-10-14). In
+    # that case put the bump back.
+    local since_rb broken rolled="" forward="" fwd_ok mine
     for s in "${failed[@]}"; do
       log "[$s] applying the reverted tree"
+      since_rb=$(date +%s)
       if tg_apply "$s"; then rollback="$rollback $s:ok"; else rollback="$rollback $s:FAILED"; fi
+      mine=$(for c in $(cat .rails_commits); do
+        grep -qx "$c" <<<"$reverted" && ! grep -qx "$c" <<<"$rolled" && commit_stacks "$c" | grep -qx "$s" && echo "$c"
+      done)
+      [ -n "$mine" ] || continue
+      if ! broken=$(rollback_broken "$s" "$since_rb"); then
+        log "[$s] the previous version runs (no restarts in ${ROLLBACK_WATCH}s)"
+        continue
+      fi
+      log "[$s] the previous version does not run after the rollback: $(printf '%s' "$broken" | paste -sd';' -)"
+      fwd_ok=1
+      for c in $mine; do
+        if roll_forward "$c" "stack $s failed its checks after the bump, and after the rails reverted it the previous version did not run ($(printf '%s' "$broken" | head -3 | paste -sd';' -))"; then
+          rolled=$(printf '%s\n%s' "$rolled" "$c")
+        else
+          fwd_ok=0
+        fi
+      done
+      if [ "$fwd_ok" = 1 ]; then
+        log "[$s] applying the rolled-forward tree"
+        if tg_apply "$s"; then forward="$forward $s:ok"; else forward="$forward $s:FAILED"; fi
+      else
+        forward="$forward $s:not-rolled-forward"
+      fi
+      forward="$forward ($(printf '%s' "$broken" | head -3 | paste -sd';' -))"
     done
     msg=":rewind: Renovate rails reverted a bump that failed on master.
 $(for c in $reverted; do echo "- $(git log -1 --format=%s "$c")"; commit_deps "$c" | sed 's/^/    ignored: /'; done)
 Failed: $(for i in "${!failed[@]}"; do printf '%s (%s) ' "${failed[$i]}" "${why[$i]}"; done)
-Rollback apply:${rollback}
+Rollback apply:${rollback}"
+    if [ -n "$forward" ]; then
+      msg="$msg
+:rotating_light: The previous version did not run after the rollback, so the rails rolled it forward again:${forward}
+Both versions failed their checks. The bumped version is back on master and live, without its ignore entry. A human needs to look."
+    fi
+    msg="$msg
 Snapshot taken before the apply:
 $(snapshot_text)
 The revert commit and the ignore entry are pushed to master by this pipeline. No data was restored.
@@ -544,7 +718,7 @@ Pipeline: ${CI_PIPELINE_URL:-}"
     slack "$msg"
     log "$msg"
     echo 1 >.rails_exit
-    push_metrics 1
+    if [ -n "$forward" ]; then push_metrics 4; else push_metrics 1; fi
   fi
 
   if [ "${#incomplete[@]}" -gt 0 ]; then
