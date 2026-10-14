@@ -157,7 +157,7 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
         # shared emptyDir. curlimages/curl is alpine and ships curl + tar.
         init_container {
           name  = "fetch-bouncer"
-          image = "curlimages/curl:8.22.0"
+          image = "curlimages/curl:8.23.0"
           command = [
             "sh", "-c",
             <<-EOT
