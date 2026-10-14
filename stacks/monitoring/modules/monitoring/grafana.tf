@@ -255,7 +255,7 @@ resource "helm_release" "grafana" {
   # The chart moved to grafana-community; grafana.github.io stops at 10.5.15 (deprecated).
   repository = "https://grafana-community.github.io/helm-charts"
   chart      = "grafana"
-  version    = "13.5.1"
+  version    = "13.6.0"
 
   values     = [templatefile("${path.module}/grafana_chart_values.yaml", { grafana_admin_password = var.grafana_admin_password, mysql_host = var.mysql_host })]
   depends_on = [kubernetes_manifest.grafana_db_creds]
