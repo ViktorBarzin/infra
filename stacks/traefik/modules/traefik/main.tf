@@ -1364,7 +1364,7 @@ resource "kubernetes_deployment" "auth_proxy" {
         }
         container {
           name  = "nginx"
-          image = "nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2"
+          image = "nginx:1.31.7-alpine@sha256:f7dda579abd6aacb9fcfab8a949c8513f99af5c075817eba308a5846fa2d1b98"
 
           port {
             container_port = 9000
