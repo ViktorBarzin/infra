@@ -86,7 +86,7 @@ resource "kubernetes_deployment" "aiostreams" {
           # refuses a database migrated by a different build, so a rollback needs
           # the pre-upgrade pg_dump restored, not just the old tag. Hand this pin to
           # Renovate when this stack migrates.
-          image = "viren070/aiostreams:v2.36.0"
+          image = "viren070/aiostreams:v2.35.9"
           name  = "aiostreams"
           port {
             container_port = 3000

@@ -1,5 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": []
+  "packageRules": [
+    {
+      "description": "rails revert 2026-10-14 pipeline #2448: stack servarr failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit fff3a56e)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "viren070/aiostreams"
+      ],
+      "matchNewValue": "v2.36.0",
+      "enabled": false
+    }
+  ]
 }
