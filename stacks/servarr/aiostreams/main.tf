@@ -79,17 +79,30 @@ resource "kubernetes_deployment" "aiostreams" {
       }
       spec {
         container {
-          # RENOVATE (ADR-0030): one-time bump on 2026-10-09 from the dated nightly
-          # 2026.05.14.1326-nightly (2.29.5) to the v2.35.9 stable tag. Stay on
-          # vX.Y.Z tags: Keel and Renovate cannot order dated nightly tags, which is
-          # why this sat on May's build for five months. Since v2.35.0 AIOStreams
-          # refuses a database migrated by a different build, so a rollback needs
-          # the pre-upgrade pg_dump restored, not just the old tag. Hand this pin to
-          # Renovate when this stack migrates.
-          image = "viren070/aiostreams:v2.35.9"
+          # RENOVATE (ADR-0030): stay on vX.Y.Z tags. Keel and Renovate cannot order
+          # dated nightly tags, which is why this sat on May's build for five months.
+          # Since v2.35.0 AIOStreams refuses a database migrated by a newer build, so
+          # a rollback needs the pre-upgrade pg_dump restored, not just the old tag.
+          # On 2026-10-14 the rails reverted v2.36.0 after it had applied migrations
+          # 43-46, and v2.35.9 then crash-looped for 20 hours; v2.36.0 was rolled
+          # forward by hand.
+          image = "viren070/aiostreams:v2.36.0"
           name  = "aiostreams"
           port {
             container_port = 3000
+          }
+          readiness_probe {
+            # Startup takes ~45s (migrations, then the anime database rebuild)
+            # before the port opens. Without this probe the rollout counted as
+            # converged at once, the rails' verify hit a 502 mid-startup, and the
+            # revert left the database ahead of the image (2026-10-14).
+            # /api/v1/health also pings Postgres.
+            http_get {
+              path = "/api/v1/health"
+              port = 3000
+            }
+            period_seconds    = 10
+            failure_threshold = 3
           }
           env {
             name  = "BASE_URL"
