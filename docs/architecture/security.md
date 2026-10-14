@@ -319,7 +319,10 @@ outcome lets it through.
 - **CRS tuning** lives in the crowdsec values as `viktor/crs-setup`, loaded
   before the CRS: the allowed methods include PUT, PATCH, DELETE and WebDAV
   (rule 911100), the allowed versions include HTTP/3 (920430; without it every
-  HTTP/3 request was blocked on go-live), and three narrow path exclusions
+  HTTP/3 request was blocked on go-live), the allowed request content types
+  include `text/plain` (920420; Home Assistant's login page posts with it, and
+  every HA login got a 403 from 2026-10-02 to 2026-10-14), and three narrow
+  path exclusions
   (Vaultwarden `/icons/`, Home Assistant `/api/camera_proxy`, Woodpecker's
   signed webhook `ci.viktorbarzin.me/api/hook`). Rule 931100 (a parameter
   holding an `http://<IPv4>` URL) is off on every host: in 7 days only Music

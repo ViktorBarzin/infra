@@ -148,7 +148,9 @@ flowchart TD
   documents).
 - CRS defaults were widened where they rejected normal traffic: the method list
   (911100) now includes PUT, PATCH, DELETE and WebDAV verbs, and the version
-  list (920430) includes HTTP/3. Three path exclusions: Vaultwarden `/icons/`,
+  list (920430) includes HTTP/3, and the content-type list (920420) includes
+  text/plain, which Home Assistant's login page sends (every HA login was
+  blocked from 2026-10-02 until 2026-10-14). Three path exclusions: Vaultwarden `/icons/`,
   Home Assistant `/api/camera_proxy`, and Woodpecker's signed webhook
   `ci.viktorbarzin.me/api/hook`.
 - Bans: more than 3 CRS blocks from one address in 30s bans it (`appsec-native`).
