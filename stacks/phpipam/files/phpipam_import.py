@@ -68,7 +68,15 @@ NETWORKS = [
     Net("100.64.0.0/10", "Headscale tailnet", None),
 ]
 _PARSED = [(ipaddress.ip_network(n.cidr), n) for n in NETWORKS]
-LOCATIONS = ["Sofia", "London", "Valchedrym", "Mladost 3"]
+# Site -> (latitude, longitude) for the phpIPAM Locations map, at town or
+# district level, not a street address. Filled only where phpIPAM has none, so
+# coordinates typed in the UI win.
+LOCATIONS = {
+    "Sofia": ("42.6977", "23.3219"),
+    "London": ("51.5072", "-0.1276"),
+    "Valchedrym": ("43.6939", "23.4447"),
+    "Mladost 3": ("42.6475", "23.3800"),
+}
 VLANS = {10: "Management", 20: "Kubernetes", 30: "CCTV"}
 DEMO_VLANS = {(2001, "IPv6 private 1"), (4001, "Servers DMZ")}
 SITES = ["london", "valchedrym", "mladost3"]
@@ -925,6 +933,12 @@ def sync_ptrs(tech: Technitium, zones: set[str], net: Net, desired: dict[str, st
     print(f"  PTR {rev}: {len(up)} written, {len(dele)} removed")
 
 
+def location_coordinates(rows: list[tuple]) -> list[tuple[int, str, str]]:
+    """(id, lat, long) for each known site whose phpIPAM row has no coordinates."""
+    return [(int(i), *LOCATIONS[name]) for i, name, lat, lng in rows
+            if name in LOCATIONS and not (lat or lng)]
+
+
 def ensure_layout(cur, db, dry_run: bool) -> dict[str, int]:
     """Subnets, locations and VLANs as NETWORKS describes them; returns CIDR -> subnet id."""
     cur.execute("SELECT id FROM sections ORDER BY id LIMIT 1")
@@ -937,6 +951,11 @@ def ensure_layout(cur, db, dry_run: bool) -> dict[str, int]:
             if not dry_run:
                 cur.execute("INSERT INTO locations (name, description) VALUES (%s, %s)", (name, "site"))
                 locations[name] = int(cur.lastrowid)
+    cur.execute("SELECT id, name, lat, `long` FROM locations")
+    for lid, lat, lng in location_coordinates(cur.fetchall()):
+        print(f"  location {lid}: coordinates {lat},{lng}")
+        if not dry_run:
+            cur.execute("UPDATE locations SET lat=%s, `long`=%s WHERE id=%s", (lat, lng, lid))
     cur.execute("SELECT vlanId, number, name FROM vlans")
     vlans_rows = cur.fetchall()
     vlans = {int(num): int(vid) for vid, num, _ in vlans_rows}

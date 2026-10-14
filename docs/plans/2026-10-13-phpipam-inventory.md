@@ -93,6 +93,35 @@ Hand rows only get empty fields filled. Vendor, Model and OS are phpIPAM
 custom fields (plain columns on `ipaddresses` and `devices`, as phpIPAM's own
 admin page adds them), created by the importer.
 
+## Topology page (amendment, 2026-10-14)
+
+phpIPAM shows addresses per subnet (an address grid for every /24 and smaller,
+usage bars, dashboard widgets) but has no view of how the subnets connect.
+`stacks/phpipam/files/phpipam_topology.py` draws one from phpIPAM's own data
+after every import:
+
+- one box per Location, holding its subnets and its network devices (types
+  Router, Firewall, Wireless and Switch in `devices.yaml`);
+- a line from each network device to every subnet it holds an address in;
+- subnets with no Location, or with network devices from more than one site
+  (the WireGuard tunnels, the tailnet), drawn above the sites with dotted lines;
+- a green border on a device seen in the last 15 minutes, red dashed when not.
+  Only addresses in the device's own site count, because tunnel rows are
+  refreshed whenever the hub lists the peer.
+
+```mermaid
+flowchart LR
+  job[phpipam-import CronJob] -->|import| db[(phpIPAM MySQL)]
+  db -->|phpipam_topology.py| cm[ConfigMap phpipam-topology]
+  cm -->|mounted at /phpipam/topology| web[phpipam-web]
+  web --> page[phpipam.viktorbarzin.me/topology/]
+```
+
+The page renders with mermaid in the browser and sits behind the same
+Authentik login as phpIPAM. The job draws it even when a Source fails, so the
+failed site's router shows red. The four Locations also get town-level
+coordinates, so phpIPAM's own Locations map shows a pin per site.
+
 ## Rollout
 
 1. `stacks/phpipam/files/phpipam_import.py` with unit tests (the London module

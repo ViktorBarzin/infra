@@ -86,7 +86,7 @@ graph TB
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
 | pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for all subnets, Kea DDNS |
-| phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
+| phpIPAM | v1.8.3 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
 | vmbr2 | Linux bridge | Physical (eno2) | DORMANT fallback leg for dCCTV (ADR-0017 rev 4) — live dCCTV rides vmbr0 tag 30 over the P1 trunk (LAN1 cable) |
@@ -730,6 +730,8 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - DNS: publishes the OpenWrt sites' lease names and hand-row names to Technitium (dns.md, "London devices" and "DHCP → DNS Auto-Registration"); everything else is read from DNS.
 - Enrichment: each row also gets MAC, Vendor, Model and OS (custom fields), a state tag (DHCP / Reserved / Used / Offline) and, for infrastructure, a link to a phpIPAM Device declared in `stacks/phpipam/files/devices.yaml`. Sources: IEEE OUI registry, the Home Assistant device registries (Sofia, London), Proxmox, Kubernetes node info. Hand rows only get empty fields filled.
 - Subnets tracked, with Locations Sofia / London / Valchedrym / Mladost 3 and VLANs 10/20/30: 192.168.1.0/24, 10.0.10.0/24, 10.0.20.0/24, 10.0.30.0/24, 10.3.2.0/24, 192.168.8.0/24 (London LAN), 192.168.9.0/24 (London Guest), 192.168.0.0/24 (Valchedrym), 192.168.3.0/24 (Mladost 3), 100.64.0.0/10 (Headscale). phpIPAM's own scan agent is off.
+- Topology page: `phpipam.viktorbarzin.me/topology/`, a diagram of sites, subnets and network devices drawn from phpIPAM by `stacks/phpipam/files/phpipam_topology.py` at the end of every `phpipam-import` run. It lives in the `phpipam-topology` ConfigMap, mounted into the web pod at `/phpipam/topology`. A device's border shows whether its site addresses were seen in the last 15 minutes.
+- Locations map: Tools → Locations shows the four sites; `phpipam-import` fills town-level coordinates where a Location has none.
 - API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access
 
 **Traefik Middleware**:
