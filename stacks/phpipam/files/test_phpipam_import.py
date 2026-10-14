@@ -55,6 +55,20 @@ class SanitizeTests(unittest.TestCase):
                 self.assertEqual(pi.sanitize(raw), want)
 
 
+class LocationTests(unittest.TestCase):
+    def test_fills_only_empty_coordinates(self):
+        rows = [
+            (1, "Sofia", "", ""),               # empty: filled
+            (2, "London", None, None),          # NULL: filled
+            (3, "Valchedrym", "43.7", "23.4"),  # set by hand: kept
+            (9, "Elsewhere", "", ""),           # not a known site: left alone
+        ]
+        self.assertEqual(pi.location_coordinates(rows), [
+            (1, *pi.LOCATIONS["Sofia"]),
+            (2, *pi.LOCATIONS["London"]),
+        ])
+
+
 class NetworkTests(unittest.TestCase):
     def test_network_of(self):
         for ip, want in [
