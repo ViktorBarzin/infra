@@ -140,7 +140,7 @@ resource "kubernetes_deployment" "dashboard_injector" {
       spec {
         container {
           name  = "nginx"
-          image = "nginxinc/nginx-unprivileged:1.31.6-alpine"
+          image = "nginxinc/nginx-unprivileged:1.31.7-alpine"
           port { container_port = 8080 }
           volume_mount {
             name       = "conf"
