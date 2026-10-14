@@ -323,7 +323,7 @@ resource "kubernetes_deployment_v1" "t3_probe" {
       spec {
         container {
           name  = "probe"
-          image = "library/python:3.14.8-alpine"
+          image = "library/python:3.15.0-alpine"
           # Long-running pod, not a high-cadence CronJob: a one-time pinned
           # pip install at start (with retries against transient DNS) is the
           # lightweight alternative to owning a registry image for ~200 lines.
