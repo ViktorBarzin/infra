@@ -401,6 +401,14 @@ appsec:
     # host got a 403, whatever it carried (Home Assistant's iOS app and
     # Shortcuts, 2026-10-02).
     #
+    # And to tx.allowed_request_content_type (rule 920420), which leaves out
+    # text/plain: a browser fetch() with a string body and no Content-Type sends
+    # text/plain;charset=UTF-8. Home Assistant's login page posts /auth/login_flow
+    # that way, so from 2026-10-02 every fresh login to ha-london and ha-sofia
+    # got a 403 and the page showed an empty "Error:" (found 2026-10-14 when
+    # Anca's Companion app had to log in again). The list below is CRS's
+    # default (901162) plus |text/plain|.
+    #
     # Path exclusions from the same replay, kept narrow:
     #  - /icons/ (Vaultwarden's icon lookups for saved logins): 930130
     #    restricted-file names ("docker" in a domain) and 931100-931130 remote
@@ -422,6 +430,7 @@ appsec:
       seclang_rules:
         - SecAction "id:900200,phase:1,pass,nolog,t:none,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK REPORT SEARCH'"
         - SecAction "id:900230,phase:1,pass,nolog,t:none,setvar:'tx.allowed_http_versions=HTTP/1.0 HTTP/1.1 HTTP/2 HTTP/2.0 HTTP/3 HTTP/3.0'"
+        - SecAction "id:900220,phase:1,pass,nolog,t:none,setvar:'tx.allowed_request_content_type=|application/x-www-form-urlencoded| |multipart/form-data| |multipart/related| |text/xml| |application/xml| |application/soap+xml| |application/json| |application/cloudevents+json| |application/cloudevents-batch+json| |text/plain|'"
         - SecRule REQUEST_FILENAME "@beginsWith /icons/" "id:1000101,phase:1,pass,nolog,t:none,ctl:ruleRemoveById=930130,ctl:ruleRemoveById=931100-931130"
         - SecRule REQUEST_FILENAME "@beginsWith /api/camera_proxy" "id:1000102,phase:1,pass,nolog,t:none,ctl:ruleEngine=Off"
         - SecRule REQUEST_HEADERS:Host "@streq ci.viktorbarzin.me" "id:1000103,phase:1,pass,nolog,t:none,t:lowercase,chain"
