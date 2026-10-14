@@ -298,7 +298,8 @@ def fetch(enc_url, kind, sid):
     return r.json().get("streams", [])
 
 try:
-    r = requests.get(f"{BASE}/api/v1/user/", params={"uuid": UUID, "password": PW}, timeout=10)
+    # Since v2.35 the user API takes Basic auth and answers 400 to query params.
+    r = requests.get(f"{BASE}/api/v1/user/", auth=(UUID, PW), timeout=10)
     r.raise_for_status()
     enc = r.json()["data"]["encryptedPassword"]
     enc_url = urllib.parse.quote(enc, safe="")
@@ -427,7 +428,9 @@ bytes_written = 0
 start = time.time()
 
 try:
-    r = requests.get(f"{BASE}/api/v1/user/", params={"uuid": UUID, "password": PW, "raw": "true"}, timeout=30)
+    # Since v2.35 the user API takes Basic auth and answers 400 to query params,
+    # which had failed this backup every week from 2026-10-11.
+    r = requests.get(f"{BASE}/api/v1/user/", params={"raw": "true"}, auth=(UUID, PW), timeout=30)
     r.raise_for_status()
     data = r.json()["data"]["userData"]
     if not data:
