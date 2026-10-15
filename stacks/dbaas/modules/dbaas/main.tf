@@ -1566,7 +1566,7 @@ variable "pg_cluster_v18_image" {
 # Rollback to the PG16 cluster = set this back to "pg-cluster" (runbook).
 variable "pg_active_cluster" {
   type    = string
-  default = "pg-cluster"
+  default = "pg-cluster-v18"
 }
 
 variable "pg_cluster_v18_instances" {
@@ -1679,8 +1679,9 @@ resource "null_resource" "pg_cluster_v18" {
   }
 }
 
-# Service that maintains the original postgresql.dbaas endpoint,
-# now pointing at the CNPG primary pod instead of the old deployment.
+# Service that maintains the original postgresql.dbaas endpoint, pointing at the
+# primary of var.pg_active_cluster (pg-cluster-v18 since 2026-10-15). CoreDNS
+# answers pg-cluster-rw.dbaas.svc.cluster.local with this Service too.
 resource "kubernetes_service" "postgresql" {
   metadata {
     name      = "postgresql"
@@ -1741,7 +1742,7 @@ resource "null_resource" "pg_terraform_state_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'terraform_state'"'"'" | grep -q 1 || \
@@ -1766,7 +1767,7 @@ resource "null_resource" "pg_payslip_ingest_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
@@ -1805,7 +1806,7 @@ resource "null_resource" "pg_paperless_ngx_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'paperless_ngx'"'"'" | grep -q 1 || \
@@ -1830,7 +1831,7 @@ resource "null_resource" "pg_job_hunter_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'job_hunter'"'"'" | grep -q 1 || \
@@ -1857,7 +1858,7 @@ resource "null_resource" "pg_goodreads_sync_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
@@ -1882,7 +1883,7 @@ resource "null_resource" "pg_lesson_harvester_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'lesson_harvester'"'"'" | grep -q 1 || \
@@ -1909,7 +1910,7 @@ resource "null_resource" "pg_resume_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'resume'"'"'" | grep -q 1 || \
@@ -1934,7 +1935,7 @@ resource "null_resource" "pg_tripit_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tripit'"'"'" | grep -q 1 || \
@@ -1965,7 +1966,7 @@ resource "null_resource" "pg_nextcloud_todos_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'nextcloud_todos'"'"'" | grep -q 1 || \
@@ -1994,7 +1995,7 @@ resource "null_resource" "pg_wealthfolio_sync_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'wealthfolio_sync'"'"'" | grep -q 1 || \
@@ -2022,7 +2023,7 @@ resource "null_resource" "pg_fire_planner_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'fire_planner'"'"'" | grep -q 1 || \
@@ -2051,7 +2052,7 @@ resource "null_resource" "pg_instagram_poster_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'instagram_poster'"'"'" | grep -q 1 || \
@@ -2079,7 +2080,7 @@ resource "null_resource" "pg_tasks_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tasks'"'"'" | grep -q 1 || \
@@ -2108,7 +2109,7 @@ resource "null_resource" "pg_f1_stream_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'f1_stream'"'"'" | grep -q 1 || \
@@ -2139,7 +2140,7 @@ resource "null_resource" "pg_verify_probe" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           set -e
@@ -2348,7 +2349,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "docker.io/library/postgres:16.15-trixie"
+              image = "docker.io/library/postgres:18.6-trixie"
               env {
                 name = "PGPASSWORD"
                 value_from {
@@ -2373,7 +2374,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
+                pg_dumpall -h postgresql.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
 
                 # Rotate — 14 day retention
                 cd /backup
@@ -2443,7 +2444,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
           spec {
             container {
               name  = "postgresql-backup-per-db"
-              image = "docker.io/library/postgres:16.15-trixie"
+              image = "docker.io/library/postgres:18.6-trixie"
               env {
                 name = "PGPASSWORD"
                 value_from {
@@ -2463,7 +2464,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
 
                 _t0=$(date +%s)
                 now=$(date +"%Y_%m_%d_%H_%M")
-                PGHOST=pg-cluster-rw.dbaas
+                PGHOST=postgresql.dbaas
                 PGUSER=postgres
                 failed=0
                 total=0

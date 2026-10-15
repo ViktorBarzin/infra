@@ -361,7 +361,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Postgres majors for pg-cluster and its backup clients (needs the cnpg-postgis-pgvector image for the new major first)",
+      description: "HELD: Postgres majors for pg-cluster and its backup clients (PG 18.6 since 2026-10-15, moved blue-green to pg-cluster-v18 with the PG16 cluster kept read-only as rollback). The next major needs the cnpg-postgis-pgvector image built for it first and its own blue-green copy (docs/runbooks/pg-cluster-major-upgrade.md)",
       matchDatasources: ["docker"],
       matchPackageNames: ["postgres", "library/postgres", "docker.io/library/postgres", "ghcr.io/cloudnative-pg/postgis", "ghcr.io/cloudnative-pg/postgresql"],
       matchUpdateTypes: ["major"],

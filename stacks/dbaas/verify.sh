@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# Verify checks for stacks/dbaas: the CNPG pg-cluster and mysql-standalone
+# Verify checks for stacks/dbaas: the CNPG pg-cluster-v18 (PG18, active since
+# 2026-10-15; pg-cluster is the read-only PG16 rollback copy) and mysql-standalone
 # (docs/runbooks/verify-jobs.md; software-currency design, Verification
 # contract, Databases row). Probes log in as verify_probe with the Vault
 # static-role passwords in secret verify-db-creds; they write only to the
@@ -8,14 +9,14 @@ VERIFY_GROUP="db"
 VERIFY_NAMESPACES="dbaas"
 VERIFY_ALERTNAMES="^(CNPG.*|PostgreSQL.*|PgCluster.*|Mysql.*|MySQL.*)$"
 
-PG_IMAGE=docker.io/library/postgres:16.15-trixie
+PG_IMAGE=docker.io/library/postgres:18.6-trixie
 MYSQL_IMAGE=docker.io/library/mysql:8.4.8
 # Apps on MySQL (Vault static roles and the static users in stacks/dbaas).
 MYSQL_APP_NAMESPACES="forgejo mailserver nextcloud monitoring speedtest realestate-crawler hackmd technitium phpipam"
 
 _cluster_healthy() {
   local j
-  j=$(kubectl get clusters.postgresql.cnpg.io -n dbaas pg-cluster -o json) || return 1
+  j=$(kubectl get clusters.postgresql.cnpg.io -n dbaas pg-cluster-v18 -o json) || return 1
   jq -r '"phase=\(.status.phase) ready=\(.status.readyInstances)/\(.spec.instances) primary=\(.status.currentPrimary) image=\(.spec.imageName)"' <<<"$j"
   [ "$(jq -r '.status.phase' <<<"$j")" = "Cluster in healthy state" ] &&
     [ "$(jq -r '.status.readyInstances == .spec.instances' <<<"$j")" = true ]
@@ -27,7 +28,7 @@ PG_PROBE='
 set -eu
 export PGUSER=verify_probe PGPASSWORD="$PG_VERIFY_PASSWORD" PGCONNECT_TIMEOUT=10
 RW=pg-cluster-rw.dbaas.svc.cluster.local
-RO=pg-cluster-ro.dbaas.svc.cluster.local
+RO=pg-cluster-v18-ro.dbaas.svc.cluster.local
 q() { psql -X -v ON_ERROR_STOP=1 -h "$1" -d "$2" -Atc "$3"; }
 echo "server: $(q $RW verify_probe "show server_version")"
 want=$(q $RW verify_probe "select count(*) from pg_stat_replication where state = '"'"'streaming'"'"'")
@@ -76,7 +77,7 @@ _pg_apps() {
   # Namespaces named after pg-cluster databases (underscores as dashes), plus
   # apps whose namespace differs from the database name.
   local dbs
-  dbs=$(kubectl get clusters.postgresql.cnpg.io -n dbaas pg-cluster >/dev/null && \
+  dbs=$(kubectl get clusters.postgresql.cnpg.io -n dbaas pg-cluster-v18 >/dev/null && \
     run_pod pg-dblist "$PG_IMAGE" 'PGPASSWORD="$PG_VERIFY_PASSWORD" psql -X -h pg-cluster-rw.dbaas.svc.cluster.local -U verify_probe -d verify_probe -Atc "select datname from pg_database where datallowconn and not datistemplate"' secret=verify-db-creds timeout=120 memory=96Mi) || { echo "cannot list databases"; return 1; }
   # shellcheck disable=SC2046
   apps_healthy $(printf '%s\n' "$dbs" | grep -Ev '^(postgres|verify_probe|immich|terraform_state)$' | tr '_' '-') trading-bot
@@ -96,8 +97,8 @@ _backups() {
 }
 
 verify_component() {
-  check "pg-cluster healthy with every instance ready" retry 900 30 _cluster_healthy
-  check "every instance's metrics exporter is up" expect_prom 'min(cnpg_collector_up{cluster="pg-cluster"})' -eq 1
+  check "pg-cluster-v18 healthy with every instance ready" retry 900 30 _cluster_healthy
+  check "every instance's metrics exporter is up" expect_prom 'min(cnpg_collector_up{cluster="pg-cluster-v18"})' -eq 1
   check "pg: scratch write, replica read-back at lag 0, PostGIS and pgvector answer" _pg_probe
   check "mysql-standalone converged" retry 300 10 workload_ready dbaas statefulset/mysql-standalone
   check "mysqld_exporter sees MySQL up" expect_prom 'max(mysql_up)' -eq 1
