@@ -390,7 +390,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run). 15.x patch/minor still land.",
+      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run, backing up and upgrading tertiary, secondary, primary one at a time). Checked 2026-10-15: 15.6.1 (2026-10-11) is the newest release and no 16.x exists yet. 15.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
       matchUpdateTypes: ["major"],
