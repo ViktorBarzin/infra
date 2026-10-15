@@ -298,6 +298,16 @@ _Avoid_: bare "backup" without saying which copy you mean (a service is "backed 
 **CNPG** is the CloudNativePG operator; **`pg-cluster`** is the Postgres cluster it manages — the shared Postgres substrate. Backs Tier-1 Terraform state (`pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`) and ~12 application databases, reached through **PgBouncer** (a **critical-path Service**) for connection pooling; app credentials rotate via the `vault-database` ClusterSecretStore.
 _Avoid_: "the database" (many DBs share one cluster); the legacy `postgresql.dbaas` Service for NEW work (it is a live compatibility alias selecting the CNPG primary — authentik's PgBouncer still uses it — but `pg-cluster-rw` is the canonical name); conflating the CNPG operator with the `pg-cluster` it manages.
 
+### Personal finance
+
+**Net worth**:
+The sum, over every Wealthfolio account, of its last-known `dav_corrected` value in GBP on the latest valuation date. The Grafana "Net worth (current)" tile and `sensor.net_worth` on ha-sofia show the same figure. ADR-0034.
+_Avoid_: summing only the rows dated today (an account whose row lands late drops out of the sum).
+
+**Daily change**:
+**Net worth** on the last weekday in the data minus **Net worth** on the weekday before it. Weekend rows only carry Friday forward, so on a weekend and on Monday before the 16:00 UTC recalc it is Friday's move. It includes new money (salary, RSU vests), so paydays show as jumps.
+_Avoid_: "today's gain" (Grafana's "Today (live)" tile is a different number, built from live quotes on current positions).
+
 ### Documents
 
 **Mail ingest**:

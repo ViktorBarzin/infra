@@ -5,7 +5,8 @@
 # Pins change deliberately; Renovate does not scan Dockerfiles here.
 FROM python:3.15-alpine3.24
 
-RUN apk add --no-cache curl jq sqlite openssh-client
+# postgresql-client: net-worth-to-ha (wealthfolio) reads the wealthfolio_sync DB
+RUN apk add --no-cache curl jq sqlite openssh-client postgresql-client
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements.txt \
