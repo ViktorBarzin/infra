@@ -293,7 +293,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         container {
           name  = "exporter"
-          image = "docker.io/oliver006/redis_exporter:v1.93.0"
+          image = "docker.io/oliver006/redis_exporter:v1.94.0"
 
           port {
             container_port = 9121
