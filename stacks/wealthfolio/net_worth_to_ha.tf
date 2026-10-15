@@ -50,6 +50,7 @@ resource "kubernetes_manifest" "ha_sofia_token_external_secret" {
   depends_on = [kubernetes_namespace.wealthfolio]
 }
 
+# The script is shipped verbatim from files/; any change there re-applies this stack.
 resource "kubernetes_config_map" "net_worth_to_ha_script" {
   metadata {
     name      = "net-worth-to-ha-script"
