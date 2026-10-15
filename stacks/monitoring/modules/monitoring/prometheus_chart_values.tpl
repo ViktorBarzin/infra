@@ -6188,6 +6188,44 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Technitium zone counts differ across instances (max-min delta: {{ $value | printf \"%.0f\" }}) — replica has drifted from primary"
+          - alert: TechnitiumDynamicUpdatesFailed
+            expr: technitium_dynamic_updates_status != 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "technitium-dynamic-updates could not set the TSIG keys or update policy on every instance. external-dns and Kea updates may be refused"
+          - alert: TechnitiumDynamicUpdatesStale
+            expr: (time() - technitium_dynamic_updates_last_run) > 7200
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "technitium-dynamic-updates has not run in over 2h (last: {{ $value | humanizeDuration }} ago)"
+          - alert: ExternalDNSLanSyncStale
+            expr: (time() - external_dns_controller_last_sync_timestamp_seconds) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns (technitium ns) has not synced *.viktorbarzin.lan in over 15m. New .lan Ingress hosts get no record"
+          # A refused or unsigned zone transfer reads as an empty zone, not an
+          # error, so the last-sync timestamp keeps advancing. The zone holds
+          # well over 100 records; near zero means the AXFR is failing.
+          - alert: ExternalDNSLanZoneEmpty
+            expr: external_dns_registry_endpoints_total < 20
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns sees only {{ $value | printf \"%.0f\" }} records in viktorbarzin.lan. Its zone transfer from Technitium is probably failing (TSIG key or zoneTransfer policy)"
+          - alert: ExternalDNSLanSoftErrors
+            expr: external_dns_controller_consecutive_soft_errors > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns has failed {{ $value | printf \"%.0f\" }} consecutive syncs of viktorbarzin.lan. Check its log in the technitium namespace"
           - alert: CoreDNSForwardFailureRate
             expr: sum(rate(coredns_forward_responses_total{rcode=~"SERVFAIL|REFUSED"}[5m])) > 0.1
             for: 5m
