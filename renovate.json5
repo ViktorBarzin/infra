@@ -344,11 +344,6 @@
       enabled: false,
     },
     {
-      description: "HELD: every update in stacks/vault until its CI apply works again (2026-10-12). terragrunt apply fails with 'Invalid for_each argument' at stacks/vault/main.tf:1622 (local.user_namespaces unknown at plan time), so any vault bump is reverted by the rails and leaves a global ignore entry. Tracked in bead code-f2u0.",
-      matchFileNames: ["stacks/vault/**"],
-      enabled: false,
-    },
-    {
       description: "HELD: every update in stacks/dbaas (2026-10-11). Before any dbaas bump the rails run all of the stack's backup CronJobs, and the full mysqldump | gzip -9 takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s). mysql 8.4.11 was held-reverted in pipeline 2244, and each held bump pauses Renovate for 2 h, so a pgadmin or phpmyadmin bump would stall the backlog the same way. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
       matchFileNames: ["stacks/dbaas/**"],
       enabled: false,
@@ -392,7 +387,7 @@
       enabled: false,
     },
     {
-      description: "HELD: hashicorp/vault provider 4 -> 5 (2026-10-12). v5 is a breaking release used by every stack that reads Vault (vault_kv_secret_v2 and friends); it needs a plan of each consumer and the stacks/vault apply working again (bead code-f2u0). 4.x minor/patch still land.",
+      description: "HELD: hashicorp/vault provider 4 -> 5 (2026-10-12). v5 is a breaking release used by every stack that reads Vault (vault_kv_secret_v2 and friends); it needs a plan of each consumer stack first. stacks/vault plans and applies with a pending chart change since 2026-10-15. 4.x minor/patch still land.",
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["hashicorp/vault"],
       matchUpdateTypes: ["major"],

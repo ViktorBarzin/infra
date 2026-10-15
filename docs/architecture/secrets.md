@@ -58,7 +58,7 @@ graph LR
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| HashiCorp Vault | 2.1.2 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
+| HashiCorp Vault | 2.2.0 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
 | External Secrets Operator | v1beta1 API | `stacks/external-secrets/` | Sync Vault secrets to K8s Secrets (52 total ExternalSecrets) |
 | Sealed Secrets | 0.40.0 (Helm chart 2.20.0) | `stacks/sealed-secrets/` | User-managed encrypted secrets |
 | SOPS | Latest | `scripts/state-sync`, `scripts/tg` | Terraform state encryption (Vault Transit + age) |
