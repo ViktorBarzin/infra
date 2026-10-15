@@ -2,6 +2,8 @@
 
 GET /            no valid cookie -> page with the Turnstile widget; valid cookie -> "passed" page
 POST /verify     {"token": "..."} -> calls siteverify, logs the full JSON, sets a signed cookie on success
+POST /hold       {"token": "..."} parks a token WITHOUT verifying it (page opened with ?hold=1)
+POST /verify-held  verifies the parked token now; call twice to test single use, wait to test lifetime
 POST /event      client-side widget events (error-callback codes, script load failure, timeouts)
 GET /debug       last 50 verify results and client events as JSON
 GET /logout      clears the cookie
@@ -32,6 +34,7 @@ SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 RING: "collections.deque[dict]" = collections.deque(maxlen=50)
 RING_LOCK = threading.Lock()
+HELD: dict = {}  # token-rules experiment: one unredeemed token parked by POST /hold
 
 
 def log(record: dict) -> None:
@@ -92,11 +95,13 @@ window.onTurnstileLoad = function () {
       window.__lastToken = token;
       ev("callback", "token len " + token.length);
       setStatus("token received, verifying...");
-      fetch("/verify", {method: "POST", headers: {"Content-Type": "application/json"},
+      var hold = location.search.indexOf("hold=1") >= 0;
+      fetch(hold ? "/hold" : "/verify", {method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({token: token})})
         .then(function (r) { return r.json(); })
         .then(function (j) {
           document.getElementById("result").textContent = JSON.stringify(j, null, 2);
+          if (j.held) { setStatus("token parked, not verified"); return; }
           if (j.success) { setStatus("PASSED"); setTimeout(function(){ if(!window.__noReload) location.reload(); }, 1500); }
           else setStatus("siteverify rejected: " + (j["error-codes"]||[]).join(","));
         })
@@ -194,13 +199,25 @@ class Handler(BaseHTTPRequestHandler):
                 ev = {"raw": raw[:500].decode(errors="replace")}
             log({"event": "client-event", "client_event": ev, **self.client()})
             return self.send(204, "")
-        if path != "/verify":
+        if path not in ("/verify", "/hold", "/verify-held"):
             return self.send(404, "not found", "text/plain")
         try:
             token = json.loads(raw).get("token", "")
         except ValueError:
             token = urllib.parse.parse_qs(raw.decode()).get("cf-turnstile-response", [""])[0]
         cl = self.client()
+        if path == "/hold":
+            HELD.clear()
+            HELD.update({"token": token, "at": time.time(), "verifies": 0})
+            log({"event": "token-held", "token_prefix": token[:12], "token_len": len(token), **cl})
+            return self.send(200, json.dumps({"held": True, "token_len": len(token)}), "application/json")
+        if path == "/verify-held":
+            if not HELD:
+                return self.send(404, json.dumps({"error": "no held token"}), "application/json")
+            token = HELD["token"]
+            HELD["verifies"] += 1
+            cl["held_age_s"] = int(time.time() - HELD["at"])
+            cl["held_verify_n"] = HELD["verifies"]
         form = urllib.parse.urlencode({"secret": SECRET, "response": token, "remoteip": cl["client_ip"]}).encode()
         t0 = time.time()
         try:
@@ -218,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         log({"event": "siteverify", "siteverify": result, "siteverify_ms": int((time.time() - t0) * 1000),
              "token_prefix": token[:12], "token_len": len(token), **cl})
         headers = {}
-        if result.get("success"):
+        if result.get("success") and path == "/verify":
             payload = {"exp": int(time.time()) + COOKIE_TTL, "ip": cl["client_ip"], "hostname": result.get("hostname")}
             headers["Set-Cookie"] = f"{COOKIE_NAME}={sign(payload)}; Path=/; Max-Age={COOKIE_TTL}; Secure; HttpOnly; SameSite=Lax"
         return self.send(200, json.dumps(result), "application/json", headers)
