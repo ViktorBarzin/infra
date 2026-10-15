@@ -407,7 +407,11 @@ resource "kubernetes_cron_job_v1" "rag_index_refresh" {
     }
   }
   spec {
-    schedule                      = "30 4 * * *"
+    schedule = "30 4 * * *"
+    # Suspended while the deployment above is scaled to 0 (2026-10-12): the
+    # job only POSTs to paperless-ai, so it fails every night with no pod to
+    # answer. Set back to false together with replicas = 1.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 2
