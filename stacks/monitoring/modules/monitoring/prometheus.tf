@@ -53,7 +53,7 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
   # version    = "15.0.2"
-  version = "29.36.2"
+  version = "29.37.0"
 
   # wait=false: do NOT block the apply on the slow Recreate + WAL-replay roll.
   # Blocking held an ~15-min in-flight `helm upgrade` that Woodpecker's

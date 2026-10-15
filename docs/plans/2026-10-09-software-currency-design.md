@@ -297,7 +297,6 @@ Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HEL
 | MySQL majors (8.4 to 9.x and 26.x) | dbaas | the supported in-place jump path is unconfirmed, and innovation releases cannot be downgraded. 8.x patch and minor releases still land | confirm Oracle's supported jumps (open question below) and encode the stepping |
 | Postgres majors (pg-cluster and its backup clients) | dbaas, immich | each major needs the `cnpg-postgis-pgvector` image built for it first | settle where that image is built (open question below), then CNPG's declarative in-place upgrade |
 | Every vault update | vault | the CI apply fails with "Invalid for_each argument" at `stacks/vault/main.tf:1622` | fix the apply, then release the rule |
-| Image pins in `prometheus_chart_values.tpl` | monitoring | a bump replaces the prometheus-server pod, whose WAL is on tmpfs | a WAL on a persistent volume, or accept a gap per bump |
 | Woodpecker chart and images | woodpecker | the rails run on Woodpecker; a CI apply restarts the agent running that pipeline. 3.19.0 was applied from a workstation on 2026-10-12 | apply from a workstation first, then push (kept as the standing method) |
 | osrm-backend majors and minors | osm_routing | osrm-routed refuses a graph built by a different major.minor | a bump builds the graph first, then moves the serving pods |
 | Nextcloud majors | nextcloud | a major runs a one-way `occ upgrade` and can disable apps. 35.0.1 since 2026-10-12, and 35 was still the newest major when checked on 2026-10-15 (no 36 image or beta published); minors and patches go through the rails | the procedure in the comment on `nextcloud_image_tag` (LVM snapshot, mysqldump, watchdog suspended) |
@@ -308,6 +307,8 @@ Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HEL
 | Kubernetes 1.36 and 1.37 | cluster | paused by Viktor on 2026-10-12 until Kyverno 1.20 ships (2026-10-23) | Kyverno 1.20 (Renovate lands chart 3.10 when it is published), then the version chain |
 
 Released on 2026-10-12: MetalLB, the CNPG operator (1.30.1, instance managers updated in place, no Postgres restart), Loki (grafana-community chart), Calico (3.33.0 in three one-minor hops; later minors go through the rails one at a time), Kyverno chart 3.10, the anisette pin, and the Nextcloud and Forgejo rules narrowed to majors.
+
+Released on 2026-10-15: the image pins in `prometheus_chart_values.tpl`. The `prometheus-backup` sidecar moved from alpine 3.21 to 3.24 together with chart 29.37.0 in one restart. Every chart bump already replaced the prometheus-server pod, because its template carries the `helm.sh/chart` label, so the alpine pin was the only part of that pod Renovate did not drive, and holding it did not avoid any gaps. A rails-applied bump still loses the head block (116 minutes of samples on 2026-10-14). A supervised restart can keep it with a TSDB snapshot that includes the head (`docs/runbooks/prometheus-restart-keep-head.md`). The WAL stays on tmpfs to spare the SSD.
 
 ### Keel cutover leftovers
 
