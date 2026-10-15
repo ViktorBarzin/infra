@@ -1454,8 +1454,12 @@ module "anubis" {
       # admin started downloading, and its segments end in `.ts`, so without
       # the entry a cookieless fetch could also pin a challenge page at the
       # edge under a segment URL (see `transcode` above).
+      #
+      # `replays/checks` joined on 2026-10-15: the f1tv app (okhttp, no Anubis
+      # cookie) calls it and was getting the PoW page back where it expects
+      # JSON. Found by curl from outside the trusted networks.
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/checks|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
       # Watch links (ADR-0034 in the f1-stream repo, 2026-10-11): the stable
       # playlist URLs VLC, mpv and other external players open. A player sends
