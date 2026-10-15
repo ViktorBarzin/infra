@@ -76,8 +76,27 @@ which collapses object ownership and drops GRANTs, so it was not used. Instead:
 
 Timings on 2026-10-15: a sequential rehearsal while PG16 was live took 23
 minutes (dawarich 377 s, technitium 368 s, health 99 s, woodpecker 78 s). The
-final copy ran in three lanes (dawarich, technitium, the rest) with PG16
-read-only.
+final copy ran in three lanes (dawarich, technitium, the rest) and took 31
+minutes, because the lanes competed for the same disks (dawarich alone took
+1,833 s). Sequential is faster on this storage. The write window ran from
+18:54 to 19:33 UTC.
+
+## Freezing the old cluster: what the GUC does not stop
+
+- `default_transaction_read_only=on` blocked every tenant except authentik,
+  which kept writing to the frozen PG16 cluster (sessions, tasks, permissions).
+  The row-count comparison caught it. Stop authentik's database access during
+  the freeze by scaling `authentik/pgbouncer` to 0 and terminating its
+  backends, copy authentik last, and scale pgbouncer back after the flip.
+- Apps that refresh OAuth tokens during the window cannot save the new token.
+  On 2026-10-15 Woodpecker refreshed viktor's Forgejo token at 19:10, could not
+  store it, and then failed with `token was already used` until a fresh login
+  at ci.viktorbarzin.me. Check `users.expiry` in the woodpecker database before
+  a freeze and keep the window shorter than the time left.
+- Vault's static-role rotations (for example `pg-terraform-state`, weekly) fail
+  while the cluster is read-only and catch up afterwards. A rotation between
+  the copy and the flip would land only on the old cluster, which is why the
+  globals are copied again inside the window.
 
 A comparison of the two clusters after the copy (database owners, extensions,
 object counts per kind, table owners, table ACLs, sequence values, exact row
