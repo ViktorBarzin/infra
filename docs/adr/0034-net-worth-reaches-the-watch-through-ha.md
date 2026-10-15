@@ -62,8 +62,8 @@ flowchart TD
    complication builder (Settings → Companion app → Complications, app
    2026.9.3), source Template, server ha-sofia. Two lines, no gauge and no
    icon: the total in the Value slot, rounded (`£1.48M`), and the change in
-   the Title slot under it (`▼4.2k`, `▲640` under £1k, `±0` when flat). The
-   Title slot strips the `£` to save width. The text colour comes from
+   the Title slot under it (`▼£4.2k`, `▲£640` under £1k, `±£0` when flat).
+   The text colour comes from
    `change_color` through the builder's Text color template, and it applies
    to both lines. The sensor carries both strings preformatted as
    `total_short` and `change_short`, so the templates only read attributes.
@@ -118,6 +118,14 @@ up on the watch:
   template. The phone's preview leaves such a slot blank, but the watch
   renders it
   ([home-assistant/iOS#5844](https://github.com/home-assistant/iOS/issues/5844)).
+- The watch keeps its own copy of each complication. After an edit, the
+  Reload Complications button in the Complications list sends the new
+  version to the watch. Until then the watch renders the old one.
+- The CrowdSec AppSec rules in front of ha-sofia return 403 for a template
+  containing `replace('£', '')`, so the templates avoid `replace`. The other
+  templates here pass.
+- Faces that tint their complications show `change_color` as the face's own
+  tint. The colour shows on full-colour faces.
 - The legacy complications screen does not refresh its complications
   ([home-assistant/iOS#5830](https://github.com/home-assistant/iOS/issues/5830)),
   so this uses the builder.
