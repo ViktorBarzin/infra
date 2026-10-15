@@ -434,9 +434,9 @@ resource "kubernetes_service" "otp" {
 # Both NFS PVCs were EMPTY (4.0K, untouched since 2026-04-12), so osrm-routed had
 # no graph to load — the serving pods could not have worked even at replicas>0.
 # These build the Greater London graphs the deployments load, into
-# local.osrm_build_graph_dir (/data/<osrm version>/<profile>). The v6.0.0 graphs from
-# before the v26 cut-over are at /data/foot and /data/bicycle; nothing reads
-# them after the cut-over, and they can be deleted once v26 is verified.
+# local.osrm_build_graph_dir (/data/<osrm version>/<profile>). Graphs of earlier
+# versions stay next to it: v26.4.0 in /data/v26.4.0 (served until 2026-10-15)
+# and v6.0.0 in /data/foot and /data/bicycle. Nothing reads them now.
 #
 # Staging + swap: each profile builds into <profile>.new and is moved into place
 # only once complete, so a refresh never corrupts a graph being served. The build
@@ -456,8 +456,10 @@ locals {
   #
   # From v26.6.5 osrm publishes Debian images with a suffix (-debian); the graph
   # directory is named after the bare version (v26.10.0), not the full tag.
-  osrm_image           = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
-  osrm_build_image     = "ghcr.io/project-osrm/osrm-backend:v26.10.0-debian"
+  # v26.10.0 since 2026-10-15; the v26.4.0 graph stays in /data/v26.4.0 so
+  # pointing osrm_image back at v26.4.0 restores the previous setup.
+  osrm_image           = "ghcr.io/project-osrm/osrm-backend:v26.10.0-debian"
+  osrm_build_image     = local.osrm_image
   osrm_graph_dir       = "/data/${regex("v[0-9]+\\.[0-9]+\\.[0-9]+", element(split(":", local.osrm_image), 1))}"
   osrm_build_graph_dir = "/data/${regex("v[0-9]+\\.[0-9]+\\.[0-9]+", element(split(":", local.osrm_build_image), 1))}"
 
