@@ -8,6 +8,11 @@ StartLimitIntervalSec=0
 # Holds the RemotePairing tunnel to the phone and serves the loopback API that
 # `homelab ios` calls. The phone drops off Wi-Fi now and then; restart forever
 # rather than entering a failed state that needs a human.
+# The service reads the Apple ID password with `homelab vault get` to re-sign
+# WebDriverAgent. That needs the same bw as an interactive shell: /usr/bin/bw
+# (2024.12.0) fails the Vaultwarden login with "You are not logged in", the
+# per-user ~/.local/bin/bw (2026.5.0) works.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/homelab ios wifi-fg
 Restart=always
 RestartSec=15
