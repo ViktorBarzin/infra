@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-16T21:15:56Z",
+  "generated_at": "2026-10-15T23:25:50Z",
   "generated_by": "scripts/gen-tier0-workload-inventory.py",
   "why": "Tier-0 stacks keep local state in the repo, which the stray-workload reconciler CronJob cannot read. Regenerate after changing a workload or helm_release in one of these stacks.",
   "stacks": [
@@ -50,6 +50,12 @@
     [
       "Deployment",
       "dbaas",
+      "mysqld-exporter",
+      "dbaas"
+    ],
+    [
+      "Deployment",
+      "dbaas",
       "pgadmin",
       "dbaas"
     ],
@@ -81,6 +87,12 @@
       "StatefulSet",
       "dbaas",
       "mysql-standalone",
+      "dbaas"
+    ],
+    [
+      "StatefulSet",
+      "dbaas",
+      "mysql-v26",
       "dbaas"
     ]
   ]
