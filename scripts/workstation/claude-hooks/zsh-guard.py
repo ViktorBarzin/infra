@@ -14,11 +14,29 @@ quietly rather than loudly:
      a commit silently takes the wrong subject.
 
 Both are recorded in memory repeatedly and still recur, because memory cannot
-intercept a command — this hook can. It is deliberately narrow: it fires only
-on the high-confidence shapes above, and stays silent on quoted values, arrays,
-`${=VAR}`, heredoc bodies, arithmetic, command substitution and subshells.
+intercept a command; this hook can. The two are handled differently:
 
-Exit codes: 0 = allow, 2 = block and return stderr to Claude.
+  - The first has one safe mechanical fix, zsh's explicit split ${=VAR}, which
+    gives the variable the meaning the agent intended under bash. The hook
+    rewrites the command to use it and returns the result as updatedInput,
+    without a permission decision, so Claude Code's own checks still run on
+    it. In one renovate-upgrades workflow on 2026-10-15 the old block fired 13
+    times on `G="git -c filter.git-crypt..."; $G push`, and each one cost the
+    agent a retry. A use the rewrite cannot reach, such as ${VAR:-x}, is still
+    blocked.
+  - The second has no single right fix, so it is still blocked.
+
+It is deliberately narrow: it fires only on the high-confidence shapes above,
+and stays silent on quoted values, arrays, `${=VAR}`, heredoc bodies,
+arithmetic, command substitution and subshells. A quoted string inside "$(...)"
+opens its own quoting level, so `"$(psql -c "select count(*)")"` is quoted.
+
+Process substitution, <(...) and >(...), works in zsh the same as in bash. A
+check that blocked it as a glob was removed on 2026-10-15 after it stopped five
+working `diff <(...) <(...)` commands in one workflow.
+
+Exit codes: 0 = allow (with updatedInput on stdout when rewritten),
+2 = block and return stderr to Claude.
 """
 import json
 import re
@@ -34,7 +52,9 @@ def _strip_heredocs(cmd):
     """Blank out heredoc bodies — their contents are data, not shell syntax.
 
     Without this, the repo's own `git commit -F - <<'EOF'` convention would trip
-    the paren check on any conventional-commit subject.
+    the paren check on any conventional-commit subject. Bodies are blanked with
+    spaces of the same length, so an index into the result is an index into
+    the original command, which the rewrite relies on.
     """
     lines = cmd.split("\n")
     out, i = [], 0
@@ -46,7 +66,7 @@ def _strip_heredocs(cmd):
             delim = m.group(2)
             i += 1
             while i < len(lines) and lines[i].strip() != delim:
-                out.append("")  # keep line numbering, drop content
+                out.append(" " * len(lines[i]))  # keep offsets, drop content
                 i += 1
             if i < len(lines):
                 out.append(lines[i])  # the closing delimiter
@@ -57,30 +77,50 @@ def _strip_heredocs(cmd):
 def _unquoted_spans(cmd):
     """Yield (index, char) for every character outside single/double quotes.
 
-    Respects backslash escapes in double-quoted strings, treating \\" as an
-    escaped quote (not a quote toggle).
+    "$(...)" starts a new unquoted level inside a double-quoted string, with its
+    own quotes, as the shell reads it. A backslash escapes the next character
+    outside single quotes.
     """
-    i, in_s, in_d = 0, False, False
+    # Each frame is [kind, paren depth]: "u" unquoted (top level, or inside
+    # $(...)), "d" double-quoted, "s" single-quoted.
+    stack = [["u", 0]]
+    i = 0
     while i < len(cmd):
         c = cmd[i]
-        if c == "\\" and i + 1 < len(cmd):
-            # In double-quoted context, backslash escapes the next char
-            if in_d:
+        frame = stack[-1]
+        kind = frame[0]
+        if kind == "s":
+            if c == "'":
+                stack.pop()
+            i += 1
+            continue
+        if c == "\\":
+            if kind == "u":
+                yield i, c
+            i += 2
+            continue
+        if kind == "d":
+            if c == '"':
+                stack.pop()
+            elif cmd.startswith("$(", i):
+                stack.append(["u", 0])
                 i += 2
                 continue
-            # In unquoted context, backslash is literal
-            elif not in_s:
-                yield i, c
-        if c == "'" and not in_d:
-            in_s = not in_s
-        elif c == '"' and not in_s:
-            # Don't toggle if this quote is escaped (preceded by \)
-            if i > 0 and cmd[i - 1] == "\\" and in_d:
-                pass  # already skipped by the backslash handler
-            else:
-                in_d = not in_d
-        elif not in_s and not in_d:
-            yield i, c
+            i += 1
+            continue
+        # unquoted
+        if c == "'":
+            stack.append(["s", 0])
+        elif c == '"':
+            stack.append(["d", 0])
+        elif c == "(":
+            frame[1] += 1
+        elif c == ")":
+            if frame[1] == 0 and len(stack) > 1:
+                stack.pop()           # end of a $(...) opened inside quotes
+            elif frame[1]:
+                frame[1] -= 1
+        yield i, c
         i += 1
 
 
@@ -98,7 +138,9 @@ def _uses_unquoted(cmd, var):
     return False
 
 
-def _check_word_splitting(cmd):
+def _flag_list_vars(cmd):
+    """Yield (name, value) for each NAME=value whose value reads as an argv:
+    more than one word, starting with a flag or with a command and a flag."""
     for m in ASSIGN.finditer(cmd):
         var = m.group(1)
         val = m.group(3) or m.group(4) or m.group(5) or ""
@@ -108,8 +150,35 @@ def _check_word_splitting(cmd):
             continue                                  # array assignment
         looks_like_flags = val.lstrip().startswith("-")
         looks_like_cmd = bool(re.match(r"^[A-Za-z0-9_./-]+\s+-", val.strip()))
-        if not (looks_like_flags or looks_like_cmd):
-            continue                                  # a message or path, not an argv
+        if looks_like_flags or looks_like_cmd:
+            yield var, val
+
+
+def rewrite(cmd):
+    """Return cmd with each unquoted $VAR / ${VAR} of a flag-list variable
+    turned into ${=VAR}, or None when there is nothing to rewrite."""
+    scan = _strip_heredocs(cmd)
+    spans = []
+    for var, _ in _flag_list_vars(scan):
+        pat = re.compile(r"\$(?:" + re.escape(var) + r"(?![A-Za-z0-9_])|\{" + re.escape(var) + r"\})")
+        for i, c in _unquoted_spans(scan):
+            if c == "$":
+                m = pat.match(scan, i)
+                if m:
+                    spans.append((m.start(), m.end(), "${=" + var + "}"))
+    if not spans:
+        return None
+    out, last = [], 0
+    for start, end, text in sorted(set(spans)):
+        out.append(cmd[last:start])
+        out.append(text)
+        last = end
+    out.append(cmd[last:])
+    return "".join(out)
+
+
+def _check_word_splitting(cmd):
+    for var, val in _flag_list_vars(cmd):
         if _uses_unquoted(cmd, var):
             return (
                 var,
@@ -123,33 +192,6 @@ def _check_word_splitting(cmd):
                 f"  3. zsh explicit split:  ${{={var}}}\n"
                 f"  4. wrap the whole invocation in  bash -c '...'",
             )
-    return None
-
-
-# Process substitution: <(...) or >(...)  — zsh treats unquoted as glob/filename pattern.
-PROCESS_SUBST = re.compile(r"[<>]\(")
-
-
-def _check_process_substitution(cmd):
-    """Detect unquoted process substitution <(...) or >(...) which zsh globs."""
-    for i, c in _unquoted_spans(cmd):
-        if c not in "<>":
-            continue
-        m = PROCESS_SUBST.match(cmd, i)
-        if not m:
-            continue
-        # Verify this is not inside $(...) or other construct
-        if i > 0 and cmd[i - 1] == "$":
-            continue
-        op = cmd[i]
-        return (
-            f"{op}(...)",
-            f"zsh globs the unquoted process substitution `{op}(...)`.\n"
-            f"  It is treated as a filename pattern, fails with 'no matches found',\n"
-            f"  and expands to NOTHING — commands that depend on the substituted\n"
-            f"  value then fail with unexpected arguments.\n"
-            f"Fix: quote it:  \"{op}(...)\"  or  $({op}(...) inside $(...)).",
-        )
     return None
 
 
@@ -194,7 +236,6 @@ def check(cmd):
     return (
         _check_word_splitting(cmd)
         or _check_paren_glob(cmd)
-        or _check_process_substitution(cmd)
     )
 
 
@@ -205,17 +246,26 @@ def main():
         sys.exit(0)                       # never break the session on bad input
     if payload.get("tool_name") != "Bash":
         sys.exit(0)
-    cmd = (payload.get("tool_input") or {}).get("command", "")
+    tool_input = payload.get("tool_input") or {}
+    cmd = tool_input.get("command", "")
     if not cmd:
         sys.exit(0)
     try:
-        hit = check(cmd)
+        new = rewrite(cmd)
+        hit = check(new or cmd)
     except Exception:
         sys.exit(0)                       # a guard bug must never block real work
-    if not hit:
-        sys.exit(0)
-    print(f"BLOCKED by zsh-guard — {hit[1]}", file=sys.stderr)
-    sys.exit(2)
+    if hit:
+        print(f"BLOCKED by zsh-guard — {hit[1]}", file=sys.stderr)
+        sys.exit(2)
+    if new:
+        # No permissionDecision: the rewritten command still goes through
+        # Claude Code's normal permission checks.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {**tool_input, "command": new},
+        }}))
+    sys.exit(0)
 
 
 if __name__ == "__main__":

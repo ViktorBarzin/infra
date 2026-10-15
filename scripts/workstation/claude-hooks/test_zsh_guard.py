@@ -4,7 +4,9 @@
 Run: python3 test_zsh_guard.py
 """
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 import unittest
 
@@ -13,6 +15,7 @@ spec = importlib.util.spec_from_file_location("zsh_guard", os.path.join(HERE, "z
 zsh_guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(zsh_guard)
 check = zsh_guard.check
+rewrite = zsh_guard.rewrite
 
 
 class WordSplitting(unittest.TestCase):
@@ -56,6 +59,84 @@ class WordSplitting(unittest.TestCase):
 
     def test_array_expansion_is_allowed(self):
         self.assertIsNone(check('F=(-a -b); cmd "${F[@]}"'))
+
+
+class RewriteToExplicitSplit(unittest.TestCase):
+    """An unquoted flag-list variable is rewritten to zsh's ${=VAR}, which
+    splits it the way bash would, so the command runs instead of bouncing."""
+
+    G = 'G="git -c filter.git-crypt.smudge=cat -c filter.git-crypt.required=false"; '
+
+    def test_command_prefix_variable(self):
+        self.assertEqual(rewrite(self.G + "$G add x && $G commit -q"),
+                         self.G + "${=G} add x && ${=G} commit -q")
+
+    def test_braced_form(self):
+        self.assertEqual(rewrite('F="-a -b"; cmd ${F} x'), 'F="-a -b"; cmd ${=F} x')
+
+    def test_push_retry_loop_from_the_renovate_workflow(self):
+        cmd = (self.G + "\nfor i in $(seq 1 10); do if $G push -q forgejo HEAD:master 2>&1; "
+               "then echo pushed; break; fi; $G fetch -q forgejo && $G rebase -q forgejo/master; "
+               "done; $G log --oneline -1")
+        out = rewrite(cmd)
+        self.assertNotIn("$G ", out)
+        self.assertEqual(out.count("${=G}"), 4)
+        self.assertIsNone(check(out))
+
+    def test_use_inside_command_substitution(self):
+        self.assertEqual(rewrite(self.G + 'echo "$($G log -1)"'),
+                         self.G + 'echo "$(${=G} log -1)"')
+
+    def test_heredoc_body_is_left_alone(self):
+        cmd = self.G + "$G commit -F - <<'EOF'\nuse $G here\nEOF"
+        self.assertEqual(rewrite(cmd),
+                         self.G + "${=G} commit -F - <<'EOF'\nuse $G here\nEOF")
+
+    # --- left unchanged ---
+    def test_quoted_use(self):
+        self.assertIsNone(rewrite(self.G + '"$G" status'))
+
+    def test_single_quoted_bash_c(self):
+        self.assertIsNone(rewrite(self.G + "bash -c '$G status'"))
+
+    def test_message_variable(self):
+        self.assertIsNone(rewrite('MSG="fix things properly"; echo $MSG'))
+
+    def test_already_explicit(self):
+        self.assertIsNone(rewrite('F="-a -b"; cmd ${=F}'))
+
+    def test_form_it_cannot_rewrite_still_blocks(self):
+        cmd = 'F="-a -b"; cmd ${F:-x}'
+        self.assertIsNone(rewrite(cmd))
+        self.assertIsNotNone(check(cmd))
+
+
+class HookOutput(unittest.TestCase):
+    """main() as Claude Code runs it: JSON on stdin, decision on stdout/exit."""
+
+    def run_hook(self, command):
+        payload = {"tool_name": "Bash",
+                   "tool_input": {"command": command, "description": "d", "timeout": 5000}}
+        return subprocess.run([sys.executable, os.path.join(HERE, "zsh-guard.py")],
+                              input=json.dumps(payload), capture_output=True, text=True)
+
+    def test_rewrite_is_returned_as_updated_input(self):
+        r = self.run_hook('F="-a -b"; cmd $F')
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PreToolUse")
+        self.assertNotIn("permissionDecision", out)   # normal permission checks still run
+        self.assertEqual(out["updatedInput"],
+                         {"command": 'F="-a -b"; cmd ${=F}', "description": "d", "timeout": 5000})
+
+    def test_clean_command_prints_nothing(self):
+        r = self.run_hook("git status")
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_glob_still_blocks(self):
+        r = self.run_hook("echo fix(x): y")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("BLOCKED by zsh-guard", r.stderr)
 
 
 class ParenGlobbing(unittest.TestCase):
@@ -109,36 +190,50 @@ class ParenGlobbing(unittest.TestCase):
 
 
 class ProcessSubstitution(unittest.TestCase):
-    """Unquoted <(...) and >(...) are zsh globs -> 'no matches found'."""
+    """zsh supports <(...) and >(...) natively, the same as bash, so they pass."""
 
     def test_unquoted_input_process_subst(self):
-        hit = check("cat <(seq 1 10)")
-        self.assertIsNotNone(hit)
-        self.assertIn("process substitution", hit[1])
+        self.assertIsNone(check("cat <(seq 1 10)"))
 
-    def test_unquoted_output_process_subst(self):
-        hit = check("cmd >(tee /tmp/log)")
-        self.assertIsNotNone(hit)
-        self.assertIn("process substitution", hit[1])
+    def test_diff_of_two_process_substs(self):
+        self.assertIsNone(check("diff <(sort file1) <(sort file2)"))
 
-    # --- must NOT fire ---
-    def test_quoted_input_process_subst(self):
-        self.assertIsNone(check('cat "<(seq 1 10)"'))
+    def test_join_from_the_renovate_workflow(self):
+        # Blocked five times on 2026-10-15 by the check this replaced.
+        self.assertIsNone(check(
+            "join -t$'\\t' <(sort $S/old.txt) <(sort $S/new.txt) | awk -F'\\t' '$2!=$3'"))
 
-    def test_quoted_output_process_subst(self):
-        self.assertIsNone(check('cmd ">(tee /tmp/log)"'))
-
-    def test_process_subst_inside_command_subst_is_flagged_conservatively(self):
-        # Guard flags unquoted <(...) even inside $(...) to be conservative.
-        # In practice, this works in zsh, but quoting it is safer.
-        hit = check("lines=$(wc -l <(cat file))")
-        # This is a conservative flag; the guard errs on the side of caution
-        self.assertIsNotNone(hit)
+    def test_output_process_subst(self):
+        self.assertIsNone(check("cmd >(tee /tmp/log)"))
 
     def test_comparison_operators_not_confused(self):
-        # < and > as comparison operators in arithmetic
         self.assertIsNone(check("if [ $x -lt 10 ]; then echo low; fi"))
         self.assertIsNone(check("result=$((x > 5 ? a : b))"))
+
+
+class NestedQuotes(unittest.TestCase):
+    """A quoted string inside "$(...)" opens a new quoting level, it does not
+    close the outer one. Reading it as closing made `count(*)` look unquoted."""
+
+    def test_sql_count_inside_quoted_command_substitution(self):
+        # Blocked three times in renovate-upgrades, 2026-10-11 to 10-12.
+        self.assertIsNone(check(
+            'until [ "$(kubectl -n dbaas exec $P -c postgres -- psql -d woodpecker -Atc '
+            '"select count(*) from pipelines where status in (\'running\',\'pending\')" '
+            '2>/dev/null)" = 0 ]; do sleep 15; done'))
+
+    def test_function_call_inside_quoted_command_substitution(self):
+        self.assertIsNone(check(
+            'until [ "$(q "select count(*) from pipelines;")" = 0 ]; do sleep 20; done'))
+
+    def test_nested_substitution_two_levels(self):
+        self.assertIsNone(check('echo "$(echo "$(echo "fix(x): y")")"'))
+
+    def test_unquoted_glob_inside_substitution_still_fires(self):
+        self.assertIsNotNone(check('echo "$(echo fix(x): y)"'))
+
+    def test_unquoted_glob_after_substitution_still_fires(self):
+        self.assertIsNotNone(check('echo "$(date)" fix(x): y'))
 
 
 class EscapedQuotes(unittest.TestCase):
@@ -167,19 +262,14 @@ class RealCommandsFromThisRepo(unittest.TestCase):
         "for db in a b c; do echo $db; done",
         'find / -maxdepth 6 -type d -name "archives" 2>/dev/null | head',
         "TOKEN=$(vault kv get -field=woodpecker_api_token secret/ci/global); echo ok",
-        'cat "<(seq 1 10)" | wc -l',  # quoted process subst is fine
-        'diff <(sort file1) <(sort file2)',  # unquoted, should error
+        'cat "<(seq 1 10)" | wc -l',
+        'diff <(sort file1) <(sort file2)',
     ]
 
     def test_none_are_blocked(self):
-        for cmd in self.CASES[:-1]:  # all except the unquoted diff
+        for cmd in self.CASES:
             with self.subTest(cmd=cmd):
                 self.assertIsNone(check(cmd))
-
-    def test_unquoted_diff_is_caught(self):
-        # The last case should be caught
-        hit = check(self.CASES[-1])
-        self.assertIsNotNone(hit)
 
 
 if __name__ == "__main__":
