@@ -361,7 +361,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Woodpecker chart and images (the rails run on Woodpecker, and a CI apply restarts the agent running that same pipeline; upgrade by applying from a workstation before the push)",
+      description: "HELD: Woodpecker chart and images, every update. On server and agent v3.19.0 with chart 3.7.5 (checked 2026-10-15: both are the newest releases). Kept for minors and patches too, because the risk is the apply path, not the size of the bump: the rails apply stacks/woodpecker from a Woodpecker agent, the apply restarts that agent, and the pipeline dies mid helm upgrade with the release left in pending-upgrade. Upgrade by applying from the main checkout first and then pushing, so the CI apply is a no-op.",
       matchPackageNames: ["ghcr.io/woodpecker-ci/helm/woodpecker", "woodpeckerci/woodpecker-server", "woodpeckerci/woodpecker-agent", "docker.io/woodpeckerci/**"],
       enabled: false,
     },
