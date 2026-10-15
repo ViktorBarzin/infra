@@ -18,8 +18,7 @@ What exists today:
   valuation rows. It runs after the UK close and in the middle of the US
   session, so US holdings carry an intraday price that the next day's run
   revises. Its schedule serves a "Grafana fresh by 6pm BST" target.
-- Weekend rows exist and carry Friday forward (measured: -£2 on Sat 10-10,
-  -£17 on Sun 10-11).
+- Weekend rows exist and carry Friday forward, moving by a few pounds of FX.
 - The Grafana `wealth` dashboard is admin-only.
 - Viktor's iPhone runs the Home Assistant Companion app, registered with both
   ha-sofia and ha-london. The Companion app renders watch complications from
@@ -51,8 +50,8 @@ Companion app is already installed and needs no new account.
 4. **Snapshot timing.** Unchanged: the 16:00 UTC recalc. The watch updates at
    about 16:15 UTC.
 5. **Watch face.** A Graphic Corner complication with two text lines: the
-   total on the inner line, rounded (`£1.22M`), and the change on the outer
-   arc (`▼£9.1k`, `▲£640` under £1k, `±£0` when flat). The sensor carries both
+   total on the inner line, rounded (`£1.48M`), and the change on the outer
+   arc (`▼£4.2k`, `▲£640` under £1k, `±£0` when flat). The sensor carries both
    strings preformatted as `total_short` and `change_short`, so the Companion
    templates only read attributes.
 6. **Staleness.** When the latest valuation is more than 3 days old the change
@@ -65,13 +64,15 @@ Companion app is already installed and needs no new account.
 
 ### Sensor contract
 
+The example values are illustrative.
+
 `sensor.net_worth`, state = total in whole GBP, attributes:
 
 | Attribute | Example | Meaning |
 |---|---|---|
-| `total_short` | `£1.22M` | Inner line of the complication |
-| `change` | `-9072.63` | Daily change in GBP, `null` with fewer than two weekdays of data |
-| `change_short` | `▼£9.1k` | Outer arc of the complication |
+| `total_short` | `£1.48M` | Inner line of the complication |
+| `change` | `-4210.55` | Daily change in GBP, `null` with fewer than two weekdays of data |
+| `change_short` | `▼£4.2k` | Outer arc of the complication |
 | `change_color` | `#FF3B30` | Green up, red down, grey flat or stale |
 | `as_of` / `compared_to` | `2026-10-15` / `2026-10-14` | The two weekdays compared |
 | `latest_valuation` | `2026-10-15` | Newest row in `dav_corrected` |

@@ -20,7 +20,7 @@ D = dt.date
 class FormatTotalTests(unittest.TestCase):
     def test_cases(self):
         for value, want in [
-            (Decimal("1223999.12"), "£1.22M"),
+            (Decimal("1482310.55"), "£1.48M"),
             (Decimal("1995000"), "£2.00M"),
             (Decimal("1000000"), "£1.00M"),
             (Decimal("987654"), "£988k"),
@@ -33,8 +33,8 @@ class FormatTotalTests(unittest.TestCase):
 class FormatChangeTests(unittest.TestCase):
     def test_cases(self):
         for value, want in [
-            (Decimal("-9073"), ("▼£9.1k", nw.RED)),
-            (Decimal("4246"), ("▲£4.2k", nw.GREEN)),
+            (Decimal("-4211"), ("▼£4.2k", nw.RED)),
+            (Decimal("3062"), ("▲£3.1k", nw.GREEN)),
             (Decimal("640.4"), ("▲£640", nw.GREEN)),
             (Decimal("-17"), ("▼£17", nw.RED)),
             (Decimal("999.6"), ("▲£1.0k", nw.GREEN)),  # rounds into thousands
@@ -48,10 +48,10 @@ class FormatChangeTests(unittest.TestCase):
 
 # Thu 2026-10-08 .. Mon 2026-10-12, weekend rows carry Friday forward.
 WEEK = {
-    D(2026, 10, 8): Decimal("1200000"),   # Thu
-    D(2026, 10, 9): Decimal("1205000"),   # Fri
-    D(2026, 10, 10): Decimal("1204998"),  # Sat
-    D(2026, 10, 11): Decimal("1204981"),  # Sun
+    D(2026, 10, 8): Decimal("1500000"),   # Thu
+    D(2026, 10, 9): Decimal("1505000"),   # Fri
+    D(2026, 10, 10): Decimal("1504998"),  # Sat
+    D(2026, 10, 11): Decimal("1504981"),  # Sun
 }
 
 
@@ -59,7 +59,7 @@ class BuildStateTests(unittest.TestCase):
     def test_weekend_shows_fridays_move(self):
         s = nw.build_state(WEEK, today=D(2026, 10, 11))
         a = s["attributes"]
-        self.assertEqual(s["state"], "1204981")  # total is the latest row, like the Grafana tile
+        self.assertEqual(s["state"], "1504981")  # total is the latest row, like the Grafana tile
         self.assertEqual(a["change"], 5000.0)
         self.assertEqual(a["as_of"], "2026-10-09")
         self.assertEqual(a["compared_to"], "2026-10-08")
@@ -72,7 +72,7 @@ class BuildStateTests(unittest.TestCase):
 
     def test_monday_after_update_compares_to_friday(self):
         totals = dict(WEEK)
-        totals[D(2026, 10, 12)] = Decimal("1209227")
+        totals[D(2026, 10, 12)] = Decimal("1509227")
         a = nw.build_state(totals, today=D(2026, 10, 12))["attributes"]
         self.assertEqual(a["as_of"], "2026-10-12")
         self.assertEqual(a["compared_to"], "2026-10-09")
@@ -88,7 +88,7 @@ class BuildStateTests(unittest.TestCase):
                     self.assertEqual(a["change_color"], nw.GREY)
 
     def test_one_weekday_has_no_change(self):
-        totals = {D(2026, 10, 9): Decimal("1205000"), D(2026, 10, 10): Decimal("1205000")}
+        totals = {D(2026, 10, 9): Decimal("1505000"), D(2026, 10, 10): Decimal("1505000")}
         a = nw.build_state(totals, today=D(2026, 10, 10))["attributes"]
         self.assertIsNone(a["change"])
         self.assertEqual(a["change_short"], "—")
@@ -100,10 +100,10 @@ class BuildStateTests(unittest.TestCase):
 
 class ParseTotalsTests(unittest.TestCase):
     def test_psql_unaligned_output(self):
-        out = "2026-10-14|1233072.40\n2026-10-15|1223999.12\n"
+        out = "2026-10-14|1486521.10\n2026-10-15|1482310.55\n"
         self.assertEqual(nw.parse_totals(out), {
-            D(2026, 10, 14): Decimal("1233072.40"),
-            D(2026, 10, 15): Decimal("1223999.12"),
+            D(2026, 10, 14): Decimal("1486521.10"),
+            D(2026, 10, 15): Decimal("1482310.55"),
         })
 
 

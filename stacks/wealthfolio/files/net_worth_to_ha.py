@@ -57,7 +57,7 @@ def _round(value, places="1"):
 
 
 def format_total(value):
-    """£1.22M at or above a million, £988k below it."""
+    """£1.48M at or above a million, £988k below it."""
     if _round(value / 10000) * 10000 >= 1_000_000:
         return "£%sM" % _round(value / 1_000_000, "0.01")
     return "£%sk" % _round(value / 1000)
