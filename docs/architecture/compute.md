@@ -155,7 +155,7 @@ graph TB
 | Assigned VM | VMID 201 (k8s-node1) — physical location only, no Terraform pin |
 | Node Label | `nvidia.com/gpu.present=true` (auto-applied by gpu-feature-discovery; also `feature.node.kubernetes.io/pci-10de.present=true` from NFD) |
 | Node Taint | `nvidia.com/gpu=true:PreferNoSchedule` (applied by `null_resource.gpu_node_config` to every NFD-tagged GPU node) |
-| Driver | NVIDIA GPU Operator, chart v26.7.1 (since 2026-10-10), driver 570.195.03 (`-ubuntu24.04` image) |
+| Driver | NVIDIA GPU Operator, chart v26.7.2 (since 2026-10-13), driver 595.91.07 (`-ubuntu24.04` image, open kernel module compiled against 6.8.0-117, since 2026-10-15) |
 | Resource Name | `nvidia.com/gpu` |
 
 **Driver pod restarts.** The driver DaemonSet is `OnDelete` with auto-upgrade
