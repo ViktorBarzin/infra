@@ -15,7 +15,11 @@ terraform {
 # the registrable domain means a token solved on one viktorbarzin.me subdomain
 # is honoured by every other Anubis-fronted site.
 #
-# X-REAL-IP: Anubis binds its cookie to X-Real-Ip. ingress_factory AUTO-ATTACHES
+# COOKIE: not bound to the client IP since 2026-10-15 (--jwt-restriction-header=
+# empty, see the container args), so one solve lasts the full cookie lifetime
+# when a client changes network or IPv6 address.
+#
+# X-REAL-IP: Anubis matches policy rules on X-Real-Ip. ingress_factory AUTO-ATTACHES
 # the shared real-ip middleware (traefik-real-ip@kubernetescrd) for any anubis-*
 # backend — no per-site wiring. It rewrites X-Real-Ip to the true client, trusting
 # Cf-Connecting-Ip only from the cloudflared pod peer (trustedProxyCIDRs = the
@@ -383,6 +387,12 @@ resource "kubernetes_deployment" "anubis" {
         container {
           name  = "anubis"
           image = "ghcr.io/techarohq/anubis:${var.image_tag}"
+          # Anubis signs sha256(X-Real-IP) into the cookie by default and
+          # re-challenges on any IP change, so phones, roaming laptops and IPv6
+          # privacy addresses solved again long before the 30-day expiry.
+          # Empty disables the binding. It must be an arg: flagenv ignores an
+          # empty JWT_RESTRICTION_HEADER env var and keeps the default.
+          args = ["--jwt-restriction-header="]
 
           port {
             name           = "http"

@@ -309,6 +309,17 @@ RAILS_BASELINE=0 CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/n
 CI_COMMIT_SHA=$H1 stage_finish >/dev/null
 eq "baseline off: same failure -> reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
 
+# A stack that fails closed (chart stack with no verify.sh) fails the baseline
+# without naming a check. The log must not call that a pass, and the failure
+# after the apply still reverts (pipeline #2502, technitium, 2026-10-15).
+mkrepo; git reset -q --hard "$H1"
+stub_verify_with_baseline 'verify: stacks/app has no verify.sh; it is in the chart/database/GPU groups, so it fails closed\nVERIFY RESULT: FAIL app\n' 'verify: stacks/app has no verify.sh; it is in the chart/database/GPU groups, so it fails closed\nVERIFY RESULT: FAIL app\n' 3 3
+echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE METRIC=""
+out=$(CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare 2>&1)
+case "$out" in *"every check passes"*) bad "baseline: fails closed -> not logged as a pass" "$out" ;; *"fails closed"*) ok "baseline: fails closed -> not logged as a pass" ;; *) bad "baseline: fails closed -> not logged as a pass" "$out" ;; esac
+CI_COMMIT_SHA=$H1 stage_finish >/dev/null
+eq "baseline: fails closed -> still reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+
 # Rollback broken: the previous version does not run after the revert (it
 # refuses a database the bump migrated). The rails roll forward and page.
 mkrepo; git reset -q --hard "$H1"

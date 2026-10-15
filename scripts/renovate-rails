@@ -374,13 +374,20 @@ run_baselines() {
     (
       bash scripts/verify/run --baseline "$s" >".baseline_$s.log" 2>&1
       grep -q '^VERIFY RESULT:' ".baseline_$s.log" && failed_checks ".baseline_$s.log" >".rails_baseline_$s"
+      # Failed without naming a check (a chart stack with no verify.sh fails
+      # closed): bump_caused blames the bump for any later failure, so say why.
+      if grep -q '^VERIFY RESULT: FAIL' ".baseline_$s.log" && [ ! -s ".rails_baseline_$s" ]; then
+        { grep -m1 'fails closed' ".baseline_$s.log" || echo "no failed check named"; } >".rails_baseline_unnamed_$s"
+      fi
       rm -f ".baseline_$s.log"
     ) &
     pids+=($!)
   done
   for s in "${pids[@]}"; do wait "$s"; done
   for s in $(cat .rails_stacks); do
-    if [ ! -f ".rails_baseline_$s" ]; then
+    if [ -f ".rails_baseline_unnamed_$s" ]; then
+      log "[$s] baseline: fails before the apply ($(cat ".rails_baseline_unnamed_$s")); any failure after the apply counts"
+    elif [ ! -f ".rails_baseline_$s" ]; then
       log "[$s] baseline: no result; every failure after the apply counts"
     elif [ -s ".rails_baseline_$s" ]; then
       log "[$s] baseline: already failing before the apply: $(paste -sd';' ".rails_baseline_$s")"
