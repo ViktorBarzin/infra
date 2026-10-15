@@ -2,8 +2,9 @@
 
 A personal iPhone in London, on a charger, driven from the devvm. Since
 2026-10-12 the devvm reaches it directly over Wi-Fi, so day-to-day testing
-works with the MacBook away. The Mac is still where apps are built and where
-WebDriverAgent is re-signed. Sideloads and drives custom builds with a free
+works with the MacBook away. Since 2026-10-15 the devvm also re-signs
+WebDriverAgent, so taps keep working too; the Mac is still where Xcode
+projects are built. Sideloads and drives custom builds with a free
 Apple ID, no paid Apple Developer Program membership.
 
 Built 2026-09-12 around the Mac; the Wi-Fi path was added 2026-10-12. Every
@@ -24,7 +25,8 @@ flowchart TD
   SVC -->|RemotePairing, TCP 49152| P["iPhone, iphone-london<br/>192.168.9.205"]
   CLI -->|W3C WebDriver, taps| WDA["WebDriverAgent :8100<br/>on the phone"]
   WDA --- P
-  MAC["MacBook, when present"] -.->|USB: build apps, re-sign WDA| P
+  SVC -->|re-signs and installs WDA<br/>every few days| WDA
+  MAC["MacBook, when present"] -.->|USB: build Xcode projects| P
 ```
 
 | Works with the Mac away | Verb |
@@ -34,7 +36,7 @@ flowchart TD
 | Launch any installed app | `homelab ios launch <bundle-id>`, `homelab ios shot out.png --app <bundle-id>` |
 | Install a signed `.ipa` | `homelab ios install app.ipa` |
 | Simulate GPS position | `homelab ios location 51.5,-0.12`, `homelab ios location clear` |
-| Taps, while WDA's 7-day signature is valid | `homelab ios shot out.png --tap X,Y` |
+| Taps (the devvm renews WDA's 7-day signature) | `homelab ios shot out.png --tap X,Y` |
 | List apps, battery and charger state | `homelab ios apps`, `homelab ios doctor` |
 
 `ios shot --url` opens the page through WebDriverAgent when WDA is running,
@@ -45,9 +47,10 @@ session (measured 2026-10-12: WDA survived screenshots, launches and app
 listing, and died after one `ios safari`), and the service restarts WDA about
 30 seconds later.
 
-Still needs the Mac: building an Xcode project (`homelab ios install <dir>`)
-and re-signing WebDriverAgent. Once WDA's signature lapses, taps stop until the
-Mac re-signs it; everything else in the table keeps working.
+Still needs the Mac: building an Xcode project (`homelab ios install <dir>`).
+WebDriverAgent is re-signed on the devvm, see "Signing WebDriverAgent on the
+devvm"; if that fails, taps stop when the signature lapses and everything else
+in the table keeps working.
 
 **How the pairing works.** The phone accepts a RemotePairing connection only
 from a host it has paired with. The record was created on the Mac over the
@@ -200,21 +203,69 @@ pinned path). Each new Xcode needs its license accepted once with `sudo
 `xcodebuild` refuses to run, though `devicectl` still works. When the laptop
 leaves, building and re-signing wait for it; the Wi-Fi path carries on.
 
-**Signing on Linux: a working toolchain exists, and Apple's login is the open
-question.** Re-investigated 2026-10-12. plumesign (from
-[Impactor](https://github.com/claration/impactor), v2.6.5) covers the free
-Apple ID login, certificates, 7-day profiles and nested-bundle signing on
-Linux, and Appium publishes an unsigned prebuilt WebDriverAgent with every
-release. Two default behaviours needed small patches: it revokes a
-certificate without asking when Apple reports too many, and its anisette
-server address is hardcoded. On 2026-10-12 every login attempt failed at
-Apple's first GrandSlam step with `-80045 This action cannot be completed at
-this time`, from the devvm with a self-hosted anisette server and from the Mac
-with its own native identity, with a password that worked in a browser.
-Another tool hit the same error that day
-([iloader#857](https://github.com/nab138/iloader/issues/857)), so this looks
-like a change on Apple's side rather than this account. Until the login works,
-WebDriverAgent re-signing stays on the Mac.
+## Signing WebDriverAgent on the devvm
+
+Since 2026-10-15 the devvm signs WebDriverAgent itself, so taps keep working
+while the Mac is away. The Wi-Fi service checks every 6 hours and re-signs when
+the 7-day free-team profile has 3 days or less left, then installs the new
+build over Wi-Fi. `homelab ios doctor` shows the expiry as `wda-signature`.
+
+```mermaid
+flowchart TD
+    zip["Appium's unsigned runner<br/>/opt/ios-rig/wda"] --> wdasign
+    vault["Vault id.apple.com"] --> wdasign
+    wdasign["wdasign (isideload)<br/>login, certificate, App IDs, 7-day profile"] --> rcodesign
+    rcodesign["rcodesign<br/>re-signs the bundle"] --> install["service installs it over Wi-Fi"]
+    install --> wda["keep_wda launches it first,<br/>the Mac's build second"]
+```
+
+The pieces, all installed by `playbooks/devvm.yml`:
+
+| piece | what it does |
+|---|---|
+| `/opt/ios-rig/bin/wdasign` | built from `cli/ios_assets/wdasign` on [isideload](https://github.com/nab138/isideload); Apple ID login, device registration, certificate, App IDs and the profile |
+| `/opt/ios-rig/bin/rcodesign` | re-signs the bundle wdasign produced |
+| `/opt/ios-rig/wda/WebDriverAgentRunner-Runner.zip` | Appium's prebuilt runner, same version as the Mac's driver |
+| `~/.local/state/ios-rig/isideload/` | the anisette identity Apple trusts after one 2FA code, and the signing key |
+
+The runner's bundle id is `com.facebook.WebDriverAgentRunner.xctrunner.26NB4W97WL`
+(isideload appends the team id). The service tries it first and the Mac's
+`me.viktorbarzin.wda.xctrunner` second; `IOS_RIG_WDA_RUNNERS` overrides the list.
+
+Why two signers: isideload signs the test bundle under its own App ID
+(`….tests`), and only the main app's profile is installed on the phone, so
+amfid refuses to load the test bundle (`No matching profile found`, seen in
+the phone's syslog). rcodesign re-signs the test bundle with the main app's
+entitlements, which that profile covers. The certificate is never revoked to
+make room: the Mac's build is signed with another one.
+
+### When Apple asks for a 2FA code
+
+Apple trusts the anisette identity in `~/.local/state/ios-rig/isideload/`
+after one code. It asks again if that directory is lost, and possibly after
+the Apple ID password changes. The service then reports "Apple asked for a
+2FA code" in doctor. Sign once by hand, typing the code when prompted:
+
+```sh
+d=$(mktemp -d) && unzip -q /opt/ios-rig/wda/WebDriverAgentRunner-Runner.zip -d "$d"
+ISIDELOAD_PASSWORD="$(homelab vault get id.apple.com --field password)" \
+  /opt/ios-rig/bin/wdasign <apple-id> "$d"/*.app 00008110-001614D03442801E ~/.local/state/ios-rig/isideload
+rm -rf "$d"
+curl -s -X POST http://127.0.0.1:8102/resign   # sign and install for real
+```
+
+### History
+
+On 2026-10-12 every third-party Apple ID login failed with `-80045`, from the
+devvm and from the Mac. On 2026-10-14 Apple changed GrandSlam login again and
+rejected clients that sent a macOS or Android client identity
+([iloader#921](https://github.com/nab138/iloader/issues/921)). isideload's
+fix the same day (commit `d424b17`) takes the client identity from the
+anisette server, and its default server (`ani.jkcoxson.com`) reports a
+Windows iTunes one. Impactor/plumesign 2.7.0 still sent a hardcoded identity
+and got HTTP 401 at the first login step. Expect this part to break again when
+Apple changes the login; doctor shows the failure, and the Mac's build is the
+fallback.
 
 ## Where the code lives
 
@@ -675,8 +726,11 @@ The service cannot complete RemotePairing with the phone. Check, in order:
 
 Screenshots, Safari, launch and installs still work; only taps need WDA. The
 detail names the cause. "signature has most likely expired" means WDA's 7-day
-free-team profile lapsed: plug the phone into the Mac and run
-`launchctl kickstart gui/$(id -u)/me.viktorbarzin.wda-resign` there. The
+free-team profile lapsed. Check `wda-signature` in doctor: the devvm renews it
+itself, and its detail names why a renewal failed. `curl -s -X POST
+http://127.0.0.1:8102/resign` retries at once. With the Mac present, plugging
+the phone in and running `launchctl kickstart gui/$(id -u)/me.viktorbarzin.wda-resign`
+there also works. The
 service retries the launch with a growing delay, capped at 30 minutes, and
 picks up the fresh signature without a restart.
 

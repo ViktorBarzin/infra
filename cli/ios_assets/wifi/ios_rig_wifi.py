@@ -18,13 +18,17 @@ import json
 import logging
 import logging.handlers
 import os
+import plistlib
+import shutil
 import socket
+import subprocess
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -41,6 +45,19 @@ DEFAULT_PAIRING_PORT = 49152
 CONNECT_TIMEOUT = 150
 SCAN_RANGE = (49152, 65535)
 WDA_PORT = 8100
+# WebDriverAgent signed on the devvm (see resign_wda). isideload appends the
+# team id to the bundle id it signs, so this is Appium's prebuilt runner id
+# plus the free team's id. The Mac's Xcode build stays second in line.
+LINUX_WDA_RUNNER = "com.facebook.WebDriverAgentRunner.xctrunner.26NB4W97WL"
+MAC_WDA_BUNDLE = "me.viktorbarzin.wda"
+# Free-team profiles last 7 days; renew with this much left so one failed
+# night does not cost the taps.
+RESIGN_MARGIN = timedelta(days=3)
+RESIGN_CHECK_SECONDS = 6 * 3600
+# Installed by playbooks/devvm.yml.
+WDASIGN = Path("/opt/ios-rig/bin/wdasign")
+RCODESIGN = Path("/opt/ios-rig/bin/rcodesign")
+WDA_UNSIGNED = Path("/opt/ios-rig/wda/WebDriverAgentRunner-Runner.zip")
 
 
 @dataclass
@@ -49,7 +66,8 @@ class Config:
     host: str
     fallback_ip: str
     listen: str
-    wda_bundle_id: str
+    wda_runners: list[str]
+    apple_id: str
     state_dir: Path
     scan_cooldown: float
 
@@ -63,13 +81,49 @@ class Config:
             # when the name does not resolve.
             fallback_ip=env("IOS_RIG_PHONE_ADDR", "192.168.9.205"),
             listen=env("IOS_RIG_WIFI_LISTEN", "127.0.0.1:8102"),
-            wda_bundle_id=env("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda") + ".xctrunner",
+            wda_runners=wda_runners(env("IOS_RIG_WDA_RUNNERS"), env("IOS_RIG_WDA_BUNDLE_ID")),
+            apple_id=env("IOS_RIG_APPLE_ID", "vbarzin@gmail.com"),
             state_dir=Path(env("IOS_RIG_STATE_DIR", str(Path.home() / ".local/state/ios-rig"))),
             scan_cooldown=float(env("IOS_RIG_SCAN_COOLDOWN_SECONDS", "300")),
         )
 
 
 # ---------------------------------------------------------------- pure logic
+
+
+def wda_runners(explicit: str | None, legacy_bundle: str | None) -> list[str]:
+    """WDA runner bundle ids to launch, in order of preference: the build the
+    devvm signs itself, then the Mac's Xcode build."""
+    if explicit and explicit.strip():
+        return [r.strip() for r in explicit.split(",") if r.strip()]
+    return [LINUX_WDA_RUNNER, (legacy_bundle or MAC_WDA_BUNDLE) + ".xctrunner"]
+
+
+def runner_for_attempt(runners: list[str], attempts: int) -> str:
+    """The runner for launch number `attempts` (1-based): each build in
+    turn, so one with a lapsed signature does not block the other."""
+    return runners[max(attempts - 1, 0) % len(runners)]
+
+
+def needs_resign(expires: datetime | None, now: datetime) -> bool:
+    return expires is None or expires - now <= RESIGN_MARGIN
+
+
+def profile_plist(mobileprovision: bytes) -> dict[str, Any]:
+    """The plist inside a .mobileprovision, which wraps it in a CMS envelope."""
+    start, end = mobileprovision.index(b"<?xml"), mobileprovision.index(b"</plist>") + len(b"</plist>")
+    return plistlib.loads(mobileprovision[start:end])
+
+
+def matching_certificate(certs: list[Any], private_key: Any) -> Any | None:
+    """The certificate in a signature's chain that belongs to our key."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    ours = private_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    for cert in certs:
+        if cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo) == ours:
+            return cert
+    return None
 
 
 def resolve_phone(host: str, fallback_ip: str, resolver: Callable[[str], str] = socket.gethostbyname) -> str:
@@ -189,6 +243,12 @@ class WdaState:
 
 
 @dataclass
+class SignState:
+    expires: datetime | None = None
+    last_error: str | None = None
+
+
+@dataclass
 class Rig:
     cfg: Config
     _rsd: Any = None
@@ -197,6 +257,7 @@ class Rig:
     _connected_port: int | None = None
     _last_error: str | None = None
     wda: WdaState = field(default_factory=WdaState)
+    signing: SignState = field(default_factory=SignState)
 
     # -- addressing
 
@@ -465,8 +526,10 @@ class Rig:
         if self.wda.task is not None and not self.wda.task.done():
             return
         rsd = await self.rsd()
-        cfg = await TestConfig.create_for(rsd, self.cfg.wda_bundle_id)
         self.wda.attempts += 1
+        runner = runner_for_attempt(self.cfg.wda_runners, self.wda.attempts)
+        log.info("launching WDA from %s", runner)
+        cfg = await TestConfig.create_for(rsd, runner)
         self.wda.started_at = time.time()
         self.wda.task = asyncio.create_task(XCUITestService(rsd).run(cfg), name="wda")
 
@@ -494,6 +557,129 @@ class Rig:
                 delay = min(1800.0, 30.0 * (2 ** min(self.wda.attempts, 6)))
             await asyncio.sleep(delay)
 
+    # -- signing WebDriverAgent on the devvm
+
+    def _signature_file(self) -> Path:
+        return self.cfg.state_dir / "wda-signature.json"
+
+    def signature_expiry(self) -> datetime | None:
+        try:
+            return datetime.fromisoformat(json.loads(self._signature_file().read_text())["expires"])
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def _sign_bundle(self) -> tuple[bytes, datetime]:
+        """Sign Appium's prebuilt WDA for the rig phone, return the .ipa and
+        its profile's expiry. Blocking; runs in a thread.
+
+        wdasign (isideload) does the Apple side: login, certificate, App IDs,
+        7-day profile. Its signer leaves the test bundle under its own App
+        ID, which has no profile on the phone, so amfid refuses to load it
+        ("No matching profile found"). rcodesign then re-signs the bundle,
+        giving the test bundle the main app's entitlements, which the
+        installed profile covers."""
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+            load_der_private_key,
+            pkcs7,
+        )
+
+        state = self.cfg.state_dir / "isideload"
+        work = self.cfg.state_dir / "wda-build"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(mode=0o700, parents=True)
+        with zipfile.ZipFile(WDA_UNSIGNED) as z:
+            z.extractall(work)
+        app = next(work.glob("*.app"))
+        xctest = next((app / "PlugIns").glob("*.xctest"))
+        for dsym in (app / "PlugIns").glob("*.dSYM"):
+            shutil.rmtree(dsym)
+        main_id = plistlib.loads((app / "Info.plist").read_bytes())["CFBundleIdentifier"]
+        # Signing needs every nested bundle id under the main one.
+        info = plistlib.loads((xctest / "Info.plist").read_bytes())
+        info["CFBundleIdentifier"] = main_id + ".tests"
+        (xctest / "Info.plist").write_bytes(plistlib.dumps(info))
+
+        password = subprocess.run(
+            ["homelab", "vault", "get", "id.apple.com", "--field", "password"],
+            capture_output=True, text=True, check=True, timeout=60,
+        ).stdout.strip()
+        signed = subprocess.run(
+            [str(WDASIGN), self.cfg.apple_id, str(app), self.cfg.udid, str(state)],
+            env={**os.environ, "ISIDELOAD_PASSWORD": password}, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=600, check=False,
+        )
+        if signed.returncode == 3:
+            raise RuntimeError("Apple asked for a 2FA code; sign once by hand, see docs/runbooks/ios-test-rig.md")
+        if signed.returncode != 0:
+            last = signed.stderr.strip().splitlines()[-1:] or ["no output"]
+            raise RuntimeError(f"wdasign failed: {last[0]}")
+
+        key = load_der_private_key(next(state.glob("sideload/*/key")).read_bytes(), password=None)
+        cms = subprocess.run(
+            [str(RCODESIGN), "extract", "cms-raw", str(app / plistlib.loads((app / "Info.plist").read_bytes())["CFBundleExecutable"])],
+            capture_output=True, check=True, timeout=60,
+        ).stdout
+        cert = matching_certificate(pkcs7.load_der_pkcs7_certificates(cms), key)
+        if cert is None:
+            raise RuntimeError("no certificate in the signature matches the stored key")
+        profile = profile_plist((app / "embedded.mobileprovision").read_bytes())
+        pem = work / "identity.pem"
+        pem.touch(mode=0o600)
+        pem.write_bytes(
+            key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()) + cert.public_bytes(Encoding.PEM)
+        )
+        entitlements = work / "entitlements.plist"
+        entitlements.write_bytes(plistlib.dumps(profile["Entitlements"]))
+        (xctest / "embedded.mobileprovision").unlink(missing_ok=True)
+        rel = xctest.relative_to(app)
+        subprocess.run(
+            [str(RCODESIGN), "sign", "--pem-file", str(pem), "--team-name", profile["TeamIdentifier"][0],
+             "-e", str(entitlements), "-e", f"{rel}:{entitlements}", str(app)],
+            capture_output=True, check=True, timeout=300,
+        )
+        pem.unlink()
+
+        ipa = work / "wda.ipa"
+        with zipfile.ZipFile(ipa, "w", zipfile.ZIP_DEFLATED) as z:
+            # File entries only: pymobiledevice3 reads the app name from the
+            # first entry, and a bare "Payload/" entry makes it reject the IPA.
+            for f in sorted(p for p in app.rglob("*") if p.is_file()):
+                z.write(f, "Payload/" + str(f.relative_to(work)))
+        data = ipa.read_bytes()
+        shutil.rmtree(work, ignore_errors=True)
+        return data, profile["ExpirationDate"].replace(tzinfo=UTC)
+
+    async def resign_wda(self) -> dict[str, Any]:
+        """Sign WDA on the devvm and install it over Wi-Fi."""
+        try:
+            ipa, expires = await asyncio.to_thread(self._sign_bundle)
+            await self.install(ipa)
+        except Exception as e:
+            self.signing.last_error = str(e)
+            log.warning("WDA re-sign failed: %s", e)
+            raise
+        self._signature_file().write_text(json.dumps({"expires": expires.isoformat(), "signed_at": datetime.now(UTC).isoformat()}))
+        self.signing.expires, self.signing.last_error = expires, None
+        # Installing replaced the running build; launch the fresh one first.
+        self.wda.attempts = 0
+        log.info("WDA re-signed on the devvm, profile valid until %s", expires.isoformat())
+        return {"expires": expires.isoformat()}
+
+    async def keep_signed(self) -> None:
+        """Renew the devvm-signed WDA before its 7-day profile lapses."""
+        while True:
+            if WDASIGN.exists() and RCODESIGN.exists() and WDA_UNSIGNED.exists():
+                self.signing.expires = self.signature_expiry()
+                if needs_resign(self.signing.expires, datetime.now(UTC)):
+                    try:
+                        await self.resign_wda()
+                    except Exception as e:  # noqa: BLE001
+                        log.debug("re-sign will retry next round: %s", e)
+            await asyncio.sleep(RESIGN_CHECK_SECONDS)
+
     async def status(self) -> dict[str, Any]:
         out: dict[str, Any] = {"host": self.cfg.host, "checked_at": datetime.now(UTC).isoformat()}
         if self._rsd is None and self._lock.locked():
@@ -518,6 +704,8 @@ class Rig:
             out["battery_error"] = str(e)
         ready = self.wda_ready()
         out["wda"] = {"ready": ready, "url": self.wda_url() if ready else None, "error": None if ready else self.wda.last_error}
+        expires = self.signing.expires or self.signature_expiry()
+        out["wda_signature"] = {"expires": expires.isoformat() if expires else None, "error": self.signing.last_error}
         return out
 
 
@@ -582,6 +770,10 @@ def build_app(rig: Rig) -> Any:
         await guarded(rig.location(body.lat, body.lon))
         return {"simulated": body.lat is not None}
 
+    @app.post("/resign")
+    async def resign() -> dict[str, Any]:
+        return await guarded(rig.resign_wda())
+
     @app.post("/reconnect")
     async def reconnect() -> dict[str, Any]:
         await rig.drop()
@@ -597,10 +789,12 @@ async def serve(cfg: Config) -> None:
     host, port = cfg.listen.rsplit(":", 1)
     server = uvicorn.Server(uvicorn.Config(build_app(rig), host=host, port=int(port), log_level="warning"))
     keeper = asyncio.create_task(rig.keep_wda(), name="keep-wda")
+    signer = asyncio.create_task(rig.keep_signed(), name="keep-signed")
     try:
         await server.serve()
     finally:
         keeper.cancel()
+        signer.cancel()
         await rig.drop()
 
 

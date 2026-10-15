@@ -1,15 +1,24 @@
-"""Tests for the pure logic in ios_rig_wifi. Run: uv run --with pytest pytest cli/ios_assets/wifi"""
+"""Tests for the pure logic in ios_rig_wifi. Run: uv run --with pytest --with cryptography pytest cli/ios_assets/wifi"""
+
+import plistlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from ios_rig_wifi import (
     DEFAULT_PAIRING_PORT,
     candidate_ports,
     connect_failure_reason,
     launch_failure_reason,
+    matching_certificate,
+    needs_resign,
+    profile_plist,
+    runner_for_attempt,
     should_scan,
     summarise_battery,
     wda_failure_reason,
+    wda_runners,
 )
 
 
@@ -98,3 +107,64 @@ def test_only_connection_errors_mean_try_another_port():
     assert means_port_moved(ConnectionTerminatedError())
     # The phone answered: scanning other ports would only hide its reason.
     assert not means_port_moved(RuntimeError("The device has not been unlocked recently"))
+
+
+@pytest.mark.parametrize(
+    "explicit,legacy,want",
+    [
+        (None, None, ["com.facebook.WebDriverAgentRunner.xctrunner.26NB4W97WL", "me.viktorbarzin.wda.xctrunner"]),
+        ("a.xctrunner, b.xctrunner", None, ["a.xctrunner", "b.xctrunner"]),
+        (None, "com.example.wda", ["com.facebook.WebDriverAgentRunner.xctrunner.26NB4W97WL", "com.example.wda.xctrunner"]),
+        ("  ", None, ["com.facebook.WebDriverAgentRunner.xctrunner.26NB4W97WL", "me.viktorbarzin.wda.xctrunner"]),
+    ],
+)
+def test_wda_runners_prefers_the_linux_signed_build(explicit, legacy, want):
+    assert wda_runners(explicit, legacy) == want
+
+
+@pytest.mark.parametrize("attempts,want", [(0, "a"), (1, "a"), (2, "b"), (3, "a"), (4, "b")])
+def test_runner_for_attempt_tries_each_build_in_turn(attempts, want):
+    assert runner_for_attempt(["a", "b"], attempts) == want
+
+
+NOW = datetime(2026, 10, 15, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "expires,want",
+    [
+        (None, True),
+        (NOW + timedelta(days=7), False),
+        (NOW + timedelta(days=3, minutes=1), False),
+        (NOW + timedelta(days=3), True),
+        (NOW - timedelta(hours=1), True),
+    ],
+)
+def test_needs_resign_three_days_before_the_profile_lapses(expires, want):
+    assert needs_resign(expires, NOW) is want
+
+
+def test_profile_plist_reads_the_xml_inside_the_cms_envelope():
+    body = plistlib.dumps({"ExpirationDate": NOW, "Entitlements": {"get-task-allow": True}}, fmt=plistlib.FMT_XML)
+    wrapped = b"0\x82\x10\x00junk" + body + b"\x00trailing-signature"
+    assert profile_plist(wrapped) == {"ExpirationDate": NOW.replace(tzinfo=None), "Entitlements": {"get-task-allow": True}}
+
+
+def _self_signed(key):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.x509.oid import NameOID
+
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "t")])
+    return (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(1).not_valid_before(NOW).not_valid_after(NOW + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+
+
+def test_matching_certificate_picks_the_leaf_for_our_key():
+    ours, other = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    leaf, ca = _self_signed(ours), _self_signed(other)
+    assert matching_certificate([ca, leaf], ours) is leaf
+    assert matching_certificate([ca], ours) is None
