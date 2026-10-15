@@ -5107,11 +5107,14 @@ serverFiles:
           # instance="infra"; hand-started test runs use another instance).
           # Quiet while the CronJob is suspended (the kill switch), which needs
           # kube_cronjob_spec_suspend in the KSM keep regex above.
+          # Window 13h since the CronJob moved from every 10 minutes to every
+          # 6 hours (2026-10-15): it tolerates one skipped run (etcd slow or a
+          # Woodpecker pipeline running) and fires when two in a row fail.
           # Runbook: docs/runbooks/renovate.md.
           - alert: RenovateNotSucceeding
             expr: |
               (
-                (time() - max(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})) > 7200
+                (time() - max(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})) > 46800
                 or
                 absent(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})
               )
@@ -5120,7 +5123,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Renovate has not completed a successful run in the last 2h (or has never pushed one) while its CronJob is not suspended"
+              summary: "Renovate has not completed a successful run in the last 13h (or has never pushed one) while its CronJob is not suspended"
               description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate logged an ERROR). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
       - name: "Traefik Ingress"
         rules:

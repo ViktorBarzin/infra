@@ -134,7 +134,7 @@ Terraform providers are exact pins in root `terragrunt.hcl`, one `# renovate:` a
 
 ## Alert
 
-`RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 2 hours, unless the CronJob is suspended (`kube_cronjob_spec_suspend`). Check, in order:
+`RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 13 hours (two 6-hourly runs, so one skipped run stays quiet; it was 2 hours while the CronJob ran every 10 minutes), unless the CronJob is suspended (`kube_cronjob_spec_suspend`). Check, in order:
 
 1. `renovate_last_run_exit_code{job="renovate",instance="infra"}`: 75 means every recent run found Woodpecker busy; 1 means Renovate logged an ERROR.
 2. `kubectl -n renovate get jobs` and `kubectl -n renovate logs job/<latest>`.
