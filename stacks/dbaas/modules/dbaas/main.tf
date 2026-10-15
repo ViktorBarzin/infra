@@ -1569,9 +1569,10 @@ variable "pg_active_cluster" {
   default = "pg-cluster-v18"
 }
 
+# 1 while data was copied in, 3 (one primary, two replicas) from the cutover on.
 variable "pg_cluster_v18_instances" {
   type    = number
-  default = 1
+  default = 3
 }
 
 resource "null_resource" "pg_cluster_v18" {
