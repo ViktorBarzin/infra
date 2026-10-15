@@ -62,7 +62,7 @@ foreach ($rows as $r) {
 
 $placeholders = implode(',', array_fill(0, count(NETWORK_TYPES), '?'));
 $stmt = $db->prepare(
-    'SELECT d.id, d.hostname, t.tname, l.name AS location, i.ip_addr, i.subnetId'
+    'SELECT d.id, d.hostname, t.tname, IF(d.Vendor <> \'\' AND d.Model <> \'\', CONCAT(d.Vendor, \' \', d.Model), \'\') AS model, l.name AS location, i.ip_addr, i.subnetId'
     . ' FROM devices d JOIN deviceTypes t ON t.tid = d.type LEFT JOIN locations l ON l.id = d.location'
     . " JOIN ipaddresses i ON i.switch = d.id WHERE t.tname IN ($placeholders) ORDER BY d.id, i.ip_addr"
 );
@@ -70,7 +70,7 @@ $stmt->execute(NETWORK_TYPES);
 $devices = [];
 foreach ($stmt as $r) {
     $id = (int)$r['id'];
-    $devices[$id] ??= ['id' => $id, 'name' => $r['hostname'], 'type' => $r['tname'], 'location' => $r['location'], 'addresses' => []];
+    $devices[$id] ??= ['id' => $id, 'name' => $r['hostname'], 'type' => $r['tname'], 'model' => $r['model'], 'location' => $r['location'], 'addresses' => []];
     $devices[$id]['addresses'][] = ['ip' => long2ip((int)$r['ip_addr']), 'subnet' => (int)$r['subnetId'], 'probe' => null];
 }
 
