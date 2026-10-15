@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Verify checks for stacks/dbaas: the CNPG pg-cluster-v18 (PG18, active since
-# 2026-10-15; pg-cluster is the read-only PG16 rollback copy) and mysql-standalone
+# 2026-10-15; pg-cluster is the read-only PG16 rollback copy) and mysql-v26
 # (docs/runbooks/verify-jobs.md; software-currency design, Verification
 # contract, Databases row). Probes log in as verify_probe with the Vault
 # static-role passwords in secret verify-db-creds; they write only to the
@@ -10,7 +10,7 @@ VERIFY_NAMESPACES="dbaas"
 VERIFY_ALERTNAMES="^(CNPG.*|PostgreSQL.*|PgCluster.*|Mysql.*|MySQL.*)$"
 
 PG_IMAGE=docker.io/library/postgres:18.6-trixie
-MYSQL_IMAGE=docker.io/library/mysql:8.4.8
+MYSQL_IMAGE=docker.io/library/mysql:26.7.0
 # Apps on MySQL (Vault static roles and the static users in stacks/dbaas).
 MYSQL_APP_NAMESPACES="forgejo mailserver nextcloud monitoring speedtest realestate-crawler hackmd technitium phpipam"
 
@@ -100,7 +100,7 @@ verify_component() {
   check "pg-cluster-v18 healthy with every instance ready" retry 900 30 _cluster_healthy
   check "every instance's metrics exporter is up" expect_prom 'min(cnpg_collector_up{cluster="pg-cluster-v18"})' -eq 1
   check "pg: scratch write, replica read-back at lag 0, PostGIS and pgvector answer" _pg_probe
-  check "mysql-standalone converged" retry 300 10 workload_ready dbaas statefulset/mysql-standalone
+  check "mysql-v26 converged" retry 300 10 workload_ready dbaas statefulset/mysql-v26
   check "mysqld_exporter sees MySQL up" expect_prom 'max(mysql_up)' -eq 1
   check "mysql: scratch write, read back, drop" _mysql_probe
   check "apps on pg-cluster are healthy" _pg_apps

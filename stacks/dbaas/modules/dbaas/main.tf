@@ -258,6 +258,12 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
           #
           # To bump: take a fresh dump first (mysql-backup CronJob), then
           # change the tag. Restore path: docs/runbooks/restore-mysql.md.
+          #
+          # Since 2026-10-15 this instance is the ROLLBACK COPY for the move to
+          # MySQL 26.7 (mysql_v26 below). It runs with super_read_only=ON,
+          # persisted in its datadir (mysqld-auto.cnf), holds the data as of
+          # the cutover, and no Service sends consumers to it. Keep it on
+          # 8.4.8: do not bump it. Rollback: docs/runbooks/mysql-major-upgrade.md.
           image = "mysql:8.4.8"
 
           port {
@@ -418,7 +424,7 @@ resource "kubernetes_service" "mysql" {
 # mysql_native_password plugin was removed in 9.0 and the option would stop
 # the server from starting. Every account already uses caching_sha2_password.
 locals {
-  mysql_active = "mysql-standalone"
+  mysql_active = "mysql-v26"
 }
 
 resource "kubernetes_config_map" "mysql_v26_cnf" {
@@ -910,7 +916,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
           spec {
             container {
               name  = "mysql-backup"
-              image = "docker.io/library/mysql:8.0"
+              image = "docker.io/library/mysql:26.7.0"
               env {
                 name = "MYSQL_PWD"
                 value_from {
@@ -1002,7 +1008,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
           spec {
             container {
               name  = "mysql-backup-per-db"
-              image = "docker.io/library/mysql:8.0"
+              image = "docker.io/library/mysql:26.7.0"
               env {
                 name = "MYSQL_PWD"
                 value_from {
