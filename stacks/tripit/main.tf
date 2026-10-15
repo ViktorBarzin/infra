@@ -808,8 +808,11 @@ locals {
     # SMTP_PASSWORD via the tripit-secrets ES). IMAP_PASSWORD is overridden to
     # spam@'s password via imap_pw_secret_key (secret/tripit PLANS_IMAP_PASSWORD),
     # because env_from otherwise injects the Gmail app-password. (The old
-    # Gmail-scrape ingest-mail CronJob was removed 2026-06-05 — plans@ is now the
-    # only inbound path; no more auto-scraping vbarzin@gmail.com.)
+    # Gmail-scrape ingest-mail CronJob was removed 2026-06-05.) Since tripit
+    # ADR-0069 the same pass also scans each user's Mailbox links: IMAP accounts
+    # users connect in Settings, with their app passwords sealed in the
+    # mailbox_links table (decrypted with DOCUMENT_ENCRYPTION_KEY from
+    # tripit-secrets). That scan has a 300 s budget inside the 600 s deadline.
     ingest-plans = {
       schedule           = "*/15 * * * *"
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
