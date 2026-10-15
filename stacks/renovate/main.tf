@@ -26,11 +26,14 @@ variable "suspended" {
 
 variable "schedule" {
   type = string
-  # Every 10 minutes (was 30, changed 2026-10-11 to clear the backlog faster).
-  # The wrapper skips a run while an infra pipeline is running or queued, so
-  # one bump still lands per pipeline; this only removes the idle gap between
-  # a pipeline finishing and the next run starting.
-  default = "*/10 * * * *"
+  # Every 6 hours (2026-10-15). Was every 10 minutes from 2026-10-11 to clear
+  # the upgrade backlog; that backlog is done, so updates now arrive slowly.
+  # Each real run, and the applies it triggers, pulls images and writes
+  # through the docker-registry VM and the node disks, all on the shared sdc
+  # HDD: node4's VM disk went from 27-70 to 67-199 GB/day while the
+  # 10-minute schedule ran. The wrapper still skips a run while an infra
+  # pipeline is running or queued.
+  default = "17 */6 * * *"
 }
 
 locals {

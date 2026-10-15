@@ -154,6 +154,23 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       innodb_adaptive_flushing_lwm=10
       innodb_max_dirty_pages_pct=90
       innodb_max_dirty_pages_pct_lwm=10
+      # 8 MiB (was the 256 KiB default) — 2026-10-15. One Nextcloud query, the
+      # iOS app's media timeline (oc_filecache image/video rows ORDER BY
+      # mtime+0 DESC LIMIT 1000 across the NFS external storages), caused
+      # 71,735 of the server's 71,756 sort merge passes in 10 days of uptime.
+      # It sorts ~780k rows of ~19 KB each, and with a 256 KiB buffer it wrote
+      # 3,443 MB of temp files to /tmp per call (on node3's root disk, i.e.
+      # sdc), ~40 GB/day. Measured on the live server, same query and data:
+      #   256 KiB: 3,443 MB written, 31-41 s
+      #   8 MiB:   1,828 MB written, 20 s
+      #   16-32 MiB: 1,828 MB written, 19-24 s (no further gain)
+      # The 1,828 MB floor is a single pass over the sorted rows. The
+      # optimizer trace reports the top-N priority queue as "not applicable"
+      # for this join, so no buffer size removes the spill entirely; only
+      # fewer calls or a narrower search scope would. MySQL allocates the
+      # buffer incrementally per sort, so small sorts do not pay for it.
+      # Dynamic (no restart).
+      sort_buffer_size=8388608
     EOT
   }
 }
