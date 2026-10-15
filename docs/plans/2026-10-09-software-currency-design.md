@@ -302,7 +302,7 @@ Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HEL
 | Nextcloud majors | nextcloud | a major runs a one-way `occ upgrade` and can disable apps. 35.0.1 since 2026-10-12, and 35 was still the newest major when checked on 2026-10-15 (no 36 image or beta published); minors and patches go through the rails | the procedure in the comment on `nextcloud_image_tag` (LVM snapshot, mysqldump, watchdog suspended) |
 | Forgejo majors | forgejo | Forgejo hosts this repository, the bot and the webhook the rails use, and its migrations are one-way. 16.0.5 since 2026-10-12 | an LVM snapshot and a mysqldump, then one major per apply from a workstation |
 | Technitium majors | technitium | home DNS, on 15.6.1. On 2026-10-15 no 16.x had been published (15.6.1 of 2026-10-11 is the newest release) | a supervised 15 to 16 upgrade once 16.x ships: a backup of each instance, then tertiary, secondary, primary one at a time |
-| NVIDIA driver majors | nvidia | 580.178.04 (LTSB) since 2026-10-12, against the held GPU node kernel 6.8.0-117 | a supervised run for the next major |
+| NVIDIA driver majors | nvidia | 595.91.07 (production branch, EOL 2027-03) since 2026-10-15, compiled against the held GPU node kernel 6.8.0-117. 610 and 615 are new feature branches and were not taken | a supervised run for the next production or LTS branch |
 | Provider majors | root `terragrunt.hcl` | vault 5 and cloudflare 5 change resources used by many stacks; authentik 2026.x gates cluster access; telmate/proxmox (all updates) manages the node VMs | a plan of every consumer stack before each |
 | Kubernetes 1.36 and 1.37 | cluster | paused by Viktor on 2026-10-12 until Kyverno 1.20 ships (2026-10-23) | Kyverno 1.20 (Renovate lands chart 3.10 when it is published), then the version chain |
 
@@ -312,11 +312,10 @@ Released on 2026-10-15: the image pins in `prometheus_chart_values.tpl`. The `pr
 
 ### Keel cutover leftovers
 
-Keel is retired. The seven apps it still deployed (excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot) now deploy through `.woodpecker/first-party-deploy.yml` after each build (B18), each checked rolling to its new tag on 2026-10-12, and `stacks/keel` is deleted (B19). The digest-only and floating pins listed here on 2026-10-11 are pinned and owned by Renovate.
+Keel is retired. The seven apps it still deployed (excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot) now deploy through `.woodpecker/first-party-deploy.yml` after each build (B18), each checked rolling to its new tag on 2026-10-12, and `stacks/keel` is deleted (B19). On 2026-10-15 the `ghcr.io/viktorbarzin/keel` package and the ViktorBarzin/keel fork were deleted too (the fork's one change had merged upstream as keel-hq/keel#943); a git bundle of the fork and an OCI archive of the image are kept on the backup host under `/mnt/backup/manual-upgrade-20261015/keel/`. The `keel` state schema is empty and stays, as the schemas of other retired stacks do. The digest-only and floating pins listed here on 2026-10-11 are pinned and owned by Renovate.
 
 | Component | Stack | Why | What it needs |
 |---|---|---|---|
-| Keel package and fork | GitHub | `ghcr.io/viktorbarzin/keel` and the ViktorBarzin/keel fork are still published | delete both if wanted (Viktor's call) |
 | Inert Keel and DIUN metadata | about 40 stacks | 78 workloads keep `keel.sh/*` metadata annotations, and `diun.*` pod-template annotations stay because removing them restarts the workloads | drop template annotations with the next change that rolls each workload; strip the metadata annotations in one pass, or leave them |
 | Leftover UpdateRequests | kyverno | 128 UpdateRequests from the generate ClusterPolicies the CEL migration replaced (the 89 for `inject-keel-annotations` are gone) | delete once, or leave |
 | youtubedl-material | ytdlp | pinned `nightly-2025-03-18`, the running digest; upstream has published nothing newer | none until upstream publishes, or replace the app |
