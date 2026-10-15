@@ -41,7 +41,7 @@ flowchart TD
   PG -->|"hourly at :15"| CJ["CronJob net-worth-to-ha<br/>(job-runtime image)"]
   CJ -->|"POST /api/states/sensor.net_worth"| HA["ha-sofia"]
   HA --> APP["HA Companion app on iPhone"]
-  APP --> W["Apple Watch corner complication<br/>total + daily change"]
+  APP --> W["Apple Watch circular complication<br/>total + daily change"]
 ```
 
 1. **Path.** A CronJob in the wealthfolio stack (`net-worth-to-ha`, hourly at
@@ -58,11 +58,17 @@ flowchart TD
    (FX only).
 4. **Snapshot timing.** Unchanged: the 16:00 UTC recalc. The watch updates at
    about 16:15 UTC.
-5. **Watch face.** A Graphic Corner complication with two text lines: the
-   total on the inner line, rounded (`£1.48M`), and the change on the outer
-   arc (`▼£4.2k`, `▲£640` under £1k, `±£0` when flat). The sensor carries both
-   strings preformatted as `total_short` and `change_short`, so the Companion
-   templates only read attributes.
+5. **Watch face.** A circular complication built in the Companion app's
+   complication builder (Settings → Companion app → Complications, app
+   2026.9.3), source Template, server ha-sofia. Two lines, no gauge and no
+   icon: the total in the Value slot, rounded (`£1.48M`), and the change in
+   the Title slot under it (`▼4.2k`, `▲640` under £1k, `±0` when flat). The
+   Title slot strips the `£` to save width. The text colour comes from
+   `change_color` through the builder's Text color template, and it applies
+   to both lines. The sensor carries both strings preformatted as
+   `total_short` and `change_short`, so the templates only read attributes.
+   A corner slot was tried first, but its curved text renders smaller than
+   the circular slot's flat text.
 6. **Staleness.** When the latest valuation is more than 3 days old the change
    reads `—` and `change_color` turns grey, so an old number is not mistaken
    for today's. No separate alert.
@@ -79,9 +85,9 @@ The example values are illustrative.
 
 | Attribute | Example | Meaning |
 |---|---|---|
-| `total_short` | `£1.48M` | Inner line of the complication |
+| `total_short` | `£1.48M` | Top line of the complication |
 | `change` | `-4210.55` | Daily change in GBP, `null` with fewer than two weekdays of data |
-| `change_short` | `▼£4.2k` | Outer arc of the complication |
+| `change_short` | `▼£4.2k` | Bottom line of the complication, shown without `£` |
 | `change_color` | `#FF3B30` | Green up, red down, grey flat or stale |
 | `as_of` / `compared_to` | `2026-10-15` / `2026-10-14` | The two weekdays compared |
 | `latest_valuation` | `2026-10-15` | Newest row in `dav_corrected` |
@@ -97,11 +103,21 @@ The example values are illustrative.
 - US holdings on the watch carry the 16:00 UTC intraday price, as on the
   Grafana tile.
 
-## Open questions
+## Setup notes
 
-- With two HA servers in the Companion app, which server a complication reads
-  from is not documented. If the corner complication only offers ha-london,
-  the job also pushes there.
-- The HA docs describe per-line colours set in the app. Whether a line's colour
-  can follow a template (to use `change_color`) is unconfirmed; the arrows
-  carry the direction either way.
+Answers to the open questions this ADR started with, found while setting it
+up on the watch:
+
+- Server. A template complication has its own Server picker, which
+  pre-selects the first server. With the other server selected, the templates
+  rendered `None None`. Choosing ha-sofia fixed it, so the job does not need
+  to push to ha-london.
+- Colour. Each colour in the builder (gauge, icon, text) has its own template
+  row. `change_color` belongs in the Text color row.
+- The Title slot holds its own template, separate from the Display name
+  template. The phone's preview leaves such a slot blank, but the watch
+  renders it
+  ([home-assistant/iOS#5844](https://github.com/home-assistant/iOS/issues/5844)).
+- The legacy complications screen does not refresh its complications
+  ([home-assistant/iOS#5830](https://github.com/home-assistant/iOS/issues/5830)),
+  so this uses the builder.
