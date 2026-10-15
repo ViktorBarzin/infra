@@ -43,6 +43,24 @@ resource "helm_release" "cnpg" {
 
     replicaCount = 1
 
+    # Longer leader election, same reasoning as the control plane in
+    # stacks/rbac/modules/rbac/leader-election-tuning.tf. With the defaults
+    # (lease 15s, renew deadline 10s) the lease client's request timeout is
+    # renew/2 = 5s, and a slow etcd write turns into
+    #   Put .../leases/db9c8771.cnpg.io?timeout=5s: context deadline exceeded
+    # then "leader election lost" and exit 1. Measured 2026-10-15: 67 restarts
+    # in 2d13h on operator 1.30.1 (about 21 in the last 24h). These are the
+    # only two knobs the 1.30 controller exposes (internal/cmd/manager/
+    # controller/cmd.go); the retry period stays at controller-runtime's 2s,
+    # which keeps 45 > 2 * 1.2. Cost: after an operator crash the replacement
+    # can wait up to 60s for the lease. With one replica there is no failover
+    # either way, and running Postgres instances do not depend on the operator
+    # being up. Changing these args restarts only the operator pod.
+    additionalArgs = [
+      "--leader-lease-duration=60",
+      "--leader-renew-deadline=45",
+    ]
+
     resources = {
       requests = {
         cpu    = "100m"
