@@ -48,6 +48,11 @@ loki:
     allow_structured_metadata: true
     volume_enabled: true
     retention_period: 720h
+    # Default 500. The London Flint's dnsmasq log blocks ~625 distinct
+    # domains a day (19 clients, measured 2026-10-15), so london-dns-digest's
+    # sum by (client, domain) and sum by (domain) queries hit the cap and the
+    # digest failed every run from 2026-10-14.
+    max_query_series: 5000
     # Proxy visit logs (spec infra#83) are kept 90d — longer than the 30d global —
     # so the "Proxy visits" dashboard has a full quarter of detail. Per-stream
     # retention overrides the global period for the matching stream only.
