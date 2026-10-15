@@ -379,7 +379,10 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
 }
 
 # Compatibility service: mysql.dbaas.svc.cluster.local:3306
-# Points at standalone MySQL (migrated from InnoDB Cluster 2026-04-16)
+# Every MySQL consumer (apps, Vault's database engine, mysqld-exporter,
+# phpMyAdmin, the backup CronJobs) connects through this Service, so
+# local.mysql_active below is the single cutover switch between the two
+# instances.
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
@@ -387,7 +390,7 @@ resource "kubernetes_service" "mysql" {
   }
   spec {
     selector = {
-      "app.kubernetes.io/instance"  = "mysql-standalone"
+      "app.kubernetes.io/instance"  = local.mysql_active
       "app.kubernetes.io/component" = "primary"
     }
     port {
@@ -396,7 +399,215 @@ resource "kubernetes_service" "mysql" {
     }
   }
 
-  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone, kubernetes_stateful_set_v1.mysql_v26]
+}
+
+#### MYSQL 26.x (blue-green target, 2026-10-15)
+#
+# Viktor approved moving past the 8.4 LTS to the newest MySQL line, which is
+# the year-numbered innovation release 26.7.0. Oracle documents no in-place
+# path from 8.4 straight to 26.x (8.4 -> 9.7 LTS -> 26.x), and innovation
+# releases cannot be downgraded in place, so the move is blue-green: a fresh
+# 26.7 instance with its own PVC, loaded from a per-database mysqldump of
+# mysql-standalone, with the `mysql` Service switched over in one place
+# (local.mysql_active). mysql-standalone stays running, pinned to 8.4.8 and
+# set to super_read_only (SET PERSIST, so it survives restarts), as the
+# rollback copy. Rollback steps: docs/runbooks/mysql-major-upgrade.md.
+#
+# Config is the mysql-standalone file minus `mysql-native-password=ON`: the
+# mysql_native_password plugin was removed in 9.0 and the option would stop
+# the server from starting. Every account already uses caching_sha2_password.
+locals {
+  mysql_active = "mysql-standalone"
+}
+
+resource "kubernetes_config_map" "mysql_v26_cnf" {
+  metadata {
+    name      = "mysql-v26-cnf"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  data = {
+    "standalone.cnf" = replace(kubernetes_config_map.mysql_standalone_cnf.data["standalone.cnf"], "mysql-native-password=ON\n", "")
+  }
+}
+
+resource "kubernetes_stateful_set_v1" "mysql_v26" {
+  metadata {
+    name      = "mysql-v26"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name"      = "mysql"
+      "app.kubernetes.io/instance"  = "mysql-v26"
+      "app.kubernetes.io/component" = "primary"
+      tier                          = var.tier
+    }
+  }
+  spec {
+    service_name = "mysql-v26"
+    replicas     = 1
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/instance"  = "mysql-v26"
+        "app.kubernetes.io/component" = "primary"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          "app.kubernetes.io/name"      = "mysql"
+          "app.kubernetes.io/instance"  = "mysql-v26"
+          "app.kubernetes.io/component" = "primary"
+        }
+      }
+      spec {
+        termination_grace_period_seconds = 90
+
+        affinity {
+          node_affinity {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
+                match_expressions {
+                  key      = "nvidia.com/gpu.present"
+                  operator = "NotIn"
+                  values   = ["true"]
+                }
+              }
+            }
+          }
+        }
+
+        container {
+          name = "mysql"
+          # Exact pin. 26.x innovation releases upgrade in place within the
+          # series and to the next LTS; they cannot be downgraded in place.
+          # Take a dump before every bump.
+          image = "docker.io/library/mysql:26.7.0"
+
+          port {
+            container_port = 3306
+            name           = "mysql"
+          }
+
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.cluster-password.metadata[0].name
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "4Gi"
+            }
+            limits = {
+              memory = "6Gi"
+            }
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/var/lib/mysql"
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/mysql/conf.d"
+            read_only  = true
+          }
+
+          startup_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 30
+          }
+
+          liveness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          readiness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.mysql_v26_cnf.metadata[0].name
+          }
+        }
+      }
+    }
+
+    volume_claim_template {
+      metadata {
+        name = "data"
+        annotations = {
+          "resize.topolvm.io/threshold"     = "10%"
+          "resize.topolvm.io/increase"      = "100%"
+          "resize.topolvm.io/storage_limit" = "60Gi"
+        }
+      }
+      spec {
+        access_modes       = ["ReadWriteOnce"]
+        storage_class_name = "proxmox-lvm-encrypted"
+        resources {
+          requests = {
+            storage = "30Gi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Same reason as mysql_standalone: the pvc-autoresizer owns PVC sizing
+      # and the VCT is immutable.
+      spec[0].volume_claim_template,
+    ]
+  }
+}
+
+# Direct address of the 26.x instance (mysql-v26.dbaas.svc.cluster.local),
+# used for the load and the checks before cutover. Consumers use `mysql`.
+resource "kubernetes_service" "mysql_v26" {
+  metadata {
+    name      = "mysql-v26"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app.kubernetes.io/instance"  = "mysql-v26"
+      "app.kubernetes.io/component" = "primary"
+    }
+    port {
+      port        = 3306
+      target_port = 3306
+    }
+  }
 }
 
 # MySQL static application users — not rotated by Vault DB engine.
@@ -427,17 +638,18 @@ locals {
 resource "null_resource" "mysql_static_user" {
   for_each = local.mysql_static_users
 
-  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone, kubernetes_stateful_set_v1.mysql_v26]
 
   triggers = {
     username      = each.key
     database      = each.value.database
     password_hash = sha256(each.value.password)
+    instance      = local.mysql_active
   }
 
   provisioner "local-exec" {
     command = <<EOT
-kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas ${local.mysql_active}-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
 CREATE DATABASE IF NOT EXISTS `${each.value.database}`;
 CREATE USER IF NOT EXISTS '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
 ALTER USER '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
@@ -473,17 +685,18 @@ locals {
 }
 
 resource "null_resource" "mysql_exporter_user" {
-  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone, kubernetes_stateful_set_v1.mysql_v26]
 
   triggers = {
     username      = local.mysql_exporter_user
     password_hash = sha256(local.mysql_exporter_password)
+    instance      = local.mysql_active
     grants        = "PROCESS,REPLICATION CLIENT;performance_schema.SELECT;max3"
   }
 
   provisioner "local-exec" {
     command = <<EOT
-kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas ${local.mysql_active}-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
 CREATE USER IF NOT EXISTS '${local.mysql_exporter_user}'@'%' IDENTIFIED WITH caching_sha2_password BY '${local.mysql_exporter_password}' WITH MAX_USER_CONNECTIONS 3;
 ALTER USER '${local.mysql_exporter_user}'@'%' IDENTIFIED WITH caching_sha2_password BY '${local.mysql_exporter_password}' WITH MAX_USER_CONNECTIONS 3;
 GRANT PROCESS, REPLICATION CLIENT ON *.* TO '${local.mysql_exporter_user}'@'%';
@@ -500,16 +713,17 @@ EOT
 # password is owned by Vault (static role `mysql-verify-probe`, stacks/vault),
 # so this only creates the user and never resets the password.
 resource "null_resource" "mysql_verify_probe_user" {
-  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone, kubernetes_stateful_set_v1.mysql_v26]
 
   triggers = {
     username = "verify_probe"
     grants   = "verify_probe.ALL;max3"
+    instance = local.mysql_active
   }
 
   provisioner "local-exec" {
     command = <<EOT
-kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas ${local.mysql_active}-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
 CREATE DATABASE IF NOT EXISTS `verify_probe`;
 CREATE USER IF NOT EXISTS 'verify_probe'@'%' IDENTIFIED WITH caching_sha2_password BY 'changeme-vault-will-rotate' WITH MAX_USER_CONNECTIONS 3;
 ALTER USER 'verify_probe'@'%' WITH MAX_USER_CONNECTIONS 3;
