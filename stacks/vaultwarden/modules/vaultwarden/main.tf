@@ -399,11 +399,12 @@ resource "kubernetes_cron_job_v1" "vaultwarden-integrity-check" {
               }
             }
             container {
-              name  = "integrity-check"
-              image = "docker.io/library/alpine"
+              name = "integrity-check"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euo pipefail
-                apk add --no-cache sqlite curl >/dev/null 2>&1
                 PUSHGW="http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091"
                 result=$(sqlite3 /data/db.sqlite3 "PRAGMA integrity_check;" 2>&1)
                 if echo "$$result" | grep -q "^ok$$"; then

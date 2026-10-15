@@ -53,7 +53,7 @@ graph TB
             DNSOpt[dns-optimization<br/>every 6h]
             PassSync[password-sync<br/>every 6h]
             StaticRec[static-records<br/>hourly]
-            Import[phpipam-import<br/>every 5min]
+            Import[phpipam-import<br/>every 30min]
         end
     end
 
@@ -487,7 +487,7 @@ Devices get automatic DNS registration without manual intervention. See [network
 Summary:
 1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
 2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones. Off on the pfSense side since 2026-07-18 (see "Dynamic updates" above), so DHCP names currently reach DNS through phpipam-import only.
-3. **phpipam-import** CronJob (every 5 min, ADR-0032) records every address in phpIPAM from Kea, pfSense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
+3. **phpipam-import** CronJob (every 30 min, ADR-0032) records every address in phpIPAM from Kea, pfSense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
 
 ### London devices
 
@@ -496,7 +496,7 @@ Every device that takes a lease from the London Flint (LAN 192.168.8.0/24, guest
 ```mermaid
 flowchart LR
   D[London device] -->|DHCP| F[Flint dnsmasq<br/>leases + curated names]
-  F -->|every 5 min, SSH via pfSense| I[phpipam-import<br/>files/phpipam_import.py]
+  F -->|every 30 min, SSH via pfSense| I[phpipam-import<br/>files/phpipam_import.py]
   I -->|one row per MAC| P[(phpIPAM<br/>London LAN / London Guest)]
   I -->|A + PTR, changes only| T[Technitium primary<br/>viktorbarzin.lan]
   T -->|AXFR| R[secondaries, pfSense Unbound]
@@ -519,7 +519,7 @@ flowchart LR
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
 | `technitium-static-records` | `35 * * * *` | technitium | Internal-only A records for names served by a LoadBalancer rather than an Ingress (currently `turn`) |
-| `phpipam-import` | `*/5 * * * *` | phpipam | Address inventory (ADR-0032): every source → phpIPAM; site lease names and hand-row names → Technitium A + PTR. Alert `PhpipamImportStale` after 30 min without a success |
+| `phpipam-import` | `*/30 * * * *` | phpipam | Address inventory (ADR-0032): every source → phpIPAM; site lease names and hand-row names → Technitium A + PTR. Alert `PhpipamImportStale` after 90 min without a success |
 
 ### Password Rotation Flow
 
@@ -657,7 +657,7 @@ Common causes:
 For internal `.viktorbarzin.lan` records:
 0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. Replicas and pfSense's copy follow on their next refresh, up to about 30 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
 1. In the phpIPAM web UI (`phpipam.viktorbarzin.me`), set the hostname on the address and give it a description that does not start with `-- ` (that makes it a hand row, which the importer never changes)
-2. Within 5 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
+2. Within 30 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
 3. A London, Valchedrym or Mladost 3 device is better named with a static lease on its site router (`ensure_host` in `scripts/london-flint/provision.sh` for London)
 4. Or add directly in Technitium web UI (`technitium.viktorbarzin.me`), or declaratively in `technitium-static-records`
 

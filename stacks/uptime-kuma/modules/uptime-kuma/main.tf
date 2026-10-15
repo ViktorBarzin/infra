@@ -395,10 +395,11 @@ resource "kubernetes_cron_job_v1" "external_monitor_sync" {
           spec {
             service_account_name = kubernetes_service_account_v1.external_monitor_sync.metadata[0].name
             container {
-              name  = "sync"
-              image = "docker.io/library/python:3.15-alpine"
+              name = "sync"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
-                pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
 import os, json, ssl, time, urllib.request, urllib.error
 from uptime_kuma_api import UptimeKumaApi, MonitorType
@@ -1046,10 +1047,11 @@ resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
           spec {
             service_account_name = kubernetes_service_account_v1.internal_monitor_sync.metadata[0].name
             container {
-              name  = "sync"
-              image = "docker.io/library/python:3.15-alpine"
+              name = "sync"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
-                pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
 import json, os, ssl, time, urllib.error, urllib.parse, urllib.request
 from uptime_kuma_api import UptimeKumaApi, MonitorType

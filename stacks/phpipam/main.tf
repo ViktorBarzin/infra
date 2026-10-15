@@ -390,7 +390,10 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
     namespace = kubernetes_namespace.phpipam.metadata[0].name
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-10-15 (was */5, ADR-0032): most runs found 0 new
+    # addresses, and each pod start costs node-disk writes on sdc. A new
+    # device's name now reaches Technitium within 30 minutes instead of 5.
+    schedule                      = "*/30 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
@@ -412,11 +415,13 @@ resource "kubernetes_cron_job_v1" "phpipam_import" {
             restart_policy       = "Never"
             service_account_name = kubernetes_service_account.phpipam_import.metadata[0].name
             container {
-              name  = "import"
-              image = "alpine:3.24"
+              name = "import"
+              # Tools baked into job-runtime (images/job-runtime): an apk add
+              # on every run wrote ~60 MB to the node disk, 288 times a day.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
-                apk add --no-cache -q openssh-client python3 py3-pymysql py3-netaddr py3-websockets py3-yaml > /dev/null
                 mkdir -p /root/.ssh
                 cp /ssh/ssh_key /root/.ssh/id_rsa
                 chmod 600 /root/.ssh/id_rsa

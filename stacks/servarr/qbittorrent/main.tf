@@ -277,9 +277,11 @@ resource "kubernetes_cron_job_v1" "qbittorrent_ratio_monitor" {
           metadata {}
           spec {
             container {
-              name    = "ratio-monitor"
-              image   = "docker.io/library/python:3.15-alpine"
-              command = ["/bin/sh", "-c", "set -euo pipefail; pip install -q requests > /dev/null 2>&1; python3 /tmp/monitor.py"]
+              name = "ratio-monitor"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "-c", "set -euo pipefail; python3 /tmp/monitor.py"]
               volume_mount {
                 name       = "script"
                 mount_path = "/tmp/monitor.py"

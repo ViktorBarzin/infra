@@ -43,8 +43,10 @@ resource "kubernetes_cron_job_v1" "egress_country_probe" {
           }
           spec {
             container {
-              name  = "egress-country-probe"
-              image = "docker.io/library/alpine:3.24"
+              name = "egress-country-probe"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               env {
                 name  = "PROXY"
                 value = "http://proxy-egress-uk.proxy.svc.cluster.local:8888"
@@ -60,7 +62,6 @@ resource "kubernetes_cron_job_v1" "egress_country_probe" {
               # All shell $ are escaped to $$ for the Terraform heredoc.
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
-                apk add --no-cache curl jq >/dev/null
 
                 valid() { echo "$$1" | grep -Eq '^[A-Z]{2}$$'; }
 

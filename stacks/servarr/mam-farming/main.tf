@@ -4,8 +4,10 @@ variable "namespace" {
 }
 
 locals {
-  python_image = "docker.io/library/python:3.15-alpine"
-  pip_prefix   = "pip install -q requests > /dev/null 2>&1; python3 /tmp/script.py"
+  # job-runtime (images/job-runtime) ships requests, so the pods do not
+  # pip install it on every run.
+  python_image = "ghcr.io/viktorbarzin/job-runtime:latest"
+  run_script   = "python3 /tmp/script.py"
 
   # Dry-run window was satisfied by a one-shot test on 2026-04-19 that
   # produced 466 `never_started` candidates and 0 matches in any other
@@ -86,9 +88,10 @@ resource "kubernetes_cron_job_v1" "grabber" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "freeleech-grabber"
-              image   = local.python_image
-              command = ["/bin/sh", "-c", local.pip_prefix]
+              name              = "freeleech-grabber"
+              image             = local.python_image
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "-c", local.run_script]
               env {
                 name = "MAM_ID"
                 value_from {
@@ -188,9 +191,10 @@ resource "kubernetes_cron_job_v1" "bp_spender" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "bp-spender"
-              image   = local.python_image
-              command = ["/bin/sh", "-c", local.pip_prefix]
+              name              = "bp-spender"
+              image             = local.python_image
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "-c", local.run_script]
               env {
                 name = "MAM_ID"
                 value_from {
@@ -272,9 +276,10 @@ resource "kubernetes_cron_job_v1" "janitor" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "farming-janitor"
-              image   = local.python_image
-              command = ["/bin/sh", "-c", local.pip_prefix]
+              name              = "farming-janitor"
+              image             = local.python_image
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "-c", local.run_script]
               env {
                 name  = "DRY_RUN"
                 value = local.janitor_dry_run

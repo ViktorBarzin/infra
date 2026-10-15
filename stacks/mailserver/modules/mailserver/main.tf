@@ -966,10 +966,12 @@ resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
           metadata {}
           spec {
             container {
-              name  = "email-roundtrip"
-              image = "docker.io/library/python:3.15-alpine"
+              name = "email-roundtrip"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
-                pip install --quiet --disable-pip-version-check requests && python3 -c '
+                python3 -c '
 import requests, imaplib, email, time, os, uuid, sys, ssl, json
 
 BREVO_API_KEY = os.environ["BREVO_API_KEY"]

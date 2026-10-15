@@ -121,9 +121,11 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
           }
           spec {
             container {
-              name    = "monitor-prometheus"
-              image   = "alpine"
-              command = ["/bin/sh", "-c", "apk add --update curl && curl --connect-timeout 2 prometheus-server.monitoring.svc.cluster.local || curl https://webhook.viktorbarzin.me/fb/message-viktor -d 'Prometheus is down!'"]
+              name = "monitor-prometheus"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "-c", "curl --connect-timeout 2 prometheus-server.monitoring.svc.cluster.local || curl https://webhook.viktorbarzin.me/fb/message-viktor -d 'Prometheus is down!'"]
             }
           }
         }
@@ -159,11 +161,12 @@ resource "kubernetes_cron_job_v1" "dns_anomaly_monitor" {
           metadata {}
           spec {
             container {
-              name  = "dns-anomaly-monitor"
-              image = "docker.io/library/alpine"
+              name = "dns-anomaly-monitor"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euo pipefail
-                apk add --no-cache curl jq
 
                 TECHNITIUM_URL="http://technitium-web.technitium.svc.cluster.local:5380"
 
@@ -316,8 +319,10 @@ resource "kubernetes_cron_job_v1" "forgejo_integrity_probe" {
           metadata {}
           spec {
             container {
-              name  = "forgejo-integrity-probe"
-              image = "docker.io/library/alpine:3.24"
+              name = "forgejo-integrity-probe"
+              # job-runtime (images/job-runtime) has the tools baked in, so the pod does not install them on every run.
+              image             = "ghcr.io/viktorbarzin/job-runtime:latest"
+              image_pull_policy = "Always"
               env {
                 name = "REG_USER"
                 value_from {
@@ -358,7 +363,6 @@ resource "kubernetes_cron_job_v1" "forgejo_integrity_probe" {
               }
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
-                apk add --no-cache curl jq >/dev/null
 
                 REG="$REGISTRY_HOST"
                 SCHEME="$${REGISTRY_SCHEME:-https}"
