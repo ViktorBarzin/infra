@@ -317,7 +317,7 @@ Keel is retired. The seven apps it still deployed (excalidraw, interview-prep-ap
 | Component | Stack | Why | What it needs |
 |---|---|---|---|
 | Inert Keel and DIUN metadata | about 40 stacks | 78 workloads keep `keel.sh/*` metadata annotations, and `diun.*` pod-template annotations stay because removing them restarts the workloads | drop template annotations with the next change that rolls each workload; strip the metadata annotations in one pass, or leave them |
-| Leftover UpdateRequests | kyverno | 128 UpdateRequests from the generate ClusterPolicies the CEL migration replaced (the 89 for `inject-keel-annotations` are gone) | delete once, or leave |
+| Leftover UpdateRequests | kyverno | deleted on 2026-10-15. All 128 had request type `generate` and named ClusterPolicies the CEL migration replaced (24 `generate-limitrange-by-tier`, 25 `generate-resourcequota-by-tier`, 35 `sync-registry-credentials`, 42 `sync-tls-secret`, 2 `sync-ghcr-credentials`); no ClusterPolicy or namespaced Policy exists any more, and none of the 128 had a status. The 3 `cel-generate` requests for live GeneratingPolicies were left in place | none |
 | youtubedl-material | ytdlp | pinned `nightly-2025-03-18`, the running digest; upstream has published nothing newer | none until upstream publishes, or replace the app |
 | plotting-book | plotting-book | deployed by its owner's CI and ignored as `CI_SETS_IMAGE` | none unless the owner wants Renovate to drive it |
 
