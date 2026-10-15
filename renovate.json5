@@ -349,7 +349,7 @@
       enabled: false,
     },
     {
-      description: "HELD: MySQL majors, 8.4 -> 9.x and 26.x (in-place jump path unconfirmed; innovation releases cannot be downgraded). 8.x patch/minor still land.",
+      description: "HELD: MySQL majors. On 26.7.0 since 2026-10-15, moved blue-green from 8.4.8 to the mysql-v26 StatefulSet (mysql-standalone stays on 8.4.8, read-only, as the rollback copy). Oracle lists no in-place jump that skips an LTS, and innovation releases cannot be downgraded in place, so a major gets a dump and, where no in-place path is listed, its own blue-green copy (docs/runbooks/mysql-major-upgrade.md).",
       matchDatasources: ["docker"],
       matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
       matchUpdateTypes: ["major"],
