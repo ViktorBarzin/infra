@@ -1,0 +1,18 @@
+[package]
+name = "wdasign"
+version = "0.1.0"
+edition = "2024"
+description = "Sign an app bundle for one iPhone with a free Apple ID, on Linux, without the device attached"
+publish = false
+
+[dependencies]
+# isideload master as of 2026-10-14: the first revision whose Apple ID login
+# works after Apple's GrandSlam change that day (it takes the anisette
+# server's client info, Windows/iTunes, instead of a hardcoded macOS one).
+isideload = { git = "https://github.com/nab138/isideload", rev = "d424b1786664f1b9b6b98dd70d5826b161c12f45", default-features = false, features = ["install", "fs-storage", "tokio-mt"] }
+rootcause = "0.12.0"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"

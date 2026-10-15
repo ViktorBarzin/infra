@@ -47,6 +47,37 @@ type iosWifiStatus struct {
 		URL   string `json:"url"`
 		Error string `json:"error"`
 	} `json:"wda"`
+	WDASignature struct {
+		Expires string `json:"expires"`
+		Error   string `json:"error"`
+	} `json:"wda_signature"`
+}
+
+// iosSignatureCheck is doctor's view of the WDA build the devvm signs itself.
+// The service renews it 3 days before its 7-day profile lapses.
+func iosSignatureCheck(expires, signErr string, now time.Time) (level int, detail string) {
+	if expires == "" {
+		if signErr != "" {
+			return 1, "not signed on the devvm yet: " + signErr
+		}
+		return 1, "not signed on the devvm yet; the Wi-Fi service signs it within 6h of starting"
+	}
+	t, err := time.Parse(time.RFC3339, expires)
+	if err != nil {
+		return 1, "unreadable expiry " + expires
+	}
+	switch {
+	case !t.After(now):
+		detail, level = "devvm-signed WDA lapsed at "+t.UTC().Format("2006-01-02 15:04 MST"), 1
+	case t.Sub(now) < 24*time.Hour:
+		detail, level = "devvm-signed WDA valid until "+t.UTC().Format("2006-01-02 15:04 MST"), 1
+	default:
+		detail, level = "devvm-signed WDA valid until "+t.UTC().Format("2006-01-02 15:04 MST")+", renewed 3 days ahead", 0
+	}
+	if signErr != "" {
+		return 1, detail + "; last renewal failed: " + signErr
+	}
+	return level, detail
 }
 
 // iosShotTransport picks the path for `ios shot`. Wi-Fi whenever the phone is
@@ -422,6 +453,8 @@ func iosWifiChecks(add func(level int, name, detail string)) (connected bool) {
 		}
 		add(1, "wda-wifi", detail)
 	}
+	level, detail := iosSignatureCheck(st.WDASignature.Expires, st.WDASignature.Error, time.Now())
+	add(level, "wda-signature", detail)
 	return true
 }
 

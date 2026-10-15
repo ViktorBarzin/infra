@@ -90,8 +90,9 @@ func capabilities() []capability {
 				"        A free team cannot sign push, App Groups, Live Activities, Wallet,",
 				"        HealthKit or iCloud — those builds run with the feature missing.",
 				"needs:  the phone UNLOCKED (Auto-Lock Never) and on Wi-Fi. The Mac is",
-				"        needed only to build apps and to re-sign WebDriverAgent (taps) every",
-				"        7 days; screenshots, Safari, launch and .ipa installs work without it.",
+				"        needed only to build Xcode projects; the devvm re-signs",
+				"        WebDriverAgent (taps) itself, and screenshots, Safari, launch and",
+				"        .ipa installs work without the Mac.",
 			},
 		},
 		{

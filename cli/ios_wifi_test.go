@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The transport decision is the part that silently picks the wrong path, so it
@@ -170,5 +171,28 @@ func TestIosWDAOpenURLNamesSafari(t *testing.T) {
 	}
 	if gotBody["url"] != "https://example.com" || gotBody["bundleId"] != "com.apple.mobilesafari" {
 		t.Errorf("WDA got %v; the phone's default browser is not Safari, so bundleId must be explicit", gotBody)
+	}
+}
+
+// The devvm renews WDA's 7-day profile itself; doctor warns before taps lapse.
+func TestIosSignatureCheck(t *testing.T) {
+	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	cases := []struct {
+		name, expires, err string
+		level              int
+		want               string
+	}{
+		{"never signed", "", "", 1, "not signed on the devvm yet"},
+		{"fresh", at(6 * 24 * time.Hour), "", 0, "valid until 2026-10-21"},
+		{"last day", at(20 * time.Hour), "", 1, "valid until 2026-10-15"},
+		{"lapsed", at(-time.Hour), "", 1, "lapsed"},
+		{"renewal failing", at(4 * 24 * time.Hour), "wdasign failed: login", 1, "wdasign failed: login"},
+	}
+	for _, c := range cases {
+		level, detail := iosSignatureCheck(c.expires, c.err, now)
+		if level != c.level || !strings.Contains(detail, c.want) {
+			t.Errorf("%s: got (%d, %q), want level %d containing %q", c.name, level, detail, c.level, c.want)
+		}
 	}
 }

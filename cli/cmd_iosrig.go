@@ -59,8 +59,8 @@ func iosHelp() string {
 	return `homelab ios — drive the iPhone test rig
 
 The phone sits on a charger in London and is driven over Wi-Fi from this box
-(ios-rig-wifi.service). The Mac is only needed to build apps and to re-sign
-WebDriverAgent, whose free-team signature lasts 7 days.
+(ios-rig-wifi.service). The Mac is only needed to build Xcode projects; the
+service re-signs WebDriverAgent (7-day free-team signature) on this box.
 
   ios doctor                       check every link in the chain
   ios shot <out.png> [flags]       screenshot, optionally driving the phone first
@@ -152,7 +152,7 @@ func iosDoctor(args []string) error {
 
 	if _, err := c.onMac("true"); err != nil {
 		if wifiOK {
-			add(1, "mac", fmt.Sprintf("%s is away (%v). Building apps and re-signing WDA wait for it; "+
+			add(1, "mac", fmt.Sprintf("%s is away (%v). Building Xcode projects waits for it; "+
 				"everything else works over Wi-Fi", c.target(), err))
 		} else {
 			add(2, "ssh", fmt.Sprintf("cannot reach %s: %v", c.target(), err))
