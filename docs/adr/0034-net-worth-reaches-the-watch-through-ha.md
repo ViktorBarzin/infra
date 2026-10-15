@@ -35,6 +35,15 @@ Companion app is already installed and needs no new account.
 
 ## Decision
 
+```mermaid
+flowchart TD
+  WF["Wealthfolio daily recalc<br/>16:00 UTC"] --> PG[("wealthfolio_sync<br/>dav_corrected, mirrored at :07")]
+  PG -->|"hourly at :15"| CJ["CronJob net-worth-to-ha<br/>(job-runtime image)"]
+  CJ -->|"POST /api/states/sensor.net_worth"| HA["ha-sofia"]
+  HA --> APP["HA Companion app on iPhone"]
+  APP --> W["Apple Watch corner complication<br/>total + daily change"]
+```
+
 1. **Path.** A CronJob in the wealthfolio stack (`net-worth-to-ha`, hourly at
    :15, after the :07 mirror) reads `dav_corrected` and POSTs
    `sensor.net_worth` to ha-sofia. ha-sofia was chosen for the existing push
