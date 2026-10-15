@@ -1375,13 +1375,13 @@ variable "pg_cluster_image" {
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
-    instances      = "3"
+    instances      = "1"
     image          = var.pg_cluster_image
-    storage_size   = "20Gi"
+    storage_size   = "35Gi"
     storage_class  = "proxmox-lvm-encrypted"
     memory_limit   = "4Gi"
     memory_request = "2816Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
-    pg_params      = "v7-shared2048-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm"
+    pg_params      = "v8-shared2048-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm-readonly"
     affinity       = "required-hostname-v1"
   }
 
@@ -1400,7 +1400,13 @@ resource "null_resource" "pg_cluster" {
         # still failover with 2 but only if the lone replica was caught up
         # — during a long WAL backlog the failover would stall the drain.
         # Bumped 2026-05-16 ahead of Monday's first post-fix kured cycle.
-        instances: 3
+        #
+        # 2026-10-15: 1 instance. pg-cluster is the PG16 rollback copy after the
+        # cutover to pg-cluster-v18 (PG18). Its replicas stream from the host
+        # pg-cluster-rw, which CoreDNS now answers with the active cluster's
+        # primary, so replicas here would try to follow the PG18 cluster.
+        # Rollback: docs/runbooks/pg-cluster-major-upgrade.md.
+        instances: 1
         # Hard anti-affinity: force one PG instance per node. Default is
         # `preferred` which let all 3 pods collapse onto k8s-node1 during
         # the 2026-05-26 node4 outage — losing node1 would have killed the
@@ -1494,6 +1500,10 @@ resource "null_resource" "pg_cluster" {
             # also moved pglz->zstd above: ~30-50% smaller full-page images.)
             archive_timeout: "0"
             commit_delay: "2500"
+            # 2026-10-15: read-only rollback copy since the PG18 cutover. Its data
+            # stays exactly as it was at the cutover. Rollback sets this to "off"
+            # (runbook docs/runbooks/pg-cluster-major-upgrade.md).
+            default_transaction_read_only: "on"
           enableAlterSystem: true
         enableSuperuserAccess: true
         inheritedMetadata:
@@ -1504,7 +1514,8 @@ resource "null_resource" "pg_cluster" {
             resize.topolvm.io/increase: "20%"
             resize.topolvm.io/storage_limit: "100Gi"
         storage:
-          size: 20Gi
+          # 35Gi = the live PVC size (grown by the autoresizer); never below it.
+          size: 35Gi
           storageClass: proxmox-lvm-encrypted
         resources:
           requests:
