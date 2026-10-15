@@ -379,7 +379,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Forgejo majors. Forgejo hosts this repo, the bot and the webhook the rails use, and its migrations are one-way, so a major gets a supervised run with an LVM snapshot first. Minors and patches go through the rails.",
+      description: "HELD: Forgejo majors (17.0.0 since 2026-10-15; 18.0 is due 2027-01-14 and 17.0 reaches end of life 2027-01-28). Forgejo hosts this repo, the bot and the webhook the rails use, and its migrations are one-way, so a major gets a run with a forgejo dump, an LVM snapshot and a mysqldump first. Minors and patches go through the rails.",
       matchPackageNames: ["codeberg.org/forgejo/forgejo", "forgejo", "forgejo/forgejo"],
       matchUpdateTypes: ["major"],
       enabled: false,
