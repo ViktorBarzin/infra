@@ -4916,12 +4916,16 @@ serverFiles:
             # Single-replica StatefulSet: brief drain re-scheduling routinely
             # takes 1-3 min during k8s upgrades. 3m suppresses those blips;
             # real outages persist longer. Raised from 2m on 2026-05-18.
-            expr: kube_statefulset_status_replicas_ready{statefulset="mysql-standalone"} < 1
+            # Watches the ACTIVE MySQL, mysql-v26 (MySQL 26.7) since the
+            # 2026-10-15 cutover; mysql-standalone is now the read-only
+            # rollback copy. The alert name is kept so inhibit rules and
+            # runbooks that name it keep working.
+            expr: kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-v26"} < 1
             for: 3m
             labels:
               severity: critical
             annotations:
-              summary: "mysql-standalone has 0 ready replicas — DB-dependent apps will fail"
+              summary: "mysql-v26 (the active MySQL) has 0 ready replicas — DB-dependent apps will fail"
           - alert: MySQLNotServing
             # mysqld_exporter (stacks/dbaas, added 2026-10-10) cannot run its
             # queries while the pod still reports ready: a hung mysqld, a full
@@ -4930,12 +4934,12 @@ serverFiles:
             # If the exporter pod itself is gone, ScrapeTargetDown covers it.
             expr: |
               mysql_up{namespace="dbaas"} == 0
-              unless on() (kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-standalone"} < 1)
+              unless on() (kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-v26"} < 1)
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "MySQL (mysql-standalone) is running but not answering queries for 5m — check mysqld logs and connection count; DB-dependent apps will fail"
+              summary: "MySQL (mysql-v26) is running but not answering queries for 5m — check mysqld logs and connection count; DB-dependent apps will fail"
           - alert: ClusterPodReadyRatioDropped
             expr: |
               (
