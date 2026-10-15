@@ -96,6 +96,15 @@ resource "kubernetes_config_map" "coredns" {
               lameduck 5s
           }
           ready
+          # pg-cluster-rw is the -rw Service of the PG16 CNPG cluster, and ~40
+          # consumers have that name in their DSNs. Answer it with the
+          # postgresql.dbaas Service instead, which selects the primary of
+          # whichever cluster stacks/dbaas var.pg_active_cluster names. That keeps
+          # the PG16 -> PG18 cutover (and its rollback) to one variable.
+          # Runbook: docs/runbooks/pg-cluster-major-upgrade.md (2026-10-15).
+          # "answer auto" rewrites the answer back to the name the client asked for.
+          # (The block form with "answer name exact" is rejected by CoreDNS 1.13.)
+          rewrite stop name exact pg-cluster-rw.dbaas.svc.cluster.local postgresql.dbaas.svc.cluster.local answer auto
           kubernetes cluster.local in-addr.arpa ip6.arpa {
               pods insecure
               fallthrough in-addr.arpa ip6.arpa
