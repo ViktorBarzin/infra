@@ -201,7 +201,7 @@ resource "kubernetes_deployment" "torrserver" {
       spec {
         container {
           name  = "torrserver"
-          image = "ghcr.io/yourok/torrserver:MatriX.146.1"
+          image = "ghcr.io/yourok/torrserver:MatriX.146.2"
           port {
             name           = "http"
             container_port = 8090
