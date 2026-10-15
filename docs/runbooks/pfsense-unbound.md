@@ -253,16 +253,33 @@ and reverse zones (`10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`,
 `1.168.192.in-addr.arpa`) require both a pfSense-source IP (10.0.20.1 /
 10.0.10.1 / 192.168.1.2) AND a valid TSIG signature.
 
+**State on 2026-10-14.** The pfSense side is off: `kea-dhcp-ddns` is not
+running, and pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the
+DDNS settings below, which were added by hand and are lost on a GUI save of
+the DHCP settings. The Technitium side was also found at `update=Deny` on all
+three instances. Since 2026-10-14 the `technitium-dynamic-updates` CronJob
+(`stacks/technitium/modules/technitium/dynamic_updates.tf`) sets the key and
+the zone policy on all three instances every hour, so Technitium accepts Kea's
+updates again as soon as pfSense sends them. The same zone also accepts the
+`external-dns` key (ADR-0033).
+
 ### Config locations
 
 | Side | File | Notes |
 |------|------|-------|
 | pfSense | `/usr/local/etc/kea/kea-dhcp-ddns.conf` | Hand-managed. Pre-WS-E backup: `.2026-04-19-pre-tsig`. Daemon: `kea-dhcp-ddns` (`pkill -x kea-dhcp-ddns && /usr/local/sbin/kea-dhcp-ddns -c /usr/local/etc/kea/kea-dhcp-ddns.conf -d &`) |
-| Technitium | Zone options API: `POST /api/zones/options/set?zone=<z>&updateSecurityPolicies=kea-ddns\|*.<z>\|ANY&updateNetworkACL=10.0.20.1,10.0.10.1,192.168.1.2&update=UseSpecifiedNetworkACL` | Set on primary; replicates to secondary/tertiary via AXFR |
-| Technitium settings | TSIG keys array: `POST /api/settings/set` with `tsigKeys: [{keyName: "kea-ddns", sharedSecret: <b64>, algorithmName: "hmac-sha256"}]` | Must be set on all 3 Technitium instances (primary, secondary, tertiary) |
+| Technitium | Zone options API: `POST /api/zones/options/set?zone=<z>&updateSecurityPolicies=kea-ddns\|*.<z>\|ANY&updateNetworkACL=10.0.20.1,10.0.10.1,192.168.1.2&update=UseSpecifiedNetworkACL` | Set by the `technitium-dynamic-updates` CronJob on all 3 instances: AXFR copies records, not zone options. Key policies apply on the primary only; replicas forward signed updates to it |
+| Technitium settings | TSIG keys array: `POST /api/settings/set` with `tsigKeys: [{keyName: "kea-ddns", sharedSecret: <b64>, algorithmName: "hmac-sha256"}]` | Set by the `technitium-dynamic-updates` CronJob on all 3 instances, from Vault. The API replaces the whole list, so the job sends both keys (`kea-ddns`, `external-dns`) every time it writes |
 | Vault | `secret/viktor/kea_ddns_tsig_secret` | Authoritative copy of the base64 secret |
 
 ### Rotating the TSIG key
+
+Since 2026-10-14 the `technitium-dynamic-updates` CronJob rewrites the key
+list and zone policies on every instance hourly from
+`stacks/technitium/modules/technitium/dynamic_updates.tf`. A key or policy
+added only through the API is removed within the hour, so steps 3, 5 and 7
+below are edits to that file (the `KEYS` list and `dynamic_update_zones`),
+followed by a run of the job, rather than API calls.
 
 1. Generate a new base64 32-byte secret: `openssl rand -base64 32` (any base64-encoded blob of reasonable length works; HMAC-SHA256 truncates/pads internally).
 2. Write it to Vault: `vault kv patch secret/viktor kea_ddns_tsig_secret=<new-secret>`.

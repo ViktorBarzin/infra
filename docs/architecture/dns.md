@@ -1,6 +1,6 @@
 # DNS Architecture
 
-Last updated: 2026-07-08 (record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
+Last updated: 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview
 
@@ -94,14 +94,15 @@ graph TB
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
 | pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
-| Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
+| Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease. Not running on pfSense since 2026-07-18 (see "Dynamic updates" below) |
+| external-dns | K8s namespace `technitium` | v0.22.0 (chart 1.22.0) | A + TXT ownership records for `*.viktorbarzin.lan` Ingress hosts, over TSIG-signed RFC 2136 (ADR-0033) |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
 ### Terraform Stacks
 
 | Stack | Path | DNS Resources |
 |-------|------|---------------|
-| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 5 CronJobs, CoreDNS ConfigMap |
+| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, CronJobs (including `technitium-dynamic-updates`), external-dns Helm release, CoreDNS ConfigMap |
 | NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
 | phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
@@ -248,7 +249,14 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | `3.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Mladost 3 site (created and kept by `technitium-static-records`, `static_ptr_records`) |
 | `emrsn.org` | Primary (stub) | — | Returns NXDOMAIN locally (avoids 27K+ daily corporate query floods) |
 
-**Dynamic updates**: Enabled via `UseSpecifiedNetworkACL` from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2) **AND require a valid TSIG signature** on `viktorbarzin.lan`, `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`. Policy: `updateSecurityPolicies = [{tsigKeyName: "kea-ddns", domain: "*.<zone>", allowedTypes: ["ANY"]}]`. Unsigned updates from the allowlisted pfSense source IPs are refused ("Dynamic Updates Security Policy"). TSIG key `kea-ddns` (HMAC-SHA256) present on primary/secondary/tertiary; secret in Vault `secret/viktor/kea_ddns_tsig_secret`. Applied 2026-04-19 (WS E, bd `code-o6j`).
+**Dynamic updates** (RFC 2136, TSIG required). Two writers, each with its own HMAC-SHA256 key:
+
+| writer | key | sends to | allowed |
+|---|---|---|---|
+| external-dns | `external-dns` (Terraform `random_id`, `stacks/technitium/modules/technitium/dynamic_updates.tf`) | the primary, via ClusterIP `technitium-primary` | A, AAAA, CNAME, TXT under `*.viktorbarzin.lan` |
+| Kea DHCP-DDNS | `kea-ddns` (Vault `secret/viktor` `kea_ddns_tsig_secret`) | LB 10.0.20.201, so any instance; a replica checks the signature with its own copy of the key and forwards to the primary | ANY under `*.viktorbarzin.lan` and the three Kea reverse zones |
+
+The update ACL is the pfSense addresses (10.0.20.1, 10.0.10.1, 192.168.1.2) plus the pod network 10.10.0.0/16 on the primary (external-dns, and replicas forwarding Kea updates), and the pfSense addresses on the replicas. Key policies exist on the primary only, since Technitium accepts them on primary zones only. Zone options and TSIG keys are per-instance settings that AXFR does not copy, and a replica zone recreated by `technitium-zone-sync` starts at `update=Deny`. The hourly `technitium-dynamic-updates` CronJob therefore sets the full key list and these options on all three instances. When it first ran on 2026-10-14, all three had drifted back to `update=Deny` with no policies, so neither writer could update. Kea itself is also off: `kea-dhcp-ddns` is not running on pfSense, and pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the DDNS settings added by hand on 2026-04-19. Re-enabling it on pfSense is a separate task; the Technitium side accepts its updates again from 2026-10-14.
 
 ### Resolver Settings
 
@@ -478,7 +486,7 @@ Devices get automatic DNS registration without manual intervention. See [network
 
 Summary:
 1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
-2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones.
+2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones. Off on the pfSense side since 2026-07-18 (see "Dynamic updates" above), so DHCP names currently reach DNS through phpipam-import only.
 3. **phpipam-import** CronJob (every 5 min, ADR-0032) records every address in phpIPAM from Kea, pfSense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
 
 ### London devices
@@ -496,7 +504,7 @@ flowchart LR
   F -->|forwarded over the tunnel| T
 ```
 
-- **Names.** A curated name wins: a Flint static lease (`uci` dhcp `host`) with a `name`, declared in `scripts/london-flint/provision.sh` (`ensure_host`), keyed by MAC with no pinned address so the name follows the device between SSIDs. Otherwise the hostname the device announces, lowercased to `[a-z0-9-]`. A name that already exists outside London (any record type, including Sofia's Kea DDNS names and the ingress CNAMEs) gets `-london`; a name several London devices announce gets each one's last four MAC hex digits (`kp115-3011`). A device that announces no name stays unnamed until it is given a curated one.
+- **Names.** A curated name wins: a Flint static lease (`uci` dhcp `host`) with a `name`, declared in `scripts/london-flint/provision.sh` (`ensure_host`), keyed by MAC with no pinned address so the name follows the device between SSIDs. Otherwise the hostname the device announces, lowercased to `[a-z0-9-]`. A name that already exists outside London (any record type, including Sofia's Kea DDNS names and the Ingress records external-dns writes) gets `-london`; a name several London devices announce gets each one's last four MAC hex digits (`kp115-3011`). A device that announces no name stays unnamed until it is given a curated one.
 - **Ownership.** `phpipam-import` is the only writer of A records that point into London (and, by the same rules, into Valchedrym `192.168.0.0/24` and Mladost 3 `192.168.3.0/24`, with `-valchedrym` and `-mladost3` as the site suffixes). It writes only what differs, and deletes London A records that no current device or hand-made row claims, so a renamed or moved device does not leave its old name behind. Rows it creates in phpIPAM carry a description starting with `-- ` (`-- dhcp london --`, `-- reservation london --`, `-- arp london --`); hand-made rows (`ha-london`, `rpi-london`, `openwrt-london`) are read as fixed names and never changed. A departed device keeps its row and name for 24 hours.
 - **London clients.** The Flint forwards `viktorbarzin.lan`, `1.168.192.in-addr.arpa` and `10.in-addr.arpa` to `10.0.20.201` over the tunnel, so London clients see the same answers Sofia does. Bare names and `<name>.lan` are still answered by the Flint from its own leases, including while the tunnel is down. GL's firewall drops dnsmasq's TCP fallback (`tcp_dns_leak_drop`), so a forwarded answer larger than 1232 bytes fails; A lookups are far below that.
 - **Code and tests.** `stacks/phpipam/files/phpipam_import.py` and `fetch_sources.sh`, tests in `test_phpipam_import.py` next to them (`cd stacks/phpipam/files && python3 -m unittest test_phpipam_import`). `DRY_RUN=1` prints every write instead of making it.
@@ -647,6 +655,7 @@ Common causes:
 ### Adding a New DNS Record
 
 For internal `.viktorbarzin.lan` records:
+0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. Replicas and pfSense's copy follow on their next refresh, up to about 30 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
 1. In the phpIPAM web UI (`phpipam.viktorbarzin.me`), set the hostname on the address and give it a description that does not start with `-- ` (that makes it a hand row, which the importer never changes)
 2. Within 5 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
 3. A London, Valchedrym or Mladost 3 device is better named with a static lease on its site router (`ensure_host` in `scripts/london-flint/provision.sh` for London)
