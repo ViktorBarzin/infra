@@ -32,7 +32,9 @@ phpIPAM is an inventory. It shows every IPv4 address in use, filled
 automatically. Kea, Terraform and the site routers stay authoritative for
 configuration; nothing reads phpIPAM to assign an address.
 
-1. **One importer.** `phpipam-import` runs every 5 minutes. It has one reader
+1. **One importer.** `phpipam-import` runs every 5 minutes (every 30 minutes
+   since 2026-10-15: most runs found no new address, and each pod start adds
+   node-disk writes on the shared HDD). It has one reader
    per source and one engine for rows, names, expiry and DNS. A source that
    fails is reported and fails the run; the other sources are still applied,
    and the failed source's rows are left untouched.

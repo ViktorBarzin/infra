@@ -3713,16 +3713,16 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
-          # phpipam-import runs every 5 minutes (ADR-0032). JobFailed covers a
+          # phpipam-import runs every 30 minutes (ADR-0032; was 5 until 2026-10-15). JobFailed covers a
           # run that fails; this covers runs that stop happening or hang
           # (Forbid + a wedged Job blocks every later run).
           - alert: PhpipamImportStale
-            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="phpipam-import", namespace="phpipam"}) > 1800
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="phpipam-import", namespace="phpipam"}) > 5400
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "phpIPAM import last succeeded {{ $value | humanizeDuration }} ago (threshold: 30m)"
+              summary: "phpIPAM import last succeeded {{ $value | humanizeDuration }} ago (threshold: 90m)"
           - alert: EtcdBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"}) > 691200
             for: 30m
