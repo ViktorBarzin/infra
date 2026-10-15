@@ -207,13 +207,27 @@ def connect_failure_reason(message: str) -> str:
     return message
 
 
+def describe_nserror(err: Any) -> str:
+    """pymobiledevice3 logs the phone's NSError as a bare object address, which
+    hides why UI testing would not start. Show the domain, code and what the
+    phone said instead."""
+    head = f"{err.domain} {err.code}"
+    info = dict(err.user_info or {})
+    if not info:
+        return head
+    desc = info.pop("NSLocalizedDescription", None)
+    rest = ", ".join(f"{k}={v}" for k, v in info.items())
+    text = f"{head}: {desc}" if desc else head
+    return f"{text} ({rest})" if rest else text
+
+
 def wda_failure_reason(message: str) -> str:
     """Turn an XCUITest launch error into what a person can act on."""
     low = message.lower()
     if "provisioning profile has expired" in low:
         return (
             "WDA would not launch: its free-team signature expired (7 days). "
-            "Re-sign it: plug the phone into the Mac and run the wda-resign job."
+            "The service re-signs it on the devvm; `homelab ios doctor` shows wda-signature."
         )
     if "failed to launch process" in low:
         return (
@@ -521,7 +535,10 @@ class Rig:
             return False
 
     async def start_wda(self) -> None:
+        from pymobiledevice3.dtx.ns_types import NSError
         from pymobiledevice3.services.dvt.testmanaged.xcuitest import TestConfig, XCUITestService
+
+        setattr(NSError, "__str__", describe_nserror)
 
         if self.wda.task is not None and not self.wda.task.done():
             return

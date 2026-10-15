@@ -1,6 +1,7 @@
 """Tests for the pure logic in ios_rig_wifi. Run: uv run --with pytest --with cryptography pytest cli/ios_assets/wifi"""
 
 import plistlib
+from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,6 +11,7 @@ from ios_rig_wifi import (
     DEFAULT_PAIRING_PORT,
     candidate_ports,
     connect_failure_reason,
+    describe_nserror,
     launch_failure_reason,
     matching_certificate,
     needs_resign,
@@ -70,6 +72,21 @@ def test_summarise_battery_handles_no_data():
 )
 def test_wda_failure_reason_names_the_fix(message, needle):
     assert needle in wda_failure_reason(message)
+
+
+@pytest.mark.parametrize(
+    "user_info,want",
+    [
+        (
+            {"NSLocalizedDescription": "Timed out while enabling automation mode.", "NSUnderlyingError": "x"},
+            "com.apple.dt.XCTest 3: Timed out while enabling automation mode. (NSUnderlyingError=x)",
+        ),
+        (None, "com.apple.dt.XCTest 3"),
+    ],
+)
+def test_describe_nserror_shows_what_the_phone_said(user_info, want):
+    err = SimpleNamespace(domain="com.apple.dt.XCTest", code=3, user_info=user_info)
+    assert describe_nserror(err) == want
 
 
 def test_launch_failure_reason_points_at_the_signature():
