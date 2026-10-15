@@ -1528,6 +1528,146 @@ resource "null_resource" "pg_cluster" {
   }
 }
 
+#### POSTGRESQL 18 — pg-cluster-v18 (blue-green upgrade from pg-cluster, 2026-10-15)
+#
+# Viktor asked for pg-cluster to move from Postgres 16 to the newest major while
+# the old cluster and its data stay alive until the new one is proven. The new
+# cluster runs next to pg-cluster with the same parameters, resources, anti-affinity
+# and storage class. Data is copied with pg_dumpall --globals-only plus per-database
+# pg_dump | pg_restore --create (ownership and GRANTs preserved, which CNPG's own
+# initdb.import does not do: it restores with --no-owner --no-privileges).
+#
+# Consumers are switched in one place: the postgresql / postgresql-lb Services below
+# select the cluster named in var.pg_active_cluster, and CoreDNS (stacks/technitium,
+# coredns.tf) answers pg-cluster-rw.dbaas.svc.cluster.local with the active cluster's
+# -rw Service. Runbook: docs/runbooks/pg-cluster-major-upgrade.md.
+#
+# Image: ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7, built on GitHub
+# Actions from claude-memory-mcp deploy/infra/Dockerfile.pgvector (PG 18.6, PostGIS
+# 3.6.4, pgvector 0.8.7).
+variable "pg_cluster_v18_image" {
+  type    = string
+  default = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7"
+}
+
+# Which CNPG cluster consumers reach: the postgresql / postgresql-lb Services select
+# its primary, and the pg_*_db provisioners create roles and databases on it.
+# Rollback to the PG16 cluster = set this back to "pg-cluster" (runbook).
+variable "pg_active_cluster" {
+  type    = string
+  default = "pg-cluster"
+}
+
+variable "pg_cluster_v18_instances" {
+  type    = number
+  default = 1
+}
+
+resource "null_resource" "pg_cluster_v18" {
+  triggers = {
+    instances      = tostring(var.pg_cluster_v18_instances)
+    image          = var.pg_cluster_v18_image
+    storage_size   = "40Gi"
+    storage_class  = "proxmox-lvm-encrypted"
+    memory_limit   = "4Gi"
+    memory_request = "2816Mi"
+    pg_params      = "v1-same-as-pg-cluster-v7"
+    affinity       = "required-hostname-v1"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      # Superuser secret shared with pg-cluster: the new cluster keeps the postgres
+      # password every consumer already has (Vault's database engine, the backup
+      # CronJobs, pg-cluster-superuser readers). Copied once, without owner
+      # references, so it outlives pg-cluster when that is eventually deleted.
+      if ! kubectl --kubeconfig ${var.kube_config_path} -n dbaas get secret pg-superuser >/dev/null 2>&1; then
+        kubectl --kubeconfig ${var.kube_config_path} -n dbaas get secret pg-cluster-superuser -o json \
+          | jq '{apiVersion: "v1", kind: "Secret", type: "kubernetes.io/basic-auth",
+                 metadata: {name: "pg-superuser", namespace: "dbaas"},
+                 data: {username: .data.username, password: .data.password}}' \
+          | kubectl --kubeconfig ${var.kube_config_path} apply -f -
+      fi
+      kubectl --kubeconfig ${var.kube_config_path} apply -f - <<'EOF'
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: pg-cluster-v18
+        namespace: dbaas
+      spec:
+        instances: ${var.pg_cluster_v18_instances}
+        affinity:
+          enablePodAntiAffinity: true
+          podAntiAffinityType: required
+          topologyKey: kubernetes.io/hostname
+        imageName: ${var.pg_cluster_v18_image}
+        primaryUpdateStrategy: unsupervised
+        primaryUpdateMethod: restart
+        bootstrap:
+          initdb:
+            database: app
+            owner: app
+            encoding: UTF8
+            localeCollate: C
+            localeCType: C
+        superuserSecret:
+          name: pg-superuser
+        enableSuperuserAccess: true
+        certificates:
+          # Clients reach this cluster under the old names too (CoreDNS answers
+          # pg-cluster-rw with this cluster's -rw Service; postgresql.dbaas selects
+          # its primary), so the server certificate carries them.
+          serverAltDNSNames:
+            - pg-cluster-rw
+            - pg-cluster-rw.dbaas
+            - pg-cluster-rw.dbaas.svc
+            - pg-cluster-rw.dbaas.svc.cluster.local
+            - postgresql
+            - postgresql.dbaas
+            - postgresql.dbaas.svc
+            - postgresql.dbaas.svc.cluster.local
+        # Parameters, preload libraries and resources match pg-cluster above; the
+        # reasoning for each value lives in that resource's comments.
+        postgresql:
+          shared_preload_libraries:
+            - pg_prewarm
+          parameters:
+            search_path: '"$user", public'
+            pg_prewarm.autoprewarm: "on"
+            pg_prewarm.autoprewarm_interval: "300"
+            max_connections: "200"
+            shared_buffers: "2048MB"
+            effective_cache_size: "3072MB"
+            work_mem: "16MB"
+            wal_compression: "zstd"
+            random_page_cost: "4"
+            checkpoint_completion_target: "0.9"
+            checkpoint_timeout: "15min"
+            max_wal_size: "4GB"
+            min_wal_size: "1GB"
+            archive_timeout: "0"
+            commit_delay: "2500"
+          enableAlterSystem: true
+        inheritedMetadata:
+          annotations:
+            resize.topolvm.io/threshold: "10%"
+            resize.topolvm.io/increase: "20%"
+            resize.topolvm.io/storage_limit: "100Gi"
+        storage:
+          size: 40Gi
+          storageClass: proxmox-lvm-encrypted
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "2816Mi"
+          limits:
+            memory: "4Gi"
+      EOF
+    EOT
+  }
+}
+
 # Service that maintains the original postgresql.dbaas endpoint,
 # now pointing at the CNPG primary pod instead of the old deployment.
 resource "kubernetes_service" "postgresql" {
@@ -1537,7 +1677,7 @@ resource "kubernetes_service" "postgresql" {
   }
   spec {
     selector = {
-      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/cluster"      = var.pg_active_cluster
       "cnpg.io/instanceRole" = "primary"
     }
     port {
@@ -1567,7 +1707,7 @@ resource "kubernetes_service" "postgresql_lb" {
   spec {
     type = "LoadBalancer"
     selector = {
-      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/cluster"      = var.pg_active_cluster
       "cnpg.io/instanceRole" = "primary"
     }
     port {
