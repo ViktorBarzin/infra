@@ -191,6 +191,8 @@ resource "kubernetes_job_v1" "nextcloud_external_storage_bootstrap" {
             # ── 4. Enable files_external (idempotent) ───────────────────────
             nc_occ app:enable files_external || true
             # NO files_accesscontrol — that app is not used in this model.
+            # Photos is a bundled app and is not used (Viktor, 2026-10-15).
+            nc_occ app:disable photos || true
 
             # ── 5. Helpers ──────────────────────────────────────────────────
 
