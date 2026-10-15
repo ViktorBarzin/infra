@@ -332,7 +332,7 @@
     // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
     // Remove a rule to release that component to the rails.
     {
-      description: "HELD: Nextcloud majors (chart and image). A major runs a one-way occ upgrade and can disable apps, so it gets a supervised run with an LVM snapshot first; minors and patches go through the rails",
+      description: "HELD: Nextcloud majors (chart and image), on 35.0.1 / chart 9.4.0 (checked 2026-10-15: 35 is the newest major, no 36 tag or beta yet). A major runs a one-way occ upgrade and can disable apps, so it gets a supervised run with an LVM snapshot first; minors and patches go through the rails",
       matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
       matchUpdateTypes: ["major"],
       enabled: false,
@@ -390,7 +390,7 @@
       enabled: false,
     },
     {
-      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run). 15.x patch/minor still land.",
+      description: "HELD: Technitium majors (home DNS; 15 -> 16 needs a supervised run, backing up and upgrading tertiary, secondary, primary one at a time). Checked 2026-10-15: 15.6.1 (2026-10-11) is the newest release and no 16.x exists yet. 15.x patch/minor still land.",
       matchDatasources: ["docker"],
       matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
       matchUpdateTypes: ["major"],
