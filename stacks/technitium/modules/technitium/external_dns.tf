@@ -36,7 +36,7 @@ resource "helm_release" "external_dns" {
 
   repository = "https://kubernetes-sigs.github.io/external-dns/"
   chart      = "external-dns"
-  version    = "1.23.0" # app v0.22.0
+  version    = "1.22.0" # app v0.22.0
 
   values = [yamlencode({
     provider           = { name = "rfc2136" }
