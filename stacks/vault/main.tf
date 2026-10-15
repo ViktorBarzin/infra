@@ -30,7 +30,7 @@ locals {
   # CronJob, so the three cannot drift apart. Chart 0.34.1 defaults
   # server.image.tag to 2.0.4, so the tag must always be set explicitly.
   # Upgrade path: docs/plans/2026-10-09-software-currency-design.md (Phase 1).
-  vault_version = "2.1.2"
+  vault_version = "2.2.0"
 }
 
 resource "helm_release" "vault" {
@@ -249,7 +249,7 @@ resource "helm_release" "vault" {
         },
         {
           name    = "audit-tail"
-          image   = "busybox:1.37"
+          image   = "busybox:1.38"
           command = ["/bin/sh", "-c"]
           # `tail -F` follows the file across rotations. Until the file exists
           # (first audit write) we wait without spinning. Output flushed line
@@ -301,10 +301,13 @@ resource "kubernetes_annotations" "audit_vault_autoresizer" {
 
 # --- Self-read: Vault's own OIDC credentials from KV ---
 
+# No depends_on on helm_release.vault, for the same reason as
+# data.vault_kv_secret_v2.platform below: with it, a pending change to the
+# release defers this read to apply time and the OIDC backend plans a
+# spurious update of its client credentials on every chart or image bump.
 data "vault_kv_secret_v2" "vault" {
-  mount      = "secret"
-  name       = "vault"
-  depends_on = [helm_release.vault]
+  mount = "secret"
+  name  = "vault"
 }
 
 # --- OIDC Authentication via Authentik ---
