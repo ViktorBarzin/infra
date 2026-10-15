@@ -11,8 +11,8 @@ function subnet(id, cidr, description, location, addresses = 1, seen = 1) {
   return { id, section: 3, cidr, description, location, addresses, seen_hour: seen };
 }
 
-function device(id, name, type, location, addresses) {
-  return { id, name, type, location, addresses };
+function device(id, name, type, location, addresses, model = "") {
+  return { id, name, type, model, location, addresses };
 }
 
 const LAN = subnet(9, "192.168.1.0/24", "Sofia LAN", "Sofia", 51, 42);
@@ -25,14 +25,16 @@ const PFSENSE = device(3, "pfsense", "Firewall", "Sofia", [
   { ip: "192.168.1.2", subnet: 9, probe: probe(true, 1) },
   { ip: "10.0.20.1", subnet: 8, probe: probe(true, 1) },
   { ip: "10.3.2.1", subnet: 10, probe: probe(true, 1) },
+  { ip: "100.64.0.9", subnet: 16, probe: probe(true, 1) },
 ]);
+const MAIN = device(4, "main-router", "Wireless", "Sofia", [{ ip: "192.168.1.1", subnet: 9, probe: probe(true) }], "TP-Link Archer AX6000");
 const FLINT = device(18, "flint-london", "Router", "London", [
   { ip: "192.168.8.1", subnet: 11, probe: probe(true, 39) },
   { ip: "10.3.2.6", subnet: 10, probe: probe(true, 41.4) },
 ]);
 const AP = device(5, "wifi-garaj", "Wireless", "Sofia", [{ ip: "192.168.1.7", subnet: 9, probe: probe(true) }]);
 
-const DATA = { subnets: [LAN, K8S, LONDON, WG, TAILNET], devices: [PFSENSE, FLINT, AP] };
+const DATA = { subnets: [LAN, K8S, LONDON, WG, TAILNET], devices: [PFSENSE, MAIN, FLINT, AP] };
 
 test("device state", () => {
   const cases = [
@@ -53,7 +55,15 @@ test("placement", () => {
   assert.equal(where.get(9), "Sofia");
   assert.equal(where.get(11), "London");
   assert.equal(where.get(10), null); // routers from two sites sit on it
-  assert.equal(where.get(16), null); // no Location in phpIPAM
+  assert.equal(where.get(16), "Sofia"); // no Location; pfSense is its only device
+  const both = t.placement([TAILNET], [PFSENSE, { ...FLINT, addresses: [{ ip: "100.64.0.20", subnet: 16, probe: null }] }]);
+  assert.equal(both.get(16), null); // no Location, devices from two sites
+});
+
+test("first host", () => {
+  assert.equal(t.firstHost("10.3.2.0/24"), "10.3.2.1");
+  assert.equal(t.firstHost("100.64.0.0/10"), "100.64.0.1");
+  assert.equal(t.firstHost("192.168.9.0/24"), "192.168.9.1");
 });
 
 test("label escapes mermaid syntax", () => {
@@ -72,12 +82,24 @@ test("mermaid layout", () => {
   assert.ok(out.includes('subgraph site_London["London"]'));
   const wg = out.split("\n").find((l) => l.trimStart().startsWith("s10("));
   assert.ok(!wg.startsWith("    "), "shared subnet is drawn outside the site boxes");
-  // Shared subnet above the routers, dotted, labelled with the live round trip.
-  assert.ok(out.includes("s10 -.-|1 ms| d3"));
+  // The way in from outside: Internet, the router holding the LAN's .1, the LAN.
+  assert.ok(out.includes('internet(("Internet")) --- d4'));
+  assert.ok(out.includes("d4 --- s9"));
+  assert.equal(out.split("\n").filter((l) => l.startsWith("  internet")).length, 1);
+  // pfSense hangs under the LAN and routes the VLANs and the tunnel below it.
+  assert.ok(out.includes("s9 --- d3"));
+  assert.ok(out.includes("d3 --- s8"));
+  assert.ok(out.includes("d3 -.-|1 ms| s10"));
+  // Remote routers hang under the tunnel, with the live round trip, above their LANs.
   assert.ok(out.includes("s10 -.-|41 ms| d18"));
-  // Router above its site's subnets; a one-subnet device hangs below its subnet.
-  assert.ok(out.includes("d3 --- s9"));
+  assert.ok(out.includes("d18 --- s11"));
+  // A subnet nobody routes (the tailnet) hangs under its members.
+  assert.ok(out.includes("d3 --- s16"));
+  // A non-gateway device on one subnet hangs below it.
   assert.ok(out.includes("s9 --- d5"));
+  // Type, then vendor and model when phpIPAM knows both.
+  assert.ok(out.includes('d4["<b>main-router</b><br/>Wireless<br/>TP-Link Archer AX6000"]'));
+  assert.ok(out.includes('d3["<b>pfsense</b><br/>Firewall"]'));
   assert.ok(out.includes('click s9 "/subnets/3/9/"'));
   assert.ok(out.includes("class d18 up"));
 });
@@ -88,7 +110,7 @@ test("round trip under a millisecond", () => {
     { ip: "10.3.2.1", subnet: 10, probe: probe(true, 0.4) },
   ]);
   const out = t.buildMermaid({ subnets: [K8S, LONDON, WG], devices: [fast, FLINT] });
-  assert.ok(out.includes("s10 -.-|#lt;1 ms| d3"));
+  assert.ok(out.includes("d3 -.-|#lt;1 ms| s10"));
 });
 
 test("down tunnel has no round-trip label", () => {

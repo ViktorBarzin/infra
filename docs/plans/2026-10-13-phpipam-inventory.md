@@ -102,9 +102,18 @@ usage bars, dashboard widgets) but has no view of how the subnets connect.
 - one box per Location, holding its subnets and its network devices (types
   Router, Firewall, Wireless and Switch in `devices.yaml`);
 - a line from each network device to every subnet it holds an address in;
-- subnets with no Location, or with network devices from more than one site
-  (the WireGuard tunnels, the tailnet), drawn above the sites with dotted
-  lines labelled with the live round-trip time;
+- the chart reads top down the way traffic comes in (amended 2026-10-15):
+  Internet, then the TP-Link Archer AX6000 (`main-router`), then the
+  192.168.1.0/24 LAN, then pfSense and the VLANs, WireGuard tunnel and tailnet
+  behind it, then the remote sites under the tunnel. The device holding a
+  subnet's first host address is drawn above that subnet as its gateway, by
+  the `.1` convention, because phpIPAM holds no gateway flag for these
+  subnets; every other device on the subnet hangs below it, and a device that
+  hangs under no subnet is joined to the Internet node;
+- a subnet with network devices from more than one site (the WireGuard tunnel)
+  drawn between the site boxes with dotted lines labelled with the live
+  round-trip time; a subnet with no Location goes in the one site its network
+  devices are all in (the tailnet, where pfSense is the only one);
 - a green border on a device with any address answering ping, red dashed when
   none answers, grey when the probe could not run.
 
