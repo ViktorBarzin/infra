@@ -1,28 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": [
-    {
-      "description": "rails revert 2026-10-14 pipeline #2456: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1) (commit 8c7ba6c4)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.37.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-15 pipeline #2502: stack technitium failed after this bump: its verify checks failed (scripts/verify/run exit 3) (commit d412e6eb)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "external-dns"
-      ],
-      "matchNewValue": "1.23.0",
-      "enabled": false
-    }
-  ]
+  "packageRules": []
 }

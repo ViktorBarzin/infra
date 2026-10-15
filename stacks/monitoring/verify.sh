@@ -60,7 +60,10 @@ _loki_rules() {
 verify_component() {
   check "prometheus-server converged" retry 300 10 workload_ready monitoring deployment/prometheus-server
   check "Prometheus ready" expect_http "$P/-/ready" '200'
-  check "rules loaded, none unhealthy" _rules_healthy
+  # Every rule group evaluates every 60s, and a rule reads health "unknown"
+  # until its first evaluation: 15 rules did 0s after the restart and the rails
+  # reverted prometheus 29.37.0 (pipeline #2456). A broken rule stays "err".
+  check "rules loaded, none unhealthy" retry 300 30 _rules_healthy
   # A chart bump restarts prometheus-server, which then has no samples for
   # the first scrape intervals: count(alloy_build_info) read 4 of 7 and the
   # 5m Loki rate had no series on 2026-10-13, and the rails reverted
