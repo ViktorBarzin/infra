@@ -228,6 +228,40 @@ resource "kubectl_manifest" "whisker" {
   })
 }
 
+# Since Calico 3.33 the operator puts calico-system behind its own tier
+# (`calico-system`, order 100, end-of-tier Deny) with a `default-deny` policy.
+# Its `kube-controller-access` policy admits the metrics port 9094 only from
+# Tigera's own Prometheus (namespace tigera-prometheus), so our Prometheus in
+# `monitoring` timed out and ScrapeTargetDown fired from 2026-10-12. A
+# Kubernetes NetworkPolicy would never be reached (the tier denies first), so
+# this allow lives in the same tier, next to the operator's policies rather
+# than editing them (the operator reverts edits).
+resource "kubectl_manifest" "allow_prometheus_kube_controllers_metrics" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "NetworkPolicy"
+    metadata = {
+      name      = "calico-system.allow-prometheus-kube-controllers-metrics"
+      namespace = "calico-system"
+    }
+    spec = {
+      tier     = "calico-system"
+      order    = 1000
+      selector = "k8s-app == 'calico-kube-controllers'"
+      types    = ["Ingress"]
+      ingress = [{
+        action   = "Allow"
+        protocol = "TCP"
+        source = {
+          namespaceSelector = "kubernetes.io/metadata.name == 'monitoring'"
+          selector          = "app.kubernetes.io/name == 'prometheus' && app.kubernetes.io/component == 'server'"
+        }
+        destination = { ports = [9094] }
+      }]
+    }
+  })
+}
+
 # ---------------------------------------------------------------------------
 # Gated public ingress for the Whisker UI (infra #57 / ADR-0014).
 #
