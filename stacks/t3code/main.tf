@@ -329,7 +329,7 @@ resource "kubernetes_deployment_v1" "t3_probe" {
           # lightweight alternative to owning a registry image for ~200 lines.
           command = ["sh", "-c", <<-EOT
             for i in 1 2 3 4 5; do
-              pip install --no-cache-dir --quiet aiohttp==3.9.5 prometheus-client==0.20.0 && break
+              pip install --no-cache-dir --quiet aiohttp==3.14.5 prometheus-client==0.26.0 && break
               echo "pip attempt $i failed; retrying" >&2; sleep 10
             done
             exec python /app/probe.py
