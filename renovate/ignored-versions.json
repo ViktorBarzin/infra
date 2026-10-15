@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "29.37.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-15 pipeline #2502: stack technitium failed after this bump: its verify checks failed (scripts/verify/run exit 3) (commit d412e6eb)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "external-dns"
+      ],
+      "matchNewValue": "1.23.0",
+      "enabled": false
     }
   ]
 }
