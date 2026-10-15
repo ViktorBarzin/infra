@@ -963,8 +963,8 @@ resource "kubernetes_cluster_role_binding" "ingress_dns_sync" {
 
 # CronJob to sync K8s Ingress hosts -> Technitium CNAME records.
 # Discovers all *.viktorbarzin.me ingress hosts, ensures each has a CNAME
-# pointing to viktorbarzin.me in Technitium's authoritative zone, and each
-# *.viktorbarzin.lan ingress host a CNAME to ingress.viktorbarzin.lan.
+# pointing to viktorbarzin.me in Technitium's authoritative zone.
+# *.viktorbarzin.lan ingress hosts are external-dns's job (external_dns.tf).
 # Prevents the desync where Cloudflare has the record but internal DNS doesn't.
 resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
   metadata {
@@ -1159,32 +1159,6 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                 else
                   echo "WARN: could not resolve Traefik LB IP; skipping .lan anchor sync"
                 fi
-
-                # Every single-label *.viktorbarzin.lan ingress host gets a CNAME
-                # to the anchor above, the same way the .me hosts get one to the
-                # apex. Until 2026-10-13 these were added by hand through the API,
-                # and android-emulator + anisette had none, so their documented
-                # LAN URLs returned NXDOMAIN. Add-only: a name that already has
-                # ANY record (a static A such as health-test, or a hand-made
-                # CNAME) is left alone, and nothing is ever deleted. Multi-label
-                # names are skipped because CoreDNS NXDOMAINs them anyway.
-                LZONE="viktorbarzin.lan"
-                LAN_EXISTING=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$LZONE&domain=$$LZONE&listZone=true" | grep -o '"name":"[^"]*\.viktorbarzin\.lan"' | sed 's/"name":"//;s/"//' | sort -u)
-                LAN_HOSTS=$$(kubectl get ingress -A -o jsonpath='{range .items[*]}{range .spec.rules[*]}{.host}{"\n"}{end}{end}' | grep -E '^[a-z0-9-]+\.viktorbarzin\.lan$$' | grep -v '^ingress\.' | sort -u || true)
-                LAN_CREATED=0
-                for HOST in $$LAN_HOSTS; do
-                  if echo "$$LAN_EXISTING" | grep -qx "$$HOST"; then
-                    continue
-                  fi
-                  R=$$(curl -sf "$$TECH_API/api/zones/records/add?token=$$TOKEN&zone=$$LZONE&domain=$$HOST&type=CNAME&cname=ingress.$$LZONE&ttl=3600" 2>&1) || true
-                  if echo "$$R" | grep -q '"status":"ok"'; then
-                    echo "lan: created CNAME $$HOST -> ingress.$$LZONE"
-                    LAN_CREATED=$$((LAN_CREATED + 1))
-                  else
-                    echo "lan: FAILED $$HOST -- $$R"
-                  fi
-                done
-                echo "lan: sync complete, created $$LAN_CREATED new records."
               EOT
               ]
             }
