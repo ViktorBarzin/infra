@@ -1,10 +1,16 @@
 # Restore MySQL (Standalone)
 
-Last updated: 2026-05-18 (after the 8.4.9 DD-upgrade disaster recovery)
+Last updated: 2026-10-15 (active instance is now `mysql-v26`, MySQL 26.7.0)
 
-Applies to the `mysql-standalone` StatefulSet in the `dbaas` namespace
-(raw `kubernetes_stateful_set_v1`, migrated from InnoDB Cluster on
-2026-04-16). The historic InnoDB-Cluster recovery flow is gone.
+Applies to the `mysql-v26` StatefulSet in the `dbaas` namespace (raw
+`kubernetes_stateful_set_v1`, MySQL 26.7.0 since 2026-10-15). The previous
+instance, `mysql-standalone` (8.4.8), keeps running read-only as the rollback
+copy for that move; its rollback is in `docs/runbooks/mysql-major-upgrade.md`.
+The historic InnoDB-Cluster recovery flow is gone.
+
+Restoring a dump made by the 8.4 servers into 26.7 is a supported logical
+upgrade. FLOAT columns in a dump carry only about 6 significant digits (see
+the gotchas in `mysql-major-upgrade.md`), so a restore rounds them.
 
 ## Prerequisites
 - `kubectl` against the cluster
@@ -31,10 +37,10 @@ When one DB is corrupted but MySQL is otherwise fine.
 ROOT_PWD=$(kubectl -n dbaas get secret cluster-secret -o jsonpath='{.data.ROOT_PASSWORD}' | base64 -d)
 
 # List per-db dumps for the affected database
-kubectl -n dbaas exec mysql-standalone-0 -- ls -lt /backup/per-db/<dbname>/
+kubectl -n dbaas exec mysql-v26-0 -- ls -lt /backup/per-db/<dbname>/
 
 # Pipe a chosen dump into MySQL (REPLACE existing data in <dbname>):
-kubectl -n dbaas exec -i mysql-standalone-0 -- \
+kubectl -n dbaas exec -i mysql-v26-0 -- \
     sh -c "zcat /backup/per-db/<dbname>/dump_YYYY_MM_DD_HH_MM.sql.gz | mysql -uroot -p\"$ROOT_PWD\" <dbname>"
 
 # Restart consumers
@@ -54,7 +60,7 @@ registry + every MySQL app go offline during this.
 ### B.1 Stop the failing MySQL pod
 
 ```bash
-kubectl -n dbaas scale statefulset mysql-standalone --replicas=0
+kubectl -n dbaas scale statefulset mysql-v26 --replicas=0
 ```
 
 ### B.2 Verify the dump you intend to restore is healthy
@@ -70,7 +76,8 @@ ssh root@192.168.1.127 'zcat /srv/nfs/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz 
 
 If the upgrade was triggered by a Keel bump on a floating tag
 (`mysql:8.4`), edit `stacks/dbaas/modules/dbaas/main.tf` to pin to a
-known-good exact version (`mysql:8.4.8`). Commit but don't apply yet.
+known-good exact version (`mysql:26.7.0` on `mysql-v26` since 2026-10-15).
+Commit but don't apply yet.
 
 ### B.4 Wipe the corrupted PVC
 
@@ -80,9 +87,9 @@ attached to the (corrupted) disk. Flip to `Delete` first so the CSI
 driver actually cleans up the underlying LV.
 
 ```bash
-PV=$(kubectl -n dbaas get pvc data-mysql-standalone-0 -o jsonpath='{.spec.volumeName}')
+PV=$(kubectl -n dbaas get pvc data-mysql-v26-0 -o jsonpath='{.spec.volumeName}')
 kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
-kubectl -n dbaas delete pvc data-mysql-standalone-0
+kubectl -n dbaas delete pvc data-mysql-v26-0
 ```
 
 The PV transitions to `Released` then gets cleaned up by the CSI
@@ -116,7 +123,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: restore
-        image: mysql:8.4.8
+        image: docker.io/library/mysql:26.7.0
         command: ["bash","-c"]
         args:
         - |
@@ -152,7 +159,7 @@ denied for user 'forgejo'@'...'`) until you reset them.
 FORGEJO_PW=$(vault kv get -field=mysql_forgejo_password secret/viktor)
 RC_PW=$(vault kv get -field=mysql_roundcubemail_password secret/viktor)
 
-kubectl -n dbaas exec -i mysql-standalone-0 -- bash -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<SQL
+kubectl -n dbaas exec -i mysql-v26-0 -- bash -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<SQL
 DROP USER IF EXISTS 'forgejo'@'%';
 DROP USER IF EXISTS 'roundcubemail'@'%';
 CREATE USER 'forgejo'@'%' IDENTIFIED WITH caching_sha2_password BY '$FORGEJO_PW';
@@ -215,7 +222,7 @@ kubectl get deploy,sts -A -o json | jq -r '.items[] | select(.spec.replicas != .
 # (empty output = healthy)
 
 # Database integrity — table counts per schema
-kubectl -n dbaas exec mysql-standalone-0 -- mysql -uroot -p"$ROOT_PWD" \
+kubectl -n dbaas exec mysql-v26-0 -- mysql -uroot -p"$ROOT_PWD" \
     -e "SELECT table_schema, COUNT(*) FROM information_schema.tables \
         WHERE table_schema NOT IN ('information_schema','performance_schema','sys') \
         GROUP BY table_schema;"
@@ -246,8 +253,9 @@ with `innodb_page_cleaners=1` — the upgrade's spatial-reference-system
 flush phase is IO-starved. **Don't retry 8.4.9 without first bumping
 IO capacity and pinning a proper maintenance window.**
 
-Until then, the StatefulSet pins to `mysql:8.4.8` exactly, not the
-floating `mysql:8.4` tag. Keel no longer manages it; version bumps
+The 8.4 instance stayed pinned to `mysql:8.4.8` exactly, not the
+floating `mysql:8.4` tag, until it became the read-only rollback copy on
+2026-10-15. The active `mysql-v26` is pinned to `mysql:26.7.0` the same way. Keel no longer manages it; version bumps
 arrive as Renovate commits through the CI rails, which run the dbaas
 backup CronJobs first (Renovate holds MySQL majors).
 

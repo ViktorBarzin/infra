@@ -120,7 +120,7 @@ scripts/tg apply stacks/dbaas
 
 # 14. Wait for CNPG and the MySQL standalone StatefulSet to initialize
 kubectl wait --for=condition=Ready cluster/pg-cluster -n dbaas --timeout=600s
-kubectl -n dbaas rollout status sts/mysql-standalone --timeout=600s
+kubectl -n dbaas rollout status sts/mysql-v26 --timeout=600s
 
 # 15. Restore PostgreSQL from dump (see restore-postgresql.md)
 # 16. Restore MySQL from dump (see restore-mysql.md)

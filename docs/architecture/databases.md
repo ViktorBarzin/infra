@@ -24,7 +24,7 @@ graph TB
     end
 
     subgraph MySQL
-        A3 --> MYC[MySQL standalone<br/>mysql-standalone-0]
+        A3 --> MYC[MySQL 26.7<br/>mysql-v26-0]
         MYC --> LVM1[Proxmox-LVM Storage]
         MYC -.anti-affinity.-> NODE1[Exclude GPU nodes]
     end
@@ -51,7 +51,7 @@ graph TB
 |-----------|---------|----------|---------|
 | PostgreSQL (CNPG) | CloudNativePG (PostGIS 16: `postgis:16`) | `dbaas` namespace | Primary/replica cluster, auto-failover |
 | PgBouncer | 3 replicas | `dbaas` namespace | Connection pooling for PostgreSQL |
-| MySQL standalone | 8.4.8 (`mysql:8.4.8`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-standalone`) |
+| MySQL | 26.7.0 (`docker.io/library/mysql:26.7.0`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-v26`); `mysql-standalone` (8.4.8, read-only) is the rollback copy |
 | Redis | Latest | `redis` namespace | Shared cache layer |
 | Vault DB Engine | - | `vault` namespace | Automated credential rotation |
 
@@ -61,7 +61,7 @@ graph TB
 |---------|----------|-------|
 | PostgreSQL (primary) | `pg-cluster-rw.dbaas.svc.cluster.local` | Always use this via PgBouncer |
 | PgBouncer | `pgbouncer.dbaas.svc.cluster.local` | Connection pool (3 replicas) |
-| MySQL | `mysql.dbaas.svc.cluster.local` | Selects the `mysql-standalone` pod |
+| MySQL | `mysql.dbaas.svc.cluster.local` | Selects the pod named by `local.mysql_active` (`mysql-v26` since 2026-10-15) |
 | Redis | `redis.redis.svc.cluster.local` | Shared instance |
 | PostgreSQL (compat) | `postgresql.dbaas.svc.cluster.local` | Compatibility service, selects CNPG primary |
 
@@ -99,9 +99,9 @@ graph TB
 
 ### MySQL standalone
 
-1. **Topology**: one `mysql:8.4.8` instance, a raw `kubernetes_stateful_set_v1` (`mysql-standalone`) in `stacks/dbaas/modules/dbaas/main.tf`. It replaced the MySQL InnoDB Cluster on 2026-04-16. The image pin and how to bump it are explained in the comment above the `image` line there.
+1. **Topology**: one MySQL 26.7.0 instance, a raw `kubernetes_stateful_set_v1` (`mysql-v26`) in `stacks/dbaas/modules/dbaas/main.tf`. It took over from the 8.4.8 StatefulSet `mysql-standalone` on 2026-10-15 in a blue-green move (`docs/runbooks/mysql-major-upgrade.md`); `mysql-standalone` keeps running with `super_read_only` as the rollback copy, and `local.mysql_active` selects which one the `mysql` Service points at. `mysql-standalone` itself replaced the MySQL InnoDB Cluster on 2026-04-16.
 
-2. **Storage**: PVC `data-mysql-standalone-0`, 30Gi on `proxmox-lvm-encrypted`.
+2. **Storage**: PVC `data-mysql-v26-0`, 30Gi on `proxmox-lvm-encrypted` (autoresizer limit 60Gi). The rollback copy keeps `data-mysql-standalone-0` (30Gi).
 
 3. **Anti-Affinity**: excludes nodes labelled `nvidia.com/gpu.present=true`, keeping the database off the GPU node.
 
@@ -118,7 +118,7 @@ The InnoDB Cluster's leftovers (a CR stuck in deletion since 2026-04-18 on the f
 - grafana
 - technitium (DNS query logs via QueryLogsMySqlApp plugin)
 
-**Observability** (added 2026-10-10, software-currency groundwork): Deployment `mysqld-exporter` in `dbaas` (`prom/mysqld-exporter:v0.20.0`, port 9104; Renovate proposes image bumps) connects to `mysql.dbaas.svc.cluster.local:3306` as the read-only `exporter` user and is scraped by the annotation-driven `kubernetes-pods` job (`app="mysqld-exporter"`). It is a separate Deployment rather than a sidecar, so it can be changed without restarting mysqld. The user has `PROCESS`, `REPLICATION CLIENT` and `SELECT` on `performance_schema` only, with `MAX_USER_CONNECTIONS 3`; it is created by `null_resource.mysql_exporter_user` the same way as the static application users, and its password is derived from the root password (`sha256`), so it rotates with it. Uptime Kuma separately polls MySQL as `MySQL Standalone (dbaas)`. The MySQL verify Job logs in as `verify_probe` (ALL on the `verify_probe` schema only, `MAX_USER_CONNECTIONS 3`), created by `null_resource.mysql_verify_probe_user`; its password is the Vault static role `mysql-verify-probe`, delivered by ESO to the `verify` namespace. Alerts: `MysqlStandaloneDown` (no ready replica, critical) and `MySQLNotServing` (`mysql_up == 0` for 5m while the pod is ready, critical; it stays quiet when `MysqlStandaloneDown` already covers the outage).
+**Observability** (added 2026-10-10, software-currency groundwork): Deployment `mysqld-exporter` in `dbaas` (`prom/mysqld-exporter:v0.20.0`, port 9104; Renovate proposes image bumps) connects to `mysql.dbaas.svc.cluster.local:3306` as the read-only `exporter` user and is scraped by the annotation-driven `kubernetes-pods` job (`app="mysqld-exporter"`). It is a separate Deployment rather than a sidecar, so it can be changed without restarting mysqld. The user has `PROCESS`, `REPLICATION CLIENT` and `SELECT` on `performance_schema` only, with `MAX_USER_CONNECTIONS 3`; it is created by `null_resource.mysql_exporter_user` the same way as the static application users, and its password is derived from the root password (`sha256`), so it rotates with it. Uptime Kuma separately polls MySQL as `MySQL Standalone (dbaas)`. The MySQL verify Job logs in as `verify_probe` (ALL on the `verify_probe` schema only, `MAX_USER_CONNECTIONS 3`), created by `null_resource.mysql_verify_probe_user`; its password is the Vault static role `mysql-verify-probe`, delivered by ESO to the `verify` namespace. Alerts: `MysqlStandaloneDown` (no ready replica of the active StatefulSet, `mysql-v26`, critical; the name predates the 26.7 move) and `MySQLNotServing` (`mysql_up == 0` for 5m while the pod is ready, critical; it stays quiet when `MysqlStandaloneDown` already covers the outage).
 
 ### Redis
 
@@ -301,7 +301,7 @@ resource "kubernetes_secret" "db_creds" {
 
 ### Why a single MySQL instance?
 
-The cluster ran MySQL InnoDB Cluster until 2026-04-16, when MySQL moved to the single `mysql-standalone` StatefulSet. Recovery relies on the daily dumps (`mysql-backup`, `mysql-backup-per-db`) and `docs/runbooks/restore-mysql.md`. The original comparison is kept below for history.
+The cluster ran MySQL InnoDB Cluster until 2026-04-16, when MySQL moved to the single `mysql-standalone` StatefulSet (and on 2026-10-15 to `mysql-v26`, MySQL 26.7). Recovery relies on the daily dumps (`mysql-backup`, `mysql-backup-per-db`) and `docs/runbooks/restore-mysql.md`. The original comparison is kept below for history.
 
 **Alternatives considered at the time** (InnoDB Cluster era):
 1. **Single MySQL instance**: No HA
