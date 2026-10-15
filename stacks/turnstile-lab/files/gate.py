@@ -3,7 +3,8 @@
 GET /            no valid cookie -> page with the Turnstile widget; valid cookie -> "passed" page
 POST /verify     {"token": "..."} -> calls siteverify, logs the full JSON, sets a signed cookie on success
 POST /hold       {"token": "..."} parks a token WITHOUT verifying it (page opened with ?hold=1)
-POST /verify-held  verifies the parked token now; call twice to test single use, wait to test lifetime
+POST /verify-held  verifies the parked token now; call twice to test single use, wait to test lifetime;
+                 ?remoteip=none omits remoteip, ?remoteip=<ip> sends a different one
 POST /event      client-side widget events (error-callback codes, script load failure, timeouts)
 GET /debug       last 50 verify results and client events as JSON
 GET /logout      clears the cookie
@@ -218,7 +219,15 @@ class Handler(BaseHTTPRequestHandler):
             HELD["verifies"] += 1
             cl["held_age_s"] = int(time.time() - HELD["at"])
             cl["held_verify_n"] = HELD["verifies"]
-        form = urllib.parse.urlencode({"secret": SECRET, "response": token, "remoteip": cl["client_ip"]}).encode()
+        fields = {"secret": SECRET, "response": token, "remoteip": cl["client_ip"]}
+        if path == "/verify-held":  # ?remoteip=none drops it, ?remoteip=1.2.3.4 overrides it
+            override = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("remoteip", [""])[0]
+            if override == "none":
+                fields.pop("remoteip")
+            elif override:
+                fields["remoteip"] = override
+            cl["remoteip_sent"] = fields.get("remoteip", "")
+        form = urllib.parse.urlencode(fields).encode()
         t0 = time.time()
         try:
             with urllib.request.urlopen(urllib.request.Request(SITEVERIFY, data=form), timeout=10) as r:
