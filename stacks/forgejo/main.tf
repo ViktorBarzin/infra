@@ -133,7 +133,10 @@ resource "kubernetes_deployment" "forgejo" {
           # tag-rewriting incident (memory id=1933). The pod crashlooped
           # because the DB had already been migrated to schema 305 by
           # 11.0.14 and v1.18 only knows up to migration 231.
-          image = "codeberg.org/forgejo/forgejo:16.0.6"
+          # 17.0.0 since 2026-10-15 (16.0.6 -> 17.0.0, one major hop; a
+          # forgejo dump, an LVM snapshot and a mysqldump were taken first,
+          # under /mnt/backup/manual-upgrade-20261015/forgejo on the PVE host).
+          image = "codeberg.org/forgejo/forgejo:17.0.0"
           env {
             name  = "USER_UID"
             value = 1000
@@ -141,6 +144,18 @@ resource "kubernetes_deployment" "forgejo" {
           env {
             name  = "USER_GID"
             value = 1000
+          }
+          # Forgejo 17 renamed the default cookies to brand-neutral names
+          # ("session", "persistent"), which logs every user out once. Keeping
+          # the pre-17 names keeps existing browser sessions and remember-me
+          # cookies valid across the upgrade.
+          env {
+            name  = "FORGEJO__session__COOKIE_NAME"
+            value = "i_like_gitea"
+          }
+          env {
+            name  = "FORGEJO__security__COOKIE_REMEMBER_NAME"
+            value = "gitea_incredible"
           }
           # Root URL for OAuth2 redirect callbacks
           env {
