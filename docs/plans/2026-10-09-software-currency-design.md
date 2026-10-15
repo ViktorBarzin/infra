@@ -312,11 +312,10 @@ Released on 2026-10-15: the image pins in `prometheus_chart_values.tpl`. The `pr
 
 ### Keel cutover leftovers
 
-Keel is retired. The seven apps it still deployed (excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot) now deploy through `.woodpecker/first-party-deploy.yml` after each build (B18), each checked rolling to its new tag on 2026-10-12, and `stacks/keel` is deleted (B19). The digest-only and floating pins listed here on 2026-10-11 are pinned and owned by Renovate.
+Keel is retired. The seven apps it still deployed (excalidraw, interview-prep-app, k8s-portal, learning, pages-publish, repowise, trading-bot) now deploy through `.woodpecker/first-party-deploy.yml` after each build (B18), each checked rolling to its new tag on 2026-10-12, and `stacks/keel` is deleted (B19). On 2026-10-15 the `ghcr.io/viktorbarzin/keel` package and the ViktorBarzin/keel fork were deleted too (the fork's one change had merged upstream as keel-hq/keel#943); a git bundle of the fork and an OCI archive of the image are kept on the backup host under `/mnt/backup/manual-upgrade-20261015/keel/`. The `keel` state schema is empty and stays, as the schemas of other retired stacks do. The digest-only and floating pins listed here on 2026-10-11 are pinned and owned by Renovate.
 
 | Component | Stack | Why | What it needs |
 |---|---|---|---|
-| Keel package and fork | GitHub | `ghcr.io/viktorbarzin/keel` and the ViktorBarzin/keel fork are still published | delete both if wanted (Viktor's call) |
 | Inert Keel and DIUN metadata | about 40 stacks | 78 workloads keep `keel.sh/*` metadata annotations, and `diun.*` pod-template annotations stay because removing them restarts the workloads | drop template annotations with the next change that rolls each workload; strip the metadata annotations in one pass, or leave them |
 | Leftover UpdateRequests | kyverno | 128 UpdateRequests from the generate ClusterPolicies the CEL migration replaced (the 89 for `inject-keel-annotations` are gone) | delete once, or leave |
 | youtubedl-material | ytdlp | pinned `nightly-2025-03-18`, the running digest; upstream has published nothing newer | none until upstream publishes, or replace the app |
