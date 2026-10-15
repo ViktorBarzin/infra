@@ -65,125 +65,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.resume]
 }
 
-# Printer service (browserless chromium for PDF generation)
-resource "kubernetes_deployment" "printer" {
-  metadata {
-    name      = "printer"
-    namespace = kubernetes_namespace.resume.metadata[0].name
-    labels = {
-      app  = "printer"
-      tier = local.tiers.aux
-      # Scale-to-zero enrollment (ADR-0022): wakes/parks together with the
-      # resume app (one sablier group) — resume's PDF printing depends on it.
-      "sablier.enable" = "true"
-      "sablier.group"  = "resume"
-      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
-      # propagation so the first forwarded request never hits a 503 race.
-      "sablier.ready-after" = "5s"
-    }
-  }
-  spec {
-    # Sablier-managed 0<->1 (group "resume"): parked when idle, woken by the
-    # first request through the resume ingress. 0 here = parked default on
-    # (re)create; live value is under ignore_changes.
-    replicas = 0
-    selector {
-      match_labels = {
-        app = "printer"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "printer"
-        }
-      }
-      spec {
-        container {
-          name  = "printer"
-          image = "ghcr.io/browserless/chromium:v2.57.0"
-
-          port {
-            container_port = 3000
-          }
-
-          env {
-            name  = "HEALTH"
-            value = "true"
-          }
-          env {
-            name  = "CONCURRENT"
-            value = "20"
-          }
-          env {
-            name  = "QUEUED"
-            value = "10"
-          }
-
-          # Chromium cannot boot in the old 128Mi limit — the pod crash-looped
-          # on the first sablier wake (2026-07-12; this pair was hand-parked in
-          # March precisely for OOM). Burstable with a hard 1Gi cap: enough to
-          # render PDFs, can never eat the node like the uncapped incident,
-          # and costs nothing while parked (the scale-to-zero point).
-          resources {
-            requests = {
-              memory = "256Mi"
-              cpu    = "25m"
-            }
-            limits = {
-              memory = "1Gi"
-            }
-          }
-
-          liveness_probe {
-            http_get {
-              path = "/pressure"
-              port = 3000
-            }
-            initial_delay_seconds = 30
-            period_seconds        = 10
-            timeout_seconds       = 5
-          }
-          readiness_probe {
-            http_get {
-              path = "/pressure"
-              port = 3000
-            }
-            initial_delay_seconds = 10
-            period_seconds        = 10
-            timeout_seconds       = 5
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["kubernetes.io/change-cause"],
-      metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
-    ]
-  }
-}
-
-resource "kubernetes_service" "printer" {
-  metadata {
-    name      = "printer"
-    namespace = kubernetes_namespace.resume.metadata[0].name
-  }
-  spec {
-    selector = {
-      app = "printer"
-    }
-    port {
-      port        = 3000
-      target_port = 3000
-    }
-  }
-}
-
 module "nfs_data_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "resume-data-host"
@@ -203,7 +84,7 @@ resource "kubernetes_deployment" "resume" {
     labels = {
       app  = "resume"
       tier = local.tiers.aux
-      # Scale-to-zero enrollment (ADR-0022): group "resume" = resume + printer.
+      # Scale-to-zero enrollment (ADR-0022): group "resume".
       "sablier.enable" = "true"
       "sablier.group"  = "resume"
       # 5s settling delay after k8s readiness: covers Traefik endpoint-list
@@ -213,7 +94,7 @@ resource "kubernetes_deployment" "resume" {
   }
   spec {
     # Sablier-managed 0<->1 (group "resume"): first request through the
-    # ingress wakes both this and printer; 3h idle parks them again.
+    # ingress wakes it; 3h idle parks it again.
     replicas = 0
     strategy {
       type = "Recreate"
@@ -396,8 +277,10 @@ module "ingress" {
   namespace       = kubernetes_namespace.resume.metadata[0].name
   name            = "resume"
   tls_secret_name = var.tls_secret_name
-  # Scale-to-zero pilot (ADR-0022): first request wakes the resume group
-  # (resume + printer), 3h idle parks it. Held-request wake, no waiting page.
+  # Scale-to-zero pilot (ADR-0022): first request wakes the resume group,
+  # 3h idle parks it. Held-request wake, no waiting page. v6 renders PDFs
+  # in the browser, so the browserless printer that used to share this
+  # group is gone.
   sablier = {
     group = "resume"
   }

@@ -363,6 +363,17 @@ kubectl get cluster -n dbaas
 kubectl cnpg promote pg-cluster-2 -n dbaas
 ```
 
+### PostgreSQL: CNPG Operator Restarting With "leader election lost"
+
+**Cause**: the operator holds a leader-election Lease and exits when it cannot renew it in time. With the upstream defaults (lease 15s, renew deadline 10s, so a 5s request timeout) a slow etcd write was enough: operator 1.30.1 restarted 67 times in its first 2d13h (2026-10-12 to 10-15), each one logging `Failed to renew lease ... context deadline exceeded`.
+
+**Fix in place**: `stacks/cnpg` passes `--leader-lease-duration=60` and `--leader-renew-deadline=45` through the chart's `additionalArgs` (2026-10-15), matching the control-plane tuning in `stacks/rbac/modules/rbac/leader-election-tuning.tf`. The retry period is not configurable in 1.30 and stays at 2s. Running Postgres instances keep serving while the operator restarts; failover and reconciliation wait until it is back.
+
+```bash
+kubectl -n cnpg-system get deploy cnpg-cloudnative-pg -o jsonpath='{.spec.template.spec.containers[0].args}'
+homelab metrics query 'sum(increase(kube_pod_container_status_restarts_total{namespace="cnpg-system"}[24h]))'
+```
+
 ### MySQL: Pod Stuck on Excluded Node
 
 **Cause**: Anti-affinity rule not applied (should exclude k8s-node1)
