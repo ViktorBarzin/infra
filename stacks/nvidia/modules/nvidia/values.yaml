@@ -29,7 +29,15 @@ driver:
   # kernel 6.8.0-117 (held), so the operator pulls 580.178.04-ubuntu24.04 and
   # compiles the open kernel module against those headers, as 570 did.
   # NVIDIA also publishes a precompiled 580-6.8.0-117-generic-ubuntu24.04.
-  version: "580.178.04"
+  # 2026-10-15: 580 LTSB -> 595 production branch (595.91.07, EOL 2027-03;
+  # CUDA 13). It is the default and recommended driver for gpu-operator
+  # v26.7.x. 610 and 615 are also in the v26.7.x matrix but are new feature
+  # branches with short support windows, so 595 is the newer branch to run.
+  # There is no precompiled 595 image for 6.8.0-117 (only 6.8.0-124 and
+  # later), so the open kernel module is compiled against the held kernel's
+  # headers, as with 580. Rollback: set this back to "580.178.04" and delete
+  # the driver pod (the DaemonSet is OnDelete).
+  version: "595.91.07"
   upgradePolicy:
     autoUpgrade: false
 
