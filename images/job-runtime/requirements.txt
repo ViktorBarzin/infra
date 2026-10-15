@@ -1,0 +1,9 @@
+# uptime-kuma internal/external-monitor-sync
+uptime-kuma-api==1.2.1
+# email-roundtrip-monitor, qbittorrent-ratio-monitor, mam-farming jobs
+requests==2.34.2
+# phpipam-import
+PyMySQL==1.2.3
+netaddr==1.3.0
+websockets==17.2
+PyYAML==6.0.3
