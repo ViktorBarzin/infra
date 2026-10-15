@@ -302,7 +302,7 @@ Each of these is a disabled `packageRules` entry in `renovate.json5` with a `HEL
 | osrm-backend majors and minors | osm_routing | osrm-routed refuses a graph built by a different major.minor | a bump builds the graph first, then moves the serving pods |
 | Nextcloud majors | nextcloud | a major runs a one-way `occ upgrade` and can disable apps. 35.0.1 since 2026-10-12; minors and patches go through the rails | the procedure in the comment on `nextcloud_image_tag` (LVM snapshot, mysqldump, watchdog suspended) |
 | Forgejo majors | forgejo | Forgejo hosts this repository, the bot and the webhook the rails use, and its migrations are one-way. 16.0.5 since 2026-10-12 | an LVM snapshot and a mysqldump, then one major per apply from a workstation |
-| Technitium majors | technitium | home DNS, on 15.6.1 | a supervised 15 to 16 upgrade |
+| Technitium majors | technitium | home DNS, on 15.6.1. On 2026-10-15 no 16.x had been published (15.6.1 of 2026-10-11 is the newest release) | a supervised 15 to 16 upgrade once 16.x ships: a backup of each instance, then tertiary, secondary, primary one at a time |
 | NVIDIA driver majors | nvidia | 580.178.04 (LTSB) since 2026-10-12, against the held GPU node kernel 6.8.0-117 | a supervised run for the next major |
 | Provider majors | root `terragrunt.hcl` | vault 5 and cloudflare 5 change resources used by many stacks; authentik 2026.x gates cluster access; telmate/proxmox (all updates) manages the node VMs | a plan of every consumer stack before each |
 | Kubernetes 1.36 and 1.37 | cluster | paused by Viktor on 2026-10-12 until Kyverno 1.20 ships (2026-10-23) | Kyverno 1.20 (Renovate lands chart 3.10 when it is published), then the version chain |
