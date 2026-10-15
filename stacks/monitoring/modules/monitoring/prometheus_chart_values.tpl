@@ -493,7 +493,12 @@ server:
   # prometheus-backup alpine sidecar, the next apply put the Terraform tag
   # back, and each flip replaced the Prometheus pod (11 ReplicaSets in 14h on
   # 2026-08-16). Keel is parked now. Renovate proposes bumps to the chart
-  # version and to the alpine tag below through the CI rails.
+  # version and to the alpine tag below through the CI rails. Each bump
+  # replaces the pod, and with the WAL on tmpfs that loses the head block
+  # (1 to 3 h of samples; 116 min on 2026-10-14). Every chart bump already
+  # does this because the pod template carries the helm.sh/chart label, so
+  # the alpine tag has no Renovate hold of its own since 2026-10-15. For a
+  # restart without the gap, see docs/runbooks/prometheus-restart-keep-head.md.
   # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
   # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
   # below keep critical metrics fresh; alert `for:` durations were audited and
@@ -564,7 +569,7 @@ server:
       readOnly: true
   sidecarContainers:
     prometheus-backup:
-      image: docker.io/library/alpine:3.21
+      image: docker.io/library/alpine:3.24
       command:
         - /bin/sh
         - -c
