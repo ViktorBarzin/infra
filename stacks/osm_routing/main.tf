@@ -434,7 +434,7 @@ resource "kubernetes_service" "otp" {
 # Both NFS PVCs were EMPTY (4.0K, untouched since 2026-04-12), so osrm-routed had
 # no graph to load — the serving pods could not have worked even at replicas>0.
 # These build the Greater London graphs the deployments load, into
-# local.osrm_graph_dir (/data/<osrm version>/<profile>). The v6.0.0 graphs from
+# local.osrm_build_graph_dir (/data/<osrm version>/<profile>). The v6.0.0 graphs from
 # before the v26 cut-over are at /data/foot and /data/bicycle; nothing reads
 # them after the cut-over, and they can be deleted once v26 is verified.
 #
@@ -445,21 +445,27 @@ resource "kubernetes_service" "otp" {
 #
 # Design: realestate-crawler/docs/plans/2026-08-04-routing-backends-design.md
 locals {
-  # One image for build and serve. osrm-routed refuses a graph prepared by a
-  # different major.minor (util::FingerPrint::IsDataCompatible), so graphs live
-  # in a directory named after the osrm version that built them. A version bump
-  # therefore points the serving pods at a directory that is empty until
-  # osrm-refresh has run with the new image: build first (bump only the CronJob
-  # image, run it once), then move the serving pods. The rolling update with a
-  # readiness probe keeps the old pod serving if a new one cannot load its graph.
-  osrm_image     = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
-  osrm_graph_dir = "/data/${element(split(":", local.osrm_image), 1)}"
+  # Build and serve normally use one image. osrm-routed refuses a graph prepared
+  # by a different major.minor (util::FingerPrint::IsDataCompatible), so graphs
+  # live in a directory named after the osrm version that built them. A version
+  # bump therefore points the serving pods at a directory that is empty until
+  # osrm-refresh has run with the new image: build first (move only
+  # osrm_build_image, run the CronJob once), then move osrm_image to match. The
+  # rolling update with a readiness probe keeps the old pod serving if a new one
+  # cannot load its graph.
+  #
+  # From v26.6.5 osrm publishes Debian images with a suffix (-debian); the graph
+  # directory is named after the bare version (v26.10.0), not the full tag.
+  osrm_image           = "ghcr.io/project-osrm/osrm-backend:v26.4.0"
+  osrm_build_image     = "ghcr.io/project-osrm/osrm-backend:v26.10.0-debian"
+  osrm_graph_dir       = "/data/${regex("v[0-9]+\\.[0-9]+\\.[0-9]+", element(split(":", local.osrm_image), 1))}"
+  osrm_build_graph_dir = "/data/${regex("v[0-9]+\\.[0-9]+\\.[0-9]+", element(split(":", local.osrm_build_image), 1))}"
 
-  # Shared by the one-off Job and the monthly CronJob so the two can never drift.
-  # GRAPH_DIR comes from the container env (local.osrm_graph_dir).
-  osrm_build_script = <<-EOT
-    # sh, not bash: the osrm-backend image ships /bin/sh only. No pipefail for
-    # the same reason. wget, not curl: curl is not in the image (verified 2026-08-04).
+  # Download step, in its own init container: the Debian osrm images ship
+  # neither wget nor curl. curl follows Geofabrik's 307 from the -latest URL to
+  # the dated file.
+  osrm_download_image  = "docker.io/curlimages/curl:8.23.0"
+  osrm_download_script = <<-EOT
     set -eu
     cd /data
     echo "downloading Greater London extract"
@@ -469,7 +475,7 @@ locals {
     # 307 to a dated file); the same request worked on 2026-10-12, so this was
     # transient upstream, and the Job's own retries came too fast to outlast it.
     n=1
-    until wget -q -O greater-london-latest.osm.pbf.tmp \
+    until curl -fsSL --max-time 1800 -o greater-london-latest.osm.pbf.tmp \
       https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf; do
       if [ "$n" -ge 6 ]; then echo "download failed $n times, giving up"; exit 1; fi
       echo "download attempt $n failed, retrying in 10 minutes"
@@ -478,6 +484,15 @@ locals {
       sleep 600
     done
     mv greater-london-latest.osm.pbf.tmp greater-london-latest.osm.pbf
+    ls -la greater-london-latest.osm.pbf
+  EOT
+
+  # Shared by every graph build (the monthly CronJob and on-demand Jobs made
+  # from it). GRAPH_DIR comes from the container env (local.osrm_build_graph_dir).
+  osrm_build_script = <<-EOT
+    set -eu
+    cd /data
+    test -s greater-london-latest.osm.pbf
     mkdir -p "$GRAPH_DIR"
     for profile in foot bicycle; do
       out="$GRAPH_DIR/$profile"
@@ -531,14 +546,38 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
           metadata { labels = { app = "osrm-refresh" } }
           spec {
             restart_policy = "Never"
+            init_container {
+              name    = "download"
+              image   = local.osrm_download_image
+              command = ["/bin/sh", "-c"]
+              args    = [local.osrm_download_script]
+              # The curl image runs as uid 100; the NFS directory belongs to
+              # root, as the osrm image that downloaded before always ran.
+              security_context {
+                run_as_user = 0
+              }
+              volume_mount {
+                name       = "osrm-data"
+                mount_path = "/data"
+              }
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
             container {
               name    = "build"
-              image   = local.osrm_image
+              image   = local.osrm_build_image
               command = ["/bin/sh", "-c"]
               args    = [local.osrm_build_script]
               env {
                 name  = "GRAPH_DIR"
-                value = local.osrm_graph_dir
+                value = local.osrm_build_graph_dir
               }
               volume_mount {
                 name       = "osrm-data"
