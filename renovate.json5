@@ -349,11 +349,6 @@
       enabled: false,
     },
     {
-      description: "HELD: image pins in prometheus_chart_values.tpl (2026-10-11). Images there land in the prometheus-server pod (e.g. the prometheus-backup sidecar), so a bump replaces the pod; its WAL is tmpfs, a restart drops up to 2 h of head data and resets alert for-state, and the verify checks of every stack that query Prometheus fail while it restarts (all six traefik and monitoring bumps were reverted for that in pipeline 2280). Bump these by hand in a chosen window.",
-      matchFileNames: ["stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl"],
-      enabled: false,
-    },
-    {
       description: "HELD: every update in stacks/dbaas (2026-10-11). Before any dbaas bump the rails run all of the stack's backup CronJobs, and the full mysqldump | gzip -9 takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s). mysql 8.4.11 was held-reverted in pipeline 2244, and each held bump pauses Renovate for 2 h, so a pgadmin or phpmyadmin bump would stall the backlog the same way. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
       matchFileNames: ["stacks/dbaas/**"],
       enabled: false,
