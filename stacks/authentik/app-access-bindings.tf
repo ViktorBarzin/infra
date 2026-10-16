@@ -92,8 +92,9 @@ resource "authentik_policy_binding" "tripit_admins_access" {
 # Values match the live objects exactly, so the adoption plans to no change.
 #
 # The applications themselves stay UI-managed. Literal UUIDs for the reason the
-# top of this file gives. `binding` is the live binding pk, used by the import
-# below.
+# top of this file gives. `binding` is the pk each one was imported from
+# (applied 2026-10-16: 8 imported, 0 changed); it is kept for lookups and
+# read by nothing.
 locals {
   ui_app_bindings = {
     "cloudflare-admins" = {
@@ -146,12 +147,6 @@ locals {
       order   = 0
     }
   }
-}
-
-import {
-  for_each = local.ui_app_bindings
-  to       = authentik_policy_binding.ui_app_access[each.key]
-  id       = each.value.binding
 }
 
 resource "authentik_policy_binding" "ui_app_access" {
