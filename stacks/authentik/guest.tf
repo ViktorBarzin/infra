@@ -151,12 +151,11 @@ resource "authentik_application" "public" {
 
 # Explicit allow for every signed-in account, `guest` included. Until
 # 2026-10-16 this application had no bindings and relied on Authentik's
-# `core_default_app_access` flag (default true), which admits everyone to an
-# application with no bindings. ADR-0001 (~/code/docs/adr) turns that flag
-# off once Terraform can set it (goauthentik provider 2026.5.0 or later; the
-# pinned 2025.12.1 drops the key), after which an application with no
-# bindings admits nobody, so the public tier needs this binding to keep
-# working. A group binding would not
+# `core_default_app_access` flag, which admits everyone to an application
+# with no bindings. ADR-0001 (~/code/docs/adr) turned that flag off on
+# 2026-10-16 (system-settings.tf), so an application with no bindings admits
+# nobody, and the public tier needs this binding to keep working. A group
+# binding would not
 # do: signed-in household members reach public pages with their own account,
 # and they are in no single group. app-access-guard.tf exempts this slug.
 resource "authentik_policy_expression" "public_allow_all" {

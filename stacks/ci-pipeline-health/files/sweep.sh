@@ -226,28 +226,40 @@ fi
 
 # --- Application default-deny audit (infra#51) ------------------------------
 #
-# Authentik's `core_default_app_access` defaults to TRUE, so an application with
-# ZERO policy bindings is reachable by any authenticated user — including a
-# confined Proxy Users guest. There is no warning in the UI and nothing in a
-# Terraform plan says so; the app simply works for everyone, which reads as
-# success. Found on 2026-09-02: `kubernetes-agent` had been live with zero
-# bindings (now 4).
+# Until 2026-10-16 Authentik's `core_default_app_access` flag was on, so an
+# application with ZERO policy bindings was reachable by any authenticated user,
+# including a confined Proxy Users guest, with no warning in the UI or in a
+# Terraform plan. Found on 2026-09-02: `kubernetes-agent` had been live with
+# zero bindings (now 4). ADR-0001 turned the flag off in Terraform
+# (stacks/authentik/system-settings.tf), so an unbound application now admits
+# nobody.
 #
-# The whitelist is for applications that are deliberately open. Adding a slug
-# here is a decision to make it reachable by every authenticated user, so it
-# wants a reason next to it.
+# Two checks follow from that. The flag must still read false: if it is ever
+# switched back on in the UI, every unbound application opens up again. And an
+# application with zero bindings is now closed to everyone, which is almost
+# always a missing binding rather than a choice, so it is still reported.
+# The `public` application has its own allow-all binding (guest.tf), so no slug
+# is exempt.
 #
 # The app-count assertion is the same lesson as the forward-auth GRANT rows
 # below: if the token loses scope and the list comes back empty, "no unbound
 # applications" is what a broken check prints too.
 if [ -n "${AUTHENTIK_TOKEN:-}" ]; then
   AK_API="${AK_API:-https://authentik.viktorbarzin.me/api/v3}"
-  # slug | why it is deliberately open
-  #   public — the unauthenticated landing app; gating it would break anon access
-  AK_OPEN_APPS="public"
 
+  ak_default_access=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+    "$AK_API/admin/settings/" 2>/dev/null | jq -r '.flags.core_default_app_access // "err"')
+  case "$ak_default_access" in
+  false) ;;
+  true) echo "authentik core_default_app_access is ON: every application with zero policy bindings admits every authenticated user. Terraform sets it false (stacks/authentik/system-settings.tf); someone changed it outside Terraform." >>"$ISSUES" ;;
+  *) echo "application default-deny audit: could not read core_default_app_access from /admin/settings/" >>"$NOTES" ;;
+  esac
+
+  # superuser_full_list: without it the API lists only the applications the
+  # token's user may open, and with the flag off that leaves out exactly the
+  # unbound ones this audit looks for. The API caps a page at 100 rows.
   ak_apps=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
-    "$AK_API/core/applications/?page_size=200" 2>/dev/null |
+    "$AK_API/core/applications/?page_size=100&superuser_full_list=true" 2>/dev/null |
     jq -r '.results[] | "\(.slug)\t\(.pk)"')
   ak_app_count=$(printf '%s' "$ak_apps" | grep -c . || true)
 
@@ -257,11 +269,10 @@ if [ -n "${AUTHENTIK_TOKEN:-}" ]; then
     unbound=0
     while IFS="$(printf '\t')" read -r slug pk; do
       [ -z "$slug" ] && continue
-      case " $AK_OPEN_APPS " in *" $slug "*) continue ;; esac
       n=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
         "$AK_API/policies/bindings/?target=$pk" 2>/dev/null | jq -r '.pagination.count // "err"')
       if [ "$n" = "0" ]; then
-        echo "authentik application '$slug' has ZERO policy bindings — reachable by every authenticated user (core_default_app_access defaults true). Bind a group, or add it to AK_OPEN_APPS with a reason." >>"$ISSUES"
+        echo "authentik application '$slug' has ZERO policy bindings, so it admits nobody (core_default_app_access is off). Bind the groups that should reach it." >>"$ISSUES"
         unbound=$((unbound + 1))
       elif [ "$n" = "err" ]; then
         echo "application default-deny audit: could not read bindings for '$slug'" >>"$NOTES"
@@ -270,7 +281,7 @@ if [ -n "${AUTHENTIK_TOKEN:-}" ]; then
 $ak_apps
 EOF
     if [ "$unbound" = "0" ]; then
-      echo "app default-deny: $ak_app_count apps checked, none unbound" >>"$NOTES"
+      echo "app default-deny: core_default_app_access=$ak_default_access, $ak_app_count apps checked, none unbound" >>"$NOTES"
     fi
   fi
 else

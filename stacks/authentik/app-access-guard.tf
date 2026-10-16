@@ -1,9 +1,13 @@
 # Every Authentik application must have an access binding.
 #
-# Authentik admits any signed-in account to an application that has no policy
-# binding. That gap was found on 2026-07-26 (Kubernetes, Kubernetes Dashboard,
-# TripIt) and again on 2026-09-02 (kubernetes-agent), each time by a manual
-# audit (app-access-bindings.tf). From f1-stream ADR-0042 on, open signup
+# Until 2026-10-16 Authentik admitted any signed-in account to an application
+# that had no policy binding (`core_default_app_access`, now off in
+# system-settings.tf). That gap was found on 2026-07-26 (Kubernetes,
+# Kubernetes Dashboard, TripIt) and again on 2026-09-02 (kubernetes-agent),
+# each time by a manual audit (app-access-bindings.tf). With the flag off an
+# unbound application admits nobody; this guard still requires a binding, so
+# an application is never closed by accident and never open if the flag is
+# switched back on outside Terraform. From f1-stream ADR-0042 on, open signup
 # creates accounts that belong to no group, so an application added without a
 # binding would be open to anyone with a Google account.
 #

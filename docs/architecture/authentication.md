@@ -301,6 +301,28 @@ The oauth2-proxy + `k8s-dashboard` Authentik OIDC app (built for the
 seamless-SSO design) remain deployed but **idle/unwired** pending the
 apiserver-OIDC fix.
 
+### Application access is default-deny (2026-10-16, ADR-0001)
+
+Authentik's `core_default_app_access` system flag is off, set in
+`stacks/authentik/system-settings.tf`. An application with no policy bindings
+admits nobody, so a new application stays closed until it is bound to the
+groups that should reach it. Before 2026-10-16 the flag was on (Authentik's
+default) and an unbound application admitted every signed-in account,
+including the `guest` identity behind `auth = "public"`.
+
+The flag is read only by an application's policy engine, not by flows or
+stages, so sign-in, enrollment and recovery flows are unaffected. The `public`
+application is bound to the allow-all policy `public-allow-all`
+(`stacks/authentik/guest.tf`) so the anonymous tier keeps working.
+`stacks/authentik/app-access-guard.tf` fails the plan for any application
+without a group or user binding, and the ci-pipeline-health sweep reports both
+an unbound application and the flag reading true.
+
+`system-settings.tf` sets every system setting to its live value, because the
+provider sends a full update with its own defaults for anything left out
+(`default_token_duration` would drop from `hours=168` to `minutes=30`). Change
+system settings there, not in the admin UI.
+
 ### Authentik Groups
 
 9 groups manage authorization:

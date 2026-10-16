@@ -29,10 +29,12 @@
 # enforced). scripts/check-allowed-groups.py fails the stack before plan if they
 # differ. Home Server Admins is implied in the JSON and bound on every host.
 #
-# ORDERING. An application with no bindings admits any signed-in user,
-# including the silent `guest` identity. The outpost therefore depends_on every
-# binding, so a provider is served only after its bindings exist, and on removal
-# the outpost drops a provider before its bindings are destroyed.
+# ORDERING. With `core_default_app_access` off (system-settings.tf), an
+# application with no bindings admits nobody; with it on, it would admit any
+# signed-in user, including the silent `guest` identity. The outpost therefore
+# depends_on every binding, so a provider is served only after its bindings
+# exist, and on removal the outpost drops a provider before its bindings are
+# destroyed.
 
 locals {
   forward_auth_apps = jsondecode(file("${path.module}/forward-auth-apps.json"))
