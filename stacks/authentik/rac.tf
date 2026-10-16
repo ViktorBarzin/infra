@@ -47,10 +47,11 @@ locals {
 }
 
 # -----------------------------------------------------------------------------
-# Who may open a remote session. Same reasoning as postgres-ldap.tf: an
-# application with no policy bindings is reachable by any authenticated user,
-# because `core_default_app_access` defaults to True and this instance leaves it
-# there. The group is created EMPTY.
+# Who may open a remote session. Same reasoning as postgres-ldap.tf: access is
+# decided by this application's policy binding. Since 2026-10-16
+# `core_default_app_access` is off (system-settings.tf), so without the binding
+# nobody could open a session; app-access-guard.tf requires it either way. The
+# group is created EMPTY.
 # -----------------------------------------------------------------------------
 
 resource "authentik_group" "rac_users" {

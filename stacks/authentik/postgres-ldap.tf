@@ -92,11 +92,12 @@ resource "authentik_flow_stage_binding" "ldap_bind_login" {
 }
 
 # -----------------------------------------------------------------------------
-# Who may bind. An application with no policy bindings is reachable by ANY
-# authenticated user — the `core_default_app_access` flag defaults to True and
-# this instance leaves it at the default (live `flags` map is empty, checked
-# 2026-09-01), which is the same default-deny gap app-access-bindings.tf closed
-# for the OIDC apps. So the binding below is required, not decorative.
+# Who may bind. When this was written (2026-09-01) an application with no
+# policy bindings was reachable by ANY authenticated user, because
+# `core_default_app_access` was on; app-access-bindings.tf closed the same gap
+# for the OIDC apps. The flag is off since 2026-10-16 (system-settings.tf), so
+# without the binding below nobody could bind, and app-access-guard.tf requires
+# it either way.
 #
 # The group is created EMPTY: nobody can bind until a person is added to it,
 # which is the second half of enabling this (the first being the replica count).

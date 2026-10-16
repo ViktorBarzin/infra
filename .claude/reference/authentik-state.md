@@ -22,11 +22,20 @@
 
 ### Access bindings
 
-Authentik admits any signed-in account to an application with no policy
-binding, so every application carries group bindings that decide who may open
-it. Audited 2026-10-16 (38 applications live, including the per-host
-`(forward auth)` applications): all were gated by group bindings except
-`Public`, which is the anonymous `auth = "public"` tier by design.
+Since 2026-10-16 `core_default_app_access` is off
+(`stacks/authentik/system-settings.tf`, ADR-0001): an application with no
+policy binding admits nobody. Before that it admitted any signed-in account.
+Every application carries group bindings that decide who may open it. Audited
+2026-10-16 (39 applications live, including the per-host `(forward auth)`
+applications): all had at least one enabled binding, and all were gated by
+group bindings except `Public`, which is bound to the allow-all policy
+`public-allow-all` (`stacks/authentik/guest.tf`) because it is the anonymous
+`auth = "public"` tier.
+
+System settings (`flags`, token duration, avatars and the rest) are
+Terraform-owned in `system-settings.tf`, every attribute set to its live
+value, because the provider's full update resets anything left out to the
+provider default.
 
 | Where the binding is declared | Applications |
 |---|---|
@@ -38,6 +47,7 @@ it. Audited 2026-10-16 (38 applications live, including the per-host
 | `stacks/authentik/postgres-ldap.tf`, `rac.tf` | Postgres LDAP, Remote Access |
 | `stacks/f1-stream/members.tf` | F1 Stream |
 | `stacks/tasks/authentik.tf` | Tasks (Tasks Users, Tasks Admins, Home Server Admins) |
+| `stacks/authentik/guest.tf` | Public (allow-all policy `public-allow-all`) |
 
 `stacks/authentik/app-access-guard.tf` reads every application and binding
 from the API and fails the authentik plan or apply when an application has no

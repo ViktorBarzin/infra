@@ -82,12 +82,13 @@ Read from the live server source:
 
 ### Default-deny is carried by the policy bindings
 
-`core_default_app_access` defaults to `True` and this instance leaves it at the
-default (the live `flags` map is empty), which means **an application with no
-policy bindings is reachable by any authenticated user**. This is the same gap
-`app-access-bindings.tf` closed for the OIDC apps. Both new applications
-therefore carry a binding to a group that is created empty, so nobody passes
-until a person is added.
+Since 2026-10-16 `core_default_app_access` is off
+(`stacks/authentik/system-settings.tf`, ADR-0001), so an application with no
+policy bindings admits nobody. Before that it admitted any authenticated user,
+which is the gap `app-access-bindings.tf` closed for the OIDC apps. Both
+applications carry a binding to a group that is created empty, so nobody passes
+until a person is added, and `app-access-guard.tf` fails the plan for an
+application without one.
 
 ## Checking current state
 
