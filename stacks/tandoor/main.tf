@@ -155,9 +155,12 @@ resource "kubernetes_deployment" "tandoor" {
             name  = "TANDOOR_PORT"
             value = 8080
           }
+          # Closed: the ingress is auth = "app", so open signup let anyone on
+          # the internet create an account. New household members join through
+          # an invite link from an existing space, which works with this off.
           env {
             name  = "ENABLE_SIGNUP"
-            value = 1
+            value = 0
           }
           env {
             name  = "ALLOWED_HOSTS"
