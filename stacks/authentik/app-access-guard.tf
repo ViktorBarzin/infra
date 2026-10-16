@@ -48,12 +48,29 @@ locals {
     Accept        = "application/json"
     Authorization = "Bearer ${data.vault_kv_secret_v2.authentik_tf.data["tf_api_token"]}"
   }
+
+  # Authentik returns at most 100 results per page whatever page_size asks
+  # for, so each listing below reads a fixed run of pages, and a page past
+  # the end answers 404. Five pages hold 500 applications and 500 bindings;
+  # on 2026-10-16 there were 38 and 94. The bindings listing holds every
+  # binding (applications, flows, stages), not only application ones. The
+  # page count is fixed rather than derived from the first page's count,
+  # because for_each cannot use a value that is unknown until apply, which is
+  # what these reads are when their depends_on changes. When a listing
+  # outgrows the pages read, the guard below fails and names this local.
+  #
+  # Each listing is ordered by a unique field, so rows cannot shift between
+  # pages. The default ordering of bindings is not unique.
+  authentik_list_pages     = toset(["1", "2", "3", "4", "5"])
+  authentik_list_page_size = 100
 }
 
 data "http" "authentik_applications" {
+  for_each = local.authentik_list_pages
+
   # superuser_full_list: without it the API lists only the applications the
   # token's user (akadmin) may open, which would hide exactly the gated ones.
-  url             = "${local.authentik_api}/core/applications/?superuser_full_list=true&page_size=1000"
+  url             = "${local.authentik_api}/core/applications/?superuser_full_list=true&ordering=slug&page_size=${local.authentik_list_page_size}&page=${each.key}"
   request_headers = local.authentik_api_headers
 
   depends_on = [
@@ -66,14 +83,16 @@ data "http" "authentik_applications" {
 
   lifecycle {
     postcondition {
-      condition     = self.status_code == 200 && try(jsondecode(self.response_body).pagination.next == 0, false)
-      error_message = "Listing Authentik applications failed or returned more than one page (HTTP ${self.status_code}); the access-binding check cannot run."
+      condition     = self.status_code == 200 || (self.status_code == 404 && each.key != "1")
+      error_message = "Listing Authentik applications failed on page ${each.key} (HTTP ${self.status_code}); the access-binding check cannot run."
     }
   }
 }
 
 data "http" "authentik_policy_bindings" {
-  url             = "${local.authentik_api}/policies/bindings/?page_size=1000"
+  for_each = local.authentik_list_pages
+
+  url             = "${local.authentik_api}/policies/bindings/?ordering=pk&page_size=${local.authentik_list_page_size}&page=${each.key}"
   request_headers = local.authentik_api_headers
 
   depends_on = [
@@ -93,15 +112,39 @@ data "http" "authentik_policy_bindings" {
 
   lifecycle {
     postcondition {
-      condition     = self.status_code == 200 && try(jsondecode(self.response_body).pagination.next == 0, false)
-      error_message = "Listing Authentik policy bindings failed or returned more than one page (HTTP ${self.status_code}); the access-binding check cannot run."
+      condition     = self.status_code == 200 || (self.status_code == 404 && each.key != "1")
+      error_message = "Listing Authentik policy bindings failed on page ${each.key} (HTTP ${self.status_code}); the access-binding check cannot run."
     }
   }
 }
 
 locals {
-  live_apps     = jsondecode(data.http.authentik_applications.response_body).results
-  live_bindings = jsondecode(data.http.authentik_policy_bindings.response_body).results
+  # The pages that exist, decoded. Pages past the end (404) drop out.
+  live_app_pages = [
+    for k in sort(local.authentik_list_pages) : jsondecode(data.http.authentik_applications[k].response_body)
+    if data.http.authentik_applications[k].status_code == 200
+  ]
+  live_binding_pages = [
+    for k in sort(local.authentik_list_pages) : jsondecode(data.http.authentik_policy_bindings[k].response_body)
+    if data.http.authentik_policy_bindings[k].status_code == 200
+  ]
+
+  live_apps     = flatten([for p in local.live_app_pages : p.results])
+  live_bindings = flatten([for p in local.live_binding_pages : p.results])
+
+  # A listing is complete when one page read says there is no next page and
+  # the rows read, without duplicates, add up to the count the API reports.
+  # The second half also catches rows added or removed between page reads.
+  live_listing_problems = compact([
+    (
+      anytrue([for p in local.live_app_pages : p.pagination.next == 0]) &&
+      length(distinct([for a in local.live_apps : a.pk])) == local.live_app_pages[0].pagination.count
+    ) ? "" : "applications: read ${length(local.live_apps)} of ${local.live_app_pages[0].pagination.count}",
+    (
+      anytrue([for p in local.live_binding_pages : p.pagination.next == 0]) &&
+      length(distinct([for b in local.live_bindings : b.pk])) == local.live_binding_pages[0].pagination.count
+    ) ? "" : "policy bindings: read ${length(local.live_bindings)} of ${local.live_binding_pages[0].pagination.count}",
+  ])
 
   # Per application: enabled bindings that admit only members of a group or one
   # named user, and enabled bindings of any other kind.
@@ -136,6 +179,14 @@ locals {
 # plan every time an application is added in another stack.
 resource "terraform_data" "app_access_guard" {
   lifecycle {
+    precondition {
+      condition     = length(local.live_listing_problems) == 0
+      error_message = <<-EOT
+        The access-binding check read an incomplete listing from the Authentik API:
+        ${join("\n", [for p in local.live_listing_problems : "  - ${p}"])}
+        If the count is above ${length(local.authentik_list_pages) * local.authentik_list_page_size}, add pages to local.authentik_list_pages in stacks/authentik/app-access-guard.tf. Otherwise the listing changed while it was read; plan again.
+      EOT
+    }
     precondition {
       condition     = length(local.app_access_gaps) == 0
       error_message = <<-EOT
