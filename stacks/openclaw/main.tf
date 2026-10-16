@@ -1895,7 +1895,7 @@ resource "kubernetes_cron_job_v1" "task_processor" {
 
             container {
               name  = "task-processor"
-              image = "bitnami/kubectl:latest@sha256:dbe04f493d362c47db291edb3382aeb56cf430a6271daa56311f5b8e82fecf2a"
+              image = "bitnami/kubectl:latest@sha256:9962c17eecf0e7668327171223f3cad4d6f9005b98c47d8af2d77c095e269b97"
               command = ["bash", "-c", <<-EOF
                 # Find the openclaw pod
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
@@ -2026,7 +2026,7 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
 
             container {
               name  = "memory-sync"
-              image = "bitnami/kubectl:latest@sha256:dbe04f493d362c47db291edb3382aeb56cf430a6271daa56311f5b8e82fecf2a"
+              image = "bitnami/kubectl:latest@sha256:9962c17eecf0e7668327171223f3cad4d6f9005b98c47d8af2d77c095e269b97"
               command = ["bash", "-c", <<-EOF
                 set -eu
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}')
