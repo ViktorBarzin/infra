@@ -496,7 +496,8 @@ resource "cloudflare_ruleset" "f1_cache" {
 # splits them: `cloudflare_tiered_cache` (value "on") owns
 # `cache/tiered_cache_smart_topology_enable`, and `cloudflare_argo_tiered_caching`
 # owns `argo/tiered_caching`. Both settings were already on when the provider
-# moved, so the import below adopts the second one rather than changing it.
+# moved, so the second one was adopted with an import block (applied, then
+# dropped, on 2026-10-16) rather than changed.
 resource "cloudflare_tiered_cache" "zone_smart" {
   zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d"
   value   = "on"
@@ -505,9 +506,4 @@ resource "cloudflare_tiered_cache" "zone_smart" {
 resource "cloudflare_argo_tiered_caching" "zone_smart" {
   zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d"
   value   = "on"
-}
-
-import {
-  to = cloudflare_argo_tiered_caching.zone_smart
-  id = "fd2c5dd4efe8fe38958944e74d0ced6d"
 }
