@@ -24,15 +24,14 @@ The Forgejo canary (2026-10-15, `stacks/turnstile-gate`) split untrusted visitor
 
 ```mermaid
 flowchart TD
-  V[visitor] --> R[real-ip, strip X-Turnstile-Pass]
-  R --> G[gate forwardAuth via fail-open shim]
-  G -->|header X-Turnstile-Pass: 1| S[site]
-  G -->|403 Turnstile page| P[page on the same URL]
-  P -->|token| C[challenge.viktorbarzin.me/verify]
-  C -->|tsgate cookie, Domain=viktorbarzin.me| V
-  G -->|no header| A[shim: shared Anubis check]
-  A -->|header present: 200| S
-  A -->|307 to anubis.viktorbarzin.me| V
+  V[request] --> R[real-ip + strip]
+  R --> G{gate}
+  G -->|pass / exempt| S[site]
+  G -->|HTML, no pass| P[Turnstile]
+  P -->|solved| C[pass cookie]
+  P -->|fails| F[fallback]
+  G -->|fallback / bot| A[Anubis]
+  A -->|ok| S
 ```
 
 ### Two gate variants
