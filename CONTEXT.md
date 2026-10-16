@@ -389,7 +389,20 @@ The **commit-driven** version updater for third-party software. Every 30 minutes
 _Avoid_: conflating with **Woodpecker deploy** (rolls first-party images on their own commits); expecting Renovate to touch the cluster directly, since every change it makes is a commit. Never point `set image` at operator-managed StatefulSets.
 
 **Anubis**:
-A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW).
+A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW). Since 2026-10-16 one more instance, the **shared Anubis**, runs in forwardAuth mode on `anubis.viktorbarzin.me` as the **Fallback** for gated sites that have no Anubis of their own.
+
+**Turnstile gate**:
+The forwardAuth service in `stacks/turnstile-gate` that puts Cloudflare Turnstile in front of public sites (`ingress_factory` `turnstile = true`). It answers each request with a **Pass** (skip Anubis), "Anubis decides", or the challenge page on the requested URL. Two variants: **strict** for sites behind their own Anubis (only a Pass skips it) and **standard** for the rest (only browsers asking for HTML are checked).
+_Avoid_: calling it a proxy (the request never travels through Cloudflare); "the canary" (that was its 48-hour Forgejo-only trial, 2026-10-15).
+
+**Pass**:
+The `tsgate` cookie, set for the whole `viktorbarzin.me` domain for 30 days once the **Challenge host** has verified a Turnstile token. On every request it earns `X-Turnstile-Pass: 1`, which every Anubis instance ALLOWs and which the `strip` middleware deletes from clients at the edge.
+
+**Challenge host**:
+`challenge.viktorbarzin.me`, where the challenge page on any site posts the Turnstile token (`/verify`) or asks for the **Fallback** (`/fallback`), cross-origin with credentials.
+
+**Fallback**:
+What a visitor gets when the Turnstile widget fails or stalls for 15 s: a 1-hour `tsgate_fb` cookie that sends them to Anubis (their site's own, or the shared Anubis). It never admits on its own.
 
 ### Externally-authored sites
 

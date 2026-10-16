@@ -83,12 +83,15 @@ module "ingress" {
   # Authentik's own UI cannot be gated by Authentik forward-auth — that
   # creates a chicken-and-egg loop (users can't reach the login page).
   # auth = "none": Authentik UI cannot be gated by Authentik forward-auth (chicken-and-egg loop prevents login).
-  auth             = "none"
-  dns_type         = "proxied"
-  namespace        = kubernetes_namespace.authentik.metadata[0].name
-  name             = "authentik"
-  service_name     = "goauthentik-server"
-  tls_secret_name  = var.tls_secret_name
+  auth            = "none"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.authentik.metadata[0].name
+  name            = "authentik"
+  service_name    = "goauthentik-server"
+  tls_secret_name = var.tls_secret_name
+  # No Turnstile gate: every SSO login and app OAuth flow (some in phone
+  # webviews) passes through here (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile        = false
   anti_ai_scraping = false
   # Swap the shared 10/50 default limiter for a dedicated 100/1000 carve-out:
   # the login SPA + flow-executor API burst on a cold load otherwise 429s into

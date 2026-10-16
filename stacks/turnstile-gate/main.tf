@@ -294,7 +294,17 @@ resource "kubernetes_config_map" "shim" {
               proxy_pass http://gate;
               proxy_set_header Connection "";
               proxy_set_header Content-Length "";
-              error_page 500 502 503 504 = @open;
+              error_page 500 502 503 504 = @gate_down;
+          }
+          # Gate down: standard sites let everything through with the header
+          # (as they were before Turnstile; without it every API call would go
+          # to Anubis), strict sites fall back to their own Anubis.
+          location @gate_down {
+              if ($arg_variant = "strict") {
+                  return 200;
+              }
+              add_header X-Turnstile-Pass "1";
+              return 200;
           }
           # The shared Anubis, for standard sites. The gate's header (set by
           # the previous forwardAuth, and stripped from clients at the edge)
@@ -310,7 +320,8 @@ resource "kubernetes_config_map" "shim" {
               proxy_set_header Host $http_x_forwarded_host;
               proxy_set_header Connection "";
               proxy_set_header Content-Length "";
-              error_page 500 502 503 504 = @open;
+              # 400: Anubis refusing a redirect target or a missing header.
+              error_page 400 500 502 503 504 = @open;
           }
           location @open {
               return 200;
@@ -526,6 +537,7 @@ module "anubis_ingress" {
   service_name     = module.anubis.service_name
   port             = module.anubis.service_port
   tls_secret_name  = var.tls_secret_name
+  turnstile        = false # it is the fallback; gating it would loop
   anti_ai_scraping = false
   homepage_enabled = false
   external_monitor = false
@@ -545,9 +557,13 @@ module "challenge_ingress" {
   port              = 80
   tls_secret_name   = var.tls_secret_name
   extra_middlewares = ["traefik-real-ip@kubernetescrd"]
-  anti_ai_scraping  = false
-  homepage_enabled  = false
-  external_monitor  = false
+  turnstile         = false
+  # A Traefik error page carries no CORS headers, so the page's fetch would
+  # fail without telling it why; the gate's own answers are always JSON.
+  skip_error_pages = true
+  anti_ai_scraping = false
+  homepage_enabled = false
+  external_monitor = false
 }
 
 # /_gate/verify and /_gate/fallback on forgejo, for challenge pages the canary
