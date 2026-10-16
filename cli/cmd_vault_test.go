@@ -1194,3 +1194,68 @@ func TestVaultHelpMentionsBothSystems(t *testing.T) {
 		t.Error("vault help must name HashiCorp Vault / OpenBao (the infra secrets store)")
 	}
 }
+
+// `bw status` can report "locked" while `bw unlock` answers "You are not logged
+// in." (seen 2026-10-16: the shared appdata lost its login between calls). The
+// session must log in again and retry the unlock once, instead of failing with
+// a message that blames the master password.
+func TestOpenSessionLogsInAgainWhenUnlockSaysNotLoggedIn(t *testing.T) {
+	unlocks, logins := 0, 0
+	run := func(name string, argv, envv []string) (string, error) {
+		key := name + " " + strings.Join(argv, " ")
+		switch {
+		case strings.HasPrefix(key, "vault kv get -field=vaultwarden_"):
+			return "x", nil
+		case key == "bw status":
+			return `{"status":"locked"}`, nil
+		case strings.HasPrefix(key, "bw login"):
+			logins++
+			return "", nil
+		case strings.HasPrefix(key, "bw unlock"):
+			unlocks++
+			if logins == 0 {
+				return "", errors.New("exit status 1: You are not logged in.")
+			}
+			return "SESS", nil
+		case strings.HasPrefix(key, "bw get password github"):
+			return "p@ss", nil
+		}
+		return "", nil
+	}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	val, err := getValue(run, "emo", uid, getOpts{name: "github", field: "password"})
+	if err != nil || val != "p@ss" {
+		t.Fatalf("want p@ss after re-login, got val=%q err=%v", val, err)
+	}
+	if logins != 1 || unlocks != 2 {
+		t.Fatalf("want 1 login and 2 unlocks, got logins=%d unlocks=%d", logins, unlocks)
+	}
+}
+
+// A real wrong-password failure is not retried and keeps the setup hint.
+func TestOpenSessionDoesNotRetryOtherUnlockFailures(t *testing.T) {
+	logins := 0
+	run := func(name string, argv, envv []string) (string, error) {
+		key := name + " " + strings.Join(argv, " ")
+		switch {
+		case strings.HasPrefix(key, "vault kv get -field=vaultwarden_"):
+			return "x", nil
+		case key == "bw status":
+			return `{"status":"locked"}`, nil
+		case strings.HasPrefix(key, "bw login"):
+			logins++
+			return "", nil
+		case strings.HasPrefix(key, "bw unlock"):
+			return "", errors.New("exit status 1: Invalid master password.")
+		}
+		return "", nil
+	}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	_, err := getValue(run, "emo", uid, getOpts{name: "github", field: "password"})
+	if err == nil || !strings.Contains(err.Error(), "wrong master password") {
+		t.Fatalf("want the wrong-master-password error, got %v", err)
+	}
+	if logins != 0 {
+		t.Fatalf("a wrong password must not trigger a login, got %d", logins)
+	}
+}

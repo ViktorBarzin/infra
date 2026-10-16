@@ -467,6 +467,16 @@ func openSession(run cmdRunner, user, uid string) (session, error) {
 		}
 	}
 	sess, err := bwUnlock(run, loginEnv)
+	// `bw status` can say "locked" while `bw unlock` says "You are not logged
+	// in." once the shared appdata has lost its login. Log in and retry once;
+	// otherwise the error blames the master password and callers are told to
+	// re-run setup for nothing.
+	if err != nil && strings.Contains(err.Error(), "You are not logged in") {
+		if _, lerr := run("bw", bwLoginArgs(), loginEnv); lerr != nil {
+			return session{}, fmt.Errorf("bw login --apikey failed (API key valid? run `homelab vault setup`): %w", lerr)
+		}
+		sess, err = bwUnlock(run, loginEnv)
+	}
 	if err != nil {
 		return session{}, err
 	}
