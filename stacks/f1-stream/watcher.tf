@@ -100,6 +100,12 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
             name  = "WATCHER_FULL_SLOTS"
             value = "10"
           }
+          # What full watches may bring the Watcher's download up to, in Mbit/s
+          # (ADR-0044, Download budget). Alert: F1WatcherDownloadOverBudget.
+          env {
+            name  = "WATCHER_DOWNLOAD_BUDGET_MBPS"
+            value = "30"
+          }
           # ADR-0046, measured 2026-10-16 through proxy-egress-uk: no refusal up
           # to 120 mints/hour and 24 open Feeds. These are those floors less 50%
           # headroom (measured = 1.5 x configured), per exit.
