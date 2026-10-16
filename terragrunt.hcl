@@ -84,7 +84,7 @@ terraform {
     vault = {
       source = "hashicorp/vault"
       # renovate: datasource=terraform-provider depName=hashicorp/vault
-      version = "4.8.0"
+      version = "5.13.0"
     }
     cloudflare = {
       source = "cloudflare/cloudflare"
