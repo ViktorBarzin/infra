@@ -1,12 +1,6 @@
-# tasks-next: the TypeScript build of tasks. Since the ADR-0001 cutover
-# (~/code/docs/adr/0001-default-app-stack.md) it serves tasks.viktorbarzin.me
-# through module.ingress in main.tf, and still answers at
-# tasks-next.viktorbarzin.me. The FastAPI Deployment in main.tf keeps running,
-# without a route, as the rollback target.
-#
-# Both builds share the `tasks` database. The TypeScript build's migrations
-# are additive (new tables only, app/drizzle/0001_auth_identity.sql), so the
-# Python image keeps running `alembic upgrade head` against the same schema.
+# The TypeScript build of tasks (ADR-0001, ~/code/docs/adr/0001-default-app-stack.md).
+# It serves tasks.viktorbarzin.me through module.ingress in main.tf. The
+# Python build it replaced was retired on 2026-10-16.
 #
 # Identity: the app signs people in itself, through the `tasks` OAuth2
 # application in authentik.tf. It never reads X-authentik-* headers in
@@ -342,41 +336,7 @@ resource "kubernetes_service" "tasks_next" {
   }
 }
 
-module "ingress_next" {
-  source = "../../modules/kubernetes/ingress_factory"
-  # auth = "app": the app runs its own OIDC sign-in against the `tasks`
-  # Authentik application (Tasks Users, Tasks Admins, Home Server Admins);
-  # /api answers 401 without a session or bearer token. Forward-auth would
-  # break the bearer-token API and the OAuth callback.
-  auth            = "app"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.tasks.metadata[0].name
-  name            = "tasks-next"
-  service_name    = kubernetes_service.tasks_next.metadata[0].name
-  port            = 3000
-  tls_secret_name = var.tls_secret_name
-  # Keeps the default rate-limit middleware: it runs the real-ip plugin, and
-  # Better Auth's rate limiter keys on the X-Real-Ip that sets.
-  # The default csp-headers middleware lets any *.viktorbarzin.me page frame
-  # the app; this one forbids framing.
-  custom_content_security_policy = "frame-ancestors 'none'"
-  # No public route may carry a client-sent X-authentik-* identity.
-  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
-  # An installable PWA whose service worker, SSE stream and bearer-token API
-  # make most requests. Every page past the sign-in wall needs a session, so
-  # there is nothing for a crawler to mine, and the bot-block forwardAuth
-  # would sit on every API call.
-  anti_ai_scraping = false
-  # Same reasoning, plus the installed PWA runs in a standalone webview and
-  # the Turnstile pass is tied to the network that solved it, so a phone
-  # changing networks would meet the challenge page mid-session.
-  turnstile = false
-  # Second host for the same build; the tile is on module.ingress.
-  homepage_enabled = false
-}
-
-# Same shape as tasks-ingress (main.tf): user traffic only from Traefik,
-# /metrics only from Prometheus.
+# User traffic only from Traefik, /metrics only from Prometheus.
 resource "kubernetes_network_policy_v1" "tasks_next_ingress" {
   metadata {
     name      = "tasks-next-ingress"
