@@ -623,16 +623,6 @@ module "anubis" {
     - name: allow-non-get-methods
       action: ALLOW
       expression: method != "GET"
-    # Turnstile canary (stacks/turnstile-gate, 48 h from 2026-10-15): the
-    # gate sets this header after a solved Turnstile, and Traefik's
-    # turnstile-gate-strip middleware deletes any client-sent copy first, so
-    # only the gate can set it. Placed after the AI denies on purpose.
-    - name: allow-turnstile-pass
-      action: ALLOW
-      expression:
-        all:
-          - '"X-Turnstile-Pass" in headers'
-          - 'headers["X-Turnstile-Pass"] == "1"'
     # Everything left is a browser GET of an HTML page, which is the entire
     # crawl surface.
     - name: catchall-challenge
@@ -734,11 +724,9 @@ module "ingress" {
   # OCI registry pushes ship full image layer blobs in one request; default
   # Traefik buffering chokes on anything past a few hundred MB.
   max_body_size = "5g"
-  # Turnstile canary, 48 h from 2026-10-15 (stacks/turnstile-gate). The
-  # factory puts real-ip first, so the gate sees the client's real address.
-  # Rollback: delete this line and the allow-turnstile-pass Anubis rule, apply,
-  # THEN destroy stacks/turnstile-gate (a missing middleware drops the router).
-  extra_middlewares = ["turnstile-gate-strip@kubernetescrd", "turnstile-gate-auth@kubernetescrd"]
+  # Turnstile in front of Anubis (stacks/turnstile-gate). An Anubis backend
+  # gets the strict gate variant: only a solved Turnstile skips Anubis.
+  turnstile = true
   extra_annotations = {
     "gethomepage.dev/enabled"                      = "true"
     "gethomepage.dev/name"                         = "Forgejo"

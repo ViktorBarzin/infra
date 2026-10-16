@@ -49,7 +49,24 @@ variable "namespace" {
 
 variable "target_url" {
   type        = string
-  description = "Backend URL Anubis forwards passing requests to (e.g. http://blog.website.svc.cluster.local)."
+  default     = null
+  description = "Backend URL Anubis forwards passing requests to (e.g. http://blog.website.svc.cluster.local). Null in forwardAuth mode (public_url set)."
+}
+
+# forwardAuth mode (Anubis >= 1.22): Traefik asks /.within.website/x/cmd/anubis/api/check
+# and Anubis answers 200, or a redirect to its challenge page on public_url.
+# One instance then serves any number of hosts. Used by the shared fallback
+# instance in stacks/turnstile-gate; per-site instances leave it null.
+variable "public_url" {
+  type        = string
+  default     = null
+  description = "External URL of this instance's own challenge pages (e.g. https://anubis.viktorbarzin.me). Setting it switches the instance to forwardAuth mode."
+}
+
+variable "redirect_domains" {
+  type        = string
+  default     = null
+  description = "forwardAuth mode only: comma list of hosts Anubis may redirect back to (globs allowed, e.g. \"*.viktorbarzin.me,viktorbarzin.me\")."
 }
 
 variable "cookie_domain" {
@@ -265,8 +282,24 @@ locals {
     ], [for cidr in var.trusted_local_cidrs : "  - \"${cidr}\""]
   ))
 
+  # Turnstile pass (stacks/turnstile-gate). The gate adds X-Turnstile-Pass: 1
+  # only after a solved Turnstile challenge, and ingress_factory attaches the
+  # strip middleware (deletes any client-sent copy) to every ingress that
+  # reaches an Anubis instance, so the header cannot be forged from outside.
+  # Second rule, after the trusted networks: a passed visitor skips every
+  # check below, including the per-site machine-path rules.
+  turnstile_pass_rule_yaml = join("\n", [
+    "# Solved Cloudflare Turnstile at the gate (stacks/turnstile-gate).",
+    "- name: allow-turnstile-pass",
+    "  action: ALLOW",
+    "  expression:",
+    "    all:",
+    "    - '\"X-Turnstile-Pass\" in headers'",
+    "    - 'headers[\"X-Turnstile-Pass\"] == \"1\"'",
+  ])
+
   # Final policy YAML: the module-owned `bots:` key, the trusted-local rule, the
-  # caller's rules (or the strict defaults), then an optional store block when
+  # Turnstile pass rule, the caller's rules (or the strict defaults), then an optional store block when
   # shared_store_url is set. Store block is module-managed and appended
   # universally — callers passing custom rules shouldn't include their own
   # `store:` block (they would collide).
@@ -275,6 +308,7 @@ locals {
   rendered_policy_yaml = "${join("\n", [
     "bots:",
     local.trusted_local_rule_yaml,
+    local.turnstile_pass_rule_yaml,
     trimspace(coalesce(var.policy_rules_yaml, local.default_policy_rules_yaml)),
   ])}${local.store_yaml_block}"
 }
@@ -411,9 +445,20 @@ resource "kubernetes_deployment" "anubis" {
             name  = "METRICS_BIND"
             value = ":9090"
           }
+          # A single space means "no upstream": forwardAuth mode (upstream docs).
           env {
             name  = "TARGET"
-            value = var.target_url
+            value = var.public_url == null ? var.target_url : " "
+          }
+          dynamic "env" {
+            for_each = var.public_url == null ? {} : {
+              PUBLIC_URL       = var.public_url
+              REDIRECT_DOMAINS = var.redirect_domains
+            }
+            content {
+              name  = env.key
+              value = env.value
+            }
           }
           env {
             name  = "DIFFICULTY"
