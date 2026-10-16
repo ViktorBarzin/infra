@@ -873,8 +873,8 @@ serverFiles:
           # unless its prefix is admitted below (tripit_* had been eaten since its
           # annotations landed; memory_* hit the same wall on day one). New app => add
           # your metric prefix here.
-          # NB the realtime_* and tasks_ops_total names are tasks-next's (TypeScript
-          # build of tasks); listed by full name because realtime_ is a generic prefix.
+          # NB the realtime_* and tasks_ops_total names are the tasks app's (TypeScript
+          # build); listed by full name because realtime_ is a generic prefix.
           # NB kube_cronjob_spec_suspend is required by RenovateNotSucceeding (quiet
           # while the renovate CronJob is suspended).
           # NB kube_job_status_active is required by the K8sUpgradeStalled live-job
