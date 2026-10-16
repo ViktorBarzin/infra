@@ -214,7 +214,7 @@ flowchart LR
 | Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
 | f1-stream source guard | `stacks/f1-stream/f1-source-guard.tf` | Hourly CronJob, calendar-gated to T-2h and T-30m before a session. Plays each source's stream in a leased chrome-fleet worker and files `broken` + `f1-source` when the chain does not produce a moving picture |
 | f1 Source Fixer | `.claude/agents/f1-source-fixer.md` | Repairs an f1-stream extractor or resolver from an `f1-source` issue, ships to `viktor/f1-stream`, verifies recovery, closes the issue |
-| f1 Feedback Fixer | `.claude/agents/f1-feedback-fixer.md` | Works a User report issue on `viktor/f1-stream` once Viktor adds `approved` (f1-stream ADR-0038): fixes a problem or plans and builds an idea, pushes to master, watches the deploy, re-checks live, closes or asks on the issue with `needs-human`. A reply comment from `viktor` starts the next run |
+| f1 Feedback Fixer | `.claude/agents/f1-feedback-fixer.md` | Works a User report issue on `viktor/f1-stream` once Viktor adds `approved` (f1-stream ADR-0047): fixes a problem or plans and builds an idea, pushes to master, watches the deploy, re-checks live, closes or asks on the issue with `needs-human`. A reply comment from `viktor` starts the next run |
 | Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
 | SEV Triage | `.claude/agents/sev-triage.md` | Fast cluster scan + severity classification |
 | SEV Historian | `.claude/agents/sev-historian.md` | Cross-references past incidents |
