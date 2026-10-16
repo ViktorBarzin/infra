@@ -118,6 +118,11 @@ resource "kubernetes_deployment" "tandoor" {
           image             = "vabene1111/recipes:2.6.15"
           image_pull_policy = "IfNotPresent"
           env {
+            # One user; 2 workers (default 3) keep 2.x well under its limit.
+            name  = "GUNICORN_WORKERS"
+            value = "2"
+          }
+          env {
             name  = "SECRET_KEY"
             value = base64encode(random_password.secret_key.result)
           }
@@ -208,12 +213,14 @@ resource "kubernetes_deployment" "tandoor" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "384Mi"
+              memory = "512Mi"
             }
             limits = {
-              # 2.x (from 2026-10-11) is OOMKilled at 512Mi while gunicorn
-              # boots its workers; 1.5.x peaked at about 354Mi.
-              memory = "1Gi"
+              # 2.x (from 2026-10-11) holds about 840Mi with 3 gunicorn
+              # workers, so 512Mi crash-looped and 1Gi left no room for a
+              # manage.py command (OOMKilled 2026-10-16). With 2 workers
+              # (GUNICORN_WORKERS above) it needs less; 1.5.x peaked at 354Mi.
+              memory = "1536Mi"
             }
           }
         }
