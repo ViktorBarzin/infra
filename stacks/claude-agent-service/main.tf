@@ -131,6 +131,17 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # Bearer token for POST /v1/intake/f1-report, the f1-stream User
+          # report intake (f1-stream ADR-0038). Its own token so f1-stream
+          # never holds the /execute one; f1-stream's copy is
+          # secret/f1-stream reports_intake_token, the same value.
+          secretKey = "INTAKE_API_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "intake_api_token"
+          }
+        },
+        {
           # Long-lived OAuth token (1-year) from `claude setup-token`.
           # Preferred over the short-lived .credentials.json — CLI picks this up and
           # skips the refresh flow entirely. Rotate yearly; alert 30d before expiry.
@@ -665,7 +676,7 @@ resource "kubernetes_deployment" "claude_agent" {
           }
           env {
             name  = "AFK_ALLOWLIST"
-            value = "infra"
+            value = "infra,f1-stream"
           }
           env {
             name  = "AFK_READY_LABEL"
@@ -1156,7 +1167,7 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
               }
               env {
                 name  = "AFK_ALLOWLIST"
-                value = "infra"
+                value = "infra,f1-stream"
               }
               env {
                 name  = "AFK_READY_LABEL"
