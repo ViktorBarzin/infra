@@ -1795,7 +1795,44 @@ variable "pg_cluster_v18_instances" {
   default = 3
 }
 
+# Custom exporter queries for the CNPG built-in postgres exporter (port 9187),
+# on top of CNPG's own cnpg-default-monitoring set. Prometheus scrapes them through
+# the `cnpg` job in stacks/monitoring, which adds the cnpg_cluster label. A metric is
+# named cnpg_<query>_<column>.
+#
+# pg_notification_queue (default app stack ADR-0001, realtime contract, 2026-10-16):
+# apps on the default stack relay NOTIFY events over SSE, and the NOTIFY queue
+# (8 GB, pg_notify files under PGDATA) is one queue for every database on the
+# cluster. A listener that stays inside a long transaction holds the queue tail, the
+# queue fills, and once it is full every NOTIFY on the cluster fails at COMMIT.
+# Alert PGNotifyQueueHigh (stacks/monitoring) fires above 0.5 for 5m.
+#
+# The cnpg.io/reload label makes the instances reload a changed ConfigMap without a
+# restart or a re-apply of the Cluster.
+resource "kubernetes_config_map" "pg_custom_queries" {
+  metadata {
+    name      = "pg-custom-queries"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "cnpg.io/reload" = ""
+    }
+  }
+  data = {
+    "queries" = <<-EOT
+      pg_notification_queue:
+        query: "SELECT pg_catalog.pg_notification_queue_usage() AS usage"
+        primary: true
+        metrics:
+          - usage:
+              usage: "GAUGE"
+              description: "Fraction of the cluster-wide NOTIFY queue in use (0 to 1). NOTIFY fails at COMMIT once it reaches 1."
+    EOT
+  }
+}
+
 resource "null_resource" "pg_cluster_v18" {
+  depends_on = [kubernetes_config_map.pg_custom_queries]
+
   triggers = {
     instances      = tostring(var.pg_cluster_v18_instances)
     image          = var.pg_cluster_v18_image
@@ -1805,6 +1842,7 @@ resource "null_resource" "pg_cluster_v18" {
     memory_request = "2816Mi"
     pg_params      = "v1-same-as-pg-cluster-v7"
     affinity       = "required-hostname-v1"
+    monitoring     = "custom-queries-v1"
   }
 
   provisioner "local-exec" {
@@ -1886,6 +1924,12 @@ resource "null_resource" "pg_cluster_v18" {
             resize.topolvm.io/threshold: "10%"
             resize.topolvm.io/increase: "20%"
             resize.topolvm.io/storage_limit: "100Gi"
+        # CNPG appends its cnpg-default-monitoring ConfigMap to this list
+        # (disableDefaultQueries stays false), so the default metrics remain.
+        monitoring:
+          customQueriesConfigMap:
+            - name: pg-custom-queries
+              key: queries
         storage:
           size: 40Gi
           storageClass: proxmox-lvm-encrypted
