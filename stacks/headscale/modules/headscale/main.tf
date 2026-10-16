@@ -319,6 +319,8 @@ module "ingress" {
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
   name            = "headscale"
+  # No Turnstile gate: Tailscale clients open its OIDC/register pages in a browser (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   port            = 8080
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

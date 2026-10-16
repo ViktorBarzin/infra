@@ -259,10 +259,12 @@ module "ingress" {
   # Stremio's browser client (can't follow the OAuth 302), and basic-auth is the
   # proven-working gate for the media/HLS/torrent paths. Non-proxied (bypasses
   # Cloudflare's CDN-video ToS); CrowdSec nftables covers the origin IP. See infra#80.
-  auth            = "none"
-  dns_type        = "non-proxied"
-  namespace       = kubernetes_namespace.stremio.metadata[0].name
-  name            = "stremio"
+  auth      = "none"
+  dns_type  = "non-proxied"
+  namespace = kubernetes_namespace.stremio.metadata[0].name
+  name      = "stremio"
+  # No Turnstile gate: Stremio apps, including TV (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile       = false
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
@@ -444,9 +446,11 @@ module "cinemeta_ingress" {
   # record from the ingress-DNS-sync, so cinemeta.viktorbarzin.me resolves on
   # both the public internet and the home LAN. (Carved out of the outage-failover
   # Worker in stacks/cloudflared so it draws no Worker quota.)
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.stremio.metadata[0].name
-  name            = "cinemeta"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.stremio.metadata[0].name
+  name      = "cinemeta"
+  # No Turnstile gate: Stremio addon API, machine-only (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile       = false
   service_name    = kubernetes_service.cinemeta_proxy.metadata[0].name
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

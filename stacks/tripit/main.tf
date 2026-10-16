@@ -1218,6 +1218,8 @@ module "ingress_api" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-api"
+  # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
   homepage_enabled = false
   service_name     = "tripit"

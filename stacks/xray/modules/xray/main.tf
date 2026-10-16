@@ -226,6 +226,8 @@ module "ingress_ws" {
   dns_type  = "proxied"
   namespace = kubernetes_namespace.xray.metadata[0].name
   name      = "xray-ws"
+  # No Turnstile gate: VPN transport (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
   homepage_enabled = false
   service_name     = "xray"

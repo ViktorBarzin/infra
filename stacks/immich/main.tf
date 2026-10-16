@@ -1430,6 +1430,8 @@ module "ingress-immich" {
   dns_type                = "non-proxied"
   namespace               = kubernetes_namespace.immich.metadata[0].name
   name                    = "immich"
+  # No Turnstile gate: the mobile app logs in through an in-app browser (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   service_name            = "immich-server"
   port                    = 2283
   tls_secret_name         = var.tls_secret_name

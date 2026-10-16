@@ -284,6 +284,8 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "nextcloud"
+  # No Turnstile gate: desktop/mobile Login Flow v2 and WebDAV clients (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   tls_secret_name = var.tls_secret_name
   port            = 8080
   # Fix Apple CalDAV/CardDAV discovery (2026-07-19). Nextcloud's shipped
