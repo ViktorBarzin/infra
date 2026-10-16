@@ -1,0 +1,181 @@
+#!/bin/sh
+# Mladost 3 router watchdog (infra/scripts/mladost3-openwrt). Reboots the
+# router when nobody could otherwise reach or manage it, because nobody is on
+# site to pull the plug. Design: docs/architecture/vpn.md, "Self-heal".
+#
+# Two triggers:
+#  1. Stick dropout, checked every TICK seconds. The USB stick holding /overlay
+#     vanished and came back under a new name, as on 2026-10-07. The router then
+#     runs from page cache with a dead overlay until it reboots, so reboot at
+#     once. If the stick does not come back, stay up: a reboot would boot the
+#     old config on internal flash.
+#  2. Tunnel loss, checked every CHECK_EVERY seconds. None of TARGETS answers,
+#     and none answers on RETRIES more tries RETRY_EVERY apart. Reboot at once
+#     if Sofia's public address answers and the last reboot was not ours (no
+#     MARKER). Otherwise reboot only once the tunnel has been down for HOLD:
+#     Sofia itself is down, or our last reboot did not help.
+#
+# It runs from a copy in /tmp under /rom/bin/busybox and calls only shell
+# builtins and ROM busybox applets, so it keeps working when the stick is gone.
+# It never reboots within MIN_UPTIME seconds of boot.
+# Every setting can be overridden from the environment; the tests do.
+
+BB=${BB:-/rom/bin/busybox}
+TARGETS=${TARGETS:-10.3.2.1 10.0.10.1}
+SOFIA=${SOFIA:-176.12.22.76}
+TICK=${TICK:-60}
+CHECK_EVERY=${CHECK_EVERY:-3600}
+RETRY_EVERY=${RETRY_EVERY:-120}
+RETRIES=${RETRIES:-5}
+HOLD=${HOLD:-21600}
+MIN_UPTIME=${MIN_UPTIME:-600}
+BOOT_DELAY=${BOOT_DELAY:-120}
+UPTIME=${UPTIME:-/proc/uptime}
+MARKER=${MARKER:-/etc/router-watchdog.rebooted}
+SYS_BLOCK=${SYS_BLOCK:-/sys/class/block}
+DEV_DIR=${DEV_DIR:-/dev}
+MOUNTS=${MOUNTS:-/proc/mounts}
+PING=${PING:-$BB ping -c 3 -W 2 -q}
+REBOOT=${REBOOT:-sysrq}
+TAG=router-watchdog
+
+log() {
+	$BB logger -t "$TAG" "$*" 2>/dev/null
+	if [ "${LOG_STDOUT:-0}" = 1 ]; then echo "$TAG: $*"; fi
+}
+
+now() { read -r NOW _ < "$UPTIME"; NOW=${NOW%.*}; }
+
+# A readable node for block device $1 (such as sdb1). The hotplug daemon makes
+# /dev nodes from files on the stick, so a returning stick may have none.
+dev_node() {
+	if [ -b "$DEV_DIR/$1" ] || [ -f "$DEV_DIR/$1" ]; then echo "$DEV_DIR/$1"; return 0; fi
+	local mm
+	read -r mm < "$SYS_BLOCK/$1/dev" 2>/dev/null || return 1
+	$BB mknod "/tmp/$TAG-$1" b "${mm%:*}" "${mm#*:}" 2>/dev/null
+	echo "/tmp/$TAG-$1"
+}
+
+# The ext4 UUID of block device $1 as 32 hex digits, read from the superblock
+# (byte 1128). Reads 16 bytes, so it is safe on a router short of memory.
+uuid_of() {
+	local node
+	node=$(dev_node "$1") || return 1
+	$BB dd if="$node" bs=8 skip=141 count=2 2>/dev/null | $BB hexdump -ve '1/1 "%02x"' 2>/dev/null
+}
+
+reboot_now() { # reboot_now REASON [mark]
+	# Never within MIN_UPTIME of boot: if a check ever misfires on a healthy
+	# router, this caps the loop and leaves a window to log in and stop it.
+	now
+	if [ "$NOW" -lt "$MIN_UPTIME" ]; then
+		log "would reboot ($1), but uptime ${NOW}s is under ${MIN_UPTIME}s"
+		return 0
+	fi
+	if [ "$2" = mark ]; then echo "$1" > "$MARKER" 2>/dev/null; fi
+	log "rebooting: $1"
+	if [ "$REBOOT" != sysrq ]; then
+		$REBOOT "REBOOT $1"
+		exit 0
+	fi
+	$BB sleep 5 # give logd time to ship the line to Loki
+	echo 1 > /proc/sys/kernel/sysrq
+	echo s > /proc/sysrq-trigger
+	$BB sleep 2
+	echo u > /proc/sysrq-trigger
+	$BB sleep 2
+	echo b > /proc/sysrq-trigger
+	$BB sleep 10
+	$BB reboot -f
+	exit 1
+}
+
+# Trigger 1. Cheap while the overlay's device exists: one file test.
+watch_stick() {
+	[ -n "$STICK_UUID" ] || return 0
+	[ -e "$SYS_BLOCK/$OVERLAY_DEV" ] && return 0
+	local p name
+	for p in "$SYS_BLOCK"/sd*; do
+		[ -e "$p" ] || continue
+		name=${p##*/}
+		if [ "$(uuid_of "$name")" = "$STICK_UUID" ]; then
+			reboot_now "stick dropout: /overlay device $OVERLAY_DEV is gone and the stick is back as $name"
+		fi
+	done
+	if [ -z "$GONE_LOGGED" ]; then
+		log "/overlay device $OVERLAY_DEV is gone and the stick has not come back; staying up"
+		GONE_LOGGED=1
+	fi
+}
+
+# Sleep $1 seconds in TICK steps, watching the stick between steps.
+nap() {
+	local left=$1 step
+	while [ "$left" -gt 0 ]; do
+		step=$TICK
+		[ "$left" -lt "$step" ] && step=$left
+		$BB sleep "$step"
+		left=$((left - step))
+		watch_stick
+	done
+}
+
+tunnel_up() {
+	local t
+	for t in $TARGETS; do
+		$PING "$t" >/dev/null 2>&1 && return 0
+	done
+	return 1
+}
+
+healthy() {
+	log "healthy${1:+ ($1)}"
+	DOWN_SINCE=
+	if [ -e "$MARKER" ]; then
+		$BB rm -f "$MARKER"
+		log "cleared the reboot marker: the tunnel is back"
+	fi
+}
+
+OVERLAY_DEV= STICK_UUID= GONE_LOGGED= DOWN_SINCE=
+while read -r dev mnt _; do
+	[ "$mnt" = /overlay ] && OVERLAY_DEV=${dev#/dev/}
+done < "$MOUNTS"
+case "$OVERLAY_DEV" in
+	sd*) STICK_UUID=$(uuid_of "$OVERLAY_DEV") ;;
+esac
+# At boot, the 90-mladost3-syslog hotplug hook restarts logd once wg0 is up,
+# which empties its buffer before the line reaches Loki. Log after that.
+now
+if [ "$NOW" -lt 300 ]; then nap "$BOOT_DELAY"; fi
+if [ -n "$STICK_UUID" ]; then
+	log "started: /overlay on $OVERLAY_DEV ($STICK_UUID); tunnel check every ${CHECK_EVERY}s against $TARGETS"
+else
+	log "started: /overlay on ${OVERLAY_DEV:-nothing}, not a USB stick, so the dropout check is off; tunnel check every ${CHECK_EVERY}s against $TARGETS"
+fi
+
+while :; do
+	nap "$CHECK_EVERY"
+	if tunnel_up; then healthy; continue; fi
+	now
+	[ -n "$DOWN_SINCE" ] || DOWN_SINCE=$NOW
+	tries=0 back=
+	while [ "$tries" -lt "$RETRIES" ]; do
+		nap "$RETRY_EVERY"
+		tries=$((tries + 1))
+		if tunnel_up; then back=1; break; fi
+	done
+	if [ -n "$back" ]; then healthy "after $tries retries"; continue; fi
+
+	now
+	mins=$(((NOW - DOWN_SINCE) / 60))
+	if $PING "$SOFIA" >/dev/null 2>&1; then sofia=up; else sofia=down; fi
+	if [ -e "$MARKER" ]; then why="the last watchdog reboot did not help"; else why="no watchdog reboot yet"; fi
+	if [ "$sofia" = up ] && [ ! -e "$MARKER" ]; then
+		reboot_now "tunnel down ${mins} min; Sofia's public address answers" mark
+	elif [ $((NOW - DOWN_SINCE)) -ge "$HOLD" ]; then
+		reboot_now "tunnel down ${mins} min, past the $((HOLD / 60)) min hold; Sofia $sofia; $why" mark
+	else
+		log "tunnel down ${mins} min; Sofia $sofia; $why; holding until $((HOLD / 60)) min"
+	fi
+done
