@@ -36,7 +36,7 @@ Release notes that mattered for this move:
 | Rollback copy | StatefulSet `mysql-standalone`, `mysql:8.4.8`, PVC `data-mysql-standalone-0` (30Gi), `super_read_only=ON` and `read_only=ON` set with `SET PERSIST` (stored in its datadir, so a restart keeps them), data as of 23:11 UTC on 2026-10-15 |
 | The switch | `local.mysql_active` in `stacks/dbaas/modules/dbaas/main.tf` |
 | What follows the switch | the `mysql` Service, so every app, Vault's database secrets engine, `mysqld-exporter`, phpMyAdmin and both backup CronJobs (host `mysql.dbaas`); the `mysql_static_user`, `mysql_exporter_user` and `mysql_verify_probe_user` provisioners (they exec into `<active>-0`) |
-| Direct addresses | `mysql-v26.dbaas.svc.cluster.local` (new). `mysql-standalone` and `mysql-standalone-headless` are Services left over from the Bitnami chart and still select the old pod |
+| Direct addresses | `mysql-v26.dbaas.svc.cluster.local` (new). `mysql-standalone` and `mysql-standalone-headless` are Services left over from the Bitnami chart and select the old pod. On 2026-10-16 only `mysql-standalone-headless` had an endpoint (the `mysql-standalone` EndpointSlice was empty and connections were refused), so reach the old server through `mysql-standalone-headless.dbaas.svc.cluster.local` |
 | Config | config map `mysql-v26-cnf`, derived from `mysql-standalone-cnf` with `replace()`, so a tuning change to the old file reaches both |
 | Backup clients | `mysql-backup` and `mysql-backup-per-db` run `docker.io/library/mysql:26.7.0` (were `mysql:8.0`) |
 
@@ -186,5 +186,16 @@ repeat this blue-green procedure with a new StatefulSet and flip
 
 - `mysql-standalone` and its PVC `data-mysql-standalone-0` are kept until
   Viktor decides to delete them. Its image stays on 8.4.8; do not bump it.
-- The off-cluster dump of 2026-10-15 stays in
-  `/mnt/backup/manual-upgrade-20261015/mysql/` on 192.168.1.127.
+- The off-cluster dump lives in `/mnt/backup/manual-upgrade-20261015/mysql/`
+  on 192.168.1.127. The first copy, taken before the cutover, was deleted by
+  the nfs-mirror run that finished at 23:28 UTC on 2026-10-15, because
+  `nfs-mirror` had no exclude for that directory. `scripts/nfs-mirror.sh` now
+  excludes `/manual-upgrade-*/`. The set there now was re-taken on 2026-10-16
+  from the read-only 8.4.8 server (`super_read_only=1`, so it holds the data as
+  of the 23:11 UTC cutover) with the 8.4.8 client: one `<db>.sql.gz` per
+  schema, `users.sql` (`SHOW CREATE USER` in hex plus `SHOW GRANTS`, 18
+  accounts), `users-pre-worker-20261015.sql` (the original pre-cutover users
+  file), `table-inventory.tsv` and `SHA256SUMS`. It was checked by restoring
+  every file into a scratch 8.4.8 server: 659 tables and 8,178,205 rows, the
+  same totals as the source. FLOAT columns are rounded by `mysqldump`; the
+  exact values remain on the old server's PVC.
