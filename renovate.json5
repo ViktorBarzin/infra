@@ -387,13 +387,6 @@
       enabled: false,
     },
     {
-      description: "HELD: hashicorp/vault provider 4 -> 5 (2026-10-12). v5 is a breaking release used by every stack that reads Vault (vault_kv_secret_v2 and friends); it needs a plan of each consumer stack first. stacks/vault plans and applies with a pending chart change since 2026-10-15. 4.x minor/patch still land.",
-      matchDatasources: ["terraform-provider"],
-      matchPackageNames: ["hashicorp/vault"],
-      matchUpdateTypes: ["major"],
-      enabled: false,
-    },
-    {
       description: "HELD: cloudflare provider 4 -> 5 (2026-10-12). v5 is a rewrite generated from the OpenAPI schema: cloudflare_record becomes cloudflare_dns_record and many attributes change, so cloudflared, reverse-proxy, forgejo and other stacks need state moves. The stack modules also bound it with ~> 4. 4.x patches still land.",
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["cloudflare/cloudflare"],
