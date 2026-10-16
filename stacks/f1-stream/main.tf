@@ -40,7 +40,8 @@ resource "kubernetes_namespace" "f1-stream" {
 # pod, and a Worker that is recreated. Memory requests at the peak of a rollout
 # come to about 3.7Gi (three Edges at 384Mi, two Transcoders at 512Mi, the
 # Worker at 1Gi, Anubis and wt-tracker at 320Mi, the source-guard Job at
-# 256Mi), over the generated quota's 3Gi. A surge pod over quota is refused by
+# 256Mi; since 2026-10-16 also the Watcher at 256Mi, watcher.tf), over the
+# generated quota's 3Gi. A surge pod over quota is refused by
 # the ReplicaSet controller and the rollout stalls, which is the stall ADR-0029
 # exists to remove. Only requests.memory moves; the other three values are the
 # tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,

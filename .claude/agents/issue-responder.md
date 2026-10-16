@@ -126,6 +126,7 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
 | `paused` | A human brake. If you see it, stop and say you stopped. |
 | `needs-human` | Escalated. |
 | `f1-source` | An f1-stream upstream source is not producing playable streams. Filed automatically by the f1-stream source guard. **You do not fix these yourself** — see "Routing: `f1-source`" in Step 4. |
+| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes. Filed automatically by the f1-stream Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
 | `incident`, `sev1`/`sev2`/`sev3`, `postmortem-required` | You apply these during triage. |
 
 An issue labelled `change` is never yours to implement autonomously. If you were
@@ -242,15 +243,45 @@ it could not find the new host, path or decoding with confidence — escalate pe
 Step 7 with its diagnosis attached. Do not attempt the repair yourself as a
 fallback.
 
+### Routing: `channel-source`
+
+An issue labelled `broken` **and** `channel-source` is a Tier 1 TV Channel on
+f1-stream (BNT 1, bTV, Nova and the rest of the hand-picked list) that has had
+no smooth Feed for 10 minutes. The f1-stream Watcher (`ROLE=watcher`, f1-stream
+ADR-0044) files these, one open thread per Channel, marked
+`[channel-source: <slug>]` in the title, and posts one line to `#alerts`.
+
+**Hand it to `channel-source-fixer`, the same way as `f1-source`** — the fix
+lives in `viktor/f1-stream`, and the knowledge of the channel resolvers lives in
+that agent.
+
+1. **Read the thread** (Step 1) and **verify the fault is current** (Step 2):
+   `f1_watcher_channel_up{channel="<slug>"}` in Prometheus reads 1 when the
+   Channel is up again. If it recovered on its own, comment with what you read,
+   close the issue, and stop.
+2. **Classify** (Step 3). One Tier 1 Channel down is SEV3; several at once, or
+   the Watcher itself not reporting, is SEV2.
+3. **Spawn the `channel-source-fixer` agent** with the Agent tool, passing the
+   issue number, the slug from the title marker, the Feed table from the body
+   (site, Reputation, last failure) and any earlier attempt in the thread.
+4. **Relay its result back onto the issue** as a comment. As with `f1-source`,
+   **never write a `Pushed-Commit:` line** for its `viktor/f1-stream` sha; name
+   it in prose with its repo.
+
+The sub-agent ships, verifies recovery through the Watcher, and closes the
+issue itself. If it stops without fixing, escalate per Step 7 with its
+diagnosis attached.
+
 ### Repo scope
 
 `infra` only. If the root cause is in an application repo (`tuya_bridge`,
 `terminal-lobby`, …), diagnose it fully, write up exactly what needs to change
 and where, then escalate. Do not clone and push to another repo.
 
-The one exception is the `f1-source` route above, and it does not bend this
-rule: `f1-source-fixer` is the agent that holds `viktor/f1-stream` write access,
-so the push happens there, not here.
+The exceptions are the `f1-source` and `channel-source` routes above, and they
+do not bend this rule: `f1-source-fixer` and `channel-source-fixer` are the
+agents that hold `viktor/f1-stream` write access, so the push happens there,
+not here.
 
 ### Out of cluster
 
