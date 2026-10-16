@@ -7741,6 +7741,27 @@ serverFiles:
             annotations:
               summary: "f1-stream dropped {{ $value | printf \"%.0f\" }} viewing beats in 30m"
               description: "Viewing beats are not reaching Postgres. Split by reason with `sum by (reason, pod) (increase(f1_viewing_beats_dropped_total[30m]))`. error and cooloff mean writes are failing: read `homelab logs query '{namespace=\"f1-stream\"} |= \"[viewing] could not\"' --since 1h`. in-flight means writes are slow to return. cap or playback-cap means a client is looping. To confirm rows are landing, read the database the apps use: `homelab k8s db pg-cluster --db f1_stream -- \"select max(at) from viewing_beats\"` (CLI v0.27.2 or later follows the postgresql Service)."
+          # The f1-stream Watcher's download over its budget. Added 2026-10-16.
+          # The plan and ADR-0044 give the Watcher about 30 Mbit/s of the house
+          # downlink (which averages 214 Mbit/s) while Feeds learn. Before the
+          # budget it measured about 51 Mbit/s around the clock and 86-90 after
+          # restarts. The Watcher now holds its full watches to
+          # WATCHER_DOWNLOAD_BUDGET_MBPS by its own measured rates and exports
+          # that budget, so this compares what the pod actually receives (all
+          # traffic, playlists and database included) with 1.2 times it.
+          # `or on() vector(30)` keeps the rule working if the gauge is missing.
+          # The 30m rate and 30m hold leave out the minutes after a restart,
+          # when unmeasured Feeds are costed at an estimate.
+          - alert: F1WatcherDownloadOverBudget
+            expr: |
+              sum(rate(container_network_receive_bytes_total{namespace="f1-stream",pod=~"f1-stream-watcher-.*"}[30m])) * 8 / 1e6
+              > on() 1.2 * (max(f1_watcher_download_budget_mbps) or on() vector(30))
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream Watcher is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
+              description: "The Watcher's received traffic has stayed above 1.2 times its download budget (f1_watcher_download_budget_mbps, WATCHER_DOWNLOAD_BUDGET_MBPS in stacks/f1-stream/watcher.tf) for 30 minutes. Compare with its own estimate, f1_watcher_download_mbps, and the watch counts, f1_watcher_watches by mode. An estimate well under the measured rate means the per-watch costing in backend/watcher/plan.py misses some traffic; an estimate near the budget with the measured rate far above means a watch is reading more than one Feed's worth. The budget is in f1-stream ADR-0044, Build decisions, Download budget."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
