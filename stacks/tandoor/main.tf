@@ -211,7 +211,9 @@ resource "kubernetes_deployment" "tandoor" {
               memory = "384Mi"
             }
             limits = {
-              memory = "512Mi"
+              # 2.x (from 2026-10-11) is OOMKilled at 512Mi while gunicorn
+              # boots its workers; 1.5.x peaked at about 354Mi.
+              memory = "1Gi"
             }
           }
         }
