@@ -26,21 +26,6 @@ import {
 }
 
 import {
-  to = kubernetes_deployment.tasks
-  id = "tasks/tasks"
-}
-
-import {
-  to = kubernetes_service.tasks
-  id = "tasks/tasks"
-}
-
-import {
-  to = kubernetes_network_policy_v1.tasks_ingress
-  id = "tasks/tasks-ingress"
-}
-
-import {
   to = module.ingress.kubernetes_ingress_v1.proxied-ingress
   id = "tasks/tasks"
 }
