@@ -78,8 +78,9 @@ resource "authentik_provider_oauth2" "k8s_dashboard" {
 
   allowed_redirect_uris = [
     {
-      matching_mode = "strict"
-      url           = "https://k8s.viktorbarzin.me/oauth2/callback"
+      matching_mode     = "strict"
+      url               = "https://k8s.viktorbarzin.me/oauth2/callback"
+      redirect_uri_type = "authorization"
     },
   ]
 

@@ -124,6 +124,13 @@ Do this while the apiserver still knows nothing about the new issuer. A rejected
 token here is a configuration problem in Authentik, and it is much easier to
 read as one now than mixed in with an apiserver change.
 
+Until 2026-10-16 this step could not succeed: the client had been created with
+an empty grant-type list, and Authentik answered every authorize request with
+`invalid_request` ("Invalid grant_type for provider" in its log). The resource
+now sets `grant_types = ["authorization_code", "refresh_token"]`. An authorize
+request for `kubernetes-agent` with a localhost redirect URI returns 302 to the
+login flow since then; a full token mint has not been run yet.
+
 ```sh
 kubectl oidc-login get-token \
   --oidc-issuer-url=https://authentik.viktorbarzin.me/application/o/kubernetes-agent/ \

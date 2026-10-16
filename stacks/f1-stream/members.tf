@@ -93,8 +93,9 @@ resource "authentik_provider_oauth2" "f1_stream" {
 
   allowed_redirect_uris = [
     {
-      matching_mode = "strict"
-      url           = "https://f1.viktorbarzin.me/auth/callback"
+      matching_mode     = "strict"
+      url               = "https://f1.viktorbarzin.me/auth/callback"
+      redirect_uri_type = "authorization"
     },
   ]
 
@@ -109,35 +110,13 @@ resource "authentik_provider_oauth2" "f1_stream" {
     data.authentik_property_mapping_provider_scope.profile.id,
     data.authentik_property_mapping_provider_scope.email.id,
   ]
-}
 
-# The Authentik server (2026.x) now keeps a per-provider list of allowed grant
-# types and creates a new provider with that list EMPTY, which refuses every
-# authorize request ("Invalid grant_type for provider: authorization_code",
-# measured 2026-10-10). The provider version this repo pins (~> 2025.8, see
-# terragrunt.hcl for why) has no `grant_types` attribute, so it is set once
-# through the API here. A later provider update does not clear it: the
-# provider never sends the field, and Authentik leaves fields a request omits
-# as they are. Replace this with `grant_types` on the resource once the pin
-# moves to a 2026.x provider.
-resource "terraform_data" "f1_stream_grant_types" {
-  triggers_replace = [authentik_provider_oauth2.f1_stream.id]
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    environment = {
-      AK_TOKEN    = data.vault_kv_secret_v2.authentik_tf.data["tf_api_token"]
-      PROVIDER_PK = authentik_provider_oauth2.f1_stream.id
-    }
-    command = <<-BASH
-      set -euo pipefail
-      curl -fsS -X PATCH \
-        -H "Authorization: Bearer $AK_TOKEN" \
-        -H 'Content-Type: application/json' \
-        -d '{"grant_types": ["authorization_code"]}' \
-        "https://authentik.viktorbarzin.me/api/v3/providers/oauth2/$PROVIDER_PK/" >/dev/null
-    BASH
-  }
+  # Authentik 2026.x keeps a per-provider list of allowed grant types and
+  # creates a new provider with that list empty, which refuses every authorize
+  # request ("Invalid grant_type for provider: authorization_code", measured
+  # 2026-10-10). Until the 2026.x provider landed this was set through the API
+  # by a terraform_data local-exec; the provider now manages it directly.
+  grant_types = ["authorization_code"]
 }
 
 resource "authentik_application" "f1_stream" {
