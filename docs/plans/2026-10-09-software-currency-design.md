@@ -107,14 +107,14 @@ As built (2026-10-10): `scripts/verify/run <stack>` starts a Job in the `verify`
 
 Inventory behind these checks (2026-10-09):
 
-- Databases: CNPG `dbaas/pg-cluster` (PG 16.9, 3 instances, 34 databases, custom `cnpg-postgis-pgvector` image), Immich PG 15.14 (vchord 0.4.3, vector 0.8.1), MySQL `mysql-standalone` 8.4.8 (20 schemas), Redis 8.10.0, ClickHouse 25.4.13 (rybbit), Dolt 2.0.7 (beads), Vault raft.
+- Databases: CNPG `dbaas/pg-cluster` (PG 16.9, 3 instances, 34 databases, custom `cnpg-postgis-pgvector` image), Immich PG 15.14 (vchord 0.4.3, vector 0.8.1), MySQL `mysql-standalone` 8.4.8 (20 schemas; moved to 26.7.0 on `mysql-v26` on 2026-10-15), Redis 8.10.0, ClickHouse 25.4.13 (rybbit), Dolt 2.0.7 (beads), Vault raft.
 - GPU: one Tesla T4 on node1, time-sliced to 100 slots, driver 570.195.03 compiled at runtime. Live consumers: llama-swap, Immich ML and worker, Frigate, claude-memory, f1-stream, stremio, android-emulator.
 
 ### Database and GPU upgrade paths
 
 - **pg-cluster majors** go blue-green: a new CNPG cluster next to the active one, a logical copy (globals plus per-database `pg_dump`/`pg_restore --create`), a second copy with the old cluster read-only, then a flip of `var.pg_active_cluster` in `stacks/dbaas`. The old cluster stays read-only as the rollback copy. 16 to 18 went this way on 2026-10-15 instead of CNPG's in-place upgrade, so the PG16 data stayed untouched until PG18 was proven. Each new major needs our `cnpg-postgis-pgvector` image built for it first. The dbaas backup CronJob clients move in the same change, because `pg_dump` refuses a newer server (`docs/runbooks/pg-cluster-major-upgrade.md`).
 - **Immich PG** moves only when Immich's release compose moves its tag. A major is an automated dump, image swap and restore, followed by the DB checks and a smart-search query.
-- **MySQL** tracks the latest innovation release. It upgrades in place after a dump; the 2026-09-04 rehearsal measured an 8.4 patch upgrade at 25 s end to end.
+- **MySQL** tracks the latest innovation release. Minors and patches within a series upgrade in place after a dump; the 2026-09-04 rehearsal measured an 8.4 patch upgrade at 25 s end to end. Majors go blue-green, because Oracle's upgrade-path table lists no in-place jump from 8.4 that skips the 9.7 LTS and innovation releases cannot be downgraded in place: a new StatefulSet, a logical copy, a second copy with the old server `super_read_only`, then a flip of `local.mysql_active` in `stacks/dbaas`. 8.4.8 to 26.7.0 went this way on 2026-10-15, and `mysql-standalone` stays read-only as the rollback copy (`docs/runbooks/mysql-major-upgrade.md`).
 - **Redis, ClickHouse, Dolt** upgrade in place after their backup runs.
 - No restore test before DB upgrades. Recovery from a failed major is a manual restore from the pre-upgrade dump.
 - **GPU node kernel stays held** at 6.8.0-117. The driver compiles against kernel headers at runtime, and the 2026-05-17 post-mortem covers what happens when the headers are missing. Everything above the kernel upgrades automatically under the GPU checks. A kernel move becomes a supervised step when a driver version supports a newer kernel whose headers exist in the repos.
