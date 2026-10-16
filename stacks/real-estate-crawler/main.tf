@@ -551,17 +551,8 @@ resource "kubernetes_service" "realestate-crawler-api" {
   }
 }
 
-# Anubis fronts the UI ingress only; the /api ingress (`module "ingress-api"`)
-# stays direct so XHRs from the UI bypass the challenge.
-module "anubis" {
-  source = "../../modules/kubernetes/anubis_instance"
-  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.28.1"
-  name             = "wrongmove"
-  namespace        = kubernetes_namespace.realestate-crawler.metadata[0].name
-  target_url       = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
-  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/12"
-}
+# The per-site Anubis instance was folded into the shared one in
+# stacks/turnstile-gate on 2026-10-16; see docs/plans/2026-10-16-turnstile-sitewide-design.md.
 
 module "ingress" {
   source    = "../../modules/kubernetes/ingress_factory"
