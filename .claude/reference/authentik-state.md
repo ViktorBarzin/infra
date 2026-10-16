@@ -2,7 +2,7 @@
 
 > Snapshot of applications, groups, users, and flows. Use `authentik` skill for management tasks.
 
-## Applications (12)
+## Applications (14)
 | Application | Provider Type | Auth Flow |
 |-------------|--------------|-----------|
 | Cloudflare Access | OAuth2/OIDC | implicit consent |
@@ -16,6 +16,7 @@
 | Kubernetes (agent sessions) | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | implicit consent |
+| Tasks | OAuth2/OIDC (confidential, TF: `stacks/tasks/authentik.tf`) | implicit consent |
 | Vault | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
 
@@ -36,6 +37,7 @@ it. Audited 2026-10-16 (38 applications live, including the per-host
 | `stacks/authentik/forward-auth-apps.tf` | every `(forward auth)` application |
 | `stacks/authentik/postgres-ldap.tf`, `rac.tf` | Postgres LDAP, Remote Access |
 | `stacks/f1-stream/members.tf` | F1 Stream |
+| `stacks/tasks/authentik.tf` | Tasks (Tasks Users, Tasks Admins, Home Server Admins) |
 
 `stacks/authentik/app-access-guard.tf` reads every application and binding
 from the API and fails the authentik plan or apply when an application has no
