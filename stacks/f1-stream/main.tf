@@ -1711,11 +1711,14 @@ module "ingress" {
   # share-link work landed: the shared `rate-limit` middleware has no
   # sourceCriterion and would key every viewer on the cloudflared pod, so f1
   # carries its own limiter keyed on X-Real-Ip (see below).
-  dns_type     = "proxied"
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  name         = "f1"
-  service_name = module.anubis.service_name
-  port         = module.anubis.service_port
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  name      = "f1"
+  # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
+  # and the shared Anubis (stacks/turnstile-gate) do the bot check.
+  service_name     = kubernetes_service.f1-stream.metadata[0].name
+  port             = 80
+  turnstile_strict = true
   # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
   # ingress_factory for anubis-* backends. f1 is non-proxied (pfSense
   # PROXY-protocol) so the peer is already the real client.

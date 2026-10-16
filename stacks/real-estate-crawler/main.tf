@@ -564,13 +564,16 @@ module "anubis" {
 }
 
 module "ingress" {
-  source       = "../../modules/kubernetes/ingress_factory"
-  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type     = "proxied"
-  namespace    = kubernetes_namespace.realestate-crawler.metadata[0].name
-  name         = "wrongmove"
-  service_name = module.anubis.service_name
-  port         = module.anubis.service_port
+  source    = "../../modules/kubernetes/ingress_factory"
+  auth      = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name      = "wrongmove"
+  # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
+  # and the shared Anubis (stacks/turnstile-gate) do the bot check.
+  service_name     = "realestate-crawler-ui"
+  port             = 80
+  turnstile_strict = true
   # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
   # ingress_factory for anubis-* backends — no per-site wiring needed.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
