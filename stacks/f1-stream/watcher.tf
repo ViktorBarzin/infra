@@ -117,7 +117,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
           # path end to end.
           env {
             name  = "WATCHER_FAULT_CHANNELS"
-            value = ""
+            value = "animalplanet"
           }
           env {
             name  = "WATCHER_ISSUE_REPO"
