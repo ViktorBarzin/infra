@@ -28,3 +28,9 @@ trips@viktorbarzin.me spam@viktorbarzin.me
 # .dovecot.sieve (mounted as docs@viktorbarzin.me.dovecot.sieve).
 # Runbook: docs/runbooks/paperless-mail-ingest.md
 docs@viktorbarzin.me docs@viktorbarzin.me
+
+# f1@ -> spam@: send-as grant for f1-stream's User report mail (status changes
+# and questions to reporters who left an address). f1-stream authenticates SMTP
+# as spam@ and sends From: f1@viktorbarzin.me; the same SPOOF_PROTECTION
+# exact-match rule as plans@ above. Also routes any reply to f1@ to spam@.
+f1@viktorbarzin.me spam@viktorbarzin.me
