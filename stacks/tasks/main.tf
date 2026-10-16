@@ -42,6 +42,8 @@ resource "kubernetes_namespace" "tasks" {
 #   secret/tasks
 #     fernet_key — Fernet key encrypting the per-user Nextcloud app passwords
 #                  stored in the Connected Accounts table (tasks ADR-0002).
+#     better_auth_secret, oidc_client_id, oidc_client_secret — used by the
+#                  TypeScript build and the OAuth2 provider (authentik.tf).
 #
 # DB: CNPG database `tasks` (created in dbaas, null_resource.pg_tasks_db);
 # role password managed via the Vault database engine — see

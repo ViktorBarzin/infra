@@ -20,7 +20,8 @@
 # app-access-guard.tf in the authentik stack requires anyway.
 #
 # Membership is NOT managed here: approvals add people at runtime, so
-# `users` is ignored. Every update of an authentik_group is a full PUT that
+# `users` is ignored after the group is created. `initial_users` seeds the
+# group on creation only, for people who used the app before it took sign-ups. Every update of an authentik_group is a full PUT that
 # includes the member list, taken from the refresh that the same plan did, so
 # an approval that lands between that refresh and the apply of a change to
 # this group would be dropped. Changes to this group are expected to be rare.
@@ -51,7 +52,8 @@ locals {
 }
 
 resource "authentik_group" "users" {
-  name = var.group_name
+  name  = var.group_name
+  users = var.initial_users
 
   attributes = jsonencode({
     managed_by = "infra/modules/authentik/app_signup"

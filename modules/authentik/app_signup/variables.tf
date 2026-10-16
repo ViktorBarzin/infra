@@ -28,3 +28,9 @@ variable "pending_url" {
   default     = null
   description = "Request mode only: the https:// page in the app a person lands on after signing up, which tells them the request is waiting."
 }
+
+variable "initial_users" {
+  type        = list(number)
+  default     = []
+  description = "User pks put in the group when it is created, for people who already use the app. Later changes to this list are ignored, like every other membership change."
+}
