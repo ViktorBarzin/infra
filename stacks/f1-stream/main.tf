@@ -243,8 +243,10 @@ module "nfs_data" {
 # before an old one leaves, the old one drains (preStop sends SIGUSR1, which
 # makes readiness 503 and closes keep-alives, then uvicorn's graceful shutdown
 # lets in-flight responses finish), and the PDB keeps one serving through a
-# node drain. The Transcoder also rolls with a surge and hands its sessions to
-# the new pod in its preStop before it exits. The Worker is Recreate: viewers
+# node drain. The Transcoder is Recreate (see the GPU seat note below): the old
+# pod stops before the new one starts, and a ladder viewer plays the source for
+# that gap, about 40s. The handover in its preStop finds no peer and returns at
+# once; it still runs if a second Transcoder is ever up. The Worker is Recreate: viewers
 # keep playing from the Edges while it restarts, and only new extraction and
 # replay work waits for it.
 #
@@ -253,10 +255,14 @@ module "nfs_data" {
 #
 # GPU seats on k8s-node1 (advertises 15000 gpumem): 12148 declared on
 # 2026-10-11, of which this namespace held 2848. Steady state with the split is
-# Worker 2000 + Transcoder 1850 = 3850 (node 13150); a Transcoder surge adds
-# 1850 for the length of a handover (node 15000, the whole budget). The Worker is Recreate, so its seat never
-# doubles. If a parked GPU tenant comes back first, the surge Transcoder waits
-# Pending and the old one keeps serving.
+# Worker 2000 + Transcoder 1850 = 3850. On 2026-10-16 the node had 13950
+# declared (the shared Android emulator's 800 among them), leaving 1050, so a
+# Transcoder surge pod needing a second 1850 waited Pending for as long as the
+# other tenants stayed, and the Transcoder serving viewers stayed on the old
+# image. Both Roles are therefore Recreate, so neither seat ever doubles.
+# Shrinking the seat so two fit is not an option: the card peaked at 14494 MiB
+# used in the week to 2026-10-16, and one monolith pod used up to 1809 MiB.
+# Ladder sessions peaked at 1 over that week, so the restart gap costs little.
 # ---------------------------------------------------------------------------
 
 locals {
@@ -794,14 +800,10 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
   }
   spec {
     replicas = 1
-    # The surge pod takes a second 1850 gpumem seat for the length of a
-    # handover; see the GPU seat note above the locals.
+    # Recreate: a surge pod needs a second 1850 gpumem seat that k8s-node1
+    # rarely has free; see the GPU seat note above the locals.
     strategy {
-      type = "RollingUpdate"
-      rolling_update {
-        max_surge       = 1
-        max_unavailable = 0
-      }
+      type = "Recreate"
     }
     selector {
       match_labels = {
