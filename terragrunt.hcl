@@ -88,8 +88,12 @@ terraform {
     }
     cloudflare = {
       source = "cloudflare/cloudflare"
+      # v5 since 2026-10-16 (rewrite: cloudflare_record became
+      # cloudflare_dns_record, worker_* became workers_*, zone_settings_override
+      # became per-setting zone_setting). The renames are carried by moved
+      # blocks in the modules that own them.
       # renovate: datasource=terraform-provider depName=cloudflare/cloudflare
-      version = "4.52.9"
+      version = "5.28.0"
     }
     authentik = {
       source = "goauthentik/authentik"

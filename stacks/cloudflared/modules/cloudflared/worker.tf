@@ -9,9 +9,11 @@
 # (The retired rybbit-analytics injection was folded in here 2026-07-17 then
 # removed the same day — Rybbit is unconfigured, 0 sites, analytics dead since
 # ~2026-04-13, so injection did nothing. Pure failover now.)
-resource "cloudflare_worker_script" "outage_failover" {
-  account_id = var.cloudflare_account_id
-  name       = "outage-failover"
+resource "cloudflare_workers_script" "outage_failover" {
+  # nonsensitive(): the account id is not a secret (stacks/valia-sites keeps it
+  # in plain text), and a sensitive value here makes v5 plan an update.
+  account_id  = nonsensitive(var.cloudflare_account_id)
+  script_name = "outage-failover"
   # The self-contained outage page (error_page.html — same content mx2 serves
   # at /error.html) is baked into the script as a JSON string literal:
   # Worker fetch() to a same-zone grey-cloud hostname was observed failing
@@ -21,7 +23,9 @@ resource "cloudflare_worker_script" "outage_failover" {
     "\"__INLINE_PAGE_JSON__\"",
     jsonencode(file("${path.module}/error_page.html")),
   )
-  module = true # ES module Worker (export default { fetch })
+  # ES module Worker (export default { fetch }). v4 said `module = true`; v5
+  # names the entry module instead.
+  main_module = "worker.mjs"
   # Pin the runtime compatibility date (good hygiene — an empty value lets Worker
   # runtime behaviour drift). Matches the retired rybbit-analytics wrangler.toml.
   compatibility_date = "2024-01-01"
@@ -158,19 +162,19 @@ locals {
   ]
 }
 
-resource "cloudflare_worker_route" "outage_failover_host" {
-  for_each    = toset(local.worker_covered_hosts)
-  zone_id     = var.cloudflare_zone_id
-  pattern     = "${each.value}.viktorbarzin.me/*"
-  script_name = cloudflare_worker_script.outage_failover.name
+resource "cloudflare_workers_route" "outage_failover_host" {
+  for_each = toset(local.worker_covered_hosts)
+  zone_id  = var.cloudflare_zone_id
+  pattern  = "${each.value}.viktorbarzin.me/*"
+  script   = cloudflare_workers_script.outage_failover.script_name
 }
 
 # Apex is not matched by any *.viktorbarzin.me pattern, so it needs its own route
 # (the blog). Was previously owned by rybbit.
-resource "cloudflare_worker_route" "outage_failover_apex" {
-  zone_id     = var.cloudflare_zone_id
-  pattern     = "viktorbarzin.me/*"
-  script_name = cloudflare_worker_script.outage_failover.name
+resource "cloudflare_workers_route" "outage_failover_apex" {
+  zone_id = var.cloudflare_zone_id
+  pattern = "viktorbarzin.me/*"
+  script  = cloudflare_workers_script.outage_failover.script_name
 }
 
 # NOTE: the Cinemeta reverse-proxy moved from a CF Worker to an in-cluster nginx
@@ -179,3 +183,22 @@ resource "cloudflare_worker_route" "outage_failover_apex" {
 # Technitium/internal clients got NXDOMAIN). cinemeta is absent from the
 # allow-list above, so the public path flows CF wildcard DNS -> tunnel -> Traefik
 # -> nginx with no Worker invocation.
+
+# Cloudflare provider v5 renamed cloudflare_worker_script/_route to
+# cloudflare_workers_script/_route (2026-10-16). These moved blocks carry the
+# live Worker and its routes across in state so nothing is deleted and
+# recreated. Safe to delete once the stack has applied on v5.
+moved {
+  from = cloudflare_worker_script.outage_failover
+  to   = cloudflare_workers_script.outage_failover
+}
+
+moved {
+  from = cloudflare_worker_route.outage_failover_host
+  to   = cloudflare_workers_route.outage_failover_host
+}
+
+moved {
+  from = cloudflare_worker_route.outage_failover_apex
+  to   = cloudflare_workers_route.outage_failover_apex
+}

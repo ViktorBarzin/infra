@@ -55,7 +55,7 @@ data "cloudflare_accounts" "main" {}
 # The registrable domain covers every subdomain. Resource name kept from the
 # canary so the sitekey does not change.
 resource "cloudflare_turnstile_widget" "forgejo_gate" {
-  account_id = data.cloudflare_accounts.main.accounts[0].id
+  account_id = data.cloudflare_accounts.main.result[0].id
   name       = "site-gate"
   domains    = [local.domain]
   mode       = "managed"

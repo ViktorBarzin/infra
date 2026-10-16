@@ -2,7 +2,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4"
+      version = "~> 5"
     }
     kubernetes = {
       source = "hashicorp/kubernetes"
@@ -380,26 +380,24 @@ resource "kubernetes_manifest" "custom_csp" {
 # serves the apex, so unlike modules/kubernetes/ingress_factory there is no
 # "@" carve-out.)
 
-resource "cloudflare_record" "non_proxied_a" {
-  count           = var.dns_type == "non-proxied" ? 1 : 0
-  name            = var.name
-  content         = var.public_ip
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "non_proxied_a" {
+  count   = var.dns_type == "non-proxied" ? 1 : 0
+  name    = var.name
+  content = var.public_ip
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "non_proxied_aaaa" {
-  count           = var.dns_type == "non-proxied" ? 1 : 0
-  name            = var.name
-  content         = var.public_ipv6
-  proxied         = false
-  ttl             = 1
-  type            = "AAAA"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "non_proxied_aaaa" {
+  count   = var.dns_type == "non-proxied" ? 1 : 0
+  name    = var.name
+  content = var.public_ipv6
+  proxied = false
+  ttl     = 1
+  type    = "AAAA"
+  zone_id = var.cloudflare_zone_id
 }
 
 # 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
@@ -407,15 +405,14 @@ resource "cloudflare_record" "non_proxied_aaaa" {
 # wildcard), so the name stays unreachable from outside while home-LAN/WG/VPN
 # clients resolve and route to Traefik directly. Mirrors
 # modules/kubernetes/ingress_factory's internal_a.
-resource "cloudflare_record" "internal_a" {
-  count           = var.dns_type == "internal" ? 1 : 0
-  name            = var.name
-  content         = var.internal_lb_ip
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "internal_a" {
+  count   = var.dns_type == "internal" ? 1 : 0
+  name    = var.name
+  content = var.internal_lb_ip
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
 }
 
 # This host's server block for the shared lean-proxy config, or null when the
@@ -428,4 +425,24 @@ output "lean_proxy_server" {
     cookies      = var.header_allowlist.cookies
     headers      = local.lean_headers
   }) : null
+}
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.non_proxied_a
+  to   = cloudflare_dns_record.non_proxied_a
+}
+
+moved {
+  from = cloudflare_record.non_proxied_aaaa
+  to   = cloudflare_dns_record.non_proxied_aaaa
+}
+
+moved {
+  from = cloudflare_record.internal_a
+  to   = cloudflare_dns_record.internal_a
 }

@@ -118,294 +118,302 @@ resource "cloudflare_ruleset" "f1_cache" {
   phase       = "http_request_cache_settings"
 
   # 1. BYPASS what cannot or must not be cached. First, so it wins.
-  rules {
-    ref         = "f1_bypass_large_files"
-    description = "Never cache the library mp4s or the torrent-cache stream"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/replays/cache/\") or ends_with(http.request.uri.path, \".mp4\")))"
-    action      = "set_cache_settings"
-    enabled     = true
+  rules = [
+    {
+      ref         = "f1_bypass_large_files"
+      description = "Never cache the library mp4s or the torrent-cache stream"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/replays/cache/\") or ends_with(http.request.uri.path, \".mp4\")))"
+      action      = "set_cache_settings"
+      enabled     = true
 
-    action_parameters {
-      cache = false
-    }
-  }
+      action_parameters = {
+        cache = false
+      }
+    },
 
-  # 1b. BYPASS Watch link playlists (ADR-0034 in the f1-stream repo). The 2s
-  #     manifest rule (4) also EXCLUDES /watch/, and that exclusion is what
-  #     actually keeps them off the edge: measured 2026-10-11, with only this
-  #     rule in place a Watch link answered MISS then HIT, because Cloudflare
-  #     cache rules stack and a later matching rule's settings override an
-  #     earlier one's. Not first-match, whatever the ordering note above says. A Watch link playlist is how an external player such as VLC
-  #     is counted as a viewer: each reload has to reach the origin, and one
-  #     answered here is a viewer the app never sees. The origin keeps each
-  #     upstream playlist for 2s in memory, so upstream load stays where this
-  #     edge kept it; the playlists are a few KB each. Segments under them are
-  #     /relay URLs and stay in rule 5.
-  rules {
-    ref         = "f1_bypass_watch_playlists"
-    description = "Never cache Watch link playlists, so every VLC reload reaches the origin"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/watch/f1/\") or starts_with(http.request.uri.path, \"/watch/channel/\")))"
-    action      = "set_cache_settings"
-    enabled     = true
+    # 1b. BYPASS Watch link playlists (ADR-0034 in the f1-stream repo). The 2s
+    #     manifest rule (4) also EXCLUDES /watch/, and that exclusion is what
+    #     actually keeps them off the edge: measured 2026-10-11, with only this
+    #     rule in place a Watch link answered MISS then HIT, because Cloudflare
+    #     cache rules stack and a later matching rule's settings override an
+    #     earlier one's. Not first-match, whatever the ordering note above says. A Watch link playlist is how an external player such as VLC
+    #     is counted as a viewer: each reload has to reach the origin, and one
+    #     answered here is a viewer the app never sees. The origin keeps each
+    #     upstream playlist for 2s in memory, so upstream load stays where this
+    #     edge kept it; the playlists are a few KB each. Segments under them are
+    #     /relay URLs and stay in rule 5.
+    {
+      ref         = "f1_bypass_watch_playlists"
+      description = "Never cache Watch link playlists, so every VLC reload reaches the origin"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/watch/f1/\") or starts_with(http.request.uri.path, \"/watch/channel/\")))"
+      action      = "set_cache_settings"
+      enabled     = true
 
-    action_parameters {
-      cache = false
-    }
-  }
+      action_parameters = {
+        cache = false
+      }
+    },
 
-  # 2. VOD ladder playlists: immutable, so cache them properly. This sits AHEAD
-  #    of the second-level manifest rule because cache rules are first-match and
-  #    a ladder playlist ends in .m3u8 like every other one, so without this it
-  #    would fall into the 2-second rule meant for the LIVE manifest.
-  #
-  #    A replay ladder is written once by ffmpeg and never rewritten: the master
-  #    and the four variant playlists are as immutable as the segments they list.
-  #    Measured 2026-09-10 on 68fbb49285d3: a variant playlist is 42,281 bytes
-  #    and lists 1,506 segments, so a 2-second TTL made every viewer re-pull all
-  #    42 KB from the origin rather than revalidate it. Small against 1.4 GB of
-  #    segments, but it is pure waste and the fix is one rule.
-  #
-  #    TTL RAISED FROM 86400 TO 31536000 (365 DAYS) ON 2026-09-11, and the same
-  #    reasoning added the ladder-segment rule below it. 86400 meant a ladder was
-  #    not paid for once, it was paid for again every viewing day, because a
-  #    24-hour TTL expiring is a full re-pull rather than a revalidation.
-  #
-  #    Both halves of that were measured on 2026-09-11 rather than assumed:
-  #      - The expiry is real, not theoretical. A ladder master fetched through
-  #        the edge at 14:12 returned `cf-cache-status: EXPIRED` — a previously
-  #        cached copy whose day was up, re-fetched from the origin.
-  #      - The origin cannot revalidate. Against 10.0.20.203 directly, a ladder
-  #        playlist ships `etag: "07d7c335684b7d901472083b148eccce"` and
-  #        `last-modified: Thu, 10 Sep 2026 22:31:53 GMT`; re-requesting it with
-  #        `If-None-Match` set to exactly that etag returns 200 with all 42,925
-  #        bytes, and `If-Modified-Since` with exactly that timestamp does the
-  #        same. A ladder segment behaves identically: 200 and all 420,180 bytes
-  #        both ways. So an expiry costs the full object every time.
-  #
-  #    DEPENDENCY, deliberately recorded here: a separate change is teaching the
-  #    origin to answer 304. This rule does not need that to help — a longer TTL
-  #    means fewer expiries whatever the origin does — but the two together are
-  #    what turn a daily cost into a one-off. If the 304 work lands and this
-  #    value is later lowered, the daily re-pull returns at revalidation cost
-  #    rather than full cost, which is a different trade, not the same one.
-  #
-  #    WHY 31536000 IS A VALUE THIS FREE ZONE ACCEPTS, checked rather than
-  #    inferred from the legacy Page Rules ceiling (Free capped Edge Cache TTL
-  #    at a month there, and that number does not govern Cache Rules).
-  #    Cloudflare's own machine-readable API schema
-  #    (github.com/cloudflare/api-schemas, openapi.json, fetched 2026-09-11)
-  #    declares `rulesets_SetCacheSettingsEdgeTTL.default` as an integer with
-  #    `minimum: 0` and NO maximum, and carries no per-plan bound anywhere. The
-  #    one per-plan table Cloudflare publishes for Edge Cache TTL is a table of
-  #    MINIMUMS (Free 2h, Pro 1h, Business/Enterprise 1s), and this zone already
-  #    runs below its own listed minimum: the manifest rule below sets 2 seconds
-  #    on Free and was measured working on 2026-09-10. So that table does not
-  #    bind Cache Rules in either direction.
-  #    THE APPLY ITSELF CANNOT FAIL ON THIS VALUE, checked with the provider
-  #    rather than hoped for. `cloudflare_ruleset` on v4.52.9 declares
-  #    `edge_ttl.default` as a plain optional `number` with no range validator
-  #    (read out of `terraform providers schema -json`), and `terraform
-  #    validate` on a rule of exactly this shape carrying 31536000 returns
-  #    Success. That is the provider's own ValidateResourceConfig, so it runs
-  #    without an API call or a plan.
-  #    WHAT IS STILL UNVERIFIED: whether the EDGE silently clamps a value this
-  #    large at serve time. Proving that needs a PUT, which is an apply, so it
-  #    was not done. A clamp would be harmless, since it means a shorter TTL
-  #    than asked for rather than an error. Two read-only probes against the
-  #    live API confirmed the request shape is otherwise accepted and left the
-  #    ruleset untouched (still version 2, same `last_updated`), but Cloudflare
-  #    reports one error at a time so neither probe could isolate the TTL field.
-  #
-  #    EXCEPT master.m3u8, WHICH IS NO LONGER WRITTEN ONCE. Added 2026-09-11
-  #    while landing this branch, because the change it lands beside made the
-  #    premise above stop being true for one file. The origin now RENDERS
-  #    master.m3u8 per request rather than sending ffmpeg's copy, so it can
-  #    probe the stream-copied v0 rung and emit the `CODECS` attribute ffmpeg
-  #    omits — which is what lets hls.js pick 1080p at all. Its bytes are
-  #    therefore a function of our code, not of a file on disk.
-  #
-  #    That was measured going wrong within the hour. After the CODECS fix
-  #    deployed, 104.21.3.16 served the 398-byte pre-fix master while the
-  #    origin served the 429-byte one carrying `CODECS="avc1.4d402a,
-  #    mp4a.40.2"`, under a `cf-cache-status: REVALIDATED`. A one-year TTL on
-  #    that path does something worse than a stale revalidation: it stops
-  #    asking the origin at all, so the next rendering fix would wait a year.
-  #
-  #    So master.m3u8 falls through to `f1_cache_manifests_briefly` below and
-  #    takes its 2 seconds, which is the TTL that rule exists to give a
-  #    playlist whose bytes can change. It costs nothing to hand it over: the
-  #    file is 429 bytes, hls.js reads it once per session, and the origin now
-  #    answers a conditional request for it with a 304 and no body. The 1,506
-  #    variant playlists and their chunks are still written once by ffmpeg and
-  #    still take the year.
-  rules {
-    ref         = "f1_cache_vod_ladder_playlists"
-    description = "Replay ladder variant playlists: 1 year edge TTL, ffmpeg writes them once"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\") and not (ends_with(http.request.uri.path, \"/master.m3u8\")))"
-    action      = "set_cache_settings"
-    enabled     = true
+    # 2. VOD ladder playlists: immutable, so cache them properly. This sits AHEAD
+    #    of the second-level manifest rule because cache rules are first-match and
+    #    a ladder playlist ends in .m3u8 like every other one, so without this it
+    #    would fall into the 2-second rule meant for the LIVE manifest.
+    #
+    #    A replay ladder is written once by ffmpeg and never rewritten: the master
+    #    and the four variant playlists are as immutable as the segments they list.
+    #    Measured 2026-09-10 on 68fbb49285d3: a variant playlist is 42,281 bytes
+    #    and lists 1,506 segments, so a 2-second TTL made every viewer re-pull all
+    #    42 KB from the origin rather than revalidate it. Small against 1.4 GB of
+    #    segments, but it is pure waste and the fix is one rule.
+    #
+    #    TTL RAISED FROM 86400 TO 31536000 (365 DAYS) ON 2026-09-11, and the same
+    #    reasoning added the ladder-segment rule below it. 86400 meant a ladder was
+    #    not paid for once, it was paid for again every viewing day, because a
+    #    24-hour TTL expiring is a full re-pull rather than a revalidation.
+    #
+    #    Both halves of that were measured on 2026-09-11 rather than assumed:
+    #      - The expiry is real, not theoretical. A ladder master fetched through
+    #        the edge at 14:12 returned `cf-cache-status: EXPIRED` — a previously
+    #        cached copy whose day was up, re-fetched from the origin.
+    #      - The origin cannot revalidate. Against 10.0.20.203 directly, a ladder
+    #        playlist ships `etag: "07d7c335684b7d901472083b148eccce"` and
+    #        `last-modified: Thu, 10 Sep 2026 22:31:53 GMT`; re-requesting it with
+    #        `If-None-Match` set to exactly that etag returns 200 with all 42,925
+    #        bytes, and `If-Modified-Since` with exactly that timestamp does the
+    #        same. A ladder segment behaves identically: 200 and all 420,180 bytes
+    #        both ways. So an expiry costs the full object every time.
+    #
+    #    DEPENDENCY, deliberately recorded here: a separate change is teaching the
+    #    origin to answer 304. This rule does not need that to help — a longer TTL
+    #    means fewer expiries whatever the origin does — but the two together are
+    #    what turn a daily cost into a one-off. If the 304 work lands and this
+    #    value is later lowered, the daily re-pull returns at revalidation cost
+    #    rather than full cost, which is a different trade, not the same one.
+    #
+    #    WHY 31536000 IS A VALUE THIS FREE ZONE ACCEPTS, checked rather than
+    #    inferred from the legacy Page Rules ceiling (Free capped Edge Cache TTL
+    #    at a month there, and that number does not govern Cache Rules).
+    #    Cloudflare's own machine-readable API schema
+    #    (github.com/cloudflare/api-schemas, openapi.json, fetched 2026-09-11)
+    #    declares `rulesets_SetCacheSettingsEdgeTTL.default` as an integer with
+    #    `minimum: 0` and NO maximum, and carries no per-plan bound anywhere. The
+    #    one per-plan table Cloudflare publishes for Edge Cache TTL is a table of
+    #    MINIMUMS (Free 2h, Pro 1h, Business/Enterprise 1s), and this zone already
+    #    runs below its own listed minimum: the manifest rule below sets 2 seconds
+    #    on Free and was measured working on 2026-09-10. So that table does not
+    #    bind Cache Rules in either direction.
+    #    THE APPLY ITSELF CANNOT FAIL ON THIS VALUE, checked with the provider
+    #    rather than hoped for. `cloudflare_ruleset` on v4.52.9 declares
+    #    `edge_ttl.default` as a plain optional `number` with no range validator
+    #    (read out of `terraform providers schema -json`), and `terraform
+    #    validate` on a rule of exactly this shape carrying 31536000 returns
+    #    Success. That is the provider's own ValidateResourceConfig, so it runs
+    #    without an API call or a plan.
+    #    WHAT IS STILL UNVERIFIED: whether the EDGE silently clamps a value this
+    #    large at serve time. Proving that needs a PUT, which is an apply, so it
+    #    was not done. A clamp would be harmless, since it means a shorter TTL
+    #    than asked for rather than an error. Two read-only probes against the
+    #    live API confirmed the request shape is otherwise accepted and left the
+    #    ruleset untouched (still version 2, same `last_updated`), but Cloudflare
+    #    reports one error at a time so neither probe could isolate the TTL field.
+    #
+    #    EXCEPT master.m3u8, WHICH IS NO LONGER WRITTEN ONCE. Added 2026-09-11
+    #    while landing this branch, because the change it lands beside made the
+    #    premise above stop being true for one file. The origin now RENDERS
+    #    master.m3u8 per request rather than sending ffmpeg's copy, so it can
+    #    probe the stream-copied v0 rung and emit the `CODECS` attribute ffmpeg
+    #    omits — which is what lets hls.js pick 1080p at all. Its bytes are
+    #    therefore a function of our code, not of a file on disk.
+    #
+    #    That was measured going wrong within the hour. After the CODECS fix
+    #    deployed, 104.21.3.16 served the 398-byte pre-fix master while the
+    #    origin served the 429-byte one carrying `CODECS="avc1.4d402a,
+    #    mp4a.40.2"`, under a `cf-cache-status: REVALIDATED`. A one-year TTL on
+    #    that path does something worse than a stale revalidation: it stops
+    #    asking the origin at all, so the next rendering fix would wait a year.
+    #
+    #    So master.m3u8 falls through to `f1_cache_manifests_briefly` below and
+    #    takes its 2 seconds, which is the TTL that rule exists to give a
+    #    playlist whose bytes can change. It costs nothing to hand it over: the
+    #    file is 429 bytes, hls.js reads it once per session, and the origin now
+    #    answers a conditional request for it with a 304 and no body. The 1,506
+    #    variant playlists and their chunks are still written once by ffmpeg and
+    #    still take the year.
+    {
+      ref         = "f1_cache_vod_ladder_playlists"
+      description = "Replay ladder variant playlists: 1 year edge TTL, ffmpeg writes them once"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\") and not (ends_with(http.request.uri.path, \"/master.m3u8\")))"
+      action      = "set_cache_settings"
+      enabled     = true
 
-    action_parameters {
-      cache = true
+      action_parameters = {
+        cache = true
 
-      edge_ttl {
-        mode    = "override_origin"
-        default = 31536000
+        edge_ttl = {
+          mode    = "override_origin"
+          default = 31536000
 
-        # Same reasoning as the segment rule below: never pin a failure for a
-        # year, and on this path the failure is expected rather than unlucky —
-        # a viewer who opens a replay mid-build asks for playlists that do not
-        # exist yet.
-        status_code_ttl {
-          status_code_range {
-            from = 400
-            to   = 599
-          }
-          value = 10
+          # Same reasoning as the segment rule below: never pin a failure for a
+          # year, and on this path the failure is expected rather than unlucky —
+          # a viewer who opens a replay mid-build asks for playlists that do not
+          # exist yet.
+          status_code_ttl = [
+            {
+              status_code_range = {
+                from = 400
+                to   = 599
+              }
+              value = 10
+            },
+          ]
+        }
+
+        browser_ttl = {
+          mode = "respect_origin"
         }
       }
+    },
 
-      browser_ttl {
-        mode = "respect_origin"
-      }
-    }
-  }
+    # 3. LADDER SEGMENTS: the same one-year TTL as the ladder playlists above, and
+    #    for the same reason. This rule exists only because of ORDER: a ladder
+    #    segment ends in `.ts`, so without it the request falls through to
+    #    `f1_cache_segments` at the bottom of this ruleset and takes that rule's
+    #    86400, which is the TTL a LIVE segment wants. For a live segment 24 hours
+    #    is already generous, because the upstream window has moved on long
+    #    before. A ladder rung is a file we wrote and still own, and it is far
+    #    larger: 1,506 chunks per rung.
+    #
+    #    These objects cannot change. `ffmpeg` writes a rung once and the URL
+    #    carries the torrent info-hash, so a different video is a different path.
+    #    Verified on disk 2026-09-11: the layout is
+    #    `<info-hash>.hls/v<rung>/s<NNNNN>.ts`, served as
+    #    `/replays/library/hls/<info-hash>/v<rung>/s<NNNNN>.ts`, and nothing in
+    #    the codebase rewrites a chunk once the build completes.
+    #
+    #    WHAT THIS SAVES, measured: a rung is 0.55-9.33 GB (v3 240p through v0
+    #    1080p stream copy), 1,506 chunks each, and the origin answers conditional
+    #    requests with 200 and the whole body (the exact measurement is in the
+    #    playlist rule above). At 86400 that is the whole rung off the 32.0 Mbit/s
+    #    home uplink again on every viewing day. At 31536000 it is once.
+    #
+    #    Sitting ahead of the manifest rule costs nothing: this rule requires
+    #    `.ts` and that one matches `/proxy` or `.m3u8`, so the two are disjoint.
+    #    It stays BEHIND `f1_bypass_large_files` deliberately — a ladder chunk is
+    #    neither `/replays/cache/` nor `.mp4`, so the order is irrelevant there,
+    #    and the bypass keeps the top slot this file asks it to keep.
+    {
+      ref         = "f1_cache_ladder_segments"
+      description = "Replay ladder segments: 1 year edge TTL, written once by ffmpeg"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".ts\"))"
+      action      = "set_cache_settings"
+      enabled     = true
 
-  # 3. LADDER SEGMENTS: the same one-year TTL as the ladder playlists above, and
-  #    for the same reason. This rule exists only because of ORDER: a ladder
-  #    segment ends in `.ts`, so without it the request falls through to
-  #    `f1_cache_segments` at the bottom of this ruleset and takes that rule's
-  #    86400, which is the TTL a LIVE segment wants. For a live segment 24 hours
-  #    is already generous, because the upstream window has moved on long
-  #    before. A ladder rung is a file we wrote and still own, and it is far
-  #    larger: 1,506 chunks per rung.
-  #
-  #    These objects cannot change. `ffmpeg` writes a rung once and the URL
-  #    carries the torrent info-hash, so a different video is a different path.
-  #    Verified on disk 2026-09-11: the layout is
-  #    `<info-hash>.hls/v<rung>/s<NNNNN>.ts`, served as
-  #    `/replays/library/hls/<info-hash>/v<rung>/s<NNNNN>.ts`, and nothing in
-  #    the codebase rewrites a chunk once the build completes.
-  #
-  #    WHAT THIS SAVES, measured: a rung is 0.55-9.33 GB (v3 240p through v0
-  #    1080p stream copy), 1,506 chunks each, and the origin answers conditional
-  #    requests with 200 and the whole body (the exact measurement is in the
-  #    playlist rule above). At 86400 that is the whole rung off the 32.0 Mbit/s
-  #    home uplink again on every viewing day. At 31536000 it is once.
-  #
-  #    Sitting ahead of the manifest rule costs nothing: this rule requires
-  #    `.ts` and that one matches `/proxy` or `.m3u8`, so the two are disjoint.
-  #    It stays BEHIND `f1_bypass_large_files` deliberately — a ladder chunk is
-  #    neither `/replays/cache/` nor `.mp4`, so the order is irrelevant there,
-  #    and the bypass keeps the top slot this file asks it to keep.
-  rules {
-    ref         = "f1_cache_ladder_segments"
-    description = "Replay ladder segments: 1 year edge TTL, written once by ffmpeg"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".ts\"))"
-    action      = "set_cache_settings"
-    enabled     = true
+      action_parameters = {
+        cache = true
 
-    action_parameters {
-      cache = true
+        edge_ttl = {
+          mode    = "override_origin"
+          default = 31536000
 
-      edge_ttl {
-        mode    = "override_origin"
-        default = 31536000
+          # The 400-599 guard matters MORE here than on any other rule, for the
+          # reason `f1_cache_segments` records at length: a ladder takes about 17
+          # minutes to build, and a viewer who opens a replay during that window
+          # asks for chunks that do not exist yet. Without this their colo would
+          # answer 404 for a YEAR rather than a day. Ten seconds recovers within
+          # one playlist reload.
+          status_code_ttl = [
+            {
+              status_code_range = {
+                from = 400
+                to   = 599
+              }
+              value = 10
+            },
+          ]
+        }
 
-        # The 400-599 guard matters MORE here than on any other rule, for the
-        # reason `f1_cache_segments` records at length: a ladder takes about 17
-        # minutes to build, and a viewer who opens a replay during that window
-        # asks for chunks that do not exist yet. Without this their colo would
-        # answer 404 for a YEAR rather than a day. Ten seconds recovers within
-        # one playlist reload.
-        status_code_ttl {
-          status_code_range {
-            from = 400
-            to   = 599
-          }
-          value = 10
+        browser_ttl = {
+          mode = "respect_origin"
         }
       }
+    },
 
-      browser_ttl {
-        mode = "respect_origin"
-      }
-    }
-  }
+    # 4. Manifests: cached for SECONDS. Long enough to collapse a burst of viewers
+    #    arriving together, short enough that nobody plays a stale playlist.
+    #    Matches the live manifest by path (/proxy carries its target in the query
+    #    string and has no extension) and every VOD playlist by extension.
+    {
+      ref         = "f1_cache_manifests_briefly"
+      description = "HLS playlists: 2s edge TTL"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")) and not starts_with(http.request.uri.path, \"/watch/\"))"
+      action      = "set_cache_settings"
+      enabled     = true
 
-  # 4. Manifests: cached for SECONDS. Long enough to collapse a burst of viewers
-  #    arriving together, short enough that nobody plays a stale playlist.
-  #    Matches the live manifest by path (/proxy carries its target in the query
-  #    string and has no extension) and every VOD playlist by extension.
-  rules {
-    ref         = "f1_cache_manifests_briefly"
-    description = "HLS playlists: 2s edge TTL"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")) and not starts_with(http.request.uri.path, \"/watch/\"))"
-    action      = "set_cache_settings"
-    enabled     = true
+      action_parameters = {
+        cache = true
 
-    action_parameters {
-      cache = true
+        edge_ttl = {
+          mode    = "override_origin"
+          default = 2
+        }
 
-      edge_ttl {
-        mode    = "override_origin"
-        default = 2
-      }
-
-      # Leave the browser alone: the origin's no-store reaches it untouched, so
-      # a viewer never holds a manifest of its own.
-      browser_ttl {
-        mode = "respect_origin"
-      }
-    }
-  }
-
-  # 5. Segments: immutable, so cache them properly. This is the rule that
-  #    actually saves the upload — one origin fetch per segment however many
-  #    people are watching.
-  rules {
-    ref         = "f1_cache_segments"
-    description = "HLS segments: 1 day edge TTL, they are immutable"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/relay\" or ends_with(http.request.uri.path, \".ts\") or ends_with(http.request.uri.path, \".m4s\")))"
-    action      = "set_cache_settings"
-    enabled     = true
-
-    action_parameters {
-      cache = true
-
-      edge_ttl {
-        mode    = "override_origin"
-        default = 86400
-
-        # NEVER PIN A FAILURE FOR A DAY. `default` applies to every status this
-        # rule caches, not just the good ones, so before this block a 404 on a
-        # segment path was cached and re-served for 24 hours. Measured live on
-        # 2026-09-10: a request for a segment that does not exist returned 404
-        # MISS then 404 HIT from the edge.
-        #
-        # That is not hypothetical here. A ladder is built by a 40-minute ffmpeg
-        # run, so a viewer who opens a replay mid-build asks for segments that do
-        # not exist yet; without this, their colo would keep answering 404 for a
-        # day after the segments appeared. The same applies to a transient 5xx
-        # from the origin.
-        #
-        # Ten seconds still collapses a burst of bad requests, which is what the
-        # per-app rate limiter is for anyway (200/s burst 2000 on X-Real-Ip), and
-        # recovers within one playlist reload.
-        status_code_ttl {
-          status_code_range {
-            from = 400
-            to   = 599
-          }
-          value = 10
+        # Leave the browser alone: the origin's no-store reaches it untouched, so
+        # a viewer never holds a manifest of its own.
+        browser_ttl = {
+          mode = "respect_origin"
         }
       }
+    },
 
-      browser_ttl {
-        mode = "respect_origin"
+    # 5. Segments: immutable, so cache them properly. This is the rule that
+    #    actually saves the upload — one origin fetch per segment however many
+    #    people are watching.
+    {
+      ref         = "f1_cache_segments"
+      description = "HLS segments: 1 day edge TTL, they are immutable"
+      expression  = "(http.host eq \"f1.viktorbarzin.me\" and (http.request.uri.path eq \"/relay\" or ends_with(http.request.uri.path, \".ts\") or ends_with(http.request.uri.path, \".m4s\")))"
+      action      = "set_cache_settings"
+      enabled     = true
+
+      action_parameters = {
+        cache = true
+
+        edge_ttl = {
+          mode    = "override_origin"
+          default = 86400
+
+          # NEVER PIN A FAILURE FOR A DAY. `default` applies to every status this
+          # rule caches, not just the good ones, so before this block a 404 on a
+          # segment path was cached and re-served for 24 hours. Measured live on
+          # 2026-09-10: a request for a segment that does not exist returned 404
+          # MISS then 404 HIT from the edge.
+          #
+          # That is not hypothetical here. A ladder is built by a 40-minute ffmpeg
+          # run, so a viewer who opens a replay mid-build asks for segments that do
+          # not exist yet; without this, their colo would keep answering 404 for a
+          # day after the segments appeared. The same applies to a transient 5xx
+          # from the origin.
+          #
+          # Ten seconds still collapses a burst of bad requests, which is what the
+          # per-app rate limiter is for anyway (200/s burst 2000 on X-Real-Ip), and
+          # recovers within one playlist reload.
+          status_code_ttl = [
+            {
+              status_code_range = {
+                from = 400
+                to   = 599
+              }
+              value = 10
+            },
+          ]
+        }
+
+        browser_ttl = {
+          mode = "respect_origin"
+        }
       }
-    }
-  }
+    },
+  ]
 }
 
 # ---------------------------------------------------------------------------
@@ -483,10 +491,23 @@ resource "cloudflare_ruleset" "f1_cache" {
 # Port-forward Loki (`kubectl -n monitoring port-forward svc/loki 3100`) and
 # query it directly, or you will count your own queries as origin pulls.
 #
-# PROVIDER NOTE: the attribute is `cache_type` on provider v4, which this repo
-# pins (`~> 4`). It was renamed to `value` in v5, so a provider bump needs this
-# line changed too.
+# PROVIDER NOTE (v5, 2026-10-16): on provider v4 this was one resource with
+# `cache_type = "smart"`, which switched on BOTH zone settings named above. v5
+# splits them: `cloudflare_tiered_cache` (value "on") owns
+# `cache/tiered_cache_smart_topology_enable`, and `cloudflare_argo_tiered_caching`
+# owns `argo/tiered_caching`. Both settings were already on when the provider
+# moved, so the import below adopts the second one rather than changing it.
 resource "cloudflare_tiered_cache" "zone_smart" {
-  zone_id    = "fd2c5dd4efe8fe38958944e74d0ced6d"
-  cache_type = "smart"
+  zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d"
+  value   = "on"
+}
+
+resource "cloudflare_argo_tiered_caching" "zone_smart" {
+  zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d"
+  value   = "on"
+}
+
+import {
+  to = cloudflare_argo_tiered_caching.zone_smart
+  id = "fd2c5dd4efe8fe38958944e74d0ced6d"
 }

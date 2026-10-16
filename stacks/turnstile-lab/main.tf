@@ -23,7 +23,7 @@ data "cloudflare_accounts" "main" {}
 # Managed mode: Cloudflare decides per visitor whether to show a checkbox.
 # Free plan allows 20 widgets; forgejo-signup is the only other one we manage.
 resource "cloudflare_turnstile_widget" "lab" {
-  account_id = data.cloudflare_accounts.main.accounts[0].id
+  account_id = data.cloudflare_accounts.main.result[0].id
   name       = local.name
   domains    = [local.host]
   mode       = "managed"
