@@ -340,10 +340,16 @@ resource "cloudflare_record" "keyserver" {
 # downloads. QUIC was not the cause: an 11-agent investigation excluded every
 # server-side candidate by measurement, and the truncation is terminated at the
 # client end. Turned back on the same day.
-resource "cloudflare_zone_settings_override" "http3" {
-  zone_id = var.cloudflare_zone_id
+#
+# Provider v5 (2026-10-16) has no cloudflare_zone_settings_override; each
+# setting becomes its own cloudflare_zone_setting. v5 cannot read the old
+# resource from state at all, so this first step drops it from state with the
+# v4 provider while leaving the live setting untouched (http3 stays "on"). The
+# v5 change re-adopts it as cloudflare_zone_setting.http3 via an import block.
+removed {
+  from = cloudflare_zone_settings_override.http3
 
-  settings {
-    http3 = "on"
+  lifecycle {
+    destroy = false
   }
 }
