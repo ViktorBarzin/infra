@@ -39,7 +39,7 @@ locals {
     # signed in as `guest` by the public-auto-login flow; a signed-in account
     # reaches the same pages a stranger does, and nothing more. A group
     # binding here would turn signed-in household members away from public
-    # pages.
+    # pages, so it is bound to an allow-all policy (public_allow_all) instead.
     public = "public ingress tier, reachable by anonymous visitors"
   }
 
@@ -108,6 +108,7 @@ data "http" "authentik_policy_bindings" {
     authentik_policy_binding.vault_allow_login_users,
     authentik_policy_binding.immich_home_users,
     authentik_policy_binding.linkwarden_home_users,
+    authentik_policy_binding.public_allow_all,
   ]
 
   lifecycle {
