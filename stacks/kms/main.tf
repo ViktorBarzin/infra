@@ -114,13 +114,16 @@ module "anubis" {
 }
 
 module "ingress" {
-  source       = "../../modules/kubernetes/ingress_factory"
-  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type     = "non-proxied"
-  namespace    = kubernetes_namespace.kms.metadata[0].name
-  name         = "kms"
-  service_name = module.anubis.service_name
-  port         = module.anubis.service_port
+  source    = "../../modules/kubernetes/ingress_factory"
+  auth      = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type  = "non-proxied"
+  namespace = kubernetes_namespace.kms.metadata[0].name
+  name      = "kms"
+  # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
+  # and the shared Anubis (stacks/turnstile-gate) do the bot check.
+  service_name     = kubernetes_service.kms-web-page.metadata[0].name
+  port             = 80
+  turnstile_strict = true
   # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
   # ingress_factory for anubis-* backends. kms is non-proxied (pfSense
   # PROXY-protocol) so the peer is already the real client.

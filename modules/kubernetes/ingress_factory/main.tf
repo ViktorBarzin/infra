@@ -195,6 +195,16 @@ variable "turnstile" {
   default = null
 }
 
+# Strict gate variant for a site whose bot check is the SHARED Anubis
+# (stacks/turnstile-gate) rather than its own anubis-* backend: only a solved
+# Turnstile skips Anubis, so a crawler cannot dodge the check by asking for
+# something other than HTML. Content sites that used to run their own Anubis
+# set this (the 2026-10-16 fold). Ignored when the gate is off.
+variable "turnstile_strict" {
+  type    = bool
+  default = false
+}
+
 # Forward-auth authorization (ADR-0023). Only meaningful when auth = "required":
 # the Authentik groups permitted to reach this host. Stamped as an annotation
 # (authentik.viktorbarzin.me/allowed-groups) that the authentik stack reads at
@@ -307,7 +317,7 @@ locals {
     var.dns_type != "internal" && contains(var.ingress_path, "/")
   )
   turnstile_strip   = local.anubis_backend || local.effective_turnstile
-  turnstile_gate_mw = !local.effective_turnstile ? null : (local.anubis_backend ? "turnstile-gate-auth@kubernetescrd" : "turnstile-gate-auth-standard@kubernetescrd")
+  turnstile_gate_mw = !local.effective_turnstile ? null : (local.anubis_backend || var.turnstile_strict ? "turnstile-gate-auth@kubernetescrd" : "turnstile-gate-auth-standard@kubernetescrd")
 
   # Auth middleware selection. "app" and "none" both attach no Authentik
   # middleware — "app" signals "the backend has its own user auth", "none"
