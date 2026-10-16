@@ -226,3 +226,68 @@ resource "kubernetes_manifest" "auth_external_secret" {
   }
   depends_on = [kubernetes_namespace.tasks]
 }
+
+# Membership re-checks (every 15 minutes per signed-in user) read the user and
+# their groups with this token: GET /api/v3/core/users/?username=..&include_groups=true.
+# Without it every re-check fails closed. view_user has to be global because
+# any Authentik user may try to sign in; view_group is held only on Tasks Users,
+# the one group the app looks up by name. Same shape as stacks/f1-stream/members.tf.
+resource "authentik_rbac_role" "membership_reader" {
+  name = "tasks membership reader"
+}
+
+resource "authentik_rbac_permission_role" "reader_view_user" {
+  role       = authentik_rbac_role.membership_reader.id
+  permission = "authentik_core.view_user"
+}
+
+resource "authentik_rbac_permission_role" "reader_view_users_group" {
+  role       = authentik_rbac_role.membership_reader.id
+  permission = "authentik_core.view_group"
+  model      = "authentik_core.group"
+  object_id  = module.signup.group_id
+}
+
+resource "authentik_group" "membership_readers" {
+  name  = "tasks membership readers"
+  roles = [authentik_rbac_role.membership_reader.id]
+  # Holds only the service account below, which the user resource adds.
+  lifecycle {
+    ignore_changes = [users]
+  }
+}
+
+resource "authentik_user" "membership_reader" {
+  username = "svc-tasks-reader"
+  name     = "tasks (membership check)"
+  type     = "service_account"
+  path     = "goauthentik.io/service-accounts"
+  groups   = [authentik_group.membership_readers.id]
+
+  attributes = jsonencode({
+    managed_by = "infra/stacks/tasks/authentik.tf"
+    purpose    = "tasks re-checks that a signed-in user is still in Tasks Users or Tasks Admins"
+  })
+}
+
+resource "authentik_token" "membership_reader" {
+  identifier   = "svc-tasks-reader"
+  user         = authentik_user.membership_reader.id
+  intent       = "api"
+  retrieve_key = true
+  # Non-expiring, like the approver token: a token that lapses on a date
+  # nobody watches turns every re-check into a sign-out. Rotate by tainting
+  # this resource.
+  expiring    = false
+  description = "tasks membership re-check. Rotate by tainting this resource."
+}
+
+resource "kubernetes_secret" "authentik_reader" {
+  metadata {
+    name      = "tasks-authentik-reader"
+    namespace = kubernetes_namespace.tasks.metadata[0].name
+  }
+  data = {
+    AUTHENTIK_READER_TOKEN = authentik_token.membership_reader.key
+  }
+}
