@@ -14,7 +14,7 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "platform"
 }
 
-# Personal/app-user secrets (forgejo + roundcubemail MySQL passwords live here,
+# Personal/app-user secrets (forgejo, roundcubemail and freshrss MySQL passwords live here,
 # not under secret/platform, to match the "secret/viktor as the go-to personal
 # vault" convention documented in .claude/CLAUDE.md).
 data "vault_kv_secret_v2" "viktor" {
@@ -32,6 +32,7 @@ module "dbaas" {
   pgadmin_password             = data.vault_kv_secret_v2.secrets.data["dbaas_pgadmin_password"]
   mysql_forgejo_password       = data.vault_kv_secret_v2.viktor.data["mysql_forgejo_password"]
   mysql_roundcubemail_password = data.vault_kv_secret_v2.viktor.data["mysql_roundcubemail_password"]
+  mysql_freshrss_password      = data.vault_kv_secret_v2.viktor.data["mysql_freshrss_password"]
   kube_config_path             = var.kube_config_path
   tier                         = local.tiers.cluster
   # pgvector operand swap (claude-memory hybrid-recall promotion, runbook Phase 2,
