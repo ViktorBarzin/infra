@@ -90,8 +90,9 @@ terraform {
       source = "cloudflare/cloudflare"
       # v5 since 2026-10-16 (rewrite: cloudflare_record became
       # cloudflare_dns_record, worker_* became workers_*, zone_settings_override
-      # became per-setting zone_setting). The renames are carried by moved
-      # blocks in the modules that own them.
+      # became per-setting zone_setting). The renames were carried by moved
+      # blocks, applied to every stack holding Cloudflare objects and then
+      # removed the same day.
       # renovate: datasource=terraform-provider depName=cloudflare/cloudflare
       version = "5.28.0"
     }

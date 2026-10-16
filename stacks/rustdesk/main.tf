@@ -285,13 +285,3 @@ resource "cloudflare_dns_record" "rustdesk" {
   type    = "A"
   zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
 }
-
-# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
-# (2026-10-16). These moved blocks carry the existing records across in state
-# so nothing is deleted and recreated; the provider's MoveState handler
-# converts the v4 state. Safe to delete once every stack has applied on v5.
-
-moved {
-  from = cloudflare_record.rustdesk
-  to   = cloudflare_dns_record.rustdesk
-}
