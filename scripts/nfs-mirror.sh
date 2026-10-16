@@ -75,6 +75,12 @@ EXCLUDES=(
     # router-config-backup's weekly site-router archives (added 2026-10-05,
     # with this exclude in the same commit so the third such job is not reaped).
     --exclude='/routers/'
+    # Hand-made pre-upgrade backups (manual-upgrade-YYYYMMDD/<item>/), written
+    # straight to /mnt/backup by upgrade runs. The 2026-10-15 run created
+    # manual-upgrade-20261015/ without this line, and the 23:20 UTC mirror
+    # deleted it the same night. Clean these up by hand once the upgrade is
+    # settled; an exclude also keeps rsync from ever removing them.
+    --exclude='/manual-upgrade-*/'
     --exclude='/lost+found/'
 
     # ---- state files used by other backup jobs ----
