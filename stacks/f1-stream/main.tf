@@ -692,6 +692,14 @@ resource "kubernetes_deployment_v1" "f1_edge" {
               }
             }
           }
+          # Last, so adding it appends to the env list rather than shifting it.
+          # One upstream reader per Feed (ADR-0045 in the f1-stream repo).
+          # Each upstream URL is owned by one Ready Edge, found through this
+          # headless Service; the other Edge asks the owner on POD_IP:8000.
+          env {
+            name  = "EDGE_PEERS_DNS"
+            value = "${kubernetes_service_v1.f1_edge_peers.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
+          }
           volume_mount {
             name       = "viewing-db"
             mount_path = "/secrets/viewing-db"
@@ -1292,6 +1300,36 @@ resource "kubernetes_service" "f1-stream" {
     port {
       port        = "80"
       target_port = "8000"
+    }
+  }
+}
+
+# The Ready Edges, for the Edges themselves (ADR-0045 in the f1-stream repo).
+# Headless, so its DNS answer is one address per Ready Edge pod; each Edge
+# hashes an upstream URL over that list to find the one Edge that fetches it,
+# and reads the URL itself if that Edge does not answer. Not-ready pods are
+# left out, so a draining Edge stops owning URLs as soon as its readiness
+# turns 503.
+resource "kubernetes_service_v1" "f1_edge_peers" {
+  metadata {
+    name      = "f1-edge-peers"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    labels = {
+      app  = "f1-stream"
+      role = "edge"
+    }
+  }
+
+  spec {
+    cluster_ip = "None"
+    selector = {
+      app  = "f1-stream"
+      role = "edge"
+    }
+    port {
+      name        = "http"
+      port        = 8000
+      target_port = 8000
     }
   }
 }
