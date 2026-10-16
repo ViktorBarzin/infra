@@ -478,7 +478,7 @@ DDNS scope.
 
 ### Zone Settings
 
-- **HTTP/3 (QUIC)**: Enabled globally via `cloudflare_zone_settings_override`
+- **HTTP/3 (QUIC)**: Enabled globally via `cloudflare_zone_setting.http3` in `stacks/cloudflared` (it was `cloudflare_zone_settings_override` until the provider moved to v5 on 2026-10-16)
 
 ## DHCP → DNS Auto-Registration
 
@@ -664,7 +664,7 @@ For internal `.viktorbarzin.lan` records:
 For external `.viktorbarzin.me` records:
 1. Add `dns_type = "proxied"` (or `"non-proxied"`) to the `ingress_factory` module call in the service stack
 2. Run `scripts/tg apply` on the service stack — DNS record is auto-created
-3. For non-standard records (MX, TXT), add a `cloudflare_record` resource in `stacks/cloudflared/modules/cloudflared/cloudflare.tf`
+3. For non-standard records (MX, TXT), add a `cloudflare_dns_record` resource in `stacks/cloudflared/modules/cloudflared/cloudflare.tf`
 4. For a Valia site (off-infra Cloudflare Pages), add the entry to `local.sites` in `stacks/valia-sites/main.tf` — public CNAME + internal record both follow (`docs/runbooks/valia-sites.md`)
 
 ## Incident History
@@ -693,7 +693,7 @@ Both halves are needed, and the internal one is easy to miss:
 
 | view | answer | set where |
 |---|---|---|
-| public | 176.12.22.76 | `cloudflare_record.git`, `stacks/forgejo/main.tf` |
+| public | 176.12.22.76 | `cloudflare_dns_record.git`, `stacks/forgejo/main.tf` |
 | internal | 10.0.20.200 | Technitium, by hand via the API (same as `vlmcs`) |
 
 Without the Technitium record the name resolves publicly and **not at all** on

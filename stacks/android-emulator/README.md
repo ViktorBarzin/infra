@@ -86,6 +86,12 @@ container start (a restart, or a wake from zero) runs the new build.
 - Pod CrashLoops with `FATAL: /dev/kvm not present` → node lost the device or
   the privileged/Kyverno exclude regressed (`android-emulator` must be in
   `security_policy_exclude_namespaces`, stacks/kyverno).
+- Log ends with `Running multiple emulators with the same AVD` → stale
+  `*.lock` files in `/sdk/.android/avd/lab.avd/` left by a killed pod. The
+  entrypoint now deletes them before launch (infra#118); on an older image,
+  `rm -f` them and delete the pod. If the emulator exits before boot, the
+  entrypoint now exits too, so the pod restarts right away instead of waiting
+  out the 30 min startup probe.
 - Wedged Android (won't boot, storage full) → delete the PVC + pod: next boot
   re-downloads cleanly. Snapshots/AVD state are disposable by design.
 - Different API level: set `API_LEVEL` env on the deployment (entrypoint

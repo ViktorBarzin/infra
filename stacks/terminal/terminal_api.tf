@@ -251,24 +251,22 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
 # --- DNS ---
 # Non-proxied so Traefik sees the real client address (the per-client limits
 # and CrowdSec's per-address bans depend on it). Internal DNS: technitium static_records.tf.
-resource "cloudflare_record" "terminal_api_a" {
-  name            = "terminal-api"
-  content         = var.public_ip
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "terminal_api_a" {
+  name    = "terminal-api"
+  content = var.public_ip
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "terminal_api_aaaa" {
-  name            = "terminal-api"
-  content         = var.public_ipv6
-  proxied         = false
-  ttl             = 1
-  type            = "AAAA"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "terminal_api_aaaa" {
+  name    = "terminal-api"
+  content = var.public_ipv6
+  proxied = false
+  ttl     = 1
+  type    = "AAAA"
+  zone_id = var.cloudflare_zone_id
 }
 
 # --- in-cluster reach to the devvm Lobby ports ---
@@ -290,4 +288,19 @@ resource "kubernetes_manifest" "devvm_lobby_anp" {
 moved {
   from = kubernetes_manifest.devvm_lobby_anp
   to   = kubernetes_manifest.devvm_lobby_anp["devvm-lobby-ports"]
+}
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.terminal_api_a
+  to   = cloudflare_dns_record.terminal_api_a
+}
+
+moved {
+  from = cloudflare_record.terminal_api_aaaa
+  to   = cloudflare_dns_record.terminal_api_aaaa
 }

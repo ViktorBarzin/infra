@@ -534,15 +534,14 @@ resource "kubernetes_service" "forgejo_ssh" {
 # A-only, non-proxied. Cloudflare's proxy carries HTTP(S) only, and this name
 # exists precisely so git bypasses it. No AAAA: the IPv6 tunnel does not
 # forward 22, and an AAAA would send v6-preferring clients somewhere that
-# cannot answer. Same shape as cloudflare_record.vlmcs in stacks/kms.
-resource "cloudflare_record" "git" {
-  name            = "git"
-  content         = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
-  allow_overwrite = true
+# cannot answer. Same shape as cloudflare_dns_record.vlmcs in stacks/kms.
+resource "cloudflare_dns_record" "git" {
+  name    = "git"
+  content = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
 }
 
 # Proof-of-work wall on forgejo's HTML routes, added 2026-09-09.
@@ -660,7 +659,7 @@ module "ingress" {
   # house. Not worth an accidental breakage for nothing.
   #
   # RE-PROXIED 2026-09-06. The cap objection is gone: git now runs over SSH on
-  # git.viktorbarzin.me (see cloudflare_record.git and kubernetes_service
+  # git.viktorbarzin.me (see cloudflare_dns_record.git and kubernetes_service
   # .forgejo_ssh above), and SSH does not pass through Cloudflare at all, so
   # neither the 100MB body cap nor the 100s first-byte timeout touches git. All
   # 40 forgejo remotes on the devvm were moved to SSH and verified before this
@@ -736,4 +735,14 @@ module "ingress" {
     "gethomepage.dev/pod-selector"                 = ""
     "uptime.viktorbarzin.me/external-monitor-path" = "/api/healthz"
   }
+}
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.git
+  to   = cloudflare_dns_record.git
 }

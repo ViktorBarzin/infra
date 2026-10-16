@@ -49,28 +49,19 @@ resource "cloudflare_pages_project" "site" {
   production_branch = "main"
 }
 
-# bridge was created by hand (wrangler) on 2026-07-03 — adopt, don't recreate.
-import {
-  to = cloudflare_pages_project.site["bridge"]
-  id = "02e035473cfc4834fb10c5d35470d8b4/bridge"
-}
-
+# bridge was created by hand (wrangler) on 2026-07-03 and adopted with import
+# stanzas (project, custom domain, CNAME); those were dropped once adopted.
 resource "cloudflare_pages_domain" "site" {
   for_each     = local.sites
   account_id   = local.cloudflare_account_id
   project_name = cloudflare_pages_project.site[each.key].name
-  domain       = "${each.key}.viktorbarzin.me"
-}
-
-import {
-  to = cloudflare_pages_domain.site["bridge"]
-  id = "02e035473cfc4834fb10c5d35470d8b4/bridge/bridge.viktorbarzin.me"
+  name         = "${each.key}.viktorbarzin.me"
 }
 
 # Public proxied CNAME. Gated on manage_dns: a site whose name is still served
 # by an in-cluster ingress keeps its ingress_factory record until cutover
 # (two records can't share one name).
-resource "cloudflare_record" "site" {
+resource "cloudflare_dns_record" "site" {
   for_each = local.dns_managed_sites
   zone_id  = var.cloudflare_zone_id
   name     = each.key
@@ -78,13 +69,6 @@ resource "cloudflare_record" "site" {
   type     = "CNAME"
   proxied  = true
   ttl      = 1
-}
-
-# bridge's record predates this stack (created 2026-07-03 in stacks/cloudflared,
-# handed off via removed{} there) — adopt by id.
-import {
-  to = cloudflare_record.site["bridge"]
-  id = "fd2c5dd4efe8fe38958944e74d0ced6d/ff4fb6f4900744d4b22de50d3fdd219b"
 }
 
 # ---------------------------------------------------------------------------
@@ -365,4 +349,14 @@ resource "kubernetes_cron_job_v1" "sync" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
   depends_on = [kubernetes_manifest.sync_external_secret]
+}
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.site
+  to   = cloudflare_dns_record.site
 }
