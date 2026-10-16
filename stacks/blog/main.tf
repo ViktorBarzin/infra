@@ -117,40 +117,8 @@ resource "kubernetes_service" "blog" {
   }
 }
 
-# Anubis reverse proxy in front of the blog. First-time visitors solve a
-# tiny PoW (~250ms desktop), get a 30-day cookie, and pass through. Replaces
-# the global ai-bot-block forwardAuth for this site.
-module "anubis" {
-  source = "../../modules/kubernetes/anubis_instance"
-  # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.28.1"
-  name             = "blog"
-  namespace        = kubernetes_namespace.website.metadata[0].name
-  target_url       = "http://${kubernetes_service.blog.metadata[0].name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local"
-  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/10"
-
-  # The module defaults plus one rule: RSS readers fetch the Hugo feeds
-  # (/index.xml, /blog/index.xml, ...) with no JS and no cookie, so behind the
-  # catch-all they got the PoW page instead of XML (found 2026-10-15). The feed
-  # rule sits after the denies, so declared AI crawlers still get a 403.
-  policy_rules_yaml = <<-EOT
-    - import: (data)/bots/_deny-pathological.yaml
-    - import: (data)/bots/aggressive-brazilian-scrapers.yaml
-    - import: (data)/meta/ai-block-aggressive.yaml
-    - import: (data)/crawlers/_allow-good.yaml
-    - import: (data)/clients/x-firefox-ai.yaml
-    - import: (data)/common/keep-internet-working.yaml
-    - name: allow-rss-feeds
-      action: ALLOW
-      path_regex: ^/([A-Za-z0-9_-]+/)*index\.xml$
-    - name: allow-non-get-methods
-      action: ALLOW
-      expression: method != "GET"
-    - name: catchall-challenge
-      path_regex: .*
-      action: CHALLENGE
-  EOT
-}
+# The per-site Anubis instance was folded into the shared one in
+# stacks/turnstile-gate on 2026-10-16; see docs/plans/2026-10-16-turnstile-sitewide-design.md.
 
 module "ingress" {
   source    = "../../modules/kubernetes/ingress_factory"

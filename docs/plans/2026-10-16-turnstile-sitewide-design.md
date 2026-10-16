@@ -1,6 +1,6 @@
 # Turnstile as the main bot check on public sites
 
-Status: approved 2026-10-16, executing. Phase 1 live; phase 2 on master, applied stack by stack (forgejo and f1 gated so far); phase 3 after phase 2 has run cleanly.
+Status: done 2026-10-16. Phases 1 to 3 live: 32 gated sites (8 strict, 24 standard), one shared Anubis, no per-site instances.
 
 ## Context
 
