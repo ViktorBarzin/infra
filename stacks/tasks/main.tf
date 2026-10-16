@@ -131,6 +131,11 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.tasks]
 }
 
+# The Python/Svelte build. Since the ADR-0001 cutover no ingress routes here;
+# this Deployment, its Service and the tasks-ingress NetworkPolicy keep
+# running as the rollback target (point module.ingress back at service tasks
+# port 8000 with auth = "required"). Its Woodpecker deploy still fires on
+# Python changes in the tasks repo.
 resource "kubernetes_deployment" "tasks" {
   metadata {
     name      = "tasks"
@@ -282,55 +287,30 @@ resource "kubernetes_service" "tasks" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # auth = "required": Authentik forward-auth gates EVERY request — the app
-  # has no login of its own and blindly trusts the X-authentik-username
-  # header the outpost injects, so Authentik is the only thing standing
-  # between strangers and everyone's tasks. Do NOT relax this tier (tasks
-  # design decision #3; pairs with the NetworkPolicy below, SEC-1).
-  auth            = "required"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.tasks.metadata[0].name
-  name            = "tasks"
-  port            = 8000
-  tls_secret_name = var.tls_secret_name
+  # Serves the TypeScript build (Deployment tasks-next, tasks-next.tf) since
+  # the ADR-0001 cutover. auth = "app": the app runs its own OIDC sign-in
+  # against the `tasks` Authentik application (Tasks Users, Tasks Admins,
+  # Home Server Admins) and answers /api with 401 without a session or bearer
+  # token. Forward-auth would break the bearer-token API and the OAuth
+  # callback. The older "auth = required, do NOT relax" rule belonged to the
+  # Python build, which trusted the X-authentik-username header with no login
+  # of its own; it still applies if this route ever points back at it.
+  # Middleware matches module.ingress_next; the reasons are there.
+  auth                           = "app"
+  dns_type                       = "proxied"
+  namespace                      = kubernetes_namespace.tasks.metadata[0].name
+  name                           = "tasks"
+  service_name                   = kubernetes_service.tasks_next.metadata[0].name
+  port                           = 3000
+  tls_secret_name                = var.tls_secret_name
+  custom_content_security_policy = "frame-ancestors 'none'"
+  extra_middlewares              = ["traefik-strip-auth-headers@kubernetescrd"]
+  anti_ai_scraping               = false
+  turnstile                      = false
   extra_annotations = {
     "gethomepage.dev/description" = "Reminders-style task PWA over Nextcloud CalDAV"
     "gethomepage.dev/icon"        = "mdi-format-list-checks"
   }
-}
-
-# Carve-out for the PWA icon assets + web manifest. macOS Safari's
-# "Add to Dock" (and every other OS icon fetcher: iOS Add-to-Home-Screen,
-# Android install prompt) fetches these in a cookie-less context — behind
-# forward-auth it got the Authentik 302 and fell back to a letter monogram.
-# Traefik prioritises these longer path prefixes over the main "/" router,
-# so ONLY these five static files bypass Authentik; the SPA shell and /api
-# stay gated by the main ingress above (and the app itself 401s /api
-# without the identity header). Guarded against regression by the
-# tasks-icons entry in the Authentik walling-off probe
-# (stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf).
-module "ingress_icons" {
-  source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": public static icons + manifest, no user data; required for
-  # OS icon fetchers (Safari Add-to-Dock etc.) that carry no session and
-  # cannot complete the Authentik redirect dance.
-  auth         = "none"
-  namespace    = kubernetes_namespace.tasks.metadata[0].name
-  name         = "tasks-icons"
-  service_name = kubernetes_service.tasks.metadata[0].name
-  port         = 8000
-  ingress_path = [
-    "/apple-touch-icon.png",
-    "/favicon.png",
-    "/pwa-192x192.png",
-    "/pwa-512x512.png",
-    "/manifest.webmanifest",
-  ]
-  full_host        = "tasks.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives tasks-icons.viktorbarzin.me and the carve-out never matches.
-  dns_type         = "none"                  # host record already owned by the main tasks ingress
-  tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false # Five static icons + a manifest; nothing for scrapers to mine.
-  homepage_enabled = false # path carve-out, not its own dashboard tile
 }
 
 # --- NetworkPolicy: scoped pod ingress (security-review finding SEC-1). ---
