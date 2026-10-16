@@ -2,7 +2,7 @@
 
 ## Overview
 
-The cluster provides shared database services (PostgreSQL, MySQL, Redis) for multi-tenant workloads with automated credential rotation via Vault. PostgreSQL uses CloudNativePG (CNPG) with PgBouncer connection pooling, MySQL runs as an InnoDB Cluster with anti-affinity rules for stability, and Redis provides a shared cache layer. SQLite is used for per-app local storage with careful attention to filesystem compatibility.
+The cluster provides shared database services (PostgreSQL, MySQL, Redis) for multi-tenant workloads with automated credential rotation via Vault. PostgreSQL uses CloudNativePG (CNPG), which apps reach directly with no pooler, MySQL runs as a single StatefulSet (`mysql-v26`), and Redis provides a shared cache layer. SQLite is used for per-app local storage with careful attention to filesystem compatibility.
 
 ## Architecture Diagram
 
@@ -16,11 +16,10 @@ graph TB
     end
 
     subgraph PostgreSQL
-        A1 --> PGB[PgBouncer<br/>3 replicas]
-        A2 --> PGB
-        A4 --> PGB
-        PGB --> CNPG_RW[CNPG Primary<br/>pg-cluster-rw.dbaas]
-        CNPG_RW --> CNPG_R1[CNPG Replica 1]
+        A1 --> CNPG_RW[CNPG primary<br/>pg-cluster-v18, PG 18]
+        A2 --> CNPG_RW
+        A4 --> CNPG_RW
+        CNPG_RW --> CNPG_R1[CNPG replicas x2]
     end
 
     subgraph MySQL
@@ -35,12 +34,11 @@ graph TB
 
     subgraph Vault
         V[Vault DB Engine]
-        V -.7-day rotation.-> PGB
+        V -.7-day rotation.-> CNPG_RW
         V -.7-day rotation.-> MYC
     end
 
     style CNPG_RW fill:#2088ff
-    style PGB fill:#4c9e47
     style MYC fill:#f39c12
     style RED fill:#dc382d
 ```
@@ -49,8 +47,8 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| PostgreSQL (CNPG) | CloudNativePG (PostGIS 16: `postgis:16`) | `dbaas` namespace | Primary/replica cluster, auto-failover |
-| PgBouncer | 3 replicas | `dbaas` namespace | Connection pooling for PostgreSQL |
+| PostgreSQL (CNPG) | PG 18.6 with PostGIS and pgvector (`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7`) | `dbaas` namespace | `pg-cluster-v18`: primary + 2 replicas, auto-failover. `pg-cluster` (PG 16, 1 instance) is the rollback copy since 2026-10-15 |
+| PgBouncer | - | `authentik` namespace | Pools Authentik's own connections only. App databases have no pooler |
 | MySQL | 26.7.0 (`docker.io/library/mysql:26.7.0`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-v26`); `mysql-standalone` (8.4.8, read-only) is the rollback copy |
 | Redis | Latest | `redis` namespace | Shared cache layer |
 | Vault DB Engine | - | `vault` namespace | Automated credential rotation |
@@ -59,25 +57,21 @@ graph TB
 
 | Service | Endpoint | Notes |
 |---------|----------|-------|
-| PostgreSQL (primary) | `pg-cluster-rw.dbaas.svc.cluster.local` | Always use this via PgBouncer |
-| PgBouncer | `pgbouncer.dbaas.svc.cluster.local` | Connection pool (3 replicas) |
+| PostgreSQL (primary) | `pg-cluster-rw.dbaas.svc.cluster.local` | `postgresql_host` in `config.tfvars`. CoreDNS answers it with the primary of `var.pg_active_cluster` |
 | MySQL | `mysql.dbaas.svc.cluster.local` | Selects the pod named by `local.mysql_active` (`mysql-v26` since 2026-10-15) |
 | Redis | `redis.redis.svc.cluster.local` | Shared instance |
-| PostgreSQL (compat) | `postgresql.dbaas.svc.cluster.local` | Compatibility service, selects CNPG primary |
+| PostgreSQL (compat) | `postgresql.dbaas.svc.cluster.local` | Compatibility service, selects the primary of `var.pg_active_cluster` |
 
 ## How It Works
 
-### PostgreSQL (CNPG + PgBouncer)
+### PostgreSQL (CNPG)
 
 1. **CNPG Cluster**: Manages PostgreSQL primary and replicas
    - Primary: `pg-cluster-rw.dbaas.svc.cluster.local`
    - Auto-failover on primary failure
    - Replicas for read scaling
 
-2. **PgBouncer**: Connection pooling layer (3 replicas)
-   - Apps connect to PgBouncer, not directly to PostgreSQL
-   - Reduces connection overhead
-   - Load balances across PgBouncer instances
+2. **Connections**: apps connect directly to the primary. There is no pooler in `dbaas`; PgBouncer runs only in front of Authentik (`stacks/authentik/modules/authentik/pgbouncer.tf`). `max_connections` is 200 (live, 2026-10-16), so each app's pool size counts against one shared budget.
 
 3. **Credential Rotation**: Vault DB engine rotates credentials every 7 days
    - Apps fetch credentials from Vault on startup
@@ -209,7 +203,7 @@ Always use shared variables, never hardcode endpoints:
 
 ```hcl
 variable "postgresql_host" {
-  default = "pgbouncer.dbaas.svc.cluster.local"
+  default = "pg-cluster-rw.dbaas.svc.cluster.local"  # config.tfvars
 }
 
 variable "mysql_host" {
@@ -292,12 +286,9 @@ resource "kubernetes_secret" "db_creds" {
 - Active community and updates
 - Better resource efficiency than Zalando
 
-### Why PgBouncer for PostgreSQL?
+### Why no pooler for app databases?
 
-- Reduces connection overhead (apps create many connections)
-- Load balances across PgBouncer replicas
-- Essential for apps that don't implement connection pooling
-- Required for Vault DB engine compatibility with some apps
+Earlier versions of this page described a shared 3-replica PgBouncer in `dbaas`. As of 2026-10-16 none runs there, and `postgresql_host` points at the primary. Direct connections keep session features such as `LISTEN/NOTIFY` and prepared statements working. The trade-off is that every app's pool counts against `max_connections` (200).
 
 ### Why a single MySQL instance?
 
@@ -336,15 +327,12 @@ The cluster ran MySQL InnoDB Cluster until 2026-04-16, when MySQL moved to the s
 
 ### PostgreSQL: "Too many connections"
 
-**Cause**: Apps connecting directly to PostgreSQL instead of PgBouncer
+**Cause**: the sum of app connection pools has reached `max_connections` (200). There is no pooler in front of app databases.
 
-**Fix**:
+**Fix**: find which roles hold the connections, then lower that app's pool size in its stack.
 ```bash
-# Check PgBouncer is running
-kubectl get pods -n dbaas | grep pgbouncer
-
-# Verify apps use pgbouncer.dbaas, not pg-cluster-rw
-kubectl get configmap <app-config> -o yaml | grep postgres
+PRIMARY=$(kubectl get cluster -n dbaas pg-cluster-v18 -o jsonpath='{.status.currentPrimary}')
+kubectl exec -n dbaas "$PRIMARY" -- psql -c "SELECT usename, count(*) FROM pg_stat_activity GROUP BY 1 ORDER BY 2 DESC"
 ```
 
 ### PostgreSQL: Primary Failover Not Working
@@ -453,17 +441,15 @@ CONFIG REWRITE
 
 ### App Can't Connect: "Connection refused"
 
-**Cause**: Service endpoint not reachable or PgBouncer not running
+**Cause**: Service endpoint not reachable, or the app points at a host that no longer exists
 
 **Fix**:
 ```bash
 # Check service endpoints
-kubectl get endpoints pgbouncer -n dbaas
 kubectl get endpoints postgresql -n dbaas
-
-# Update app to use pgbouncer
-kubectl set env deployment/<app> DB_HOST=pgbouncer.dbaas.svc.cluster.local
+kubectl get endpoints pg-cluster-v18-rw -n dbaas
 ```
+The app's DB host should be `pg-cluster-rw.dbaas.svc.cluster.local` (or `postgresql.dbaas.svc.cluster.local`), set through its stack's `postgresql_host`.
 
 ## Related
 
