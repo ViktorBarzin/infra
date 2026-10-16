@@ -42,11 +42,3 @@ module "cloudflared" {
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
   cloudflare_tunnel_token      = data.vault_kv_secret_v2.secrets.data["cloudflare_tunnel_token"]
 }
-
-# Adopts the live HTTP/3 zone setting into the v5 resource that replaced
-# cloudflare_zone_settings_override (2026-10-16). Import blocks are only valid
-# in the root module, so it lives here rather than next to the resource.
-import {
-  to = module.cloudflared.cloudflare_zone_setting.http3
-  id = "${var.cloudflare_zone_id}/http3"
-}

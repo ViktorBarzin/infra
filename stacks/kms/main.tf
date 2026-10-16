@@ -533,13 +533,3 @@ resource "kubernetes_service" "windows_kms" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
-
-# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
-# (2026-10-16). These moved blocks carry the existing records across in state
-# so nothing is deleted and recreated; the provider's MoveState handler
-# converts the v4 state. Safe to delete once every stack has applied on v5.
-
-moved {
-  from = cloudflare_record.vlmcs
-  to   = cloudflare_dns_record.vlmcs
-}
