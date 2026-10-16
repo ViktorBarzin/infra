@@ -258,6 +258,10 @@ module "ingress_public" {
   dns_type         = "none" # DNS already owned by the main uptime ingress above.
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false # Status pages + push ingest are machine/anon-hit; bot-block forwardAuth would break them.
+  # Turnstile gate (2026-10-16): only browsers asking for an HTML page are
+  # checked, so push monitors, badges and the page's own API calls pass, and the
+  # gate fails open, so the status page stays reachable if the gate is down.
+  turnstile        = true
   homepage_enabled = false # Homepage tile belongs to the main UI ingress.
   external_monitor = false # The main ingress already carries the external monitor.
 }
