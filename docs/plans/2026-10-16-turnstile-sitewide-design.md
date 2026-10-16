@@ -1,6 +1,6 @@
 # Turnstile as the main bot check on public sites
 
-Status: approved 2026-10-16, executing.
+Status: approved 2026-10-16, executing (phase 1 live, phase 2 rolling out).
 
 ## Context
 
