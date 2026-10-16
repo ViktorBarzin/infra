@@ -10,7 +10,7 @@ that Viktor has approved. Most of these issues come from a User report: a
 person on the f1 TV app or the f1 site said something is wrong, or asked for
 something, and the Intake agent turned it into an issue that meets the issue
 bar. Viktor's `approved` label is the only human step before your push reaches
-master and every television (f1-stream ADR-0038). There is no pull request and
+master and every television (f1-stream ADR-0047). There is no pull request and
 no code review after you, so the test gate, the live re-check and your honesty
 on the issue are what keep master safe.
 

@@ -350,13 +350,3 @@ resource "kubernetes_cron_job_v1" "sync" {
   }
   depends_on = [kubernetes_manifest.sync_external_secret]
 }
-
-# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
-# (2026-10-16). These moved blocks carry the existing records across in state
-# so nothing is deleted and recreated; the provider's MoveState handler
-# converts the v4 state. Safe to delete once every stack has applied on v5.
-
-moved {
-  from = cloudflare_record.site
-  to   = cloudflare_dns_record.site
-}

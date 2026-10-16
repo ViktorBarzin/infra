@@ -183,22 +183,3 @@ resource "cloudflare_workers_route" "outage_failover_apex" {
 # Technitium/internal clients got NXDOMAIN). cinemeta is absent from the
 # allow-list above, so the public path flows CF wildcard DNS -> tunnel -> Traefik
 # -> nginx with no Worker invocation.
-
-# Cloudflare provider v5 renamed cloudflare_worker_script/_route to
-# cloudflare_workers_script/_route (2026-10-16). These moved blocks carry the
-# live Worker and its routes across in state so nothing is deleted and
-# recreated. Safe to delete once the stack has applied on v5.
-moved {
-  from = cloudflare_worker_script.outage_failover
-  to   = cloudflare_workers_script.outage_failover
-}
-
-moved {
-  from = cloudflare_worker_route.outage_failover_host
-  to   = cloudflare_workers_route.outage_failover_host
-}
-
-moved {
-  from = cloudflare_worker_route.outage_failover_apex
-  to   = cloudflare_workers_route.outage_failover_apex
-}

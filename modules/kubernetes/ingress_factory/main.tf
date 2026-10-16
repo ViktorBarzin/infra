@@ -650,28 +650,3 @@ resource "cloudflare_dns_record" "internal_a" {
   type    = "A"
   zone_id = var.cloudflare_zone_id
 }
-
-# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
-# (2026-10-16). These moved blocks carry the existing records across in state
-# so nothing is deleted and recreated; the provider's MoveState handler
-# converts the v4 state. Safe to delete once every stack has applied on v5.
-
-moved {
-  from = cloudflare_record.proxied
-  to   = cloudflare_dns_record.proxied
-}
-
-moved {
-  from = cloudflare_record.non_proxied_a
-  to   = cloudflare_dns_record.non_proxied_a
-}
-
-moved {
-  from = cloudflare_record.non_proxied_aaaa
-  to   = cloudflare_dns_record.non_proxied_aaaa
-}
-
-moved {
-  from = cloudflare_record.internal_a
-  to   = cloudflare_dns_record.internal_a
-}
