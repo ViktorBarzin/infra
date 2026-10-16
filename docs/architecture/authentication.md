@@ -161,6 +161,45 @@ Group membership is auto-assigned from the invitation's `fixed_data` field. This
 
 **Google social signup is a special case (2026-07-25, `stacks/authentik/google-social-signup.tf`).** An Authentik invitation lives in the flow *plan*, which is abandoned when the browser leaves for Google's OAuth screen — so a social signup that starts on `invitation-enrollment` returns from `/source/oauth/callback/google/` with no `itoken` and the InvitationStage denies with *"Invalid invite/invite not found."* This is why invite-gated Google signup never worked through the shared flow. Fix: the **Google source's `enrollment_flow` is a dedicated `google-proxy-enrollment`** (write + login, no password prompt). The invite is bridged across the OAuth redirect via the **Postgres cache keyed by the round-trip-stable browser session key**: a `capture-proxy-invite` policy on the invite landing sets `proxy_invite_ok:<session_key>` iff the itoken resolves to a proxy invite, and a `validate-proxy-invite` policy on the enrollment write-stage denies unless that flag is set — otherwise it stamps `attributes.proxy_only=true` + a username (the invitation's `fixed_data` does NOT reach the user on this path, so proxy_only is set by the policy, not the invite) and posts to Slack `#alerts`. A direct hit on the Google source with no invite is denied. GitHub/Facebook still route social enrollment through `invitation-enrollment` and share the original broken-invite limitation.
 
+
+### Per-app sign-up paths (2026-10-16, ADR-0001)
+
+Since 2026-09-02 all three social sources enrol through one flow, `social-signup`, whose first stage asks for an invite code (`stacks/authentik/invite-flow.tf`). `stacks/authentik/app-signup.tf` adds a second way through that flow for people who arrive from an app that takes sign-ups, generalised from f1-stream ADR-0042. Everyone else keeps the invite path unchanged.
+
+How the flow knows the app: an app sends a new person to Authentik with its own OAuth authorize request. The login page keeps it as `next`, the "Sign up" link and the source buttons carry it, and after the Google (or GitHub, Facebook) round trip the source flow manager puts it in the enrollment plan as `context["redirect"]`. The `app-signup-path` policy parses the `client_id` from that URL, finds the application behind it, and looks for the one group whose `attributes.signup.app` names that application.
+
+```mermaid
+flowchart TD
+  A[App authorize request] --> L[Login page, next = authorize URL]
+  L --> S[Google / GitHub / Facebook]
+  S --> P{app-signup-path:<br/>registered app in redirect?}
+  P -- no --> I[invite-code prompt] --> W[user write]
+  P -- yes --> T[Turnstile captcha] --> W
+  W --> LG[login: assign-invite-group, app-signup-finish] --> PK[passkey]
+  PK --> R{mode}
+  R -- open --> AZ[back to the authorize request, now in the app group]
+  R -- request --> PU[app pending page]
+```
+
+| Mode | What sign-up does | How the person gets in |
+|---|---|---|
+| `open` | Skips the invite prompt, shows the captcha, stamps `attributes.invite_group`, which `assign-invite-group` turns into membership of the app group | The flow resumes the authorize request |
+| `request` | Skips the invite prompt, shows the captcha, creates the account with no group, stamps `attributes.signup_request.{app,requested_at}`; `app-signup-finish` grants the app's approver role `view_user` on that one account and redirects to the app's pending page | An admin approves in the app, which calls `POST /api/v3/core/groups/<group>/add_user/` with the approver token |
+
+An app opts in with `modules/authentik/app_signup` (variables `app_slug`, `group_name`, `mode`, and `pending_url` for request mode). The module creates the `<App> Users` group carrying the registration and, in request mode, an approver service account whose role holds only `add_user_to_group` on that group. Its token comes out as the `approver_token` output, for the app stack to put in a Secret in its own namespace, as `stacks/f1-stream/members.tf` does with its membership token. The token lists only the people who asked for that app; `GET /api/v3/core/users/` answers 403 while nobody has. The app stack still binds its application to the group (`app-access-guard.tf` requires a binding).
+
+Limits, by design:
+
+- A group with `is_superuser`, an RBAC role or a parent group is never used as a sign-up target, and neither is an app that two groups claim. Those paths fall back to the invite prompt.
+- Anyone can start an authorize request for any `client_id`, so an app path proves only that the person asked for that app. What it unlocks is that app's group (`open`) or nothing (`request`).
+- A failure while evaluating the policy keeps the invite prompt (`failure_result = true` on the negated binding, because Authentik does not negate a failure result).
+- The Turnstile widget is the one `stacks/turnstile-gate` creates (`site-gate`, domain `viktorbarzin.me`). Its keys are read from the Cloudflare API at plan time, since they are not in Vault and CI cannot write Vault KV.
+- Browsers on the Simplified Flow Executor (iOS 16.3 and older) cannot render the captcha, so they can use the invite path but not an app path.
+
+### Device-code login (2026-10-16)
+
+`stacks/authentik/device-code.tf` creates the `device-code` flow (designation `stage_configuration`, require authenticated, no stages) and sets it as `flow_device_code` on the default brand, which this stack now manages for that one field. Before this, `https://authentik.viktorbarzin.me/device` answered 404. A CLI requests a code at `/application/o/device/`, the person enters it at `/device` after signing in, and the CLI polls `/application/o/token/` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`. Each app's OAuth2 provider must also list that grant in `grant_types`, which the provider pin (2026.8.0 since 2026-10-16; first release with the attribute is 2026.5.0) can set.
+
 ### OIDC Applications
 
 Authentik provides OIDC for 10 applications:
