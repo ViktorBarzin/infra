@@ -19,6 +19,32 @@
 | Vault | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
 
+### Access bindings
+
+Authentik admits any signed-in account to an application with no policy
+binding, so every application carries group bindings that decide who may open
+it. Audited 2026-10-16 (38 applications live, including the per-host
+`(forward auth)` applications): all were gated by group bindings except
+`Public`, which is the anonymous `auth = "public"` tier by design.
+
+| Where the binding is declared | Applications |
+|---|---|
+| `stacks/authentik/app-access-bindings.tf` | Kubernetes, Kubernetes Dashboard, Kubernetes (agent sessions), TripIt App, and since 2026-10-16 Cloudflare Access, Grafana, Headscale, wrongmove, Forgejo, plus the Home Server Admins bindings on Immich and linkwarden (these were UI-only until then) |
+| `stacks/authentik/home-users.tf` | Home Users on Immich and linkwarden |
+| `stacks/authentik/vault-authz-binding.tf` | Vault (Allow Login Users) |
+| `stacks/authentik/catchall-access-binding.tf` | Domain wide catch all |
+| `stacks/authentik/forward-auth-apps.tf` | every `(forward auth)` application |
+| `stacks/authentik/postgres-ldap.tf`, `rac.tf` | Postgres LDAP, Remote Access |
+| `stacks/f1-stream/members.tf` | F1 Stream |
+
+`stacks/authentik/app-access-guard.tf` reads every application and binding
+from the API and fails the authentik plan or apply when an application has no
+enabled group or user binding, or uses policy_engine_mode `any` with a policy
+or negated binding beside its groups. The daily drift-detection plan runs it
+too, which is how an application created in the UI or in another stack is
+noticed. Exceptions are listed with a reason in `local.app_access_exempt`
+(today only `public`).
+
 > **2026-06-10 — every provider now uses implicit consent.** Cloudflare
 > Access (pk 9), Forgejo (20), Immich (1), Headscale (13), linkwarden (8)
 > and Vault (53) were switched from
