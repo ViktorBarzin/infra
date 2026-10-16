@@ -34,9 +34,10 @@ func TestK8sTargetObjectRef(t *testing.T) {
 
 func TestPlanDBExecPostgresDefault(t *testing.T) {
 	p := planDBExec("fire-planner", "", "SELECT 1", false)
-	// pg-cluster-rw is a Service, so the PG plan resolves the primary POD by
-	// label rather than naming an (un-exec-able) Service.
-	if p.ns != "dbaas" || p.pod != "" || p.selector != "cnpg.io/instanceRole=primary" || p.container != "postgres" {
+	// The pod is the one the apps' own Service selects. On 2026-10-15 the
+	// cutover to pg-cluster-v18 left the frozen PG16 primary running, and a
+	// bare instanceRole=primary label picked it, so every read was stale.
+	if p.ns != "dbaas" || p.service != "postgresql" || p.container != "postgres" {
 		t.Fatalf("unexpected pg target: %+v", p)
 	}
 	// db name defaults to the app; SQL passed via -tAc
@@ -48,13 +49,50 @@ func TestPlanDBExecPostgresDefault(t *testing.T) {
 
 func TestPlanDBExecMysqlEnvPassword(t *testing.T) {
 	p := planDBExec("wrongmove", "wrongmove", "SHOW TABLES", true)
-	if p.pod != "mysql-standalone-0" {
-		t.Fatalf("unexpected mysql pod: %+v", p)
+	// Same rule as Postgres: follow the `mysql` Service, which moved to
+	// mysql-v26 on 2026-10-15 while mysql-standalone-0 kept running.
+	if p.ns != "dbaas" || p.service != "mysql" {
+		t.Fatalf("unexpected mysql target: %+v", p)
 	}
 	inner := strings.Join(p.argv, " ")
 	// password must come from the env var, never inline
 	if !strings.Contains(inner, `-p"$MYSQL_ROOT_PASSWORD"`) {
 		t.Fatalf("mysql must use env password wrapper: %v", p.argv)
+	}
+}
+
+func TestLabelSelectorFromService(t *testing.T) {
+	cases := []struct {
+		raw, want string
+		ok        bool
+	}{
+		{`{"cnpg.io/instanceRole":"primary","cnpg.io/cluster":"pg-cluster-v18"}`,
+			"cnpg.io/cluster=pg-cluster-v18,cnpg.io/instanceRole=primary", true},
+		{`{"app.kubernetes.io/component":"primary","app.kubernetes.io/instance":"mysql-v26"}`,
+			"app.kubernetes.io/component=primary,app.kubernetes.io/instance=mysql-v26", true},
+		{``, "", false},   // a Service with no selector names no pod
+		{`{}`, "", false}, // same, spelled as an empty map
+		{`not json`, "", false},
+	}
+	for _, c := range cases {
+		got, err := labelSelectorFromService(c.raw)
+		if (err == nil) != c.ok || got != c.want {
+			t.Errorf("labelSelectorFromService(%q) = %q, %v; want %q, ok=%v", c.raw, got, err, c.want, c.ok)
+		}
+	}
+}
+
+func TestOnlyPod(t *testing.T) {
+	if pod, err := onlyPod("pg-cluster-v18-1"); err != nil || pod != "pg-cluster-v18-1" {
+		t.Fatalf("onlyPod(one) = %q, %v", pod, err)
+	}
+	// Two pods behind one primary Service means a selector we cannot trust:
+	// refuse rather than pick one, which is how the stale reads happened.
+	if _, err := onlyPod("pg-cluster-1 pg-cluster-v18-1"); err == nil || !strings.Contains(err.Error(), "pg-cluster-1") {
+		t.Fatalf("onlyPod(two) should fail naming both, got %v", err)
+	}
+	if _, err := onlyPod("  "); err == nil {
+		t.Fatal("onlyPod(none) should fail")
 	}
 }
 

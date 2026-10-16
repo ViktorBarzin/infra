@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -103,17 +105,20 @@ func (t k8sTarget) objectRef() string {
 
 type dbPlan struct {
 	ns        string
-	pod       string   // explicit pod (e.g. mysql-standalone-0)
-	selector  string   // resolve the pod by this label when pod == "" (CNPG primary)
+	service   string   // the Service the apps connect through; its selector names the pod
 	container string   // "" = default container
 	argv      []string // command + args to run inside the pod
 }
 
 // planDBExec builds the in-pod command to run sql against app's database.
-// PG (default): CNPG primary POD (resolved by label — pg-cluster-rw is a
-// Service, not an exec target), psql -U postgres -d <db>.
-// MySQL: mysql-standalone-0, password from env (never on the command line).
-// dbName defaults to app. sql empty => interactive client.
+// The pod is the one behind the Service the apps themselves use: `postgresql`
+// for Postgres, `mysql` for MySQL. A major-version cutover is a blue-green
+// swap of that Service's selector, with the old cluster left running frozen,
+// so following the Service is what keeps reads on the live data. (On
+// 2026-10-15 the label cnpg.io/instanceRole=primary matched both pg-cluster-1
+// and pg-cluster-v18-1, and the frozen one came first.)
+// PG: psql -U postgres -d <db>. MySQL: password from env (never on the
+// command line). dbName defaults to app. sql empty => interactive client.
 func planDBExec(app, dbName, sql string, mysql bool) dbPlan {
 	if dbName == "" {
 		dbName = app
@@ -123,13 +128,69 @@ func planDBExec(app, dbName, sql string, mysql bool) dbPlan {
 		if sql != "" {
 			inner += " -e " + shellQuote(sql)
 		}
-		return dbPlan{ns: "dbaas", pod: "mysql-standalone-0", argv: []string{"bash", "-c", inner}}
+		return dbPlan{ns: "dbaas", service: "mysql", argv: []string{"bash", "-c", inner}}
 	}
 	argv := []string{"psql", "-U", "postgres", "-d", dbName}
 	if sql != "" {
 		argv = append(argv, "-tAc", sql)
 	}
-	return dbPlan{ns: "dbaas", selector: "cnpg.io/instanceRole=primary", container: "postgres", argv: argv}
+	return dbPlan{ns: "dbaas", service: "postgresql", container: "postgres", argv: argv}
+}
+
+// labelSelectorFromService turns a Service's `.spec.selector` (as JSON) into
+// a `-l` label selector, keys sorted. An empty selector is an error: it
+// would match every pod in the namespace.
+func labelSelectorFromService(raw string) (string, error) {
+	var sel map[string]string
+	if err := json.Unmarshal([]byte(raw), &sel); err != nil {
+		return "", fmt.Errorf("service selector %q is not a label map: %v", raw, err)
+	}
+	if len(sel) == 0 {
+		return "", fmt.Errorf("service has no selector")
+	}
+	keys := make([]string, 0, len(sel))
+	for k := range sel {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + "=" + sel[k]
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// onlyPod returns the single pod name in a space-separated list, or an error
+// naming what was found. A primary Service backed by two pods is a cutover in
+// flight or a broken selector, and picking either would be a guess.
+func onlyPod(names string) (string, error) {
+	pods := strings.Fields(names)
+	if len(pods) != 1 {
+		return "", fmt.Errorf("expected exactly one pod, found %d: %v", len(pods), pods)
+	}
+	return pods[0], nil
+}
+
+// resolveServicePod finds the one running pod behind ns/service.
+func resolveServicePod(ns, service string) (string, error) {
+	raw, err := kubectlCapture(ns, "get", "service", service, "-o", "jsonpath={.spec.selector}")
+	if err != nil {
+		return "", fmt.Errorf("could not read service %s/%s: %v", ns, service, err)
+	}
+	sel, err := labelSelectorFromService(raw)
+	if err != nil {
+		return "", fmt.Errorf("service %s/%s: %v", ns, service, err)
+	}
+	names, err := kubectlCapture(ns, "get", "pod", "-l", sel,
+		"--field-selector=status.phase=Running", "-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		return "", fmt.Errorf("could not list pods for %s/%s (%s): %v", ns, service, sel, err)
+	}
+	pod, err := onlyPod(names)
+	if err != nil {
+		return "", fmt.Errorf("service %s/%s (%s): %v", ns, service, sel, err)
+	}
+	return pod, nil
 }
 
 // shellQuote single-quotes s for safe embedding in a bash -c string.
