@@ -518,6 +518,10 @@ resource "kubernetes_deployment_v1" "f1_edge" {
         # shutdown + 5s margin. 45s is above Traefik's p99.9 request time of
         # 29s, so a TV's segment load in flight at SIGTERM finishes.
         termination_grace_period_seconds = 70
+        # Its own account, so the Edge can list the f1-edge-peers
+        # EndpointSlices (the Role below) to find the Ready Edges.
+        service_account_name            = kubernetes_service_account_v1.f1_edge.metadata[0].name
+        automount_service_account_token = true
         # The two Edges of one revision on different nodes, so losing a node
         # leaves one serving. A spread per revision (pod-template-hash) rather
         # than required anti-affinity: anti-affinity also counts the old
@@ -1305,11 +1309,14 @@ resource "kubernetes_service" "f1-stream" {
 }
 
 # The Ready Edges, for the Edges themselves (ADR-0045 in the f1-stream repo).
-# Headless, so its DNS answer is one address per Ready Edge pod; each Edge
-# hashes an upstream URL over that list to find the one Edge that fetches it,
-# and reads the URL itself if that Edge does not answer. Not-ready pods are
-# left out, so a draining Edge stops owning URLs as soon as its readiness
-# turns 503.
+# Each Edge lists this Service's EndpointSlices through the Kubernetes API
+# (the f1-stream-edge account and Role below), hashes an upstream URL over the
+# Ready endpoints to find the one Edge that fetches it, and reads the URL
+# itself if that Edge does not answer. A draining Edge leaves the slices as
+# soon as its readiness turns 503. The DNS answer of this headless Service is
+# only the Edges' fallback: cluster DNS served exited Edges for up to an hour
+# on 2026-10-16, so an Edge also sets aside for 30 s any peer that does not
+# answer or cannot prove it is an Edge.
 resource "kubernetes_service_v1" "f1_edge_peers" {
   metadata {
     name      = "f1-edge-peers"
@@ -1331,6 +1338,45 @@ resource "kubernetes_service_v1" "f1_edge_peers" {
       port        = 8000
       target_port = 8000
     }
+  }
+}
+
+# The Edges' account: read-only on the EndpointSlices of this namespace, and
+# nothing else, so an Edge can see which Edges are Ready (f1_edge_peers above).
+resource "kubernetes_service_account_v1" "f1_edge" {
+  metadata {
+    name      = "f1-stream-edge"
+    namespace = local.f1_namespace
+  }
+  automount_service_account_token = true
+}
+
+resource "kubernetes_role_v1" "f1_edge_peers_reader" {
+  metadata {
+    name      = "f1-edge-peers-reader"
+    namespace = local.f1_namespace
+  }
+  rule {
+    api_groups = ["discovery.k8s.io"]
+    resources  = ["endpointslices"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "f1_edge_peers_reader" {
+  metadata {
+    name      = "f1-edge-peers-reader"
+    namespace = local.f1_namespace
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.f1_edge_peers_reader.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.f1_edge.metadata[0].name
+    namespace = local.f1_namespace
   }
 }
 
