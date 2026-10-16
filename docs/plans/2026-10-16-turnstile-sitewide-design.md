@@ -1,6 +1,6 @@
 # Turnstile as the main bot check on public sites
 
-Status: approved 2026-10-16, executing (phase 1 live, phase 2 rolling out).
+Status: approved 2026-10-16, executing. Phase 1 live; phase 2 on master, applied stack by stack (forgejo and f1 gated so far); phase 3 after phase 2 has run cleanly.
 
 ## Context
 
@@ -23,7 +23,7 @@ The Forgejo canary (2026-10-15, `stacks/turnstile-gate`) split untrusted visitor
 ## Design
 
 ```mermaid
-flowchart LR
+flowchart TD
   V[visitor] --> R[real-ip, strip X-Turnstile-Pass]
   R --> G[gate forwardAuth via fail-open shim]
   G -->|header X-Turnstile-Pass: 1| S[site]
@@ -55,7 +55,7 @@ Both forwardAuth calls go through the nginx shim. Gate down: standard sites let 
 
 ### Header trust
 
-`X-Turnstile-Pass` is deleted at the edge by the `strip` middleware, which `ingress_factory` now attaches to every ingress, so a client cannot send it to any Anubis instance.
+`X-Turnstile-Pass` is deleted at the edge by the `strip` middleware, which `ingress_factory` attaches to every gated ingress and to every ingress whose backend is an Anubis instance, gated or not, so a client cannot send it to any Anubis instance.
 
 ## Challenger review (2026-10-16)
 
@@ -77,17 +77,16 @@ Recorded, not changed: the pass header is the constant `1`, guarded by the strip
 
 1. Gate v2 (multi-host, two variants, CORS verify on `challenge.viktorbarzin.me`, domain cookie), the shared Anubis in forwardAuth mode on `anubis.viktorbarzin.me`, and the Anubis module's `allow-turnstile-pass` rule for every instance. Forgejo moves from the canary wiring to the strict variant.
 2. `ingress_factory` default-on, with the opt-outs in place; apply every affected app stack in one pass. Test the switch before that apply.
-3. Fold: each Anubis site points its ingress at its backend and moves to the standard chain with Anubis as the fallback, then its per-site instance is deleted.
+3. Fold: each Anubis site points its ingress at its backend, keeps the strict variant, and uses the shared Anubis in place of its own; then its per-site instance is deleted. Per-site Anubis rules (Forgejo's machine paths, kms's script paths) move into the shared policy keyed on `headers["X-Forwarded-Host"]`.
 
 ## Verification
 
-From the UK egress (untrusted): the Turnstile page on an HTML GET for a sample of sites; API, asset, POST and git requests unchanged; a valid pass cookie admits across two different sites; a forged header is ignored; with the gate scaled to 0 a standard site sends browsers to Anubis. From the devvm: no challenge. Uptime Kuma green. A TalkBack pass on the shared Android emulator.
+From the UK egress (untrusted): the Turnstile page on an HTML GET for a sample of sites; API, asset, POST and git requests unchanged; a valid pass cookie admits across two different sites; a forged header is ignored; with the gate scaled to 0 a standard site lets everything through and a strict site falls back to its own Anubis; the global switch flips every site in one apply (tested 2026-10-16: `open` returned Forgejo to its own Anubis within about a minute). From the devvm: no challenge. Uptime Kuma green. A TalkBack pass on the shared Android emulator.
 
 ## Open questions
 
 - Safari caps cookies to 7 days when the server that sets them is on a different IP range from the page (its CNAME-cloaking rule). The challenge host is proxied, so visitors to the DNS-only sites (forgejo, kms and others) on Safari may solve weekly rather than monthly. Not tested.
 - Phase 3 (fold): in forwardAuth mode Anubis rules see the shim's host and an empty query; per-site rules need `headers["X-Forwarded-Host"]`.
-
 - Link-preview bots (Slack, Discord) declare themselves as bots, so on standard sites they go to Anubis and are likely challenged; previews of those sites may stop rendering.
 - The token-reuse cache is still per gate replica.
-- Whether a site's own CSP blocks `challenges.cloudflare.com` is checked per site after the apply, not before.
+- The challenge page never reaches the backend, so a site's own CSP cannot block the widget; only a Traefik headers middleware placed before the gate could. The shared `csp-headers` middleware is before it and the widget loads under it on Forgejo; each site is still checked after its apply.
