@@ -26,18 +26,14 @@ resource "authentik_flow" "device_code" {
   authentication = "require_authenticated"
 }
 
-# The default brand ("authentik-default", the only brand) was UI-managed. Only
-# flow_device_code is managed here; every other field stays as it is live.
+# The default brand ("authentik-default", the only brand) was UI-managed until
+# 2026-10-16, when it was imported (pk efe8ee42-945e-4731-a499-e4ee355c83b0).
+# Only flow_device_code is managed here; every other field stays as it is live.
 # Update is a full PUT of the fields this provider knows, and with
 # ignore_changes those are sent with the values the import read back. Fields
 # the provider does not know (flow_user_switch, flow_request,
 # branding_map_tiles) are left out of the request, and the server leaves
 # omitted fields alone.
-import {
-  to = authentik_brand.default
-  id = "efe8ee42-945e-4731-a499-e4ee355c83b0"
-}
-
 resource "authentik_brand" "default" {
   domain           = "authentik-default"
   default          = true
