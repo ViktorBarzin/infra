@@ -273,6 +273,8 @@ module "ingress" {
   auth            = "none"
   namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
   name            = "webhook-handler"
+  # No Turnstile gate: machine-only webhooks (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   host            = "webhook"
   dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name

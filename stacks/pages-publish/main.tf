@@ -282,6 +282,8 @@ module "ingress" {
   dns_type  = "proxied"
   namespace = local.namespace
   name      = "pages-publish"
+  # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   # Route to the Service's 8080 (svc-builder put it on 8080, not the
   # ingress_factory default 80) — otherwise Traefik can't resolve the backend
   # port and POST /publish returns a stray 405 while GET falls through.

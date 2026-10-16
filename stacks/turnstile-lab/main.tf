@@ -179,11 +179,13 @@ module "ingress" {
   # The page under test IS the Turnstile gate, and the lab backend holds
   # nothing but its own verify log.
   # auth = "none": public by design, the Turnstile experiment itself
-  auth             = "none"
-  dns_type         = "proxied"
-  namespace        = kubernetes_namespace.lab.metadata[0].name
-  name             = local.name
-  tls_secret_name  = var.tls_secret_name
+  auth            = "none"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.lab.metadata[0].name
+  name            = local.name
+  tls_secret_name = var.tls_secret_name
+  # No gate: the lab serves its own Turnstile page.
+  turnstile        = false
   anti_ai_scraping = false
   homepage_enabled = false
   external_monitor = false

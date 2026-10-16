@@ -209,6 +209,8 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.eurooffice.metadata[0].name
   name            = "eurooffice"
+  # No Turnstile gate: its editor loads in an iframe inside Nextcloud (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   tls_secret_name = var.tls_secret_name
   # Matches the Document Server's own 100 MB upload cap.
   max_body_size = "100m"

@@ -218,6 +218,8 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   name            = "vaultwarden"
+  # No Turnstile gate: Bitwarden apps open its SSO/WebAuthn connector pages in a webview (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

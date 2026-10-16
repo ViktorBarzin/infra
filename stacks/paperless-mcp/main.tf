@@ -218,6 +218,8 @@ module "ingress" {
   dns_type          = "proxied"
   namespace         = kubernetes_namespace.paperless-mcp.metadata[0].name
   name              = "paperless-mcp"
+  # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
+  turnstile = false
   tls_secret_name   = var.tls_secret_name
   homepage_enabled  = false
   extra_middlewares = ["paperless-mcp-bearer-auth@kubernetescrd"]
