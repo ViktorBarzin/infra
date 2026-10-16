@@ -45,6 +45,12 @@ too, which is how an application created in the UI or in another stack is
 noticed. Exceptions are listed with a reason in `local.app_access_exempt`
 (today only `public`).
 
+The API returns at most 100 rows per page whatever `page_size` asks for, so
+the guard reads pages 1 to 5 of each listing (`local.authentik_list_pages`,
+room for 500 applications and 500 bindings; 38 and 94 on 2026-10-16). It
+fails with "incomplete listing" when a listing holds more rows than those
+pages, which is the signal to add pages.
+
 > **2026-06-10 — every provider now uses implicit consent.** Cloudflare
 > Access (pk 9), Forgejo (20), Immich (1), Headscale (13), linkwarden (8)
 > and Vault (53) were switched from
