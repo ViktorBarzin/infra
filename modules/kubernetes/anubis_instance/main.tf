@@ -305,12 +305,22 @@ locals {
   # `store:` block (they would collide).
   # NB: string concatenation is interpolation in HCL — `+` is numeric addition
   # only, and using it here failed the apply with "Invalid operand" (2026-08-23).
+  # forwardAuth mode: Traefik treats any 2xx as "allowed", and DENY answers
+  # 200 by default, so a denied bot would get in. 403 makes DENY a refusal.
+  status_codes_yaml_block = var.public_url == null ? "" : <<-EOT
+
+
+    status_codes:
+      CHALLENGE: 200
+      DENY: 403
+  EOT
+
   rendered_policy_yaml = "${join("\n", [
     "bots:",
     local.trusted_local_rule_yaml,
     local.turnstile_pass_rule_yaml,
     trimspace(coalesce(var.policy_rules_yaml, local.default_policy_rules_yaml)),
-  ])}${local.store_yaml_block}"
+  ])}${local.store_yaml_block}${local.status_codes_yaml_block}"
 }
 
 # Bot policy ConfigMap. Mounted into the pod and referenced by POLICY_FNAME.

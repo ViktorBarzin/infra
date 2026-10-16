@@ -12,7 +12,7 @@ asked for. Two variants, chosen per site by the middleware's query string:
 
 GET  /auth[?variant=strict]   forwardAuth decision (stateless)
 POST /verify                  token -> siteverify -> pass cookie for the whole domain (30 days)
-POST /fallback                fallback cookie (1 h): the visitor gets Anubis, never a pass
+POST /fallback                nonce from the page -> fallback cookie (1 h): the visitor gets Anubis, never a pass
 OPTIONS /verify, /fallback    CORS preflight (the page calls these cross-origin)
 GET  /healthz                 readiness
 
@@ -46,11 +46,20 @@ FALLBACK_COOKIE = "tsgate_fb"
 PASS_HEADER = "X-Turnstile-Pass"
 KIND_PASS = "pass"
 KIND_FALLBACK = "fallback"
+KIND_NONCE = "nonce"
 PASS_TTL = 30 * 24 * 3600
 FALLBACK_TTL = 3600
 TOKEN_TTL = 300  # Turnstile token lifetime; siteverify accepts reuse within it (measured), so we refuse it
 MAX_TOKEN_LEN = 2048
 SITEVERIFY_TIMEOUT = 5.0
+# A fallback is only granted for a challenge page this old (the page waits it
+# out), from the network the page was served to. The crawler spends ~5 s per IP.
+MIN_FALLBACK_AGE = 10
+MAX_NONCE_AGE = 600
+# Pass and fallback cookies work only from the network that earned them, so one
+# solve cannot be shared across a pool of residential IPs.
+NET_BITS_V4 = 16
+NET_BITS_V6 = 48
 
 # The global switch (local.mode in main.tf).
 MODE_ON = "on"          # challenge as designed
@@ -167,6 +176,29 @@ def parse_ip(value: str) -> "Address | None":
     return addr
 
 
+def net_of(ip: str) -> str:
+    addr = parse_ip(ip)
+    if addr is None:
+        return ""
+    bits = NET_BITS_V4 if addr.version == 4 else NET_BITS_V6
+    return str(ipaddress.ip_network(f"{addr}/{bits}", strict=False))
+
+
+def in_net(net: str, ip: str, other_family_ok: bool) -> bool:
+    try:
+        network = ipaddress.ip_network(net)
+    except ValueError:
+        return False
+    addr = parse_ip(ip)
+    if addr is None:
+        return False
+    if addr.version != network.version:
+        # Dual-stack browsers reach DNS-only and proxied hosts over different
+        # families; the binding holds within one family.
+        return other_family_ok
+    return addr in network
+
+
 def host_allowed(cfg: Config, host: str) -> bool:
     host = host.lower()
     return host == cfg.domain or host.endswith("." + cfg.domain)
@@ -205,15 +237,31 @@ def unsign(cfg: Config, value: str, now: float) -> "dict | None":
     return payload
 
 
-def cookie_of_kind(cfg: Config, header: str, name: str, kind: str, now: float) -> "dict | None":
+def cookie_of_kind(cfg: Config, header: str, name: str, kind: str, ip: str, now: float) -> "dict | None":
     # A browser can send the same name twice (the canary's host-only cookie and
     # the domain cookie), so any valid one counts.
     for n, value in cookie_pairs(header):
         if n != name:
             continue
         payload = unsign(cfg, value, now)
-        if payload is not None and payload.get("k") == kind:
+        if payload is not None and payload.get("k") == kind and in_net(str(payload.get("net", "")), ip, True):
             return payload
+    return None
+
+
+def issue_nonce(cfg: Config, ip: str, now: float) -> str:
+    return sign(cfg, {"k": KIND_NONCE, "net": net_of(ip), "iat": int(now), "exp": int(now) + MAX_NONCE_AGE})
+
+
+def check_nonce(cfg: Config, nonce: str, ip: str, now: float) -> "str | None":
+    """None when the fallback is earned, else the reason it is refused."""
+    payload = unsign(cfg, nonce, now) if nonce else None
+    if payload is None or payload.get("k") != KIND_NONCE:
+        return "bad-nonce"
+    if now - float(payload.get("iat", 0)) < MIN_FALLBACK_AGE:
+        return "too-early"
+    if not in_net(str(payload.get("net", "")), ip, False):
+        return "other-network"
     return None
 
 
@@ -222,14 +270,14 @@ def set_cookie(cfg: Config, name: str, value: str, max_age: int) -> str:
     return f"{name}={value}; Domain={cfg.domain}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
 
 
-def fallback_cookie(cfg: Config, now: float) -> str:
-    payload = {"id": secrets.token_hex(8), "k": KIND_FALLBACK, "exp": int(now) + FALLBACK_TTL}
+def fallback_cookie(cfg: Config, ip: str, now: float) -> str:
+    payload = {"id": secrets.token_hex(8), "k": KIND_FALLBACK, "net": net_of(ip), "exp": int(now) + FALLBACK_TTL}
     return set_cookie(cfg, FALLBACK_COOKIE, sign(cfg, payload), FALLBACK_TTL)
 
 
 def decide(cfg: Config, r: Request, now: float) -> Decision:
     # The pass comes first and covers every request, assets included.
-    passed = cookie_of_kind(cfg, r.cookie, PASS_COOKIE, KIND_PASS, now)
+    passed = cookie_of_kind(cfg, r.cookie, PASS_COOKIE, KIND_PASS, r.real_ip, now)
     if passed is not None:
         return Decision(200, "pass", {PASS_HEADER: "1"}, cookie_id=str(passed.get("id", "")))
     # Strict sites have their own Anubis: anything that is not a pass goes there.
@@ -243,7 +291,7 @@ def decide(cfg: Config, r: Request, now: float) -> Decision:
         return Decision(200, "no-ip", dict(skip))
     if any(addr in net for net in cfg.trusted if addr.version == net.version):
         return Decision(200, "trusted", dict(skip))
-    fb = cookie_of_kind(cfg, r.cookie, FALLBACK_COOKIE, KIND_FALLBACK, now)
+    fb = cookie_of_kind(cfg, r.cookie, FALLBACK_COOKIE, KIND_FALLBACK, r.real_ip, now)
     if fb is not None:
         return Decision(200, "fallback", cookie_id=str(fb.get("id", "")))
     if not r.ua.startswith("Mozilla/"):
@@ -255,7 +303,8 @@ def decide(cfg: Config, r: Request, now: float) -> Decision:
     if cfg.mode == MODE_ANUBIS:
         return Decision(200, "mode-anubis")
     body = (PAGE.replace("__SITEKEY__", cfg.sitekey).replace("__ACTION__", cfg.action)
-            .replace("__ORIGIN__", cfg.challenge_origin))
+            .replace("__ORIGIN__", cfg.challenge_origin).replace("__NONCE__", issue_nonce(cfg, r.real_ip, now))
+            .replace("__MINWAIT__", str(MIN_FALLBACK_AGE * 1000)))
     headers = {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}
     return Decision(403, "challenge", headers, body)
 
@@ -301,11 +350,10 @@ def verify(cfg: Config, token: str, ip: str, now: float, siteverify: SiteverifyF
         result = siteverify(fields, SITEVERIFY_TIMEOUT)
     except urllib.error.HTTPError as e:
         if e.code >= 500:
-            return admit(cfg, now, "verify_unavailable_admit", dict(detail, siteverify_error=f"http {e.code}"))
+            return unavailable(cfg, ip, now, dict(detail, siteverify_error=f"http {e.code}"))
         return VerifyResult(False, "verify_fail", detail=dict(detail, siteverify_error=f"http {e.code}"))
     except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, ValueError) as e:
-        # A real token exists and Cloudflare could not judge it: admit, log it.
-        return admit(cfg, now, "verify_unavailable_admit", dict(detail, siteverify_error=repr(e)[:200]))
+        return unavailable(cfg, ip, now, dict(detail, siteverify_error=repr(e)[:200]))
     hostname = str(result.get("hostname", ""))
     detail.update({
         "error_codes": result.get("error-codes", []),
@@ -313,14 +361,20 @@ def verify(cfg: Config, token: str, ip: str, now: float, siteverify: SiteverifyF
         "sv_action": result.get("action", ""),
     })
     if result.get("success") is True and host_allowed(cfg, hostname) and result.get("action") == cfg.action:
-        return admit(cfg, now, "verify_ok", detail)
+        return admit(cfg, ip, now, detail)
     return VerifyResult(False, "verify_fail", detail=detail)
 
 
-def admit(cfg: Config, now: float, event: str, detail: dict) -> VerifyResult:
+def unavailable(cfg: Config, ip: str, now: float, detail: dict) -> VerifyResult:
+    # Cloudflare could not judge the token. Anyone can send a junk token, so
+    # this earns the Anubis fallback, never a pass.
+    return VerifyResult(False, "verify_unavailable_fallback", fallback_cookie(cfg, ip, now), detail)
+
+
+def admit(cfg: Config, ip: str, now: float, detail: dict) -> VerifyResult:
     cookie_id = secrets.token_hex(8)
-    payload = {"id": cookie_id, "k": KIND_PASS, "exp": int(now) + PASS_TTL}
-    return VerifyResult(True, event, set_cookie(cfg, PASS_COOKIE, sign(cfg, payload), PASS_TTL),
+    payload = {"id": cookie_id, "k": KIND_PASS, "net": net_of(ip), "exp": int(now) + PASS_TTL}
+    return VerifyResult(True, "verify_ok", set_cookie(cfg, PASS_COOKIE, sign(cfg, payload), PASS_TTL),
                         dict(detail, cookie_id=cookie_id))
 
 
@@ -342,22 +396,29 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:36rem;m
 #widget{min-height:70px;margin:1.5rem 0}
 </style>
 <script>
-var gateOrigin = "__ORIGIN__";
-var gateDone = false, gateInteractive = false;
+var gateOrigin = "__ORIGIN__", gateNonce = "__NONCE__", gateMinWait = __MINWAIT__;
+var gateLoaded = Date.now(), gateDone = false, gateInteractive = false;
 function gateStatus(t) { document.getElementById("status").textContent = t; }
 // text/plain keeps this a simple CORS request (no preflight); the server reads JSON either way.
 function gatePost(path, body) {
   return fetch(gateOrigin + path, {method: "POST", credentials: "include",
     headers: {"Content-Type": "text/plain"}, body: JSON.stringify(body)});
 }
-// Asks for the other check (Anubis). The server never admits on this call.
-function gateFallback(reason) {
-  if (gateDone) return;
+// Asks for the other check (Anubis). The server never admits on this call,
+// and grants it only for a page at least gateMinWait old, so wait that out.
+function gateFallback(reason, force) {
+  if (gateDone && !force) return;
   gateDone = true;
   gateStatus("Switching to another check...");
-  gatePost("/fallback", {reason: String(reason).slice(0, 100)}).then(
-    function () { location.reload(); },
-    function () { gateStatus("Could not reach the server. Reload the page to try again."); });
+  var wait = Math.max(0, gateMinWait + 500 - (Date.now() - gateLoaded));
+  setTimeout(function () {
+    gatePost("/fallback", {reason: String(reason).slice(0, 100), nonce: gateNonce})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.ok) { location.reload(); }
+        else { gateStatus("The check could not finish. Reload the page to try again."); }
+      }, function () { gateStatus("Could not reach the server. Reload the page to try again."); });
+  }, wait);
 }
 window.onTurnstileLoad = function () {
   gateStatus("Running the check...");
@@ -369,12 +430,14 @@ window.onTurnstileLoad = function () {
       if (gateDone) return;
       gateDone = true;
       gateStatus("Verifying...");
+      // Any answer but ok:true (a rejected token, or an error page from the
+      // proxy that a cross-origin fetch cannot even read) falls back to Anubis.
       gatePost("/verify", {token: token})
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (j.ok) { gateStatus("Done. Loading the page..."); location.reload(); }
-          else { gateStatus("The check did not pass. Reload the page to try again."); }
-        }, function () { gateStatus("Could not reach the server. Reload the page to try again."); });
+          else { gateFallback("verify-rejected", true); }
+        }, function () { gateFallback("verify-unreachable", true); });
     },
     "error-callback": function (code) { gateFallback("widget-error-" + code); return true; },
     "unsupported-callback": function () { gateFallback("unsupported"); },
@@ -489,7 +552,14 @@ def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler
                 return self.send(200, json.dumps({"ok": res.admitted}), headers)
             if path in FALLBACK_PATHS:
                 reason = str(body.get("reason", ""))[:100]
-                headers["Set-Cookie"] = fallback_cookie(cfg, time.time())
+                nonce = body.get("nonce", "")
+                now = time.time()
+                refused = check_nonce(cfg, nonce if isinstance(nonce, str) else "", ip, now)
+                if refused:
+                    log({"event": "fallback_refused", "reason": reason, "refused": refused, "ip": ip, "ua": ua,
+                         "origin": origin})
+                    return self.send(200, json.dumps({"ok": False}), headers)
+                headers["Set-Cookie"] = fallback_cookie(cfg, ip, now)
                 log({"event": "fallback_set", "reason": reason, "ip": ip, "ua": ua, "origin": origin})
                 return self.send(200, json.dumps({"ok": True}), headers)
             return self.send(404, "not found")

@@ -42,8 +42,9 @@ def req(**over: object) -> gate.Request:
     return gate.Request(**base)
 
 
-def signed(kind: str = gate.KIND_PASS, name: str = gate.PASS_COOKIE, cfg: gate.Config = CFG, now: float = NOW) -> str:
-    value = gate.sign(cfg, {"id": "abc123", "k": kind, "exp": int(now) + 3600})
+def signed(kind: str = gate.KIND_PASS, name: str = gate.PASS_COOKIE, cfg: gate.Config = CFG, now: float = NOW,
+           ip: str = UNTRUSTED) -> str:
+    value = gate.sign(cfg, {"id": "abc123", "k": kind, "exp": int(now) + 3600, "net": gate.net_of(ip)})
     return f"other=1; {name}={value}"
 
 
@@ -120,6 +121,65 @@ class StandardVariantTest(DecideCase):
             self.assertChallenge(gate.decide(CFG, req(cookie=c), NOW))
 
 
+class NetworkBindingTest(DecideCase):
+    """A pass or fallback works only from the network that earned it, so one
+    solve cannot be shared across a crawler's pool of residential IPs."""
+
+    def test_net_of(self) -> None:
+        self.assertEqual(gate.net_of("203.0.113.7"), "203.0.0.0/16")
+        self.assertEqual(gate.net_of("2a00:23c6:1234:5678::1"), "2a00:23c6:1234::/48")
+        self.assertEqual(gate.net_of("::ffff:203.0.113.7"), "203.0.0.0/16")
+        self.assertEqual(gate.net_of("garbage"), "")
+
+    def test_pass_from_the_same_network_works(self) -> None:
+        self.assertSkip(gate.decide(CFG, req(real_ip="203.0.200.1", cookie=PASS), NOW), "pass")
+
+    def test_pass_from_another_network_is_challenged(self) -> None:
+        self.assertChallenge(gate.decide(CFG, req(real_ip="198.51.100.9", cookie=PASS), NOW))
+
+    def test_fallback_from_another_network_is_challenged(self) -> None:
+        self.assertChallenge(gate.decide(CFG, req(real_ip="198.51.100.9", cookie=FALLBACK), NOW))
+
+    def test_other_address_family_is_accepted(self) -> None:
+        # Dual-stack browsers reach DNS-only and proxied hosts over different
+        # families; the binding only applies within one family.
+        v6_pass = signed(ip="2a00:23c6:1234:5678::1")
+        self.assertSkip(gate.decide(CFG, req(real_ip=UNTRUSTED, cookie=v6_pass), NOW), "pass")
+        self.assertChallenge(gate.decide(CFG, req(real_ip="2001:db8::1", cookie=v6_pass), NOW))
+
+    def test_cookie_without_a_network_is_rejected(self) -> None:
+        value = gate.sign(CFG, {"id": "x", "k": gate.KIND_PASS, "exp": int(NOW) + 60})
+        self.assertChallenge(gate.decide(CFG, req(cookie=f"{gate.PASS_COOKIE}={value}"), NOW))
+
+
+class FallbackNonceTest(unittest.TestCase):
+    """The fallback has to be earned on the challenge page: a nonce bound to
+    the network, at least MIN_FALLBACK_AGE old, and not stale."""
+
+    def nonce(self, ip: str = UNTRUSTED, now: float = NOW) -> str:
+        return gate.issue_nonce(CFG, ip, now)
+
+    def test_page_carries_a_nonce(self) -> None:
+        d = gate.decide(CFG, req(), NOW)
+        self.assertIn('gateNonce = "', d.body)
+        self.assertIn(str(gate.MIN_FALLBACK_AGE * 1000), d.body)
+
+    def test_valid_nonce_after_the_wait(self) -> None:
+        self.assertIsNone(gate.check_nonce(CFG, self.nonce(), UNTRUSTED, NOW + gate.MIN_FALLBACK_AGE))
+
+    def test_rejections(self) -> None:
+        cases = {
+            "missing": ("", UNTRUSTED, NOW + 60),
+            "garbage": ("x.y", UNTRUSTED, NOW + 60),
+            "too-early": (self.nonce(), UNTRUSTED, NOW + gate.MIN_FALLBACK_AGE - 1),
+            "stale": (self.nonce(), UNTRUSTED, NOW + gate.MAX_NONCE_AGE + 1),
+            "other-network": (self.nonce(), "198.51.100.9", NOW + 60),
+            "pass-cookie-as-nonce": (PASS.split("=", 2)[2], UNTRUSTED, NOW + 60),
+        }
+        for name, (nonce, ip, now) in cases.items():
+            self.assertIsNotNone(gate.check_nonce(CFG, nonce, ip, now), name)
+
+
 class StrictVariantTest(DecideCase):
     """The Anubis sites: only a Turnstile pass skips Anubis, as in the canary."""
 
@@ -175,6 +235,9 @@ class ChallengePageTest(unittest.TestCase):
         self.assertIn('"site-gate"', d.body)
         self.assertIn('"https://challenge.viktorbarzin.me"', d.body)
         self.assertIn('credentials: "include"', d.body)
+        # A failed verify must not strand the visitor on the page.
+        self.assertIn('gateFallback("verify-rejected", true)', d.body)
+        self.assertIn('gateFallback("verify-unreachable", true)', d.body)
         self.assertEqual(d.headers.get("Cache-Control"), "no-store")
         self.assertTrue(d.headers.get("Content-Type", "").startswith("text/html"))
 
@@ -208,7 +271,7 @@ class CookieTest(unittest.TestCase):
             self.assertIn(attr, h)
 
     def test_fallback_cookie_cannot_act_as_a_pass(self) -> None:
-        h = gate.fallback_cookie(CFG, NOW)
+        h = gate.fallback_cookie(CFG, UNTRUSTED, NOW)
         self.assertTrue(h.startswith(gate.FALLBACK_COOKIE + "="))
         self.assertIn("Max-Age=3600", h)
         value = h.split("=", 1)[1].split(";", 1)[0]
@@ -244,7 +307,8 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual((sv.calls[0]["secret"], sv.calls[0]["response"], sv.calls[0]["remoteip"]),
                          ("widget-secret", "tok-1", UNTRUSTED))
         value = r.set_cookie.split("=", 1)[1].split(";", 1)[0]
-        self.assertEqual(gate.unsign(CFG, value, NOW)["k"], gate.KIND_PASS)  # type: ignore[index]
+        payload = gate.unsign(CFG, value, NOW)
+        self.assertEqual((payload["k"], payload["net"]), (gate.KIND_PASS, "203.0.0.0/16"))  # type: ignore[index]
 
     def test_any_site_in_the_domain_is_accepted(self) -> None:
         for host in ("forgejo.viktorbarzin.me", "viktorbarzin.me", "cc.viktorbarzin.me"):
@@ -279,11 +343,13 @@ class VerifyTest(unittest.TestCase):
         self.assertFalse(c.first_use("a", NOW + 299))
         self.assertTrue(c.first_use("a", NOW + 301))
 
-    def test_siteverify_unavailable_admits(self) -> None:
+    def test_siteverify_unavailable_gives_the_fallback_not_a_pass(self) -> None:
+        # Junk tokens during a Cloudflare outage must not mint 30-day passes.
         for exc in (socket.timeout("timed out"), urllib.error.URLError("down"),
                     urllib.error.HTTPError(gate.SITEVERIFY, 503, "unavailable", {}, None)):  # type: ignore[arg-type]
             r = self.verify("tok-x", FakeSiteverify(exc))
-            self.assertEqual((r.admitted, r.event), (True, "verify_unavailable_admit"), repr(exc))
+            self.assertEqual((r.admitted, r.event), (False, "verify_unavailable_fallback"), repr(exc))
+            self.assertTrue(r.set_cookie.startswith(gate.FALLBACK_COOKIE + "="), repr(exc))
 
     def test_siteverify_4xx_is_a_rejection(self) -> None:
         r = self.verify("tok-y", FakeSiteverify(urllib.error.HTTPError(gate.SITEVERIFY, 400, "bad", {}, None)))  # type: ignore[arg-type]
