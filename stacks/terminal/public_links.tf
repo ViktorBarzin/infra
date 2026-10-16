@@ -174,11 +174,18 @@ resource "kubernetes_manifest" "public_link_ingressroute" {
           services    = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
         },
         {
-          match       = "Host(`${local.public_link_host}`) && (Path(`/s`) || Path(`/s/`))"
-          kind        = "Rule"
-          priority    = 200
-          middlewares = local.public_link_guard
-          services    = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
+          match    = "Host(`${local.public_link_host}`) && (Path(`/s`) || Path(`/s/`))"
+          kind     = "Rule"
+          priority = 200
+          # The visitor page is HTML opened in a browser, so it also gets the
+          # Turnstile gate (stacks/turnstile-gate, 2026-10-16), after real-ip.
+          # The API routes above stay ungated: they only answer JSON.
+          middlewares = concat(local.public_link_guard, [
+            { name = "strip", namespace = "turnstile-gate" },
+            { name = "auth-standard", namespace = "turnstile-gate" },
+            { name = "anubis", namespace = "turnstile-gate" },
+          ])
+          services = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
         },
       ]
       tls = {

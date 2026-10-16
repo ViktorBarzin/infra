@@ -1421,17 +1421,41 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
   }
 }
 
+# Public share links (/share/<key>, /s/<slug>) are what strangers and crawlers
+# reach, opened in a real browser, so they get the Turnstile gate. The rest of
+# Immich stays on module.ingress-immich without it: the mobile app logs in
+# through an in-app browser. More specific paths win in Traefik.
+module "ingress-immich-shares" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "app": Immich checks the share key itself
+  auth                    = "app"
+  dns_type                = "none" # module.ingress-immich owns the record
+  namespace               = kubernetes_namespace.immich.metadata[0].name
+  name                    = "immich-shares"
+  full_host               = "immich.viktorbarzin.me"
+  ingress_path            = ["/share/", "/s/"]
+  turnstile               = true
+  service_name            = "immich-server"
+  port                    = 2283
+  tls_secret_name         = var.tls_secret_name
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
+  anti_ai_scraping        = false
+  homepage_enabled        = false
+  external_monitor        = false
+}
+
 module "ingress-immich" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "app": Immich has its own user auth + bearer-token API. Authentik
   # forward-auth on `/api/*` was 302-ing the iOS/Android Immich app and any
   # external API consumer. App-level auth is the gate now.
-  auth                    = "app"
-  dns_type                = "non-proxied"
-  namespace               = kubernetes_namespace.immich.metadata[0].name
-  name                    = "immich"
+  auth      = "app"
+  dns_type  = "non-proxied"
+  namespace = kubernetes_namespace.immich.metadata[0].name
+  name      = "immich"
   # No Turnstile gate: the mobile app logs in through an in-app browser (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile               = false
   service_name            = "immich-server"
   port                    = 2283
   tls_secret_name         = var.tls_secret_name

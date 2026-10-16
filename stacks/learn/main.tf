@@ -693,9 +693,12 @@ resource "kubernetes_service" "prep_sync" {
 # copy can sync from: that page runs on file:// with no cookie for this domain,
 # so any redirect to Authentik would fail its fetch.
 module "ingress_prep" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "prep"
-  host            = "pages"
+  source = "../../modules/kubernetes/ingress_factory"
+  name   = "prep"
+  host   = "pages"
+  # Turnstile gate on this public page (2026-10-16). A carve-out path, so the
+  # factory leaves it off by default; the page is HTML people open in a browser.
+  turnstile       = true
   ingress_path    = ["/prep"]
   service_name    = "learn"
   port            = 80
@@ -721,9 +724,12 @@ module "ingress_prep" {
 # carve-out pattern as ingress_prep above, including auth = "none" rather than
 # "public" for the reason given there.
 module "ingress_pe_summit_trip" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "pe-summit-trip"
-  host            = "pages"
+  source = "../../modules/kubernetes/ingress_factory"
+  name   = "pe-summit-trip"
+  host   = "pages"
+  # Turnstile gate on this public page (2026-10-16). A carve-out path, so the
+  # factory leaves it off by default; the page is HTML people open in a browser.
+  turnstile       = true
   ingress_path    = ["/pe-summit-trip"]
   service_name    = "learn"
   port            = 80

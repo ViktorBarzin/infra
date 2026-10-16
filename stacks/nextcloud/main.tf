@@ -274,18 +274,41 @@ module "nfs_pve_ssd_root_host" {
   storage_class_name = "nfs-pve"
 }
 
+# Public share links (/s/<token>, /index.php/s/<token>) are what strangers and
+# crawlers reach, opened in a real browser, so they get the Turnstile gate. The
+# rest of Nextcloud stays on module.ingress without it: desktop and phone
+# clients log in through Login Flow v2 in a webview and sync over WebDAV.
+module "ingress_shares" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "app": Nextcloud checks the share token itself
+  auth                    = "app"
+  dns_type                = "none" # module.ingress owns the record
+  namespace               = kubernetes_namespace.nextcloud.metadata[0].name
+  name                    = "nextcloud-shares"
+  full_host               = "nextcloud.viktorbarzin.me"
+  ingress_path            = ["/s/", "/index.php/s/"]
+  turnstile               = true
+  service_name            = "nextcloud"
+  tls_secret_name         = var.tls_secret_name
+  port                    = 8080
+  extra_middlewares       = ["traefik-nextcloud-rate-limit@kubernetescrd"]
+  skip_default_rate_limit = true
+  homepage_enabled        = false
+  external_monitor        = false
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Native WebDAV / CalDAV / CardDAV clients (Nextcloud desktop+mobile apps,
   # calendar sync) use HTTP basic-auth + app passwords, not browser sessions.
   # Nextcloud has strong app-layer auth of its own.
   # auth = "app": Native WebDAV / CalDAV / CardDAV clients use HTTP Basic auth + app passwords; Nextcloud enforces app-layer authentication.
-  auth            = "app"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
-  name            = "nextcloud"
+  auth      = "app"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  name      = "nextcloud"
   # No Turnstile gate: desktop/mobile Login Flow v2 and WebDAV clients (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   tls_secret_name = var.tls_secret_name
   port            = 8080
   # Fix Apple CalDAV/CardDAV discovery (2026-07-19). Nextcloud's shipped
