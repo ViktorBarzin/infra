@@ -181,6 +181,17 @@ variable "anti_ai_scraping" {
   default = null # null = auto (enabled when not protected, disabled when protected)
 }
 
+# Cloudflare Turnstile gate (stacks/turnstile-gate, design:
+# docs/plans/2026-10-16-turnstile-sitewide-design.md). true attaches the gate;
+# an Anubis backend (service_name = "anubis-*") gets the strict variant, where
+# only a solved Turnstile skips Anubis, and any other backend gets the standard
+# variant, where only browsers asking for an HTML page are checked and the
+# shared Anubis is the fallback.
+variable "turnstile" {
+  type    = bool
+  default = false
+}
+
 # Forward-auth authorization (ADR-0023). Only meaningful when auth = "required":
 # the Authentik groups permitted to reach this host. Stamped as an annotation
 # (authentik.viktorbarzin.me/allowed-groups) that the authentik stack reads at
@@ -284,6 +295,12 @@ locals {
   # is intentionally public). When Authentik gates the request
   # (required/public), the auth flow already discourages bots.
   effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : (var.auth == "none" || var.auth == "app")
+
+  # An Anubis backend honours X-Turnstile-Pass (modules/kubernetes/anubis_instance),
+  # so every route into one strips the client-sent copy, gate or no gate.
+  anubis_backend    = var.service_name != null && startswith(var.service_name, "anubis-")
+  turnstile_strip   = local.anubis_backend || var.turnstile
+  turnstile_gate_mw = !var.turnstile ? null : (local.anubis_backend ? "turnstile-gate-auth@kubernetescrd" : "turnstile-gate-auth-standard@kubernetescrd")
 
   # Auth middleware selection. "app" and "none" both attach no Authentik
   # middleware — "app" signals "the backend has its own user auth", "none"
@@ -413,13 +430,18 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         # client-unspoofable X-Real-Ip with zero per-site wiring. Carve-out
         # ingresses that point at the bare backend (not anubis-*) correctly skip
         # it. distinct() dedupes if a site also lists real-ip in extra_middlewares.
-        var.service_name != null && startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
+        # The Turnstile gate keys on X-Real-Ip too, so it gets real-ip as well.
+        local.anubis_backend || var.turnstile ? "traefik-real-ip@kubernetescrd" : null,
+        local.turnstile_strip ? "turnstile-gate-strip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         var.skip_error_pages ? null : "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
+        # After the AI-bot block, before Sablier: a bot never wakes a parked app.
+        local.turnstile_gate_mw,
+        var.turnstile && !local.anubis_backend ? "turnstile-gate-anubis@kubernetescrd" : null,
         local.auth_middleware,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         # sablier sits AFTER every gate (auth, ip-allowlist) so only admitted

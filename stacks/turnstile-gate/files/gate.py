@@ -1,14 +1,23 @@
-"""Forgejo Turnstile canary gate (48 h A/B test, see stacks/turnstile-gate/main.tf).
+"""Turnstile gate for the public *.viktorbarzin.me sites (see stacks/turnstile-gate/main.tf).
 
-Traefik forwardAuth -> nginx shim -> GET /auth here. The answer is always 200
-unless the visitor is an untrusted browser asking for an HTML page, holds no
-pass cookie and its IP hashes into the Turnstile arm; then it is 403 with the
-Turnstile page. A 200 carrying X-Turnstile-Pass: 1 tells Anubis to ALLOW.
+Traefik forwardAuth -> nginx shim -> GET /auth here. A 200 carrying
+X-Turnstile-Pass: 1 means "let it through, skip Anubis"; a 200 without it means
+"Anubis decides"; a 403 is the Turnstile page, served on the URL the visitor
+asked for. Two variants, chosen per site by the middleware's query string:
 
-GET  /auth            forwardAuth decision (stateless)
-POST /_gate/verify    {"token": "..."} -> siteverify -> pass cookie (30 days)
-POST /_gate/fallback  {"reason": "..."} -> fallback cookie (1 h): the visitor gets Anubis, never a pass
-GET  /healthz         readiness
+  standard  sites with no Anubis of their own. Only an untrusted browser asking
+            for an HTML page is checked; everything else skips Anubis.
+  strict    sites fronted by their own Anubis. Only a Turnstile pass skips it,
+            so a crawler cannot dodge the check by not asking for HTML.
+
+GET  /auth[?variant=strict]   forwardAuth decision (stateless)
+POST /verify                  token -> siteverify -> pass cookie for the whole domain (30 days)
+POST /fallback                fallback cookie (1 h): the visitor gets Anubis, never a pass
+OPTIONS /verify, /fallback    CORS preflight (the page calls these cross-origin)
+GET  /healthz                 readiness
+
+/verify and /fallback are served on the challenge host (challenge.viktorbarzin.me)
+and, for the canary's old page, on forgejo's /_gate/ path.
 
 Every decision worth measuring is one JSON line on stdout, for Loki.
 """
@@ -37,21 +46,25 @@ FALLBACK_COOKIE = "tsgate_fb"
 PASS_HEADER = "X-Turnstile-Pass"
 KIND_PASS = "pass"
 KIND_FALLBACK = "fallback"
-ARM_TURNSTILE = "turnstile"
-ARM_ANUBIS = "anubis"
 PASS_TTL = 30 * 24 * 3600
 FALLBACK_TTL = 3600
 TOKEN_TTL = 300  # Turnstile token lifetime; siteverify accepts reuse within it (measured), so we refuse it
 MAX_TOKEN_LEN = 2048
 SITEVERIFY_TIMEOUT = 5.0
 
+# The global switch (local.mode in main.tf).
+MODE_ON = "on"          # challenge as designed
+MODE_ANUBIS = "anubis"  # never challenge; browsers asking for HTML go to Anubis instead
+MODE_OPEN = "open"      # never challenge; sites behave as they did before Turnstile
+MODES = (MODE_ON, MODE_ANUBIS, MODE_OPEN)
+
 # Mirrors var.trusted_local_cidrs in modules/kubernetes/anubis_instance, the
 # canonical list. Matched against X-Real-Ip, which the real-ip plugin sets from
 # the TCP peer, so it cannot be forged from the internet.
 DEFAULT_TRUSTED_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10"]
 
-# Clients that say they are a bot (or are not a browser at all) keep today's
-# behaviour: Anubis verifies the good crawlers and denies the AI ones.
+# A browser-style user agent that says it is a bot. Anubis verifies the search
+# engines by IP and challenges the rest, so these go to Anubis, not Turnstile.
 DECLARED_BOT = re.compile(r"bot|crawl|spider|slurp", re.IGNORECASE)
 
 Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
@@ -63,9 +76,10 @@ class Config:
     sitekey: str
     secret: str
     cookie_key: bytes
-    arm_salt: str
-    host: str
+    domain: str
+    challenge_origin: str
     action: str
+    mode: str
     trusted: "list[Network]"
 
 
@@ -77,6 +91,8 @@ class Request:
     ua: str
     cookie: str
     uri: str
+    host: str
+    strict: bool
 
 
 @dataclass
@@ -85,7 +101,6 @@ class Decision:
     reason: str
     headers: "dict[str, str]" = field(default_factory=dict)
     body: str = ""
-    arm: str = ""
     cookie_id: str = ""
 
 
@@ -100,17 +115,28 @@ class VerifyResult:
 SiteverifyFn = Callable[[dict, float], dict]
 
 
+def parse_mode(value: str) -> str:
+    return value if value in MODES else MODE_ON
+
+
 def parse_cidrs(value: str) -> "list[Network]":
     return [ipaddress.ip_network(c.strip()) for c in value.split(",") if c.strip()]
 
 
 def parse_cookies(header: str) -> "dict[str, str]":
     out: "dict[str, str]" = {}
+    for name, value in cookie_pairs(header):
+        out[name] = value
+    return out
+
+
+def cookie_pairs(header: str) -> "list[tuple[str, str]]":
+    pairs = []
     for part in header.split(";"):
         name, sep, value = part.strip().partition("=")
         if sep and name:
-            out[name] = value
-    return out
+            pairs.append((name, value))
+    return pairs
 
 
 def wants_html(accept: str) -> bool:
@@ -131,10 +157,6 @@ def wants_html(accept: str) -> bool:
     return False
 
 
-def is_browser(ua: str) -> bool:
-    return ua.startswith("Mozilla/") and not DECLARED_BOT.search(ua)
-
-
 def parse_ip(value: str) -> "Address | None":
     try:
         addr = ipaddress.ip_address(value.strip())
@@ -145,16 +167,20 @@ def parse_ip(value: str) -> "Address | None":
     return addr
 
 
-def arm_for(cfg: Config, ip: str) -> str:
-    addr = parse_ip(ip)
-    key = ip
-    if isinstance(addr, ipaddress.IPv6Address):
-        # One /64 is one subscriber; privacy addresses rotate inside it.
-        key = str(ipaddress.ip_network(f"{addr}/64", strict=False).network_address)
-    elif addr is not None:
-        key = str(addr)
-    digest = hmac.new(cfg.arm_salt.encode(), key.encode(), hashlib.sha256).digest()
-    return ARM_TURNSTILE if digest[0] & 1 else ARM_ANUBIS
+def host_allowed(cfg: Config, host: str) -> bool:
+    host = host.lower()
+    return host == cfg.domain or host.endswith("." + cfg.domain)
+
+
+def cors_headers(cfg: Config, origin: str) -> "dict[str, str]":
+    parsed = urllib.parse.urlsplit(origin)
+    if parsed.scheme != "https" or parsed.port is not None or parsed.path or not host_allowed(cfg, parsed.hostname or ""):
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 
 def sign(cfg: Config, payload: dict) -> str:
@@ -179,54 +205,59 @@ def unsign(cfg: Config, value: str, now: float) -> "dict | None":
     return payload
 
 
-def cookie_of_kind(cfg: Config, cookies: "dict[str, str]", name: str, kind: str, now: float) -> "dict | None":
-    value = cookies.get(name)
-    if not value:
-        return None
-    payload = unsign(cfg, value, now)
-    if payload is None or payload.get("k") != kind:
-        return None
-    return payload
+def cookie_of_kind(cfg: Config, header: str, name: str, kind: str, now: float) -> "dict | None":
+    # A browser can send the same name twice (the canary's host-only cookie and
+    # the domain cookie), so any valid one counts.
+    for n, value in cookie_pairs(header):
+        if n != name:
+            continue
+        payload = unsign(cfg, value, now)
+        if payload is not None and payload.get("k") == kind:
+            return payload
+    return None
 
 
-def set_cookie(name: str, value: str, max_age: int) -> str:
-    # No Domain attribute: host-only, so the cookie never reaches other subdomains.
-    return f"{name}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
+def set_cookie(cfg: Config, name: str, value: str, max_age: int) -> str:
+    # Domain-wide: one solve covers every site (decision 5 in the design doc).
+    return f"{name}={value}; Domain={cfg.domain}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
 
 
 def fallback_cookie(cfg: Config, now: float) -> str:
     payload = {"id": secrets.token_hex(8), "k": KIND_FALLBACK, "exp": int(now) + FALLBACK_TTL}
-    return set_cookie(FALLBACK_COOKIE, sign(cfg, payload), FALLBACK_TTL)
+    return set_cookie(cfg, FALLBACK_COOKIE, sign(cfg, payload), FALLBACK_TTL)
 
 
 def decide(cfg: Config, r: Request, now: float) -> Decision:
-    cookies = parse_cookies(r.cookie)
-    # The pass cookie comes first and applies to every request, assets
-    # included: without the header Anubis would challenge a passed visitor's
-    # CSS and JS, because that visitor never solved Anubis.
-    passed = cookie_of_kind(cfg, cookies, PASS_COOKIE, KIND_PASS, now)
+    # The pass comes first and covers every request, assets included.
+    passed = cookie_of_kind(cfg, r.cookie, PASS_COOKIE, KIND_PASS, now)
     if passed is not None:
         return Decision(200, "pass", {PASS_HEADER: "1"}, cookie_id=str(passed.get("id", "")))
+    # Strict sites have their own Anubis: anything that is not a pass goes there.
+    skip = {} if r.strict else {PASS_HEADER: "1"}
+    if cfg.mode == MODE_OPEN:
+        return Decision(200, "mode-open", dict(skip))
     if r.method.upper() not in ("GET", "HEAD"):
-        return Decision(200, "method")
+        return Decision(200, "method", dict(skip))
     addr = parse_ip(r.real_ip)
     if addr is None:
-        return Decision(200, "no-ip")
+        return Decision(200, "no-ip", dict(skip))
     if any(addr in net for net in cfg.trusted if addr.version == net.version):
-        return Decision(200, "trusted")
-    if not wants_html(r.accept):
-        return Decision(200, "not-html")
-    if not is_browser(r.ua):
-        return Decision(200, "not-browser")
-    arm = arm_for(cfg, r.real_ip)
-    fb = cookie_of_kind(cfg, cookies, FALLBACK_COOKIE, KIND_FALLBACK, now)
+        return Decision(200, "trusted", dict(skip))
+    fb = cookie_of_kind(cfg, r.cookie, FALLBACK_COOKIE, KIND_FALLBACK, now)
     if fb is not None:
-        return Decision(200, "fallback", arm=arm, cookie_id=str(fb.get("id", "")))
-    if arm == ARM_ANUBIS:
-        return Decision(200, "arm-anubis", arm=arm)
-    body = PAGE.replace("__SITEKEY__", cfg.sitekey).replace("__ACTION__", cfg.action)
+        return Decision(200, "fallback", cookie_id=str(fb.get("id", "")))
+    if not r.ua.startswith("Mozilla/"):
+        return Decision(200, "not-browser", dict(skip))
+    if DECLARED_BOT.search(r.ua):
+        return Decision(200, "declared-bot")
+    if not wants_html(r.accept):
+        return Decision(200, "not-html", dict(skip))
+    if cfg.mode == MODE_ANUBIS:
+        return Decision(200, "mode-anubis")
+    body = (PAGE.replace("__SITEKEY__", cfg.sitekey).replace("__ACTION__", cfg.action)
+            .replace("__ORIGIN__", cfg.challenge_origin))
     headers = {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}
-    return Decision(403, "challenge", headers, body, arm=arm)
+    return Decision(403, "challenge", headers, body)
 
 
 class TokenCache:
@@ -275,12 +306,13 @@ def verify(cfg: Config, token: str, ip: str, now: float, siteverify: SiteverifyF
     except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, ValueError) as e:
         # A real token exists and Cloudflare could not judge it: admit, log it.
         return admit(cfg, now, "verify_unavailable_admit", dict(detail, siteverify_error=repr(e)[:200]))
+    hostname = str(result.get("hostname", ""))
     detail.update({
         "error_codes": result.get("error-codes", []),
-        "sv_hostname": result.get("hostname", ""),
+        "sv_hostname": hostname,
         "sv_action": result.get("action", ""),
     })
-    if result.get("success") is True and result.get("hostname") == cfg.host and result.get("action") == cfg.action:
+    if result.get("success") is True and host_allowed(cfg, hostname) and result.get("action") == cfg.action:
         return admit(cfg, now, "verify_ok", detail)
     return VerifyResult(False, "verify_fail", detail=detail)
 
@@ -288,7 +320,8 @@ def verify(cfg: Config, token: str, ip: str, now: float, siteverify: SiteverifyF
 def admit(cfg: Config, now: float, event: str, detail: dict) -> VerifyResult:
     cookie_id = secrets.token_hex(8)
     payload = {"id": cookie_id, "k": KIND_PASS, "exp": int(now) + PASS_TTL}
-    return VerifyResult(True, event, set_cookie(PASS_COOKIE, sign(cfg, payload), PASS_TTL), dict(detail, cookie_id=cookie_id))
+    return VerifyResult(True, event, set_cookie(cfg, PASS_COOKIE, sign(cfg, payload), PASS_TTL),
+                        dict(detail, cookie_id=cookie_id))
 
 
 def format_event(record: dict, now: float) -> str:
@@ -309,18 +342,20 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:36rem;m
 #widget{min-height:70px;margin:1.5rem 0}
 </style>
 <script>
+var gateOrigin = "__ORIGIN__";
 var gateDone = false, gateInteractive = false;
 function gateStatus(t) { document.getElementById("status").textContent = t; }
+// text/plain keeps this a simple CORS request (no preflight); the server reads JSON either way.
 function gatePost(path, body) {
-  return fetch(path, {method: "POST", credentials: "same-origin",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return fetch(gateOrigin + path, {method: "POST", credentials: "include",
+    headers: {"Content-Type": "text/plain"}, body: JSON.stringify(body)});
 }
 // Asks for the other check (Anubis). The server never admits on this call.
 function gateFallback(reason) {
   if (gateDone) return;
   gateDone = true;
   gateStatus("Switching to another check...");
-  gatePost("/_gate/fallback", {reason: String(reason).slice(0, 100)}).then(
+  gatePost("/fallback", {reason: String(reason).slice(0, 100)}).then(
     function () { location.reload(); },
     function () { gateStatus("Could not reach the server. Reload the page to try again."); });
 }
@@ -334,7 +369,7 @@ window.onTurnstileLoad = function () {
       if (gateDone) return;
       gateDone = true;
       gateStatus("Verifying...");
-      gatePost("/_gate/verify", {token: token})
+      gatePost("/verify", {token: token})
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (j.ok) { gateStatus("Done. Loading the page..."); location.reload(); }
@@ -365,11 +400,16 @@ def load_config() -> Config:
         sitekey=os.environ["TURNSTILE_SITEKEY"],
         secret=os.environ["TURNSTILE_SECRET"],
         cookie_key=os.environ["COOKIE_KEY"].encode(),
-        arm_salt=os.environ["ARM_SALT"],
-        host=os.environ["GATE_HOST"],
-        action=os.environ.get("TURNSTILE_ACTION", "forgejo-gate"),
+        domain=os.environ.get("GATE_DOMAIN", "viktorbarzin.me"),
+        challenge_origin=os.environ["CHALLENGE_ORIGIN"],
+        action=os.environ.get("TURNSTILE_ACTION", "site-gate"),
+        mode=parse_mode(os.environ.get("GATE_MODE", MODE_ON)),
         trusted=parse_cidrs(os.environ.get("TRUSTED_CIDRS", ",".join(DEFAULT_TRUSTED_CIDRS))),
     )
+
+
+VERIFY_PATHS = ("/verify", "/_gate/verify")
+FALLBACK_PATHS = ("/fallback", "/_gate/fallback")
 
 
 def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler]":
@@ -399,20 +439,32 @@ def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler
             self.do_GET()
 
         def do_GET(self) -> None:
-            path = urllib.parse.urlparse(self.path).path
-            if path == "/healthz":
+            url = urllib.parse.urlparse(self.path)
+            if url.path == "/healthz":
                 return self.send(200, "ok")
-            if path != "/auth":
+            if url.path != "/auth":
                 return self.send(404, "not found")
             h = self.headers
+            strict = urllib.parse.parse_qs(url.query).get("variant", [""])[0] == "strict"
             r = Request(method=h.get("X-Forwarded-Method", "GET"), real_ip=h.get("X-Real-Ip", ""),
                         accept=h.get("Accept", ""), ua=h.get("User-Agent", ""), cookie=h.get("Cookie", ""),
-                        uri=h.get("X-Forwarded-Uri", ""))
+                        uri=h.get("X-Forwarded-Uri", ""), host=h.get("X-Forwarded-Host", ""), strict=strict)
             d = decide(cfg, r, time.time())
-            if d.reason in ("challenge", "arm-anubis", "fallback") or (d.reason == "pass" and wants_html(r.accept)):
-                log({"event": "decision", "reason": d.reason, "arm": d.arm or arm_for(cfg, r.real_ip),
-                     "ip": r.real_ip, "ua": r.ua, "uri": r.uri[:300], "cookie_id": d.cookie_id})
+            if d.reason in ("challenge", "fallback", "declared-bot") or (d.reason == "pass" and wants_html(r.accept)):
+                log({"event": "decision", "reason": d.reason, "variant": "strict" if strict else "standard",
+                     "host": r.host, "ip": r.real_ip, "ua": r.ua, "uri": r.uri[:300], "cookie_id": d.cookie_id})
             return self.send(d.status, d.body, d.headers)
+
+        def do_OPTIONS(self) -> None:
+            path = urllib.parse.urlparse(self.path).path
+            cors = cors_headers(cfg, self.headers.get("Origin", ""))
+            if path not in VERIFY_PATHS + FALLBACK_PATHS or not cors:
+                return self.send(404, "not found")
+            return self.send(204, "", dict(cors, **{
+                "Access-Control-Allow-Methods": "POST",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Max-Age": "86400",
+            }))
 
         def read_json(self) -> dict:
             length = min(int(self.headers.get("Content-Length", "0") or 0), 16384)
@@ -426,19 +478,20 @@ def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler
             path = urllib.parse.urlparse(self.path).path
             body = self.read_json()
             ip, ua = self.real_ip(), self.headers.get("User-Agent", "")
-            if path == "/_gate/verify":
+            origin = self.headers.get("Origin", "")
+            headers = dict(cors_headers(cfg, origin), **{"Content-Type": "application/json"})
+            if path in VERIFY_PATHS:
                 token = body.get("token", "")
                 res = verify(cfg, token if isinstance(token, str) else "", ip, time.time(), siteverify_http, cache)
-                log(dict(res.detail, event=res.event, arm=arm_for(cfg, ip), ip=ip, ua=ua))
-                headers = {"Content-Type": "application/json"}
+                log(dict(res.detail, event=res.event, ip=ip, ua=ua, origin=origin))
                 if res.set_cookie:
                     headers["Set-Cookie"] = res.set_cookie
                 return self.send(200, json.dumps({"ok": res.admitted}), headers)
-            if path == "/_gate/fallback":
+            if path in FALLBACK_PATHS:
                 reason = str(body.get("reason", ""))[:100]
-                header = fallback_cookie(cfg, time.time())
-                log({"event": "fallback_set", "reason": reason, "arm": arm_for(cfg, ip), "ip": ip, "ua": ua})
-                return self.send(200, json.dumps({"ok": True}), {"Content-Type": "application/json", "Set-Cookie": header})
+                headers["Set-Cookie"] = fallback_cookie(cfg, time.time())
+                log({"event": "fallback_set", "reason": reason, "ip": ip, "ua": ua, "origin": origin})
+                return self.send(200, json.dumps({"ok": True}), headers)
             return self.send(404, "not found")
 
     return Handler
@@ -446,7 +499,7 @@ def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler
 
 if __name__ == "__main__":
     config = load_config()
-    log({"event": "start", "sitekey": config.sitekey, "host": config.host})
+    log({"event": "start", "sitekey": config.sitekey, "domain": config.domain, "mode": config.mode})
     server = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), make_handler(config, TokenCache()))
     server.daemon_threads = True
     server.serve_forever()
