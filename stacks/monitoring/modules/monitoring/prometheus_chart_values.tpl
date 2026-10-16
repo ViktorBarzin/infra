@@ -4474,6 +4474,19 @@ serverFiles:
               severity: critical
             annotations:
               summary: "PostgreSQL {{ $labels.cnpg_cluster }}: connection utilisation {{ $value | humanizePercentage }} — new client connections will be refused soon. Bump max_connections or reap idle backends."
+          - alert: PGNotifyQueueHigh
+            # The NOTIFY queue is one 8 GB queue for every database on a CNPG
+            # cluster. Apps on the default stack (ADR-0001 realtime contract)
+            # relay NOTIFY over SSE; a LISTEN session idling inside an open
+            # transaction pins the queue tail, and at 1.0 every NOTIFY on the
+            # cluster fails at COMMIT. Series from the pg-custom-queries
+            # ConfigMap in stacks/dbaas, primary only.
+            expr: max by (cnpg_cluster) (cnpg_pg_notification_queue_usage) > 0.5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: NOTIFY queue {{ $value | humanizePercentage }} full. At 100% every NOTIFY on the cluster fails. Find the listener holding it: SELECT pid, datname, usename, application_name, xact_start FROM pg_stat_activity WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;"
       - name: Cluster
         rules:
           - alert: NodeDown
