@@ -54,7 +54,7 @@
 - Virtualization platform for VM provisioning
 - Host: `192.168.1.127:8006` (`proxmox_pm_api_url`)
 - Auth: API token ID `terraform-prov@pve!terrform-prov`, secret in tfvars
-- Provider: `telmate/proxmox` v3.0.2-rc07
+- Provider: `telmate/proxmox` v3.0.2-rc10
 - Access: IDRAC credentials for physical server monitoring (`idrac_host`, `idrac_username`, `idrac_password`)
 
 ## Data Storage

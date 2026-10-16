@@ -47,7 +47,7 @@
 **Critical:**
 - hashicorp/terraform (Kubernetes 3.0.1) - Kubernetes API provider
 - hashicorp/helm (3.1.1) - Helm release management
-- telmate/proxmox (3.0.2-rc07) - Proxmox VM management (`stacks/infra/`)
+- telmate/proxmox (3.0.2-rc10) - Proxmox VM management (`stacks/infra/`)
 - cloudflare/cloudflare (4.52.5) - DNS and tunnel management (`stacks/platform/modules/cloudflared/`)
 - hashicorp/null (3.2.4) - Utility provider for local operations
 - hashicorp/random (3.8.1) - Random value generation

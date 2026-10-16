@@ -387,7 +387,7 @@
       enabled: false,
     },
     {
-      description: "HELD: telmate/proxmox provider, all updates (2026-10-12). Only stacks/infra uses it (the k8s node VMs and the registry VM), CI does not re-apply that stack on a root change, and stacks/infra/main.tf works around rc07 disk-block defects; a newer rc (rc10 is out) can plan disk or VM replacement. Plan stacks/infra with the new rc in a supervised session.",
+      description: "HELD: telmate/proxmox provider, all updates (updated 2026-10-16). On 3.0.2-rc10 since 2026-10-16, the newest release that day; upstream still ships only release candidates, and rc08 changed the qemu schema enough that rc09 was a fix-up release. The pin is in root terragrunt.hcl, so every stack downloads it on init, but only stacks/infra configures the provider and it holds no proxmox_* resources (the VMs and templates are created outside the provider), so a bump is a plan of stacks/infra plus one other stack. Plan in a supervised session before releasing a newer rc, and before adopting any VM into Terraform.",
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["telmate/proxmox"],
       enabled: false,
