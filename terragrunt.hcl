@@ -124,7 +124,7 @@ terraform {
     proxmox = {
       source = "telmate/proxmox"
       # renovate: datasource=terraform-provider depName=telmate/proxmox
-      version = "3.0.2-rc07"
+      version = "3.0.2-rc10"
     }
   }
 }
