@@ -27,11 +27,10 @@ func edgesRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	// pg-cluster-rw is a Service (not exec-able); resolve the primary POD.
-	pod, err := kubectlCapture("dbaas", "get", "pod", "-l", "cnpg.io/instanceRole=primary",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if err != nil || pod == "" {
-		return fmt.Errorf("could not resolve CNPG primary pod in dbaas: %v", err)
+	// The pod behind the apps' `postgresql` Service (see planDBExec).
+	pod, err := resolveServicePod("dbaas", "postgresql")
+	if err != nil {
+		return fmt.Errorf("could not resolve the Postgres primary pod: %v", err)
 	}
 	exec := []string{"exec", pod, "-c", "postgres", "--", "psql", "-U", "postgres", "-d", "goldmane_edges"}
 	if o.asJSON {

@@ -48,7 +48,7 @@ ambient kubeconfig.
 | `k8s debug <app>` | read | one-shot triage: pods + workloads + describe + recent logs + events |
 | `k8s pf <app> <local:remote> [target]` | read | port-forward to `svc/<app>` (or an explicit target) |
 | `k8s rollout-status <app>` | read | `rollout status deploy/<app>` |
-| `k8s db <app> [--mysql] [--db N] -- "<SQL>"` | write | exec into the dbaas DB (PG `pg-cluster-rw`, or MySQL with env-password wrapper) |
+| `k8s db <app> [--mysql] [--db N] -- "<SQL>"` | write | exec into the dbaas DB pod behind the Service the apps use (`postgresql`, or `mysql` with env-password wrapper), so a blue-green cutover moves it too; refuses if that Service selects more than one pod |
 | `k8s exec <app> [--tty] -- <cmd>` | write | exec in the app's pod |
 | `k8s restart <app>` | write | `rollout restart deploy/<app>` then wait for status |
 | `k8s rm-pod <name> -n <ns> [--job] [--force]` | write | delete a stuck **pod/job only** |
