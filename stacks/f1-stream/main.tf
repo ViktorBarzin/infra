@@ -276,7 +276,11 @@ locals {
     # can land in either order.
     { name = "OIDC_ISSUER", value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/" },
     { name = "OIDC_CLIENT_ID", value = authentik_provider_oauth2.f1_stream.client_id },
+    # MEMBER_GROUP is what images before ADR-0042 read; later ones read
+    # MEMBER_GROUPS and approve Access requests into F1 Users by its pk.
     { name = "MEMBER_GROUP", value = data.authentik_group.home_users.name },
+    { name = "MEMBER_GROUPS", value = "${data.authentik_group.home_users.name},${module.f1_users.group_name}" },
+    { name = "F1_USERS_GROUP_ID", value = module.f1_users.group_id },
     { name = "DISCORD_CHANNELS", value = var.discord_f1_channel_ids },
     # Verifier connects to in-cluster headed Chromium pool — see
     # stacks/chrome-service/. Falls back to in-process headless if unset.
@@ -430,6 +434,8 @@ locals {
     { name = "ADMIN_SESSION_KEY", secret = "f1-stream-secrets", key = "admin_session_key", optional = false },
     { name = "OIDC_CLIENT_SECRET", secret = kubernetes_secret.f1_members.metadata[0].name, key = "oidc_client_secret", optional = false },
     { name = "AUTHENTIK_API_TOKEN", secret = kubernetes_secret.f1_members.metadata[0].name, key = "authentik_api_token", optional = false },
+    # Can add users to F1 Users and nothing else (members.tf, ADR-0042).
+    { name = "AUTHENTIK_APPROVER_TOKEN", secret = kubernetes_secret.f1_members.metadata[0].name, key = "authentik_approver_token", optional = true },
     { name = "DISCORD_TOKEN", secret = "f1-stream-secrets", key = "discord_user_token", optional = false },
     # Announces a television taking a different build, to the same
     # #alerts webhook the source-guard already carries in this namespace.

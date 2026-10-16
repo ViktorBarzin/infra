@@ -93,6 +93,28 @@ locals {
         if app is None:
             return None
         return app_signup_group_for_slug(app.slug)
+
+
+    STATE_CHARS = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-~"
+    )
+
+
+    def app_signup_state(ctx):
+        # The authorize request's OAuth `state`, which the app chose. Recorded
+        # on a request-mode account so the app can tell which of its own
+        # requests the account came from (f1-stream ties it to the TV that
+        # showed the QR). URL-safe and at most 256 characters, else None.
+        target = ctx.get("redirect")
+        if not isinstance(target, str):
+            return None
+        states = parse_qs(urlsplit(target).query).get("state") or []
+        if len(states) != 1:
+            return None
+        state = states[0]
+        if not state or len(state) > 256 or not set(state) <= STATE_CHARS:
+            return None
+        return state
   EOT
 }
 
@@ -101,8 +123,11 @@ locals {
 # policy sets it on the invite path) and the mode's marker.
 #   open     attributes.invite_group, which assign-invite-group
 #            (invite-flow.tf) turns into membership on the login stage.
-#   request  attributes.signup_request.{app,requested_at}, which
-#            app-signup-finish reads after the user exists.
+#   request  attributes.signup_request.{app,requested_at,state}, which
+#            app-signup-finish reads after the user exists. `state` is the
+#            authorize request's OAuth state, when it is URL-safe; the app
+#            uses it to find which of its requests the account belongs to,
+#            and it is appended to pending_url as ?state=.
 # Bound twice: to the captcha binding as is, and to the invite-prompt binding
 # negated. Both bindings evaluate on plan and again at run time; the writes are
 # idempotent.
@@ -132,6 +157,9 @@ resource "authentik_policy_expression" "app_signup_path" {
     else:
         pd["attributes.signup_request.app"] = signup["app"]
         pd["attributes.signup_request.requested_at"] = timezone.now().isoformat()
+        state = app_signup_state(request.context)
+        if state:
+            pd["attributes.signup_request.state"] = state
     return True
   EOT
 }
@@ -147,6 +175,8 @@ resource "authentik_policy_expression" "app_signup_finish" {
   execution_logging = true
   expression        = <<-EOT
     ${local.app_signup_lookup}
+
+    from urllib.parse import urlencode
 
     from authentik.rbac.models import Role
 
@@ -171,6 +201,12 @@ resource "authentik_policy_expression" "app_signup_finish" {
         plan = request.context.get("flow_plan")
         pending_url = signup.get("pending_url")
         if plan is not None and pending_url:
+            # The app's own state rides along, so its pending page knows
+            # which request this was.
+            state = ((user.attributes or {}).get("signup_request") or {}).get("state")
+            if isinstance(state, str) and state:
+                joiner = "&" if "?" in pending_url else "?"
+                pending_url = pending_url + joiner + urlencode({"state": state})
             plan.context["redirect"] = pending_url
     except Exception as exc:
         ak_logger.warning("app-signup-finish: failed", error=str(exc))

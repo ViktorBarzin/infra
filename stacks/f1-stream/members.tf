@@ -1,11 +1,13 @@
-# Signed-in Members of f1.viktorbarzin.me (f1-stream ADR-0025, ADR-0021).
+# Signed-in Members of f1.viktorbarzin.me (f1-stream ADR-0025, ADR-0021,
+# ADR-0042).
 #
-# Anyone in "Home Users" may sign in to the site, keep their own channel order
-# (My channels) and pair a TV that shows it. Home Server Admins pass as well.
-# The member group was a dedicated "F1 Users" until 2026-10-11, when it was
-# folded into Home Users (stacks/authentik/home-users.tf, infra ADR-0031). The
-# app reads the group name from MEMBER_GROUP (main.tf), so nothing in the app
-# changed.
+# Anyone in "Home Users" or "F1 Users" may sign in to the site, keep their own
+# channel order (My channels) and pair a TV that shows it. Home Server Admins
+# pass as well. Home Users is the household (stacks/authentik/home-users.tf,
+# infra ADR-0031). F1 Users is for other households, who ask from an unpaired
+# TV and are let in by an admin in the app (ADR-0042, "Access requests"
+# below); Terraform declares that group but not its members. The app reads
+# both names from MEMBER_GROUPS (main.tf).
 # Design: f1-stream docs/design/2026-10-10-my-channels.md; wire format:
 # docs/design/2026-10-10-my-channels-build-contract.md.
 #
@@ -155,6 +157,31 @@ resource "authentik_policy_binding" "f1_stream_admins" {
   order  = 1
 }
 
+resource "authentik_policy_binding" "f1_stream_f1_users" {
+  target = authentik_application.f1_stream.uuid
+  group  = module.f1_users.group_id
+  order  = 2
+}
+
+# --- Access requests: F1 Users through request-mode sign-up -------------------
+#
+# f1-stream ADR-0042. An unpaired TV shows a QR that starts this application's
+# authorize request. A new person signs up with Google on that path without an
+# invite code (stacks/authentik/app-signup.tf), gets an account with no group,
+# and lands on pending_url. A Home Server Admin approves in the app, on an
+# Admin TV or on /account, and the app adds the person to F1 Users with the
+# approver token below, which can add users to that one group and nothing
+# else. Every other sign-up path still asks for an invite code.
+
+module "f1_users" {
+  source = "../../modules/authentik/app_signup"
+
+  app_slug    = authentik_application.f1_stream.slug
+  group_name  = "F1 Users"
+  mode        = "request"
+  pending_url = "https://f1.viktorbarzin.me/join/pending"
+}
+
 # --- Membership check: a read-only service account ---------------------------
 #
 # The app asks Authentik whether a Member is still in Home Users when the site
@@ -212,7 +239,8 @@ resource "kubernetes_secret" "f1_members" {
     namespace = kubernetes_namespace.f1-stream.metadata[0].name
   }
   data = {
-    oidc_client_secret  = random_password.oidc_client_secret.result
-    authentik_api_token = authentik_token.f1_membership.key
+    oidc_client_secret       = random_password.oidc_client_secret.result
+    authentik_api_token      = authentik_token.f1_membership.key
+    authentik_approver_token = module.f1_users.approver_token
   }
 }
