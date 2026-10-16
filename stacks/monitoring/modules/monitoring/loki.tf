@@ -680,6 +680,32 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Site routers (2026-10-16). Every OpenWrt router shipping syslog to
+          # Loki: today flint-london and mladost3-openwrt.
+          name = "Site routers"
+          rules = [
+            {
+              # The Mladost 3 router runs from a USB stick (extroot). On
+              # 2026-10-07 the stick dropped off the bus and came back under a
+              # new name; the router ran from page cache with every overlay read
+              # failing for 8.5 days before anyone noticed. The kernel lines
+              # (EXT4-fs error/warning, I/O error) catch that within minutes.
+              # The router-watchdog lines (scripts/mladost3-openwrt) report its
+              # own decisions: a reboot, a reboot it held back because uptime was
+              # under 10 min (a misfire), or a stick that never came back.
+              # Replayed 2026-10-07 18:20-18:45 UTC: 18 matches in 15 min.
+              # Matches nothing on either router over the 2 days after.
+              alert  = "SiteRouterDiskOrWatchdog"
+              expr   = "sum by (host) (count_over_time({job=\"syslog\"} |~ \"EXT4-fs (error|warning)|I/O error, dev sd|^rebooting: |^would reboot \\\\(|the stick has not come back\" [15m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning" }
+              annotations = {
+                summary = "{{ $labels.host }}: disk errors on its USB stick, or its watchdog acted ({{ $value | printf \"%.0f\" }} lines in 15m). Read them: {job=\"syslog\", host=\"{{ $labels.host }}\"} |~ \"EXT4-fs|I/O error|rebooting|would reboot|stick\". Do not run heavy commands on a router whose stick is gone: docs/architecture/vpn.md, Mladost 3 self-heal."
+              }
+            },
+          ]
+        },
+        {
           # Egress / pfSense (added 2026-06-28 after the 2026-06-27 WAN/egress
           # incident). Cloudflared edge-connection failures are the log canary
           # that fired FIRST + most reliably — the cloudflared *deployment*

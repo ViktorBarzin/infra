@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+# Mladost 3 router watchdog (infra/scripts/mladost3-openwrt). Runs a copy in
+# /tmp under the ROM busybox, so it keeps running, and procd can respawn it,
+# after the extroot stick dies. Shown in LuCI -> System -> Startup.
+
+START=99
+USE_PROCD=1
+
+start_service() {
+	/rom/bin/busybox cp /usr/sbin/router-watchdog /tmp/router-watchdog
+	procd_open_instance
+	procd_set_param command /rom/bin/busybox sh /tmp/router-watchdog
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
+}
