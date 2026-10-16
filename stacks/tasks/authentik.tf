@@ -1,12 +1,6 @@
-# Identity for the TypeScript tasks build (ADR-0001 in ~/code/docs/adr,
-# "Identity and access" and "Pilot: port tasks").
-#
-# The running tasks image still signs people in through forward-auth on
-# tasks.viktorbarzin.me (main.tf) and does not use anything in this file. The
-# TypeScript build signs in with Better Auth's generic OAuth plugin against
-# the OAuth2 application below, first on tasks-next.viktorbarzin.me while it is
-# compared with the old build, then on tasks.viktorbarzin.me after cutover.
-# Nothing here changes the Deployment, the ingresses or the NetworkPolicy.
+# Identity for tasks (ADR-0001 in ~/code/docs/adr, "Identity and access" and
+# "Pilot: port tasks"). The app signs people in with Better Auth's generic
+# OAuth plugin against the OAuth2 application below.
 #
 # Who can sign in:
 #   Tasks Users         the app's members. Seeded with the people who already
@@ -45,7 +39,6 @@ provider "authentik" {
 locals {
   tasks_hosts = [
     "https://tasks.viktorbarzin.me",
-    "https://tasks-next.viktorbarzin.me",
   ]
   # Better Auth 1.7 serves every OAuth callback, generic OAuth included, at
   # <basePath>/callback/<providerId> (getOAuthCallbackPath in
@@ -68,8 +61,9 @@ data "authentik_property_mapping_provider_scope" "openid" {
   managed = "goauthentik.io/providers/oauth2/scope-openid"
 }
 
-# Carries `groups` and `preferred_username`. The app matches existing
-# Connected Account rows on preferred_username once, at cutover.
+# Carries `groups` and `preferred_username`. The app matched existing
+# Connected Account rows on preferred_username once, at the 2026-10-16
+# cutover.
 data "authentik_property_mapping_provider_scope" "profile" {
   managed = "goauthentik.io/providers/oauth2/scope-profile"
 }
@@ -145,9 +139,7 @@ resource "authentik_application" "tasks" {
 # "Tasks Users" and request + approve sign-up. app_slug must match the
 # application slug above: the shared sign-up flow (stacks/authentik/
 # app-signup.tf) finds this group through it. After sign-up a requester lands
-# on pending_url. That page exists only in the TypeScript build, so until
-# cutover tasks.viktorbarzin.me answers it with the old build behind
-# forward-auth.
+# on pending_url, which the app serves.
 module "signup" {
   source = "../../modules/authentik/app_signup"
 
@@ -185,9 +177,7 @@ resource "authentik_policy_binding" "tasks_home_server_admins" {
   order  = 2
 }
 
-# --- Secrets for the TypeScript build ------------------------------------------
-#
-# Neither Secret is referenced by the running Deployment.
+# --- Secrets the Deployment reads ---------------------------------------------
 
 resource "kubernetes_secret" "authentik_approver" {
   metadata {
