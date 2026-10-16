@@ -98,26 +98,20 @@ terraform {
     }
     authentik = {
       source = "goauthentik/authentik"
-      # Floor raised from ~> 2024.10 (which resolved to 2024.12.1) on
-      # 2026-09-02. That version cannot create an email stage against authentik
-      # 2026.8.1 at all: it types token_expiry as a NUMBER and always sends one,
-      # even when the attribute is omitted, and the server rejects it —
-      #   POST /stages/email/ -> 400
-      #   {"token_expiry":["30 is not in the correct format of 'hours=3;minutes=1'."]}
-      # 2025.8 types it as a string.
+      # 2026.x since 2026-10-16, matching the server's year line (server
+      # 2026.8.4). Measured before landing: all five consumer stacks
+      # (authentik, rbac, k8s-dashboard, f1-stream, tripit) planned on 2026.8.0
+      # with no destroy or replace. The one difference: 2026.5 reads back
+      # `redirect_uri_type` on each allowed_redirect_uris entry, so every entry
+      # now sets it to "authorization" (the server default) to keep plans at
+      # zero. 2026.x also manages `grant_types`, which replaced the f1-stream
+      # API workaround and fixed the empty list on kubernetes-agent.
       #
-      # MEASURED before bumping, because this provider is used by four stacks
-      # and two of them gate cluster access (rbac, k8s-dashboard):
-      #   - authentik stack plan: 2 to add, 0 to change, 0 to destroy
-      #   - schema diff 2024.12.1 -> 2025.8.1 for every type the other three
-      #     stacks use (authentik_application, authentik_provider_oauth2, and
-      #     the three data sources): no newly-required attribute, no type
-      #     change, no removal.
-      # Note authentik_provider_oauth2 does drop `redirect_uris` in 2025.8, but
-      # nothing here uses it — all four stacks already use
-      # allowed_redirect_uris, which 2024.12.1 also has.
+      # Earlier history: the floor was raised from ~> 2024.10 on 2026-09-02
+      # because 2024.12.1 sent email-stage token_expiry as a number, which the
+      # 2026.8 server rejects with a 400.
       # renovate: datasource=terraform-provider depName=goauthentik/authentik
-      version = "2025.12.1"
+      version = "2026.8.0"
     }
     # kubectl (gavinbunney) — workaround for hashicorp/kubernetes
     # `kubernetes_manifest` panics on Kyverno CRDs. See beads code-e2dp.

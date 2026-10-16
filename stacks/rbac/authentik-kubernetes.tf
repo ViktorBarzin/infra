@@ -95,12 +95,14 @@ data "authentik_property_mapping_provider_scope" "groups" {
 locals {
   kubelogin_redirect_uris = [
     {
-      matching_mode = "regex"
-      url           = "http://localhost:.*"
+      matching_mode     = "regex"
+      url               = "http://localhost:.*"
+      redirect_uri_type = "authorization"
     },
     {
-      matching_mode = "regex"
-      url           = "http://127\\.0\\.0\\.1:.*"
+      matching_mode     = "regex"
+      url               = "http://127\\.0\\.0\\.1:.*"
+      redirect_uri_type = "authorization"
     },
   ]
 }
@@ -219,6 +221,12 @@ resource "authentik_provider_oauth2" "kubernetes_agent" {
   issuer_mode                = "per_provider"
 
   allowed_redirect_uris = local.kubelogin_redirect_uris
+
+  # Authentik 2026.x creates a provider with an empty grant-type list, and this
+  # client was created that way on 2026-09-01, so every authorize request was
+  # refused ("Invalid grant_type for provider", measured 2026-10-16). kubelogin
+  # needs the code flow plus refresh tokens (refresh_token_validity above).
+  grant_types = ["authorization_code", "refresh_token"]
 
   # Same four mappings as the human client. The `agent:` prefix that separates
   # the two is applied by the apiserver, not here — Authentik emits the plain

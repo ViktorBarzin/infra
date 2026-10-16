@@ -387,13 +387,6 @@
       enabled: false,
     },
     {
-      description: "HELD: goauthentik provider 2025.x -> 2026.x (2026-10-12). Four stacks use it and two of them gate cluster access (rbac, k8s-dashboard); the 2025.8 bump was landed only after a plan of the authentik stack and a schema diff for the types the other three use (root terragrunt.hcl comment). Repeat that measurement, then drop this rule. 2025.x patches still land.",
-      matchDatasources: ["terraform-provider"],
-      matchPackageNames: ["goauthentik/authentik"],
-      matchUpdateTypes: ["major"],
-      enabled: false,
-    },
-    {
       description: "HELD: telmate/proxmox provider, all updates (2026-10-12). Only stacks/infra uses it (the k8s node VMs and the registry VM), CI does not re-apply that stack on a root change, and stacks/infra/main.tf works around rc07 disk-block defects; a newer rc (rc10 is out) can plan disk or VM replacement. Plan stacks/infra with the new rc in a supervised session.",
       matchDatasources: ["terraform-provider"],
       matchPackageNames: ["telmate/proxmox"],

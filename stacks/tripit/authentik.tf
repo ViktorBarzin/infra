@@ -65,15 +65,17 @@ resource "authentik_provider_oauth2" "tripit_app" {
 
   allowed_redirect_uris = [
     {
-      matching_mode = "strict"
-      url           = "me.viktorbarzin.tripit://callback"
+      matching_mode     = "strict"
+      url               = "me.viktorbarzin.tripit://callback"
+      redirect_uri_type = "authorization"
     },
     {
       # "Log in with Authentik" on the website: TripIt is the OIDC client and
       # mints its own session on callback (tripit ADR-0028, #90). Same public
       # tripit-app provider as the Shell — just the web redirect URI added.
-      matching_mode = "strict"
-      url           = "https://tripit.viktorbarzin.me/api/auth/callback/authentik"
+      matching_mode     = "strict"
+      url               = "https://tripit.viktorbarzin.me/api/auth/callback/authentik"
+      redirect_uri_type = "authorization"
     },
   ]
 
