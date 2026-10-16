@@ -13,10 +13,3 @@ import {
   to = module.authentik.kubernetes_service_v1.outpost
   id = "authentik/ak-outpost-authentik-embedded-outpost"
 }
-
-# System settings, adopted to turn off core_default_app_access (ADR-0001).
-# The provider's import ID is the fixed string "system_settings".
-import {
-  to = authentik_system_settings.settings
-  id = "system_settings"
-}
