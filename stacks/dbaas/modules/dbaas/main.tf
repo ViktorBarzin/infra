@@ -28,6 +28,11 @@ variable "mysql_roundcubemail_password" {
   type      = string
   sensitive = true
 }
+# FreshRSS keeps this one in data/config.php on its PVC.
+variable "mysql_freshrss_password" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "dbaas" {
   metadata {
@@ -637,6 +642,13 @@ locals {
     roundcubemail = {
       database = "roundcubemail"
       password = var.mysql_roundcubemail_password
+    }
+    # The freshrss user was missing on mysql-standalone and therefore on
+    # mysql-v26 too; FreshRSS feed refresh had failed with error 1045 since
+    # 2026-07-07 while the freshrss schema and its data stayed intact.
+    freshrss = {
+      database = "freshrss"
+      password = var.mysql_freshrss_password
     }
   }
 }
