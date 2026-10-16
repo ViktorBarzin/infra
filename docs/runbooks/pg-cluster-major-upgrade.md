@@ -97,6 +97,13 @@ minutes, because the lanes competed for the same disks (dawarich alone took
   while the cluster is read-only and catch up afterwards. A rotation between
   the copy and the flip would land only on the old cluster, which is why the
   globals are copied again inside the window.
+- While the old cluster keeps running, two pods carry
+  `cnpg.io/instanceRole=primary`. Anything that picks a pod by that label alone
+  can land on the frozen cluster and read stale data. On 2026-10-15
+  `homelab k8s db` did exactly that, and the f1-stream viewing record looked
+  empty from 18:11 UTC although every row was on PG18. Since CLI v0.27.2 the
+  verb follows the `postgresql` Service's selector. Read the new cluster with
+  `homelab k8s db` (or `kubectl exec pg-cluster-v18-1`) when comparing.
 
 A comparison of the two clusters after the copy (database owners, extensions,
 object counts per kind, table owners, table ACLs, sequence values, exact row
