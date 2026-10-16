@@ -78,9 +78,9 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 
 ## Claude-Specific Resources
 - **Skills**: `.claude/skills/` (10).
-- **Agents**: `.claude/agents/` (9 files).
+- **Agents**: `.claude/agents/` (10 files).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
-  - **Other**: issue-responder, postmortem-todo-resolver, f1-source-fixer, payslip-extractor
+  - **Other**: issue-responder, postmortem-todo-resolver, f1-source-fixer, f1-feedback-fixer (approved User reports on viktor/f1-stream), payslip-extractor
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
 
 ## Contributor Onboarding
