@@ -7700,6 +7700,32 @@ serverFiles:
             annotations:
               summary: "f1-stream could not reach Authentik for {{ $value | printf \"%.0f\" }} membership checks in 30m"
               description: "Signed-in Members and their TVs are being admitted on their last known F1 Users membership. Find the reason with `homelab logs query '{namespace=\"f1-stream\"} |= \"membership\"' --since 1h`. A 401 or 403 from Authentik means the svc-f1-stream API token (infra stacks/f1-stream/members.tf) was revoked or lost its role; a timeout means Authentik itself is down."
+          # Added 2026-10-16. The viewing record (f1-stream ADR-0014) drops a
+          # beat rather than make a viewer wait, and until now counted each
+          # drop only on its admin page. On 2026-10-15 the record looked dead
+          # for hours and nothing outside that page could say whether beats
+          # were being written or dropped. (That evening it was neither: the
+          # rows were on pg-cluster-v18 and the reads went to the frozen PG16
+          # cluster.) f1_viewing_beats_written_total now answers the first
+          # question; this rule covers the second.
+          #
+          # reason="rate" is excluded: it is a client beating faster than one
+          # write per ten seconds with nothing new, and those rows are not
+          # lost. Every other reason is a beat that will never be a row.
+          #
+          # Threshold: one failed write rests the recorder for 30 s, which
+          # drops one or two beats per viewer at a 20 s beat. More than 10 in
+          # 30m is several failures or a sustained outage, not one hiccup. A
+          # database down for 30 minutes with two viewers is about 180.
+          - alert: F1ViewingRecordDropping
+            expr: |
+              sum(increase(f1_viewing_beats_dropped_total{reason!="rate"}[30m])) > 10
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream dropped {{ $value | printf \"%.0f\" }} viewing beats in 30m"
+              description: "Viewing beats are not reaching Postgres. Split by reason with `sum by (reason, pod) (increase(f1_viewing_beats_dropped_total[30m]))`. error and cooloff mean writes are failing: read `homelab logs query '{namespace=\"f1-stream\"} |= \"[viewing] could not\"' --since 1h`. in-flight means writes are slow to return. cap or playback-cap means a client is looping. To confirm rows are landing, read the database the apps use: `homelab k8s db pg-cluster --db f1_stream -- \"select max(at) from viewing_beats\"` (CLI v0.27.2 or later follows the postgresql Service)."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
