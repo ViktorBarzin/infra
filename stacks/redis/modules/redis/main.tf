@@ -521,6 +521,10 @@ locals {
     "realestate-crawler",
     "redis",
     "trading-bot",
+    # turnstile-gate, added 2026-10-16: the shared Anubis (forwardAuth mode,
+    # db 13), the fallback for sites without their own Anubis. Same crashloop
+    # as forgejo's below without it.
+    "turnstile-gate",
     "uptime-kuma",
     # verify, added 2026-10-10: the redis verify Job (stacks/redis/verify.sh,
     # docs/runbooks/verify-jobs.md) writes, reads and deletes one key in db 15.
