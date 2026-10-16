@@ -81,3 +81,77 @@ resource "authentik_policy_binding" "tripit_admins_access" {
   group  = "54559f22-54be-4701-9c91-ac8a16cc7d30" # Home Server Admins
   order  = 1
 }
+
+# --- Bindings that existed only in the Authentik UI --------------------------
+#
+# Audit 2026-10-16 (f1-stream plan F0, ahead of open signup in f1-stream
+# ADR-0042, which creates accounts that belong to no group). Every application
+# already had a group binding live, except "Public" (see app-access-guard.tf),
+# but eight of those bindings were UI-managed. Declaring them here puts each
+# gate in review and lets the next apply restore one that is deleted by hand.
+# Values match the live objects exactly, so the adoption plans to no change.
+#
+# The applications themselves stay UI-managed. Literal UUIDs for the reason the
+# top of this file gives. `binding` is the pk each one was imported from
+# (applied 2026-10-16: 8 imported, 0 changed); it is kept for lookups and
+# read by nothing.
+locals {
+  ui_app_bindings = {
+    "cloudflare-admins" = {
+      binding = "4b6f2885-a75c-474f-8fa9-a9e2e16cadae"
+      target  = "93bda117-9d3c-4f28-8760-c9f040a04f72" # app "Cloudflare Access"
+      group   = "54559f22-54be-4701-9c91-ac8a16cc7d30" # Home Server Admins
+      order   = 0
+    }
+    "grafana-admins" = {
+      binding = "4f7cf226-3157-422c-8e45-bae10c2ef2e8"
+      target  = "8eee85a7-c962-4627-9e07-a134b245b5f2" # app "Grafana"
+      group   = "54559f22-54be-4701-9c91-ac8a16cc7d30" # Home Server Admins
+      order   = 0
+    }
+    "headscale-users" = {
+      binding = "36bf1476-a985-448c-be35-d71f5b624b55"
+      target  = "3282c09d-d0e9-46fc-b18c-05652fc0e5a5" # app "Headscale"
+      group   = "10c1b854-7d02-45ba-b7ab-c8dba19b7cff" # Headscale Users
+      order   = 0
+    }
+    "wrongmove-users" = {
+      binding = "b61bc20b-de0b-4055-893a-991c565b014c"
+      target  = "f75c2d76-4c83-42e6-883c-f053d964d214" # app "wrongmove"
+      group   = "476c6949-a235-4329-b281-0f8c6f0ba44d" # Wrongmove Users
+      order   = 0
+    }
+    "forgejo-task-submitters" = {
+      binding = "80940ff1-b8be-422c-9dff-cb8367761765"
+      target  = "769dc61f-b0de-4c38-b89c-774beeaf40cb" # app "Forgejo"
+      group   = "fe11b867-11a7-4335-a233-325a61aa9d7e" # Task Submitters
+      order   = 0
+    }
+    "forgejo-users" = {
+      binding = "31f608aa-87a6-4fe8-8a62-37ddf364b147"
+      target  = "769dc61f-b0de-4c38-b89c-774beeaf40cb" # app "Forgejo"
+      group   = "deb72e20-f087-470b-baf3-cd5f6b1f280f" # Forgejo Users
+      order   = 1
+    }
+    # Home Users holds order 1 on these two (home-users.tf).
+    "immich-admins" = {
+      binding = "e77b81be-9041-4f00-a5ad-998fb19c4977"
+      target  = "d51932d3-2fbd-4d9f-ad94-8baaf3311f25" # app "Immich"
+      group   = "54559f22-54be-4701-9c91-ac8a16cc7d30" # Home Server Admins
+      order   = 0
+    }
+    "linkwarden-admins" = {
+      binding = "60b4b28c-2738-4efc-a9c6-6288723055d4"
+      target  = "85bca6c8-fd52-418f-96fe-bf263320ae88" # app "linkwarden"
+      group   = "54559f22-54be-4701-9c91-ac8a16cc7d30" # Home Server Admins
+      order   = 0
+    }
+  }
+}
+
+resource "authentik_policy_binding" "ui_app_access" {
+  for_each = local.ui_app_bindings
+  target   = each.value.target
+  group    = each.value.group
+  order    = each.value.order
+}
