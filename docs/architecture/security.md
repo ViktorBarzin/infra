@@ -426,10 +426,6 @@ sync sat broken for days with `crowdsec_cf_list_sync_success` correctly pushed a
 - `CrowdSecL7BouncerRefreshFailing` (Loki) — fail-open makes a LAPI outage a
   *staleness* incident, not an availability one: new bans are not enforced and a
   deleted ban keeps blocking.
-- `CrowdSecL7BlockBurst` (Loki) — guards the feedback loop this design creates.
-  Blocked requests now reach Traefik and are access-logged, so mass 403s can trip
-  `crowdsecurity/http-403-abuse`; a false positive on a shared egress shows up
-  here first.
 The plugin runs under Yaegi, where Prometheus counters are not cheaply available,
 so its own decisions are structured log lines (`[crowdsec-bouncer] action=…`) on
 the Traefik pods' stdout and are alerted on from Loki.

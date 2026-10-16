@@ -1373,60 +1373,6 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 EOT
               }
             },
-            {
-              # The feedback loop this guards: blocked requests now reach Traefik
-              # and are access-logged, so a burst of 403s can itself trip
-              # crowdsecurity/http-403-abuse, whose profile notifies per decision.
-              # A false-positive ban on a busy shared address would show up here
-              # first, as sustained blocking on one IP across many hosts.
-              #
-              # The threshold was "deliberately loose" while the enforced set was
-              # 4 non-CAPI decisions and scanner traffic against a banned IP was
-              # a handful of requests. That baseline is gone: ~78 distinct IPs
-              # are now blocked continuously. Re-derived 2026-09-16, see below.
-              # Still re-derive before enabling CAPI — 22.7k community bans
-              # would change it again.
-              alert = "CrowdSecL7BlockBurst"
-              # THRESHOLD RAISED 200 -> 1500 on 2026-09-16, from the measured
-              # distribution rather than the "deliberately loose" guess the
-              # paragraph above describes. Over 24h of ordinary traffic the
-              # busiest single IP reached 1,027 blocks/15m while the MEDIAN IP
-              # sat at 7, and ~78 distinct IPs were being blocked continuously
-              # at ~142 blocks/15m in total. At 200 the rule fired for 6 IPs in
-              # 10 days, every one an ordinary crawler persisting against its
-              # own ban, which is not what this alert is for.
-              #
-              # 1500 is above the observed ceiling of 1,027, so background
-              # crawlers stop tripping it while the case it EXISTS for still
-              # does: a shared address carrying legitimate traffic that we have
-              # banned by mistake generates far more than a crawler, because
-              # every real client behind it keeps retrying. That is the London
-              # WAN egress case in the annotation below, and the Meta corp
-              # ranges that self-locked twice (2026-09-07 and again 2026-09-11).
-              #
-              # Deliberately NOT repurposed into an attack detector. A crawl is
-              # now covered by DistributedCrawlDetected in
-              # prometheus_chart_values.tpl, which reads the agent's own
-              # overflow counter. This rule answers the opposite question and
-              # is the only thing that does.
-              expr = "sum by (ip) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=block\" | regexp \"ip=(?P<ip>[^ ]+)\" [15m])) > 1500"
-              for  = "15m"
-              labels = {
-                severity = "info"
-              }
-              annotations = {
-                summary     = "CrowdSec bouncer has blocked {{ $labels.ip }} over 1500 times in 15m — far past the 1,027 an ordinary crawler reaches, so suspect a shared address we have banned by mistake"
-                description = <<-EOT
-                  Either a real attacker persisting against a ban, or a false
-                  positive on an address that carries legitimate traffic — a
-                  NAT/CGNAT egress, or one of our own. Check what the address is
-                  before assuming: our own London WAN egress was hand-banned on
-                  2026-08-16 exactly this way. `cscli decisions list --ip <ip>`
-                  shows the scenario that decided it, and `cscli decisions delete
-                  --ip <ip>` takes effect within one 30s poll.
-                EOT
-              }
-            },
             # ---- AppSec check (ADR-0027) -----------------------------------
             # The bouncer asks CrowdSec AppSec about each request before it
             # reaches the backend. Everything below is about regressions that
