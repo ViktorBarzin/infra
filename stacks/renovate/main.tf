@@ -1,5 +1,11 @@
 # Renovate: lands third-party version bumps on viktor/infra master, one per run,
-# with runs back to back (every 10 minutes, skipped while an infra pipeline runs).
+# every 6 hours (skipped while an infra pipeline runs).
+#
+# A second CronJob, renovate-apps (bottom of this file), updates first-party app
+# repos on the default app stack (monorepo docs/adr/0001-default-app-stack.md,
+# "Delivery"): its own config (files/config-apps.js), repo list, run limit and
+# cache. It shares the renovate-bot account, the renovate-env Secret and the
+# wrapper script with the infra job, and changes nothing about that job.
 #
 # Software-currency design (docs/plans/2026-10-09-software-currency-design.md,
 # "Phase 3") and ADR-0030. Renovate reads renovate.json5 at the repo root and
@@ -22,6 +28,19 @@ variable "suspended" {
   description = "Kill switch. true sets the CronJob to suspend: no Renovate run starts until it is false."
   # Unsuspended 2026-10-11 (software-currency wave 6). Set back to true to stop Renovate.
   default = false
+}
+
+variable "apps_suspended" {
+  type        = bool
+  description = "Kill switch for the renovate-apps CronJob only. true suspends it; the infra job is unaffected."
+  default     = false
+}
+
+variable "apps_schedule" {
+  type = string
+  # Every 6 hours, 30 minutes after the infra job (its runs end within 25
+  # minutes, active_deadline_seconds), so the two never run at once.
+  default = "47 */6 * * *"
 }
 
 variable "schedule" {
@@ -258,6 +277,159 @@ resource "kubernetes_cron_job_v1" "renovate" {
               name = "cache"
               persistent_volume_claim {
                 claim_name = kubernetes_persistent_volume_claim.cache.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
+# ---------------------------------------------------------------------------
+# renovate-apps: app repos (ADR-0001 Delivery row, 2026-10-16).
+# Repo list, landing policy, 3-day npm wait and the TanStack Start/Router hold
+# live in files/config-apps.js. Same image pin as the infra job, so Renovate's
+# weekly self-bump moves both.
+# ---------------------------------------------------------------------------
+
+resource "kubernetes_config_map" "renovate_apps" {
+  metadata {
+    name      = "renovate-apps"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+  }
+  data = {
+    "config.js"       = file("${path.module}/files/config-apps.js")
+    "run-renovate.sh" = file("${path.module}/files/run-renovate.sh")
+  }
+}
+
+# Repo clones, lookup cache, the OSV database and the Bun binary containerbase
+# installs (binarySource=install). Public data, rebuilt by the next run if
+# lost, so no backup. Separate from renovate-cache: both are RWO, and sharing
+# one would tie the two jobs to the same node.
+resource "kubernetes_persistent_volume_claim" "apps_cache" {
+  wait_until_bound = false
+  metadata {
+    name      = "renovate-apps-cache"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = { storage = "5Gi" }
+    }
+  }
+  lifecycle {
+    # pvc-autoresizer grows this PVC; do not shrink it back on apply.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+resource "kubernetes_cron_job_v1" "renovate_apps" {
+  metadata {
+    name      = "renovate-apps"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+    labels    = { app = "renovate-apps" }
+  }
+  spec {
+    schedule                      = var.apps_schedule
+    suspend                       = var.apps_suspended
+    concurrency_policy            = "Forbid"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {
+        labels = { app = "renovate-apps" }
+      }
+      spec {
+        backoff_limit              = 0
+        active_deadline_seconds    = 1500
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = { app = "renovate-apps" }
+          }
+          spec {
+            restart_policy      = "Never"
+            priority_class_name = kubernetes_priority_class_v1.renovate.metadata[0].name
+            security_context {
+              fs_group               = 12021
+              fs_group_change_policy = "OnRootMismatch"
+            }
+            container {
+              name  = "renovate"
+              image = local.image
+              args  = ["/opt/renovate/run-renovate.sh"]
+              env_from {
+                secret_ref {
+                  name = "renovate-env"
+                }
+              }
+              env {
+                name  = "RENOVATE_CONFIG_FILE"
+                value = "/opt/renovate/config.js"
+              }
+              env {
+                name  = "LOG_LEVEL"
+                value = "info"
+              }
+              # Pushgateway group job="renovate", instance="apps". The
+              # RenovateNotSucceeding alert reads instance="infra" only.
+              env {
+                name  = "RENOVATE_INSTANCE"
+                value = "apps"
+              }
+              # The rails hold cool-down is about infra bumps; app repos do not
+              # wait on it. No WOODPECKER_REPO_ID either: app builds run on
+              # GitHub Actions, and the infra pipeline guard does not apply.
+              # The etcd calm gate stays on.
+              env {
+                name  = "RAILS_HOLD_COOLDOWN"
+                value = "0"
+              }
+              volume_mount {
+                name       = "config"
+                mount_path = "/opt/renovate"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "cache"
+                mount_path = "/tmp/renovate"
+              }
+              resources {
+                requests = {
+                  cpu    = "250m"
+                  memory = "768Mi"
+                }
+                limits = {
+                  memory = "3Gi"
+                }
+              }
+            }
+            volume {
+              name = "config"
+              config_map {
+                name         = kubernetes_config_map.renovate_apps.metadata[0].name
+                default_mode = "0755"
+              }
+            }
+            volume {
+              name = "cache"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.apps_cache.metadata[0].name
               }
             }
           }

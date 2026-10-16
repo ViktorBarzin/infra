@@ -132,6 +132,37 @@ Shared-module image pins live in the callers, not in the module default: the anu
 
 Terraform providers are exact pins in root `terragrunt.hcl`, one `# renovate:` annotation each. Renovate lands at most one a week (Wednesday 00:00-03:59, subject `providers: bump ...`). CI re-applies the 32 platform stacks; the rails do not verify that commit, so a failed apply turns the pipeline red without a revert. Majors of authentik and every telmate/proxmox update are held (vault and cloudflare moved to 5.x on 2026-10-16, and their minors and patches go through the rails). `scripts/tg` runs `terragrunt init -upgrade` when a workstation lockfile predates a pin.
 
+## App repos (renovate-apps)
+
+A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the default app stack (monorepo `docs/adr/0001-default-app-stack.md`, "Delivery"). It shares the `renovate-bot` account, the `renovate-env` Secret, the image pin and `run-renovate.sh` with the infra job. Everything else is its own, and the infra job's config, schedule and behaviour are unchanged.
+
+| What | Where |
+|---|---|
+| Global config, which holds the whole policy (app repos need no `renovate.json`) | `stacks/renovate/files/config-apps.js`, ConfigMap `renovate/renovate-apps` |
+| Repo list | `repositories` in that file: `viktor/tasks` (base branch `master`) since 2026-10-16 |
+| Schedule and kill switch | `variable "apps_schedule"` (`47 */6 * * *`, 30 minutes after the infra job) and `variable "apps_suspended"` in `stacks/renovate/main.tf` |
+| Cache (repo clones, lookups, the OSV database, the Bun binary) | PVC `renovate/renovate-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
+| Metrics | Pushgateway `job="renovate"`, `instance="apps"`; no alert reads it yet |
+
+Policy, from ADR-0001:
+
+- Only the Bun manager runs (`enabledManagers: ["bun"]`): a `package.json` with a sibling `bun.lock`. Other ecosystems in an app repo are left alone, such as the legacy npm frontend and Python backend in `viktor/tasks` before its cutover.
+- Bun comes from `binarySource: "install"`: containerbase installs the version the app pins in `"packageManager": "bun@x.y.z"` into the cache PVC. The 2.6 GB `-full` image would carry whatever Bun its tag ships, not the app's pin.
+- npm releases wait 3 days (`minimumReleaseAge`), except `@viktorbarzin/*`. This matches the app's `bunfig.toml` `install.minimumReleaseAge`.
+- Updates land straight on master (`automergeType: branch`, `ignoreTests: true`), majors included. A failed `bun.lock` update blocks the automerge and leaves the branch with an artifact error. Each landed commit starts the app's normal build and deploy.
+- `@tanstack/*start*` and `@tanstack/*router*` are pinned to exact versions and grouped into one branch, `renovate/tanstack-start-router`, with automerge off. Renovate opens a pull request and a person merges it.
+- A bump of the Bun pin itself (`packageManager` / `engines`) is also a pull request, because the devvm playbook, CI `setup-bun` and the `oven/bun` base image move with it.
+- `osvVulnerabilityAlerts: true`. Security updates skip Renovate's 3-day wait, but the app's own `bunfig.toml` wait still applies to `bun install`. A fix younger than 3 days therefore fails the lock update and does not land. ADR-0001 takes urgent fixes through a `minimumReleaseAgeExcludes` entry and a manual bump.
+- Run limit: `prCommitsPerRunLimit: 6` across all app repos (each landed bump is 2 pushes, a pull request branch is 1).
+- The wrapper's infra-only checks are off for this job: there is no `WOODPECKER_REPO_ID`, so no infra pipeline guard, and `RAILS_HOLD_COOLDOWN=0`. The etcd calm gate still applies.
+
+Adding an app repo:
+
+1. On Forgejo, add `renovate-bot` as a write collaborator, and enable pull requests with fast-forward-only merges allowed. Renovate aborts a repo without push access (`REPOSITORY_ACCESS_FORBIDDEN`) or with pull requests disabled (`REPOSITORY_BLOCKED`). These settings are made through the Forgejo API outside Terraform, the same way as for `viktor/infra`.
+2. Add the repo to `repositories` in `config-apps.js`, with `baseBranchPatterns` if Forgejo's default branch is not the one that builds.
+
+Run by hand: `kubectl -n renovate create job renovate-apps-manual --from=cronjob/renovate-apps`, then `kubectl -n renovate logs -f job/renovate-apps-manual`. For a dry run, use the infra recipe above with `cronjob/renovate-apps`. A healthy run logs `Repository started` and `Repository finished` for each repo, with no `WARN` or `ERROR` lines.
+
 ## Alert
 
 `RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 13 hours (two 6-hourly runs, so one skipped run stays quiet; it was 2 hours while the CronJob ran every 10 minutes), unless the CronJob is suspended (`kube_cronjob_spec_suspend`). Check, in order:
