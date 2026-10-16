@@ -263,6 +263,15 @@ resource "kubernetes_config_map" "shim" {
   }
   data = {
     "default.conf" = <<-EOT
+      # Gate down: standard sites get the pass header (fail open, as before
+      # Turnstile), strict sites get none and fall back to their own Anubis.
+      # A map, not an `if` with add_header: nginx copies the outer add_header
+      # into the if block, so the strict branch sent the header too (found in
+      # the 2026-10-16 fail-open drill). An empty value sends no header.
+      map $arg_variant $gate_down_pass {
+          strict  "";
+          default "1";
+      }
       upstream gate {
           server ${kubernetes_service.gate.metadata[0].name}.${kubernetes_namespace.gate.metadata[0].name}.svc.cluster.local:80;
           keepalive 16;
@@ -300,10 +309,7 @@ resource "kubernetes_config_map" "shim" {
           # (as they were before Turnstile; without it every API call would go
           # to Anubis), strict sites fall back to their own Anubis.
           location @gate_down {
-              if ($arg_variant = "strict") {
-                  return 200;
-              }
-              add_header X-Turnstile-Pass "1";
+              add_header X-Turnstile-Pass $gate_down_pass;
               return 200;
           }
           # The shared Anubis, for standard sites. The gate's header (set by
