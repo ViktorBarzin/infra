@@ -317,6 +317,18 @@ resource "kubernetes_deployment" "linkwarden" {
             name  = "NEXT_PUBLIC_AUTHENTIK_ENABLED"
             value = "true"
           }
+          # Sign-in is Authentik only (ADR-0042: Linkwarden is a Home Users
+          # app). The ingress is auth = "app", so without these two the public
+          # /register page and POST /api/v1/users let anyone create a local
+          # account. Accounts arrive through the Authentik button instead.
+          env {
+            name  = "NEXT_PUBLIC_DISABLE_REGISTRATION"
+            value = "true"
+          }
+          env {
+            name  = "NEXT_PUBLIC_CREDENTIALS_ENABLED"
+            value = "false"
+          }
           # Absolute path so archives land on the PVC below rather than the
           # app's working directory. Linkwarden resolves this with path.join(),
           # which preserves an absolute value; its default is the RELATIVE
