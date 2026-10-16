@@ -2,7 +2,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4"
+      version = "~> 5"
     }
     kubernetes = {
       source = "hashicorp/kubernetes"
@@ -606,37 +606,34 @@ resource "kubectl_manifest" "sablier" {
 # catch-all). ONE exception: a DNS wildcard never matches the zone apex, so
 # the root-domain ingress (stacks/blog, effective host == root_domain →
 # dns_name "@") keeps its explicit record.
-resource "cloudflare_record" "proxied" {
-  count           = var.dns_type == "proxied" && local.dns_name == "@" ? 1 : 0
-  name            = local.dns_name
-  content         = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
-  proxied         = true
-  ttl             = 1
-  type            = "CNAME"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "proxied" {
+  count   = var.dns_type == "proxied" && local.dns_name == "@" ? 1 : 0
+  name    = local.dns_name
+  content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "non_proxied_a" {
-  count           = var.dns_type == "non-proxied" ? 1 : 0
-  name            = local.dns_name
-  content         = var.public_ip
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "non_proxied_a" {
+  count   = var.dns_type == "non-proxied" ? 1 : 0
+  name    = local.dns_name
+  content = var.public_ip
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "non_proxied_aaaa" {
-  count           = var.dns_type == "non-proxied" ? 1 : 0
-  name            = local.dns_name
-  content         = var.public_ipv6
-  proxied         = false
-  ttl             = 1
-  type            = "AAAA"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "non_proxied_aaaa" {
+  count   = var.dns_type == "non-proxied" ? 1 : 0
+  name    = local.dns_name
+  content = var.public_ipv6
+  proxied = false
+  ttl     = 1
+  type    = "AAAA"
+  zone_id = var.cloudflare_zone_id
 }
 
 # 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
@@ -644,13 +641,37 @@ resource "cloudflare_record" "non_proxied_aaaa" {
 # reach Traefik directly (the WG spokes policy-route 10.0.0.0/8 through the
 # tunnel), so kiosk devices with baked-in URLs need no DNS overrides anywhere.
 # IPv4-only on purpose: the spokes route no internal IPv6 range.
-resource "cloudflare_record" "internal_a" {
-  count           = var.dns_type == "internal" ? 1 : 0
-  name            = local.dns_name
-  content         = var.internal_lb_ip
-  proxied         = false
-  ttl             = 1
-  type            = "A"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "internal_a" {
+  count   = var.dns_type == "internal" ? 1 : 0
+  name    = local.dns_name
+  content = var.internal_lb_ip
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
+}
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.proxied
+  to   = cloudflare_dns_record.proxied
+}
+
+moved {
+  from = cloudflare_record.non_proxied_a
+  to   = cloudflare_dns_record.non_proxied_a
+}
+
+moved {
+  from = cloudflare_record.non_proxied_aaaa
+  to   = cloudflare_dns_record.non_proxied_aaaa
+}
+
+moved {
+  from = cloudflare_record.internal_a
+  to   = cloudflare_dns_record.internal_a
 }
