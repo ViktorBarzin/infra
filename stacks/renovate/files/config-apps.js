@@ -67,8 +67,8 @@ module.exports = {
   osvVulnerabilityAlerts: true,
 
   // Only the Bun manager: package.json files with a sibling bun.lock. A legacy
-  // npm or Python build in the same repo (tasks' frontend/ and backend/ until
-  // cutover) is left alone, since each master push deploys it.
+  // npm or Python build in the same repo is left alone, since each master push
+  // deploys it.
   enabledManagers: ['bun'],
 
   // Landing: straight to master, no PR, like viktor/infra (Viktor's call,

@@ -16,8 +16,3 @@ dependency "external-secrets" {
   config_path  = "../external-secrets"
   skip_outputs = true
 }
-
-inputs = {
-  # Override per-deploy in CI / commit.
-  image_tag = "latest"
-}

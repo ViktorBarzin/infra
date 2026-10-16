@@ -131,7 +131,7 @@ pages, which is the signal to add pages.
 | Forgejo Users | -- | No | Forgejo (OIDC binding) |
 | F1 Users | -- | No | f1-stream households let in from an Access request (f1-stream ADR-0042): `modules/authentik/app_signup` in request mode from `stacks/f1-stream/members.tf`; bound on F1 Stream beside Home Users and Home Server Admins; TF declares the group, the app's approver token (`svc-f1-stream-approver`) adds members |
 | f1-stream membership readers | -- | No | holds svc-f1-stream only; role `f1-stream membership reader` = view_user + view_group |
-| tasks membership readers | -- | No | holds svc-tasks-reader only; role `tasks membership reader` = view_user + view_group on Tasks Users only (`stacks/tasks/tasks-next.tf`); its token is Secret `tasks-authentik-reader` |
+| tasks membership readers | -- | No | holds svc-tasks-reader only; role `tasks membership reader` = view_user + view_group on Tasks Users only (`stacks/tasks/authentik.tf`); its token is Secret `tasks-authentik-reader` |
 | Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
 
 ## Users (8 real)
