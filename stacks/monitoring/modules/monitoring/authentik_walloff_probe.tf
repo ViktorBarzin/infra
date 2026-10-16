@@ -72,10 +72,11 @@ locals {
     # HTML as the JSON descriptor and reports an invalid response. The probe
     # sends no cookie, which is what the carve-out rule keys on.
     "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
-    # tasks PWA icons + manifest (auth="none" path carve-out, stacks/tasks
-    # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
-    # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
-    "tasks-icons" = "https://tasks.viktorbarzin.me/apple-touch-icon.png"
+    # tasks app root (auth="app", stacks/tasks module.ingress): the TypeScript
+    # build runs its own OIDC sign-in. An Authentik 302 here breaks the
+    # bearer-token API, the OAuth callback and cookie-less OS icon fetchers.
+    # Replaced the tasks-icons carve-out target at the ADR-0001 cutover.
+    "tasks-app" = "https://tasks.viktorbarzin.me/"
     # health PWA icons + manifest (auth="none" path carve-out, stacks/health
     # module.ingress_icons): the iOS Add to Home Screen fetcher carries no
     # session cookie, so an Authentik 302 here breaks the home-screen icon.

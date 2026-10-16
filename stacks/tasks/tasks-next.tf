@@ -1,9 +1,8 @@
-# tasks-next: the TypeScript build of tasks, served side by side with the
-# running FastAPI build (main.tf) at tasks-next.viktorbarzin.me. This is the
-# pilot phase of ADR-0001 (~/code/docs/adr/0001-default-app-stack.md):
-# compare the two builds on the same data, then swap. The swap is a separate
-# change; nothing here touches the `tasks` Deployment, Service, ingresses or
-# NetworkPolicy.
+# tasks-next: the TypeScript build of tasks. Since the ADR-0001 cutover
+# (~/code/docs/adr/0001-default-app-stack.md) it serves tasks.viktorbarzin.me
+# through module.ingress in main.tf, and still answers at
+# tasks-next.viktorbarzin.me. The FastAPI Deployment in main.tf keeps running,
+# without a route, as the rollback target.
 #
 # Both builds share the `tasks` database. The TypeScript build's migrations
 # are additive (new tables only, app/drizzle/0001_auth_identity.sql), so the
@@ -15,13 +14,15 @@
 
 variable "next_image_tag" {
   type        = string
-  default     = "c2161219"
-  description = "tasks-ts image tag for tasks-next. Set here until tasks-ts has its own Woodpecker deploy."
+  default     = "fe33cf63"
+  description = "tasks-ts image tag for tasks-next on (re)create. The running tag is set by the Woodpecker deploy (kubectl set image) after build-ts.yml."
 }
 
 locals {
   # Built by GitHub Actions (build-ts.yml in the tasks repo) and pushed to the
-  # public ghcr package tasks-ts, so pulls are anonymous.
+  # public ghcr package tasks-ts, so pulls are anonymous. The Woodpecker
+  # deploy sets the running tag on both containers; both image refs are
+  # ignore_changes'd (CI_SETS_IMAGE), so this base only matters on (re)create.
   next_image = "ghcr.io/viktorbarzin/tasks-ts:${var.next_image_tag}"
   # Must differ from local.labels: the live Deployment's selector and the
   # tasks-ingress NetworkPolicy match app=tasks.
@@ -219,11 +220,12 @@ resource "kubernetes_deployment" "tasks_next" {
             name  = "NODE_ENV"
             value = "production"
           }
-          # Better Auth's baseURL and the CSRF allow-list. Becomes
-          # tasks.viktorbarzin.me at the swap.
+          # Comma-separated. The first entry is Better Auth's baseURL and the
+          # OAuth redirect host, so sign-in started on tasks-next also returns
+          # to the main host. Every entry is a trusted origin for CSRF.
           env {
             name  = "PUBLIC_ORIGINS"
-            value = "https://${local.next_host}"
+            value = "https://tasks.viktorbarzin.me,https://${local.next_host}"
           }
           env {
             name  = "OIDC_DISCOVERY_URL"
@@ -297,6 +299,8 @@ resource "kubernetes_deployment" "tasks_next" {
     ignore_changes = [
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].spec[0].init_container[0].image,                                     # CI_SETS_IMAGE: the migrate init container moves with the app image
     ]
   }
 
@@ -367,7 +371,7 @@ module "ingress_next" {
   # the Turnstile pass is tied to the network that solved it, so a phone
   # changing networks would meet the challenge page mid-session.
   turnstile = false
-  # A side-by-side preview; the tasks tile stays the one entry.
+  # Second host for the same build; the tile is on module.ingress.
   homepage_enabled = false
 }
 
