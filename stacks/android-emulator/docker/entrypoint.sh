@@ -79,6 +79,19 @@ hw.keyboard=yes
 EOF
 fi
 
+# --- stale AVD locks ------------------------------------------------------------
+# The emulator writes hardware-qemu.ini.lock / multiinstance.lock into the AVD
+# dir and does not remove them when the pod is killed (idle-sleeper scale-to-
+# zero, eviction, restart). The next boot then refuses with "Running multiple
+# emulators with the same AVD is an experimental feature" and exits. This
+# Deployment runs one replica on an RWO volume, so any lock present now is
+# stale. (infra#118; same failure hit by hand on 2026-08-22.)
+AVD_DIR="${ANDROID_AVD_HOME}/${AVD_NAME}.avd"
+if compgen -G "${AVD_DIR}/*.lock" >/dev/null; then
+  echo "Removing stale AVD locks: $(cd "$AVD_DIR" && echo *.lock)"
+  rm -rf "${AVD_DIR}"/*.lock
+fi
+
 # --- noVNC defaults: scaled view, autoconnect, self-reconnect ----------------
 cat > /usr/share/novnc/defaults.json <<'JSON'
 {
@@ -147,9 +160,19 @@ EMU_PID=$!
 
 SUPERVISED[$EMU_PID]=emulator
 
-adb wait-for-device
+# Supervision below only starts after boot, so watch the emulator here too: if
+# it exits during boot (a lock, a bad flag), say so and restart the pod now
+# instead of waiting in adb wait-for-device until the 30 min startup probe.
+emulator_alive() {
+  kill -0 "$EMU_PID" 2>/dev/null && return 0
+  echo "Emulator (pid ${EMU_PID}) exited before boot completed; restarting pod." >&2
+  sleep 2
+  exit 1
+}
+until timeout 5 adb wait-for-device 2>/dev/null; do emulator_alive; done
 echo "Emulator up; waiting for boot completion..."
 until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+  emulator_alive
   sleep 3
 done
 echo "Boot completed."
