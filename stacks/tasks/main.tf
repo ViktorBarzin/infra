@@ -47,8 +47,8 @@ resource "kubernetes_namespace" "tasks" {
 #
 # DB: CNPG database `tasks` (created in dbaas, null_resource.pg_tasks_db);
 # role password managed via the Vault database engine — see
-# static-creds/pg-tasks. Alembic runs migrations on app startup (no init
-# container needed).
+# static-creds/pg-tasks. The Deployment's `migrate` init container runs the
+# Drizzle migrations.
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
     force_conflicts = true
@@ -84,8 +84,8 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.tasks]
 }
 
-# DB credentials from Vault database engine (7-day rotation).
-# Builds the asyncpg DSN consumed by the FastAPI app as TASKS_DB_DSN.
+# DB credentials from Vault database engine (7-day rotation). The app reads
+# DB_PASSWORD from a mounted file on every new connection.
 # Pre-req in dbaas: CNPG cluster has DB `tasks`, role `tasks`, and Vault
 # role `static-creds/pg-tasks`.
 resource "kubernetes_manifest" "db_external_secret" {
@@ -114,8 +114,7 @@ resource "kubernetes_manifest" "db_external_secret" {
             }
           }
           data = {
-            TASKS_DB_DSN = "postgresql+asyncpg://tasks:{{ .password }}@${var.postgresql_host}:5432/tasks"
-            DB_PASSWORD  = "{{ .password }}"
+            DB_PASSWORD = "{{ .password }}"
           }
         }
       }
@@ -131,234 +130,41 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.tasks]
 }
 
-# The Python/Svelte build. Since the ADR-0001 cutover no ingress routes here;
-# this Deployment, its Service and the tasks-ingress NetworkPolicy keep
-# running as the rollback target (point module.ingress back at service tasks
-# port 8000 with auth = "required"). Its Woodpecker deploy still fires on
-# Python changes in the tasks repo.
-resource "kubernetes_deployment" "tasks" {
-  metadata {
-    name      = "tasks"
-    namespace = kubernetes_namespace.tasks.metadata[0].name
-    labels = merge(local.labels, {
-      tier = local.tiers.aux
-    })
-    annotations = {
-      # Reloader restarts the pod when tasks-secrets / tasks-db-creds change
-      # (both carry reloader.stakater.com/match=true) — required because the
-      # DB password rotates every 7 days and is read only at startup.
-      "reloader.stakater.com/search" = "true"
-    }
-  }
-
-  spec {
-    # Single leader: the CalDAV sync engine wants one writer per user's
-    # sync-token cursor; the SPA is served by the same process.
-    replicas = 1
-    strategy {
-      type = "Recreate"
-    }
-
-    selector {
-      match_labels = local.labels
-    }
-
-    template {
-      metadata {
-        labels = local.labels
-        annotations = {
-          # Prometheus scrapes the service-endpoints (annotations live on the
-          # Service below); the pod annotations here let the kubernetes-pods
-          # SD job also discover /metrics directly.
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/path"   = "/metrics"
-          "prometheus.io/port"   = "8000"
-        }
-      }
-
-      spec {
-        image_pull_secrets {
-          name = "registry-credentials"
-        }
-
-        container {
-          name  = "tasks"
-          image = local.image
-
-          port {
-            container_port = 8000
-          }
-
-          # TASKS_FERNET_KEY via tasks-secrets; TASKS_DB_DSN via tasks-db-creds.
-          env_from {
-            secret_ref { name = "tasks-secrets" }
-          }
-          env_from {
-            secret_ref { name = "tasks-db-creds" }
-          }
-
-          # Wall-clock zone for all-day due dates (DUE;VALUE=DATE) and the
-          # Today/Scheduled smart views.
-          env {
-            name  = "TASKS_LOCAL_TZ"
-            value = "Europe/Sofia"
-          }
-          # SECURITY INVARIANT — DEV_USER must NEVER be set here. It is the
-          # dev-only identity fallback: when present the backend treats every
-          # request as that user, bypassing the Authentik forward-auth
-          # identity (X-authentik-username) entirely. Production identity
-          # comes ONLY from the header Traefik/Authentik injects.
-
-          readiness_probe {
-            http_get {
-              path = "/healthz"
-              port = 8000
-            }
-            initial_delay_seconds = 5
-            period_seconds        = 10
-          }
-          liveness_probe {
-            http_get {
-              path = "/healthz"
-              port = 8000
-            }
-            initial_delay_seconds = 30
-            period_seconds        = 30
-          }
-
-          resources {
-            requests = { cpu = "100m", memory = "384Mi" }
-            limits   = { memory = "384Mi" }
-          }
-        }
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [
-      # Stakater Reloader stamps this on every secret-triggered restart. The
-      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
-      # the marker onto this pod-template annotation on the expectation that
-      # Terraform does not manage it, but it does wherever the pod template
-      # declares annotations, so it planned as a removal on every run.
-      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
-      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
-      metadata[0].annotations["kubernetes.io/change-cause"],
-      metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-    ]
-  }
-
-  depends_on = [
-    kubernetes_manifest.external_secret,
-    kubernetes_manifest.db_external_secret,
-  ]
-}
-
-resource "kubernetes_service" "tasks" {
-  metadata {
-    name      = "tasks"
-    namespace = kubernetes_namespace.tasks.metadata[0].name
-    labels    = local.labels
-    annotations = {
-      # Prometheus kubernetes-service-endpoints SD scrapes /metrics here.
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "8000"
-    }
-  }
-
-  spec {
-    type     = "ClusterIP"
-    selector = local.labels
-
-    port {
-      name        = "http"
-      port        = 8000
-      target_port = 8000
-    }
-  }
-}
-
 # Kyverno ClusterPolicy `sync-tls-secret` auto-clones the wildcard TLS
 # secret into every namespace, so we don't need a setup_tls_secret module.
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Serves the TypeScript build (Deployment tasks-next, tasks-next.tf) since
-  # the ADR-0001 cutover. auth = "app": the app runs its own OIDC sign-in
-  # against the `tasks` Authentik application (Tasks Users, Tasks Admins,
-  # Home Server Admins) and answers /api with 401 without a session or bearer
-  # token. Forward-auth would break the bearer-token API and the OAuth
-  # callback. The older "auth = required, do NOT relax" rule belonged to the
-  # Python build, which trusted the X-authentik-username header with no login
-  # of its own; it still applies if this route ever points back at it.
-  # Middleware matches module.ingress_next; the reasons are there.
-  auth                           = "app"
-  dns_type                       = "proxied"
-  namespace                      = kubernetes_namespace.tasks.metadata[0].name
-  name                           = "tasks"
-  service_name                   = kubernetes_service.tasks_next.metadata[0].name
-  port                           = 3000
-  tls_secret_name                = var.tls_secret_name
+  # auth = "app": the app runs its own OIDC sign-in against the `tasks`
+  # Authentik application (Tasks Users, Tasks Admins, Home Server Admins) and
+  # answers /api with 401 without a session or bearer token. Forward-auth
+  # would break the bearer-token API and the OAuth callback.
+  auth            = "app"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.tasks.metadata[0].name
+  name            = "tasks"
+  service_name    = kubernetes_service.tasks_next.metadata[0].name
+  port            = 3000
+  tls_secret_name = var.tls_secret_name
+  # Keeps the default rate-limit middleware: it runs the real-ip plugin, and
+  # Better Auth's rate limiter keys on the X-Real-Ip that sets.
+  # The default csp-headers middleware lets any *.viktorbarzin.me page frame
+  # the app; this one forbids framing.
   custom_content_security_policy = "frame-ancestors 'none'"
-  extra_middlewares              = ["traefik-strip-auth-headers@kubernetescrd"]
-  anti_ai_scraping               = false
-  turnstile                      = false
+  # No public route may carry a client-sent X-authentik-* identity.
+  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
+  # An installable PWA whose service worker, SSE stream and bearer-token API
+  # make most requests. Every page past the sign-in wall needs a session, so
+  # there is nothing for a crawler to mine, and the bot-block forwardAuth
+  # would sit on every API call.
+  anti_ai_scraping = false
+  # Same reasoning, plus the installed PWA runs in a standalone webview and
+  # the Turnstile pass is tied to the network that solved it, so a phone
+  # changing networks would meet the challenge page mid-session.
+  turnstile = false
   extra_annotations = {
     "gethomepage.dev/description" = "Reminders-style task PWA over Nextcloud CalDAV"
     "gethomepage.dev/icon"        = "mdi-format-list-checks"
   }
 }
 
-# --- NetworkPolicy: scoped pod ingress (security-review finding SEC-1). ---
-# The app trusts X-authentik-username unconditionally, so its ENTIRE auth
-# model depends on requests only ever arriving through Traefik (where the
-# Authentik forward-auth middleware sets that header). Any pod that could
-# reach the pod IP directly could spoof the header and read/write anyone's
-# tasks — hence ingress is restricted to:
-#   - TCP/8000 from the traefik namespace (user traffic, post-forward-auth);
-#   - TCP/8000 from the monitoring namespace (Prometheus /metrics scrape).
-# The cluster has no default-deny, so this NP only takes effect inside the
-# tasks ns — pods elsewhere remain unaffected. (Same shape as
-# chrome-service's chrome-service-ws-ingress.)
-resource "kubernetes_network_policy_v1" "tasks_ingress" {
-  metadata {
-    name      = "tasks-ingress"
-    namespace = kubernetes_namespace.tasks.metadata[0].name
-  }
-  spec {
-    pod_selector {
-      match_labels = local.labels
-    }
-    policy_types = ["Ingress"]
-    ingress {
-      from {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "traefik"
-          }
-        }
-      }
-      ports {
-        port     = "8000"
-        protocol = "TCP"
-      }
-    }
-    ingress {
-      from {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "monitoring"
-          }
-        }
-      }
-      ports {
-        port     = "8000"
-        protocol = "TCP"
-      }
-    }
-  }
-}
