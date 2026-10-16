@@ -529,6 +529,55 @@ module "anubis" {
   redirect_domains = "${local.domain},*.${local.domain}"
   # DB index 13 — 5 to 12 are taken by the per-site instances.
   shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/13"
+
+  # One policy for every site. Per-site rules from the instances folded in on
+  # 2026-10-16 come first, each scoped to its host: in forwardAuth mode the
+  # site's host arrives as X-Forwarded-Host (path follows X-Forwarded-Uri).
+  # Forgejo's machine paths stay ahead of the deny imports, as on its own
+  # instance, so no UA-based deny can ever break git or CI.
+  policy_rules_yaml = <<-EOT
+    - name: forgejo-machine-paths
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "forgejo.${local.domain}"'
+          - 'path.matches("^/(api|v2)/") || path.matches("(/info/refs$|/git-upload-pack$|/git-receive-pack$|/info/lfs/|/objects/[0-9a-f]{2}/)")'
+    - import: (data)/bots/_deny-pathological.yaml
+    - import: (data)/bots/aggressive-brazilian-scrapers.yaml
+    - import: (data)/meta/ai-block-aggressive.yaml
+    - import: (data)/crawlers/_allow-good.yaml
+    - import: (data)/clients/x-firefox-ai.yaml
+    - import: (data)/common/keep-internet-working.yaml
+    - name: blog-rss-feeds
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "${local.domain}"'
+          - 'path.matches("^/([A-Za-z0-9_-]+/)*index\\.xml$")'
+    - name: f1-app-paths
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}"'
+          - 'path.matches("^/(_app/|openapi\\.json|docs|api/)") || path.matches("^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/checks|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\\?|$)") || path.matches("^/watch/(f1/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}|channel/[A-Za-z0-9_-]{1,96})(/v[0-9]{1,2})?[.]m3u8$") || path.matches("^/(sw\\.js|manifest\\.webmanifest|icons/[A-Za-z0-9_-]+\\.png|apple-touch-icon(-precomposed)?\\.png)$") || path.matches("^/logos/[A-Za-z0-9_-]+\\.png$")'
+    - name: f1-share-link-previews
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}"'
+          - 'path.matches("^/(s|p)/[A-Za-z0-9_:-]{6,64}(/thumb[.]jpg)?/?$")'
+          - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
+    - name: allow-non-get-methods
+      action: ALLOW
+      expression: method != "GET"
+    - name: catchall-challenge
+      path_regex: .*
+      action: CHALLENGE
+  EOT
 }
 
 # The shared Anubis's own pages (challenge, pass-challenge, static assets).

@@ -715,11 +715,14 @@ module "ingress" {
   # real-ip middleware first, which Anubis needs for its cookie and its
   # trusted-local-networks bypass, and which the shared rate-limit chain now
   # needs for its bucket key.
-  namespace       = kubernetes_namespace.forgejo.metadata[0].name
-  name            = "forgejo"
-  service_name    = module.anubis.service_name
-  port            = module.anubis.service_port
-  tls_secret_name = var.tls_secret_name
+  namespace = kubernetes_namespace.forgejo.metadata[0].name
+  name      = "forgejo"
+  # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
+  # and the shared Anubis (stacks/turnstile-gate) do the bot check.
+  service_name     = kubernetes_service.forgejo.metadata[0].name
+  port             = 80
+  turnstile_strict = true
+  tls_secret_name  = var.tls_secret_name
   # OCI registry pushes ship full image layer blobs in one request; default
   # Traefik buffering chokes on anything past a few hundred MB.
   max_body_size = "5g"
