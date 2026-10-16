@@ -11,7 +11,7 @@ visitor can activate Volume License Microsoft products. The webpage at
   (`10.0.20.203`), which has **no** `:1688` listener.
 - `vlmcs.viktorbarzin.me` — the **KMS endpoint** (vlmcsd). A-only (no AAAA —
   the IPv6 tunnel doesn't forward 1688). Resolves to `10.0.20.202` on the LAN
-  (Technitium split-horizon, set via API — `cloudflare_record.vlmcs` in
+  (Technitium split-horizon, set via API — `cloudflare_dns_record.vlmcs` in
   `stacks/kms` owns the public A) and to `176.12.22.76` on the internet
   (Cloudflare → pfSense WAN NAT :1688). Every `slmgr` / `ospp` command on the
   page points here.

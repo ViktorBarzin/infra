@@ -294,14 +294,13 @@ module "ingress_diag" {
 # vlmcsd MetalLB IP both ways:
 #   external: vlmcs.viktorbarzin.me -> 176.12.22.76 -> pfSense WAN NAT :1688 -> 10.0.20.202
 #   internal: vlmcs.viktorbarzin.me -> 10.0.20.202 (Technitium split-horizon, set via API)
-resource "cloudflare_record" "vlmcs" {
-  name            = "vlmcs"
-  content         = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
-  proxied         = false          # raw TCP 1688 — Cloudflare proxy is HTTP-only
-  ttl             = 1
-  type            = "A"
-  zone_id         = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
-  allow_overwrite = true
+resource "cloudflare_dns_record" "vlmcs" {
+  name    = "vlmcs"
+  content = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
+  proxied = false          # raw TCP 1688 — Cloudflare proxy is HTTP-only
+  ttl     = 1
+  type    = "A"
+  zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
 }
 
 resource "kubernetes_config_map" "kms_slack_notifier" {
@@ -534,3 +533,13 @@ resource "kubernetes_service" "windows_kms" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.vlmcs
+  to   = cloudflare_dns_record.vlmcs
+}

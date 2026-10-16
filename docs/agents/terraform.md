@@ -43,7 +43,8 @@ When bringing a live cluster/Vault/Cloudflare resource under Terraform managemen
 | `kubernetes_manifest` | `{"apiVersion":"...","kind":"...","metadata":{"namespace":"...","name":"..."}}` | (pass as HCL object literal) |
 | `kubernetes_<kind>_v1` | `<namespace>/<name>` for namespaced, `<name>` for cluster-scoped | `kube-system/coredns` |
 | `authentik_provider_proxy` | provider UUID | `0eecac07-97c7-443c-...` |
-| `cloudflare_record` | `<zone-id>/<record-id>` | `abc123/def456` |
+| `cloudflare_dns_record` (provider v5; `cloudflare_record` on v4) | `<zone-id>/<record-id>` | `abc123/def456` |
+| `cloudflare_zone_setting` | `<zone-id>/<setting-id>` | `abc123/http3` |
 
 ## Terraform State — Two-Tier Backend
 - **Tier 0 (bootstrap)**: Local state, SOPS-encrypted in git. Stacks: `infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`. These must exist before PG is reachable.

@@ -11,7 +11,7 @@
 // so neither the body cap nor the 100 s first-byte timeout applies to git.
 //
 // Clone URLs use git.viktorbarzin.me, an A record straight to the WAN IP
-// (stacks/forgejo/main.tf, cloudflare_record.git). forgejo.viktorbarzin.me
+// (stacks/forgejo/main.tf, cloudflare_dns_record.git). forgejo.viktorbarzin.me
 // will resolve to Cloudflare addresses, which carry no SSH.
 //
 // EXPOSURE: Forgejo's built-in SSH server registers a PublicKeyHandler and no

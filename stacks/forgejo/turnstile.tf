@@ -9,7 +9,7 @@
 data "cloudflare_accounts" "main" {}
 
 resource "cloudflare_turnstile_widget" "forgejo_signup" {
-  account_id = data.cloudflare_accounts.main.accounts[0].id
+  account_id = data.cloudflare_accounts.main.result[0].id
   name       = "forgejo-signup"
   domains    = ["forgejo.viktorbarzin.me"]
   # "managed" = Cloudflare adaptively decides whether to show an interactive

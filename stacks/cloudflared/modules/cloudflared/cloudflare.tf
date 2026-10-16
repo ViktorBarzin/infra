@@ -28,8 +28,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4"
-
+      version = "~> 5"
     }
   }
 }
@@ -61,42 +60,73 @@ resource "cloudflare_bot_management" "zone" {
   enable_js          = true
   fight_mode         = true
   ai_bots_protection = "disabled"
-  # crawler_protection / is_robots_txt_managed are settable only via newer
-  # provider versions; they retain whatever the API currently has
-  # (crawler_protection=enabled, is_robots_txt_managed=true).
+  # Provider v5 defaults is_robots_txt_managed to false, so it is pinned to the
+  # value the zone already had (true) to keep the v5 move a no-op.
+  # crawler_protection keeps whatever the API has (enabled).
+  is_robots_txt_managed = true
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
   account_id = var.cloudflare_account_id
   tunnel_id  = var.cloudflare_tunnel_id
 
-  config {
-    warp_routing {
-      enabled = true
-    }
+  # Provider v5 has no config.warp_routing on this resource; the v4 block here
+  # was `warp_routing { enabled = true }` and was dropped with the v5 move.
+  config = {
     # Wildcard rule routes all subdomains through the tunnel to Traefik,
     # which handles host-based routing via K8s Ingress resources.
     # Origin = in-cluster Traefik Service DNS (NOT a MetalLB LB IP) so the
     # tunnel is decoupled from LB-IP changes. A raw IP here caused a full-site
     # 502 on 2026-06-01 when Traefik moved 10.0.20.200 -> .203; see
     # docs/post-mortems/2026-06-01-cloudflared-stale-traefik-origin.md.
-    ingress_rule {
-      hostname = "*.viktorbarzin.me"
-      service  = "https://traefik.traefik.svc.cluster.local:443"
-      origin_request {
-        no_tls_verify = true
-      }
-    }
-    ingress_rule {
-      hostname = "viktorbarzin.me"
-      service  = "https://traefik.traefik.svc.cluster.local:443"
-      origin_request {
-        no_tls_verify = true
-      }
-    }
-    ingress_rule {
-      service = "http_status:404"
-    }
+    ingress = [
+      {
+        hostname = "*.viktorbarzin.me"
+        service  = "https://traefik.traefik.svc.cluster.local:443"
+        origin_request = {
+          no_tls_verify = true
+          # cloudflared's own defaults, spelled out because the v5 provider
+          # would otherwise plan them to null on every apply.
+          connect_timeout          = 30
+          disable_chunked_encoding = false
+          http2_origin             = false
+          keep_alive_connections   = 100
+          keep_alive_timeout       = 90
+          no_happy_eyeballs        = false
+          tcp_keep_alive           = 30
+          tls_timeout              = 10
+          ca_pool                  = ""
+          http_host_header         = ""
+          origin_server_name       = ""
+          proxy_type               = ""
+        }
+      },
+      {
+        hostname = "viktorbarzin.me"
+        service  = "https://traefik.traefik.svc.cluster.local:443"
+        origin_request = {
+          no_tls_verify = true
+          # cloudflared's own defaults, spelled out because the v5 provider
+          # would otherwise plan them to null on every apply.
+          connect_timeout          = 30
+          disable_chunked_encoding = false
+          http2_origin             = false
+          keep_alive_connections   = 100
+          keep_alive_timeout       = 90
+          no_happy_eyeballs        = false
+          tcp_keep_alive           = 30
+          tls_timeout              = 10
+          ca_pool                  = ""
+          http_host_header         = ""
+          origin_server_name       = ""
+          proxy_type               = ""
+        }
+      },
+      {
+        service = "http_status:404"
+      },
+    ]
+    origin_request = {}
   }
 }
 
@@ -113,8 +143,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
 #     (see docs/adr/0021).
 # The apex is NOT covered by a wildcard — stacks/blog keeps its explicit "@"
 # record via the ingress_factory apex carve-out.
-resource "cloudflare_record" "wildcard" {
-  content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+resource "cloudflare_dns_record" "wildcard" {
+  # nonsensitive(): the tunnel UUID is already public in every proxied
+  # CNAME answer, and marking the content sensitive makes v5 plan an update.
+  content = "${nonsensitive(var.cloudflare_tunnel_id)}.cfargotunnel.com"
   name    = "*"
   proxied = true
   ttl     = 1
@@ -122,7 +154,7 @@ resource "cloudflare_record" "wildcard" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "dns_record" {
+resource "cloudflare_dns_record" "dns_record" {
   # count   = length(var.cloudflare_proxied_names)
   # name    = var.cloudflare_proxied_names[count.index]
   for_each = local.cloudflare_proxied_names_map
@@ -135,7 +167,7 @@ resource "cloudflare_record" "dns_record" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "non_proxied_dns_record" {
+resource "cloudflare_dns_record" "non_proxied_dns_record" {
   # count = length(var.cloudflare_non_proxied_names)
   # name    = var.cloudflare_non_proxied_names[count.index]
   for_each = local.cloudflare_non_proxied_names_map
@@ -158,7 +190,7 @@ resource "cloudflare_record" "non_proxied_dns_record" {
 # fall back to A). Web/mail AAAA records come from ingress_factory
 # "non-proxied" instances, which stay dual-stack.
 
-resource "cloudflare_record" "mail_mx" {
+resource "cloudflare_dns_record" "mail_mx" {
   content  = "mail.viktorbarzin.me"
   name     = "viktorbarzin.me"
   proxied  = false
@@ -170,7 +202,7 @@ resource "cloudflare_record" "mail_mx" {
 
 # Backup MX host (ADR-0019) — the Oracle Always-Free relay. IP is the OCI
 # RESERVED public IP (stable across VM stop/start; owned by stacks/backup-mx).
-resource "cloudflare_record" "backup_mx_a" {
+resource "cloudflare_dns_record" "backup_mx_a" {
   content = "92.5.132.215"
   name    = "mx2.viktorbarzin.me"
   proxied = false
@@ -187,7 +219,7 @@ resource "cloudflare_record" "backup_mx_a" {
 # and works on networks where only DNS/DoH escapes (the transport of last
 # resort). Nameserver is mx2.viktorbarzin.me, already A→92.5.132.215
 # (backup_mx_a above) so it is in-zone glue. NS records are never proxied.
-resource "cloudflare_record" "dnstt_ns" {
+resource "cloudflare_dns_record" "dnstt_ns" {
   content = "mx2.viktorbarzin.me"
   name    = "t"
   ttl     = 1
@@ -199,7 +231,7 @@ resource "cloudflare_record" "dnstt_ns" {
 # is unreachable. ARMED now that the drain path works end-to-end (gate O3:
 # mx2's WireGuard tunnel IP 10.3.2.10 is whitelisted past the primary's PTR
 # check). mx2 queues up to 30 days and drains to the primary on recovery.
-resource "cloudflare_record" "backup_mx_mx" {
+resource "cloudflare_dns_record" "backup_mx_mx" {
   content  = "mx2.viktorbarzin.me"
   name     = "viktorbarzin.me"
   proxied  = false
@@ -217,7 +249,7 @@ resource "cloudflare_record" "backup_mx_mx" {
 # to https://status.viktorbarzin.me/error.html goes straight to mx2 and can
 # never re-enter a Worker route (routes only see proxied traffic — no
 # recursion possible). Do NOT re-add "status" to cloudflare_proxied_names.
-resource "cloudflare_record" "status_a" {
+resource "cloudflare_dns_record" "status_a" {
   content = "92.5.132.215"
   name    = "status"
   proxied = false
@@ -232,7 +264,7 @@ resource "cloudflare_record" "status_a" {
 # worker.tf) without touching real traffic or waiting for a real outage. One
 # permanent DNS record + a trickle of Worker requests — negligible cost,
 # deliberate.
-resource "cloudflare_record" "test_failover" {
+resource "cloudflare_dns_record" "test_failover" {
   content = "00000000-0000-0000-0000-000000000000.cfargotunnel.com"
   name    = "test-failover"
   proxied = true
@@ -242,19 +274,18 @@ resource "cloudflare_record" "test_failover" {
 }
 
 
-resource "cloudflare_record" "mail_spf" {
+resource "cloudflare_dns_record" "mail_spf" {
   # Brevo replaced Mailgun as the outbound relay on 2026-04-12 (see docs/architecture/mailserver.md).
   # Soft-fail (~all) is intentional during cutover — revisit once relay delivery is stable.
-  content  = "\"v=spf1 include:spf.brevo.com ~all\""
-  name     = "viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  priority = 1
-  zone_id  = var.cloudflare_zone_id
+  content = "\"v=spf1 include:spf.brevo.com ~all\""
+  name    = "viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "mail_domainkey_rspamd" {
+resource "cloudflare_dns_record" "mail_domainkey_rspamd" {
   content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIX\" \"z2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
   name    = "mail._domainkey.viktorbarzin.me"
   proxied = false
@@ -263,8 +294,8 @@ resource "cloudflare_record" "mail_domainkey_rspamd" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "brevo_domainkey1" {
-  content = "b1.viktorbarzin-me.dkim.brevo.com."
+resource "cloudflare_dns_record" "brevo_domainkey1" {
+  content = "b1.viktorbarzin-me.dkim.brevo.com"
   name    = "brevo1._domainkey.viktorbarzin.me"
   proxied = false
   ttl     = 1
@@ -272,8 +303,8 @@ resource "cloudflare_record" "brevo_domainkey1" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "brevo_domainkey2" {
-  content = "b2.viktorbarzin-me.dkim.brevo.com."
+resource "cloudflare_dns_record" "brevo_domainkey2" {
+  content = "b2.viktorbarzin-me.dkim.brevo.com"
   name    = "brevo2._domainkey.viktorbarzin.me"
   proxied = false
   ttl     = 1
@@ -281,7 +312,7 @@ resource "cloudflare_record" "brevo_domainkey2" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "brevo_code" {
+resource "cloudflare_dns_record" "brevo_code" {
   content = "\"brevo-code:a6ef1dd91b248559900246eb4e7ceebd\""
   name    = "viktorbarzin.me"
   proxied = false
@@ -290,7 +321,7 @@ resource "cloudflare_record" "brevo_code" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "mail_mta_sts" {
+resource "cloudflare_dns_record" "mail_mta_sts" {
   content = "\"v=STSv1; id=20260412\""
   name    = "_mta-sts.viktorbarzin.me"
   proxied = false
@@ -299,7 +330,7 @@ resource "cloudflare_record" "mail_mta_sts" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "mail_tlsrpt" {
+resource "cloudflare_dns_record" "mail_tlsrpt" {
   content = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
   name    = "_smtp._tls.viktorbarzin.me"
   proxied = false
@@ -308,24 +339,22 @@ resource "cloudflare_record" "mail_tlsrpt" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "mail_dmarc" {
-  content  = "\"v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
-  name     = "_dmarc.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  priority = 1
-  zone_id  = var.cloudflare_zone_id
+resource "cloudflare_dns_record" "mail_dmarc" {
+  content = "\"v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
+  name    = "_dmarc.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "keyserver" {
-  content  = "130.162.165.220" # Oracle VPS
-  name     = "keyserver.viktorbarzin.me"
-  proxied  = false
-  ttl      = 3600
-  type     = "A"
-  priority = 1
-  zone_id  = var.cloudflare_zone_id
+resource "cloudflare_dns_record" "keyserver" {
+  content = "130.162.165.220" # Oracle VPS
+  name    = "keyserver.viktorbarzin.me"
+  proxied = false
+  ttl     = 3600
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
 }
 
 # bridge.viktorbarzin.me (Cloudflare Pages, "мост" school site) moved to
@@ -341,15 +370,107 @@ resource "cloudflare_record" "keyserver" {
 # server-side candidate by measurement, and the truncation is terminated at the
 # client end. Turned back on the same day.
 #
-# Provider v5 (2026-10-16) has no cloudflare_zone_settings_override; each
-# setting becomes its own cloudflare_zone_setting. v5 cannot read the old
-# resource from state at all, so this first step drops it from state with the
-# v4 provider while leaving the live setting untouched (http3 stays "on"). The
-# v5 change re-adopts it as cloudflare_zone_setting.http3 via an import block.
-removed {
-  from = cloudflare_zone_settings_override.http3
+# Provider v5 (2026-10-16) replaced cloudflare_zone_settings_override with one
+# cloudflare_zone_setting per setting. The old resource was dropped from state
+# first with a v4 removed{} block (the live setting stayed on), and this one
+# was adopted by the import block in the stack root (stacks/cloudflared/main.tf).
+resource "cloudflare_zone_setting" "http3" {
+  zone_id    = var.cloudflare_zone_id
+  setting_id = "http3"
+  value      = "on"
+}
 
-  lifecycle {
-    destroy = false
-  }
+# Cloudflare provider v5 renamed cloudflare_record to cloudflare_dns_record
+# (2026-10-16). These moved blocks carry the existing records across in state
+# so nothing is deleted and recreated; the provider's MoveState handler
+# converts the v4 state. Safe to delete once every stack has applied on v5.
+
+moved {
+  from = cloudflare_record.wildcard
+  to   = cloudflare_dns_record.wildcard
+}
+
+moved {
+  from = cloudflare_record.dns_record
+  to   = cloudflare_dns_record.dns_record
+}
+
+moved {
+  from = cloudflare_record.non_proxied_dns_record
+  to   = cloudflare_dns_record.non_proxied_dns_record
+}
+
+moved {
+  from = cloudflare_record.mail_mx
+  to   = cloudflare_dns_record.mail_mx
+}
+
+moved {
+  from = cloudflare_record.backup_mx_a
+  to   = cloudflare_dns_record.backup_mx_a
+}
+
+moved {
+  from = cloudflare_record.dnstt_ns
+  to   = cloudflare_dns_record.dnstt_ns
+}
+
+moved {
+  from = cloudflare_record.backup_mx_mx
+  to   = cloudflare_dns_record.backup_mx_mx
+}
+
+moved {
+  from = cloudflare_record.status_a
+  to   = cloudflare_dns_record.status_a
+}
+
+moved {
+  from = cloudflare_record.test_failover
+  to   = cloudflare_dns_record.test_failover
+}
+
+moved {
+  from = cloudflare_record.mail_spf
+  to   = cloudflare_dns_record.mail_spf
+}
+
+moved {
+  from = cloudflare_record.mail_domainkey_rspamd
+  to   = cloudflare_dns_record.mail_domainkey_rspamd
+}
+
+moved {
+  from = cloudflare_record.brevo_domainkey1
+  to   = cloudflare_dns_record.brevo_domainkey1
+}
+
+moved {
+  from = cloudflare_record.brevo_domainkey2
+  to   = cloudflare_dns_record.brevo_domainkey2
+}
+
+moved {
+  from = cloudflare_record.brevo_code
+  to   = cloudflare_dns_record.brevo_code
+}
+
+moved {
+  from = cloudflare_record.mail_mta_sts
+  to   = cloudflare_dns_record.mail_mta_sts
+}
+
+moved {
+  from = cloudflare_record.mail_tlsrpt
+  to   = cloudflare_dns_record.mail_tlsrpt
+}
+
+moved {
+  from = cloudflare_record.mail_dmarc
+  to   = cloudflare_dns_record.mail_dmarc
+}
+
+moved {
+  from = cloudflare_record.keyserver
+  to   = cloudflare_dns_record.keyserver
 }
