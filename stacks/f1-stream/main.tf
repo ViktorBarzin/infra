@@ -403,6 +403,23 @@ locals {
     # usernames a viewer's address used that week. One batched query a
     # day, never during a session.
     { name = "LOKI_URL", value = "http://loki.monitoring.svc.cluster.local:3100" },
+    # User reports (app repo ADR-0038 to ADR-0040, build contract
+    # docs/design/2026-10-16-user-reports-build-contract.md). The intake
+    # job gathers Loki and Prometheus evidence, asks the f1-report-intake
+    # agent in claude-agent-service for a verdict, and files the issue on
+    # viktor/f1-stream as tv-feedback-bot. Mail goes From f1@, which the
+    # mailserver's aliases.txt authorises for the spam@ login.
+    { name = "PROMETHEUS_URL", value = "http://prometheus-server.monitoring.svc.cluster.local" },
+    { name = "PUBLIC_BASE_URL", value = "https://f1.viktorbarzin.me" },
+    { name = "REPORTS_FORGEJO_API", value = "https://forgejo.viktorbarzin.me/api/v1" },
+    { name = "REPORTS_REPO", value = "viktor/f1-stream" },
+    { name = "REPORTS_INTAKE_URL", value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080" },
+    { name = "REPORTS_NTFY_URL", value = "https://ntfy.viktorbarzin.me" },
+    { name = "REPORTS_NTFY_TOPIC", value = "fixer" },
+    { name = "REPORTS_SMTP_HOST", value = "mailserver.mailserver.svc.cluster.local" },
+    { name = "REPORTS_SMTP_PORT", value = "587" },
+    { name = "REPORTS_SMTP_USER", value = "spam@viktorbarzin.me" },
+    { name = "REPORTS_SMTP_FROM", value = "f1@viktorbarzin.me" },
   ]
 
   # Secret-backed env shared by the Edge and the Worker.
@@ -440,6 +457,13 @@ locals {
     # restart to pick them up.
     { name = "REDDIT_CLIENT_ID", secret = "f1-stream-secrets", key = "reddit_client_id", optional = true },
     { name = "REDDIT_CLIENT_SECRET", secret = "f1-stream-secrets", key = "reddit_client_secret", optional = true },
+    # User reports. All optional: each piece of the pipeline turns itself
+    # off when its secret is missing, and reports are still stored.
+    { name = "REPORTS_FORGEJO_TOKEN", secret = "f1-stream-secrets", key = "reports_forgejo_token", optional = true },
+    { name = "REPORTS_WEBHOOK_SECRET", secret = "f1-stream-secrets", key = "reports_webhook_secret", optional = true },
+    { name = "REPORTS_INTAKE_TOKEN", secret = "f1-stream-secrets", key = "reports_intake_token", optional = true },
+    { name = "REPORTS_NTFY_TOKEN", secret = "f1-stream-secrets", key = "reports_ntfy_token", optional = true },
+    { name = "REPORTS_SMTP_PASSWORD", secret = "f1-stream-secrets", key = "reports_smtp_password", optional = true },
   ]
 
   f1_namespace = kubernetes_namespace.f1-stream.metadata[0].name
