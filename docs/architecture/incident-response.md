@@ -174,6 +174,7 @@ For contributors who want to understand how the automation works.
 flowchart LR
     subgraph "Forgejo (viktor/infra)"
         A0["f1-stream source guard<br/>(hourly, calendar-gated)"] --> A
+        W0["f1-stream Watcher<br/>(Tier 1 Channel down 10 min)"] --> A
         A["Issue labelled<br/>'broken'"] --> B[Webhook fires]
     end
 
@@ -189,6 +190,8 @@ flowchart LR
         I --> L[Post-Mortem Pipeline]
         H -->|"also labelled<br/>'f1-source'"| R[f1-source-fixer agent]
         R --> S["push viktor/f1-stream<br/>watch deploy, verify,<br/>close the issue"]
+        H -->|"also labelled<br/>'channel-source'"| CR[channel-source-fixer agent]
+        CR --> S
     end
 
     subgraph "Post-Mortem Pipeline"
@@ -213,6 +216,8 @@ flowchart LR
 | fixer-tick CronJob | `stacks/claude-agent-service` | Drains queued `broken` issues and follows pushed commits through CI |
 | Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
 | f1-stream source guard | `stacks/f1-stream/f1-source-guard.tf` | Hourly CronJob, calendar-gated to T-2h and T-30m before a session. Plays each source's stream in a leased chrome-fleet worker and files `broken` + `f1-source` when the chain does not produce a moving picture |
+| f1-stream Watcher | `stacks/f1-stream/watcher.tf` | `ROLE=watcher` pod (f1-stream ADR-0044). Watches every Feed of the hand-picked Tier 1 TV Channels through the Edges; when one has had no smooth Feed for 10 minutes it posts one line to `#alerts` and files `broken` + `channel-source`, one open issue per Channel (`[channel-source: <slug>]`). Health card at `https://f1.viktorbarzin.me/admin/channels` |
+| Channel Source Fixer | `.claude/agents/channel-source-fixer.md` | Repairs a Tier 1 Channel's resolvers or catalogue aliases from a `channel-source` issue, ships to `viktor/f1-stream`, confirms through the Watcher that the Channel is up, closes the issue or reverts |
 | f1 Source Fixer | `.claude/agents/f1-source-fixer.md` | Repairs an f1-stream extractor or resolver from an `f1-source` issue, ships to `viktor/f1-stream`, verifies recovery, closes the issue |
 | f1 Feedback Fixer | `.claude/agents/f1-feedback-fixer.md` | Works a User report issue on `viktor/f1-stream` once Viktor adds `approved` (f1-stream ADR-0047): fixes a problem or plans and builds an idea, pushes to master, watches the deploy, re-checks live, closes or asks on the issue with `needs-human`. A reply comment from `viktor` starts the next run |
 | Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
@@ -276,6 +281,7 @@ The automated agent follows strict rules:
 | `postmortem-required` | SEV1/SEV2 — the post-mortem pipeline owes a writeup |
 | `needs-human` | Escalated — handed back to a human |
 | `f1-source` | An f1-stream upstream source stopped producing playable streams — **routes the issue to `f1-source-fixer`** rather than being fixed in place |
+| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes — **routes the issue to `channel-source-fixer`** |
 
 #### Recreating a label
 
@@ -283,7 +289,7 @@ These labels are live objects on `viktor/infra`, created by hand. Nothing in
 this repo declares them, so a repo restored from a backup that predates one, or
 a label someone deletes, comes back only by being recreated. Current ids on
 `viktor/infra`: `broken` 12, `change` 13, `agent-in-progress` 14, `paused` 15,
-`needs-human` 16, `f1-source` 22. Ids are assigned by Forgejo and are not worth
+`needs-human` 16, `f1-source` 22, `channel-source` 39. Ids are assigned by Forgejo and are not worth
 matching — every consumer resolves by name.
 
 Idempotent recreate, for `f1-source` or any other name in the table:
@@ -302,6 +308,11 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
   "$FJ/repos/viktor/infra/labels" \
   -d '{"name":"f1-source","color":"#1d76db","description":"f1-stream upstream source is not producing playable streams"}'
 ```
+
+`channel-source` (created 2026-10-16) is recreated the same way, with
+`{"name":"channel-source","color":"#0e8a16","description":"f1-stream Tier 1 TV Channel has no smooth Feed"}`;
+while it is missing the Watcher posts its `#alerts` line and files nothing
+(`backend/watcher/alerts.py` resolves labels by name the same way).
 
 What breaks while `f1-source` is missing: the f1-stream source guard resolves
 label names to ids before it files and refuses to file when one is absent
