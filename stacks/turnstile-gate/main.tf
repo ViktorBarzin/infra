@@ -41,7 +41,7 @@ locals {
   challenge_host   = "challenge.${local.domain}"
   anubis_host      = "anubis.${local.domain}"
   action           = "site-gate"
-  mode             = "on" # the global switch: on | anubis | open
+  mode             = "open" # the global switch: on | anubis | open
   anubis_check_uri = "/.within.website/x/cmd/anubis/api/check"
   # Mirrors var.trusted_local_cidrs in modules/kubernetes/anubis_instance.
   trusted_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10"]
