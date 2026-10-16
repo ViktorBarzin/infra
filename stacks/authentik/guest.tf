@@ -140,13 +140,34 @@ resource "authentik_application" "public" {
   name              = "Public"
   slug              = "public"
   protocol_provider = authentik_provider_proxy.public.id
-  # No bound policies. policy_engine_mode = "any" + zero bindings = everyone
-  # passes (the auto-login flow has already established `guest` as the user).
+  # Everyone passes through the allow-all binding below; the auto-login flow
+  # has already established `guest` as the user for strangers.
   policy_engine_mode = "any"
 
   lifecycle {
     ignore_changes = [meta_description, meta_launch_url, meta_icon, group, backchannel_providers, open_in_new_tab]
   }
+}
+
+# Explicit allow for every signed-in account, `guest` included. Until
+# 2026-10-16 this application had no bindings and relied on Authentik's
+# `core_default_app_access` flag (default true), which admits everyone to an
+# application with no bindings. ADR-0001 (~/code/docs/adr) turns that flag
+# off once Terraform can set it (goauthentik provider 2026.5.0 or later; the
+# pinned 2025.12.1 drops the key), after which an application with no
+# bindings admits nobody, so the public tier needs this binding to keep
+# working. A group binding would not
+# do: signed-in household members reach public pages with their own account,
+# and they are in no single group. app-access-guard.tf exempts this slug.
+resource "authentik_policy_expression" "public_allow_all" {
+  name       = "public-allow-all"
+  expression = "return True"
+}
+
+resource "authentik_policy_binding" "public_allow_all" {
+  target = authentik_application.public.uuid
+  policy = authentik_policy_expression.public_allow_all.id
+  order  = 0
 }
 
 # Dedicated outpost so the public provider can claim viktorbarzin.me without
