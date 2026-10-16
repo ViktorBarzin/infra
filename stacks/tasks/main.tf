@@ -1,6 +1,6 @@
 variable "image_tag" {
   type        = string
-  default     = "fe33cf63"
+  default     = "482bd42e"
   description = "Image tag used when the Deployment is (re)created. The running tag is set by the Woodpecker deploy (kubectl set image)."
 }
 
@@ -17,7 +17,7 @@ locals {
   # ghcr package, so pulls are anonymous. The Woodpecker deploy sets the
   # running tag on both containers; both image refs are ignore_changes'd
   # (CI_SETS_IMAGE), so this base only matters on (re)create.
-  image = "ghcr.io/viktorbarzin/tasks-ts:${var.image_tag}"
+  image = "ghcr.io/viktorbarzin/tasks:${var.image_tag}"
   labels = {
     app = "tasks"
   }
@@ -449,21 +449,4 @@ resource "kubernetes_network_policy_v1" "tasks_ingress" {
       }
     }
   }
-}
-
-# 2026-10-16: the TypeScript resources took the plain names when the Python
-# build was retired. The k8s name and selector changes replace each object.
-moved {
-  from = kubernetes_deployment.tasks_next
-  to   = kubernetes_deployment.tasks
-}
-
-moved {
-  from = kubernetes_service.tasks_next
-  to   = kubernetes_service.tasks
-}
-
-moved {
-  from = kubernetes_network_policy_v1.tasks_next_ingress
-  to   = kubernetes_network_policy_v1.tasks_ingress
 }
