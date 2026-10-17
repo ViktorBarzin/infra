@@ -268,7 +268,16 @@ module "nfs_data" {
 # surge pod brings it to 15000, the whole budget, for the length of a
 # handover. Any other new GPU tenant leaves the surge pod Pending; the old
 # Transcoder keeps serving and the pipeline rolls the remaining Roles and
-# fails the run. The Worker is Recreate, so its seat never doubles. Shrinking
+# fails the run.
+#
+# Two other things roll the Transcoder without that pipeline: Reloader, when
+# f1-stream-secrets changes (its ExternalSecret refreshes hourly), and a
+# Terraform apply that changes the pod template (this resource waits for the
+# rollout, 10 minutes by default). For those the emulator's gate watches: the
+# Transcoder pod carries the label android-emulator-yields-to=gpu-seat, and
+# when such a pod waits Pending on Insufficient viktorbarzin.me/gpumem the
+# gate scales the emulator to 0 within about 10 s and holds off waking it
+# until the pod has scheduled (infra stacks/android-emulator/gate.py). The Worker is Recreate, so its seat never doubles. Shrinking
 # the Transcoder seat so two fit without the emulator's 800 is not an option:
 # the card peaked at 14494 MiB used in the week to 2026-10-16, and one
 # monolith pod used up to 1809 MiB.
@@ -810,8 +819,10 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
   spec {
     replicas = 1
     # The surge pod takes a second 1850 gpumem seat for the length of a
-    # handover. The deploy pipeline puts the Android emulator to sleep first
-    # to free it; see the GPU seat note above the locals.
+    # handover, which needs the Android emulator asleep. The deploy pipeline
+    # sleeps it first; for a roll from Reloader or Terraform, the emulator's
+    # gate sleeps it when it sees the pod label below. See the GPU seat note
+    # above the locals.
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -830,6 +841,10 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
         labels = {
           app  = "f1-stream"
           role = "transcoder"
+          # The Android emulator's gate puts the emulator to sleep when a pod
+          # with this label waits Pending for gpumem (infra
+          # stacks/android-emulator/gate.tf, yield-watch Role).
+          "android-emulator-yields-to" = "gpu-seat"
         }
       }
       spec {
