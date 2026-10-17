@@ -693,10 +693,12 @@ resource "kubernetes_deployment_v1" "f1_edge" {
             value = "/tmp/share-thumbs"
           }
           # Proves to the app that a request came through the ingress rather
-          # than straight at a pod. Straight from the random_password rather
-          # than through f1-stream-secrets: the Middleware in ingress-proof.tf
-          # reads the same resource, so there is nothing for Vault or an
-          # ExternalSecret to add.
+          # than straight at a pod. From the f1-stream-ingress-proof Secret in
+          # ingress-proof.tf rather than f1-stream-secrets: the Middleware
+          # there reads the same random_password, so there is nothing for
+          # Vault or an ExternalSecret to add. A Secret reference rather than
+          # a literal value, because anything that may list pods in this
+          # namespace (the Android emulator's gate does) reads literal env.
           #
           # Set on every Role, not only the Edges that the ingress reaches.
           # Unset, the app trusts Authentik headers from anything that can
@@ -704,8 +706,13 @@ resource "kubernetes_deployment_v1" "f1_edge" {
           # Transcoder without it would mint an admin session for any pod in
           # the cluster.
           env {
-            name  = "INGRESS_PROOF_SECRET"
-            value = random_password.ingress_proof.result
+            name = "INGRESS_PROOF_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.ingress_proof.metadata[0].name
+                key  = "proof"
+              }
+            }
           }
           dynamic "env" {
             for_each = local.f1_env_values
@@ -978,8 +985,13 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
           }
           # On every Role; see the Edge.
           env {
-            name  = "INGRESS_PROOF_SECRET"
-            value = random_password.ingress_proof.result
+            name = "INGRESS_PROOF_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.ingress_proof.metadata[0].name
+                key  = "proof"
+              }
+            }
           }
           volume_mount {
             name       = "transcode"
@@ -1238,8 +1250,13 @@ resource "kubernetes_deployment_v1" "f1_worker" {
           }
           # On every Role; see the Edge.
           env {
-            name  = "INGRESS_PROOF_SECRET"
-            value = random_password.ingress_proof.result
+            name = "INGRESS_PROOF_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.ingress_proof.metadata[0].name
+                key  = "proof"
+              }
+            }
           }
           dynamic "env" {
             for_each = local.f1_env_values
