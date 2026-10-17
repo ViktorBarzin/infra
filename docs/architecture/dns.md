@@ -95,7 +95,7 @@ graph TB
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
 | pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease. Not running on pfSense since 2026-07-18 (see "Dynamic updates" below) |
-| external-dns | K8s namespace `technitium` | v0.22.0 (chart 1.22.0) | A + TXT ownership records for `*.viktorbarzin.lan` Ingress hosts, over TSIG-signed RFC 2136 (ADR-0033) |
+| external-dns | K8s namespace `technitium` | v0.23.0 (chart 1.23.0) | A + TXT ownership records for `*.viktorbarzin.lan` Ingress hosts, over TSIG-signed RFC 2136 (ADR-0033) |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
 ### Terraform Stacks

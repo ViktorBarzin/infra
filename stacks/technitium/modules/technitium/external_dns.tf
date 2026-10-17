@@ -13,9 +13,10 @@
 # records) are skipped entirely: no create, update or delete. Only .lan is in
 # scope; internal viktorbarzin.me records stay with technitium-ingress-dns-sync.
 #
-# A failed zone transfer is logged and read as an empty zone rather than as an
-# error, so the record-count alert in the monitoring stack is what catches a
-# broken key or zone-transfer policy.
+# Since app v0.23.0 a failed zone transfer is a soft error: the loop skips
+# that cycle and external_dns_controller_consecutive_soft_errors rises. Up to
+# v0.22.0 it read as an empty zone, which is why the record-count alert in the
+# monitoring stack exists; it still catches a key or policy that shrinks the zone.
 
 resource "kubernetes_secret_v1" "external_dns_tsig" {
   metadata {
@@ -36,7 +37,7 @@ resource "helm_release" "external_dns" {
 
   repository = "https://kubernetes-sigs.github.io/external-dns/"
   chart      = "external-dns"
-  version    = "1.22.0" # app v0.22.0
+  version    = "1.23.0" # app v0.23.0
 
   values = [yamlencode({
     provider           = { name = "rfc2136" }
