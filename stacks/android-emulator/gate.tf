@@ -1,5 +1,5 @@
 # On-demand lifecycle: the emulator scales to ZERO when idle and wakes on
-# visit. The gate (tiny stdlib-python HTTP server) owns `/` on both emulator
+# visit, and also sleeps when a labelled pod waits for its GPU seat (below). The gate (tiny stdlib-python HTTP server) owns `/` on both emulator
 # hostnames — it scales the deployment up and hands the browser to noVNC once
 # ready; agents use GET /wake + /status. The idle CronJob scales back to zero
 # after ~1h with no adb/VNC connections. Decision: Viktor 2026-06-12 —
@@ -102,6 +102,44 @@ resource "kubernetes_role_binding" "deploy_yield" {
   }
 }
 
+# The gate also watches for a pod that waits Pending for the GPU seat the
+# emulator holds, and puts the emulator to sleep when it finds one (gate.py,
+# yield_loop). The pods it watches carry the label
+# android-emulator-yields-to=gpu-seat; today that is the f1-stream Transcoder,
+# whose surge pod needs a second 1850 gpumem on k8s-node1 (infra
+# stacks/f1-stream/main.tf GPU seat note). The deploy pipeline above sleeps the
+# emulator before its own roll, but Reloader and Terraform roll the Transcoder
+# too, and only this watcher sees those. Reading pods there needs list on pods
+# in that namespace, and nothing more.
+resource "kubernetes_role" "gate_yield_watch" {
+  metadata {
+    name      = "android-emulator-yield-watch"
+    namespace = "f1-stream"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_role_binding" "gate_yield_watch" {
+  metadata {
+    name      = "android-emulator-yield-watch"
+    namespace = "f1-stream"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.gate_yield_watch.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.gate.metadata[0].name
+    namespace = kubernetes_namespace.android-emulator.metadata[0].name
+  }
+}
+
 resource "kubernetes_config_map" "gate" {
   metadata {
     name      = "android-emulator-gate"
@@ -145,6 +183,15 @@ resource "kubernetes_deployment" "gate" {
           env {
             name  = "DEPLOYMENT"
             value = "android-emulator"
+          }
+          # Pods the emulator gives its GPU seat to (see the yield-watch Role).
+          env {
+            name  = "YIELD_NAMESPACE"
+            value = kubernetes_role.gate_yield_watch.metadata[0].namespace
+          }
+          env {
+            name  = "YIELD_SELECTOR"
+            value = "android-emulator-yields-to=gpu-seat"
           }
           port {
             container_port = 8080

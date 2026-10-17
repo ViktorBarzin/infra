@@ -20,6 +20,21 @@ emulator to 0 before that roll and leaves it asleep. A session on the emulator
 at that moment is cut off; wake it again through the gate. The deploy's
 grant is the `f1-stream-deploy-yield` Role in `gate.tf`.
 
+The Transcoder also rolls when Reloader sees its Secret change and when a
+Terraform apply changes its pod template, and neither passes through that
+pipeline. So the gate watches too (since 2026-10-17): every 10 s it lists the
+pods labelled `android-emulator-yields-to=gpu-seat` in namespace `f1-stream`,
+and when one waits Pending with `Insufficient viktorbarzin.me/gpumem` it scales
+the emulator to 0 and logs which pod it yields to. While such a pod waits,
+`/wake` does not scale the emulator up: it answers `"woke": false` with
+`"yielding_to": [...]`, `/status` carries the same field, and the gate does
+the held-back wake by itself once nothing waits, so polling `/status` for
+`"ready": 1` still works. If the waiting pod never schedules (another GPU
+tenant took the seat), the emulator stays asleep until it does; the
+`PodUnschedulable` alert reports that pod. The grant is the
+`android-emulator-yield-watch` Role in namespace `f1-stream` (list pods).
+Tests: `python3 -m unittest discover -s stacks/android-emulator`.
+
 - Humans: open https://android-emulator.viktorbarzin.me — it wakes the
   emulator if needed, shows a self-refreshing boot page, then hands over to
   the noVNC screen.
