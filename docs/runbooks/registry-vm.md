@@ -212,6 +212,12 @@ sat 100% full for 45 days with nobody noticing. Each port's `/healthz` is
 therefore a **real manifest fetch** of a pinned tag on a repo the cluster
 actually pulls, so it fails when storage does:
 
+Until 2026-10-17 the :5020 (quay) and :5030 (registry.k8s.io) probes
+fetched an immich image that exists only on GHCR, so they answered 404 on a
+healthy disk. They now fetch `prometheus/node-exporter:v1.12.1` and
+`external-dns/external-dns:v0.23.0`. When those pins age out of the
+cluster, move the probe to a tag still in use.
+
 ```sh
 for p in 5000 5010 5020 5030 5040; do
   printf ':%s ' "$p"
@@ -287,6 +293,17 @@ space went from 440 MB to 24 GB. The pre-edit schedules are kept as
 `/root/<cache>-scheduler-state.<timestamp>.bak`. A burst of that size
 refills about 25 GB, so the 61G root disk leaves little room for two
 bursts inside one 168h TTL window.
+
+Done a third time on 2026-10-17, while 22 pending Renovate updates were
+landed by hand in one morning. The disk reached 100% and the cache served a
+cut-off copy of Frigate's 2,855 MB layer (750 MB, with HTTP 200), which
+containerd did not retry against upstream, so Frigate stayed down about
+25 minutes until its image was pulled on the node with `ctr ... --hosts-dir ""`.
+Expiring the GHCR blob entries fetched more than a few hours earlier (384 of
+845 entries) took free space from 413 MB to 16.6 GB. The pre-edit schedule
+is `/root/ghcr-scheduler-state.20261017T062852Z.bak`. A full disk here shows
+up as a truncated layer and a failed pull, not as an HTTP error, so check
+`df` on this VM before landing several large image bumps at once.
 
 ## Rollback
 
