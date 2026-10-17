@@ -16,7 +16,7 @@
 | Kubernetes (agent sessions) | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | implicit consent |
-| Tasks | OAuth2/OIDC (confidential, TF: `stacks/tasks/authentik.tf`) | implicit consent |
+| Tasks | OAuth2/OIDC (confidential, TF: `stacks/tasks` via `modules/kubernetes/tanstack_app`) | implicit consent |
 | Vault | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
 
@@ -46,7 +46,7 @@ provider default.
 | `stacks/authentik/forward-auth-apps.tf` | every `(forward auth)` application |
 | `stacks/authentik/postgres-ldap.tf`, `rac.tf` | Postgres LDAP, Remote Access |
 | `stacks/f1-stream/members.tf` | F1 Stream |
-| `stacks/tasks/authentik.tf` | Tasks (Tasks Users, Tasks Admins, Home Server Admins) |
+| `modules/kubernetes/tanstack_app/authentik.tf` (from `stacks/tasks`) | Tasks (Tasks Users, Tasks Admins, Home Server Admins) |
 | `stacks/authentik/guest.tf` | Public (allow-all policy `public-allow-all`) |
 
 `stacks/authentik/app-access-guard.tf` reads every application and binding
@@ -131,7 +131,7 @@ pages, which is the signal to add pages.
 | Forgejo Users | -- | No | Forgejo (OIDC binding) |
 | F1 Users | -- | No | f1-stream households let in from an Access request (f1-stream ADR-0042): `modules/authentik/app_signup` in request mode from `stacks/f1-stream/members.tf`; bound on F1 Stream beside Home Users and Home Server Admins; TF declares the group, the app's approver token (`svc-f1-stream-approver`) adds members |
 | f1-stream membership readers | -- | No | holds svc-f1-stream only; role `f1-stream membership reader` = view_user + view_group |
-| tasks membership readers | -- | No | holds svc-tasks-reader only; role `tasks membership reader` = view_user + view_group on Tasks Users only (`stacks/tasks/authentik.tf`); its token is Secret `tasks-authentik-reader` |
+| tasks membership readers | -- | No | holds svc-tasks-reader only; role `tasks membership reader` = view_user + view_group on Tasks Users only (`modules/kubernetes/tanstack_app/authentik.tf`, called from `stacks/tasks`); its token is Secret `tasks-authentik-reader` |
 | Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
 
 ## Users (8 real)

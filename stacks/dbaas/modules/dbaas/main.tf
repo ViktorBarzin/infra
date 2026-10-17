@@ -2342,34 +2342,6 @@ resource "null_resource" "pg_instagram_poster_db" {
   }
 }
 
-# Create tasks database for the tasks PWA (Reminders-style front-end over
-# Nextcloud CalDAV; FastAPI + SvelteKit SPA — see ~/code/tasks). Stores
-# Connected Accounts (Fernet-encrypted Nextcloud app passwords) + sync state.
-# Role password is managed by Vault Database Secrets Engine (static role
-# `pg-tasks`, 7d rotation). Tables are created by alembic on app startup.
-resource "null_resource" "pg_tasks_db" {
-  depends_on = [null_resource.pg_cluster]
-
-  triggers = {
-    db_name  = "tasks"
-    username = "tasks"
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
-        bash -c '
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tasks'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE ROLE tasks WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'tasks'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE DATABASE tasks OWNER tasks"
-          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE tasks TO tasks"
-        '
-    EOT
-  }
-}
-
 # Create f1_stream database for the f1-stream site's visitor and viewing record:
 # which browser or TV watched which stream, how well it played, and the media
 # bytes each client was sent (f1-stream ADR-0014). The app applies its own
