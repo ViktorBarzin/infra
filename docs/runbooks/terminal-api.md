@@ -147,7 +147,7 @@ duration. To lift a ban on a legitimate caller:
   an unauthenticated ttyd on `0.0.0.0:18099`, which every pod could open. IPv6 published ports go
   through docker-proxy on the input path and are not covered by this rule. Tests:
   `sudo bash scripts/test-devvm-lobby-nftables.sh`.
-- AdminNetworkPolicy `devvm-lobby-ports` (priority 10): no namespace except `traefik` may reach
+- ClusterNetworkPolicy (`policy.networking.k8s.io/v1alpha2`, tier `Admin`) `devvm-lobby-ports` (priority 10): no namespace except `traefik` may reach
   `10.0.10.10` on 7681, 7683-7688, 7690 or 8710. `devvm-lobby-ports-headscale` (priority 11) lets
   `headscale` reach only 7681 (subnet-router probe), and `devvm-lobby-ports-monitoring`
   (priority 12) lets `monitoring` reach only 7684 (tmux-api metrics). Each observer namespace has
@@ -155,3 +155,7 @@ duration. To lift a ban on a legitimate caller:
   needs. Needed because Calico SNATs pod egress to the node address, which the nftables rules
   admit. The policy data is in `stacks/terminal/devvm_lobby_anp.tf`, and
   `tests/devvm-lobby-anp.test.sh` checks who reaches which port.
+  These were AdminNetworkPolicies (`v1alpha1`) until 2026-10-17. Calico 3.32 stopped enforcing
+  ANP/BANP, so after the 3.33 upgrade on 2026-10-12 they did nothing and every pod reached ttyd
+  again (infra#123). Verify enforcement with a live probe, not just by checking that the object
+  exists: from a pod in any other namespace, `wget -T5 http://10.0.10.10:7681/` must time out.

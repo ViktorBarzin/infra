@@ -270,14 +270,14 @@ resource "cloudflare_dns_record" "terminal_api_aaaa" {
 }
 
 # --- in-cluster reach to the devvm Lobby ports ---
-# Policy data and the reasoning are in devvm_lobby_anp.tf. Who reaches which
+# Policy data and the reasoning are in devvm_lobby_anp.tf (ClusterNetworkPolicy, tier Admin). Who reaches which
 # port: traefik all of them, headscale only 7681, monitoring only 7684, every
 # other namespace none (pinned by tests/devvm-lobby-anp.test.sh).
-resource "kubernetes_manifest" "devvm_lobby_anp" {
-  for_each = local.devvm_lobby_anps
+resource "kubernetes_manifest" "devvm_lobby_cnp" {
+  for_each = local.devvm_lobby_cnps
   manifest = {
-    apiVersion = "policy.networking.k8s.io/v1alpha1"
-    kind       = "AdminNetworkPolicy"
+    apiVersion = "policy.networking.k8s.io/v1alpha2"
+    kind       = "ClusterNetworkPolicy"
     metadata = {
       name = each.key
     }
@@ -285,7 +285,12 @@ resource "kubernetes_manifest" "devvm_lobby_anp" {
   }
 }
 
-moved {
+# The v1alpha1 AdminNetworkPolicies these replace. Calico 3.32+ ignores them
+# (infra#123), so they are dropped from state without deleting the objects;
+# deleting the three inert objects is tracked separately.
+removed {
   from = kubernetes_manifest.devvm_lobby_anp
-  to   = kubernetes_manifest.devvm_lobby_anp["devvm-lobby-ports"]
+  lifecycle {
+    destroy = false
+  }
 }
