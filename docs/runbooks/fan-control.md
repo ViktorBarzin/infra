@@ -290,6 +290,29 @@ Loop every ~15 s, using only the existing IPMI + HA-REST methods:
 2. apply it via `ipmitool raw 0x30 0x30 0x02 0xff 0x<NN>` (writes only if the change clears `MIN_STEP`);
 3. read CPU temp + fan rpm for safety + telemetry (Pushgateway).
 
+**iDRAC load.** The temperature and fan reads go through a cached copy of the
+iDRAC's sensor table, `SDR_CACHE` (default `/var/cache/fan-control/sdr.cache`).
+A plain `ipmitool sdr type …` downloads all 187 sensor records before reading
+any of them, which on 2026-10-17 measured 549 IPMI requests and ~1.4 s per read,
+about 217,000 requests an hour from this daemon alone. Through the cache the two
+reads take 17 requests and 0.06 s per loop. The iDRAC's one processor also
+answers the SNMP and Redfish exporters: with nonstop live reads added, the SNMP
+scrape p50 went from 4.4 s to 6.7 s and its slowest from 8.8 s to 27.4 s, past
+the 15 s scrape timeout. The daemon writes the cache at start and rewrites it
+once whenever a cached read finds no matching sensor (the table only changes
+with hardware or iDRAC firmware). If the dump fails it reads live, as before.
+`SDR_CACHE=` (empty) in `/etc/fan-control.env` turns the cache off.
+
+Regular iDRAC clients, as counted on 2026-10-15 (HA and Uptime Kuma do not reach it;
+HA reads through Prometheus):
+
+| Client | Path | Interval | Per run |
+|---|---|---|---|
+| snmp-exporter (`snmp-idrac`) | SNMP v2c, network | 30 s | ~20 packets, 201 series, p50 ~3.6 s |
+| idrac-redfish-exporter (`redfish-idrac`) | Redfish HTTPS, network | 10 min | p50 ~23 s |
+| Synology "Check server power state" | Redfish HTTPS, network | 10 min | 1 GET |
+| this daemon | in-band IPMI (`/dev/ipmi0`) | ~15 s | 17 requests (1,097 before the cache) |
+
 **Anti-flap:** on a missing/stale command it **holds the last applied %** for up
 to `HA_GRACE_SECS` (300 s) instead of falling back; only sustained loss hands the
 fans to Dell auto. `HA_GRACE_SECS` stays at the 300 s default by Emil's choice
@@ -346,6 +369,7 @@ records every command line on this host and ships it to Loki.
 | A readout blinks `unavailable` | the REST value-template fallback should hold it; a 1×/8h blip at ~02:00 (backup window) is a benign fetch hiccup. |
 | PID setting changes ignored | does `sensor.r730_fan_pid_pid_output` move, and does `sensor.r730_fan_command_pct` follow it? token valid? |
 | Command shows `-1` | the PID's Auto mode is off, its output is unavailable (e.g. right after an HA restart), or the freshness guard fired because `sensor.r730_cpu_temperature` has no fresh reading (Prometheus / SNMP iDRAC scrape). The daemon holds 300 s, then Dell auto; it resumes on its own when the command returns. |
+| Temp or rpm reads empty after a hardware or iDRAC firmware change | the daemon re-dumps the sensor table on its own (`SDR cache refreshed` in the journal). To force it, `rm /var/cache/fan-control/sdr.cache` and restart. |
 | Box left in manual after crash | `ipmitool raw 0x30 0x30 0x01 0x01` to force Dell auto. |
 | Faceplate field does not take a click or loses typed text | the input needs `pointer-events:auto` (button-card disables pointer events on its content), and it must live in its own card: a button-card re-creates nested cards when it re-renders, which drops focus. Both are handled in the generator on the NAS. |
 

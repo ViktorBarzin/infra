@@ -63,5 +63,51 @@ eq "hex 45"  0x2d "$(fc_pct_to_hex 45)"
 eq "hex 100" 0x64 "$(fc_pct_to_hex 100)"
 eq "hex 5"   0x05 "$(fc_pct_to_hex 5)"
 
+# --- SDR cache: reads go through a dumped sensor table, not a fresh download ---
+# A fake ipmitool logs each call. `sdr dump` writes a cache file (or fails when
+# FAKE_DUMP_FAIL=1); a cached read prints nothing while FAKE_STALE exists, which
+# stands in for a table that no longer matches the hardware.
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+cat >"$T/ipmitool" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_LOG"
+if [[ "$1" == "-S" ]]; then shift 2; cached=1; else cached=0; fi
+case "$1 $2" in
+  "sdr dump") [[ "${FAKE_DUMP_FAIL:-0}" == 1 ]] && exit 1; echo sdr >"$3"; rm -f "$FAKE_STALE" ;;
+  "sdr type")
+    (( cached == 1 )) && [[ -e "$FAKE_STALE" ]] && exit 0
+    [[ "$3" == temperature ]] && echo 'Temp             | 0Eh | ok  |  3.1 | 61 degrees C'
+    [[ "$3" == fan ]] && { echo 'Fan1             | 30h | ok  |  7.1 | 6000 RPM'; echo 'Fan2             | 31h | ok  |  7.1 | 6200 RPM'; } ;;
+esac
+EOF
+chmod +x "$T/ipmitool"
+export FAKE_LOG="$T/log" FAKE_STALE="$T/stale"
+export IPMITOOL="$T/ipmitool"
+calls() { grep -c -- "$1" "$FAKE_LOG" 2>/dev/null || true; }  # <pattern> -> count
+reset_fake() { rm -f "$FAKE_LOG" "$FAKE_STALE" "$SDR_CACHE"; FAKE_DUMP_FAIL=0; }
+export FAKE_DUMP_FAIL=0
+
+SDR_CACHE="$T/cache/sdr.cache"; reset_fake
+eq "cache: first read dumps the table"   61 "$(read_cpu_temp)"
+eq "cache: one dump"                      1 "$(calls 'sdr dump')"
+eq "cache: read goes through the cache"   1 "$(calls "^-S $SDR_CACHE sdr type temperature")"
+eq "cache: fan mean from the cache"    6100 "$(read_fan_rpm)"
+eq "cache: no second dump"                1 "$(calls 'sdr dump')"
+eq "cache: no live reads"                 0 "$(calls '^sdr type')"
+
+reset_fake; read_cpu_temp >/dev/null; : >"$FAKE_STALE"
+eq "stale: empty cached read re-dumps"   61 "$(read_cpu_temp)"
+eq "stale: exactly one re-dump"           2 "$(calls 'sdr dump')"
+eq "stale: still no live reads"           0 "$(calls '^sdr type')"
+
+reset_fake; export FAKE_DUMP_FAIL=1
+eq "dump fails: falls back to a live read" 61 "$(read_cpu_temp)"
+eq "dump fails: live read happened"         1 "$(calls '^sdr type temperature')"
+export FAKE_DUMP_FAIL=0
+
+reset_fake; SDR_CACHE=""
+eq "no cache configured: live read"  61 "$(read_cpu_temp)"
+eq "no cache configured: no dump"     0 "$(calls 'sdr dump')"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))
