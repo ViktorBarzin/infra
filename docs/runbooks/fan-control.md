@@ -375,8 +375,16 @@ records every command line on this host and ships it to Loki.
 
 ## Verify wiring
 ```bash
-ssh -i ~/.ssh/pve_root root@192.168.1.127 'set -a; . /etc/fan-control.env; set +a; RUN_ONCE=1 /usr/local/bin/fan-control'
+ssh -i ~/.ssh/pve_root root@192.168.1.127 'set -a; . /etc/fan-control.env; set +a; DRY_RUN=1 RUN_ONCE=1 /usr/local/bin/fan-control'
 ```
 The log `cmd=%` should equal `sensor.r730_fan_command_pct`. Switch the faceplate to
 MAN and type a different OP so the HA sensor changes, re-run, and the applied `cmd=%`
 should follow; return with AUTO.
+
+`DRY_RUN=1` keeps this one-shot run off the fans while the service is running; it
+still reads HA, the temperature and the fans, and logs `DRY set fan …%`. Without
+it, the run writes the command and its exit handler then hands the fans to Dell
+auto. The service still counts manual mode as on, so it re-sends only the duty and
+not manual mode, and the fans can stay on Dell auto until the service restarts or
+passes through its own Dell auto fallback. Every applied write is in the service's
+journal anyway (`cmd=` lines).
