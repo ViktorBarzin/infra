@@ -182,7 +182,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
         container {
           # Terraform owns the tag; Renovate proposes bumps. 3.3.0 is what
           # Keel had rolled (as :3.3) when it was retired (2026-10-10).
-          image = "ghcr.io/paperless-ngx/paperless-ngx:3.3.1"
+          image = "ghcr.io/paperless-ngx/paperless-ngx:3.3.2"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
@@ -522,7 +522,7 @@ resource "kubernetes_deployment" "gotenberg" {
       }
       spec {
         container {
-          image = "gotenberg/gotenberg:8.37.0"
+          image = "gotenberg/gotenberg:8.38.1"
           name  = "gotenberg"
           # docker-compose `command:` == k8s `args` (overrides CMD, keeps the
           # image's tini ENTRYPOINT). Paperless's recommended hardening flags.
