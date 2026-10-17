@@ -91,7 +91,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # Viktor wants every upstream release here, majors included.
           # Renovate offers each bump (majors as their own commit); the tag
           # must stay a semver tag, never `latest`, so the bumps sort.
-          image = "stirlingtools/stirling-pdf:3.1.0"
+          image = "stirlingtools/stirling-pdf:3.2.0"
           name  = "stirling-pdf"
           # v2's entrypoint DYNAMICALLY sizes the JVM from the container memory
           # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
@@ -135,8 +135,10 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # JVM cold-start on a Sablier wake is ~15-25s. Without probes the pod
           # reports Ready the instant the process starts, so Sablier forwards
           # the held request into a not-yet-serving JVM → 502. startup gates a
-          # ~120s boot budget; readiness keeps the pod out of the Service until
-          # it serves. Probe /api/v1/info/status — the auth-free health endpoint
+          # ~300s boot budget (raised from ~120s on 2026-10-17: init ~25s plus a
+          # 30-100s JVM start overran 120s on a busy node and crashlooped);
+          # readiness keeps the pod out of the Service until it serves. Probe
+          # /api/v1/info/status — the auth-free health endpoint
           # (/ is login-gated on the standard image; status stays 200 regardless).
           startup_probe {
             http_get {
@@ -145,7 +147,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
             }
             initial_delay_seconds = 5
             period_seconds        = 3
-            failure_threshold     = 40
+            failure_threshold     = 100
             timeout_seconds       = 3
           }
           readiness_probe {
