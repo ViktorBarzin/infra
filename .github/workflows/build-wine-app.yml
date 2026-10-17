@@ -1,0 +1,38 @@
+name: Build wine-app
+
+# ADR-0002: infra-owned image built off-infra on GHA → ghcr (public).
+# The generic Wine + noVNC base for Windows apps (modules/kubernetes/wine_app,
+# ADR-0035). It holds no app: each app installs into its own PVC on first
+# start, so nothing proprietary is in this image. Stacks pin the commit-sha
+# tag, never latest. Make the new package public once after its first push.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'images/wine-app/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: images/wine-app
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/wine-app:latest
+            ghcr.io/viktorbarzin/wine-app:${{ github.sha }}

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Readiness probe: noVNC answers on :6080 AND the app's main window exists.
+# Not ready during the first-start install (which takes minutes).
+set -u
+APP_READY_WINDOW=$(. /app/app.env >/dev/null 2>&1; echo "${APP_READY_WINDOW:-}")
+[ -n "$APP_READY_WINDOW" ] || exit 1
+[ "$(cat /tmp/wine-app-state 2>/dev/null)" = running ] || exit 1
+curl -fs -o /dev/null --max-time 3 http://127.0.0.1:6080/vnc.html || exit 1
+DISPLAY=:0 timeout 5 xdotool search --name "$APP_READY_WINDOW" >/dev/null 2>&1
