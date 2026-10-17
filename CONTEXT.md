@@ -78,6 +78,14 @@ _Avoid_: "cold start" for the whole event (cold start is the *duration* the wake
 The per-group activity window (default 3h) that every real, non-probe request refreshes; expiry parks the group. Held only in Sablier's memory — and on restart Sablier PARKS every enrolled workload without a live session (`auto-stop-on-startup`, the deliberate clean-slate), so a restart means "everything enrolled re-wakes on its next request", not "windows continue".
 _Avoid_: reading "session" as a user/auth session (it's per-Service-group, shared by all visitors); assuming sessions survive a Sablier restart.
 
+**Wake gate**:
+A small HTTP service that owns `/` of an on-demand Service, scales its Deployment from 0 to 1 on visit and shows a waiting page until it is ready, paired with an idle-sleeper CronJob that scales it back. Used where Sablier cannot be (noVNC over a WebSocket): android-emulator and every **Wine app**. Not an **Enrolled** Service.
+_Avoid_: "Sablier" for these; "autoscaler".
+
+**Wine app**:
+A Windows desktop application run under Wine in its own pod from `modules/kubernetes/wine_app`, shown in the browser through noVNC and asleep behind a **Wake gate** when unused (ADR-0035). The base image `wine-app` holds no app; each app installs into the Wine prefix on its own PVC on first start. iVMS-4200 is the first.
+_Avoid_: "Windows VM" (there is none); "the iVMS image" (the image is shared and app-free).
+
 ### GPU sharing
 
 **GPU slice**:
@@ -210,6 +218,14 @@ _Avoid_: "branch", "remote office"; calling a roaming WireGuard or tailnet clien
 **Mladost 3 site**:
 The network at the flat in Mladost 3, Sofia (code name `mladost3`): one OpenWrt router serving `192.168.3.0/24` on its own ISP line, reaching the hub over the tunnel. It replaced a stock D-Link router in Oct 2026, and the router was the Sofia edge router before that. `mladost3.viktorbarzin.me` is that router's admin UI.
 _Avoid_: "Mladost" alone (Mladost 1-4 are different districts); using `mladost3` for the D-Link it replaced.
+
+**Vermont complex**:
+The residential complex in Simeonovo, Sofia, that the Sofia site's apartment and garage belong to, with its own network of Hikvision devices (cameras, NVR, entrance panels, an access terminal, apartment monitors) on `192.168.1.0/24`, the same range as the Sofia home LAN. Reached only through rpi-sofia's `guestns` namespace. Not a **Site**: it has no router on the WireGuard tunnel.
+_Avoid_: "the camera network" (the home LAN has cameras too); "Vermont" alone when you mean the garage camera `vermont-garage`, which is on the home dCCTV segment.
+
+**Complex alias**:
+The range `10.77.1.0/24`, which rpi-sofia maps 1:1 onto the **Vermont complex** network, so `10.77.1.111` is the complex device `192.168.1.111`. It exists because the two `192.168.1.0/24` ranges overlap. Reachable from the `ivms` namespace, the devvm and VM 300 (ADR-0035).
+_Avoid_: calling the complex devices by their `192.168.1.x` address from the homelab side, where that address means a home device.
 
 ### London site
 

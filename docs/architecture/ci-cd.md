@@ -95,7 +95,7 @@ can't reach Forgejo's public hairpin.
 
 | Visibility | Packages | Pull mechanism |
 |------------|----------|----------------|
-| **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, android-emulator | Anonymous |
+| **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, android-emulator, wine-app | Anonymous |
 | **Private** | f1-stream, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
 
 Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
@@ -186,6 +186,7 @@ reconciled — the workflows were added to the GitHub lineage via PR):
 | Image | Workflow | Destination |
 |-------|----------|-------------|
 | android-emulator | `build-android-emulator.yml` | public `ghcr.io/viktorbarzin/android-emulator` |
+| wine-app (base for Windows apps, ADR-0035) | `build-wine-app.yml` | public `ghcr.io/viktorbarzin/wine-app` |
 | infra CLI | `build-cli.yml` | DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli` |
 | infra-ci | `build-infra-ci.yml` | private `ghcr.io/viktorbarzin/infra-ci` |
 | k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal`, deployed by `.woodpecker/first-party-deploy.yml` |
