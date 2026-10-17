@@ -1,0 +1,75 @@
+---
+# playbooks/pfsense-vermont-alias.yml
+#
+# pfSense side of the path to the Vermont complex alias 10.77.1.0/24
+# (ADR-0035): gateway rpi_sofia, static route, no-NAT for the allowed clients,
+# and a floating block for everyone else. The Pi side is
+# playbooks/rpi-sofia-netmap.yml; the pod-level rule is the
+# ClusterNetworkPolicy in stacks/ivms.
+#
+# The client list lives in two places that must agree: $CLIENTS in
+# files/pfsense-vermont-alias-config.php and vermont_allowed_sources in
+# rpi-sofia-netmap.yml.
+#
+# RUN (from repo root; claim presence first:
+#      scripts/presence claim infra:pfsense --purpose "vermont alias route"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-vermont-alias.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-vermont-alias.yml
+#
+# The daily backup copies config.xml; the configurator also leaves pfSense's
+# own config history entry ("Vermont complex alias route"), restorable from
+# Diagnostics > Backup & Restore > Config History.
+
+- name: pfSense route to the Vermont complex alias
+  hosts: pfsense
+  gather_facts: false
+  vars:
+    php_script_remote: /tmp/pfsense-vermont-alias-config.php
+
+  tasks:
+    - name: Ship the idempotent configurator
+      ansible.builtin.copy:
+        src: files/pfsense-vermont-alias-config.php
+        dest: "{{ php_script_remote }}"
+        mode: "0700"
+        owner: root
+      # The script is the idempotency boundary; see pfsense-tailscale.yml.
+      changed_when: false
+      check_mode: false
+
+    - name: Apply desired configuration (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} -- --check
+      changed_when: false
+      check_mode: false
+      register: cfg_check
+      when: ansible_check_mode
+
+    - name: Report what check mode would change
+      ansible.builtin.debug:
+        var: (cfg_check.stdout | from_json).changes
+      when: ansible_check_mode
+
+    - name: Apply desired configuration
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} --
+      register: cfg_apply
+      changed_when: (cfg_apply.stdout | from_json).changed | bool
+      when: not ansible_check_mode
+
+    - name: Report configuration changes
+      ansible.builtin.debug:
+        var: (cfg_apply.stdout | from_json).changes
+      when: not ansible_check_mode
+
+    - name: Read the installed route
+      ansible.builtin.command: route -n get 10.77.1.111
+      register: route_get
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: Assert the route points at rpi-sofia
+      ansible.builtin.assert:
+        that:
+          - "'gateway: 192.168.1.10' in route_get.stdout"
+        fail_msg: "{{ route_get.stdout }}"
+      when: not ansible_check_mode
