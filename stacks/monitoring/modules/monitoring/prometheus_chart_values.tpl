@@ -6236,9 +6236,11 @@ serverFiles:
               severity: warning
             annotations:
               summary: "external-dns (technitium ns) has not synced *.viktorbarzin.lan in over 15m. New .lan Ingress hosts get no record"
-          # A refused or unsigned zone transfer reads as an empty zone, not an
-          # error, so the last-sync timestamp keeps advancing. The zone holds
-          # well over 100 records; near zero means the AXFR is failing.
+          # Since external-dns v0.23.0 (upstream #6652) a refused, unsigned or
+          # timed-out zone transfer is a soft error, which
+          # ExternalDNSLanSoftErrors below catches. This alert stays as a
+          # backstop: the zone holds well over 100 records, so near zero means
+          # external-dns reads far fewer records than the zone has.
           - alert: ExternalDNSLanZoneEmpty
             expr: external_dns_registry_endpoints_total < 20
             for: 10m
