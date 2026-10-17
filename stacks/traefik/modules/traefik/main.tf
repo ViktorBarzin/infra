@@ -50,9 +50,12 @@ resource "helm_release" "traefik" {
   # 3.0.0-3.7.11). That bump moved logs.access to accessLog (41.0.0 changed the
   # logs syntax) and added aliasHeadersStrategy on websecure. 41.7.1 since
   # 2026-10-10: same app and templates, it only adds Traefik Hub version
-  # support (Hub is not enabled here). No image.tag pin: the chart default
-  # image is the version.
-  version         = "41.7.1"
+  # support (Hub is not enabled here). 42.0.0 since 2026-10-17: same app
+  # v3.7.14; its breaking changes (Kubernetes >= 1.30, Hub Secret RBAC, Hub
+  # transparency-log witnesses) do not touch this install, and the rendered
+  # manifest differs only in the helm.sh/chart label. No image.tag pin: the
+  # chart default image is the version.
+  version         = "42.0.0"
   atomic          = true
   cleanup_on_fail = true
   timeout         = 600
@@ -279,7 +282,7 @@ resource "helm_release" "traefik" {
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
         # entrypoint. Verify any change here by rendering the Service first:
-        #   helm template traefik traefik/traefik --version 41.7.1 -f <values>
+        #   helm template traefik traefik/traefik --version 42.0.0 -f <values>
         # and confirm websecure/TCP:443 is still in the output.
         http3 = {
           enabled        = true
