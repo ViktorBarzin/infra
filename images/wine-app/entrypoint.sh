@@ -130,9 +130,13 @@ install_app() {
 
   if [ "$mode" = fresh ]; then
     rm -rf "$WINEPREFIX"
+    # Wine refuses to create a prefix inside a directory it does not own, and
+    # a PVC root is root-owned (group-writable through fsGroup), so the prefix
+    # directory is created first: wine accepts an existing one owned by us.
+    mkdir -p "$WINEPREFIX"
     # The first wineboot of a prefix must not see the X display: under X it
     # failed with "could not load kernel32.dll" (2026-10-17).
-    env -u DISPLAY wineboot -i >/dev/null 2>&1 || die "wineboot -i failed"
+    env -u DISPLAY wineboot -i >/tmp/wineboot.log 2>&1 || { tail -20 /tmp/wineboot.log >&2; die "wineboot -i failed"; }
     wineserver -w
   fi
   if [ -n "$APP_WINETRICKS" ]; then
