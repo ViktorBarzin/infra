@@ -35,7 +35,7 @@ persistence:
   enabled: false # using external mysql
   existingClaim: "grafana-pvc"
 ingress:
-  enabled: "true"
+  enabled: true
   ingressClassName: "traefik"
   annotations:
     traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
@@ -58,7 +58,7 @@ ingress:
     - "grafana.viktorbarzin.me"
 sidecar:
   datasources:
-    enabled: "true"
+    enabled: true
   dashboards:
     enabled: true
     label: "grafana_dashboard"
