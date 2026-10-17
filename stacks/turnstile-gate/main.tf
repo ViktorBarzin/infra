@@ -138,7 +138,7 @@ resource "kubernetes_deployment" "gate" {
         }
         container {
           name    = "gate"
-          image   = "python:3.12-slim"
+          image   = "python:3.15-slim"
           command = ["python3", "-u", "/app/gate.py"]
           env {
             name  = "TURNSTILE_SITEKEY"
