@@ -47,7 +47,7 @@ and Terminal Lobby's own files ship in its Debian package.
 ## Instructions
 - **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in your own AGENTS.md — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
 - **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
-- **New service**: Use `setup-project` skill for full workflow
+- **New service**: Use `setup-project` skill for full workflow. A new first-party TanStack Start app is one `modules/kubernetes/tanstack_app` call; steps in `docs/agents/new-app.md`.
 - **Adopting existing resources**: use HCL `import {}` blocks (TF 1.5+), not `terraform import` CLI. Commit stanza → plan-to-zero → apply → delete stanza. Canonical reason: reviewable in PR, plan-safe, idempotent, tier-agnostic. Full rules + per-provider ID formats in `docs/agents/terraform.md` → "Adopting Existing Resources".
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `docs/agents/*.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
@@ -168,6 +168,7 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 - `docs/agents/infrastructure.md` — hosts, nodes, GPU scheduling, SMTP
 - `docs/agents/known-issues.md` — Known Issues
 - `docs/agents/homelab-cli.md` — the `homelab` verb catalogue
+- `docs/agents/new-app.md` — a new first-party app on the ADR-0001 stack: `modules/kubernetes/tanstack_app` plus the dbaas and vault map entries
 - Repowise: `docs/architecture/repowise.md`. Automated service upgrades: `docs/architecture/automated-upgrades.md`
 
 ## User Preferences

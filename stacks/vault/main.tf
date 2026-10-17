@@ -1068,7 +1068,8 @@ resource "vault_database_secret_backend_connection" "mysql" {
 resource "vault_database_secret_backend_connection" "postgresql" {
   backend = vault_mount.database.path
   name    = "postgresql"
-  allowed_roles = [
+  # A list in vault provider 5.13, so order is part of the plan.
+  allowed_roles = distinct(concat([
     "pg-trading",
     "pg-health", "pg-linkwarden",
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
@@ -1085,7 +1086,12 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-paperless-ngx",
     "pg-f1-stream",
     "pg-verify-probe",
-  ]
+    ], [
+    # App databases from app_db_roles.tf. distinct() keeps the first
+    # occurrence, so roles already listed above keep their place and a new
+    # app's role is appended at the end.
+    for k in sort(keys(var.pg_app_roles)) : "pg-${k}"
+  ]))
 
   postgresql {
     connection_url = "postgresql://{{username}}:{{password}}@postgresql.dbaas.svc.cluster.local:5432/postgres?sslmode=disable"
@@ -1331,9 +1337,6 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
   rotation_period = 604800
 }
 
-# tasks PWA (Reminders-style front-end over Nextcloud CalDAV) — 7-day rotation
-# for the `tasks` CNPG role. Consumed by stacks/tasks via a vault-database
-# ExternalSecret -> TASKS_DB_DSN (remoteRef static-creds/pg-tasks).
 # State for the Goodreads -> Calibre pipeline: one row per shelf item recording
 # what happened to it, so a book is attempted once and misses stay explainable.
 resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
@@ -1341,14 +1344,6 @@ resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-goodreads-sync"
   username        = "goodreads_sync"
-  rotation_period = 604800
-}
-
-resource "vault_database_secret_backend_static_role" "pg_tasks" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-tasks"
-  username        = "tasks"
   rotation_period = 604800
 }
 
