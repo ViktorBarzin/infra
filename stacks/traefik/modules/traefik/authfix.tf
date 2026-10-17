@@ -161,7 +161,7 @@ resource "kubernetes_deployment" "authfix" {
           # estate. Renovate proposes bumps of this tag through the CI rails.
           # Pinned patch@digest (2026-10-12); the floating 3.13-alpine tag had
           # left the 2 pods on different builds.
-          image   = "python:3.15.0-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928"
+          image   = "python:3.15.0-alpine@sha256:e7044ccc46c44b6174e0051dbdcb84c79e19d0f2c398d28d5d45521ea42b01e2"
           command = ["python3", "/app/authfix.py"]
           port { container_port = 8080 }
           volume_mount {
