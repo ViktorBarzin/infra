@@ -39,8 +39,3 @@ resource "vault_database_secret_backend_static_role" "pg_app" {
   rotation_schedule = each.value.rotation_schedule
   rotation_window   = each.value.rotation_window
 }
-
-moved {
-  from = vault_database_secret_backend_static_role.pg_tasks
-  to   = vault_database_secret_backend_static_role.pg_app["tasks"]
-}

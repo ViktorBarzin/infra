@@ -47,8 +47,3 @@ resource "null_resource" "pg_app_db" {
     EOT
   }
 }
-
-moved {
-  from = null_resource.pg_tasks_db
-  to   = null_resource.pg_app_db["tasks"]
-}
