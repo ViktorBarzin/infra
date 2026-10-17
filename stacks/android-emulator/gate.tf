@@ -53,6 +53,55 @@ resource "kubernetes_role_binding" "gate" {
   }
 }
 
+# The f1-stream deploy puts the emulator to sleep before it rolls the
+# Transcoder, whose surge pod needs the 800 gpumem the emulator holds on
+# k8s-node1 (Viktor, 2026-10-17; f1-stream .woodpecker/deploy.yml, infra
+# stacks/f1-stream/main.tf GPU seat note). It scales down the same way the idle
+# sleeper does, a replicas patch on the named Deployment, and waits for the pod
+# to leave. It does not wake the emulator again; the gate does that on the next
+# visit.
+#
+# Woodpecker runs pipeline steps as the `default` ServiceAccount in namespace
+# woodpecker. That account is cluster-admin today (stacks/woodpecker,
+# woodpecker-default), so this Role grants nothing new yet. It names what the
+# deploy needs here, so the deploy keeps working if that binding is narrowed.
+resource "kubernetes_role" "deploy_yield" {
+  metadata {
+    name      = "f1-stream-deploy-yield"
+    namespace = kubernetes_namespace.android-emulator.metadata[0].name
+  }
+  rule {
+    api_groups     = ["apps"]
+    resources      = ["deployments"]
+    resource_names = ["android-emulator"]
+    verbs          = ["get", "patch"]
+  }
+  # `kubectl get pods -l app=android-emulator` lists, and list cannot be
+  # limited by name.
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_role_binding" "deploy_yield" {
+  metadata {
+    name      = "f1-stream-deploy-yield"
+    namespace = kubernetes_namespace.android-emulator.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.deploy_yield.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "default"
+    namespace = "woodpecker"
+  }
+}
+
 resource "kubernetes_config_map" "gate" {
   metadata {
     name      = "android-emulator-gate"

@@ -18,10 +18,12 @@
 #
 # Memory: the process is the full app (about 250 MiB, like an Edge at rest)
 # plus up to ~10 full watches and ~40 light ones, each streaming segments
-# without holding them. 768Mi limit, which fits the namespace quota with an Edge
-# surge in flight (limits used 11456Mi of 16Gi on 2026-10-16, including a
-# pending Transcoder surge pod, which Recreate has since removed; +768Mi watcher
-# +1536Mi Edge surge = 13760Mi), so the quota is unchanged.
+# without holding them. 768Mi limit. The namespace quota still has room for a
+# deploy with the Transcoder back on a surge (2026-10-17): limits used 10176Mi
+# of 16Gi at rest, Watcher included; a Transcoder surge pod +2048Mi, the old
+# Transcoder still terminating while the Edge surge pod starts +1536Mi, and the
+# hourly source-guard job +768Mi come to 14528Mi. Requests peak at 3776Mi of
+# 6Gi memory and 910m of 2 CPU. The quota is unchanged.
 resource "kubernetes_deployment_v1" "f1_watcher" {
   metadata {
     name      = "f1-stream-watcher"
