@@ -63,7 +63,7 @@ resource "kubernetes_deployment" "cloudflared" {
         }
         container {
           # image = "wisdomsky/cloudflared-web:latest"
-          image = "cloudflare/cloudflared:2026.10.0"
+          image = "cloudflare/cloudflared:2026.10.1"
           name  = "cloudflared"
           # --no-autoupdate: without it cloudflared self-updates in place and
           # exits (code 11) when CF ships a release, severing every WebSocket
