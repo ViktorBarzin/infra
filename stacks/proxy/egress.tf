@@ -249,11 +249,11 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
           # SOCKS5 is UNRELEASED. The newest gluetun RELEASE (v3.41.3, commit
           # 3d1e20c, 2026-07-30) has NO socks5 listener at all — pinning to it on
           # 2026-08-16 silently left Service port 1080 with nothing behind it.
-          # This digest is the `:latest` build (commit 7eed6ea, 2026-08-07) that
+          # This digest is the `:latest` build (commit 41654bf, 2026-10-16) that
           # was verified to carry BOTH the http proxy and socks5, end to end.
           # Same pattern as NEKO_IMAGE in main.tf. If you bump this, re-verify
           # `socks5` appears in the gluetun startup log before trusting :1080.
-          image = "ghcr.io/qdm12/gluetun@sha256:2733bb22b27e3efa7a9f2cef9057ec12791b8b225793fcd3dbfd0508404dfc25"
+          image = "ghcr.io/qdm12/gluetun@sha256:945d325be5c2abe50b89c84791b51a4e3d039737ed3703b2482c1e2b396e8fbe"
           security_context {
             capabilities {
               # Kernelspace WireGuard needs no /dev/net/tun, no privileged and
