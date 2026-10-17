@@ -29,15 +29,62 @@ same name with underscores.
 4. Stack: create `stacks/<slug>/` with
    - `terragrunt.hcl` including root and depending on `platform`, `vault` and
      `external-secrets` (copy `stacks/tasks/terragrunt.hcl`),
-   - `authentik.tf` with the `authentik` provider block and any
-     `data "authentik_user"` lookups for admins (copy `stacks/tasks/authentik.tf`),
-   - `main.tf` with `image_tag`, `postgresql_host` and `tls_secret_name`
-     variables and one `module "app"` call.
+   - `authentik.tf` with the `authentik` provider block and the
+     `data "authentik_user"` lookup for the owner (copy `stacks/tasks/authentik.tf`),
+   - `main.tf` with the three variables and one `module "app"` call:
+
+     ```hcl
+     variable "image_tag" {
+       type    = string
+       default = "latest" # used only when the Deployment is created; CI sets the running tag
+     }
+     variable "postgresql_host" { type = string }
+     variable "tls_secret_name" {
+       type      = string
+       sensitive = true
+     }
+
+     module "app" {
+       source          = "../../modules/kubernetes/tanstack_app"
+       name            = "<slug>"
+       display_name    = "<Display Name>"
+       tier            = local.tiers.aux
+       image           = "ghcr.io/viktorbarzin/<slug>"
+       image_tag       = var.image_tag
+       postgresql_host = var.postgresql_host
+       tls_secret_name = var.tls_secret_name
+
+       # The owner signs in as a member and approves everyone else. Request
+       # mode refuses to plan without an admin.
+       initial_user_pks = [data.authentik_user.viktor.id]
+       admin_user_pks   = [data.authentik_user.viktor.id]
+     }
+     ```
+
+     `postgresql_host` and `tls_secret_name` come from `config.tfvars`.
 5. Apply in order: dbaas, vault, then the new stack (CI does this on push to
-   master; check each one landed, see `docs/agents/terraform.md`).
-6. CI: register the repo with `scripts/offinfra-onboard`. The template ships
-   its own `build.yml` and `.woodpecker/deploy.yml`, which onboarding should
-   keep rather than replace; check the script's options before running it.
+   master; check each one landed, see `docs/agents/terraform.md`). The stack
+   can go in before the app's first image exists: the module does not wait
+   for the rollout, and the pod sits in `ImagePullBackOff` until the first
+   build pushes `:latest` and the Woodpecker deploy sets the tag.
+6. CI: from a clean clone of the app repo, run
+
+   ```sh
+   scripts/offinfra-onboard <slug> --clone <path-to-clone> --visibility public \
+     --namespace <slug> --deploy "<slug>=migrate,<slug>" --keep-workflows
+   ```
+
+   `--keep-workflows` keeps the template's own `build.yml` and
+   `.woodpecker/deploy.yml`. The script sets the `WOODPECKER_TOKEN`,
+   `FORGEJO_GIT_TOKEN` and `SLACK_WEBHOOK` secrets, registers the mirror in
+   Woodpecker and sets the `WOODPECKER_REPO_ID` repo variable that the
+   template's `build.yml` reads.
+
+A private repo publishes a private ghcr image, which the cluster cannot pull
+anonymously: add the namespace to `ghcr_private_namespaces` in
+`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`, pass
+`image_pull_secrets = ["ghcr-credentials"]` to the module and
+`--visibility private` to the script.
 
 ## Connection budget
 

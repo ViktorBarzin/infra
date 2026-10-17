@@ -8,8 +8,11 @@
 #   2. Sets GHA secrets (WOODPECKER_TOKEN, FORGEJO_GIT_TOKEN, SLACK_WEBHOOK).
 #   3. Ensures the Forgejo push-mirror (sync_on_commit) + fires an initial sync.
 #   4. Registers the mirror in Woodpecker (github forge) → deploy repo id.
+#   4b. Sets the GitHub repo variable WOODPECKER_REPO_ID to that id (workflows
+#      that read `${{ vars.WOODPECKER_REPO_ID }}`, e.g. the app template's).
 #   5. Renders .github/workflows/build.yml + .woodpecker/deploy.yml into the
-#      clone, removes the old in-cluster build pipeline.
+#      clone (skipped with --keep-workflows), removes the old in-cluster
+#      build pipeline.
 #   6. Commits on the FORGEJO side and pushes master (this fires the chain).
 #   7. Flips the GitHub default branch to master once the mirror has synced.
 #
@@ -17,7 +20,11 @@
 #   offinfra-onboard <name> --clone <path> --visibility private|public \
 #     --namespace <ns> --deploy "<deployment>=<container>[,<container>...]" \
 #     [--image <ghcr-image-name>] [--context <docker-context>] [--dockerfile <path>] \
-#     [--test-steps <yaml-file>] [--dry-run]
+#     [--test-steps <yaml-file>] [--keep-workflows] [--no-deploy] [--dry-run]
+#
+#   --keep-workflows keeps the clone's own build.yml and .woodpecker/deploy.yml
+#   (an app made from viktor/app-template ships tested ones) instead of
+#   rendering the generic templates over them.
 #
 #   --deploy is repeatable. --test-steps points at a YAML fragment of extra
 #   steps for the lint-and-test job (indented for a `steps:` list); omitted =
@@ -32,7 +39,7 @@ FORGEJO_LB="10.0.20.203"
 WP_API="https://ci.viktorbarzin.me/api"
 
 NAME=${1:?usage: offinfra-onboard <name> [flags]}; shift
-CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." DOCKERFILE="Dockerfile" TEST_STEPS_FILE="" DRY_RUN=0 NO_DEPLOY=0
+CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." DOCKERFILE="Dockerfile" TEST_STEPS_FILE="" DRY_RUN=0 NO_DEPLOY=0 KEEP_WORKFLOWS=0
 DEPLOYS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,6 +52,7 @@ while [ $# -gt 0 ]; do
     --deploy) DEPLOYS+=("$2"); shift 2;;
     --test-steps) TEST_STEPS_FILE=$2; shift 2;;
     --no-deploy) NO_DEPLOY=1; shift;;
+    --keep-workflows) KEEP_WORKFLOWS=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
@@ -157,6 +165,12 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 fi
 
+# --- 4b) WOODPECKER_REPO_ID repo variable (gh variable set creates or updates) ---
+if [ "$NO_DEPLOY" = 0 ]; then
+  log "setting repo variable WOODPECKER_REPO_ID=$WP_REPO_ID"
+  run gh variable set WOODPECKER_REPO_ID -R "$GH_OWNER/$NAME" --body "$WP_REPO_ID"
+fi
+
 # --- 5) Render workflow + deploy files into the clone ---
 DEPLOY_CMDS=""
 for d in "${DEPLOYS[@]}"; do
@@ -190,8 +204,12 @@ os.makedirs(os.path.dirname(dst), exist_ok=True)
 open(dst, 'w').write(s)
 PYEOF
 }
+if [ "$KEEP_WORKFLOWS" = 1 ]; then
+  log "--keep-workflows: keeping the clone's own build.yml and .woodpecker/deploy.yml"
+else
 log "rendering build.yml$([ "$NO_DEPLOY" = 1 ] && echo ' (no deploy step)' || echo ' + deploy.yml')"
-if [ "$DRY_RUN" = 0 ]; then
+fi
+if [ "$DRY_RUN" = 0 ] && [ "$KEEP_WORKFLOWS" = 0 ]; then
   render "$TEMPLATES/build.yml.tmpl"  "$CLONE/.github/workflows/build.yml"
   # The deploy trigger is the last step of the build job, fenced by marker
   # comments. CronJob-only (--no-deploy) drops the fenced block, since
@@ -220,8 +238,10 @@ OLD_REMOVED=""
 for f in .woodpecker.yml .woodpecker/build.yml .woodpecker/build-fallback.yml; do
   [ -f "$f" ] && { run git rm -q "$f"; OLD_REMOVED="$OLD_REMOVED $f"; }
 done
-run git add .github/workflows/build.yml
-[ -f .woodpecker/deploy.yml ] && run git add .woodpecker/deploy.yml
+if [ "$KEEP_WORKFLOWS" = 0 ]; then
+  run git add .github/workflows/build.yml
+  [ -f .woodpecker/deploy.yml ] && run git add .woodpecker/deploy.yml
+fi
 if git diff --cached --quiet 2>/dev/null; then
   log "no changes to commit — SKIP (already migrated)"
 else

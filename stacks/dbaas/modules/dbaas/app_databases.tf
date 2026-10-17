@@ -33,6 +33,15 @@ resource "null_resource" "pg_app_db" {
     username = each.key
   }
 
+  lifecycle {
+    # The key goes unquoted into CREATE ROLE / CREATE DATABASE. A dashed app
+    # slug (my-app) needs the underscore form (my_app) here.
+    precondition {
+      condition     = can(regex("^[a-z][a-z0-9_]*$", each.key))
+      error_message = "app_databases keys are Postgres identifiers: lowercase letters, digits and underscores, starting with a letter (use my_app for the slug my-app)."
+    }
+  }
+
   provisioner "local-exec" {
     command = <<-EOT
       PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
