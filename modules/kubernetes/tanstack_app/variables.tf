@@ -58,13 +58,19 @@ variable "strategy" {
 variable "http_port" {
   type        = number
   default     = 3000
-  description = "Port the app serves HTTP on (PORT in the image)."
+  description = "Port the app serves HTTP on. The image defaults PORT to 3000; any other value is passed as PORT."
 }
 
 variable "metrics_port" {
   type        = number
   default     = 9090
-  description = "Port that serves /metrics (METRICS_PORT in the image). The ingress never routes it; the Service's prometheus.io annotations point at it."
+  description = "Port that serves /metrics. The image defaults METRICS_PORT to 9090; any other value is passed as METRICS_PORT. The ingress never routes it; the Service's prometheus.io annotations point at it."
+}
+
+variable "image_pull_secrets" {
+  type        = list(string)
+  default     = []
+  description = "Pull secrets for a private image, e.g. [\"ghcr-credentials\"] (a ghcr package pushed from a private GitHub repo is private). The namespace must also be on the Kyverno ghcr_private_namespaces allowlist, which copies that Secret in."
 }
 
 variable "resources" {
@@ -216,7 +222,7 @@ variable "authentik_url" {
 variable "signup_mode" {
   type        = string
   default     = "request"
-  description = "\"request\": new accounts wait for an admin to approve them in the app. \"open\": sign-up adds them to the users group at once."
+  description = "\"request\": new accounts wait for an admin to approve them in the app. \"open\": sign-up adds them to the users group at once. Open mode is passed to the app as SIGNUP_MODE=open."
 
   validation {
     condition     = contains(["request", "open"], var.signup_mode)
@@ -251,13 +257,13 @@ variable "agents_group" {
 variable "initial_user_pks" {
   type        = list(number)
   default     = []
-  description = "Authentik user pks seeded into the users group on creation only; later approvals are runtime state."
+  description = "Authentik user pks seeded into the users group on creation only; later approvals are runtime state. Admins are not members by default, so list the app's owner here too."
 }
 
 variable "admin_user_pks" {
   type        = list(number)
   default     = []
-  description = "Authentik user pks in the admins group. Authoritative."
+  description = "Authentik user pks in the admins group. Authoritative: members added in the Authentik UI are removed on the next apply. In request mode at least one is required, since only an admin can approve access requests."
 }
 
 variable "bind_home_server_admins" {

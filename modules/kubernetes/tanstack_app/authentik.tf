@@ -111,6 +111,15 @@ module "signup" {
 resource "authentik_group" "admins" {
   name  = local.admins_group
   users = var.admin_user_pks
+
+  lifecycle {
+    # Home Server Admins gets past Authentik but is not an app member, so with
+    # no admin nobody could approve the first access request.
+    precondition {
+      condition     = !local.request_mode || length(var.admin_user_pks) > 0
+      error_message = "signup_mode = \"request\" needs at least one admin_user_pks entry; only an app admin can approve access requests."
+    }
+  }
 }
 
 resource "authentik_group" "agents" {

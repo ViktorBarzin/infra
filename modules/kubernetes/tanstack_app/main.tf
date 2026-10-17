@@ -51,6 +51,15 @@ locals {
     var.agents_group != null ? [{ name = "AUTH_AGENTS_GROUP", value = var.agents_group }] : [],
   ) : []
 
+  # Emitted only when they differ from the image defaults (PORT=3000,
+  # METRICS_PORT=9090, signup "request"), so an app on the defaults renders
+  # exactly as tasks always has.
+  setting_env = concat(
+    var.http_port != 3000 ? [{ name = "PORT", value = tostring(var.http_port) }] : [],
+    var.metrics_port != 9090 ? [{ name = "METRICS_PORT", value = tostring(var.metrics_port) }] : [],
+    local.request_mode ? [] : [{ name = "SIGNUP_MODE", value = var.signup_mode }],
+  )
+
   container_env = concat(
     [
       { name = "DATABASE_URL", value = local.database_url },
@@ -60,11 +69,13 @@ locals {
       { name = "OIDC_DISCOVERY_URL", value = "${var.authentik_url}/application/o/${authentik_application.this.slug}/.well-known/openid-configuration" },
       { name = "AUTHENTIK_API_URL", value = var.authentik_url },
     ],
+    local.setting_env,
     local.group_env,
     var.extra_env,
   )
-  # DEV_USER must never be set on a production pod. The app ignores it under
-  # NODE_ENV=production.
+  # DEV_USER must never be set on a production pod. The app template honours
+  # it only under NODE_ENV development or test, and @viktorbarzin/auth ignores
+  # it whenever OIDC is configured.
 }
 
 resource "kubernetes_namespace" "this" {
@@ -82,6 +93,11 @@ resource "kubernetes_namespace" "this" {
 }
 
 resource "kubernetes_deployment" "this" {
+  # CI owns rollouts (CI_SETS_IMAGE). Waiting here would fail the first apply,
+  # which runs before the first image exists, and leave the Deployment tainted;
+  # the next apply would then replace it and roll back CI's image.
+  wait_for_rollout = false
+
   metadata {
     name      = var.name
     namespace = kubernetes_namespace.this.metadata[0].name
@@ -114,6 +130,15 @@ resource "kubernetes_deployment" "this" {
       }
 
       spec {
+        # Needed only for a private ghcr image (a package pushed from a private
+        # GitHub repo is private); see README "Private repositories".
+        dynamic "image_pull_secrets" {
+          for_each = var.image_pull_secrets
+          content {
+            name = image_pull_secrets.value
+          }
+        }
+
         security_context {
           run_as_non_root = true
           run_as_user     = 10001
