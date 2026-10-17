@@ -115,7 +115,7 @@ variable "extra_env" {
 variable "emit_group_env" {
   type        = bool
   default     = true
-  description = "Emit AUTH_USERS_GROUP, AUTH_ADMINS_GROUP (and AUTH_AGENTS_GROUP when set) after the platform env. tasks passes false until it adopts the @viktorbarzin packages."
+  description = "Emit AUTH_USERS_GROUP, AUTH_ADMINS_GROUP (and AUTH_AGENTS_GROUP when set) after the platform env. False only for an app that reads its group names from code."
 }
 
 # --- Hostnames -----------------------------------------------------------------

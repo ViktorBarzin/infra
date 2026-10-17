@@ -41,9 +41,9 @@ module "app" {
     { name = "TASKS_CALDAV_BASE_URL", value = "https://nextcloud.viktorbarzin.me/remote.php/dav" },
     { name = "TASKS_LOCAL_TZ", value = "Europe/Sofia" },
   ]
-  # tasks reads its group names from code until it adopts the @viktorbarzin
-  # packages; turning this on adds env vars and restarts the pod once.
-  emit_group_env = false
+  # tasks reads AUTH_USERS_GROUP and AUTH_ADMINS_GROUP since it runs on the
+  # @viktorbarzin packages; the values equal its built-in defaults.
+  emit_group_env = true
 
   # Usernames in this instance are email addresses. On 2026-10-16 the tasks
   # database had one Connected Account, so Tasks Users was seeded with it.
