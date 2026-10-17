@@ -22,13 +22,20 @@
 # means a caller who sends their own copy has it replaced on the way through.
 # A request that never met the middleware arrives without one.
 #
-# WHY THE VALUE LIVES IN TERRAFORM STATE AND NOWHERE ELSE. It is read by
-# exactly two things, the Middleware below and the Deployment in main.tf, both
-# of them in this file's stack. Putting it in Vault would add a second place to
+# WHY THE VALUE LIVES IN TERRAFORM STATE AND NOWHERE ELSE. It is read by the
+# Middleware below and by the four Roles (Edge, Worker, Transcoder, Watcher),
+# all in this file's stack. Putting it in Vault would add a second place to
 # rotate it from and a second thing to keep in step, for no consumer that
 # cannot already read it here. Rotating it is `terraform taint` on this
-# resource plus an apply, which updates the Middleware and the Deployment in
-# the same run.
+# resource plus an apply, which updates the Middleware and the Secret in the
+# same run; Reloader then rolls the Roles.
+#
+# The Roles read it through the Secret below, not as a literal env value.
+# Literal env is part of the pod spec, so anything allowed to list pods in
+# f1-stream could read it; since 2026-10-17 that includes the Android
+# emulator's gate (stacks/android-emulator, Role android-emulator-yield-watch),
+# which lists pods to see a Transcoder surge waiting for GPU. Reading a Secret
+# needs its own grant, which that Role does not have.
 #
 # NOT A CHANGE TO stacks/traefik. A namespaced Middleware is enough, and it
 # keeps this to one stack: the shared middleware file is attached to every
@@ -39,6 +46,16 @@ resource "random_password" "ingress_proof" {
   # two YAML manifests; there is no reason to make either of those interesting
   # when 48 characters of [A-Za-z0-9] is already far past guessing.
   special = false
+}
+
+resource "kubernetes_secret" "ingress_proof" {
+  metadata {
+    name      = "f1-stream-ingress-proof"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  }
+  data = {
+    proof = random_password.ingress_proof.result
+  }
 }
 
 resource "kubernetes_manifest" "ingress_proof" {

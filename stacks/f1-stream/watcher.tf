@@ -172,8 +172,13 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
           # Set on every Role, so this pod never trusts Authentik headers from
           # anything that can reach it (see the Edge).
           env {
-            name  = "INGRESS_PROOF_SECRET"
-            value = random_password.ingress_proof.result
+            name = "INGRESS_PROOF_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.ingress_proof.metadata[0].name
+                key  = "proof"
+              }
+            }
           }
           # Reputation, samples, the Tier 1 list and viewers' interruptions all
           # live in the viewing Postgres (schema version 7).
