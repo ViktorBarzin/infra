@@ -257,6 +257,15 @@ resource "helm_release" "grafana" {
   chart      = "grafana"
   version    = "14.0.1"
 
-  values     = [templatefile("${path.module}/grafana_chart_values.yaml", { grafana_admin_password = var.grafana_admin_password, mysql_host = var.mysql_host })]
+  values = [templatefile("${path.module}/grafana_chart_values.yaml", { mysql_host = var.mysql_host })]
+  # The admin password comes from a vault_kv_secret_v2 data source, which
+  # vault provider v5 marks deprecated. Passed into templatefile(), the
+  # sensitive + deprecation marks made Terraform 1.15 fail the apply with
+  # "function returned an inconsistent result" (2026-10-17), so it goes in
+  # through set_sensitive instead and the template gets no marked values.
+  set_sensitive = [
+    { name = "adminPassword", value = var.grafana_admin_password, type = "string" },
+    { name = "ingress.annotations.gethomepage\\.dev/widget\\.password", value = var.grafana_admin_password, type = "string" },
+  ]
   depends_on = [kubernetes_manifest.grafana_db_creds]
 }

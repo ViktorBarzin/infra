@@ -10,7 +10,6 @@ replicas: 1
 # and rendered by the chart.
 image:
   tag: "{{ .Chart.AppVersion }}"
-adminPassword: "${grafana_admin_password}"
 plugins:
   - netsage-sankey-panel
 resources:
@@ -49,7 +48,6 @@ ingress:
     gethomepage.dev/widget.type: "grafana"
     gethomepage.dev/widget.url: "http://grafana.monitoring.svc.cluster.local"
     gethomepage.dev/widget.username: "admin"
-    gethomepage.dev/widget.password: "${grafana_admin_password}"
   tls:
     - secretName: "tls-secret"
       hosts:
