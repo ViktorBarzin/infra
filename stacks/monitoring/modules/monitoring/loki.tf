@@ -26,8 +26,9 @@ resource "helm_release" "loki" {
   # (Loki 3.7.8). The community README "Upgrading" notes for majors 8-18 touch
   # nothing we set; the StatefulSet keeps its name, selector, serviceName and
   # the `storage` volumeClaimTemplate, so helm patches it in place and
-  # storage-loki-0 keeps its data.
-  version = "18.15.1"
+  # storage-loki-0 keeps its data. 2026-10-17: 18.15.1 -> 18.17.0, rendered
+  # manifests differ only in the chart label.
+  version = "18.17.0"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
