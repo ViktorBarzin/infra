@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "dashy" {
       }
       spec {
         container {
-          image = "lissy93/dashy:4.8.3"
+          image = "lissy93/dashy:4.8.7"
           name  = "dashy"
 
           resources {
