@@ -14,8 +14,8 @@ verify_component() {
   check "DNS VIP 10.0.20.201:53 accepts TCP" tcp_open 10.0.20.201 53
   # external-dns syncs every 1m; a new pod needs one loop before the gauge moves.
   check "external-dns synced .lan in the last 5m" retry 180 15 expect_prom 'time() - max(external_dns_controller_last_sync_timestamp_seconds)' -lt 300
-  # Its zone transfer from the primary works: an AXFR that fails reads as an
-  # empty zone, not an error (134 records on 2026-10-15).
+  # Its zone transfer from the primary works (134 records on 2026-10-15). Up to
+  # app v0.22.0 an AXFR that failed read as an empty zone, not an error.
   check "external-dns sees the .lan zone (>= 20 records)" retry 180 15 expect_prom 'max(external_dns_registry_endpoints_total)' -ge 20
   check "external-dns has no consecutive soft errors" retry 120 15 expect_prom 'max(external_dns_controller_consecutive_soft_errors)' -eq 0
 }
