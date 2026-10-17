@@ -1,0 +1,114 @@
+---
+# playbooks/rpi-sofia-netmap.yml
+#
+# The Vermont complex alias on rpi-sofia: 10.77.1.0/24 maps 1:1 onto the
+# complex network (192.168.1.0/24 inside netns guestns), and only the listed
+# sources may use it.
+#
+# WHY: Emil's session placed vermont-netmap.sh and its unit on the Pi by hand
+# on 2026-10-17 for iVMS on VM 300. Since ADR-0035 the iVMS pod in the cluster
+# depends on it too, through a pfSense route, so a rebuilt Pi (an ageing SD
+# card, see docs/architecture/monitoring.md) must get it back from here.
+#
+# Scope: only vermont-netmap. camera_net_setup2.sh, camera-net.service, the
+# socat relays and the rest of the Pi stay hand-managed for now.
+#
+# RUN (from repo root; claim presence first:
+#      scripts/presence claim host:rpi-sofia --purpose "vermont-netmap"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-netmap.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-netmap.yml
+#
+# Safety: the rules match only traffic to 10.77.1.0/24 leaving through
+# veth-host, so Frigate, HA and the existing DNAT ports are not on their path.
+# The full rule set is saved before every change under
+# /home/pi/netbackup-<timestamp>-ansible/, restorable with iptables-restore
+# (host) and `ip netns exec guestns iptables-restore` (guestns).
+
+- name: rpi-sofia vermont-netmap
+  hosts: rpi_sofia
+  gather_facts: false
+  become: true
+  vars:
+    vermont_alias_cidr: 10.77.1.0/24
+    vermont_real_cidr: 192.168.1.0/24
+    vermont_guest_veth_ip: 10.200.1.2
+    vermont_pfsense_wan: 192.168.1.2
+    # Keep in step with $CLIENTS in files/pfsense-vermont-alias-config.php.
+    # pfSense does not NAT traffic to the alias, so these are real addresses.
+    vermont_allowed_sources:
+      - { cidr: 192.168.1.230, why: "VM 300, dormant iVMS-on-Windows path (infra#121)" }
+      - { cidr: 10.0.20.100, why: "k8s-master", via_pfsense: true }
+      - { cidr: 10.0.20.101, why: "k8s-node1", via_pfsense: true }
+      - { cidr: 10.0.20.102, why: "k8s-node2", via_pfsense: true }
+      - { cidr: 10.0.20.103, why: "k8s-node3", via_pfsense: true }
+      - { cidr: 10.0.20.104, why: "k8s-node4", via_pfsense: true }
+      - { cidr: 10.0.20.105, why: "k8s-node5", via_pfsense: true }
+      - { cidr: 10.0.10.10, why: "devvm", via_pfsense: true }
+
+  tasks:
+    - name: Render the script
+      ansible.builtin.template:
+        src: files/rpi-sofia/vermont-netmap.sh.j2
+        dest: /usr/local/sbin/vermont-netmap.sh
+        mode: "0755"
+        owner: root
+        group: root
+      register: script
+
+    - name: Install the unit
+      ansible.builtin.copy:
+        src: files/rpi-sofia/vermont-netmap.service
+        dest: /etc/systemd/system/vermont-netmap.service
+        mode: "0644"
+        owner: root
+        group: root
+      register: unit
+
+    - name: Save the current rules before changing them
+      ansible.builtin.shell: |
+        set -eu
+        d=/home/pi/netbackup-$(date +%Y%m%d-%H%M%S)-ansible
+        mkdir -p "$d"
+        iptables-save > "$d/host.rules"
+        ip netns exec guestns iptables-save > "$d/guestns.rules"
+        ip route > "$d/host.routes"
+        chown -R pi:pi "$d"
+        echo "$d"
+      register: backup
+      when: script.changed or unit.changed
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: unit.changed
+
+    - name: Enable the unit
+      ansible.builtin.systemd:
+        name: vermont-netmap.service
+        enabled: true
+
+    - name: Re-apply the rules
+      # restart = stop (removes the legacy rule too) then start with the new
+      # allowlist. Only traffic to the alias is briefly unfiltered-out, i.e.
+      # dropped for a moment with no route.
+      ansible.builtin.systemd:
+        name: vermont-netmap.service
+        state: restarted
+      when: script.changed or unit.changed
+
+    - name: Read the live rules
+      ansible.builtin.command: /usr/local/sbin/vermont-netmap.sh status
+      register: status
+      changed_when: false
+      check_mode: false
+
+    - name: Assert the alias is live with the expected allowlist
+      ansible.builtin.assert:
+        that:
+          - "'10.77.1.0/24 via 10.200.1.2 dev veth-host' in status.stdout"
+          - "'-i eth1 -o veth-host -j VERMONT_NETMAP' in status.stdout"
+          - "'10.0.20.101 via 192.168.1.2 dev eth1' in status.stdout"
+          - "'NETMAP --to 192.168.1.0/24' in status.stdout"
+          - "status.stdout_lines | select('search', '-A VERMONT_NETMAP -s') | list | length == vermont_allowed_sources | length"
+        fail_msg: "{{ status.stdout }}"
+      when: not ansible_check_mode

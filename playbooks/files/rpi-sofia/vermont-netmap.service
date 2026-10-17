@@ -1,0 +1,16 @@
+# Managed by playbooks/rpi-sofia-netmap.yml — edit there, not here.
+[Unit]
+Description=Vermont complex alias 10.77.1.0/24 (ADR-0035)
+Documentation=file:///usr/local/sbin/vermont-netmap.sh
+After=camera-net.service
+Requires=camera-net.service
+PartOf=camera-net.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/vermont-netmap.sh start
+ExecStop=/usr/local/sbin/vermont-netmap.sh stop
+
+[Install]
+WantedBy=camera-net.service multi-user.target

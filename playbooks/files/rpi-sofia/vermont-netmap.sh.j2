@@ -1,0 +1,115 @@
+#!/bin/bash
+# Managed by playbooks/rpi-sofia-netmap.yml — edit there, not here.
+#
+# vermont-netmap: gives the Vermont complex network (guestns, 192.168.1.0/24)
+# a second, non-overlapping address, 10.77.1.0/24, so clients on the homelab
+# side reach every complex device on every port: 10.77.1.x is 192.168.1.x in
+# the complex. ADR-0035, runbook docs/runbooks/cameras-nvr-intercom.md.
+#
+# The rules sit FIRST, because the older DNAT rules in camera_net_setup2.sh
+# match on port only, not on destination address, and would otherwise send for
+# example 10.77.1.115:8000 to the NVR.
+#
+# Who may use the alias is the VERMONT_NETMAP chain: an allowed source arriving
+# on eth1 RETURNs to FORWARD (and continues exactly as before), anything else
+# is dropped. pfSense does not NAT this traffic, so the sources are the real
+# k8s node and devvm addresses; each gets a return route via pfSense's WAN
+# address so replies do not hairpin through the TP-Link.
+# Usage: vermont-netmap.sh start|stop|status
+set -u
+NS=guestns
+ALIAS={{ vermont_alias_cidr }}
+REAL={{ vermont_real_cidr }}
+GUEST_VETH_IP={{ vermont_guest_veth_ip }}
+CHAIN=VERMONT_NETMAP
+LAN_IF=eth1
+PFSENSE_WAN={{ vermont_pfsense_wan }}
+ALLOWED_SRCS=(
+{% for s in vermont_allowed_sources %}
+  {{ s.cidr }}   # {{ s.why }}
+{% endfor %}
+)
+# Sources behind pfSense, which need a return route via its WAN address.
+ROUTED_SRCS=(
+{% for s in vermont_allowed_sources if s.via_pfsense | default(false) %}
+  {{ s.cidr }}
+{% endfor %}
+)
+
+# Rules from earlier versions of this script, removed on start and stop.
+legacy_rules=(
+  "filter FORWARD -o veth-host -d $ALIAS ! -s 192.168.1.230 -j DROP"
+)
+
+ipt() { iptables "$@"; }
+nsipt() { ip netns exec $NS iptables "$@"; }
+
+remove_all() {  # $1=function, rest = -t table chain rule...
+  local fn=$1; shift
+  local t=$1 c=$2; shift 2
+  while $fn -t "$t" -C "$c" "$@" 2>/dev/null; do $fn -t "$t" -D "$c" "$@"; done
+}
+
+drop_legacy() {
+  local r
+  for r in "${legacy_rules[@]}"; do
+    set -- $r
+    remove_all ipt "$@"
+  done
+}
+
+start() {
+  drop_legacy
+  # Allowlist chain, rebuilt from scratch so a removed source disappears.
+  ipt -N $CHAIN 2>/dev/null || true
+  ipt -F $CHAIN
+  local s
+  for s in "${ALLOWED_SRCS[@]}"; do
+    ipt -A $CHAIN -s "$s" -j RETURN
+  done
+  ipt -A $CHAIN -j DROP
+  # Any jump other than the current one (e.g. an older one without -i) goes.
+  ipt -S FORWARD | grep -F -- "-j $CHAIN" | grep -vF -- "-i $LAN_IF" | sed 's/^-A /-D /' \
+    | while read -r rule; do ipt $rule; done
+  ipt -C FORWARD -i $LAN_IF -o veth-host -d $ALIAS -j $CHAIN 2>/dev/null \
+    || ipt -I FORWARD 1 -i $LAN_IF -o veth-host -d $ALIAS -j $CHAIN
+  ipt -t nat -C PREROUTING -d $ALIAS -j ACCEPT 2>/dev/null \
+    || ipt -t nat -I PREROUTING 1 -d $ALIAS -j ACCEPT
+  nsipt -t nat -C PREROUTING -i veth-guest -d $ALIAS -j NETMAP --to $REAL 2>/dev/null \
+    || nsipt -t nat -I PREROUTING 1 -i veth-guest -d $ALIAS -j NETMAP --to $REAL
+  ip route replace $ALIAS via $GUEST_VETH_IP dev veth-host
+  for s in "${ROUTED_SRCS[@]}"; do
+    ip route replace "$s" via $PFSENSE_WAN dev $LAN_IF
+  done
+  logger -t vermont-netmap "started, allowed: ${ALLOWED_SRCS[*]}"
+}
+
+stop() {
+  ip route del $ALIAS 2>/dev/null
+  local s
+  for s in "${ROUTED_SRCS[@]}"; do
+    ip route del "$s" via $PFSENSE_WAN dev $LAN_IF 2>/dev/null
+  done
+  drop_legacy
+  remove_all ipt filter FORWARD -i $LAN_IF -o veth-host -d $ALIAS -j $CHAIN
+  ipt -F $CHAIN 2>/dev/null && ipt -X $CHAIN 2>/dev/null
+  remove_all ipt nat PREROUTING -d $ALIAS -j ACCEPT
+  remove_all nsipt nat PREROUTING -i veth-guest -d $ALIAS -j NETMAP --to $REAL
+  logger -t vermont-netmap "stopped"
+}
+
+status() {
+  ip route show $ALIAS
+  for s in "${ROUTED_SRCS[@]}"; do ip route show "$s"; done
+  ipt -t nat -S PREROUTING | grep -F "$ALIAS"
+  ipt -S FORWARD | grep -F "$ALIAS"
+  ipt -S $CHAIN 2>/dev/null
+  nsipt -t nat -S PREROUTING | grep -F "$ALIAS"
+}
+
+case "${1:-}" in
+  start) start ;;
+  stop) stop ;;
+  status) status ;;
+  *) echo "usage: $0 start|stop|status"; exit 1 ;;
+esac
