@@ -174,17 +174,31 @@ stays on the NAS; what to do with it is Emil's decision.
 
 ## Verification
 
-- `ivms.viktorbarzin.me` from a browser: the waking page, then iVMS in noVNC.
-- After 30 minutes with no viewer, the Deployment is at 0 replicas.
-- From the ivms pod, `10.77.1.111:80` answers. From a pod in another
-  namespace on the same node, the same request is refused by the policy.
-- The panels and `.117` show Online in iVMS.
-- The push test person appears on `.111` and is gone after deletion.
-- Both playbooks report no changes on a second run.
+Results on 2026-10-17:
+
+| Check | Result |
+|---|---|
+| Authentik in front of both ingresses | `/` and `/vnc.html` redirect to Authentik, inside the LAN and through Cloudflare |
+| Wake | `/wake` on the gate scaled the Deployment to 1; the first start installed iVMS in 293 seconds |
+| Network policy | from the ivms pod, `10.77.1.111` ISAPI answers 401 and `.117` answers 200; from `claude-agent` on the same node, `10.77.1.111` times out while Traefik answers |
+| Devices | the 6 panels and `.117` are Online in iVMS |
+| Import | 95 people taken from the devices; every device's person list was byte-identical before and after |
+| Push test | `TEST-IVMS` appeared on `.111` and nowhere else; after deletion every device matched the pre-test snapshot |
+| Persistence | after a pod restart: login, 95 people, 7 devices; the stop took 28 seconds |
+| Idle sleep | with no viewer, the sleeper scaled the Deployment to 0 at its 20:25 run, 1999 seconds after the last viewer |
+| Playbooks | both report no changes on a second run |
+
+Not checked: the wake page in a browser through Authentik with a real login,
+because that needs Emil's or Viktor's session. The gate behind it was
+exercised directly and is covered by its unit tests.
 
 ## Open questions
 
-- Pushing to devices under Wine is unproven until the push test runs.
+- Deleting a person in iVMS does not remove them from a device they were
+  already applied to (seen in the push test). How iVMS should be used for
+  removals is still to be settled; until then a removal is also done on the
+  device.
+- "Apply All to Device" has not been tried.
 - A real iVMS version upgrade has not been tried, because 3.14.1.4 is the only
   version Hikvision offers today. A newer installer will probably open on a
   different first page, so `install.sh` will need its coordinates, and
