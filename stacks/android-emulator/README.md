@@ -13,6 +13,13 @@ gate owns `/` on both hostnames. Warm boot is ~90s. Idle is measured from
 real interaction, not connection count, so a forgotten `adb connect` (left
 ESTABLISHED) no longer keeps it awake — but `adb disconnect` anyway.
 
+An f1-stream deploy also puts it to sleep (since 2026-10-17): the f1
+Transcoder rolls with a surge pod that needs the emulator's 800 gpumem on
+k8s-node1, so `.woodpecker/deploy.yml` in the f1-stream repo scales the
+emulator to 0 before that roll and leaves it asleep. A session on the emulator
+at that moment is cut off; wake it again through the gate. The deploy's
+grant is the `f1-stream-deploy-yield` Role in `gate.tf`.
+
 - Humans: open https://android-emulator.viktorbarzin.me — it wakes the
   emulator if needed, shows a self-refreshing boot page, then hands over to
   the noVNC screen.
