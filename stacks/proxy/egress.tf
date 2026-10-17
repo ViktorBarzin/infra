@@ -100,7 +100,7 @@ locals {
 # gateway bug, design §3). They are live right now, so a plain create would fail
 # with `already exists`. These blocks are idempotent — a no-op once the objects
 # are in state — and may be removed after the next green apply. Same class as
-# stacks/monitoring/imports.tf and stacks/tasks/imports.tf.
+# stacks/monitoring/imports.tf.
 import {
   to = kubernetes_service.proxy_gw_1
   id = "proxy/proxy-gw-1"

@@ -72,7 +72,7 @@ locals {
     # HTML as the JSON descriptor and reports an invalid response. The probe
     # sends no cookie, which is what the carve-out rule keys on.
     "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
-    # tasks app root (auth="app", stacks/tasks module.ingress): the TypeScript
+    # tasks app root (auth="app", stacks/tasks module.app.module.ingress): the TypeScript
     # build runs its own OIDC sign-in. An Authentik 302 here breaks the
     # bearer-token API, the OAuth callback and cookie-less OS icon fetchers.
     # Replaced the tasks-icons carve-out target at the ADR-0001 cutover.
