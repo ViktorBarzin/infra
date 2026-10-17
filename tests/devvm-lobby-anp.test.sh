@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Checks which namespaces can reach the devvm Lobby ports through the
-# AdminNetworkPolicies in stacks/terminal/devvm_lobby_anp.tf.
+# ClusterNetworkPolicies (tier Admin) in stacks/terminal/devvm_lobby_anp.tf.
 #
 # That file holds only locals, so `terraform console` evaluates it without
-# providers, state or credentials. A small model of ANP evaluation (lowest
+# providers, state or credentials. A small model of CNP evaluation (lowest
 # priority number first, first matching rule wins, no match falls through to
 # allow) then answers "can namespace N reach 10.0.10.10:P" for every Lobby port
 # and compares it with the runbook (docs/runbooks/terminal-api.md):
@@ -19,7 +19,7 @@ SRC="$HERE/stacks/terminal/devvm_lobby_anp.tf"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 cp "$SRC" "$TMP/" || { echo "FAIL: cannot copy $SRC"; exit 1; }
-if ! (cd "$TMP" && echo 'jsonencode(local.devvm_lobby_anps)' | terraform console >"$TMP/out" 2>"$TMP/err"); then
+if ! (cd "$TMP" && echo 'jsonencode(local.devvm_lobby_cnps)' | terraform console >"$TMP/out" 2>"$TMP/err"); then
   echo "FAIL: terraform console could not evaluate $SRC (it must hold only locals)"; cat "$TMP/err"; exit 1
 fi
 
@@ -52,11 +52,14 @@ def subject_matches(subject, ns):
             raise ValueError(f"unsupported operator {e['operator']}")
     return True
 
-def port_matches(ports, port):
-    for p in ports:
-        if "portNumber" in p and p["portNumber"]["port"] == port:
+def port_matches(protocols, port):
+    for p in protocols:
+        if set(p) != {"tcp"}:
+            raise ValueError(f"unsupported protocol entry {p}")
+        dp = p["tcp"]["destinationPort"]
+        if "number" in dp and dp["number"] == port:
             return True
-        if "portRange" in p and p["portRange"]["start"] <= port <= p["portRange"]["end"]:
+        if "range" in dp and dp["range"]["start"] <= port <= dp["range"]["end"]:
             return True
     return False
 
@@ -66,8 +69,8 @@ def reachable(ns, port):
             continue
         for rule in spec.get("egress", []):
             nets = [n for peer in rule["to"] for n in peer.get("networks", [])]
-            if DEVVM in nets and port_matches(rule["ports"], port):
-                if rule["action"] == "Allow":
+            if DEVVM in nets and port_matches(rule["protocols"], port):
+                if rule["action"] == "Accept":
                     return True
                 if rule["action"] == "Deny":
                     return False
@@ -75,10 +78,16 @@ def reachable(ns, port):
                     return True  # no namespace NetworkPolicy targets 10.0.10.10
     return True
 
-# Two policies at one priority are undefined behaviour in the ANP API.
+# Calico 3.32+ enforces only ClusterNetworkPolicy; every policy here must sit
+# in the Admin tier to run before namespace NetworkPolicies (infra#123).
+for name, spec in anps.items():
+    if spec.get("tier") != "Admin":
+        failures.append(f"{name}: tier {spec.get('tier')!r}, want 'Admin'")
+
+# Two policies at one priority are undefined behaviour in the CNP API.
 prios = [s["priority"] for s in anps.values()]
 if len(prios) != len(set(prios)):
-    failures.append(f"duplicate ANP priorities {sorted(prios)}")
+    failures.append(f"duplicate CNP priorities {sorted(prios)}")
 
 for ns, want in EXPECT.items():
     got = {p for p in PORTS if reachable(ns, p)}

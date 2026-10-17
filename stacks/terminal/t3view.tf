@@ -25,7 +25,7 @@
 # the result names only the lobby.
 #
 # Reach on the DevVM side: the nftables table in playbooks/devvm.yml admits
-# 7690 from the Traefik nodes only, and the AdminNetworkPolicy in
+# 7690 from the Traefik nodes only, and the ClusterNetworkPolicy in
 # devvm_lobby_anp.tf keeps every namespace but traefik off it.
 
 resource "kubernetes_service" "t3view" {

@@ -1,5 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": []
+  "packageRules": [
+    {
+      "description": "rails revert 2026-10-17 pipeline #2635: stack traefik failed after this bump: its terragrunt apply failed (commit 270b8f35)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchNewValue": "3.15.0-alpine",
+      "enabled": false
+    }
+  ]
 }
