@@ -445,7 +445,8 @@ kube-state-metrics:
   # SablierWakeFailed alert can scope to scale-to-zero-enrolled workloads
   # (ADR-0022). KSM exports NO workload labels unless allowlisted here.
   metricLabelsAllowlist:
-    - deployments=[sablier.enable]
+    # wine-app: the WineApp* alerts below (modules/kubernetes/wine_app, ADR-0035)
+    - deployments=[sablier.enable,wine-app]
   # Export the dns-type annotation ingress_factory stamps on every ingress
   # (cloudflare.viktorbarzin.me/dns-type = proxied | non-proxied | internal) on
   # kube_ingress_annotations. The Trivy alert rules join on it by namespace to
@@ -3574,6 +3575,37 @@ serverFiles:
             annotations:
               summary: "Sablier (scale-to-zero wake layer) has no available replica — sleeping services cannot wake"
               description: "Enrolled services that are currently running are unaffected (plugin failOpen), but parked ones 503 on first request until Sablier recovers. `kubectl -n sablier describe deploy sablier`."
+      # Windows apps under Wine (modules/kubernetes/wine_app, ADR-0035). They
+      # sleep at 0 replicas and wake on visit through their own gate, so
+      # failure shows up in kube-state, not in a probe.
+      - name: Wine apps
+        rules:
+          # Woken but not ready for 45m. The first start installs the app,
+          # which the startup probe allows 30m for.
+          - alert: WineAppWakeFailed
+            expr: |
+              kube_deployment_status_replicas_unavailable > 0
+              and on(namespace, deployment) kube_deployment_spec_replicas > 0
+              and on(namespace, deployment) kube_deployment_labels{label_wine_app="true"} == 1
+            for: 45m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Windows app {{ $labels.namespace }}/{{ $labels.deployment }} woke but is not becoming ready"
+              description: "The pod has been unavailable for 45m after a wake. Usually a failed first-start install or the app window never appearing. `kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}`."
+          # Awake for 12h. The idle sleeper sleeps it after 30m with no viewer
+          # or 2h with no input, and leaves it running on any read error, so
+          # this is the signal that the sleeper is not working.
+          - alert: WineAppStuckAwake
+            expr: |
+              kube_deployment_spec_replicas > 0
+              and on(namespace, deployment) kube_deployment_labels{label_wine_app="true"} == 1
+            for: 12h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Windows app {{ $labels.namespace }}/{{ $labels.deployment }} has been awake for 12h"
+              description: "It holds its memory request (iVMS: 3.5Gi) while it runs. Check the sleeper: `kubectl -n {{ $labels.namespace }} get jobs`, then read the log of the newest {{ $labels.deployment }}-idle-sleeper job."
       - name: Infrastructure Health
         rules:
           - alert: HomeAssistantDown
