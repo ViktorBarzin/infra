@@ -30,7 +30,7 @@ locals {
   # reason this stack moved off the bundled Playwright Chromium. Upstream image,
   # DIGEST-pinned per the house rule (`:latest` is served stale by the
   # pull-through cache). Bump deliberately on a neko upgrade.
-  neko_image = "ghcr.io/m1k1o/neko/google-chrome:3.1.6@sha256:dce2a6286cfb7e747d7fb05fadd03b25bf2db155c4f71ae53e0f40be71837547"
+  neko_image = "ghcr.io/m1k1o/neko/google-chrome:3.2.0@sha256:0609ca9ec35a2745a189b3b4934ea609f71feb12a1a67c33df65f556599c7a7f"
   # Virtual-desktop resolution. Matches the framebuffer the old Xvfb ran, and an
   # admin can change it live from the neko UI (screen-size menu → xrandr).
   # Software x264 at this size costs ~1.2 cores while a viewer is attached, ~0
