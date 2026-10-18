@@ -126,12 +126,15 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
 | `paused` | A human brake. If you see it, stop and say you stopped. |
 | `needs-human` | Escalated. |
 | `f1-source` | An f1-stream upstream source is not producing playable streams. Filed automatically by the f1-stream source guard. **You do not fix these yourself** — see "Routing: `f1-source`" in Step 4. |
-| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes. Filed automatically by the f1-stream Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
+| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes (down), or fewer than 2 clean Feeds for 24 hours (thin; the title reads `thin:`). Filed automatically by the f1-stream Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
 | `incident`, `sev1`/`sev2`/`sev3`, `postmortem-required` | You apply these during triage. |
 
 An issue labelled `change` is never yours to implement autonomously. If you were
 dispatched for something that turns out not to be broken, say so, relabel it
-`change`, and close your run — do not implement it.
+`change`, and close your run — do not implement it. A thin `channel-source`
+issue is the exception: the Channel still plays by design, and the issue asks
+for more sources. Route it as "Routing: `channel-source`" says; do not relabel
+or close it.
 
 ## Step 1: Read everything first
 
@@ -271,6 +274,34 @@ that agent.
 The sub-agent ships, verifies recovery through the Watcher, and closes the
 issue itself. If it stops without fixing, escalate per Step 7 with its
 diagnosis attached.
+
+#### A thin Channel
+
+The Watcher also files a `channel-source` issue for a **thin** Channel: one
+with fewer than 2 clean Feeds (in its ready order with no frame gap in the last
+15 minutes) at every minute of the last 24 hours. The title reads
+`<name> thin: <n> clean Feed(s) for 24 h [channel-source: <slug>]`, and the
+body says the Channel still plays. A down issue can also carry a thin comment
+that starts `<!-- f1-watcher: thin -->`. A thin issue asks for more sources;
+it is not an outage. It differs from the down route in four places:
+
+1. **Skip the recovery check.** `f1_watcher_channel_up` reads 1 for a thin
+   Channel, so it says nothing about whether the issue still holds. Read
+   `f1_watcher_channel_thin{channel="<slug>"}` and the card's `clean_feeds`
+   and `thin` for the Channel instead, and note them in a comment. Do not close
+   the issue and do not relabel it `change` because the Channel is up.
+2. **No incident.** Do not add `incident` or a sev label; comment
+   `**Routing.** Thin Channel, handing to channel-source-fixer.`
+3. **Spawn `channel-source-fixer`** as in step 3 above, saying it is a thin
+   issue, with the Feed table (Watch score, frame gaps) from the body. Its
+   "A thin Channel" section covers the rest.
+4. **Leave the issue open**, and leave `agent-in-progress` for the service to
+   release when your run ends. The Watcher closes a thin issue itself once
+   the Channel has held 2 clean Feeds for an hour. Relay the fixer's result
+   as a comment. If it found no other site, it adds `needs-human`.
+
+A Channel that goes down while its thin issue is open gets a separate down
+issue, which takes the down route above.
 
 ### Repo scope
 
