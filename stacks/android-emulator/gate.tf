@@ -106,8 +106,10 @@ resource "kubernetes_role_binding" "deploy_yield" {
 # emulator holds, and puts the emulator to sleep when it finds one (gate.py,
 # yield_loop). The pods it watches carry the label
 # android-emulator-yields-to=gpu-seat; today that is the f1-stream Transcoder,
-# whose surge pod needs a second 1850 gpumem on k8s-node1 (infra
-# stacks/f1-stream/main.tf GPU seat note). The deploy pipeline above sleeps the
+# whose surge pod needs a second 1850 gpumem on k8s-node1, and the f1-stream
+# Worker, whose replacement pod needs its 2000 back (infra
+# stacks/f1-stream/main.tf GPU seat note). A pod that still waits after
+# YIELD_LIMIT_SECONDS stops holding the emulator asleep. The deploy pipeline above sleeps the
 # emulator before its own roll, but Reloader and Terraform roll the Transcoder
 # too, and only this watcher sees those. Reading pods there needs list on pods
 # in that namespace, and nothing more.
@@ -193,6 +195,13 @@ resource "kubernetes_deployment" "gate" {
             name  = "YIELD_SELECTOR"
             value = "android-emulator-yields-to=gpu-seat"
           }
+          # One pod keeps the emulator asleep for at most 15 min; past that it
+          # is short of more than the emulator's 800 gpumem (Viktor,
+          # 2026-10-18).
+          env {
+            name  = "YIELD_LIMIT_SECONDS"
+            value = "900"
+          }
           port {
             container_port = 8080
           }
@@ -215,6 +224,16 @@ resource "kubernetes_deployment" "gate" {
               port = 8080
             }
             period_seconds = 10
+          }
+          # /healthz fails when the yield watcher thread has died or stopped
+          # finishing passes; restarting the gate starts a new one.
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            period_seconds    = 10
+            failure_threshold = 6
           }
         }
         volume {
