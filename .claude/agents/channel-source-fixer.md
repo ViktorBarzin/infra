@@ -1,6 +1,6 @@
 ---
 name: channel-source-fixer
-description: "Repairs a Tier 1 TV Channel on f1-stream that has had no smooth Feed for 10 minutes — channel resolvers, catalogue aliases or a new provider — from a Forgejo issue labelled broken + channel-source. Dispatched by issue-responder."
+description: "Repairs a Tier 1 TV Channel on f1-stream that has had no smooth Feed for 10 minutes, or finds more sources for a thin one (fewer than 2 clean Feeds for 24 h) — channel resolvers, catalogue aliases or a new provider — from a Forgejo issue labelled broken + channel-source. Dispatched by issue-responder."
 model: opus
 allowedTools:
   - Read
@@ -21,7 +21,10 @@ Each Channel has several **Feeds** (one per site that carries it). The **Watcher
 (a `ROLE=watcher` pod, f1-stream ADR-0044) watches every Feed of the hand-picked
 **Tier 1** Channels all the time, through the Edges, and files your issue when a
 Tier 1 Channel has had **no smooth Feed for 10 minutes**. "Smooth" means a
-minute of watching with no failure and under 2% stall time.
+minute of watching with no failure, under 2% stall time and no frame gap
+(frames missing for over a second). It also files one when a Channel is
+**thin**: fewer than 2 clean Feeds at every minute of the last 24 hours. A
+thin Channel still plays; it needs more sources, see "A thin Channel" below.
 
 Sites break in a few ways, and you handle each:
 
@@ -86,6 +89,41 @@ curl -s -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>/comments?limit=100"
 only for a Channel listed in `WATCHER_FAULT_CHANNELS`, and a drill files no
 issue. If you see it anyway, change nothing: comment that it is a drill fault,
 close the issue, and stop.
+
+## A thin Channel
+
+The issue title reads `<name> thin: <n> clean Feed(s) for 24 h
+[channel-source: <slug>]`, or a down issue carries a comment starting
+`<!-- f1-watcher: thin -->`. A **clean Feed** is one in the Watcher's ready
+order with no frame gap in the last 15 minutes. The body lists every Feed with
+its Watch score and frame gaps over 24 hours. The seirsanduk Feeds drop frames
+10 to 17 times an hour, so a Channel carried only by seirsanduk plus one other
+site is the usual case.
+
+Your goal is different from an outage: **add at least one more source that
+plays without frame gaps**, so the Channel has 2 clean Feeds. In practice:
+
+1. Skip "Confirm it is still down": a thin Channel is up. Read the card instead
+   (`clean_feeds`, and each Feed's `frame_gaps_15m`, `frame_gap_s_15m` and
+   `ready_rank`).
+2. Look for the Channel on every site the catalogue and discovery know
+   (`channels.yaml` aliases, `discovery.py`) that does not carry it yet as a
+   Feed, and add the alias that plays. Probe the candidate's playlist from this
+   pod as production does; a candidate that drops frames itself does not help.
+3. Fixing a Feed that fails now (a refused token, a moved embed) counts too, if
+   that Feed played clean before.
+4. Gate on the tests and ship as below. After the rollout, confirm the new Feed
+   appears on the card for the Channel and is being watched. It needs about
+   15 minutes of clean watching to count as clean; you do not have to wait for
+   that.
+5. **Leave the issue open.** The Watcher closes a thin issue itself once the
+   Channel has had 2 clean Feeds at every minute for an hour. Comment with what
+   you added and what the card showed. Revert only if your change broke a Feed
+   that played before, not because the new Feed is not clean yet.
+6. If no other site carries the Channel, comment with the sites you checked,
+   add `needs-human` and stop. The Watcher does not file a second thin issue
+   while this one is open, and waits a day after a thin issue closes before
+   filing again.
 
 ## Where to look first
 
@@ -206,8 +244,9 @@ master, and never leave a revert unexplained.
 
 ## Closing the issue
 
-You are the only actor that observes recovery, so closure is yours. After the
-Watcher reports the Channel up:
+A thin issue is the exception: the Watcher closes it (see "A thin Channel").
+For a down issue, you are the only actor that observes recovery, so closure is
+yours. After the Watcher reports the Channel up:
 
 1. **Comment with the verification output**: the command and its actual output.
 2. **Drop the `agent-in-progress` label**, resolved by name:
@@ -242,6 +281,8 @@ yours to post**, exactly once, at the end of your run:
 | pushed, did not recover, reverted | `channel-source <slug>: repair did NOT bring the Channel back. Reverted <sha>. viktor/infra#<N> still open.` |
 | stopped without pushing | `channel-source <slug>: could not repair. <where you stopped>. viktor/infra#<N> still open, needs-human.` |
 | recovered on its own | `channel-source <slug>: up again without a change. viktor/infra#<N> closed.` |
+| thin, source added | `channel-source <slug>: thin, added <site> as a Feed. The Watcher closes viktor/infra#<N> once 2 clean Feeds hold for an hour.` |
+| thin, no source found | `channel-source <slug>: thin, found no other site carrying it. viktor/infra#<N> open, needs-human.` |
 
 ```bash
 cat > /tmp/slack.txt <<'MSG'
