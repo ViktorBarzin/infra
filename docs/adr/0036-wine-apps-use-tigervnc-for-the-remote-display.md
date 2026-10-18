@@ -101,3 +101,6 @@ GStreamer `nvh264enc` element ("Selected preset not supported"), so a neko
 pipeline using `nvh264enc preset=2` sends no video. The proxy browsers use
 that pipeline. On neko 3.2.0 the newer element works:
 `nvcudah264enc preset=p1 tune=ultra-low-latency`.
+The proxy broker was switched to `nvcudah264enc` (infra#129); the element is
+already present in its pinned `nvidia-chromium:3.1.4` image, so no image bump
+was needed.

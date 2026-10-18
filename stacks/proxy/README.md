@@ -68,7 +68,8 @@ home-IP leak.
   **neko** container (upstream `ghcr.io/m1k1o/neko/nvidia-chromium`,
   DIGEST-pinned via `NEKO_IMAGE` in `main.tf`) serving its UI + signaling
   WebSocket on HTTP `:8080`. neko v3 streams **hardware H.264** (NVENC on the T4,
-  `nvh264enc` at 8 Mbps) plus **Opus audio** over WebRTC, at
+  `nvcudah264enc` at 8 Mbps — not the legacy `nvh264enc`, whose presets the
+  T4's 595.x driver rejects, infra#129) plus **Opus audio** over WebRTC, at
   `NEKO_SCREEN=2560x1440@30` by default — an admin can change the resolution live
   from the UI. GPU scheduling: `nvidia.com/gpu=1` + a `viktorbarzin.me/gpumem`
   slot (`GPUMEM_MIB`, ~384) pins the pod to node1, and `GPU_BROWSERS_MAX` caps

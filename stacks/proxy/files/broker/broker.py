@@ -102,13 +102,20 @@ NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "2560x1440@30")
 # (~4.4 cores at 1440p) to the T4 (~0.9 core). Verified end-to-end (memory #10279):
 # the stock nvidia-chromium image runs once GLX is disabled in Xorg (initContainer
 # below; we only need the GPU for encode, not render).
+# Encoder element: nvcudah264enc (GStreamer's newer CUDA NVENC element, present in
+# the pinned 3.1.4 image's GStreamer 1.24.2), NOT the legacy nvh264enc. The T4
+# driver 595.91.07 rejects every legacy nvh264enc preset ("Selected preset not
+# supported" -> caps not-negotiated -> the viewer gets no video), infra#129.
+# preset p4 + tune ultra-low-latency + CBR is the new-API equivalent of the old
+# preset=2 (hq) + rc-mode=6 (cbr-ld-hq). The element keeps name=encoder because
+# neko looks it up by that name to change the bitrate at runtime.
 NEKO_GPU = os.environ.get("NEKO_GPU", "1") == "1"
 NEKO_PIPELINE = os.environ.get(
     "NEKO_PIPELINE",
     "ximagesrc display-name={display} show-pointer=true use-damage=false "
     "! videoconvert ! queue ! video/x-raw,format=NV12 "
-    "! nvh264enc name=encoder preset=2 gop-size=25 spatial-aq=true temporal-aq=true "
-    "bitrate=8000 vbv-buffer-size=8000 rc-mode=6 "
+    "! nvcudah264enc name=encoder preset=p4 tune=ultra-low-latency rate-control=cbr "
+    "gop-size=25 spatial-aq=true temporal-aq=true bitrate=8000 vbv-buffer-size=8000 "
     "! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=appsink")
 # per-browser T4 VRAM budget slot (measured ~311 MiB actual). 384 fits the current
 # ~400 MiB free budget without a gpumem_total_mib bump; a 2nd GPU browser needs the
