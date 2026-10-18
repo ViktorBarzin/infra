@@ -36,7 +36,8 @@
 #
 # To fix a failure, bind the application to the groups that should reach it:
 # here for UI-managed applications, or next to the application resource in
-# the stack that owns it (f1-stream/members.tf is an example).
+# the stack that owns it (f1-stream/members.tf is an example, including the
+# access-request policy binding described above).
 #
 # The reads run after this stack's application and binding changes are
 # applied (depends_on below), so an application and its binding can land in

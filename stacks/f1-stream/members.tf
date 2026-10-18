@@ -6,7 +6,8 @@
 # pass as well. Home Users is the household (stacks/authentik/home-users.tf,
 # infra ADR-0031). F1 Users is for other households, who ask from an unpaired
 # TV and are let in by an admin in the app (ADR-0042, "Access requests"
-# below); Terraform declares that group but not its members. The app reads
+# below), whether they sign up there or already had an Authentik account;
+# Terraform declares that group but not its members. The app reads
 # both names from MEMBER_GROUPS (main.tf).
 # Design: f1-stream docs/design/2026-10-10-my-channels.md; wire format:
 # docs/design/2026-10-10-my-channels-build-contract.md.
