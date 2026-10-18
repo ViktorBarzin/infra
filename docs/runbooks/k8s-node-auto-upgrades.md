@@ -51,8 +51,9 @@ kured uncordons + posts Slack notification (configuration.notifyUrl)
 
 ### unattended-upgrades (in-guest)
 - **Config**: `/etc/apt/apt.conf.d/52unattended-upgrades-k8s` + `/etc/apt/apt.conf.d/20auto-upgrades`
-- **Source of truth**: `infra/modules/create-template-vm/cloud_init.yaml` (lines for `is_k8s_template`)
-- **Day-2 push**: SSH-based — see "Restore / re-apply config" below
+- **Source of truth**: `infra/playbooks/k8s-node-tuning.yml`, play "Kubernetes node security patching" (tags `patching`, `cloudinit`), with the two files in `infra/playbooks/files/k8s-node/`. It installs the package, writes both files, holds `kubelet`, `kubeadm`, `kubectl` and `containerd.io`, and enables the apt timers. `infra/modules/create-template-vm/cloud_init.yaml` writes the same files at a new node's first boot.
+- **Drift**: the hourly `k8s-node-drift-check` runs that playbook in `--check` mode, so a node that loses the package or its config shows up as drift in Slack #alerts. Since 2026-10-18; before that nothing declared it, and k8s-node5 went without patches from 2026-07-28 to 2026-10-18.
+- **cloud-init runs once**: the same play writes `/etc/cloud/cloud-init.disabled` on any node that has cloud-init installed, so a bootstrap never re-runs on a live node. See "Restore / re-apply" below for why.
 
 ### kured (Helm release)
 - **Stack**: `infra/stacks/kured/main.tf`
@@ -111,52 +112,23 @@ kubectl -n kured scale ds kured --replicas=0
 
 ### Pause apt upgrades on a single node
 ```bash
-ssh <node> sudo systemctl stop unattended-upgrades
-ssh <node> sudo systemctl disable unattended-upgrades
-# Re-enable when ready:
-ssh <node> sudo systemctl enable --now unattended-upgrades
+ssh <node> sudo systemctl disable --now apt-daily-upgrade.timer
+# Re-enable when ready (or re-run the playbook, below):
+ssh <node> sudo systemctl enable --now apt-daily-upgrade.timer
 ```
+The hourly drift check reports the paused node until the timer is back on, which is the reminder to undo it.
 
 ### Restore / re-apply unattended-upgrades config to existing nodes
-Cloud-init only runs on first boot. To bring existing nodes into compliance with the IaC:
+The config is declared in `playbooks/k8s-node-tuning.yml`. From the infra repo root, claim presence for the node, then:
 
 ```bash
-# Per node — installs uu, drops apt config, holds k8s/runtime packages, enables service
-for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
-  ssh $n sudo bash -s <<'EOF'
-set -e
-systemctl unmask unattended-upgrades 2>/dev/null || true
-DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades update-notifier-common
-cat > /etc/apt/apt.conf.d/52unattended-upgrades-k8s <<'CONF'
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}";
-    "${distro_id}:${distro_codename}-security";
-    "${distro_id}:${distro_codename}-updates";
-    "${distro_id}ESMApps:${distro_codename}-apps-security";
-    "${distro_id}ESM:${distro_codename}-infra-security";
-};
-Unattended-Upgrade::Package-Blacklist {
-    "^containerd(\.io)?$";
-    "^runc$";
-    "^cri-tools$";
-    "^kubernetes-cni$";
-    "^calico-.*";
-    "^cni-plugins-.*";
-    "^docker-ce$";
-};
-Unattended-Upgrade::DevRelease "false";
-Unattended-Upgrade::Automatic-Reboot "false";
-CONF
-cat > /etc/apt/apt.conf.d/20auto-upgrades <<'CONF'
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-CONF
-apt-mark hold kubelet kubeadm kubectl
-apt-mark hold containerd containerd.io runc 2>/dev/null || true
-systemctl enable --now unattended-upgrades
-EOF
-done
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --tags patching,cloudinit --check --diff   # first
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --tags patching,cloudinit [--limit <node-ip>]
+# verify on the node
+ssh wizard@<node-ip> 'systemctl is-enabled apt-daily-upgrade.timer; apt-mark showhold; sudo unattended-upgrade --dry-run 2>&1 | tail -3'
 ```
+
+Why cloud-init is disabled after the first boot: k8s-node4 and k8s-node5 were bootstrapped on 2026-05-26 from hand-made Proxmox snippets whose runcmd uninstalled unattended-upgrades, reset `/etc/containerd/config.toml` and restarted containerd. cloud-init re-runs the runcmd whenever Proxmox issues a new instance-id, which it did on node5 on 2026-07-18 and 2026-07-28, and that undid a hand fix from June. The snippets are now managed by `playbooks/pve-host.yml` (tag `snippets`, files in `playbooks/files/pve/snippets/`) and keep only the identity settings; the originals are kept next to them on the host as timestamped backups. With cloud-init disabled, a disk grown in Proxmox is not auto-extended at boot: run `sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1` on the node.
 
 ### Roll back a bad apt upgrade
 1. Identify the package(s) that broke things from `/var/log/apt/history.log` on the affected node.
@@ -202,6 +174,8 @@ kubectl -n kured logs ds/kured-sentinel-gate --tail=20 | grep -E "soak|cool-down
 | kured Helm + sentinel-gate | `infra/stacks/kured/main.tf` |
 | Upgrade Gates alerts | `infra/stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |
 | Cloud-init for new nodes | `infra/modules/create-template-vm/cloud_init.yaml` |
+| unattended-upgrades config on running nodes | `infra/playbooks/k8s-node-tuning.yml` (tags `patching`, `cloudinit`) |
+| node4 and node5 Proxmox snippets | `infra/playbooks/pve-host.yml` (tag `snippets`) |
 | Slack webhook | Vault `secret/kured` → `slack_kured_webhook` |
 | Post-mortem | `infra/docs/post-mortems/2026-03-16-kured-containerd-cascade-outage.html` |
 | Architecture doc | `infra/docs/architecture/automated-upgrades.md` (OS section) |

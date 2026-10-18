@@ -1,0 +1,25 @@
+#cloud-config
+# Managed by playbooks/pve-host.yml. VM 205 (k8s-node5) points its cicustom user= at this file.
+#
+# The node was bootstrapped from a hand-made version of this file on 2026-05-26.
+# Its runcmd uninstalled unattended-upgrades, reset containerd's config and
+# restarted containerd, and cloud-init re-ran it whenever Proxmox issued a new
+# instance-id, which undid node patching on k8s-node5 twice (2026-07-18 and
+# 2026-07-28). The bootstrap is done. What the node needs now is declared in
+# playbooks/k8s-node-tuning.yml, which also disables cloud-init on the node, so
+# this file is not read at boot. It keeps the identity settings only, so it is
+# harmless if cloud-init is ever re-enabled.
+#
+# Do not copy this file to build a new node. Clone template 2000, whose
+# bootstrap is modules/create-template-vm/cloud_init.yaml (stacks/infra), then
+# run playbooks/k8s-node-tuning.yml against the node.
+hostname: k8s-node5
+fqdn: k8s-node5.viktorbarzin.lan
+manage_etc_hosts: true
+
+users:
+  - name: wizard
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx vbarzin@gmail.com

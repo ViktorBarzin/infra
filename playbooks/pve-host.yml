@@ -187,6 +187,27 @@
               retain_days = 7
           }
 
+    # ---- cloud-init snippets for k8s-node4 and k8s-node5 ---------------------
+    # VMs 204 and 205 were built from hand-made snippets that were never in
+    # git. Their runcmd uninstalled unattended-upgrades and reset containerd,
+    # and cloud-init re-ran it on node5 twice. The versions here keep only the
+    # identity settings; the reasoning is in the files. Each copy keeps the
+    # previous file next to it as a timestamped backup. The snippets the
+    # template stack writes (k8s_cloud_init.yaml and the others) stay with
+    # stacks/infra.
+    - name: Install the k8s-node4 and k8s-node5 cloud-init snippets
+      ansible.builtin.copy:
+        src: "files/pve/snippets/{{ item }}"
+        dest: "/var/lib/vz/snippets/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+        backup: true
+      loop:
+        - node4_bootstrap.yaml
+        - k8s_node5_bootstrap.yaml
+      tags: snippets
+
   handlers:
     - name: restart journald
       ansible.builtin.systemd_service:
