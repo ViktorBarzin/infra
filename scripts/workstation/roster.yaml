@@ -70,7 +70,10 @@
 # 2026-08-17, which its deploy installed over the generated one.
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin}                                          # base config author + cluster-admin
-  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user}                                     # NET-NEW k8s_users entry (add as power-user before provisioning)
+  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, code_layout: workspace, repos: [f1-stream]}  # NET-NEW k8s_users entry (add as power-user before provisioning)
+  #  f1-stream added 2026-10-18 (Viktor: emo maintains f1-stream with him). He is an
+  #  admin collaborator on Forgejo viktor/f1-stream, granted through the API like his
+  #  infra write access; the repo has no branch protection, so he pushes to master.
 # ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit], parked: true}
   #  REMOVED 2026-08-17 (Viktor: "remove anca from t3 users") -- the reversible
   #  cut from docs/runbooks/offboard-user.md part A1, one step past the parking of
