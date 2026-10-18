@@ -83,7 +83,7 @@ A small HTTP service that owns `/` of an on-demand Service, scales its Deploymen
 _Avoid_: "Sablier" for these; "autoscaler".
 
 **Wine app**:
-A Windows desktop application run under Wine in its own pod from `modules/kubernetes/wine_app`, shown in the browser through noVNC and asleep behind a **Wake gate** when unused (ADR-0035). The base image `wine-app` holds no app; each app installs into the Wine prefix on its own PVC on first start. iVMS-4200 is the first.
+A Windows desktop application run under Wine in its own pod from `modules/kubernetes/wine_app`, shown in the browser through noVNC and asleep behind a **Wake gate** when unused (ADR-0035). The base image `wine-app` holds no app; each app installs into the Wine prefix on its own PVC on first start. iVMS-4200 is the first. The screen is drawn by TigerVNC's Xvnc and shown with noVNC (ADR-0036).
 _Avoid_: "Windows VM" (there is none); "the iVMS image" (the image is shared and app-free).
 
 ### GPU sharing

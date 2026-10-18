@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-17
-- Related: `modules/kubernetes/wine_app/`, `images/wine-app/`, `stacks/ivms/`, `playbooks/pfsense-vermont-alias.yml`, `playbooks/rpi-sofia-netmap.yml`, `docs/plans/2026-10-17-ivms-in-cluster-design.md`, `docs/runbooks/cameras-nvr-intercom.md`, infra#121, infra#123
+- Related: `modules/kubernetes/wine_app/`, `images/wine-app/`, `stacks/ivms/`, `playbooks/pfsense-vermont-alias.yml`, `playbooks/rpi-sofia-netmap.yml`, `docs/plans/2026-10-17-ivms-in-cluster-design.md`, `docs/runbooks/cameras-nvr-intercom.md`, infra#121, infra#123, ADR-0036 (remote display chosen by benchmark)
 
 ## Context
 

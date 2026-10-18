@@ -67,6 +67,9 @@ flowchart TB
 - `images/wine-app/`: Debian bookworm, WineHQ stable 11.0 pinned, winetricks
   pinned, Xvfb, x11vnc on loopback, noVNC with websockify on :6080, a window
   manager, xdotool, xprintidle. No app inside.
+- Update 2026-10-18: the display is now TigerVNC `Xvnc` with noVNC 1.6.0,
+  chosen by a benchmark after Emil reported lag: 29 ms median click-to-screen
+  against 56 ms for the Xvfb + x11vnc setup described here (ADR-0036).
 - Built by GitHub Actions (`.github/workflows/build-wine-app.yml`) on changes
   under `images/wine-app/`, per ADR-0002. Stacks pin the commit-sha tag.
 - The app contract, mounted at `/app` from a ConfigMap: `app.env` (name,
