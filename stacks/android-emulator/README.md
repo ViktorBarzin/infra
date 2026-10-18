@@ -42,7 +42,10 @@ that pod. A new pod (the next rollout) gets its own 15 min. The grant is the
 `/healthz` answers JSON with `"yield_watcher"`: `alive`, `dead` (the thread
 exited) or `stuck` (no finished pass for 2 min), plus `last_pass_s_ago`. It
 answers 503 unless the watcher is alive, and the liveness probe restarts the
-gate after a minute of that.
+gate after a minute of that. The readiness probe uses `/readyz`, which answers
+200 whenever the server is up, so a broken watcher does not take the gate (one
+replica) out of its Service while it waits for that restart; visits and
+`/wake` keep working.
 Tests: `python3 -m unittest discover -s stacks/android-emulator`.
 
 - Humans: open https://android-emulator.viktorbarzin.me — it wakes the

@@ -218,9 +218,13 @@ resource "kubernetes_deployment" "gate" {
               memory = "64Mi"
             }
           }
+          # Readiness only asks whether the server answers (/readyz). The
+          # gate runs one replica, so putting the watcher state here would
+          # empty the Service and stop human visits and agent /wake calls
+          # for up to a minute before the liveness restart below.
           readiness_probe {
             http_get {
-              path = "/healthz"
+              path = "/readyz"
               port = 8080
             }
             period_seconds = 10

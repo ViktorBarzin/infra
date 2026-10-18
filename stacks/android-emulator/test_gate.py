@@ -1,8 +1,11 @@
 """Unit tests for gate.py. Run: python3 -m unittest discover -s stacks/android-emulator"""
 
 import datetime
+import http.client
+import threading
 import unittest
 import urllib.error
+from http.server import ThreadingHTTPServer
 
 import gate
 
@@ -239,6 +242,28 @@ class YieldLimitTest(unittest.TestCase):
         gate.yield_once(fake, self.logs.append, now=NOW + 10)
         self.assertEqual(gate.gave_up_on(), [])
 
+    def test_failed_pod_list_on_wake_keeps_the_give_up_record(self):
+        # try_wake wakes anyway when it cannot read the waiters, but that
+        # must not forget which pods the gate already gave up on.
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 20 * MINUTE)], replicas=0, ready=0)
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        fake.fail_pods = OSError("api down")
+        self.assertEqual(gate.try_wake(fake, now=NOW + 5, log=self.logs.append), [])
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 1}}])
+        self.assertEqual(gate.gave_up_on(), ["w-stuck"])
+        fake.fail_pods = None
+        gate.yield_once(fake, self.logs.append, now=NOW + 10)
+        mentions = [line for line in self.logs if "w-stuck" in line]
+        self.assertEqual(len(mentions), 1)
+
+    def test_failed_pod_list_on_wake_keeps_the_first_sight_clock(self):
+        fake = FakeKube(pods=[pod("w-new")], replicas=1)
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        fake.fail_pods = OSError("api down")
+        gate.try_wake(fake, now=NOW + 10 * MINUTE, log=self.logs.append)
+        fake.fail_pods = None
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW + 16 * MINUTE), [])
+
 
 class HealthTest(unittest.TestCase):
     def test_live_watcher_is_healthy(self):
@@ -261,6 +286,40 @@ class HealthTest(unittest.TestCase):
         code, body = gate.health_report(alive=True, last_pass=NOW - 10 * MINUTE, now=NOW)
         self.assertEqual(code, 503)
         self.assertEqual(body["yield_watcher"], "stuck")
+
+
+class ProbeEndpointTest(unittest.TestCase):
+    """Readiness must not depend on the watcher.
+
+    The gate runs one replica. If readiness followed /healthz, a dead watcher
+    would empty the Service and stop wakes until the liveness restart.
+    """
+
+    def setUp(self):
+        self.saved = dict(gate._watcher)
+        gate._watcher["thread"] = None  # no watcher thread: /healthz says dead
+        gate._watcher["last_pass"] = None
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), gate.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        gate._watcher.update(self.saved)
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status
+
+    def test_readyz_answers_ok_while_the_watcher_is_dead(self):
+        self.assertEqual(self.get("/readyz"), 200)
+
+    def test_healthz_still_fails_while_the_watcher_is_dead(self):
+        self.assertEqual(self.get("/healthz"), 503)
 
 
 if __name__ == "__main__":
