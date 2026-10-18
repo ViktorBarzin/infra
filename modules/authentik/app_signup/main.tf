@@ -64,6 +64,11 @@ resource "authentik_group" "users" {
     ignore_changes = [users]
 
     precondition {
+      condition     = local.request_mode || var.existing_account_state_prefix == null
+      error_message = "existing_account_state_prefix needs mode = \"request\"."
+    }
+
+    precondition {
       condition     = !local.request_mode || try(startswith(var.pending_url, "https://"), false)
       error_message = "mode = \"request\" needs pending_url, an https:// page in the app that tells the person their request is waiting for approval."
     }
@@ -127,4 +132,108 @@ resource "authentik_token" "approver" {
   # tainting this resource.
   expiring    = false
   description = "${var.app_slug} sign-up approvals. Rotate by tainting this resource."
+}
+
+# --- Request + approve: people who already have an account -------------------
+#
+# The sign-up flow above only runs for a new person. Someone who already has
+# an Authentik account outside this app's groups never enrols: Authentik checks
+# the application's bindings at the authorize step and shows its own
+# access-denied page. With existing_account_state_prefix set, this policy,
+# bound to the application by the app stack, admits such an account for an
+# authorize request whose OAuth state starts with that prefix, and records the
+# request first, the way app-signup-path and app-signup-finish
+# (stacks/authentik/app-signup.tf) do for a new account:
+#
+#   attributes.signup_request.{app, requested_at, state}  on the account
+#   view_user on that account                              for the approver role
+#
+# Authentik then finishes the authorize request, so the app receives an ID
+# token for a person in none of its groups. The app must check the groups
+# claim (every app here does, ADR-0001) and send that person to its pending
+# page instead of signing them in; nothing is granted until an admin approves
+# in the app. f1-stream does this in /auth/callback (ADR-0042).
+#
+# It returns False, and changes nothing, for: any other authorize request or
+# API call that evaluates the application's bindings, a member of any group
+# bound to the application (those bindings decide), a service account, the
+# shared `guest` account and other users under users/system, and an account whose
+# signup_request names another app. An error inside it denies, through the
+# binding's default failure_result.
+
+locals {
+  existing_account_request = local.request_mode && var.existing_account_state_prefix != null
+}
+
+resource "authentik_policy_expression" "existing_account_request" {
+  count             = local.existing_account_request ? 1 : 0
+  name              = "${var.app_slug}-access-request"
+  execution_logging = true
+  expression        = <<-EOT
+    from django.utils import timezone
+
+    from authentik.core.models import Application
+    from authentik.policies.models import PolicyBinding
+    from authentik.rbac.models import Role
+
+    APP = "${var.app_slug}"
+    STATE_PREFIX = "${coalesce(var.existing_account_state_prefix, "-")}"
+    APPROVER_ROLE = "${authentik_rbac_role.approver[0].id}"
+    STATE_CHARS = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-~"
+    )
+
+    http = request.http_request
+    if http is None or http.path != "/application/o/authorize/":
+        return False
+    states = http.GET.getlist("state")
+    if len(states) != 1:
+        return False
+    state = states[0]
+    if not state.startswith(STATE_PREFIX) or len(state) > 256 or not set(state) <= STATE_CHARS:
+        return False
+
+    user = request.user
+    if user is None or not user.is_authenticated or not user.is_active:
+        return False
+    if user.type not in ("internal", "external"):
+        return False
+    # The shared anonymous account the public ingress tier signs strangers in
+    # as (stacks/authentik/guest.tf). Google sign-ups live under
+    # goauthentik.io/sources/..., so that prefix is not excluded.
+    if user.username == "guest" or (user.path or "").startswith("users/system"):
+        return False
+
+    app = Application.objects.filter(slug=APP).first()
+    if app is None:
+        return False
+    bound = list(
+        PolicyBinding.objects.filter(
+            target=app, enabled=True, negate=False, group__isnull=False
+        ).values_list("group_id", flat=True)
+    )
+    if user.all_groups().filter(pk__in=bound).exists():
+        return False
+
+    attributes = dict(user.attributes or {})
+    current = attributes.get("signup_request")
+    current = dict(current) if isinstance(current, dict) else {}
+    if current.get("app") not in (None, APP):
+        ak_logger.info("access-request: account asked for another app", app=APP, user=user.username)
+        return False
+    current["app"] = APP
+    current.setdefault("requested_at", timezone.now().isoformat())
+    current["state"] = state
+    attributes["signup_request"] = current
+    user.attributes = attributes
+    user.save(update_fields=["attributes"])
+
+    role = Role.objects.filter(pk=APPROVER_ROLE).first()
+    if role is not None:
+        role.assign_perms("authentik_core.view_user", obj=user)
+    else:
+        ak_logger.warning("access-request: approver role missing", app=APP)
+    ak_logger.info("access-request: recorded", app=APP, user=user.username)
+    return True
+  EOT
 }

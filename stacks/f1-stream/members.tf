@@ -163,12 +163,29 @@ resource "authentik_policy_binding" "f1_stream_f1_users" {
   order  = 2
 }
 
+# A person who already has an Authentik account outside these groups and
+# scans an unpaired TV's QR (f1-stream ADR-0042, decided 2026-10-18). The
+# policy lets that account through the authorize step only for a join state
+# (`j.<ref>.<random>`, which /join/<ref> sends), after recording an Access
+# request on it (modules/authentik/app_signup). The app sees no member group
+# in the ID token and sends the person to /join/pending, signed in to
+# nothing, until an admin approves. Without this, Authentik showed such a
+# person its access-denied page. app-access-guard.tf accepts this binding by
+# the policy's name.
+resource "authentik_policy_binding" "f1_stream_access_request" {
+  target = authentik_application.f1_stream.uuid
+  policy = module.f1_users.existing_account_policy_id
+  order  = 3
+}
+
 # --- Access requests: F1 Users through request-mode sign-up -------------------
 #
 # f1-stream ADR-0042. An unpaired TV shows a QR that starts this application's
 # authorize request. A new person signs up with Google on that path without an
 # invite code (stacks/authentik/app-signup.tf), gets an account with no group,
-# and lands on pending_url. A Home Server Admin approves in the app, on an
+# and lands on pending_url. Someone who already has an account takes the
+# f1_stream_access_request binding above instead and reaches the same page
+# through the app's callback. A Home Server Admin approves in the app, on an
 # Admin TV or on /account, and the app adds the person to F1 Users with the
 # approver token below, which can add users to that one group and nothing
 # else. Every other sign-up path still asks for an invite code.
@@ -180,6 +197,9 @@ module "f1_users" {
   group_name  = "F1 Users"
   mode        = "request"
   pending_url = "https://f1.viktorbarzin.me/join/pending"
+
+  # /join/<ref> starts the authorize request with state j.<ref>.<random>.
+  existing_account_state_prefix = "j."
 }
 
 # --- Membership check: a read-only service account ---------------------------

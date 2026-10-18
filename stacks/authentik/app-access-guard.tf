@@ -24,6 +24,15 @@
 #     its own for an account outside every group, so "any" needs every
 #     binding to be a membership check. Under "all" extra bindings only
 #     narrow access further.
+#   - one exception to the above: a policy binding to the app's own
+#     access-request policy, named "<slug>-access-request", which
+#     modules/authentik/app_signup creates in request mode when the app sets
+#     existing_account_state_prefix. It admits an account outside the app's
+#     groups only for an authorize request carrying the app's request state,
+#     records an access request on it, and the app sends that person to its
+#     pending page without signing them in (f1-stream ADR-0042, 2026-10-18).
+#     The match is by name, so it guards against an accidental binding, not
+#     against an admin who names another policy that way.
 #
 # To fix a failure, bind the application to the groups that should reach it:
 # here for UI-managed applications, or next to the application resource in
@@ -163,7 +172,7 @@ locals {
       ])
       other = length([
         for b in local.live_bindings : b
-        if b.target == app.pbm_uuid && b.enabled && (b.negate || b.policy != null || (b.group == null && b.user == null))
+        if b.target == app.pbm_uuid && b.enabled && (b.negate || b.policy != null || (b.group == null && b.user == null)) && !(!b.negate && b.policy != null && try(b.policy_obj.name, "") == "${app.slug}-access-request")
       ])
     }
   }
