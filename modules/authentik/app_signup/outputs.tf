@@ -17,3 +17,8 @@ output "approver_token" {
   value       = one(authentik_token.approver[*].key)
   sensitive   = true
 }
+
+output "existing_account_policy_id" {
+  description = "Request mode with existing_account_state_prefix: the access-request policy. Bind it to the application next to its group bindings (policy_engine_mode \"any\"); app-access-guard.tf in the authentik stack accepts it by its name, \"<app_slug>-access-request\". Null otherwise."
+  value       = one(authentik_policy_expression.existing_account_request[*].id)
+}

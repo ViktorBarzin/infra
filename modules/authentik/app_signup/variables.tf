@@ -34,3 +34,14 @@ variable "initial_users" {
   default     = []
   description = "User pks put in the group when it is created, for people who already use the app. Later changes to this list are ignored, like every other membership change."
 }
+
+variable "existing_account_state_prefix" {
+  type        = string
+  default     = null
+  description = "Request mode only: an OAuth state prefix the app puts on authorize requests that ask for access. When set, the module creates an access-request policy (output existing_account_policy_id) for the app stack to bind to its application. An existing account outside the app's groups whose authorize request carries this prefix is then let through to the app, after the policy records attributes.signup_request on it, instead of seeing Authentik's access-denied page."
+
+  validation {
+    condition     = var.existing_account_state_prefix == null || can(regex("^[A-Za-z0-9._~-]{2,32}$", var.existing_account_state_prefix))
+    error_message = "existing_account_state_prefix is 2 to 32 URL-safe characters (letters, digits, . _ ~ -)."
+  }
+}
