@@ -259,12 +259,16 @@ def try_wake(kube_fn, now=None, log=log_line):
     Returns the waiting pods; empty means it woke the emulator. A held-back
     wake is done by the watcher once nothing waits, so an agent polling
     /status still sees the emulator come up. If the waiters cannot be read,
-    it wakes anyway, so a broken grant never locks people out.
+    it wakes anyway, so a broken grant never locks people out. A failed read
+    leaves the yield limit's record alone, as yield_once does, so a pod
+    already given up on is not logged again and a pod with no timestamp
+    keeps its first-sight clock.
     """
     try:
         waits = list_seat_waiters(kube_fn)
     except Exception:
-        waits = []
+        wake(kube_fn)
+        return []
     waiters = within_limit(waits, time.time() if now is None else now, log)
     if waiters:
         with _yield_lock:
@@ -317,6 +321,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802 (stdlib naming)
+        if self.path == "/readyz":
+            # Readiness: the HTTP server answers. It leaves out the watcher,
+            # so a dead watcher does not take the gate out of its Service
+            # (one replica) while the liveness probe restarts it.
+            return self._respond(200, b"ok", "text/plain")
         if self.path == "/healthz":
             thread = _watcher["thread"]
             code, body = health_report(
