@@ -273,6 +273,11 @@ daemon's own state comes from the Pushgateway through `rest_resources/fan_contro
 the daemon pushes 2 while it applies or holds the HA command (labelled "Cool", a name
 kept from the June design) and 0 for Dell auto.
 
+**History.** Since 2026-10-17 HA's recorder leaves out `sensor.r730_fan_pid_pid_output`
+and `sensor.r730_fan_command_display` to reduce writes to the ha-sofia database; their
+live states work as before. While the PID is in charge, `sensor.r730_fan_command_pct`
+carries the same output to one decimal, so its history covers the PID output as well.
+
 **Chart "R730 — CPU & Fans"** (same view, apexcharts-card inside a config-template-card
 with 1 h / 12 h / 1 week buttons): since 2026-10-07 the four header numbers are the
 live entity states (`show.in_header: raw`), the lines draw the recorded states as steps
@@ -335,6 +340,12 @@ ssh root@192.168.1.127 'journalctl -u fan-control -n 30 --no-pager'
 Log line: `temp=64C cmd=49% rpm=9380 (was -1%)` (`cmd` = the % read from HA and
 applied). `HA command miss — holding 49%` = a transient HA blip being ridden out;
 `HA command lost (...) — Dell auto` = sustained loss.
+
+The host journal is kept in memory (`Storage=volatile`) and on 2026-10-18 reached back
+about 27 hours. Loki keeps the same lines for 30 days:
+```bash
+homelab logs query '{job="pve-journal", identifier="fan-control"}' --since 7d --limit 2000
+```
 
 ## Tune
 The PID (setpoint, Kp, Ki, Kd, output min/max) is tuned **live from the HA
