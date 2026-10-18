@@ -154,12 +154,22 @@ resource "authentik_token" "approver" {
 # page instead of signing them in; nothing is granted until an admin approves
 # in the app. f1-stream does this in /auth/callback (ADR-0042).
 #
+# A browser signed in as the shared `guest` account (stacks/authentik/guest.tf,
+# given to anyone who opens a public-tier page) arrives here with a prefixed
+# state too. The policy signs that browser out of its guest session and
+# returns True: the authorize view then finds no login event, so it sends the
+# browser to the authentication flow, and after a real sign-in the policy runs
+# again for that person. Nothing is written to `guest` and no code is issued
+# to it. Signing out happens before the sign-in page, which matters: a Google
+# login made while still signed in as guest would link that Google identity
+# to `guest` (Authentik's source LINK action), and `prompt=login` does not
+# help because Authentik checks bindings before it reads `prompt`.
+#
 # It returns False, and changes nothing, for: any other authorize request or
 # API call that evaluates the application's bindings, a member of any group
-# bound to the application (those bindings decide), a service account, the
-# shared `guest` account and other users under users/system, and an account whose
-# signup_request names another app. An error inside it denies, through the
-# binding's default failure_result.
+# bound to the application (those bindings decide), a service account, other
+# users under users/system, and an account whose signup_request names another
+# app. An error inside it denies, through the binding's default failure_result.
 
 locals {
   existing_account_request = local.request_mode && var.existing_account_state_prefix != null
@@ -170,6 +180,7 @@ resource "authentik_policy_expression" "existing_account_request" {
   name              = "${var.app_slug}-access-request"
   execution_logging = true
   expression        = <<-EOT
+    from django.contrib.auth import logout
     from django.utils import timezone
 
     from authentik.core.models import Application
@@ -199,9 +210,19 @@ resource "authentik_policy_expression" "existing_account_request" {
     if user.type not in ("internal", "external"):
         return False
     # The shared anonymous account the public ingress tier signs strangers in
-    # as (stacks/authentik/guest.tf). Google sign-ups live under
-    # goauthentik.io/sources/..., so that prefix is not excluded.
-    if user.username == "guest" or (user.path or "").startswith("users/system"):
+    # as (stacks/authentik/guest.tf). Sign the browser out so the authorize
+    # view asks for a real sign-in; True only once it is signed out, so guest
+    # itself is never let through.
+    if user.username == "guest" and (user.path or "").startswith("users/system"):
+        if not hasattr(http, "session"):
+            return False
+        logout(http)
+        signed_out = not http.user.is_authenticated
+        ak_logger.info("access-request: signed guest out", app=APP, signed_out=signed_out)
+        return signed_out
+    # Google sign-ups live under goauthentik.io/sources/..., so that prefix is
+    # not excluded.
+    if (user.path or "").startswith("users/system"):
         return False
 
     app = Application.objects.filter(slug=APP).first()
