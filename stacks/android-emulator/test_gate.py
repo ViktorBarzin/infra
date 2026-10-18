@@ -1,7 +1,11 @@
 """Unit tests for gate.py. Run: python3 -m unittest discover -s stacks/android-emulator"""
 
+import datetime
+import http.client
+import threading
 import unittest
 import urllib.error
+from http.server import ThreadingHTTPServer
 
 import gate
 
@@ -12,14 +16,22 @@ GPUMEM_FULL = (
     "1 Insufficient viktorbarzin.me/gpumem, 5 Preemption is not helpful for scheduling."
 )
 CPU_FULL = "0/6 nodes are available: 6 Insufficient cpu."
+NOW = datetime.datetime(2026, 10, 18, 12, 0, tzinfo=datetime.timezone.utc).timestamp()
+MINUTE = 60.0
 
 
-def pod(name, phase="Pending", reason="Unschedulable", message=GPUMEM_FULL, deleting=False):
+def stamp(epoch):
+    t = datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def pod(name, phase="Pending", reason="Unschedulable", message=GPUMEM_FULL, deleting=False, since=None):
     p = {"metadata": {"name": name}, "status": {"phase": phase}}
     if reason is not None:
-        p["status"]["conditions"] = [
-            {"type": "PodScheduled", "status": "False", "reason": reason, "message": message}
-        ]
+        cond = {"type": "PodScheduled", "status": "False", "reason": reason, "message": message}
+        if since is not None:
+            cond["lastTransitionTime"] = stamp(since)
+        p["status"]["conditions"] = [cond]
     if deleting:
         p["metadata"]["deletionTimestamp"] = "2026-10-17T01:00:00Z"
     return p
@@ -159,6 +171,155 @@ class WakeTest(unittest.TestCase):
         fake = FakeKube(replicas=0, ready=0, fail_pods=OSError("timeout"))
         self.assertEqual(gate.try_wake(fake), [])
         self.assertEqual(fake.patches, [{"spec": {"replicas": 1}}])
+
+
+class YieldLimitTest(unittest.TestCase):
+    """A pod that still waits after YIELD_LIMIT_SECONDS stops holding the emulator asleep.
+
+    Sleeping the emulator frees 800 gpumem. A pod that waits longer than the
+    limit is short of more than that (another GPU tenant took the seat), so
+    keeping the emulator down helps nobody.
+    """
+
+    def setUp(self):
+        gate.reset_yield_state()
+        self.logs = []
+
+    def test_limit_defaults_to_fifteen_minutes(self):
+        self.assertEqual(gate.YIELD_LIMIT_SECONDS, 15 * MINUTE)
+
+    def test_waiter_within_the_limit_still_holds_the_emulator(self):
+        fake = FakeKube(pods=[pod("w-new", since=NOW - 5 * MINUTE)], replicas=1)
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW), ["w-new"])
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+
+    def test_waiter_past_the_limit_does_not_sleep_the_emulator(self):
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 16 * MINUTE)], replicas=1)
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW), [])
+        self.assertEqual(fake.patches, [])
+        self.assertEqual(gate.yielding_to(), [])
+        self.assertEqual(gate.gave_up_on(), ["w-stuck"])
+
+    def test_giving_up_is_logged_once_with_the_reason(self):
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 16 * MINUTE)], replicas=0)
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        gate.yield_once(fake, self.logs.append, now=NOW + 10)
+        mentions = [line for line in self.logs if "w-stuck" in line]
+        self.assertEqual(len(mentions), 1)
+        self.assertIn("15 min", mentions[0])
+
+    def test_limit_counts_from_first_sight_when_the_pod_has_no_timestamp(self):
+        fake = FakeKube(pods=[pod("w-new")], replicas=1)
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW), ["w-new"])
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW + 14 * MINUTE), ["w-new"])
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW + 16 * MINUTE), [])
+
+    def test_held_wake_happens_when_the_waiter_passes_the_limit(self):
+        # Someone asked for the emulator while the pod waited; once the gate
+        # stops waiting for that pod it does the wake it held back.
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW)], replicas=0, ready=0)
+        self.assertEqual(gate.try_wake(fake, now=NOW), ["w-stuck"])
+        gate.yield_once(fake, self.logs.append, now=NOW + 10 * MINUTE)
+        self.assertEqual(fake.patches, [])
+        gate.yield_once(fake, self.logs.append, now=NOW + 16 * MINUTE)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 1}}])
+
+    def test_wake_is_not_held_for_a_waiter_past_the_limit(self):
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 20 * MINUTE)], replicas=0, ready=0)
+        self.assertEqual(gate.try_wake(fake, now=NOW, log=self.logs.append), [])
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 1}}])
+
+    def test_a_new_waiter_gets_its_own_limit(self):
+        # The next rollout makes a new pod, which the emulator yields to again.
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 20 * MINUTE), pod("w-next", since=NOW)], replicas=1)
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW), ["w-next"])
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+
+    def test_gave_up_list_clears_once_the_pod_stops_waiting(self):
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 20 * MINUTE)])
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        fake.pods = []
+        gate.yield_once(fake, self.logs.append, now=NOW + 10)
+        self.assertEqual(gate.gave_up_on(), [])
+
+    def test_failed_pod_list_on_wake_keeps_the_give_up_record(self):
+        # try_wake wakes anyway when it cannot read the waiters, but that
+        # must not forget which pods the gate already gave up on.
+        fake = FakeKube(pods=[pod("w-stuck", since=NOW - 20 * MINUTE)], replicas=0, ready=0)
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        fake.fail_pods = OSError("api down")
+        self.assertEqual(gate.try_wake(fake, now=NOW + 5, log=self.logs.append), [])
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 1}}])
+        self.assertEqual(gate.gave_up_on(), ["w-stuck"])
+        fake.fail_pods = None
+        gate.yield_once(fake, self.logs.append, now=NOW + 10)
+        mentions = [line for line in self.logs if "w-stuck" in line]
+        self.assertEqual(len(mentions), 1)
+
+    def test_failed_pod_list_on_wake_keeps_the_first_sight_clock(self):
+        fake = FakeKube(pods=[pod("w-new")], replicas=1)
+        gate.yield_once(fake, self.logs.append, now=NOW)
+        fake.fail_pods = OSError("api down")
+        gate.try_wake(fake, now=NOW + 10 * MINUTE, log=self.logs.append)
+        fake.fail_pods = None
+        self.assertEqual(gate.yield_once(fake, self.logs.append, now=NOW + 16 * MINUTE), [])
+
+
+class HealthTest(unittest.TestCase):
+    def test_live_watcher_is_healthy(self):
+        code, body = gate.health_report(alive=True, last_pass=NOW - 5, now=NOW)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["yield_watcher"], "alive")
+        self.assertEqual(body["last_pass_s_ago"], 5)
+
+    def test_watcher_before_its_first_pass_is_healthy(self):
+        code, body = gate.health_report(alive=True, last_pass=None, now=NOW)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["yield_watcher"], "alive")
+
+    def test_dead_watcher_fails_health(self):
+        code, body = gate.health_report(alive=False, last_pass=NOW - 5, now=NOW)
+        self.assertEqual(code, 503)
+        self.assertEqual(body["yield_watcher"], "dead")
+
+    def test_watcher_with_no_pass_for_minutes_fails_health(self):
+        code, body = gate.health_report(alive=True, last_pass=NOW - 10 * MINUTE, now=NOW)
+        self.assertEqual(code, 503)
+        self.assertEqual(body["yield_watcher"], "stuck")
+
+
+class ProbeEndpointTest(unittest.TestCase):
+    """Readiness must not depend on the watcher.
+
+    The gate runs one replica. If readiness followed /healthz, a dead watcher
+    would empty the Service and stop wakes until the liveness restart.
+    """
+
+    def setUp(self):
+        self.saved = dict(gate._watcher)
+        gate._watcher["thread"] = None  # no watcher thread: /healthz says dead
+        gate._watcher["last_pass"] = None
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), gate.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        gate._watcher.update(self.saved)
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status
+
+    def test_readyz_answers_ok_while_the_watcher_is_dead(self):
+        self.assertEqual(self.get("/readyz"), 200)
+
+    def test_healthz_still_fails_while_the_watcher_is_dead(self):
+        self.assertEqual(self.get("/healthz"), 503)
 
 
 if __name__ == "__main__":

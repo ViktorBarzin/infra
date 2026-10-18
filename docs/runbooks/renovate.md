@@ -146,14 +146,15 @@ A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the
 
 Policy, from ADR-0001:
 
-- Only the Bun manager runs (`enabledManagers: ["bun"]`): a `package.json` with a sibling `bun.lock`. Other ecosystems in an app repo are left alone, such as the legacy npm frontend and Python backend in `viktor/tasks` before its cutover.
+- The Bun manager runs on a `package.json` with a sibling `bun.lock`. The `dockerfile` and `github-actions` managers are on only for the Bun runtime pins (below); a packageRule disables everything else they find. Other ecosystems in an app repo are left alone, such as the legacy npm frontend and Python backend in `viktor/tasks` before its cutover.
 - Bun comes from `binarySource: "install"`: containerbase installs the version the app pins in `"packageManager": "bun@x.y.z"` into the cache PVC. The 2.6 GB `-full` image would carry whatever Bun its tag ships, not the app's pin.
 - npm releases wait 3 days (`minimumReleaseAge`), except `@viktorbarzin/*`. This matches the app's `bunfig.toml` `install.minimumReleaseAge`.
 - Updates land straight on master (`automergeType: branch`, `ignoreTests: true`), majors included. A failed `bun.lock` update blocks the automerge and leaves the branch with an artifact error. Each landed commit starts the app's normal build and deploy.
-- `@tanstack/*start*` and `@tanstack/*router*` are pinned to exact versions and grouped into one branch, `renovate/tanstack-start-router`, with automerge off. Renovate opens a pull request and a person merges it.
-- A bump of the Bun pin itself (`packageManager` / `engines`) is also a pull request, because the devvm playbook, CI `setup-bun` and the `oven/bun` base image move with it.
+- Nothing waits for review (Viktor, 2026-10-18). Until then TanStack Start and Router and the Bun pin were pull requests for a person, and `viktor/tasks` PR #8 was one of them.
+- `@tanstack/*start*` and `@tanstack/*router*` are pinned to exact versions and grouped into one branch, `renovate/tanstack-start-router`, which lands like any other. Start ships breaking changes in minor and patch releases; the app's CI runs lint, typecheck, unit and e2e tests before its deploy job, so a breaking bump stops there and the running version stays up. A red build on master after a TanStack bump is the signal to fix or revert it.
+- The Bun runtime moves as one commit, `renovate/bun-runtime`: the `packageManager` / `engines` pin, the `oven/bun` tags in the Dockerfile and `bun-version` for `oven-sh/setup-bun` in the GitHub workflow. The whole group waits 3 days so a Docker tag cannot land ahead of its npm release. The devvm playbook's Bun pin is not in the app repo and still moves by hand.
 - `osvVulnerabilityAlerts: true`. Security updates skip Renovate's 3-day wait, but the app's own `bunfig.toml` wait still applies to `bun install`. A fix younger than 3 days therefore fails the lock update and does not land. ADR-0001 takes urgent fixes through a `minimumReleaseAgeExcludes` entry and a manual bump.
-- Run limit: `prCommitsPerRunLimit: 6` across all app repos (each landed bump is 2 pushes, a pull request branch is 1).
+- Run limit: `prCommitsPerRunLimit: 6` across all app repos (each landed bump is 2 pushes).
 - The wrapper's infra-only checks are off for this job: there is no `WOODPECKER_REPO_ID`, so no infra pipeline guard, and `RAILS_HOLD_COOLDOWN=0`. The etcd calm gate still applies.
 
 Adding an app repo:
