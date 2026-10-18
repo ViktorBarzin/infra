@@ -35,7 +35,7 @@ app needs. The `wine-app` Deployment label scopes the `WineAppWakeFailed` and
 `app_files` must contain `app.env` and `install.sh`. The contract, with an
 example, is in `images/wine-app/README.md`. In short: `app.env` names the
 installer (URL, sha256, optional Referer), the version, the launch command and
-the main window title; `install.sh` drives the installer under Xvfb with
+the main window title; `install.sh` drives the installer on the X display with
 xdotool. On start the image installs the app into `/data/prefix` if the marker
 for that version is missing. Bumping the version in `app.env` runs the new
 installer over the existing prefix on the next start.
