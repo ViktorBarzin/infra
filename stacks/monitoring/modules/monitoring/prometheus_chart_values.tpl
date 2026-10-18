@@ -7776,20 +7776,22 @@ serverFiles:
               summary: "f1-stream dropped {{ $value | printf \"%.0f\" }} viewing beats in 30m"
               description: "Viewing beats are not reaching Postgres. Split by reason with `sum by (reason, pod) (increase(f1_viewing_beats_dropped_total[30m]))`. error and cooloff mean writes are failing: read `homelab logs query '{namespace=\"f1-stream\"} |= \"[viewing] could not\"' --since 1h`. in-flight means writes are slow to return. cap or playback-cap means a client is looping. To confirm rows are landing, read the database the apps use: `homelab k8s db pg-cluster --db f1_stream -- \"select max(at) from viewing_beats\"` (CLI v0.27.2 or later follows the postgresql Service)."
           # The f1-stream Watcher's download over its budget. Added 2026-10-16.
-          # The plan and ADR-0044 give the Watcher about 30 Mbit/s of the house
-          # downlink (which averages 214 Mbit/s) while Feeds learn. Before the
+          # The plan and ADR-0044 give the Watcher 45 Mbit/s of the house
+          # downlink (which averages 214 Mbit/s) while Feeds learn; it was 30
+          # until 2026-10-18. Before the
           # budget it measured about 51 Mbit/s around the clock and 86-90 after
           # restarts. The Watcher now holds its full watches to
           # WATCHER_DOWNLOAD_BUDGET_MBPS by its own measured rates and exports
           # that budget, so this compares what the pod actually receives (all
           # traffic, playlists and database included) with 1.2 times it.
-          # `or on() vector(30)` keeps the rule working if the gauge is missing.
+          # `or on() vector(45)` keeps the rule working if the gauge is missing;
+          # keep it equal to WATCHER_DOWNLOAD_BUDGET_MBPS in watcher.tf.
           # The 30m rate and 30m hold leave out the minutes after a restart,
           # when unmeasured Feeds are costed at an estimate.
           - alert: F1WatcherDownloadOverBudget
             expr: |
               sum(rate(container_network_receive_bytes_total{namespace="f1-stream",pod=~"f1-stream-watcher-.*"}[30m])) * 8 / 1e6
-              > on() 1.2 * (max(f1_watcher_download_budget_mbps) or on() vector(30))
+              > on() 1.2 * (max(f1_watcher_download_budget_mbps) or on() vector(45))
             for: 30m
             labels:
               severity: warning
