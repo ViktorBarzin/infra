@@ -157,7 +157,7 @@ resource "kubernetes_service" "gate" {
 }
 
 # Sleep side, every 5 minutes. The image's entrypoint keeps two signals in the
-# pod: /tmp/last-viewer (touched while x11vnc has a client; noVNC's websockify
+# pod: /tmp/last-viewer (touched while Xvnc has a VNC client; noVNC's websockify
 # is that client, so this counts browser sessions, not Traefik keep-alives or
 # probes) and /tmp/input-idle-ms (X input idle time from xprintidle).
 # Fail-safe: a pod that is not Running and Ready (booting, installing) is left

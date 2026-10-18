@@ -30,7 +30,7 @@ RUN set -eux; \
       winehq-stable="$WINE_VERSION" wine-stable="$WINE_VERSION" \
       wine-stable-amd64="$WINE_VERSION" wine-stable-i386="$WINE_VERSION"; \
     apt-get install -y --no-install-recommends \
-      xvfb xauth x11-utils xdotool xprintidle x11vnc novnc websockify openbox \
+      xvfb tigervnc-standalone-server xauth x11-utils xdotool xprintidle novnc websockify openbox \
       imagemagick cabextract unzip file procps iproute2 psmisc tini osslsigncode \
       fonts-dejavu-core; \
     curl -fsSL -o /usr/local/bin/winetricks \
@@ -40,11 +40,16 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # noVNC opens straight into the session: scaled to the browser, reconnecting.
+# Scaling is capped at 1:1. Stock noVNC also scales UP when the browser window
+# is larger than the screen, which blurs every glyph; capped, a large window
+# shows the session pixel for pixel and only a smaller one is scaled down.
 RUN set -eux; \
     printf '%s\n' '{"autoconnect": true, "reconnect": true, "reconnect_delay": 2000, "resize": "scale", "shared": true}' \
       > /usr/share/novnc/defaults.json; \
     printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&resize=scale&reconnect=1">' \
-      > /usr/share/novnc/index.html
+      > /usr/share/novnc/index.html; \
+    sed -i 's|^\(        this\._rescale(scaleRatio);\)$|        scaleRatio = Math.min(scaleRatio, 1);\n\1|' /usr/share/novnc/core/display.js; \
+    grep -q 'scaleRatio = Math.min(scaleRatio, 1);' /usr/share/novnc/core/display.js
 
 RUN useradd -m -u 1000 -s /bin/bash app \
     && mkdir /data /app && chown app:app /data \

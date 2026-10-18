@@ -13,8 +13,7 @@ the likely second.
 ```mermaid
 flowchart LR
   B[Browser] -->|Authentik-guarded ingress| WS[websockify + noVNC :6080]
-  WS --> VNC[x11vnc 127.0.0.1:5900]
-  VNC --> X[Xvfb :0 + openbox]
+  WS --> X[Xvnc :0, VNC on 127.0.0.1:5900, + openbox]
   X --- APP[Windows app under Wine]
   APP --- P[(PVC /data/prefix)]
 ```
@@ -27,10 +26,38 @@ flowchart LR
 | Wine | WineHQ stable `11.0.0.0~bookworm-1` (amd64 + i386), pinned |
 | winetricks | release 20260125, pinned by commit `b76e1ee7` |
 | fonts | Microsoft core fonts pre-fetched into the winetricks cache (no prefix in the image) |
-| display | Xvfb, openbox, x11vnc, noVNC 1.3 + websockify (Debian packages) |
+| display | TigerVNC Xvnc 1.12, openbox, noVNC 1.3 + websockify (Debian packages). Xvfb stays for the image build and for spikes |
 | tools | xdotool, xprintidle, imagemagick, osslsigncode, curl, procps, iproute2, tini |
 
 It runs as uid 1000 (`app`), with `WINEPREFIX=/data/prefix`.
+
+## Display
+
+Xvnc (TigerVNC) is the X server and the VNC server in one process. It tracks
+which pixels changed instead of polling the screen, which is what x11vnc with
+`-noxdamage` did on top of Xvfb until 2026-10-18. Measured on the devvm the
+same day, from a window move inside the container to the changed pixel in a
+headless browser's noVNC canvas, 40 moves per run, two runs each:
+
+| stack | median | p90 |
+|---|---|---|
+| Xvfb + x11vnc `-noxdamage` | 61-69 ms | 97-100 ms |
+| Xvnc | 24-25 ms | 27-28 ms |
+
+The screen has a fixed size (`SCREEN_GEOMETRY`) and Xvnc runs with
+`-AcceptSetDesktopSize=0`, so noVNC's "remote resizing" mode has no effect.
+Letting the screen follow the browser window was tried with iVMS and dropped:
+iVMS warns that it needs at least 1280x768, which a full-HD laptop at 125 %
+display scaling does not offer (its browser window is about 1536x730 CSS
+pixels), and after the screen grew while iVMS was running, Wine left the part
+of its windows below the old height unpainted until the client restarted.
+
+noVNC's scaling is capped at 1:1 (a one-line patch to
+`/usr/share/novnc/core/display.js`, checked at build time). A browser window
+larger than the screen shows it pixel for pixel; a smaller one scales it down
+to fit. Text is sharpest when the browser's CSS pixels match the screen's
+pixels: on a laptop with 125 % display scaling, setting the browser zoom to
+80 % for the app's tab gives that.
 
 ## App contract
 
@@ -56,7 +83,7 @@ The Terraform module mounts a ConfigMap read-only at `/app`:
 | `APP_READY_WINDOW` | yes | `xdotool search --name` regex for the app's window, used by readiness |
 | `APP_WINETRICKS` | no | space-separated winetricks verbs, e.g. `corefonts` |
 | `APP_SERVICES_WAIT` | no | seconds to wait after `wineboot` before launching (default 0) |
-| `SCREEN_GEOMETRY` | no | Xvfb screen, default `1600x900x24` |
+| `SCREEN_GEOMETRY` | no | the Xvnc screen, default `1600x900x24`. Fixed for the pod's life: viewers cannot resize it (see Display) |
 
 `/usr/local/bin/wine-app-lib.sh` has helpers for install scripts: find a window
 by class and size, wait until it stops repainting, click at window-relative
@@ -66,17 +93,16 @@ picture of what went wrong).
 
 ## Start sequence
 
-1. Xvfb on `:0`, x11vnc on `127.0.0.1:5900` (no password, the ingress is
-   guarded by Authentik), websockify serving noVNC on `0.0.0.0:6080`. The
-   install can be watched through noVNC while it runs.
+1. Xvnc on `:0` with its VNC port on `127.0.0.1:5900` (no password, the
+   ingress is guarded by Authentik), websockify serving noVNC on
+   `0.0.0.0:6080`. The install can be watched through noVNC while it runs.
 2. If `/data/.installed-$APP_NAME-$APP_VERSION` is missing, install (below),
    then re-exec the entrypoint so the first session runs from a clean boot.
 3. openbox, a persistent `wineserver`, `wineboot`, then `APP_LAUNCH` in a loop
    that restarts the client 5 s after it exits (users close the window by
    accident). `post-start.sh` runs alongside.
-4. A supervisor exits the container (so Kubernetes restarts it) if Xvfb,
-   x11vnc, websockify, openbox, the idle loop, `wineserver` or `services.exe`
-   dies.
+4. A supervisor exits the container (so Kubernetes restarts it) if Xvnc,
+   websockify, openbox, the idle loop, `wineserver` or `services.exe` dies.
 
 ## Install and upgrade
 
@@ -105,7 +131,7 @@ While installing, the pod is not Ready (see probes).
   Use it as the readiness probe. A liveness probe should be a plain TCP check
   on 6080 with a generous `initialDelaySeconds`, or none: the install takes
   5-10 minutes and the supervisor already exits on component death.
-- `/tmp/last-viewer` is touched at startup and every 30 s while x11vnc on
+- `/tmp/last-viewer` is touched at startup and every 30 s while Xvnc on
   `:5900` has an ESTABLISHED client (each noVNC browser tab is one). Probes and
   Traefik keep-alives only reach `:6080`, so they do not count.
 - `/tmp/input-idle-ms` holds the X server's input idle time in ms
@@ -137,15 +163,15 @@ retry.
   worked under Docker. `runAsUser: 1000`, `runAsNonRoot: true`.
 - `readOnlyRootFilesystem` is not supported: `/tmp`, `/home/app/.cache` and
   `/home/app/.config` are written.
-- RLIMIT_NOFILE: the entrypoint lowers it to 65536 itself (x11vnc stalls on
-  huge fd tables), nothing needed in the spec.
+- RLIMIT_NOFILE: the entrypoint lowers it to 65536 itself (x11vnc, used
+  until 2026-10-18, stalled on huge fd tables), nothing needed in the spec.
 - Resources for iVMS: about 3.2 GB of memory at idle and 0.6-0.7 of a core
   (spike, 2026-10-17); request 3.5Gi, limit 5Gi.
 - Ports: 6080 only. 5900 is bound to localhost.
 
 ## Adding a new app
 
-1. Spike first: run the installer under this image by hand (Xvfb plus
+1. Spike first: run the installer under this image by hand (Xvfb or Xvnc plus
    `import -window root` screenshots), find out which winetricks verbs it
    needs, whether it has a silent-install switch, which windows and dialogs it
    shows and their WM_CLASS and sizes (`wa_list_windows`), and whether the

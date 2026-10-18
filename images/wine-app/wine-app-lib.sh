@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Helpers for app install scripts (/app/install.sh) that drive a Windows
-# installer's GUI on the Xvfb display. Source it:
+# installer's GUI on the virtual X display. Source it:
 #
 #   . /usr/local/bin/wine-app-lib.sh
 #
