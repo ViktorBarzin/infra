@@ -1316,6 +1316,8 @@
 #     master and node1-4 have run since 2026-05-10: security, -updates and ESM
 #     origins, a blacklist for the container runtime and CNI packages, and no
 #     automatic reboot, because kured and its sentinel gate own reboots.
+#   * a needrestart drop-in that stops the post-upgrade hook from restarting
+#     containerd and kubelet after every package (infra#128).
 #   * cloud-init is disabled on a node that has already joined, so no bootstrap
 #     can run a second time on a live node. master and node1-3 do not have
 #     cloud-init installed. node4's VM lost its cloud-init drive and the
@@ -1356,6 +1358,29 @@
         owner: root
         group: root
         mode: "0644"
+      tags: patching
+
+    # needrestart restarts every service touched by an upgraded library after
+    # EACH dpkg run, and unattended-upgrades runs dpkg once per package. Left
+    # alone, that restarted containerd ~63 times in 35 minutes during node5's
+    # 143-package catch-up on 2026-10-18 (infra#128) and took the node
+    # NotReady. The drop-in defers containerd and kubelet to kured's reboot.
+    # Only node4 and node5 (bootstrapped from the hand-made snippets) have
+    # needrestart installed; master and node1-3 do not, so the task skips them.
+    - name: Is needrestart installed
+      ansible.builtin.stat:
+        path: /usr/sbin/needrestart
+      register: needrestart_bin
+      tags: patching
+
+    - name: needrestart never restarts containerd or kubelet
+      ansible.builtin.copy:
+        src: files/k8s-node/50-k8s-node-runtime.conf
+        dest: /etc/needrestart/conf.d/50-k8s-node-runtime.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: needrestart_bin.stat.exists
       tags: patching
 
     # The blacklist above keeps unattended-upgrades off these, and the hold
