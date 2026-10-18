@@ -83,7 +83,7 @@ variable "cpu_request" {
 variable "shm_size" {
   type        = string
   default     = "1Gi"
-  description = "Size of the Memory-backed /dev/shm. Wine and Xvfb use shared memory; the Kubernetes default of 64Mi is too small."
+  description = "Size of the Memory-backed /dev/shm. Wine and the X server use shared memory; the Kubernetes default of 64Mi is too small."
 }
 
 variable "storage_size" {

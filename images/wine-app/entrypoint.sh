@@ -6,8 +6,8 @@ set -euo pipefail
 log() { echo "[wine-app $(date +%H:%M:%S)] $*" >&2; }
 die() { log "FATAL: $*"; exit 1; }
 
-# Containerd hands out a huge RLIMIT_NOFILE; x11vnc sweeps the whole fd table
-# on every connect and stalls for minutes. Lowering is always permitted.
+# Containerd hands out a huge RLIMIT_NOFILE; VNC servers that sweep the fd
+# table on connect stall for minutes. Lowering is always permitted.
 ulimit -n 65536 2>/dev/null || true
 
 # --- app contract -----------------------------------------------------------
@@ -65,18 +65,21 @@ stop_all() {
 trap 'stop_all 0 SIGTERM' TERM INT
 
 # --- display and remote viewing ---------------------------------------------
+# TigerVNC's Xvnc is the X server and the VNC server in one, so it sends only
+# what changed. It replaced Xvfb + x11vnc after the 2026-10-18 benchmark
+# (ADR-0036): 29 ms vs 56 ms median click-to-screen, 59 vs 36 fps.
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
-Xvfb :0 -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
+[[ "$SCREEN_GEOMETRY" =~ ^([0-9]+x[0-9]+)x([0-9]+)$ ]] || die "SCREEN_GEOMETRY must look like 1600x900x24"
+Xvnc :0 -geometry "${BASH_REMATCH[1]}" -depth "${BASH_REMATCH[2]}" -rfbport 5900 -localhost \
+  -SecurityTypes None -AlwaysShared -nolisten tcp &
 PIDS+=($!)
 for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
-xdpyinfo >/dev/null 2>&1 || die "Xvfb did not start"
+xdpyinfo >/dev/null 2>&1 || die "Xvnc did not start"
 
-x11vnc -display :0 -rfbport 5900 -localhost -nopw -forever -shared -quiet -nolookup -noxdamage &
-PIDS+=($!)
 websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 &
 PIDS+=($!)
 
-# Idle signals: viewers = established connections to x11vnc on :5900 (noVNC's
+# Idle signals: viewers = established connections to Xvnc on :5900 (noVNC's
 # websockify connects there once per browser; probes and Traefik keep-alives
 # only ever touch :6080). Input idle time comes from the X server.
 (
