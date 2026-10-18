@@ -38,7 +38,7 @@ measured each option running on k8s-node3, over the pod network:
 |---|---|---|---|---|---|---|---|
 | x11vnc `-noxdamage` + noVNC 1.3 (before) | 56 ms | 89 ms | 36 | 0.08 | 0.29 | 37 kbit/s | 607 MiB |
 | x11vnc `-wait 5 -defer 5` + noVNC 1.6 | 45 ms | 61 ms | 54 | 0.07 | 0.20 | 57 kbit/s | 624 MiB |
-| **TigerVNC Xvnc 1.12 + noVNC 1.6** | **29 ms** | **38 ms** | **59** | **0.00** | **0.11** | **97 kbit/s** | **603 MiB** |
+| TigerVNC Xvnc 1.12 + noVNC 1.6 (chosen) | 29 ms | 38 ms | 59 | 0.00 | 0.11 | 97 kbit/s | 603 MiB |
 | KasmVNC (linuxserver image) | 55 ms | 96 ms | 23 | 0.00 | 0.13 | 40 kbit/s | 303 MiB |
 | neko 3.1.4, VP8 on CPU, 60 fps | 144 ms | 170 ms | 25 | 1.41 | 1.52 | 2.1 Mbit/s | 244 MiB |
 | neko 3.1.4, x264 on CPU, 60 fps | 164 ms | 211 ms | 25 | 1.80 | 1.48 | 2.1 Mbit/s | 181 MiB |
