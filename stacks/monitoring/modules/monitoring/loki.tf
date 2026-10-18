@@ -28,7 +28,7 @@ resource "helm_release" "loki" {
   # the `storage` volumeClaimTemplate, so helm patches it in place and
   # storage-loki-0 keeps its data. 2026-10-17: 18.15.1 -> 18.17.0, rendered
   # manifests differ only in the chart label.
-  version = "18.17.0"
+  version = "18.17.1"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
