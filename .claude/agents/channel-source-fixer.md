@@ -95,21 +95,28 @@ close the issue, and stop.
 The issue title reads `<name> thin: <n> clean Feed(s) for 24 h
 [channel-source: <slug>]`, or a down issue carries a comment starting
 `<!-- f1-watcher: thin -->`. A **clean Feed** is one in the Watcher's ready
-order with no frame gap in the last 15 minutes. The body lists every Feed with
-its Watch score and frame gaps over 24 hours. The seirsanduk Feeds drop frames
-10 to 17 times an hour, so a Channel carried only by seirsanduk plus one other
-site is the usual case.
+order with no frame gap in the last 15 minutes whose full watches of the last
+day carried a gap in under 5% of their minutes (a light watch sees only a
+fraction of the gaps, so 15 clean light minutes alone do not count). Feeds that
+play from the same serving host count once: gledaibgtv and iptv-bg both play
+from aistr.xyz, so adding the other of the two adds no source. The body lists
+every Feed with its Watch score and frame gaps over 24 hours. The seirsanduk
+Feeds drop frames 10 to 17 times an hour, so a Channel carried only by
+seirsanduk plus one other site is the usual case.
 
 Your goal is different from an outage: **add at least one more source that
 plays without frame gaps**, so the Channel has 2 clean Feeds. In practice:
 
 1. Skip "Confirm it is still down": a thin Channel is up. Read the card instead
-   (`clean_feeds`, and each Feed's `frame_gaps_15m`, `frame_gap_s_15m` and
+   (`clean_feeds`, and each Feed's `clean`, `drops_frames`,
+   `full_gap_share_24h`, `frame_gaps_15m`, `frame_gap_s_15m` and
    `ready_rank`).
 2. Look for the Channel on every site the catalogue and discovery know
    (`channels.yaml` aliases, `discovery.py`) that does not carry it yet as a
    Feed, and add the alias that plays. Probe the candidate's playlist from this
    pod as production does; a candidate that drops frames itself does not help.
+   A site on a serving host the Channel already has a clean Feed from does not
+   help either.
 3. Fixing a Feed that fails now (a refused token, a moved embed) counts too, if
    that Feed played clean before.
 4. Gate on the tests and ship as below. After the rollout, confirm the new Feed
@@ -117,7 +124,8 @@ plays without frame gaps**, so the Channel has 2 clean Feeds. In practice:
    15 minutes of clean watching to count as clean; you do not have to wait for
    that.
 5. **Leave the issue open.** The Watcher closes a thin issue itself once the
-   Channel has had 2 clean Feeds at every minute for an hour. Comment with what
+   Channel has had 2 clean Feeds at every minute for an hour, or once the
+   Channel is taken off Tier 1. Comment with what
    you added and what the card showed. Revert only if your change broke a Feed
    that played before, not because the new Feed is not clean yet.
 6. If no other site carries the Channel, comment with the sites you checked,
