@@ -88,7 +88,8 @@
 #   ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
 #     --tags kubelet,containerd,pigz --limit 10.0.20.104 --check --diff
 #
-# Tags: `sysctl` (the original play), `kubelet`, `containerd`, `pigz`.
+# Tags: `sysctl` (the original play), `kubelet`, `containerd`, `pigz`, and
+# `patching` / `cloudinit` (unattended-upgrades and cloud-init, the last play).
 #
 # WHY: the sysctl half
 # --------------------
@@ -1290,3 +1291,127 @@
           discard_unpacked_layers`. Confirm k8s-node1 is actually in kured's
           rotation before treating this as applied there.
       tags: [kubelet, containerd, pigz]
+
+# ---------------------------------------------------------------------------
+# Security patching, and cloud-init as a one-shot
+# ---------------------------------------------------------------------------
+# WHY (2026-10-18). k8s-node5 had gone without security patches since
+# 2026-07-28, with 143 pending, because its unattended-upgrades package had been
+# uninstalled. The template bootstrap (modules/create-template-vm/cloud_init.yaml)
+# installs and configures it correctly. node4 and node5 were not built from the
+# template: they boot from hand-made Proxmox snippets
+# (/var/lib/vz/snippets/node4_bootstrap.yaml, k8s_node5_bootstrap.yaml) whose
+# runcmd ran `apt-get remove -y unattended-upgrades`. It also reset
+# /etc/containerd/config.toml to defaults, put journald back on disk, ran a
+# full `package_upgrade` and restarted containerd. cloud-init re-runs that
+# runcmd whenever Proxmox hands the VM a new instance-id, which it did on
+# node5 on 2026-07-18 and again on 2026-07-28. A hand fix in June was undone
+# by the July re-run. Nothing reported it: this playbook declared none of it,
+# so the hourly drift check had nothing to compare.
+#
+# Two things now hold the state:
+#   * unattended-upgrades, its two apt.conf.d files and the package holds are
+#     declared here, so the hourly drift check (scripts/k8s-node-drift-check)
+#     reports a node that loses them. The two files are byte-identical to what
+#     master and node1-4 have run since 2026-05-10: security, -updates and ESM
+#     origins, a blacklist for the container runtime and CNI packages, and no
+#     automatic reboot, because kured and its sentinel gate own reboots.
+#   * cloud-init is disabled on a node that has already joined, so no bootstrap
+#     can run a second time on a live node. master and node1-3 do not have
+#     cloud-init installed. node4's VM lost its cloud-init drive and the
+#     generator already disables it at boot. node5 was the one node where it
+#     still ran. A rebuilt node gets its first boot from the template, then
+#     needs this playbook run, which writes the marker.
+#     Trade-off: a disk grown in Proxmox is no longer auto-extended at boot
+#     (cc_growpart). Run `sudo growpart /dev/sda 1 && sudo resize2fs /dev/sda1`.
+#
+# Tags: `patching`, `cloudinit`.
+- name: Kubernetes node security patching
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+
+  tasks:
+    - name: unattended-upgrades is installed
+      ansible.builtin.apt:
+        name:
+          - unattended-upgrades
+          - update-notifier-common
+        state: present
+      register: uu_packages
+      tags: patching
+
+    - name: apt runs the daily list refresh and the unattended upgrade
+      ansible.builtin.copy:
+        src: files/k8s-node/20auto-upgrades
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+      tags: patching
+
+    - name: Allowed origins, runtime blacklist and no automatic reboot
+      ansible.builtin.copy:
+        src: files/k8s-node/52unattended-upgrades-k8s
+        dest: /etc/apt/apt.conf.d/52unattended-upgrades-k8s
+        owner: root
+        group: root
+        mode: "0644"
+      tags: patching
+
+    # The blacklist above keeps unattended-upgrades off these, and the hold
+    # keeps a manual `apt upgrade` off them too. The k8s-version-upgrade chain
+    # unholds and re-holds the kube packages around each version step.
+    - name: Kubernetes and containerd packages are held
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+        - containerd.io
+      tags: patching
+
+    # Under --check on a node where the package is missing, the unit files do
+    # not exist yet, so these would fail rather than report the drift the
+    # install task above already reported.
+    - name: The apt timers and the shutdown hook are enabled
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        masked: false
+      loop:
+        - unattended-upgrades.service
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      when: not (ansible_check_mode and uu_packages.changed)
+      tags: patching
+
+    - name: The apt timers are running
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      when: not (ansible_check_mode and uu_packages.changed)
+      tags: patching
+
+    - name: Is cloud-init installed
+      ansible.builtin.stat:
+        path: /usr/bin/cloud-init
+      register: cloud_init_bin
+      tags: cloudinit
+
+    - name: cloud-init does not run again on a node that has joined
+      ansible.builtin.copy:
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. cloud-init's generator
+          # skips every stage while this file exists. The node's bootstrap ran
+          # once, at first boot; its OS state is declared in that playbook.
+        dest: /etc/cloud/cloud-init.disabled
+        owner: root
+        group: root
+        mode: "0644"
+      when: cloud_init_bin.stat.exists
+      tags: cloudinit
