@@ -12,7 +12,13 @@ emulator to 0, so the waiting pod gets the 800 the emulator held. While a pod
 waits, /wake does not scale the emulator up again. This covers every way that
 Transcoder rolls (its deploy pipeline, Reloader, a Terraform apply), not only
 the pipeline that sleeps the emulator itself.
+
+A pod that still waits after YIELD_LIMIT_SECONDS is short of more than the
+emulator's 800, so the gate stops holding the emulator asleep for it, logs
+why, and wakes it as usual. /healthz reports whether the watcher thread is
+alive and fails when it is not.
 """
+import datetime
 import json
 import os
 import ssl
@@ -37,25 +43,43 @@ VNC_PATH = "/vnc.html?autoconnect=1&resize=scale"
 YIELD_NAMESPACE = os.environ.get("YIELD_NAMESPACE", "f1-stream")
 YIELD_SELECTOR = os.environ.get("YIELD_SELECTOR", "android-emulator-yields-to=gpu-seat")
 YIELD_INTERVAL_SECONDS = float(os.environ.get("YIELD_INTERVAL_SECONDS", "10"))
+# How long one pod may keep the emulator asleep. With the emulator asleep a
+# Transcoder surge pod schedules within seconds; one that still waits after
+# this is short of more than the emulator's 800 gpumem.
+YIELD_LIMIT_SECONDS = float(os.environ.get("YIELD_LIMIT_SECONDS", "900"))
 # The scheduler's FailedScheduling message names the resource a pod is short
 # of; only this one is something the emulator can give back.
 GPU_SEAT_SHORTAGE = "Insufficient viktorbarzin.me/gpumem"
 
-# What the watcher saw last, and whether a /wake was held back for it. The
-# handler threads and the watcher thread share it.
+# What the watcher saw last, whether a /wake was held back for it, when each
+# waiting pod was first seen, and which pods passed the limit. The handler
+# threads and the watcher thread share it.
 _yield_lock = threading.Lock()
-_yield_state = {"waiters": [], "wake_held": False}
+_yield_state = {"waiters": [], "wake_held": False, "first_seen": {}, "gave_up": []}
+# The watcher thread and the wall-clock time its last pass finished, for /healthz.
+_watcher = {"thread": None, "last_pass": None}
 
 
 def reset_yield_state():
     with _yield_lock:
         _yield_state["waiters"] = []
         _yield_state["wake_held"] = False
+        _yield_state["first_seen"] = {}
+        _yield_state["gave_up"] = []
 
 
 def yielding_to():
     with _yield_lock:
         return list(_yield_state["waiters"])
+
+
+def gave_up_on():
+    with _yield_lock:
+        return list(_yield_state["gave_up"])
+
+
+def log_line(line):
+    print(line, flush=True)
 
 WAKING_PAGE = """<!doctype html><html><head><title>Android emulator</title>
 <meta http-equiv="refresh" content="10">
@@ -109,9 +133,27 @@ def sleep_emulator(kube_fn):
     )
 
 
+def parse_time(value):
+    """Epoch seconds from a Kubernetes timestamp, or None."""
+    try:
+        t = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    return t.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
 def seat_waiters(pods):
     """Names of the pods the scheduler left Pending for want of gpumem."""
-    names = []
+    return [name for name, _ in seat_waits(pods)]
+
+
+def seat_waits(pods):
+    """(name, waiting since) for each pod left Pending for want of gpumem.
+
+    Waiting since is the PodScheduled condition's lastTransitionTime in epoch
+    seconds, or None when the pod does not carry one.
+    """
+    waits = []
     for p in pods:
         meta = p.get("metadata") or {}
         status = p.get("status") or {}
@@ -124,9 +166,9 @@ def seat_waiters(pods):
                 and c.get("reason") == "Unschedulable"
                 and GPU_SEAT_SHORTAGE in (c.get("message") or "")
             ):
-                names.append(meta.get("name", "?"))
+                waits.append((meta.get("name", "?"), parse_time(c.get("lastTransitionTime"))))
                 break
-    return names
+    return waits
 
 
 def list_seat_waiters(kube_fn):
@@ -134,20 +176,56 @@ def list_seat_waiters(kube_fn):
         {"labelSelector": YIELD_SELECTOR, "fieldSelector": "status.phase=Pending"}
     )
     pods = kube_fn("GET", f"/api/v1/namespaces/{YIELD_NAMESPACE}/pods?{query}")
-    return seat_waiters(pods.get("items") or [])
+    return seat_waits(pods.get("items") or [])
 
 
-def yield_once(kube_fn, log):
-    """One pass of the yield watcher. Returns the waiting pods it saw.
+def within_limit(waits, now, log):
+    """The waiting pods the emulator still yields to.
+
+    A pod that has waited YIELD_LIMIT_SECONDS or longer, counted from its
+    PodScheduled timestamp (or from when the gate first saw it), is dropped
+    and recorded in gave_up; the reason is logged once per pod.
+    """
+    holding, expired, newly = [], [], []
+    with _yield_lock:
+        first_seen = _yield_state["first_seen"]
+        current = {name for name, _ in waits}
+        for name in list(first_seen):
+            if name not in current:
+                del first_seen[name]
+        for name, since in waits:
+            seen = first_seen.setdefault(name, now)
+            waited = now - (since if since is not None else seen)
+            if waited >= YIELD_LIMIT_SECONDS:
+                expired.append(name)
+                if name not in _yield_state["gave_up"]:
+                    newly.append((name, waited))
+            else:
+                holding.append(name)
+        _yield_state["gave_up"] = expired
+    for name, waited in newly:
+        log(
+            f"yield: {name} in {YIELD_NAMESPACE} has waited {int(waited // 60)} min for a GPU seat, "
+            f"past the {int(YIELD_LIMIT_SECONDS // 60)} min limit. The emulator's 800 gpumem is not "
+            "what it lacks (another GPU tenant on k8s-node1, or a request that cannot fit), so the "
+            "gate stops holding the emulator asleep for it and wakes it as usual; the "
+            "PodUnschedulable alert reports the pod"
+        )
+    return holding
+
+
+def yield_once(kube_fn, log, now=None):
+    """One pass of the yield watcher. Returns the waiting pods it yields to.
 
     Never raises: a failed read leaves the emulator as it is, and a failed
     patch is logged and retried on the next pass.
     """
     try:
-        waiters = list_seat_waiters(kube_fn)
+        waits = list_seat_waiters(kube_fn)
     except Exception as e:
         log(f"yield: could not list pods in {YIELD_NAMESPACE} ({describe(e)}); leaving the emulator as it is")
         return []
+    waiters = within_limit(waits, time.time() if now is None else now, log)
     with _yield_lock:
         _yield_state["waiters"] = list(waiters)
         wake_held = _yield_state["wake_held"] and not waiters
@@ -175,18 +253,23 @@ def yield_once(kube_fn, log):
     return waiters
 
 
-def try_wake(kube_fn):
+def try_wake(kube_fn, now=None, log=log_line):
     """Scale the emulator up unless a pod is waiting for its GPU seat.
 
     Returns the waiting pods; empty means it woke the emulator. A held-back
     wake is done by the watcher once nothing waits, so an agent polling
     /status still sees the emulator come up. If the waiters cannot be read,
-    it wakes anyway, so a broken grant never locks people out.
+    it wakes anyway, so a broken grant never locks people out. A failed read
+    leaves the yield limit's record alone, as yield_once does, so a pod
+    already given up on is not logged again and a pod with no timestamp
+    keeps its first-sight clock.
     """
     try:
-        waiters = list_seat_waiters(kube_fn)
+        waits = list_seat_waiters(kube_fn)
     except Exception:
-        waiters = []
+        wake(kube_fn)
+        return []
+    waiters = within_limit(waits, time.time() if now is None else now, log)
     if waiters:
         with _yield_lock:
             _yield_state["waiters"] = list(waiters)
@@ -204,8 +287,27 @@ def describe(e):
 
 def yield_loop():
     while True:
-        yield_once(kube, lambda line: print(line, flush=True))
+        yield_once(kube, log_line)
+        _watcher["last_pass"] = time.time()
         time.sleep(YIELD_INTERVAL_SECONDS)
+
+
+def health_report(alive, last_pass, now):
+    """(HTTP code, body) for /healthz.
+
+    Unhealthy when the watcher thread has died, or when it is alive but has
+    not finished a pass for longer than a pass can take (four API calls with a
+    10 s timeout each, plus the interval).
+    """
+    stuck_after = max(120.0, 6 * YIELD_INTERVAL_SECONDS)
+    body = {"yield_watcher": "alive" if alive else "dead"}
+    if last_pass is not None:
+        age = now - last_pass
+        body["last_pass_s_ago"] = int(age)
+        if alive and age > stuck_after:
+            body["yield_watcher"] = "stuck"
+    body["ok"] = body["yield_watcher"] == "alive"
+    return (200 if body["ok"] else 503), body
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -219,8 +321,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802 (stdlib naming)
-        if self.path == "/healthz":
+        if self.path == "/readyz":
+            # Readiness: the HTTP server answers. It leaves out the watcher,
+            # so a dead watcher does not take the gate out of its Service
+            # (one replica) while the liveness probe restarts it.
             return self._respond(200, b"ok", "text/plain")
+        if self.path == "/healthz":
+            thread = _watcher["thread"]
+            code, body = health_report(
+                alive=thread is not None and thread.is_alive(),
+                last_pass=_watcher["last_pass"],
+                now=time.time(),
+            )
+            return self._respond(code, json.dumps(body).encode(), "application/json")
         try:
             spec, ready = deployment_state()
             if self.path.startswith("/status"):
@@ -228,6 +341,9 @@ class Handler(BaseHTTPRequestHandler):
                 waiting = yielding_to()
                 if waiting:
                     body["yielding_to"] = waiting
+                stuck = gave_up_on()
+                if stuck:
+                    body["gave_up_on"] = stuck
                 return self._respond(200, json.dumps(body).encode(), "application/json")
             woke = False
             waiting = []
@@ -264,5 +380,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    threading.Thread(target=yield_loop, name="yield", daemon=True).start()
+    _watcher["thread"] = threading.Thread(target=yield_loop, name="yield", daemon=True)
+    _watcher["thread"].start()
     ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

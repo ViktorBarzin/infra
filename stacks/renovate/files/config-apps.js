@@ -66,13 +66,14 @@ module.exports = {
   // bump). They also bypass prCommitsPerRunLimit.
   osvVulnerabilityAlerts: true,
 
-  // Only the Bun manager: package.json files with a sibling bun.lock. A legacy
-  // npm or Python build in the same repo is left alone, since each master push
-  // deploys it.
-  enabledManagers: ['bun'],
+  // The Bun manager: package.json files with a sibling bun.lock. A legacy npm
+  // or Python build in the same repo is left alone, since each master push
+  // deploys it. dockerfile and github-actions are on only for the Bun runtime
+  // pins (the packageRules below disable everything else they find).
+  enabledManagers: ['bun', 'dockerfile', 'github-actions'],
 
-  // Landing: straight to master, no PR, like viktor/infra (Viktor's call,
-  // ADR-0001). ignoreTests: these repos report no commit statuses to Forgejo,
+  // Landing: straight to master, no PR and no review, like viktor/infra
+  // (Viktor's call, ADR-0001; no exceptions since 2026-10-18). ignoreTests: these repos report no commit statuses to Forgejo,
   // so Renovate would otherwise wait forever. A failed bun.lock update still
   // blocks the automerge (artifact errors are checked before ignoreTests).
   automerge: true,
@@ -95,20 +96,27 @@ module.exports = {
     },
     {
       description:
-        'TanStack Start and Router: pinned to exact versions and never automerged. Start ships breaking changes in minor and patch releases, so Renovate opens one PR for both and a person merges it (ADR-0001)',
+        'TanStack Start and Router: pinned to exact versions and moved together in one commit. Start ships breaking changes in minor and patch releases; the app CI (lint, typecheck, unit and e2e tests) runs before the deploy job, so a breaking bump stops at CI and the running version stays up. Landed without review since 2026-10-18 (Viktor), like every other update',
       matchDatasources: ['npm'],
       matchPackageNames: ['@tanstack/*start*', '@tanstack/*router*'],
       rangeStrategy: 'pin',
-      automerge: false,
       groupName: 'TanStack Start and Router',
       groupSlug: 'tanstack-start-router',
     },
     {
       description:
-        'The Bun runtime pin (packageManager / engines) moves with the devvm playbook, CI setup-bun and the oven/bun base image (ADR-0001), so a bump is a PR for a person, not a landed commit',
-      matchPackageNames: ['bun'],
-      matchDepTypes: ['packageManager', 'engines'],
-      automerge: false,
+        'The Bun runtime: the packageManager / engines pin, the oven/bun base image tags in the Dockerfile and setup-bun\'s bun-version in the GitHub workflow move together in one commit, so the build never runs a different Bun from the one the app pins. The whole group waits 3 days, because a docker tag would otherwise land before the npm release it belongs with',
+      matchPackageNames: ['bun', 'oven/bun'],
+      groupName: 'Bun runtime',
+      groupSlug: 'bun-runtime',
+      minimumReleaseAge: '3 days',
+    },
+    {
+      description:
+        'The dockerfile and github-actions managers are on for the Bun runtime only. Other base images and actions in an app repo are left alone',
+      matchManagers: ['dockerfile', 'github-actions'],
+      matchPackageNames: ['!bun', '!oven/bun'],
+      enabled: false,
     },
   ],
 

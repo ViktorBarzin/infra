@@ -33,7 +33,7 @@ flowchart TD
   T[Trivy Operator] -.->|CVE alerts, weekly digest| HUM[people]
 ```
 
-App repos have their own Renovate job: the `renovate-apps` CronJob in the same stack, with its own config (`stacks/renovate/files/config-apps.js`), repo list (`viktor/tasks` since 2026-10-16) and run limit. It updates `bun.lock` dependencies after a 3-day npm wait and lands them on the app's master; TanStack Start and Router bumps wait for a person to merge them. The rails do not cover it: the app's own build and deploy run after each landed commit. See `docs/runbooks/renovate.md` "App repos".
+App repos have their own Renovate job: the `renovate-apps` CronJob in the same stack, with its own config (`stacks/renovate/files/config-apps.js`), repo list (`viktor/tasks` since 2026-10-16) and run limit. It updates `bun.lock` dependencies after a 3-day npm wait and lands them on the app's master without review, TanStack Start and Router and the Bun runtime pin included (since 2026-10-18). The rails do not cover it: the app's own build and deploy run after each landed commit. See `docs/runbooks/renovate.md` "App repos".
 
 Status on 2026-10-15: the CronJob runs every 6 hours (every 30 minutes until 2026-10-11, then every 10 minutes until the upgrade backlog cleared) (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
 
@@ -167,12 +167,13 @@ Independent of the Renovate path above. Drives apt package updates + reboots on 
 ### Source of truth
 | Concern | Location |
 |---|---|
-| Package config (uu, holds, blacklist) | `modules/create-template-vm/cloud_init.yaml` (within `is_k8s_template`) |
+| Package config (uu, holds, blacklist) on running nodes | `playbooks/k8s-node-tuning.yml`, play "Kubernetes node security patching" |
+| The same config at a new node's first boot | `modules/create-template-vm/cloud_init.yaml` (within `is_k8s_template`) |
 | kured Helm release + sentinel-gate DS | `stacks/kured/main.tf` |
 | Upgrade Gates alerts | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` |
 
 ### Day-2 changes
-Cloud-init only runs on first boot. Existing nodes are brought into compliance with a one-shot SSH push — see the runbook section "Restore / re-apply unattended-upgrades config to existing nodes" in `docs/runbooks/k8s-node-auto-upgrades.md`.
+Cloud-init runs once, at first boot; the playbook then disables it on the node. Running nodes get the config from `playbooks/k8s-node-tuning.yml`, and the hourly `k8s-node-drift-check` reports a node that has lost it. Since 2026-10-18, after k8s-node5 went without patches from 2026-07-28 because a hand-made bootstrap snippet re-ran and uninstalled the package. Details in the runbook section "Restore / re-apply unattended-upgrades config to existing nodes" in `docs/runbooks/k8s-node-auto-upgrades.md`.
 
 ### Why this design
 The 26h cluster outage on 2026-03-16 was triggered by an unattended-upgrades kernel push that corrupted containerd's overlayfs snapshotter cluster-wide. The remediations:

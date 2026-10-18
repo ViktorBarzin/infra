@@ -277,7 +277,10 @@ module "nfs_data" {
 # Transcoder pod carries the label android-emulator-yields-to=gpu-seat, and
 # when such a pod waits Pending on Insufficient viktorbarzin.me/gpumem the
 # gate scales the emulator to 0 within about 10 s and holds off waking it
-# until the pod has scheduled (infra stacks/android-emulator/gate.py). The Worker is Recreate, so its seat never doubles. Shrinking
+# until the pod has scheduled, for at most 15 minutes per pod (infra
+# stacks/android-emulator/gate.py). The Worker is Recreate, so its seat never
+# doubles, but the emulator can take the freed seat before the new Worker
+# schedules, so the Worker pod carries the same label (2026-10-18). Shrinking
 # the Transcoder seat so two fit without the emulator's 800 is not an option:
 # the card peaked at 14494 MiB used in the week to 2026-10-16, and one
 # monolith pod used up to 1809 MiB.
@@ -1063,6 +1066,12 @@ resource "kubernetes_deployment_v1" "f1_worker" {
         labels = {
           app  = "f1-stream"
           role = "worker"
+          # The Android emulator's gate puts the emulator to sleep when a pod
+          # with this label waits Pending for gpumem (infra
+          # stacks/android-emulator/gate.tf, yield-watch Role). Recreate frees
+          # the old Worker's 2000 first, but the emulator can take part of it
+          # in the gap (Viktor, 2026-10-18).
+          "android-emulator-yields-to" = "gpu-seat"
         }
       }
       spec {
