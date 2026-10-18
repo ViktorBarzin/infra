@@ -125,6 +125,10 @@ plays without frame gaps**, so the Channel has 2 clean Feeds. In practice:
    while this one is open, and waits a day after a thin issue closes before
    filing again.
 
+If the Channel goes down while its thin issue is open, the Watcher files a
+separate down issue, which comes to you as an outage. Work that one as a down
+issue and leave the thin one open.
+
 ## Where to look first
 
 ```bash
