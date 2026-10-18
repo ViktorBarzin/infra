@@ -6,8 +6,9 @@ set -euo pipefail
 log() { echo "[wine-app $(date +%H:%M:%S)] $*" >&2; }
 die() { log "FATAL: $*"; exit 1; }
 
-# Containerd hands out a huge RLIMIT_NOFILE; x11vnc sweeps the whole fd table
-# on every connect and stalls for minutes. Lowering is always permitted.
+# Containerd hands out a huge RLIMIT_NOFILE; x11vnc swept the whole fd table on
+# every connect and stalled for minutes, and Wine and the X server open fds per
+# client too. Lowering is always permitted.
 ulimit -n 65536 2>/dev/null || true
 
 # --- app contract -----------------------------------------------------------
@@ -65,18 +66,24 @@ stop_all() {
 trap 'stop_all 0 SIGTERM' TERM INT
 
 # --- display and remote viewing ---------------------------------------------
+# Xvnc (TigerVNC) is the X server and the VNC server in one process, so it
+# knows which pixels changed instead of polling the screen: a screen change
+# reached the browser in a median 24 ms against 61-69 ms with Xvfb + x11vnc
+# -noxdamage (2026-10-18, same host). The screen size is fixed and viewers may
+# not resize it: iVMS warns below 1280x768, and under Wine it left part of its
+# window unpainted after the screen grew while it was running.
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
-Xvfb :0 -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
+Xvnc :0 -geometry "${SCREEN_GEOMETRY%x*}" -depth "${SCREEN_GEOMETRY##*x}" \
+  -rfbport 5900 -localhost -SecurityTypes None -AlwaysShared -AcceptSetDesktopSize=0 \
+  -desktop "$APP_NAME" -nolisten tcp >/tmp/xvnc.log 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
-xdpyinfo >/dev/null 2>&1 || die "Xvfb did not start"
+xdpyinfo >/dev/null 2>&1 || { tail -20 /tmp/xvnc.log >&2; die "Xvnc did not start"; }
 
-x11vnc -display :0 -rfbport 5900 -localhost -nopw -forever -shared -quiet -nolookup -noxdamage &
-PIDS+=($!)
 websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 &
 PIDS+=($!)
 
-# Idle signals: viewers = established connections to x11vnc on :5900 (noVNC's
+# Idle signals: viewers = established connections to Xvnc on :5900 (noVNC's
 # websockify connects there once per browser; probes and Traefik keep-alives
 # only ever touch :6080). Input idle time comes from the X server.
 (
