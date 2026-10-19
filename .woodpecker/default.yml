@@ -190,7 +190,6 @@ steps:
         if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
           echo "Cannot determine changed files — applying ALL platform stacks"
           echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
-          > .needs_human_apply
           > .app_apply
         else
           # Check if global files changed (triggers full platform apply)
@@ -314,9 +313,9 @@ steps:
             # 2026-10-10: the CI `ci` Vault role carries the ci-vault-admin
             # policy (stacks/vault/main.tf), per ADR-0030 decision 11 and the
             # software-currency design, so Vault chart bumps land through CI.
-            # Before that it was skipped and recorded in .needs_human_apply
-            # (infra#84). That reporting below stays as the channel for any
-            # stack deliberately skipped in future; today nothing writes it.
+            # Before that it was skipped and reported to Slack and the
+            # ci_stack_pending_human_apply gauge (infra#84); that reporting was
+            # removed on 2026-10-19 because no stack is skipped any more.
             echo "[$stack] Starting apply..."
             ATTEMPT=0
             while :; do
@@ -392,29 +391,6 @@ steps:
         # reflects reality — the service-upgrade agent and CI alert cascade
         # both rely on this (see bd code-e1x). Lock-skipped stacks are NOT
         # counted as failures.
-        # A stack deliberately skipped is NOT a failure — the run stays green,
-        # because turning ~4 of 32 runs red for doing the right thing trains
-        # people to ignore red (Viktor, 2026-09-02, infra#84). It is instead
-        # made loud: a Slack post nobody can miss, and a Pushgateway gauge so a
-        # missed Slack post still surfaces via CIStackPendingHumanApply.
-        if [ -s .needs_human_apply ]; then
-          PENDING=$(tr '\n' ' ' < .needs_human_apply | sed 's/ *$//')
-          echo "=== NEEDS A HUMAN APPLY: [$PENDING] ==="
-          curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\":warning: infra CI: *$PENDING* changed but was NOT applied (Tier-0, human-applied via OIDC).\nCommit: $CI_COMMIT_SHA\nPipeline: $CI_PIPELINE_URL\nApply it: \`cd stacks/vault && ../../scripts/tg apply\`\"}" \
-            "$SLACK_WEBHOOK" >/dev/null || echo "(slack unavailable, the gauge below still records it)"
-          {
-            printf 'ci_stack_pending_human_apply %s\n' "$(wc -l < .needs_human_apply | tr -d ' ')"
-            printf 'ci_stack_pending_human_apply_timestamp %s\n' "$(date +%s)"
-          } | curl -s --data-binary @- \
-            http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/infra-apply \
-            || echo "(pushgateway unavailable, metrics lost for this run)"
-        else
-          printf 'ci_stack_pending_human_apply 0\n' | curl -s --data-binary @- \
-            http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/infra-apply \
-            || true
-        fi
-
         echo "$FAILED_APP_STACKS" > .app_failed
         # A stack the Renovate rails are verifying does not fail the step here:
         # `renovate-rails finish` reverts its bump and applies the reverted tree.

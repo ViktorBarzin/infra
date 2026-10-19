@@ -741,8 +741,7 @@ resource "kubernetes_deployment" "crowdsec-web" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].template[0].spec[0].container[0].image,                     # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
+      spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
     ]
   }
 }

@@ -289,7 +289,6 @@ resource "kubernetes_deployment" "job_hunter" {
       spec[0].template[0].spec[0].init_container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       # Stakater Reloader stamps this on every secret-triggered restart. The
       # 2026-08-14 switch to `reloadStrategy = annotations` (stacks/reloader)
       # moved the marker off the env list and onto this pod-template

@@ -334,7 +334,6 @@ resource "kubernetes_deployment" "browser_bridge" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
