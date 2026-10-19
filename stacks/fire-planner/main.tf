@@ -356,7 +356,6 @@ resource "kubernetes_deployment" "fire_planner" {
       spec[0].template[0].spec[0].init_container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

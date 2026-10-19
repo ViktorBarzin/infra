@@ -73,8 +73,8 @@ data "kubernetes_secret" "whisker_backend" {
 }
 
 # The CA bundle that verifies Goldmane's serving cert. It lives ONLY in
-# calico-system (verified: ConfigMap `tigera-ca-bundle`, 2 keys present —
-# `ca-bundle.crt` AND `tigera-ca-bundle.crt`, both the trusted bundle). We read
+# calico-system (ConfigMap `tigera-ca-bundle`; since calico 3.33 it holds
+# `ca-bundle.crt`, `ca.crt` and `tigera-ca-bundle.crt`). We read
 # it and recreate it as a ConfigMap in this namespace so the pod can mount it
 # (a ConfigMap cannot be cross-namespace-mounted).
 data "kubernetes_config_map" "tigera_ca_bundle" {
@@ -89,10 +89,14 @@ resource "kubernetes_config_map" "tigera_ca_bundle" {
     name      = "tigera-ca-bundle"
     namespace = kubernetes_namespace.goldmane_edge_aggregator.metadata[0].name
   }
-  # Copy the upstream bundle verbatim. We mount the `tigera-ca-bundle.crt` key
-  # at /etc/tigera-ca/tigera-ca-bundle.crt so the service's default
+  # Copy only the `tigera-ca-bundle.crt` key, mounted at
+  # /etc/tigera-ca/tigera-ca-bundle.crt so the service's default
   # CA_CERT_PATH (/etc/tigera-ca/tigera-ca-bundle.crt) resolves with no override.
-  data = data.kubernetes_config_map.tigera_ca_bundle.data
+  # Copying the whole map drifted whenever the operator added a key (calico
+  # 3.33 added `ca.crt`); a change to this key's content still shows as drift.
+  data = {
+    "tigera-ca-bundle.crt" = data.kubernetes_config_map.tigera_ca_bundle.data["tigera-ca-bundle.crt"]
+  }
 }
 
 # Client cert + key for mTLS to goldmane:7443, mounted at TLS_CERT_PATH /

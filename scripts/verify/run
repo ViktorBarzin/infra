@@ -197,8 +197,8 @@ metadata:
 spec:
   suspend: true
   backoffLimit: 0
-  # A pod preempted by the scheduler or evicted from its node (the namespace
-  # runs at tier-4-aux priority) is restarted instead of failing the Job; the
+  # A pod evicted from its node (or preempted, which the renovate priority
+  # class below makes unlikely) is restarted instead of failing the Job; the
   # new pod runs every check again. Seen on the first full run: a verify pod
   # preempted mid alert-watch failed a healthy stack.
   podFailurePolicy:
@@ -215,6 +215,11 @@ spec:
         verify/stack: "$STACK"
     spec:
       serviceAccountName: $SA
+      # The renovate PriorityClass (stacks/renovate: 400000, the tier-3-edge
+      # value, preemptionPolicy Never), so the Woodpecker step pods that run
+      # alongside a rails verify cannot preempt it, and it never preempts
+      # anything itself. Without it Kyverno gives it tier-4-aux.
+      priorityClassName: renovate
       restartPolicy: Never
       terminationGracePeriodSeconds: 5
       containers:

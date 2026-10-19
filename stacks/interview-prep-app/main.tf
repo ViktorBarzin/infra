@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "interview-prep-app" {
           # (CI_SETS_IMAGE below). This value, the build running on
           # 2026-10-12, is used only on a recreate.
           image             = "ghcr.io/viktorbarzin/interview-prep-app:4f3bd20f79015b7daa6dbc9230b1512110167990"
-          image_pull_policy = "Always"
+          image_pull_policy = "IfNotPresent"
           name              = "interview-prep-app"
           port { container_port = 80 } # Dockerfile EXPOSEs 80 (nginx)
           resources {
