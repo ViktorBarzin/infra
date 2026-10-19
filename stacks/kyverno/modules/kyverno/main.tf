@@ -18,6 +18,12 @@ resource "helm_release" "kyverno" {
   name             = "kyverno"
   atomic           = true
   cleanup_on_fail  = true
+  # The default 300s covers the three controller rollouts plus the
+  # kyverno-migrate-resources post-upgrade hook only on a quiet cluster. On
+  # 2026-10-19 the hook pod waited ~2 min for its sandbox and 2m27s for its
+  # image on a busy node, ran for 9s, and helm timed out at 5m33s, so atomic
+  # rolled a values-only change back.
+  timeout = 900
 
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno"
@@ -127,7 +133,15 @@ resource "helm_release" "kyverno" {
       }
     }
 
+    # Leader election. Kyverno derives all three timings from one flag:
+    # lease = 6x, renew deadline = 5x, retry = 1x the retry period, default
+    # 2s (12s/10s/2s). One slow etcd write on the shared pve HDD (sdc) used
+    # to cost the lease, and the controller exits when it loses it:
+    # background+cleanup 89 and admission 53 restarts in the 3 days to
+    # 2026-10-19. 9s gives 54s/45s/9s, the same 45s renew deadline as the
+    # controller-manager, scheduler and CNPG operator.
     backgroundController = {
+      extraArgs = { leaderElectionRetryPeriod = "9s" }
       resources = {
         # Bumped 2026-05-16 from 384Mi → 2Gi because the controller OOMKilled
         # while processing 176 UpdateRequests for the inject-keel-annotations
@@ -145,6 +159,7 @@ resource "helm_release" "kyverno" {
     }
 
     cleanupController = {
+      extraArgs = { leaderElectionRetryPeriod = "9s" }
       resources = {
         limits = {
           memory = "192Mi"
@@ -168,6 +183,7 @@ resource "helm_release" "kyverno" {
       }
 
       container = {
+        extraArgs = { leaderElectionRetryPeriod = "9s" }
         resources = {
           limits = {
             memory = "256Mi"

@@ -166,5 +166,25 @@ WP=1 run_wrapper
 grep -q RENOVATE-RAN <<<"$OUT" && pass "old bump: renovate runs" || fail "old bump: renovate did not run: $OUT"
 rm -f "$WORK/pipelines"
 
+# 12. A repository aborted with external-host-error (Renovate still exits 0)
+#     counts as a failure: exit 1, records 1, no success timestamp.
+fake_renovate 'echo " INFO: Repository finished (repository=viktor/infra)"
+echo "       \"cloned\": true,"
+echo "       \"result\": \"external-host-error\","
+echo "       \"status\": \"activated\""
+exit 0'
+run_wrapper
+[ "$RC" = 1 ] && pass "external-host-error: exit 1" || fail "external-host-error: exit $RC"
+[ "$(last_exit_code)" = 1 ] && pass "external-host-error: records 1" || fail "external-host-error: records '$(last_exit_code)'"
+has_success && fail "external-host-error: pushed a success timestamp" || pass "external-host-error: no success timestamp"
+grep -q "aborted with external-host-error" <<<"$OUT" && pass "external-host-error: says why" || fail "external-host-error: no reason printed"
+
+# 13. "result": "done" stays a success.
+fake_renovate 'echo " INFO: Repository finished (repository=viktor/infra)"
+echo "       \"result\": \"done\","
+exit 0'
+run_wrapper
+[ "$RC" = 0 ] && [ "$(last_exit_code)" = 0 ] && has_success && pass "result done: success" || fail "result done: rc=$RC recorded=$(last_exit_code)"
+
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; } || { echo "$fails failed"; exit 1; }

@@ -89,7 +89,7 @@ resource "kubernetes_deployment" "excalidraw" {
           # running on 2026-10-12, used only on a recreate. DockerHub
           # viktorbarzin/excalidraw-library:v4 is the frozen rollback image.
           image             = "ghcr.io/viktorbarzin/excalidraw-library:91d0213d1ae0f00b6a9b326474e3eb70b3686bca"
-          image_pull_policy = "Always"
+          image_pull_policy = "IfNotPresent"
           name              = "excalidraw"
           port {
             container_port = 8080
