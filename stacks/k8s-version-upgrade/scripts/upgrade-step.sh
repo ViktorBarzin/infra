@@ -910,6 +910,34 @@ phase_postflight() {
   # rollback — kubeadm can't downgrade — we halt loudly for a human.
   local smoke_failed=0
 
+  # CoreDNS follows kubeadm (Viktor, 2026-10-19): after every Kubernetes
+  # upgrade it moves to the version this release's kubeadm ships. kubeadm's
+  # own addon phase stays skipped in update_k8s.sh because it would replace
+  # the technitium-owned Corefile, so coredns-sync.py sets only the image, and
+  # only forward (a newer live CoreDNS is left alone). It checks DNS against
+  # every CoreDNS pod before and after, and rolls back a failed rollout. A
+  # rolled-back sync leaves the cluster on the old, working CoreDNS, so that
+  # warns and continues; the DNS smoke test below runs either way.
+  local cd_images cd_out cd_rc=0 cd_result
+  cd_images=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
+    "kubeadm config images list --kubernetes-version v$TARGET_VERSION" 2>/dev/null || true)
+  if [ -z "$cd_images" ]; then
+    slack "WARN postflight: could not read kubeadm's image list on k8s-master; CoreDNS left as is"
+  else
+    cd_out=$(printf '%s\n' "$cd_images" | python3 /scripts/coredns-sync.py --images-list - 2>&1) || cd_rc=$?
+    echo "$cd_out"
+    cd_result=$(printf '%s\n' "$cd_out" | tail -1)
+    case "$cd_result" in
+      result=upgraded*)                     slack "CoreDNS moved to kubeadm's version for v$TARGET_VERSION ($cd_result)" ;;
+      result=unchanged*)                    echo "CoreDNS already on kubeadm's version for v$TARGET_VERSION" ;;
+      result=newer*|result=unknown*)        slack "CoreDNS left as is for v$TARGET_VERSION: $cd_result" ;;
+      result=rolled-back*|result=dns-broken-before*)
+                                            slack "WARN postflight: CoreDNS sync not applied: $cd_result" ;;
+      *) smoke_failed=1
+         slack "postflight FAIL: CoreDNS sync: ${cd_result:-no result} (rc=$cd_rc)" ;;
+    esac
+  fi
+
   # 1. apiserver health endpoints. `kubectl get --raw` exits non-zero on a
   #    non-200, which under `set -e` would abort — capture rc explicitly.
   local readyz_out readyz_rc=0 livez_out livez_rc=0

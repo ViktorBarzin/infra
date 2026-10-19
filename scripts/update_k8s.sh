@@ -110,10 +110,9 @@ if [[ "$ROLE" == "master" ]]; then
     # then overwrite our custom Corefile with its default AND downgrade the
     # image (verified via `kubeadm upgrade apply --dry-run`, 2026-06-17). So we
     # also skip the coredns addon phase entirely: kubeadm leaves CoreDNS 100%
-    # untouched and only upgrades the control-plane components. (CoreDNS
-    # drifted ahead of kubeadm's migration table while Keel rolled it. Keel is
-    # retired since 2026-10-11 and CoreDNS is not in Terraform, so nothing
-    # advances it now; see docs/architecture/automated-upgrades.md.)
+    # untouched and only upgrades the control-plane components. The chain's
+    # postflight then sets the CoreDNS image to kubeadm's version for this
+    # release, forward only (stacks/k8s-version-upgrade/scripts/coredns-sync.py).
     coredns_flags="--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins --skip-phases=addon/coredns"
     while ! sudo kubeadm upgrade apply "v$RELEASE" -y $coredns_flags $extra_flags; do
         if (( attempt >= 3 )); then
