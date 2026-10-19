@@ -1265,7 +1265,7 @@
     # onto the shared sdc spindle, so the cadence is not free.
     #
     # discard: node4 and node5 carried it, the other four did not, and
-    # fstrim.timer is enabled on all six. So those two were running
+    # fstrim.timer was enabled on all six. So those two were running
     # CONTINUOUS TRIM on top of a weekly batch job. Measured on node5 over
     # 47.8 days: 16,541,765 discard operations covering 8,774 GB, 183.5 GB/day,
     # against exactly zero on node1. Each one is a request that reaches the
@@ -1298,6 +1298,32 @@
       when: root_mount_opts.changed
       changed_when: true
       tags: fstab
+
+    # ---- no weekly fstrim on k8s-master ------------------------------------
+    # Measured 2026-10-19. The weekly fstrim on k8s-master stalls etcd for
+    # 5-12 minutes every Sunday night: WAL fsync p99 went to 7.1 s on 09-20,
+    # 7.6 s on 10-04 and 6.9 s on 10-18, each in the exact minutes the
+    # guest's discard counter was moving (10-18: trim ran 21:00:30-21:05:52
+    # UTC and released 18.8 GiB). The pve host was idle in those minutes
+    # (sdc 2-5% busy, host-side await for master's LV 0.1-0.2 ms) while the
+    # guest's own write await sat at 200-300 ms, so the stall is the trim
+    # itself and not contention on the shared disk.
+    #
+    # The trim also buys nothing on master. Its LV (pve/vm-200-disk-1) is
+    # 100% allocated in the thin pool and has received 0 discards since the
+    # qemu process started, because an online `qm move-disk` leaves the drive
+    # chain without discard passthrough until the VM next restarts. Even
+    # after a restart the reclaim is bounded by the 64 GiB disk.
+    #
+    # The other five nodes keep their weekly trim: their discards reach the
+    # thin pool, and a trim there stalls only that node, not etcd.
+    - name: fstrim.timer is off on the control-plane node
+      ansible.builtin.systemd_service:
+        name: fstrim.timer
+        enabled: false
+        state: stopped
+      when: k8s_node_name == 'k8s-master'
+      tags: fstrim
 
     # ---- no dnsmasq on the nodes -------------------------------------------
     # Port 53 on a node belongs to node-cache (NodeLocal DNSCache, on

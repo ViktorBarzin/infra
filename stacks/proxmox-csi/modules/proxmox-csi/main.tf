@@ -75,11 +75,28 @@ resource "helm_release" "proxmox_csi" {
       },
     ]
 
+    # Sidecar leader election: lease 60s, renew deadline 45s, retry 15s.
+    # The sidecar defaults (15s/10s/5s) give up on the lease after one slow
+    # etcd write, because etcd's WAL shares the pve HDD sdc with every VM
+    # disk. Each sidecar then exits, so all three restarted ~38 times in the
+    # 3 days to 2026-10-19, mostly in the same seconds as the other
+    # controllers. Same values as the controller-manager, scheduler and CNPG
+    # operator. The chart replaces its default args with these lists, so
+    # --default-fstype=ext4 is repeated for the attacher and provisioner.
     controller = {
       replicas = 2
       resources = {
         requests = { cpu = "10m", memory = "32Mi" }
         limits   = { memory = "64Mi" }
+      }
+      attacher = {
+        args = concat(["--default-fstype=ext4"], local.sidecar_leader_election_args)
+      }
+      provisioner = {
+        args = concat(["--default-fstype=ext4"], local.sidecar_leader_election_args)
+      }
+      resizer = {
+        args = local.sidecar_leader_election_args
       }
     }
 
@@ -112,6 +129,12 @@ resource "helm_release" "proxmox_csi" {
 # region = Proxmox cluster name, zone = Proxmox node name (where the VM runs).
 # All our VMs run on the single Proxmox node "pve".
 locals {
+  sidecar_leader_election_args = [
+    "--leader-election-lease-duration=60s",
+    "--leader-election-renew-deadline=45s",
+    "--leader-election-retry-period=15s",
+  ]
+
   k8s_nodes = {
     "k8s-master" = { vmid = 200, proxmox_node = "pve" }
     "k8s-node1"  = { vmid = 201, proxmox_node = "pve" }
