@@ -502,6 +502,10 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           port {
             container_port = 8083
           }
+          # cwa-init runs `chown -R /app/calibre-web-automated` on every start,
+          # which copies the whole app directory up through overlayfs. On a
+          # busy node that took over 130s on 2026-10-19 and the probe killed
+          # it six times in a row, so the window is 10 minutes.
           startup_probe {
             http_get {
               path = "/"
@@ -510,7 +514,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             initial_delay_seconds = 10
             timeout_seconds       = 5
             period_seconds        = 5
-            failure_threshold     = 24
+            failure_threshold     = 120
           }
           liveness_probe {
             http_get {
