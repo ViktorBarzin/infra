@@ -187,6 +187,52 @@
               retain_days = 7
           }
 
+    # ---- security updates ----------------------------------------------------
+    # Nothing installed updates on this host until 2026-10-19, when 29 Debian
+    # security updates were waiting. unattended-upgrades takes packages from
+    # Debian-Security only. Proxmox packages (kernel, QEMU, pve-manager) and
+    # Debian point releases stay manual, because those are the ones that need
+    # a reboot or a VM stop/start to take effect. The host never reboots
+    # itself, and needrestart is not installed, so nothing restarts services
+    # behind our back either; running VMs are untouched. The 52 drop-in sorts
+    # after the package's 50unattended-upgrades and #clear replaces its origin
+    # list rather than appending to it. Kernel autoremoval is off as well: on
+    # the first run, 2026-10-19, the package default removed the fallback
+    # kernel proxmox-kernel-6.14.11-3-pve-signed, and which kernels stay
+    # installed is a decision for whoever reboots the host.
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: present
+      tags: patching
+
+    - name: Turn on the daily list refresh and upgrade run
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+      tags: patching
+
+    - name: Debian security updates only, no automatic reboot
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/52unattended-upgrades-security-only
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          // Managed by infra/playbooks/pve-host.yml.
+          #clear Unattended-Upgrade::Origins-Pattern;
+          Unattended-Upgrade::Origins-Pattern {
+              "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+          };
+          Unattended-Upgrade::Automatic-Reboot "false";
+          Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+      tags: patching
+
     # ---- cloud-init snippets for k8s-node4 and k8s-node5 ---------------------
     # VMs 204 and 205 were built from hand-made snippets that were never in
     # git. Their runcmd uninstalled unattended-upgrades and reset containerd,

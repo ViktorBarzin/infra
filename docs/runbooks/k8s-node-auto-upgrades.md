@@ -42,7 +42,7 @@ kured drains the node (priority-ordered, 310s budget)
 kured runs /bin/systemctl reboot
   │
   ▼ node returns
-kured uncordons + posts Slack notification (configuration.notifyUrl)
+kured uncordons + posts Slack notification (KURED_NOTIFY_URL)
   │
   ▼ 24h cool-down begins (sentinel-gate Check 4)
 ```
@@ -63,7 +63,7 @@ kured uncordons + posts Slack notification (configuration.notifyUrl)
 - **Helm chart**: `kured-6.1.0` (image `ghcr.io/kubereboot/kured:1.23.0`)
 - **Window**: 02:00-06:00 Europe/London, every day of the week (was Mon-Fri until 2026-05-16), period=1h, concurrency=1
 - **Sentinel**: `/sentinel/gated-reboot-required` (created by sentinel-gate DaemonSet)
-- **Slack hook**: Vault `secret/kured` → `slack_kured_webhook`
+- **Slack hook**: Vault `secret/kured` → `slack_kured_webhook`, synced by the `kured-notify` ExternalSecret into the `kured-notify` Secret and passed to kured as the `KURED_NOTIFY_URL` env var (chart `extraEnvVars`). Since 2026-10-19; before that it was `configuration.notifyUrl`, which the chart renders into the DaemonSet args as `--notify-url`, visible to anyone who can read DaemonSets
 
 ### kured-sentinel-gate (DaemonSet)
 - **Source**: `kubernetes_daemon_set_v1.kured_sentinel_gate` in `infra/stacks/kured/main.tf` (lines ~120-260)
@@ -183,6 +183,6 @@ Measured 2026-10-19 on a manual reboot of k8s-node5 (cordon, then `systemctl reb
 | Cloud-init for new nodes | `infra/modules/create-template-vm/cloud_init.yaml` |
 | unattended-upgrades config on running nodes | `infra/playbooks/k8s-node-tuning.yml` (tags `patching`, `cloudinit`) |
 | node4 and node5 Proxmox snippets | `infra/playbooks/pve-host.yml` (tag `snippets`) |
-| Slack webhook | Vault `secret/kured` → `slack_kured_webhook` |
+| Slack webhook | Vault `secret/kured` → `slack_kured_webhook` (ExternalSecret `kured/kured-notify`) |
 | Post-mortem | `infra/docs/post-mortems/2026-03-16-kured-containerd-cascade-outage.html` |
 | Architecture doc | `infra/docs/architecture/automated-upgrades.md` (OS section) |

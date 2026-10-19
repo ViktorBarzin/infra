@@ -124,7 +124,6 @@ resource "kubernetes_deployment" "worker_warm" {
       # The image is pinned (matches the master's browser) and not ignored.
       # The tier label is stamped by the resource-governance policy.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

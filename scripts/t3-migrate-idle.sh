@@ -49,6 +49,11 @@ safe_to_restart() {
 }
 
 main() {
+  # one restarter at a time (shared with t3-autoupdate + t3-watchdog); the next
+  # 20-minute pass retries, so a short wait is enough
+  if ! take_update_lock "${T3_LOCK_WAIT:-120}"; then
+    LOG "skipping pass: another t3 update, migration or watchdog sweep holds $UPDATE_LOCK"; exit 0
+  fi
   # a frozen build must not be auto-migrated (shared switch with t3-autoupdate)
   if [ -e "$FREEZE_FILE" ]; then LOG "FROZEN: $FREEZE_FILE present — not draining deferrals"; exit 0; fi
   [ -d "$DEFER_DIR" ] || exit 0                       # nothing deferred
