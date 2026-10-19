@@ -17,9 +17,10 @@ import (
 // Design: docs/plans/2026-07-20-homelab-message-personal-messaging-design.md.
 //
 // Safety model (all enforced here or in the embedded automation):
-//   - sends only reach an ALLOWLISTED contact (fail-closed: empty/missing list
-//     refuses every send); a fuzzy --to must resolve to exactly one allowlisted
-//     title, which is then opened + verified against the composer before typing.
+//   - --to must name exactly one chat (case-insensitive exact title), which is
+//     opened + verified against the composer before typing.
+//   - a send only counts once WhatsApp marks the message Sent/Delivered/Read;
+//     a red "Something went wrong" or a message still pending is an error.
 //   - preview + confirm by default; --yes skips (only after the agent has shown
 //     the message in chat and the human approved); --dry-run resolves + prints,
 //     never sends.
@@ -113,7 +114,7 @@ func parseMessageArgs(verb string, args []string) (messageOpts, error) {
 	return o, nil
 }
 
-// --- allowlist ------------------------------------------------------------
+// --- paths ----------------------------------------------------------------
 
 func configHome() string {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
@@ -123,13 +124,6 @@ func configHome() string {
 		return filepath.Join(h, ".config")
 	}
 	return ".config"
-}
-
-func allowlistPath() string {
-	if v := os.Getenv("HOMELAB_MESSAGE_ALLOWLIST"); v != "" {
-		return v
-	}
-	return filepath.Join(configHome(), "homelab", "message-allowlist")
 }
 
 func auditPath() string {
@@ -143,66 +137,6 @@ func auditPath() string {
 		return filepath.Join(h, ".local", "state", "homelab", "message-audit.jsonl")
 	}
 	return "message-audit.jsonl"
-}
-
-// parseAllowlist extracts permitted recipient titles from a file body: one exact
-// WhatsApp contact title per line, `#` comments and blank lines ignored.
-func parseAllowlist(body string) []string {
-	var out []string
-	for _, ln := range strings.Split(body, "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" || strings.HasPrefix(ln, "#") {
-			continue
-		}
-		out = append(out, ln)
-	}
-	return out
-}
-
-// loadAllowlist reads + parses the allowlist file. A missing file yields an empty
-// list (send fails closed), not an error.
-func loadAllowlist(path string) ([]string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return parseAllowlist(string(b)), nil
-}
-
-// resolveRecipient maps a fuzzy --to onto exactly one allowlisted title.
-// Precedence: exact (case-insensitive) → unique case-insensitive substring.
-// Returns candidates (for a helpful message) when the match is ambiguous.
-func resolveRecipient(to string, allow []string) (match string, candidates []string, err error) {
-	to = strings.TrimSpace(to)
-	if to == "" {
-		return "", nil, fmt.Errorf("no recipient: pass --to <name>")
-	}
-	if len(allow) == 0 {
-		return "", nil, fmt.Errorf("allowlist is empty — add permitted recipients (one exact WhatsApp name per line) to %s", allowlistPath())
-	}
-	for _, a := range allow {
-		if strings.EqualFold(a, to) {
-			return a, nil, nil
-		}
-	}
-	lto := strings.ToLower(to)
-	var cands []string
-	for _, a := range allow {
-		if strings.Contains(strings.ToLower(a), lto) {
-			cands = append(cands, a)
-		}
-	}
-	switch len(cands) {
-	case 0:
-		return "", nil, fmt.Errorf("no allowlisted contact matches %q (allowlist: %s)", to, strings.Join(allow, ", "))
-	case 1:
-		return cands[0], nil, nil
-	default:
-		return "", cands, fmt.Errorf("%q is ambiguous — matches %d allowlisted contacts: %s", to, len(cands), strings.Join(cands, ", "))
-	}
 }
 
 // --- audit ----------------------------------------------------------------

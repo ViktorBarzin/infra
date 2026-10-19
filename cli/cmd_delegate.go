@@ -40,7 +40,6 @@ func liveDelegateDeps() (delegateDeps, error) {
 		},
 		send:         whatsappDelegationSend,
 		contactsPath: delegateContactsPath(),
-		allowPath:    allowlistPath(),
 		out:          os.Stdout,
 		sleep:        time.Sleep,
 		now:          time.Now,
@@ -240,10 +239,9 @@ WHAT IT DOES
 
 SAFETY
   This is the one unattended send 'homelab message' permits, and only to the
-  chat pinned for that Caller in BOTH files below; otherwise it refuses before
+  chat pinned for that Caller in the file below; otherwise it refuses before
   anything is recorded:
       ` + delegateContactsPath() + `   (lines: muse=<exact WhatsApp chat name>)
-      ` + allowlistPath() + `   (the same exact name)
   The chat is verified on screen before typing, and every send is in the
   message audit log (action "delegate"):
       ` + auditPath() + `
