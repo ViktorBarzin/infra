@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-KUBECTL="kubectl --kubeconfig /Users/viktorbarzin/code/infra/config"
+KUBECTL=${KUBECTL:-kubectl}
 DRY_RUN=false
 AGENT="db-health"
 
@@ -23,40 +23,36 @@ json.dump(checks, sys.stdout)
 ")
 }
 
-# MySQL InnoDB Cluster - Group Replication status
-check_mysql_gr() {
+# MySQL runs as one StatefulSet pod. The active instance is mysql-v26 (MySQL
+# 26.7, since 2026-10-15); mysql-standalone (8.4.8) is the rollback copy, kept
+# at 0 replicas with its PVC. local.mysql_active in stacks/dbaas names the
+# active one.
+MYSQL_STS="mysql-v26"
+
+mysql_query() {
+  $KUBECTL exec -n dbaas "$MYSQL_STS-0" -c mysql -- \
+    sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot -N -e "$1"' sh "$1"
+}
+
+# Active MySQL answers and accepts writes
+check_mysql_active() {
   if $DRY_RUN; then
-    add_check "mysql-group-replication" "ok" "DRY RUN: would check MySQL Group Replication status"
+    add_check "mysql-active" "ok" "DRY RUN: would check $MYSQL_STS answers and is writable"
     return
   fi
 
-  # Discover MySQL pod via labels first, fall back to known name
-  local mysql_pod
-  mysql_pod=$($KUBECTL get pods -n dbaas -l app=mysql-cluster -o name 2>/dev/null | head -1) || true
-  if [ -z "$mysql_pod" ]; then
-    mysql_pod=$($KUBECTL get pods -n dbaas -l app.kubernetes.io/name=mysql -o name 2>/dev/null | head -1) || true
-  fi
-  if [ -z "$mysql_pod" ]; then
-    mysql_pod="sts/mysql-cluster"
-  fi
-
-  local gr_status
-  gr_status=$($KUBECTL exec "$mysql_pod" -n dbaas -- mysql -N -e \
-    "SELECT MEMBER_HOST, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members" 2>/dev/null) || {
-    add_check "mysql-group-replication" "fail" "Cannot connect to MySQL cluster to check GR status"
+  local info
+  info=$(mysql_query "SELECT @@version, @@super_read_only, @@read_only" 2>/dev/null) || {
+    add_check "mysql-active" "fail" "Cannot connect to $MYSQL_STS-0"
     return
   }
 
-  local member_count online_count
-  member_count=$(echo "$gr_status" | grep -c . || true)
-  online_count=$(echo "$gr_status" | grep -c "ONLINE" || true)
-
-  if [ "$online_count" -eq "$member_count" ] && [ "$member_count" -ge 3 ]; then
-    add_check "mysql-group-replication" "ok" "All $member_count members ONLINE: $(echo "$gr_status" | tr '\t' ' ' | tr '\n' '; ')"
-  elif [ "$online_count" -lt "$member_count" ]; then
-    add_check "mysql-group-replication" "fail" "Only $online_count/$member_count members ONLINE: $(echo "$gr_status" | tr '\t' ' ' | tr '\n' '; ')"
+  local version sro ro
+  read -r version sro ro <<<"$info"
+  if [ "$sro" = "0" ] && [ "$ro" = "0" ]; then
+    add_check "mysql-active" "ok" "$MYSQL_STS-0 MySQL $version, writable"
   else
-    add_check "mysql-group-replication" "warn" "Cluster has $member_count members (expected 3): $(echo "$gr_status" | tr '\t' ' ' | tr '\n' '; ')"
+    add_check "mysql-active" "fail" "$MYSQL_STS-0 MySQL $version is read-only (super_read_only=$sro read_only=$ro)"
   fi
 }
 
@@ -68,21 +64,19 @@ check_mysql_pods() {
   fi
 
   local pod_status
-  pod_status=$($KUBECTL get pods -n dbaas -l app=mysql-cluster -o wide --no-headers 2>/dev/null) || \
-  pod_status=$($KUBECTL get pods -n dbaas --no-headers 2>/dev/null | grep -i mysql) || {
-    add_check "mysql-pods" "warn" "Cannot find MySQL pods in dbaas namespace"
+  pod_status=$($KUBECTL get pods -n dbaas -l "app.kubernetes.io/instance=$MYSQL_STS" --no-headers 2>/dev/null) || true
+  if [ -z "$pod_status" ]; then
+    add_check "mysql-pods" "fail" "No $MYSQL_STS pod in dbaas namespace"
     return
-  }
+  fi
 
-  local not_running
-  not_running=$(echo "$pod_status" | grep -v "Running" | grep -v "Completed" || true)
+  local not_ready
+  not_ready=$(echo "$pod_status" | awk '{split($2, r, "/")} $3 != "Running" || r[1] != r[2]' || true)
 
-  if [ -z "$not_running" ]; then
-    local count
-    count=$(echo "$pod_status" | grep -c "Running" || true)
-    add_check "mysql-pods" "ok" "$count MySQL pod(s) running in dbaas namespace"
+  if [ -z "$not_ready" ]; then
+    add_check "mysql-pods" "ok" "$MYSQL_STS: $(echo "$pod_status" | awk '{print $1" "$2" "$3}' | tr '\n' ' ')"
   else
-    add_check "mysql-pods" "fail" "Unhealthy MySQL pods: $(echo "$not_running" | awk '{print $1": "$3}' | tr '\n' '; ')"
+    add_check "mysql-pods" "fail" "Unhealthy MySQL pods: $(echo "$not_ready" | awk '{print $1": "$2" "$3}' | tr '\n' '; ')"
   fi
 }
 
@@ -113,6 +107,10 @@ for cluster in data.get('items', []):
   ready = cluster.get('status', {}).get('readyInstances', 0)
   instances = cluster.get('spec', {}).get('instances', 0)
   primary = cluster.get('status', {}).get('currentPrimary', 'unknown')
+  # A hibernated cluster (pg-cluster, the PG16 rollback copy) has no pods by design.
+  if cluster['metadata'].get('annotations', {}).get('cnpg.io/hibernation') == 'on':
+    results.append(f'{ns}/{name}: hibernated')
+    continue
   if phase != 'Cluster in healthy state' and phase != 'Healthy':
     all_healthy = False
   if ready < instances:
@@ -141,14 +139,8 @@ check_mysql_connections() {
     return
   fi
 
-  local mysql_pod
-  mysql_pod=$($KUBECTL get pods -n dbaas -l app=mysql-cluster -o name 2>/dev/null | head -1) || true
-  if [ -z "$mysql_pod" ]; then
-    mysql_pod="sts/mysql-cluster"
-  fi
-
   local conn_info
-  conn_info=$($KUBECTL exec "$mysql_pod" -n dbaas -- mysql -N -e \
+  conn_info=$(mysql_query \
     "SELECT 'threads_connected', VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected' UNION ALL SELECT 'max_connections', VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='max_connections'" 2>/dev/null) || {
     add_check "mysql-connections" "warn" "Cannot query MySQL connection info"
     return
@@ -173,7 +165,7 @@ check_mysql_connections() {
 }
 
 # Run all checks
-check_mysql_gr
+check_mysql_active
 check_mysql_pods
 check_cnpg
 check_mysql_connections
