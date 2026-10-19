@@ -1,8 +1,18 @@
 # ADR-0035: Windows apps run under Wine in the cluster, starting with iVMS-4200
 
-- Status: accepted
+- Status: superseded for iVMS on 2026-10-19; the Wine app pattern stays
 - Date: 2026-10-17
 - Related: `modules/kubernetes/wine_app/`, `images/wine-app/`, `stacks/ivms/`, `playbooks/pfsense-vermont-alias.yml`, `playbooks/rpi-sofia-netmap.yml`, `docs/plans/2026-10-17-ivms-in-cluster-design.md`, `docs/runbooks/cameras-nvr-intercom.md`, infra#121, infra#123, ADR-0036 (remote display chosen by benchmark)
+
+> [!NOTE]
+> **Update 2026-10-19.** Emil tried both and chose iVMS-4200 on Windows VM 300
+> over RDP: it feels faster, and RDP gives him file transfer and clipboard.
+> Two iVMS databases next to each other could both push people and cards to
+> the same devices, so the cluster copy was retired: `stacks/ivms` was
+> destroyed and deleted (the last commit with `stacks/ivms` is `ec0ecbdd3`), and pfSense and rpi-sofia no longer admit the
+> k8s nodes to the complex alias. The last daily backup of the cluster copy is
+> in `/srv/nfs/ivms-backup/`. The `wine_app` module, the `wine-app` image and
+> ADR-0036 stay for future Windows apps; no app runs on them today.
 
 ## Context
 
