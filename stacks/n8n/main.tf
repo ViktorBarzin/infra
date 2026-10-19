@@ -54,38 +54,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
-resource "kubernetes_manifest" "external_secret_claude_agent" {
-  field_manager {
-    force_conflicts = true
-  }
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "ExternalSecret"
-    metadata = {
-      name      = "claude-agent-token"
-      namespace = "n8n"
-    }
-    spec = {
-      refreshInterval = "1h"
-      secretStoreRef = {
-        name = "vault-kv"
-        kind = "ClusterSecretStore"
-      }
-      target = {
-        name = "claude-agent-token"
-      }
-      data = [{
-        secretKey = "api_bearer_token"
-        remoteRef = {
-          key      = "claude-agent-service"
-          property = "api_bearer_token"
-        }
-      }]
-    }
-  }
-  depends_on = [kubernetes_namespace.n8n]
-}
-
 # Shared secrets for the Immich → Telegram → Postiz Instagram pipeline.
 # Workflows in stacks/n8n/workflows/instagram-*.json reference these env vars.
 resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
@@ -303,15 +271,6 @@ resource "kubernetes_deployment" "n8n" {
           env {
             name  = "WEBHOOK_URL"
             value = "https://n8n.viktorbarzin.me"
-          }
-          env {
-            name = "CLAUDE_AGENT_API_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "claude-agent-token"
-                key  = "api_bearer_token"
-              }
-            }
           }
           env {
             name  = "N8N_BLOCK_ENV_ACCESS_IN_NODE"
