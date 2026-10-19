@@ -26,6 +26,8 @@
 #      caps and earlyoom backstop added after the 2026-06-22 overload, when the
 #      box had to be hard-killed. A machine built without them repeats that.
 #   2. The t3 service layer (section 9) — t3-dispatch, t3-serve@, the timers.
+#      The updater, idle-migrator and watchdog scripts are declared since
+#      2026-10-19; their units and timers are not.
 #   3. Per-user provisioning — accounts, groups, clones, kubeconfigs. That is
 #      ViktorBarzin/infra#88, deliberately last because it touches live access.
 #   Until those land, a machine built from this playbook serves the lobby but is
@@ -1331,6 +1333,26 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # The t3 updater and the two scripts that also restart t3-serve@ units,
+    # plus the library all three source. Adopted 2026-10-19 with the shared
+    # update lock (/run/t3-autoupdate.lock): on 2026-09-28 t3-watchdog restarted
+    # a serve onto a half-installed build while t3-autoupdate was mid-install,
+    # and both rolled back at once. The four files only work as a set, so they
+    # are declared together. Their units and timers are still installed by
+    # setup-devvm.sh (section 9), which installs the same repo files.
+    - name: Install the t3 updater, idle migrator and watchdog scripts
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+        owner: root
+        group: root
+      loop:
+        - { src: t3-safe-restart.sh, dest: /usr/local/lib/t3-safe-restart.sh, mode: "0644" }
+        - { src: t3-autoupdate.sh, dest: /usr/local/bin/t3-autoupdate, mode: "0755" }
+        - { src: t3-migrate-idle.sh, dest: /usr/local/bin/t3-migrate-idle, mode: "0755" }
+        - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
 
     # The per-tool schedules this replaces. Stopped and disabled before their
     # unit files go, or systemd keeps an enabled symlink pointing at nothing.

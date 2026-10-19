@@ -14,6 +14,14 @@ between builds; the gate is what makes auto-tracking safe.
 
 ## How the tracker gates each bump  (`scripts/t3-autoupdate.sh`)
 
+0. **Update lock** — takes `/run/t3-autoupdate.lock` (flock) and holds it for the
+   whole run, dry runs included, through install, canary and any rollback.
+   `t3-watchdog` skips its sweeps and `t3-migrate-idle` skips its pass while it
+   is held; both take it themselves too, so the tracker waits up to 30 min
+   (`T3_LOCK_WAIT`) for a watchdog restart or an idle drain to finish, and a
+   second tracker run gives up. Added 2026-10-19 after the 2026-09-28 freeze, when
+   the watchdog restarted emo onto a half-installed 0.0.42 and both scripts rolled
+   back at once.
 1. **Freeze gate** — `/etc/t3-autoupdate.freeze` present (or `T3_PIN=<ver>` set) →
    hold at current, do nothing.
 2. **Resolve + downgrade-guard** — `npm view t3@latest version`; proceed only if
@@ -47,7 +55,7 @@ Alertmanager → Slack.
 Step 5 DEFERS any instance with an active agent, recording `/var/lib/t3-autoupdate/deferred/<user>` (= the target version). Without a drainer, a user busy at every 04:00 window never migrates and their client shows *"Client and server versions differ"* for days. `t3-migrate-idle.timer` (overnight, every 20 min 01:00–05:40) drains those markers:
 
 - Per marker: skip + clear if the unit is gone or was already restarted *after* the deferral; otherwise restart the still-stale `t3-serve@<u>` onto the current binary **only when that user is idle** — `state.sqlite` shows zero `active_turn_id` (no in-flight turn) AND ≥ `T3_MIGRATE_QUIET_SECONDS` (default 900 = 15 min) since the last thread activity — then verify pairing and clear the marker. **Fail-closed:** any query/parse doubt → skip, retry next tick.
-- It restarts via the SAME `safe_restart_unit` the daily canary uses (sourced `t3-safe-restart.sh`: backup → restart → verify → recover). The shared `/etc/t3-autoupdate.freeze` halts it too.
+- It restarts via the SAME `safe_restart_unit` the daily canary uses (sourced `t3-safe-restart.sh`: backup → restart → verify → recover). The shared `/etc/t3-autoupdate.freeze` halts it too, and it skips a pass while the tracker or a watchdog sweep holds `/run/t3-autoupdate.lock`.
 - **Force / preview:**
   ```bash
   sudo systemctl start t3-migrate-idle.service           # run a drain pass now (still idle-gated)
