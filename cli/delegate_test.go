@@ -93,20 +93,14 @@ func (s *fakeSender) send(to, text string) error {
 	return s.err
 }
 
-// delegateFixture writes the two contact files into a temp dir and returns
+// delegateFixture writes delegate-contacts into a temp dir and returns
 // deps wired to fakes.
-func delegateFixture(t *testing.T, contacts, allowlist string) (delegateDeps, *fakeDelegationAPI, *fakeSender, *bytes.Buffer) {
+func delegateFixture(t *testing.T, contacts string) (delegateDeps, *fakeDelegationAPI, *fakeSender, *bytes.Buffer) {
 	t.Helper()
 	dir := t.TempDir()
 	cp := filepath.Join(dir, "delegate-contacts")
-	ap := filepath.Join(dir, "message-allowlist")
 	if contacts != "" {
 		if err := os.WriteFile(cp, []byte(contacts), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if allowlist != "" {
-		if err := os.WriteFile(ap, []byte(allowlist), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,7 +111,6 @@ func delegateFixture(t *testing.T, contacts, allowlist string) (delegateDeps, *f
 		api:          api,
 		send:         snd.send,
 		contactsPath: cp,
-		allowPath:    ap,
 		out:          out,
 		sleep:        func(time.Duration) {},
 		now:          func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) },
@@ -185,21 +178,16 @@ func TestParseDelegateArgs(t *testing.T) {
 	}
 }
 
-func TestDelegateRefusesWithoutBothContactFiles(t *testing.T) {
+func TestDelegateRefusesWithoutContactsEntry(t *testing.T) {
 	cases := []struct {
-		name, contacts, allow, wantErr string
+		name, contacts, wantErr string
 	}{
-		{"caller missing from delegate-contacts", "other=Bob\n", "Muse\n", "no WhatsApp chat configured for caller \"muse\""},
-		{"contacts file missing", "", "Muse\n", "no WhatsApp chat configured for caller \"muse\""},
-		{"chat not on the message allowlist", "muse=Muse\n", "Anca Milea\n", "not on the message allowlist"},
-		{"allowlist missing", "muse=Muse\n", "", "not on the message allowlist"},
-		// The allowlist resolves --to fuzzily for a human; an unattended send
-		// gets no such latitude, so a near-match is still a refusal.
-		{"near match is not enough", "muse=Muse\n", "Muse (Meta AI)\n", "not on the message allowlist"},
+		{"caller missing from delegate-contacts", "other=Bob\n", "no WhatsApp chat configured for caller \"muse\""},
+		{"contacts file missing", "", "no WhatsApp chat configured for caller \"muse\""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			deps, api, snd, _ := delegateFixture(t, c.contacts, c.allow)
+			deps, api, snd, _ := delegateFixture(t, c.contacts)
 			err := runDelegate(delegateOpts{caller: "muse", task: "do it"}, deps)
 			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 				t.Fatalf("err = %v, want it to contain %q", err, c.wantErr)
@@ -215,7 +203,7 @@ func TestDelegateRefusesWithoutBothContactFiles(t *testing.T) {
 }
 
 func TestDelegateHappyPath(t *testing.T) {
-	deps, api, snd, out := delegateFixture(t, "muse=Muse\n", "Muse\n")
+	deps, api, snd, out := delegateFixture(t, "muse=Muse\n")
 	err := runDelegate(delegateOpts{caller: "muse", task: "check seat 32A", from: "terminal-lobby-404", expiresIn: 3600}, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +226,7 @@ func TestDelegateHappyPath(t *testing.T) {
 }
 
 func TestDelegateUndeliveredOnSendError(t *testing.T) {
-	deps, api, snd, _ := delegateFixture(t, "muse=Muse\n", "Muse\n")
+	deps, api, snd, _ := delegateFixture(t, "muse=Muse\n")
 	snd.err = &sendError{reason: "WhatsApp Web is logged out in the shared browser; re-link at chrome.viktorbarzin.me"}
 	err := runDelegate(delegateOpts{caller: "muse", task: "x"}, deps)
 	if err == nil {
@@ -259,7 +247,7 @@ func TestDelegateUndeliveredOnSendError(t *testing.T) {
 }
 
 func TestDelegateCapReached(t *testing.T) {
-	deps, api, snd, _ := delegateFixture(t, "muse=Muse\n", "Muse\n")
+	deps, api, snd, _ := delegateFixture(t, "muse=Muse\n")
 	api.createErr = &apiError{status: 429, msg: "cap reached", retryAfter: 1200}
 	err := runDelegate(delegateOpts{caller: "muse", task: "x"}, deps)
 	if err == nil || !strings.Contains(err.Error(), "retry in 20m") {
@@ -273,7 +261,7 @@ func TestDelegateCapReached(t *testing.T) {
 func TestDelegateSentMarkFailureStillSucceeds(t *testing.T) {
 	// The message is out; Muse can still post a result against a pending
 	// delegation, so a failed /sent is a warning, not a failed delegation.
-	deps, api, _, out := delegateFixture(t, "muse=Muse\n", "Muse\n")
+	deps, api, _, out := delegateFixture(t, "muse=Muse\n")
 	api.sentErr = errors.New("connection refused")
 	if err := runDelegate(delegateOpts{caller: "muse", task: "x"}, deps); err != nil {
 		t.Fatalf("err = %v", err)
@@ -285,7 +273,7 @@ func TestDelegateSentMarkFailureStillSucceeds(t *testing.T) {
 
 func TestDelegateWaitLoop(t *testing.T) {
 	t.Run("polls until done and prints the result", func(t *testing.T) {
-		deps, api, _, out := delegateFixture(t, "muse=Muse\n", "Muse\n")
+		deps, api, _, out := delegateFixture(t, "muse=Muse\n")
 		api.gets = []delegation{
 			{ID: "d_01TEST", Status: "sent", ExpiresAt: "2026-10-03T12:00:00Z"},
 			{ID: "d_01TEST", Status: "sent", ExpiresAt: "2026-10-03T12:00:00Z"},
@@ -307,7 +295,7 @@ func TestDelegateWaitLoop(t *testing.T) {
 		}
 	})
 	t.Run("failed exits non-zero with the result", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		api.gets = []delegation{{ID: "d_1", Status: "failed", Result: "no such booking"}}
 		err := waitDelegation("d_1", deps)
 		if err == nil || !strings.Contains(err.Error(), "failed") {
@@ -315,7 +303,7 @@ func TestDelegateWaitLoop(t *testing.T) {
 		}
 	})
 	t.Run("expired exits non-zero", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		api.gets = []delegation{{ID: "d_1", Status: "sent"}, {ID: "d_1", Status: "expired"}}
 		err := waitDelegation("d_1", deps)
 		if err == nil || !strings.Contains(err.Error(), "expired") {
@@ -323,7 +311,7 @@ func TestDelegateWaitLoop(t *testing.T) {
 		}
 	})
 	t.Run("undelivered exits non-zero with the reason", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		api.gets = []delegation{{ID: "d_1", Status: "undelivered", Reason: "logged out"}}
 		err := waitDelegation("d_1", deps)
 		if err == nil || !strings.Contains(err.Error(), "logged out") {
@@ -331,7 +319,7 @@ func TestDelegateWaitLoop(t *testing.T) {
 		}
 	})
 	t.Run("stops when the server never expires a delegation past its deadline", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		// now is 2026-10-02T12:00Z; the deadline passed an hour ago and the
 		// server still says sent. Waiting forever on it helps nobody.
 		api.gets = []delegation{{ID: "d_1", Status: "sent", ExpiresAt: "2026-10-02T11:00:00Z"}}
@@ -344,21 +332,21 @@ func TestDelegateWaitLoop(t *testing.T) {
 		}
 	})
 	t.Run("rides out transient errors, then gives up", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		boom := errors.New("connection refused")
 		api.getErr = []error{boom, boom, nil}
 		api.gets = []delegation{{}, {}, {ID: "d_1", Status: "done", Result: "ok"}}
 		if err := waitDelegation("d_1", deps); err != nil {
 			t.Fatalf("two transient errors then done: err = %v", err)
 		}
-		deps2, api2, _, _ := delegateFixture(t, "", "")
+		deps2, api2, _, _ := delegateFixture(t, "")
 		api2.getErr = []error{boom, boom, boom, boom, boom, boom, boom, boom}
 		if err := waitDelegation("d_1", deps2); err == nil {
 			t.Fatal("persistent errors must end the wait")
 		}
 	})
 	t.Run("a 404 ends the wait at once", func(t *testing.T) {
-		deps, api, _, _ := delegateFixture(t, "", "")
+		deps, api, _, _ := delegateFixture(t, "")
 		api.getErr = []error{&apiError{status: 404, msg: "not found"}}
 		if err := waitDelegation("d_1", deps); err == nil {
 			t.Fatal("want an error")
@@ -374,6 +362,7 @@ func TestClassifySendFailure(t *testing.T) {
 		{"Error: WhatsApp Web is not logged in (no chat list appeared). Log in via noVNC", "re-link at chrome.viktorbarzin.me"},
 		{"Error: contact not found in WhatsApp: Muse", "chat \"Muse\" not found in WhatsApp"},
 		{"Error: recipient verification FAILED — opened chat is not \"Muse\"", "recipient verification failed"},
+		{"Error: WhatsApp did not send the message to \"Muse\" (it shows \"Something went wrong\" in the chat)", "WhatsApp did not send the message"},
 		{"chrome-service CDP not ready", "chrome-service"},
 		{"", "WhatsApp send failed"},
 	}

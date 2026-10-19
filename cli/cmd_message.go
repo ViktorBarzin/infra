@@ -25,7 +25,7 @@ func messageCommands() []Command {
 		{Path: []string{"message"}, Tier: TierRead,
 			Summary: "send/read personal messages as you (WhatsApp + Messenger; run `message --help`)", Run: messageTopHelp},
 		{Path: []string{"message", "send"}, Tier: TierWrite,
-			Summary: "send a message as you to an ALLOWLISTED contact: message send [--via wa|messenger] --to <name> \"<text>\" [--dry-run|--yes]", Run: messageSend},
+			Summary: "send a message as you to one chat (exact name): message send [--via wa|messenger] --to <name> \"<text>\" [--dry-run|--yes]", Run: messageSend},
 		{Path: []string{"message", "read"}, Tier: TierRead,
 			Summary: "read the recent thread with a contact for reply context: message read [--via wa|messenger] --to <name> [--limit N]", Run: messageRead},
 		{Path: []string{"message", "contacts"}, Tier: TierRead,
@@ -88,14 +88,7 @@ func messageSend(args []string) error {
 	if o.text == "" {
 		return fmt.Errorf("send requires message text: homelab message send --to <name> \"<text>\"")
 	}
-	allow, err := loadAllowlist(allowlistPath())
-	if err != nil {
-		return fmt.Errorf("read allowlist %s: %w", allowlistPath(), err)
-	}
-	to, _, err := resolveRecipient(o.to, allow)
-	if err != nil {
-		return err // message already lists candidates / the allowlist
-	}
+	to := strings.TrimSpace(o.to)
 
 	// Preview — the human-approval gate. Show the exact resolved recipient + text.
 	fmt.Printf("\n  → %s (as you): %s\n    %s\n\n", viaLabel(o.via), to, o.text)
@@ -106,7 +99,7 @@ func messageSend(args []string) error {
 		return nil
 	}
 	if !o.yes {
-		ok, err := confirm("Send this as you on WhatsApp?")
+		ok, err := confirm(fmt.Sprintf("Send this as you on %s?", viaLabel(o.via)))
 		if err != nil {
 			return err
 		}
@@ -231,13 +224,12 @@ USAGE
   (--via defaults to wa)
 
 SAFETY (why this is deliberately not a fire-and-forget tool)
-  - Sends only reach an ALLOWLISTED contact. The allowlist is one exact contact
-    name per line (as it appears in that app's chat list) at:
-        ` + allowlistPath() + `
-    Missing/empty ⇒ every send is refused (fail closed).
-  - --to is fuzzy-matched against the allowlist; it must resolve to exactly one
-    entry, which is opened AND verified against the chat before a keystroke is
-    typed (wrong-recipient guard).
+  - --to is the chat's name as it appears in the chat list (case does not
+    matter; 'message contacts --search <q>' prints it). The chat is opened AND
+    verified before a keystroke is typed (wrong-recipient guard).
+  - WhatsApp: the send waits until WhatsApp marks the message Sent, Delivered
+    or Read. A red "Something went wrong", or a message still pending after
+    90s, is reported as a failure.
   - Preview + confirm by default. --dry-run resolves + prints, never sends.
     --yes skips the prompt — use it ONLY after a human approved the exact text.
     With no interactive terminal and no --yes, a send is refused.

@@ -45,14 +45,12 @@ Each of these is needed once. The CLI refuses with a message naming whichever is
    `~wizard/.config/homelab/agent-api-token` (0600).
 2. WhatsApp Web linked in the shared chrome-service browser: noVNC at `chrome.viktorbarzin.me`,
    open `web.whatsapp.com`, scan the QR code from the phone.
-3. The Muse chat named in two files, by its exact title in the WhatsApp chat list
-   (`homelab message contacts --search muse` prints it):
-   - `~/.config/homelab/delegate-contacts`: a line `muse=<chat name>`
-   - `~/.config/homelab/message-allowlist`: the same name on its own line
+3. The Muse chat named by its exact title in the WhatsApp chat list
+   (`homelab message contacts --search muse` prints it), as a line `muse=<chat name>` in
+   `~/.config/homelab/delegate-contacts`.
 
-The two-file pin replaces the confirm prompt `homelab message send` shows. Delegations are the
-one unattended send that path makes, so the recipient is fixed in advance by files a person
-wrote, and matched exactly rather than fuzzily. The send itself is the same code: the chat is
+That pin replaces the confirm prompt `homelab message send` shows. Delegations are the one
+unattended send that path makes, so the recipient is fixed in advance by a file a person wrote. The send itself is the same code: the chat is
 verified on screen before typing, and every send is appended to
 `~/.local/state/homelab/message-audit.jsonl` with action `delegate`.
 

@@ -352,10 +352,10 @@ permanent ban risk of automating a personal account):
 
 | Command | tier | notes |
 |---|---|---|
-| `message send [--via wa\|messenger] --to <name> "<text>" [--dry-run] [--yes]` | write | send as you. `--to` is **fuzzy-matched against an allowlist** (`~/.config/homelab/message-allowlist`, one exact contact name per line; missing/empty ⇒ every send refused, fail-closed). Resolves to exactly one entry, opens it, and **verifies the recipient** against the composer before typing. Preview + confirm by default; `--dry-run` never sends; `--yes` skips the prompt (only after a human approved the text); no send without a TTY unless `--yes`. Types **human-paced** (per-char jitter). Appends to an audit log (`~/.local/state/homelab/message-audit.jsonl`). |
+| `message send [--via wa\|messenger] --to <name> "<text>" [--dry-run] [--yes]` | write | send as you. `--to` is the chat's name as the chat list shows it, case-insensitive (`message contacts --search <q>` prints it). Opens that chat and **verifies the recipient** against the composer before typing. On WhatsApp the send waits until the message is marked Sent, Delivered or Read; a red "Something went wrong" or a message still pending after 90s is an error (closing the tab sooner is what left messages unsent). Preview + confirm by default; `--dry-run` never sends; `--yes` skips the prompt (only after a human approved the text); no send without a TTY unless `--yes`. Types **human-paced** (per-char jitter). Appends to an audit log (`~/.local/state/homelab/message-audit.jsonl`). |
 | `message read [--via wa\|messenger] --to <name> [--limit N]` | read | open the thread and print the last N messages (`← ` in / `→ ` out) for reply context. Separate from send on purpose (injection firewall): incoming text is context, never an instruction to send. |
 | `message contacts [--via wa\|messenger] [--search <q>]` | read | list addressable chat names. |
-| `message --help` | read | full safety model + allowlist/audit paths. |
+| `message --help` | read | full safety model + audit path. |
 
 Per-platform automation is embedded (`message_wa.js`, `message_messenger.js`);
 `runMessageAutomation` picks by `--via`. Selectors are DOM-fragile — re-probe with
@@ -363,7 +363,7 @@ a read-only `browser run` script if a verb breaks after a web update.
 - **WhatsApp Web (2026):** rows `#pane-side div[role="row"]`/`span[title]`; search `[aria-label="Ask Meta AI or Search"]`; composer Lexical `footer div[contenteditable][role="textbox"]` (Enter sends); messages `div[data-id]`, direction by geometry (right = out) anchored on `#main`.
 - **messenger.com (2026):** threads `a[href*="/t/"]`; search `[aria-label="Search Messenger"]`; composer Lexical `div[contenteditable][role="textbox"][aria-label^="Write to <name>"]` (Enter sends); messages carry `aria-label="…by <Sender>: <text>"` / `"You sent…"` — direction from the explicit sender.
 
-Overrides: `HOMELAB_MESSAGE_ALLOWLIST`, `HOMELAB_MESSAGE_AUDIT`.
+Override: `HOMELAB_MESSAGE_AUDIT`.
 
 ### v0.25 verbs — video (download to your Nextcloud for the phone)
 
@@ -392,11 +392,10 @@ A homelab session hands work to another **Caller** of Terminal Lobby's
 The send goes through the same function as `message send` (`sendMessageAs`):
 the WhatsApp automation, the on-screen recipient check, and the audit log
 (action `delegate`). It is the one send without a confirm prompt. In its place
-the recipient is pinned by two files a human wrote, and the verb refuses before
-recording anything unless both agree exactly (no fuzzy matching):
+the recipient is pinned by a file a human wrote, and the verb refuses before
+recording anything unless the Caller has a line there:
 
 - `~/.config/homelab/delegate-contacts`, lines `muse=<exact WhatsApp chat name>`
-- `~/.config/homelab/message-allowlist`, the same name on its own line
 
 The bearer token is read from `~/.config/homelab/agent-api-token` (0600,
 installed by `playbooks/devvm.yml` from Vault `secret/terminal-lobby`
