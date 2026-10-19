@@ -74,6 +74,7 @@ Job 6 — postflight       (no pinning)
   ├── Verify all 5 nodes at target version
   ├── Verify no firing Upgrade Gates alerts
   ├── Compute pod-ready ratio (should be ≥ 0.9)
+  ├── CoreDNS to kubeadm's image for the target (coredns-sync.py, forward only)
   ├── Clear k8s-upgrade-* annotations on namespace
   ├── Push k8s_upgrade_in_flight=0, k8s_upgrade_snapshot_taken=0, k8s_upgrade_started_timestamp=0
   └── Slack: ✅ K8s upgrade complete
@@ -242,27 +243,61 @@ those fire on problems; this reports the outcome every week). Manual run:
 (name it WITHOUT a `k8s-upgrade-{phase}-` prefix so a failure can't trip
 `K8sUpgradeChainJobFailed`).
 
-### CoreDNS is NOT upgraded by kubeadm here
+### CoreDNS: the chain sets the image, kubeadm's addon phase stays off
 
-CoreDNS runs a **custom split-horizon Corefile** (owned by the technitium stack)
-and its image is tracked separately — it must NOT be touched by kubeadm. The
-master `kubeadm upgrade apply` therefore runs with
+CoreDNS runs a custom split-horizon Corefile (owned by the technitium stack),
+so kubeadm's CoreDNS addon phase must not run. The master `kubeadm upgrade
+apply` therefore runs with
 `--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins
---skip-phases=addon/coredns` (in `scripts/update_k8s.sh`), so kubeadm upgrades
-the control plane but leaves CoreDNS 100% untouched (image + Corefile). Without
-the `--skip-phases`, forcing past the preflight makes kubeadm overwrite the
-Corefile with its default and downgrade the image (verified via
-`kubeadm upgrade apply --dry-run`).
+--skip-phases=addon/coredns` (in `scripts/update_k8s.sh`), and kubeadm upgrades
+the control plane without touching CoreDNS. Without the `--skip-phases`,
+forcing past the preflight makes kubeadm overwrite the Corefile with its
+default and downgrade the image (verified via `kubeadm upgrade apply
+--dry-run`, 2026-06-17).
 
-**CoreDNS has no automatic version owner.** On 2026-06-12 Keel had auto-bumped
-CoreDNS v1.12.1 → v1.12.4 (kube-system out-of-band annotation from the
-2026-05-26 Keel cascade), and 1.12.4 is ahead of kubeadm 1.34.9's
-corefile-migration table — which is what blocked the 1.34.9 upgrade. CoreDNS was
-then set to `keel.sh/policy=never`, and Keel was retired on 2026-10-11. CoreDNS
-is not in Terraform, so neither Renovate nor kubeadm (with the skip above)
-advances it. If a
-future kubeadm minor ships a CoreDNS that DOES know the running version, drop the
-`--skip-phases` for that run to let kubeadm re-take ownership.
+The CoreDNS version follows the Kubernetes version (Viktor, 2026-10-19).
+Postflight runs `scripts/coredns-sync.py`, which:
+
+1. reads the CoreDNS image this release's kubeadm ships
+   (`kubeadm config images list --kubernetes-version v<target>` over SSH on
+   k8s-master);
+2. compares tags with the live `kube-system/coredns` Deployment, and moves
+   forward only: an older live tag is upgraded, an equal or newer one is left
+   alone, an unparsable one is reported and left alone;
+3. before changing anything, sends a DNS query for
+   `kubernetes.default.svc.cluster.local` to every Ready CoreDNS pod IP
+   directly (so nodelocal-dns caching cannot hide a broken pod), and skips the
+   change if that already fails;
+4. runs `kubectl set image deploy/coredns coredns=<kubeadm image>`, waits for
+   `rollout status` (5 min) and repeats the DNS check;
+5. on a failed rollout or check, runs `kubectl rollout undo` and checks again.
+
+The last line it prints is `result=<r> live=<image> kubeadm=<image>`, and
+postflight posts it to Slack:
+
+| result | meaning | postflight |
+|---|---|---|
+| `upgraded` | moved to kubeadm's image, DNS answers from every pod | Slack note |
+| `unchanged` | already on kubeadm's image | log only |
+| `newer` / `unknown` | live tag is ahead of kubeadm's, or not `X.Y.Z` | Slack note, left as is |
+| `rolled-back` / `dns-broken-before` | change not applied, CoreDNS on its previous image | Slack WARN, chain continues |
+| `rollback-failed` or no result | DNS may be broken | postflight fails (smoke test) |
+
+Status on 2026-10-19: live CoreDNS is v1.13.2 (Keel moved it there on
+2026-06-26), and kubeadm v1.35.9 ships v1.13.1, so the sync reports `newer`
+and leaves it. CoreDNS moves again with the first Kubernetes release whose
+kubeadm ships a version above v1.13.2.
+
+Tests: `python3 -m pytest stacks/k8s-version-upgrade/scripts/test_coredns_sync.py`.
+To see what the sync would do now, from a workstation with SSH to the master:
+
+```sh
+ssh wizard@10.0.20.100 'kubeadm config images list --kubernetes-version v1.35.9' \
+  | python3 stacks/k8s-version-upgrade/scripts/coredns-sync.py --images-list - --dry-run
+```
+
+The DNS check needs pod-network access, so from a workstation the dry run is
+only meaningful when the decision is `unchanged`, `newer` or `unknown`.
 
 ### Vault secrets
 

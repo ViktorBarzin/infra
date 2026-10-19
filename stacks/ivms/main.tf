@@ -45,7 +45,7 @@ module "ivms" {
   host            = "ivms"
   tls_secret_name = var.tls_secret_name
   nfs_server      = var.nfs_server
-  image_tag       = "ee806e46d797556ef5752a25b94d57921cfe9a8b"
+  image_tag       = "e111425a90b854a87ddfa3e672c8debc4f05b2f5"
 
   app_files = {
     "app.env"       = file("${path.module}/app/app.env")
