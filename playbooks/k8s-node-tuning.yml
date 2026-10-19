@@ -1360,6 +1360,80 @@
         mode: "0644"
       tags: patching
 
+    # ---- k8s-node1: unattended-upgrades and apt disagree on the release ----
+    # unattended-upgrades expands ${distro_codename} from `lsb_release -cs`,
+    # which reads /etc/os-release. On k8s-node1 that file is a regular file
+    # carrying Noble content on purpose (see the pigz task above, and
+    # docs/post-mortems/2026-05-17-gpu-driver-ubuntu2604-mismatch.md), while apt
+    # is configured for resolute. So the allowed origins in the file above read
+    # `noble-security` and match nothing, and every daily run logged "No
+    # packages found that can be upgraded unattended". Found 2026-10-19 with
+    # 211 packages pending, 152 of them security, none installed since the
+    # 2026-05-17 dist-upgrade.
+    #
+    # Where the two disagree, a second file adds the origins for apt's own
+    # suite, and base-files is held: a base-files upgrade restores the
+    # os-release symlink, which is exactly the GPU outage the spoof prevents.
+    # Where they agree (every other node, and node1 once the spoof is undone)
+    # the file is absent and base-files upgrades normally.
+    - name: Which release unattended-upgrades and apt each see
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          echo "$(lsb_release -cs)"
+          apt-get indextargets --format '$(RELEASE)' 2>/dev/null \
+            | grep -vE -- '-(updates|security|backports|proposed)$' \
+            | grep -vE '^$' | sort -u | head -1
+        executable: /bin/bash
+      register: uu_release
+      changed_when: false
+      check_mode: false
+      tags: patching
+
+    - name: Refuse to guess if either release could not be read
+      ansible.builtin.assert:
+        that:
+          - uu_release.stdout_lines | length == 2
+          - uu_release.stdout_lines[1] in ['noble', 'resolute']
+        fail_msg: >-
+          Could not read both releases on {{ inventory_hostname }}
+          (got {{ uu_release.stdout_lines }}). Refusing to write allowed
+          origins for a suite I cannot verify.
+      tags: patching
+
+    - name: Allowed origins for apt's suite where os-release names another
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/53unattended-upgrades-apt-suite
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          // /etc/os-release says {{ uu_release.stdout_lines[0] }} on purpose (GPU driver tag).
+          // apt is configured for {{ uu_release.stdout_lines[1] }}, so these origins match it.
+          Unattended-Upgrade::Allowed-Origins {
+              "Ubuntu:{{ uu_release.stdout_lines[1] }}";
+              "Ubuntu:{{ uu_release.stdout_lines[1] }}-security";
+              "Ubuntu:{{ uu_release.stdout_lines[1] }}-updates";
+              "UbuntuESMApps:{{ uu_release.stdout_lines[1] }}-apps-security";
+              "UbuntuESM:{{ uu_release.stdout_lines[1] }}-infra-security";
+          };
+      when: uu_release.stdout_lines[0] != uu_release.stdout_lines[1]
+      tags: patching
+
+    - name: No extra origins where os-release and apt agree
+      ansible.builtin.file:
+        path: /etc/apt/apt.conf.d/53unattended-upgrades-apt-suite
+        state: absent
+      when: uu_release.stdout_lines[0] == uu_release.stdout_lines[1]
+      tags: patching
+
+    - name: base-files is held while os-release is spoofed
+      ansible.builtin.dpkg_selections:
+        name: base-files
+        selection: "{{ 'hold' if uu_release.stdout_lines[0] != uu_release.stdout_lines[1] else 'install' }}"
+      tags: patching
+
     # needrestart restarts every service touched by an upgraded library after
     # EACH dpkg run, and unattended-upgrades runs dpkg once per package. Left
     # alone, that restarted containerd ~63 times in 35 minutes during node5's

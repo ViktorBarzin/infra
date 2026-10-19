@@ -2,7 +2,7 @@
 
 ## Overview
 
-OS-level package upgrades on the 5 K8s VMs (master + 4 workers) are driven by `unattended-upgrades` and rebooted by `kured`, with multiple safety gates layered on top to prevent the failure mode that caused the March 2026 26h cluster outage.
+OS-level package upgrades on the 6 K8s VMs (master + 5 workers) are driven by `unattended-upgrades` and rebooted by `kured`, with multiple safety gates layered on top to prevent the failure mode that caused the March 2026 26h cluster outage.
 
 ## Architecture
 
@@ -53,6 +53,7 @@ kured uncordons + posts Slack notification (configuration.notifyUrl)
 - **Config**: `/etc/apt/apt.conf.d/52unattended-upgrades-k8s` + `/etc/apt/apt.conf.d/20auto-upgrades`
 - **Source of truth**: `infra/playbooks/k8s-node-tuning.yml`, play "Kubernetes node security patching" (tags `patching`, `cloudinit`), with the two files in `infra/playbooks/files/k8s-node/`. It installs the package, writes both files, holds `kubelet`, `kubeadm`, `kubectl` and `containerd.io`, and enables the apt timers. `infra/modules/create-template-vm/cloud_init.yaml` writes the same files at a new node's first boot.
 - **needrestart**: on k8s-node4 and k8s-node5 (the only nodes with `needrestart` installed) the same play writes `/etc/needrestart/conf.d/50-k8s-node-runtime.conf`, which sets `override_rc` to 0 for `containerd.service` and `kubelet.service`. Without it, needrestart's post-dpkg hook restarts containerd after every package, and unattended-upgrades installs one package per dpkg run. On 2026-10-18 node5's 143-package catch-up restarted containerd about 63 times in 35 minutes, which took the node NotReady and left new pods `Unknown` (infra#128). With the drop-in they are listed as deferred, and kured's gated reboot picks up the new libraries.
+- **k8s-node1's release mismatch**: node1's `/etc/os-release` says noble on purpose (GPU driver tag, see `docs/known-issues.md`), while apt is configured for resolute. unattended-upgrades takes `${distro_codename}` from that file, so the shared origins matched nothing there and node1 installed no updates from the 2026-05-17 dist-upgrade until 2026-10-19 (211 pending, 152 security). Where `lsb_release -cs` and apt's suite disagree, the play writes `/etc/apt/apt.conf.d/53unattended-upgrades-apt-suite` with apt's suite and holds `base-files`, whose upgrade would restore the os-release symlink and take the GPU offline. On every other node the file is absent and `base-files` upgrades normally.
 - **Drift**: the hourly `k8s-node-drift-check` runs that playbook in `--check` mode, so a node that loses the package or its config shows up as drift in Slack #alerts. Since 2026-10-18; before that nothing declared it, and k8s-node5 went without patches from 2026-07-28 to 2026-10-18.
 - **cloud-init runs once**: the same play writes `/etc/cloud/cloud-init.disabled` on any node that has cloud-init installed, so a bootstrap never re-runs on a live node. See "Restore / re-apply" below for why.
 
@@ -90,7 +91,7 @@ kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
   jq -r '.data.groups[] | select(.name == "Upgrade Gates") | .rules[] | "  \(.name): \(.state)"'
 
 # Per-node unattended-upgrades status
-for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
+for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4 k8s-node5; do
   echo "=== $n ==="
   ssh $n "systemctl is-active unattended-upgrades; apt list --upgradable 2>/dev/null | wc -l"
 done
@@ -163,6 +164,10 @@ kubectl -n kured logs ds/kured-sentinel-gate --tail=20 | grep -E "soak|cool-down
 # If you need to override (e.g. emergency security patch), shorten the cool-down by
 # editing infra/stacks/kured/main.tf (sentinel script: 86400 → smaller) and applying.
 ```
+
+## Known limitation: a node reboot leaves pods Pending
+
+Measured 2026-10-19 on a manual reboot of k8s-node5 (cordon, then `systemctl reboot`, no drain). Graceful node shutdown terminates every pod, their controllers create replacements, and the other nodes lacked the memory to take them: about 50 pods sat Pending from about 05:41 until node5 returned Ready at 06:09 UTC (shutdown about 7 minutes inside `InhibitDelayMaxSec=480`, containerd 51 s to start). calico-node then needed until 06:09 to reach the API server, which was slow because the restart burst pushed etcd fsync p99 to about 2.5 s on the shared HDD. A kured reboot drains first and hits the same memory limit, so expect the reboot window to take the node's workloads offline until it returns.
 
 ## Past Incidents
 
