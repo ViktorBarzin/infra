@@ -27,6 +27,16 @@ filter covers all t3-safe-restart callers).
 (`t3 --version` vs `/var/lib/t3-autoupdate/last-good`). Then
 `sudo systemctl restart t3-serve@<user>` and watch the next probes go green.
 
+**During a t3 update:** the watchdog skips its whole sweep while
+`t3-autoupdate` or `t3-migrate-idle` holds `/run/t3-autoupdate.lock`, and logs
+`skipping sweep: a t3 update or idle migration holds ...` each minute. The npm
+install makes healthy serves answer 404 for a few minutes, and on 2026-09-28 a
+watchdog restart during that window raced the updater's own rollback. Fail
+counters are not advanced while it skips. The watchdog takes the same lock for
+its own sweep, so the updater and the idle migrator wait for a restart in
+progress to finish. `sudo flock -n /run/t3-autoupdate.lock true` returns
+non-zero while something holds it.
+
 **Pause the watchdog:** `sudo systemctl disable --now t3-watchdog.timer`
 (re-enable with `enable --now`). It deliberately IGNORES
 `/etc/t3-autoupdate.freeze` — freeze stops version changes, not recovery

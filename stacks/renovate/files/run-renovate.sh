@@ -3,7 +3,8 @@
 # Runs Renovate once (stopping it after the first automerge, see below), then
 # records the outcome in Pushgateway:
 #   renovate_last_run_timestamp_seconds      every run
-#   renovate_last_run_exit_code              every run (0 ok, 1 renovate error, 75 skipped:
+#   renovate_last_run_exit_code              every run (0 ok, 1 renovate error or a repository
+#                                            aborted with external-host-error, 75 skipped:
 #                                            Woodpecker busy, gap since the last bump,
 #                                            control plane not calm, or rails hold cool-down)
 #   renovate_last_run_duration_seconds       every run
@@ -145,6 +146,12 @@ fi
 # preempts), so the default is to let the run finish. Set it to 1 to go back
 # to stopping. RENOVATE_STOP_GRACE (default 20 s) bounds the wait after
 # SIGTERM before SIGKILL. Output is still passed through line by line.
+#
+# External host errors: when a host Renovate depends on (GitHub, a registry,
+# Forgejo) fails, Renovate aborts that repository, logs "Repository finished"
+# with "result": "external-host-error", and still exits 0. The loop flags that
+# line and the run is recorded as a failure (1), so RenovateNotSucceeding
+# sees a run that did nothing.
 fifo=$(mktemp -u /tmp/run-renovate.XXXXXX)
 mkfifo "$fifo"
 # Job control gives Renovate its own process group, so the signals below also
@@ -154,8 +161,10 @@ renovate "$@" >"$fifo" 2>&1 &
 pid=$!
 set +m
 stopped=0
+host_error=0
 while IFS= read -r line || [ -n "$line" ]; do
   printf '%s\n' "$line"
+  [[ "$line" == *'"result": "external-host-error"'* ]] && host_error=1
   if [ "${RENOVATE_STOP_AFTER_AUTOMERGE:-0}" = 1 ] && [ "$stopped" = 0 ] && [[ "$line" == *"Restarting repository job after automerge result"* ]]; then
     stopped=1
     echo "run-renovate: one bump landed; stopping Renovate before its post-automerge restart (prCommitsPerRunLimit=1 skips every branch in it)"
@@ -175,5 +184,9 @@ wait "$pid"
 rc=$?
 rm -f "$fifo"
 [ "$stopped" = 1 ] && rc=0
+if [ "$host_error" = 1 ] && [ "$rc" = 0 ]; then
+  echo "run-renovate: a repository aborted with external-host-error; recording the run as failed"
+  rc=1
+fi
 record "$rc"
 exit "$rc"

@@ -13,16 +13,23 @@
 #   - in this namespace: create and delete probe pods and PVCs, and server-side
 #     dry runs of a privileged pod, an ExternalSecret and a CNPG Cluster (the
 #     admission-webhook checks; a dry run persists nothing)
-#   - in the database namespaces: start a Job from the backup CronJob, the
-#     "backup job runs on the new version" check
+#   - in the namespaces listed in cronjob_run_namespaces: start a Job from a
+#     CronJob, for the "backup job runs on the new version" check and for
+#     CronJob-only images (run_cronjob in scripts/verify/lib.sh)
 # It has no exec into other namespaces' pods: database probes log in over the
 # network with the credentials below.
 
 variable "nfs_server" { type = string }
 
 locals {
-  # Namespaces whose backup CronJob the database checks start once.
-  backup_namespaces = ["dbaas", "immich", "redis", "rybbit", "beads-server"]
+  # Namespaces where a verify.sh starts a CronJob once (run_cronjob): the
+  # database backups, and since 2026-10-19 the probe CronJobs whose image runs
+  # nowhere else, so a Renovate bump of that image is exercised before it
+  # counts as landed.
+  cronjob_run_namespaces = [
+    "dbaas", "immich", "redis", "rybbit", "beads-server",
+    "claude-agent", "dawarich", "headscale", "myprotein-watch", "payslip-ingest",
+  ]
 }
 
 resource "kubernetes_namespace" "verify" {
@@ -149,9 +156,9 @@ resource "kubernetes_role_binding" "verify_runner" {
   }
 }
 
-# Start (and clean up) a one-off Job from a backup CronJob.
+# Start (and clean up) a one-off Job from a CronJob (run_cronjob).
 resource "kubernetes_role" "verify_backup" {
-  for_each = toset(local.backup_namespaces)
+  for_each = toset(local.cronjob_run_namespaces)
   metadata {
     name      = "verify-backup-run"
     namespace = each.value
@@ -164,7 +171,7 @@ resource "kubernetes_role" "verify_backup" {
 }
 
 resource "kubernetes_role_binding" "verify_backup" {
-  for_each = toset(local.backup_namespaces)
+  for_each = toset(local.cronjob_run_namespaces)
   metadata {
     name      = "verify-backup-run"
     namespace = each.value
