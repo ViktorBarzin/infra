@@ -145,7 +145,9 @@ provider "helm" {
 }
 
 provider "vault" {
-  address          = "https://vault.viktorbarzin.me"
+  # VAULT_ADDR when set: CI sets the in-cluster http://vault-active.vault.svc.cluster.local:8200,
+  # which skips the public ingress and its rate limit. The devvm default is the public URL.
+  address          = "${get_env("VAULT_ADDR", "https://vault.viktorbarzin.me")}"
   skip_child_token = true
 }
 
