@@ -6,9 +6,9 @@
 # sources may use it.
 #
 # WHY: Emil's session placed vermont-netmap.sh and its unit on the Pi by hand
-# on 2026-10-17 for iVMS on VM 300. Since ADR-0035 the iVMS pod in the cluster
-# depends on it too, through a pfSense route, so a rebuilt Pi (an ageing SD
-# card, see docs/architecture/monitoring.md) must get it back from here.
+# on 2026-10-17 for iVMS on VM 300, and iVMS runs there. The devvm reaches the
+# alias through a pfSense route. A rebuilt Pi (an ageing SD card, see
+# docs/architecture/monitoring.md) must get it back from here.
 #
 # Scope: only vermont-netmap. camera_net_setup2.sh, camera-net.service, the
 # socat relays and the rest of the Pi stay hand-managed for now.
@@ -36,13 +36,8 @@
     # Keep in step with $CLIENTS in files/pfsense-vermont-alias-config.php.
     # pfSense does not NAT traffic to the alias, so these are real addresses.
     vermont_allowed_sources:
-      - { cidr: 192.168.1.230, why: "VM 300, dormant iVMS-on-Windows path (infra#121)" }
-      - { cidr: 10.0.20.100, why: "k8s-master", via_pfsense: true }
-      - { cidr: 10.0.20.101, why: "k8s-node1", via_pfsense: true }
-      - { cidr: 10.0.20.102, why: "k8s-node2", via_pfsense: true }
-      - { cidr: 10.0.20.103, why: "k8s-node3", via_pfsense: true }
-      - { cidr: 10.0.20.104, why: "k8s-node4", via_pfsense: true }
-      - { cidr: 10.0.20.105, why: "k8s-node5", via_pfsense: true }
+      # The k8s nodes were removed on 2026-10-19 with the cluster iVMS.
+      - { cidr: 192.168.1.230, why: "VM 300, runs iVMS-4200 (infra#121)" }
       - { cidr: 10.0.10.10, why: "devvm", via_pfsense: true }
 
   tasks:
@@ -107,7 +102,7 @@
         that:
           - "'10.77.1.0/24 via 10.200.1.2 dev veth-host' in status.stdout"
           - "'-i eth1 -o veth-host -j VERMONT_NETMAP' in status.stdout"
-          - "'10.0.20.101 via 192.168.1.2 dev eth1' in status.stdout"
+          - "'10.0.10.10 via 192.168.1.2 dev eth1' in status.stdout"
           - "'NETMAP --to 192.168.1.0/24' in status.stdout"
           - "status.stdout_lines | select('search', '-A VERMONT_NETMAP -s') | list | length == vermont_allowed_sources | length"
         fail_msg: "{{ status.stdout }}"

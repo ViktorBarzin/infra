@@ -4,8 +4,8 @@
 # pfSense side of the path to the Vermont complex alias 10.77.1.0/24
 # (ADR-0035): gateway rpi_sofia, static route, no-NAT for the allowed clients,
 # and a floating block for everyone else. The Pi side is
-# playbooks/rpi-sofia-netmap.yml; the pod-level rule is the
-# ClusterNetworkPolicy in stacks/ivms.
+# playbooks/rpi-sofia-netmap.yml. Since 2026-10-19 the only allowed client is
+# the devvm (the cluster iVMS was retired).
 #
 # The client list lives in two places that must agree: $CLIENTS in
 # files/pfsense-vermont-alias-config.php and vermont_allowed_sources in

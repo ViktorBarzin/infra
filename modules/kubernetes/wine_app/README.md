@@ -2,8 +2,9 @@
 
 One module call runs one Windows desktop app in its own pod: Wine, an X
 display, and noVNC at `https://<host>.viktorbarzin.me` behind Authentik. The
-pod sleeps at 0 replicas and wakes on visit. Decision record: ADR-0035. First
-user: `stacks/ivms` (iVMS-4200).
+pod sleeps at 0 replicas and wakes on visit. Decision record: ADR-0035. No app
+runs on it today. The first, iVMS-4200, ran as `stacks/ivms` from 2026-10-17
+to 2026-10-19 and moved back to Windows VM 300 (the last commit with `stacks/ivms` is `ec0ecbdd3`).
 
 ```mermaid
 flowchart LR
@@ -50,7 +51,7 @@ installer over the existing prefix on the next start.
    (`docs/runbooks/nfs-prerequisites.md`).
 3. New stack: namespace with a tier that fits the memory (3-edge allows an
    8Gi container, 4-aux caps at 4Gi), `setup_tls_secret`, the module call, and
-   the app's `app/` directory. Copy `stacks/ivms` as the starting point.
+   the app's `app/` directory. Start from the deleted `stacks/ivms` (`git show ec0ecbdd3:stacks/ivms/main.tf`).
 4. Apply, open the URL, and watch the first-start install in the pod log.
 
 ## Operating

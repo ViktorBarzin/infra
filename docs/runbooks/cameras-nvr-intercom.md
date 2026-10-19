@@ -22,14 +22,14 @@
 
 Цялата мрежа на комплекса има и незастъпващ се адрес: `10.77.1.x` е
 устройството `192.168.1.x` в комплекса, на всички портове. Пример: NVR-ът е
-`10.77.1.150`, панелът е `10.77.1.115`. Ползва го iVMS-4200 в клъстера
-(`ivms.viktorbarzin.me`, ADR-0035), а също devvm и VM 300.
+`10.77.1.150`, панелът е `10.77.1.115`. Ползват го VM 300 (там е iVMS-4200)
+и devvm. Клъстерът няма достъп от 19.10.2026, когато iVMS в клъстера беше
+спрян.
 
 ```mermaid
 flowchart LR
-  P["под ivms<br/>(само ns ivms, ClusterNetworkPolicy)"] --> PF["pfSense<br/>маршрут през rpi_sofia, без NAT"]
-  D["devvm 10.0.10.10"] --> PF
-  PF -->|"източник = адрес на k8s възел или devvm"| PI["rpi-sofia eth1<br/>верига VERMONT_NETMAP"]
+  D["devvm 10.0.10.10"] --> PF["pfSense<br/>маршрут през rpi_sofia, без NAT"]
+  PF -->|"източник = devvm"| PI["rpi-sofia eth1<br/>верига VERMONT_NETMAP"]
   V["VM 300 192.168.1.230"] --> PI
   PI -->|"NETMAP в guestns"| C["комплекс 192.168.1.x"]
 ```
@@ -37,12 +37,12 @@ flowchart LR
 | Къде | Какво | Кой го управлява |
 |---|---|---|
 | pfSense | gateway `rpi_sofia` = 192.168.1.10 на WAN, без мониторинг; маршрут `10.77.1.0/24` през него | `playbooks/pfsense-vermont-alias.yml` |
-| pfSense | outbound NAT: без NAT от `vermont_complex_clients` (6-те k8s възела и devvm) към `10.77.1.0/24`; floating block за всеки друг източник | същият |
+| pfSense | outbound NAT: без NAT от `vermont_complex_clients` (само devvm от 19.10.2026) към `10.77.1.0/24`; floating block за всеки друг източник | същият |
 | rpi-sofia, host | маршрут `10.77.1.0/24 via 10.200.1.2 dev veth-host`; `nat PREROUTING -d 10.77.1.0/24 -j ACCEPT` (първо правило) | `playbooks/rpi-sofia-netmap.yml` |
 | rpi-sofia, host | `FORWARD -i eth1 -o veth-host -d 10.77.1.0/24 -j VERMONT_NETMAP` (първо правило); веригата пуска изброените източници, останалите DROP | същият |
-| rpi-sofia, host | обратни маршрути за k8s възлите и devvm през 192.168.1.2 | същият |
+| rpi-sofia, host | обратен маршрут за devvm през 192.168.1.2 | същият |
 | rpi-sofia, guestns | `nat PREROUTING -i veth-guest -d 10.77.1.0/24 -j NETMAP --to 192.168.1.0/24` (първо правило) | същият |
-| VM 300 | постоянен маршрут `route -p add 10.77.1.0 mask 255.255.255.0 192.168.1.10` (резервен път, не се ползва) | на ръка |
+| VM 300 | постоянен маршрут `route -p add 10.77.1.0 mask 255.255.255.0 192.168.1.10` (пътят на iVMS) | на ръка |
 
 - Скрипт: `/usr/local/sbin/vermont-netmap.sh start|stop|status`, генериран от
   playbook-а. Service: `vermont-netmap.service`, закачен за
@@ -50,8 +50,7 @@ flowchart LR
   `playbooks/files/rpi-sofia/`.
 - Списъкът с позволени източници е на две места, които трябва да съвпадат:
   `$CLIENTS` в `playbooks/files/pfsense-vermont-alias-config.php` и
-  `vermont_allowed_sources` в `playbooks/rpi-sofia-netmap.yml`. Нов k8s възел
-  трябва да влезе и в двете.
+  `vermont_allowed_sources` в `playbooks/rpi-sofia-netmap.yml`.
 - Без NAT, защото автоматичното правило на pfSense за собствения му WAN адрес
   („let out anything from firewall host itself") праща трафика към TP-Link-а,
   а не към Pi-то.
@@ -73,7 +72,14 @@ flowchart LR
   възстановява там, защото iVMS може да запише старите списъци с хора върху
   панелите.
 
-### iVMS-4200 в клъстера (от 17.10.2026)
+### iVMS-4200 в клъстера (17.10.2026 – 19.10.2026, спрян)
+
+Спрян на 19.10.2026: Emil избра iVMS на VM 300 през RDP (по-бърз, с файлове и
+clipboard), а две бази iVMS могат да пращат различни хора и карти към едни и
+същи устройства. `stacks/ivms` е изтрит (последният commit с него е
+`ec0ecbdd3`), последното дневно копие е в `/srv/nfs/ivms-backup/`. Записът по-долу
+остава за историята и за наученото.
+
 
 - Адрес: `https://ivms.viktorbarzin.me` (Authentik, Home Server Admins). При
   първо отваряне iVMS се събужда за една-две минути; първият старт след
@@ -236,7 +242,7 @@ flowchart LR
   проверено.
 - Сървърът на iVMS (`*.S`) остава да работи и след Exit на клиента, а WatchDog го
   рестартира. Нормално спиране под Windows: първо `taskkill /f /im WatchDog.exe`,
-  после `taskkill` без `/f` за сървърите (редът от `stacks/ivms/app/pre-stop.sh`).
+  после `taskkill` без `/f` за сървърите (редът от `git show ec0ecbdd3:stacks/ivms/app/pre-stop.sh`).
   Shadow copy (VSS) на VM 300 върна „Access is denied“ и не създаде копие.
 - Snapshot `pre-ivms-backup-20261019` на VM 300 е направен преди тези стъпки.
 
