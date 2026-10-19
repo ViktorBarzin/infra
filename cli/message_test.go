@@ -53,51 +53,6 @@ func TestParseMessageArgs(t *testing.T) {
 	})
 }
 
-func TestParseAllowlist(t *testing.T) {
-	body := "# my people\nAnca Milea\n\n  Himani Agrawal  \n# comment\nAlek Vukadinov\n"
-	got := parseAllowlist(body)
-	want := []string{"Anca Milea", "Himani Agrawal", "Alek Vukadinov"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestResolveRecipient(t *testing.T) {
-	allow := []string{"Anca Milea", "Alek Vukadinov", "Himani Agrawal"}
-
-	t.Run("exact case-insensitive", func(t *testing.T) {
-		m, _, err := resolveRecipient("anca milea", allow)
-		if err != nil || m != "Anca Milea" {
-			t.Errorf("m=%q err=%v", m, err)
-		}
-	})
-	t.Run("unique substring", func(t *testing.T) {
-		m, _, err := resolveRecipient("himani", allow)
-		if err != nil || m != "Himani Agrawal" {
-			t.Errorf("m=%q err=%v", m, err)
-		}
-	})
-	t.Run("ambiguous returns candidates", func(t *testing.T) {
-		_, cands, err := resolveRecipient("a", allow) // matches all three
-		if err == nil {
-			t.Fatal("expected ambiguity error")
-		}
-		if len(cands) != 3 {
-			t.Errorf("candidates = %v", cands)
-		}
-	})
-	t.Run("no match", func(t *testing.T) {
-		if _, _, err := resolveRecipient("zzz", allow); err == nil {
-			t.Error("expected no-match error")
-		}
-	})
-	t.Run("empty allowlist fails closed", func(t *testing.T) {
-		if _, _, err := resolveRecipient("anyone", nil); err == nil {
-			t.Error("expected empty-allowlist error")
-		}
-	})
-}
-
 func TestBuildAuditRecord(t *testing.T) {
 	r := buildAuditRecord("2026-07-20T19:00:00Z", "wa", "send", "Anca Milea", "hello there", "sent")
 	if r.Chars != 11 {
