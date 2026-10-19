@@ -3,7 +3,10 @@
 # needs the `markdown` lib because it shells out to the monorepo's render.py.
 FROM python:3.12-slim
 
+# apt-get upgrade pulls trixie-security fixes (libexpat1 and others) that the
+# base image has not picked up yet.
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 

@@ -12,6 +12,8 @@
 # instance); WD_FAILS_REQUIRED consecutive failed probes (ride out blips); fewer
 # than WD_MAX_RESTARTS watchdog restarts in the trailing WD_WINDOW_SECONDS — at the
 # cap it logs WATCHDOG-EXHAUSTED (-> critical Loki alert) and stands down.
+# Skips the whole sweep while t3-autoupdate or t3-migrate-idle holds the shared
+# update lock (take_update_lock, added after the 2026-09-28 race).
 # DELIBERATELY NOT GATED on the idle/active-turn check (a dead port means every
 # session is already broken) nor on /etc/t3-autoupdate.freeze (freeze is VERSION
 # policy; this re-execs the already-installed binary). Design + rationale:
@@ -62,6 +64,13 @@ gate_should_restart() {
 main() {
   mkdir -p "$WD_STATE_DIR"
   local unit u port code rc fails now started uptime recent reason
+  # Stand aside while t3-autoupdate or t3-migrate-idle holds the shared lock: the
+  # npm install makes healthy serves answer 404 for minutes, and a restart or
+  # rollback from here would race theirs (2026-09-28). Fail counters are left
+  # alone, so the install window is not counted as a wedge.
+  if ! take_update_lock 0; then
+    LOG "skipping sweep: a t3 update or idle migration holds $UPDATE_LOCK"; return 0
+  fi
   # safe_restart_unit contract: $target (version moved to — here: what's installed,
   # used in backup filenames/logs) and $last_good (its rollback target — equal to
   # installed outside a mid-update window, making rollback a no-op reinstall).

@@ -88,7 +88,15 @@
   // helm datasource defaults ("<dep> Docker tag", "to v15") are merged after
   // top-level config but before packageRules (updates/flatten.ts).
   fetchChangeLogs: "branch", // needs GITHUB_COM_TOKEN for github.com-hosted notes
-  commitBody: "Why: upstream released {{depName}} {{newValue}} ({{updateType}}). Renovate lands third-party version bumps per ADR-0030; the Woodpecker rails gate, snapshot, apply, verify and revert this commit.\n{{#each upgrades}}\n- {{depName}} {{currentValue}} -> {{newValue}} in {{packageFile}}{{#if releases}}{{#each releases}}\n  {{version}}{{#if releaseNotes.url}}: {{releaseNotes.url}}{{/if}}{{/each}}{{/if}}{{/each}}\n\n{{#each upgrades}}Renovate-Dep: {{datasource}} {{packageName}} {{#if newValue}}{{newValue}}{{else}}{{newDigest}}{{/if}}\n{{/each}}",
+  // The release lines read logJSON.versions, which processBranch fills before
+  // it compiles commitBody. `releases` is filled from logJSON only when a PR
+  // is created (update/pr/index.ts, 44.115.9), and branch automerge creates
+  // none, so until 2026-10-19 every commit body had an empty release list.
+  // (`compare` is not an allowed template field, so no compare-URL fallback.)
+  // Each line ends in its own newline: a {{#each}} tag alone on a line is
+  // "standalone" to Handlebars, which drops the newline after it, so the
+  // second upgrade of a group used to run on from the first.
+  commitBody: "Why: upstream released {{depName}} {{newValue}} ({{updateType}}). Renovate lands third-party version bumps per ADR-0030; the Woodpecker rails gate, snapshot, apply, verify and revert this commit.\n{{#each upgrades}}- {{depName}} {{currentValue}} -> {{newValue}} in {{packageFile}}\n{{#each logJSON.versions}}  {{version}}{{#if releaseNotes.url}}: {{releaseNotes.url}}{{/if}}\n{{/each}}{{/each}}\n{{#each upgrades}}Renovate-Dep: {{datasource}} {{packageName}} {{#if newValue}}{{newValue}}{{else}}{{newDigest}}{{/if}}\n{{/each}}",
 
   // ---- Managers ----
   "helm-values": {
@@ -235,11 +243,6 @@
       description: "TorrServer publishes MatriX.N and MatriX.N.M tags. Docker versioning cannot read the non-numeric prefix, so MatriX.141 would never be offered a newer one (Keel cutover B11, 2026-10-10)",
       matchPackageNames: ["ghcr.io/yourok/torrserver"],
       versioning: "regex:^MatriX\\.(?<major>\\d+)(?:\\.(?<minor>\\d+))?$",
-    },
-    {
-      description: "youtubedl-material publishes dated nightly-YYYY-MM-DD tags; read the date as the version (Keel cutover B07, 2026-10-10)",
-      matchPackageNames: ["tzahi12345/youtubedl-material", "docker.io/tzahi12345/youtubedl-material"],
-      versioning: "regex:^nightly-(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$",
     },
     {
       description: "edoburu/pgbouncer tags end in a packaging revision (v1.24.1-p0, -p1). Docker versioning treats that suffix as a compatibility string, so a -p1 rebuild of the same release would never be offered to a -p0 pin; read it as the build number (Keel cutover B15, 2026-10-11)",

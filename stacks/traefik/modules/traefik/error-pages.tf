@@ -29,9 +29,6 @@ resource "kubernetes_deployment" "error_pages" {
         labels = {
           app = "error-pages"
         }
-        annotations = {
-          "diun.enable" = "true"
-        }
       }
       spec {
         topology_spread_constraint {
@@ -100,7 +97,6 @@ resource "kubernetes_deployment" "error_pages" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       # The tier label is stamped on the live object by resource governance.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

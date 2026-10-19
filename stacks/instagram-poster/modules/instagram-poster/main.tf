@@ -272,10 +272,6 @@ resource "kubernetes_deployment" "instagram_poster" {
     template {
       metadata {
         labels = local.labels
-        annotations = {
-          # Diun watches this image tag and POSTs the auto-upgrade pipeline.
-          "diun.enable" = "true"
-        }
       }
 
       spec {
@@ -417,7 +413,6 @@ resource "kubernetes_deployment" "instagram_poster" {
       spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 

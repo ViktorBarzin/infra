@@ -415,10 +415,6 @@ resource "kubernetes_deployment" "calibre-web-automated" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable"       = "false"
-          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-        }
         labels = {
           app = "calibre-web-automated"
         }
@@ -506,6 +502,10 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           port {
             container_port = 8083
           }
+          # cwa-init runs `chown -R /app/calibre-web-automated` on every start,
+          # which copies the whole app directory up through overlayfs. On a
+          # busy node that took over 130s on 2026-10-19 and the probe killed
+          # it six times in a row, so the window is 10 minutes.
           startup_probe {
             http_get {
               path = "/"
@@ -514,7 +514,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             initial_delay_seconds = 10
             timeout_seconds       = 5
             period_seconds        = 5
-            failure_threshold     = 24
+            failure_threshold     = 120
           }
           liveness_probe {
             http_get {
@@ -573,7 +573,6 @@ resource "kubernetes_deployment" "calibre-web-automated" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -706,7 +705,6 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -870,7 +868,6 @@ resource "kubernetes_deployment" "audiobookshelf" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -1253,7 +1250,6 @@ resource "kubernetes_deployment" "book_search" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -1512,7 +1508,6 @@ resource "kubernetes_deployment" "goodreads_sync" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "worker_warm" {
         }
         container {
           name    = "chrome"
-          image   = "ghcr.io/viktorbarzin/chrome-service-browser:d593d8266aaf3c82c625fd3263744f2f2788b151"
+          image   = "ghcr.io/viktorbarzin/chrome-service-browser:e111425a90b854a87ddfa3e672c8debc4f05b2f5"
           command = ["bash", "/scripts/worker_entrypoint.sh"]
           env {
             name  = "DISPLAY"
@@ -124,7 +124,6 @@ resource "kubernetes_deployment" "worker_warm" {
       # The image is pinned (matches the master's browser) and not ignored.
       # The tier label is stamped by the resource-governance policy.
       metadata[0].labels["tier"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

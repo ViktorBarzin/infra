@@ -144,8 +144,9 @@ resource "kubernetes_deployment" "dolt" {
           # Exact pin, owned by Terraform (the image is no longer in
           # lifecycle.ignore_changes, so changing this tag rolls the pod).
           # Strategy is Recreate, so only one Dolt process opens the store.
-          # Take a tarball of /var/lib/dolt before bumping: the daily
-          # dolt-backup CronJob below keeps current rows but not commit history.
+          # The Renovate rails run every "*-backup" CronJob in this namespace
+          # before applying a bump: dolt-backup (current rows) and
+          # dolt-history-backup (full stores with commit history), both below.
           image = "dolthub/dolt-sql-server:2.4.2"
 
           port {
@@ -190,13 +191,20 @@ resource "kubernetes_deployment" "dolt" {
             period_seconds        = 10
           }
 
+          # 512Mi -> 1536Mi on 2026-10-19, request raised to match. At 512Mi
+          # the cgroup sat at its limit (memory.current 536.6M of 536.9M,
+          # workingset_refault_file 81.5M pages, 142k major faults in 5.5
+          # days), so the page cache kept being evicted and re-read: the
+          # server read 224 MB/s from disk on k8s-node3, MySQL handshakes
+          # took ~14s, BeadBoard crash-looped, and the sql-server process was
+          # OOM-killed once.
           resources {
             requests = {
-              memory = "256Mi"
+              memory = "1536Mi"
               cpu    = "50m"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1536Mi"
             }
           }
         }
@@ -323,7 +331,8 @@ resource "kubernetes_service" "dolt" {
 #     scratch Dolt directory, checks every table and view came back, then
 #     gzips it to /backup/<UTC yyyymmdd-hhmm>/ and pushes the metrics.
 #
-# What it does not keep: Dolt commit history. A restore gives the current
+# What it does not keep: Dolt commit history (dolt-history-backup below
+# does). A restore gives the current
 # rows of every table, including uncommitted working-set changes (the beads
 # database's presence_claims is never committed), as one new commit. Users
 # and grants come from the dolt-init ConfigMap, not from the dump.
@@ -486,6 +495,258 @@ resource "kubernetes_cron_job_v1" "dolt_backup" {
             volume {
               name = "work"
               empty_dir {}
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_dolt_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# ── Dolt history backup ──
+#
+# Daily full backup of every Dolt database with its commit history, branches,
+# tags and working sets, to /srv/nfs/dolt-backup/history/<UTC yyyymmdd-hhmm>/.
+# The row backup above keeps current rows only; this is the copy to restore
+# from when history matters, and the Renovate rails run it (with dolt-backup)
+# before applying a Dolt bump.
+#
+# The live server does no work for this backup. A first version called
+# CALL dolt_backup('sync-url') on the server; on 2026-10-19 that call ran for
+# 17 minutes on the `code` database without finishing, and every other query
+# took 50-60s meanwhile. The same sync run by the CLI on a copy of the store
+# took 3s. So this job:
+#
+#   - probe (init, mysql client): records each database's commit and branch
+#     counts over SQL, before the copy.
+#   - backup (dolt image matching the server): mounts dolt-data read-only (RWO,
+#     so pod affinity puts it on the server's node) and copies each database
+#     into a memory-backed scratch directory: the noms manifest first, then
+#     the table files, then the append-only chunk journal last. That is the
+#     state a crash would leave, which Dolt is built to open. `dolt fsck` must
+#     pass on the copy and its counts must be at least what the probe saw;
+#     otherwise it copies again (3 tries), which covers a GC rewriting files
+#     mid-copy. It then runs `dolt backup sync-url` from the copy, tars the
+#     resulting store to NFS, restores the NFS copy with `dolt backup restore`,
+#     checks the restored counts, publishes the run directory, keeps the newest
+#     14 runs, and pushes metrics.
+#
+# Retention is by count, not age, so a stalled job never ages out the last
+# good copies. It only touches /backup/history; the row backups at the top
+# level of the share are rotated by dolt-backup. Users and grants
+# (.doltcfg/privileges.db) are saved alongside as doltcfg.tar. Restore:
+# docs/runbooks/restore-dolt.md.
+resource "kubernetes_cron_job_v1" "dolt_history_backup" {
+  metadata {
+    name      = "dolt-history-backup"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    schedule                      = "45 1 * * *"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit           = 2
+        active_deadline_seconds = 1800
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            affinity {
+              pod_affinity {
+                # dolt-data is RWO: only a pod on the server's node can mount it.
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "dolt"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            init_container {
+              name  = "probe"
+              image = "mysql:8.4.11"
+              env {
+                name  = "DOLT_HOST"
+                value = "${kubernetes_service.dolt.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in mysql client image. Records what the copy must contain at least.
+                q() { mysql -h "$DOLT_HOST" -P 3306 -u root -N -B "$@"; }
+                date -u +%s > /work/start
+                q -e "SELECT dolt_version()" > /work/VERSION
+                q -e "SHOW DATABASES" | grep -v -x -E 'information_schema|mysql|performance_schema|sys' > /work/databases
+                : > /work/commits.tsv
+                while read -r db; do
+                  commits=$(q -D "$db" -e "SELECT COUNT(*) FROM dolt_log")
+                  branches=$(q -D "$db" -e "SELECT COUNT(*) FROM dolt_branches")
+                  printf '%s\t%s\t%s\n' "$db" "$commits" "$branches" >> /work/commits.tsv
+                done < /work/databases
+                cat /work/VERSION /work/commits.tsv
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+            }
+            container {
+              name  = "backup"
+              image = "dolthub/dolt-sql-server:2.4.2"
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
+              }
+              env {
+                name  = "KEEP"
+                value = "14"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in the dolt image that matches the server. See the comment above the
+                # resource for why it copies the store instead of asking the server.
+                export HOME=/tmp
+                dolt config --global --add user.name backup >/dev/null
+                dolt config --global --add user.email backup@beads-server >/dev/null
+                count() { dolt sql -r csv -q "SELECT COUNT(*) FROM $1" | tail -n 1; }
+                copy_db() { # db -> /scratch/copy/db, journal last
+                  src=/data/$1 dst=/scratch/copy/$1
+                  rm -rf "$dst"; mkdir -p "$dst/.dolt/noms"
+                  cp -p "$src/.dolt/noms/manifest" "$dst/.dolt/noms/"
+                  for f in "$src"/.dolt/*; do [ "$${f##*/}" = noms ] || cp -a "$f" "$dst/.dolt/"; done
+                  for f in "$src"/.dolt/noms/*; do
+                    case "$${f##*/}" in manifest|LOCK|vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv) ;; *) cp -a "$f" "$dst/.dolt/noms/" ;; esac
+                  done
+                  if [ -f "$src/.dolt/noms/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv" ]; then
+                    cp -p "$src/.dolt/noms/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv" "$dst/.dolt/noms/"
+                  fi
+                  : > "$dst/.dolt/noms/LOCK"
+                }
+                TS=$(date -u +%Y%m%d-%H%M)
+                out=/backup/history/$TS
+                mkdir -p "$out.partial"
+                fail=0
+                while IFS="$(printf '\t')" read -r db commits branches; do
+                  ok=0
+                  for try in 1 2 3; do
+                    copy_db "$db"
+                    if (cd "/scratch/copy/$db" && dolt fsck --quiet); then
+                      c=$(cd "/scratch/copy/$db" && count dolt_log) b=$(cd "/scratch/copy/$db" && count dolt_branches)
+                      if [ "$c" -ge "$commits" ] && [ "$b" -ge "$branches" ]; then ok=1; break; fi
+                      echo "database $db try $try: copy has $c commits, $b branches; live had $commits, $branches"
+                    else
+                      echo "database $db try $try: fsck failed on the copy"
+                    fi
+                  done
+                  [ "$ok" = 1 ] || { echo "database $db: no consistent copy after 3 tries"; fail=1; continue; }
+                  rm -rf "/scratch/store/$db"
+                  (cd "/scratch/copy/$db" && dolt backup sync-url "file:///scratch/store/$db")
+                  rm -rf "/scratch/copy/$db"
+                  tar -C /scratch/store -cf "$out.partial/$db.tar" "$db"
+                  rm -rf "/scratch/store/$db" /scratch/check && mkdir -p /scratch/check/store
+                  tar -C /scratch/check/store -xf "$out.partial/$db.tar"
+                  (cd /scratch/check && dolt backup restore "file:///scratch/check/store/$db" "$db" >/dev/null)
+                  rc=$(cd "/scratch/check/$db" && count dolt_log) rb=$(cd "/scratch/check/$db" && count dolt_branches)
+                  rm -rf /scratch/check
+                  echo "database $db: live $commits commits $branches branches; copy $c $b; restored $rc $rb"
+                  if [ "$rc" -ne "$c" ] || [ "$rb" -ne "$b" ]; then fail=1; fi
+                  printf '%s\t%s\t%s\n' "$db" "$rc" "$rb" >> "$out.partial/commits.tsv"
+                done < /work/commits.tsv
+                [ "$fail" -eq 0 ] || { echo "backup check failed, not publishing $out"; exit 1; }
+
+                tar -C /data -cf "$out.partial/doltcfg.tar" .doltcfg
+                cp /work/VERSION /work/databases "$out.partial/"
+                (cd "$out.partial" && sha256sum * > SHA256SUMS)
+                mv "$out.partial" "$out"
+                # Keep the newest $KEEP complete runs; never touches the row backups in /backup.
+                ls -1d /backup/history/20* | grep -v '\.partial$' | sort | head -n "-$KEEP" | while read -r d; do
+                  echo "rotating out $d"; rm -rf "$d"
+                done
+                find /backup/history -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mtime +1 -exec rm -rf {} +
+
+                t0=$(cat /work/start)
+                dur=$(( $(date -u +%s) - t0 ))
+                bytes=$(du -sb "$out" | cut -f1)
+                echo "backup written: $out ($bytes bytes, $dur s)"; ls -l "$out"; df -h /backup
+                cat <<METRICS | curl -sf --data-binary @- "$PUSHGATEWAY/metrics/job/dolt-history-backup" || echo "pushgateway push failed"
+                backup_duration_seconds $dur
+                backup_output_bytes $bytes
+                backup_last_success_timestamp $(date -u +%s)
+                METRICS
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "256Mi"
+                }
+                # /scratch is memory-backed and counts against this limit: a copy of the
+                # largest database, its backup store and one restore check at a time.
+                limits = {
+                  memory = "1536Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+              volume_mount {
+                name       = "dolt-data"
+                mount_path = "/data"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "scratch"
+                mount_path = "/scratch"
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "work"
+              empty_dir {}
+            }
+            volume {
+              name = "scratch"
+              empty_dir {
+                medium     = "Memory"
+                size_limit = "1Gi"
+              }
+            }
+            volume {
+              name = "dolt-data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.dolt_data.metadata[0].name
+                read_only  = true
+              }
             }
             volume {
               name = "backup"
@@ -690,7 +951,6 @@ resource "kubernetes_deployment" "workbench" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -968,7 +1228,6 @@ resource "kubernetes_deployment" "beadboard" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]

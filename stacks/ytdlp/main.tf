@@ -100,8 +100,19 @@ module "nfs_highlights_data_host" {
   storage_class_name = "nfs-pve"
 }
 
+# MeTube (yt-dlp web UI) on yt.viktorbarzin.me. Replaced youtubedl-material
+# (tzahi12345/youtubedl-material, last image nightly-2025-03-18, unmaintained)
+# on 2026-10-19; the Deployment keeps its name so the Service, ingress and
+# Authentik application stay as they were.
+#
+# The NFS volume is the old app's: its config and database files sit at the
+# top level and stay untouched, and its per-user download folders are
+# <user>/video and <user>/audio. MeTube writes into the default user's folders
+# (admin/video, admin/audio) and keeps its own queue and history in .metube/.
+# Files from before the switch stay where they were (ioan.milea1964@gmail.com/
+# audio holds the only ones). CHOWN_DIRS is off so MeTube never re-owns the
+# existing tree; PUID/PGID match its owner (1000:33, setgid group-writable).
 resource "kubernetes_deployment" "ytdlp" {
-  # resource "kubernetes_daemonset" "technitium" {
   metadata {
     name      = "ytdlp"
     namespace = kubernetes_namespace.ytdlp.metadata[0].name
@@ -109,15 +120,13 @@ resource "kubernetes_deployment" "ytdlp" {
       app  = "ytdlp"
       tier = local.tiers.aux
     }
-    annotations = {
-      "diun.enable" = "true"
-    }
   }
   spec {
-    # strategy {
-    #   type = "Recreate"
-    # }
-    # replicas = 1
+    replicas = 1
+    # MeTube's state files live on NFS; never run two pods against them.
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "ytdlp"
@@ -131,50 +140,80 @@ resource "kubernetes_deployment" "ytdlp" {
       }
       spec {
         container {
-          image = "tzahi12345/youtubedl-material:nightly-2025-03-18"
-          name  = "ytdlp"
-          # requests 512Mi -> 256Mi on 2026-09-04 (bead code-hn6k). Measured
-          # peak working set over 30 days is 165Mi, a third of the old request.
-          # 256Mi is 1.5x that peak.
-          #
-          # An earlier version of this comment said the deployment is
-          # Sablier-parked at 0 replicas most of the time. It is not: it runs
-          # 1/1 and has for 248 days, so the reservation is real and worth
-          # taking back.
-          #
-          # The LIMIT stays at 512Mi. Request and limit were equal before, so a
-          # download that needs more headroom has exactly as much as it did.
+          image = "ghcr.io/alexta69/metube:2026.10.09@sha256:df929ef2453fd75c1f1cbd8dafb309ee03ff18d8705c7c1e01642b1202d4a650"
+          name  = "metube"
+          env {
+            name  = "PUID"
+            value = "1000"
+          }
+          env {
+            name  = "PGID"
+            value = "33"
+          }
+          env {
+            name  = "UMASK"
+            value = "002"
+          }
+          env {
+            name  = "CHOWN_DIRS"
+            value = "false"
+          }
+          env {
+            name  = "DOWNLOAD_DIR"
+            value = "/data/admin/video"
+          }
+          env {
+            name  = "AUDIO_DOWNLOAD_DIR"
+            value = "/data/admin/audio"
+          }
+          env {
+            name  = "STATE_DIR"
+            value = "/data/.metube"
+          }
+          # Partial downloads stay off NFS; a pod restart loses them, which
+          # only means MeTube starts that download again.
+          env {
+            name  = "TEMP_DIR"
+            value = "/tmp/metube"
+          }
           resources {
             requests = {
               cpu    = "25m"
-              memory = "256Mi"
+              memory = "192Mi"
             }
+            # ffmpeg merges and audio extraction run in this container.
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
-            container_port = 17442
+            name           = "http"
+            container_port = 8081
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 8081
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 8081
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 30
+            timeout_seconds       = 5
           }
           volume_mount {
-            mount_path = "/app/appdata"
+            mount_path = "/data"
             name       = "data"
           }
           volume_mount {
-            mount_path = "/app/audio"
-            name       = "data"
-          }
-          volume_mount {
-            mount_path = "/app/video"
-            name       = "data"
-          }
-          volume_mount {
-            mount_path = "/app/users"
-            name       = "data"
-          }
-          volume_mount {
-            mount_path = "/app/subscriptions"
-            name       = "data"
+            mount_path = "/tmp/metube"
+            name       = "temp"
           }
         }
         volume {
@@ -183,7 +222,12 @@ resource "kubernetes_deployment" "ytdlp" {
             claim_name = module.nfs_data_host.claim_name
           }
         }
-        # }
+        volume {
+          name = "temp"
+          empty_dir {
+            size_limit = "20Gi"
+          }
+        }
       }
     }
   }
@@ -213,7 +257,7 @@ resource "kubernetes_service" "ytdlp" {
     port {
       name        = "ytdlp"
       port        = 80
-      target_port = 17442
+      target_port = 8081
       protocol    = "TCP"
     }
   }
@@ -229,9 +273,9 @@ module "ingress" {
   dns_type        = "non-proxied"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "yt-dlp"
-    "gethomepage.dev/description"  = "Video downloader"
-    "gethomepage.dev/icon"         = "youtube-dl.png"
+    "gethomepage.dev/name"         = "MeTube"
+    "gethomepage.dev/description"  = "Video downloader (yt-dlp)"
+    "gethomepage.dev/icon"         = "metube.png"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
@@ -262,7 +306,6 @@ resource "kubernetes_deployment" "yt_highlights" {
       "sablier.ready-after" = "180s"
     }
     annotations = {
-      "diun.enable"                = "true"
       "reloader.stakater.com/auto" = "true"
     }
   }
@@ -388,7 +431,6 @@ resource "kubernetes_deployment" "yt_highlights" {
       spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built viktorbarzin/yt-highlights, Renovate skips it
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].replicas,                                                                        # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]

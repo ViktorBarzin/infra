@@ -47,7 +47,7 @@ Status on 2026-10-15: the CronJob runs every 6 hours (every 30 minutes until 202
 | Pins under `modules/` (for example the `anubis_instance` image tag) | Manual for now | `ignorePaths` excludes `modules/**`, because a change there re-applies every platform stack |
 | `.woodpecker/*.yml` CI images | Manual | Excluded so a broken CI image cannot break the rails that would revert it |
 | First-party images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, Forgejo registry) | The app's own CI | Renovate skips them (package rule "Our own images") |
-| CoreDNS | Nobody yet | Not in Terraform, and kubeadm skips the addon (`scripts/update_k8s.sh`). Keel rolled it before 2026-10 |
+| CoreDNS | The K8s version chain | Postflight (`coredns-sync.py`, since 2026-10-19) sets the image kubeadm ships for the target release only when the live CoreDNS is older. It never downgrades: a newer live CoreDNS is logged, posted to Slack and left as is (v1.13.2 live against kubeadm v1.35.9's v1.13.1 on 2026-10-19). kubeadm's addon phase stays skipped because of the custom Corefile. Not in Terraform; Keel rolled it before 2026-10 |
 
 Components held for a supervised session are disabled `packageRules` with a `HELD:` description in `renovate.json5`: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, the NVIDIA driver major, the Loki chart repository switch, Kyverno 1.20 (chart 3.10), Forgejo, and Technitium 14 to 15.
 
@@ -162,7 +162,7 @@ Independent of the Renovate path above. Drives apt package updates + reboots on 
 - **Reboot gate (sentinel)**: `kured-sentinel-gate` DaemonSet creates `/var/run/gated-reboot-required` only when (a) host needs reboot, (b) all nodes Ready, (c) all calico-node pods Running, (d) **no node has transitioned Ready in the last 24h** (24h soak window). The gate runs as an immortal `bash` loop that forks `kubectl` each cycle; the pod whose host has a pending reboot runs the full kubectl-heavy path indefinitely and slowly leaks. Mitigated 2026-05-31 (limit 64Mi→256Mi + `MAX_ITER=72` self-exit ≈6h so kubelet restarts it fresh) — see PM `2026-05-31-kured-sentinel-gate-oom.md`.
 - **Reboot gate (Prometheus)**: kured `--prometheus-url` polls `prometheus-server.monitoring.svc:80` before each drain. ANY firing alert blocks unless it matches the ignore-regex `^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$`.
 - **Health alert library**: 10 alerts in the `Upgrade Gates` group (`prometheus_chart_values.tpl`): `KubeAPIServerDown`, `KubeStateMetricsDown`, `PrometheusRuleEvaluationFailing`, `PVCStuckPending`, `RecentNodeReboot` (the explicit 24h soak signal), `MysqlStandaloneDown`, `ClusterPodReadyRatioDropped`, `NodeMemoryPressure`, `NodeDiskPressure`, `KubeQuotaAlmostFull`. Plus the existing 200+ alerts in the cluster-wide library (anything firing blocks kured).
-- **Notifications**: kured `notifyUrl` posts drain-start/drain-finish to Slack via Vault `secret/kured.slack_kured_webhook`. Alertmanager separately routes critical alerts to `#alerts`.
+- **Notifications**: kured posts drain-start/drain-finish to Slack through the webhook in Vault `secret/kured.slack_kured_webhook`, which the `kured-notify` ExternalSecret syncs into a Secret and the DaemonSet reads as `KURED_NOTIFY_URL` (not `notifyUrl`, which would put it in the pod args). Alertmanager separately routes critical alerts to `#alerts`.
 
 ### Source of truth
 | Concern | Location |
@@ -267,9 +267,14 @@ each Job's pod and its drain target are always different nodes.
   `--role master|worker --release X.Y.Z`. Piped via SSH into each node by
   upgrade-step.sh. The master path runs `kubeadm upgrade apply` with
   `--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins
-  --skip-phases=addon/coredns` so kubeadm never touches CoreDNS (custom Corefile
-  + separately-tracked image; CoreDNS is pinned off Keel via `keel.sh/policy=never`).
-  See the runbook's "CoreDNS is NOT upgraded by kubeadm here".
+  --skip-phases=addon/coredns` so kubeadm never touches CoreDNS (its addon
+  phase would replace the custom Corefile).
+- **CoreDNS version**: postflight runs
+  `infra/stacks/k8s-version-upgrade/scripts/coredns-sync.py`, which sets the
+  CoreDNS image to the one kubeadm ships for the target release, forward only,
+  with a DNS check against every CoreDNS pod before and after and a
+  `rollout undo` on failure. See the runbook's "CoreDNS: the chain sets the
+  image, kubeadm's addon phase stays off".
 - **Four Upgrade Gates alerts**:
   - `K8sVersionSkew` — `count(count by (kubelet_version)(kube_node_info)) > 1 unless on() (<chain job>.active>0)` for 15m. Catches a half-done rollout **at rest**. Rebuilt 2026-07-25 off `kube_node_info` (the old `kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"}` source was never scraped → the alert could never fire, RC5); the `unless active>0` guard suppresses it only during a genuinely-running phase.
   - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently. (Deliberately NOT given the live-Job guard — its snapshot runs while the master Job is Active.)

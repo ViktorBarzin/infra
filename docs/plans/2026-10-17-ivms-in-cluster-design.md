@@ -1,6 +1,6 @@
 # Windows apps under Wine in the cluster, starting with iVMS-4200
 
-- Status: approved, executing
+- Status: superseded on 2026-10-19 (iVMS stays on VM 300, see ADR-0035)
 - Date: 2026-10-17
 - Decision record: `docs/adr/0035-ivms-runs-under-wine-in-the-cluster.md`
 - Supersedes the phase 2 proposal in infra#121 (iVMS-4200 on VM 300)
@@ -67,6 +67,9 @@ flowchart TB
 - `images/wine-app/`: Debian bookworm, WineHQ stable 11.0 pinned, winetricks
   pinned, Xvfb, x11vnc on loopback, noVNC with websockify on :6080, a window
   manager, xdotool, xprintidle. No app inside.
+- Update 2026-10-19: Emil chose iVMS on VM 300 over RDP, so the cluster copy
+  was retired and `stacks/ivms` deleted (the last commit with `stacks/ivms` is `ec0ecbdd3`). The `wine_app` module and image
+  stay for future Windows apps.
 - Update 2026-10-18: the display is now TigerVNC `Xvnc` with noVNC 1.6.0,
   chosen by a benchmark after Emil reported lag: 29 ms median click-to-screen
   against 56 ms for the Xvfb + x11vnc setup described here (ADR-0036).

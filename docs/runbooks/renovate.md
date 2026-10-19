@@ -26,7 +26,9 @@ Design: `docs/plans/2026-10-09-software-currency-design.md` ("Phase 3"). Decisio
 2. Renovate clones the repo, looks up every dependency, and sorts the pending updates (vulnerability, priority, then pin, digest, patch, minor, major, then title).
 3. It commits the first update to `renovate/<stack>-<dep>` and fast-forwards `master` to it (`automergeType: branch`, `ignoreTests: true`). `prCommitsPerRunLimit: 1` stops every later branch in the same run, including the one Renovate's own post-automerge restart would otherwise land.
 4. After the automerge Renovate logs `Restarting repository job after automerge result` and runs the repository job again. That second pass lands nothing (the commit limit is reached) and writes the Dependency Dashboard issue and the repository cache. It overlaps with the pipeline the push just started, so the pod runs at the `renovate` PriorityClass: the `tier-3-edge` value, so Woodpecker step pods cannot preempt it, and `preemptionPolicy: Never`, so it never evicts another pod. On 2026-10-11, at `tier-4-aux`, the step pods preempted it in two of three runs, and from `4b808e14` until the PriorityClass change the wrapper stopped Renovate at that log line, which also kept the dashboard from refreshing. That stop is still available with `RENOVATE_STOP_AFTER_AUTOMERGE=1` (SIGTERM to the process group, SIGKILL after `RENOVATE_STOP_GRACE`, default 20 s).
-5. The wrapper pushes `renovate_last_run_timestamp_seconds`, `renovate_last_run_exit_code`, `renovate_last_run_duration_seconds`, and on exit 0 `renovate_last_success_timestamp_seconds` to Pushgateway (`job="renovate"`, `instance="infra"`).
+5. The wrapper pushes `renovate_last_run_timestamp_seconds`, `renovate_last_run_exit_code`, `renovate_last_run_duration_seconds`, and on exit 0 `renovate_last_success_timestamp_seconds` to Pushgateway (`job="renovate"`, `instance="infra"`). A repository that Renovate aborts because a host it depends on failed (GitHub, a registry, Forgejo) ends with `Repository finished` and `"result": "external-host-error"` while Renovate still exits 0; the wrapper watches for that line and records the run as 1 (since 2026-10-19).
+
+Branches that `prCommitsPerRunLimit` holds back log `Reached commits per run limit - skipping branch`. Renovate logs that at debug; `logLevelRemap` in `config.js` and `config-apps.js` raises it to info so it appears in the Job log.
 
 Commit subjects read `<stack>: bump <dep> <old> -> <new>`. The body lists each pin and ends with `Renovate-Dep: <datasource> <package> <version>` trailers, which the rails use to write an ignore entry.
 
@@ -166,9 +168,9 @@ Run by hand: `kubectl -n renovate create job renovate-apps-manual --from=cronjob
 
 ## Alert
 
-`RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 13 hours (two 6-hourly runs, so one skipped run stays quiet; it was 2 hours while the CronJob ran every 10 minutes), unless the CronJob is suspended (`kube_cronjob_spec_suspend`). Check, in order:
+`RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 13 hours (two 6-hourly runs, so one skipped run stays quiet; it was 2 hours while the CronJob ran every 10 minutes), unless the CronJob is suspended or was suspended at any point in the last 13 hours (`max_over_time(kube_cronjob_spec_suspend[13h])`), so a resumed CronJob gets one full window before the alert can fire. Check, in order:
 
-1. `renovate_last_run_exit_code{job="renovate",instance="infra"}`: 75 means every recent run found Woodpecker busy; 1 means Renovate logged an ERROR.
+1. `renovate_last_run_exit_code{job="renovate",instance="infra"}`: 75 means every recent run was skipped by a gate (Woodpecker busy, gap between bumps, calm gate, rails hold); 1 means Renovate exited non-zero (it logged an ERROR) or a repository aborted with `external-host-error` (the Job log names the host).
 2. `kubectl -n renovate get jobs` and `kubectl -n renovate logs job/<latest>`.
 3. A token problem shows as HTTP 401 against `forgejo.viktorbarzin.me`. Mint a new PAT for `renovate-bot` (scopes `write:repository`, `read:user`, `write:issue`, `read:organization`) and write it to `secret/renovate` `forgejo_token`; ESO refreshes the Secret within an hour.
 

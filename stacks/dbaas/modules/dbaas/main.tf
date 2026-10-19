@@ -1267,8 +1267,13 @@ resource "kubernetes_deployment" "phpmyadmin" {
       }
       spec {
         container {
-          name  = "phpmyadmin"
-          image = "phpmyadmin/phpmyadmin:5.2.3"
+          name = "phpmyadmin"
+          # Docker official image (library/phpmyadmin), built from the same
+          # phpmyadmin/docker sources as phpmyadmin/phpmyadmin but rebuilt
+          # on base-image updates; on 2026-10-19 the same 5.2.3 tag had been
+          # rebuilt on 2026-10-14 while phpmyadmin/phpmyadmin:5.2.3 dated
+          # from 2025-10-08.
+          image = "phpmyadmin:5.2.3"
           port {
             container_port = 80
           }
