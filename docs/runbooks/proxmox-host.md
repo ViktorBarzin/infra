@@ -1,6 +1,6 @@
 # Runbook: Proxmox host (pve, 192.168.1.127)
 
-Last updated: 2026-09-24
+Last updated: 2026-10-19
 
 The Proxmox host is a baremetal hypervisor on the storage LAN
 (192.168.1.0/24) with a single IP `192.168.1.127`. It hosts every
@@ -114,6 +114,7 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | Fan actuator (`scripts/fan-control.sh` and its unit) | Replaces the old scp deploy. The script passes the Home Assistant token through a file descriptor, so it no longer appears in the host's command audit |
 | promtail config (`scripts/pve-promtail.yaml`) | Redacts secret-shaped values before the journal reaches Loki |
 | LVM metadata archive kept 7 days (`/etc/lvm/lvmlocal.conf`) | The default 30 days held 9,810 files and 1.9 GB for the `pve` volume group |
+| unattended-upgrades, Debian-Security origin only, no automatic reboot (tag `patching`) | Nothing installed updates on the host until 2026-10-19, when 29 security updates were waiting. Proxmox packages (kernel, QEMU, pve-manager) and Debian point releases are still upgraded by hand, because they need a reboot or a VM stop/start to take effect. Kernel autoremoval is off, after the first run removed the fallback kernel 6.14.11-3 |
 
 The measurements and reasoning for each item sit next to its task in
 the playbook.
