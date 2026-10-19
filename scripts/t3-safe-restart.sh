@@ -23,8 +23,23 @@
 : "${DISPATCH:=${T3_DISPATCH:-127.0.0.1:3780}}"
 : "${USER_MAP:=${T3_USER_MAP:-/etc/ttyd-user-map}}"
 : "${T3_BACKUP_TIMEOUT:=900}"
+: "${UPDATE_LOCK:=${T3_UPDATE_LOCK:-/run/t3-autoupdate.lock}}"
 
 LOG() { logger -t "$LOG_TAG" "$*"; echo "$LOG_TAG: $*"; }
+
+# take_update_lock <wait_seconds>: take the exclusive lock shared by every script
+# that restarts t3-serve@ units or reinstalls the global binary (t3-autoupdate for
+# its whole update + canary + rollback, t3-migrate-idle for a drain, t3-watchdog
+# for a sweep). Held on fd 9 until the caller exits. Returns non-zero if another
+# holder kept it for <wait_seconds> (0 = do not wait).
+# Why: on 2026-09-28 the npm install made the running serves answer 404, the
+# watchdog restarted emo onto the half-installed build, failed pairing, rolled the
+# binary back and froze, while t3-autoupdate was rolling back at the same moment.
+# Background children that may outlive the caller must close it (`9>&-`).
+take_update_lock() {
+  exec 9>>"$UPDATE_LOCK" || return 1
+  if [ "${1:-0}" -gt 0 ]; then flock -w "$1" 9; else flock -n 9; fi
+}
 ver() { t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
 # OS users owning a ~/.t3 (RHS of each non-comment "authentik=os_user" map line).
 osusers() { awk -F= '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$2);print $2}' "$USER_MAP" 2>/dev/null | sort -u; }
