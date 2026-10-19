@@ -806,6 +806,41 @@
       tags: kubelet
 
     # ---- containerd -------------------------------------------------------
+    # containerd.service is Type=notify with systemd's default 90s start timeout.
+    # At boot it reads its metadata and snapshots from the shared sdc spindle,
+    # and on k8s-node5's reboot on 2026-10-19 the first three attempts each ran
+    # past 90s, were killed and started over from nothing; the fourth finished
+    # in 51s. That added about five minutes before the kubelet had a runtime.
+    # A longer timeout lets the first attempt finish. It changes nothing on a
+    # running node: daemon-reload only, and the value is read at the next start.
+    - name: containerd's systemd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/containerd.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: containerd
+
+    - name: containerd gets long enough to start on the shared disk
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/containerd.service.d/10-start-timeout.conf
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          [Service]
+          TimeoutStartSec=600
+        owner: root
+        group: root
+        mode: "0644"
+      register: containerd_timeout_dropin
+      tags: containerd
+
+    - name: systemd reads the containerd drop-in
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: containerd_timeout_dropin.changed
+      tags: containerd
+
     # discard_unpacked_layers deletes the compressed layer blob once it has been
     # unpacked into the snapshotter. It is NOT a latency lever: an earlier claim
     # that it caused 3.2x pull writes was disproved, and pull-time writes are
