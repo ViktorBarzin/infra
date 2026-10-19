@@ -212,10 +212,14 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
   # generates I/O storm that breaks kubeadm's 5-min watch) and back to 1
   # after master is upgraded. Until HA control plane lands (beads code-n0ow),
   # this is how we keep autonomous upgrades unblocked.
+  #
+  # `watch` added 2026-10-19 for `kubectl rollout status deploy/coredns` in
+  # postflight (coredns-sync.py), which also uses the patch rule below for
+  # `kubectl set image` and `kubectl rollout undo`.
   rule {
     api_groups = ["apps"]
     resources  = ["daemonsets", "statefulsets", "replicasets", "deployments"]
-    verbs      = ["get", "list"]
+    verbs      = ["get", "list", "watch"]
   }
   rule {
     api_groups = ["apps"]
@@ -321,6 +325,7 @@ resource "kubernetes_config_map" "k8s_upgrade_scripts" {
     "upgrade-step.sh"   = file("${path.module}/scripts/upgrade-step.sh")
     "update_k8s.sh"     = file("${path.module}/../../scripts/update_k8s.sh")
     "compat-gate.py"    = file("${path.module}/scripts/compat-gate.py")
+    "coredns-sync.py"   = file("${path.module}/scripts/coredns-sync.py")
     "addon-compat.json" = file("${path.module}/scripts/addon-compat.json")
     "nightly-report.py" = file("${path.module}/scripts/nightly-report.py")
   }

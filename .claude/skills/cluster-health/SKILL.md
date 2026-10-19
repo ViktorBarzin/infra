@@ -221,9 +221,10 @@ DNS provider secret, rate-limit from Let's Encrypt.
 ### Backups (checks 34, 35, 36)
 
 ```bash
-# Per-DB dumps (inside the DB pod)
-kubectl exec -n dbaas mysql-standalone-0 -- ls -lah /backup/per-db/
-kubectl exec -n dbaas pg-cluster-0 -- ls -lah /backup/per-db/
+# Per-DB dumps: last successful run of each backup CronJob (the dumps live
+# on NFS, /srv/nfs/{mysql,postgresql}-backup/per-db/, not in the DB pods)
+kubectl -n dbaas get cronjob mysql-backup-per-db postgresql-backup-per-db \
+    -o custom-columns=NAME:.metadata.name,LAST_OK:.status.lastSuccessfulTime
 
 # Pushgateway metrics
 kubectl exec -n monitoring deploy/prometheus-server -- \

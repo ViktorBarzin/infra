@@ -101,7 +101,6 @@ resource "kubernetes_deployment" "novelapp" {
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       metadata[0].annotations["kubernetes.io/change-cause"],                                   # rollout tooling writes this (Keel did until 2026-10)
       metadata[0].annotations["deployment.kubernetes.io/revision"],                            # K8s increments this on every rollout
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

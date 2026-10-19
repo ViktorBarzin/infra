@@ -230,7 +230,6 @@ resource "kubernetes_deployment" "stremio" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_manifest.external_secret]
@@ -409,8 +408,7 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
     ]
   }
 }

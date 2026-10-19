@@ -291,8 +291,6 @@ resource "kubernetes_deployment" "linkwarden" {
           app = "linkwarden"
         }
         annotations = {
-          "diun.enable"                    = "true"
-          "diun.include_tags"              = "^v?\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
         }
       }
@@ -401,7 +399,6 @@ resource "kubernetes_deployment" "linkwarden" {
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   # v2.16.3 migrations need CREATE on schema public; see kubernetes_job.db_owner.

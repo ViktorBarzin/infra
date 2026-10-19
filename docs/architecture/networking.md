@@ -144,17 +144,16 @@ The Vermont complex network is also `192.168.1.0/24`, reachable only from rpi-so
 
 ```mermaid
 flowchart LR
-  POD["pod in ns ivms"] -->|"other namespaces: ClusterNetworkPolicy deny"| N["k8s node address"]
-  N --> PF["pfSense<br/>route 10.77.1.0/24 via rpi_sofia 192.168.1.10<br/>no NAT for vermont_complex_clients<br/>floating block for other sources"]
-  DV["devvm 10.0.10.10"] --> PF
+  DV["devvm 10.0.10.10"] --> PF["pfSense<br/>route 10.77.1.0/24 via rpi_sofia 192.168.1.10<br/>no NAT for vermont_complex_clients<br/>floating block for other sources"]
   PF --> PI["rpi-sofia eth1<br/>VERMONT_NETMAP allowlist"]
+  VM["VM 300 192.168.1.230"] --> PI
   PI -->|"NETMAP in guestns"| C["complex 192.168.1.x"]
 ```
 
-- **pfSense** (`playbooks/pfsense-vermont-alias.yml`): gateway `rpi_sofia` on WAN, monitoring off; static route; manual outbound-NAT rule `nonat` from alias `vermont_complex_clients` (the 6 k8s node addresses + devvm) to `vermont_complex_alias`; floating `block quick out on wan` from any other source. No NAT because the automatic `let out anything from firewall host itself` rule carries `route-to` the TP-Link for source 192.168.1.2, which would bypass the static route. The disabled `4g_router` gateway (it pointed at 192.168.1.10) was deleted with its disabled route.
+- **pfSense** (`playbooks/pfsense-vermont-alias.yml`): gateway `rpi_sofia` on WAN, monitoring off; static route; manual outbound-NAT rule `nonat` from alias `vermont_complex_clients` (only the devvm since 2026-10-19) to `vermont_complex_alias`; floating `block quick out on wan` from any other source. No NAT because the automatic `let out anything from firewall host itself` rule carries `route-to` the TP-Link for source 192.168.1.2, which would bypass the static route. The disabled `4g_router` gateway (it pointed at 192.168.1.10) was deleted with its disabled route.
 - **rpi-sofia** (`playbooks/rpi-sofia-netmap.yml`): chain `VERMONT_NETMAP` on `-i eth1 -o veth-host -d 10.77.1.0/24` lets the same addresses (plus VM 300, `192.168.1.230`) through, and return routes for them go via 192.168.1.2.
-- **Cluster**: ClusterNetworkPolicy `complex-alias-ivms-only` (`stacks/ivms`) denies the alias to every namespace except `ivms`. hostNetwork pods and node processes are outside it.
-- The client list lives in both playbooks and must agree; a new k8s node needs both.
+- **Cluster**: no access since 2026-10-19. The k8s node addresses were removed from both allowlists when the cluster iVMS was retired, together with its ClusterNetworkPolicy `complex-alias-ivms-only`. Giving a namespace access again means adding the node addresses back to both playbooks and a pod-level rule like that one.
+- The client list lives in both playbooks and must agree.
 
 ## IPAM & DNS Auto-Registration
 

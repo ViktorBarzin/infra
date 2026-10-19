@@ -5,7 +5,6 @@
 # These entries are shared between all the Immich components
 defaultPodOptions:
   annotations:
-    diun.enable: "true"
 
 env:
   # REDIS_HOSTNAME: '{{ printf "%s-redis-master" .Release.Name }}'

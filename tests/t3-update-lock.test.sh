@@ -87,7 +87,7 @@ rm -f "$TMP/freeze"
 
 # --- the throwaway health-check serve must not inherit the lock fd: if it ever
 # outlived the script it would hold the lock and silence the watchdog for good ---
-grep -q 'serve --host 0.0.0.0 .* 9>&- &' "$HERE/scripts/t3-autoupdate.sh"
+grep -q 'serve --host 0.0.0.0 .* 9>&- &' "$HERE/scripts/t3-safe-restart.sh"
 eq "$?" 0 "health_check closes fd 9 for the background serve"
 
 echo; echo "t3-update-lock: pass=$pass fail=$fail"

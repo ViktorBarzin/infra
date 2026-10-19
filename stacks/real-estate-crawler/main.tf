@@ -717,7 +717,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -837,7 +836,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

@@ -77,8 +77,7 @@ resource "kubernetes_deployment" "kms-web-page" {
     ignore_changes = [
       # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image,                     # CI_SETS_IMAGE: first-party image, deployed by its own CI
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
     ]
   }
 }
@@ -234,8 +233,7 @@ resource "kubernetes_deployment" "kms_diag" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
     ]
   }
 }
@@ -479,7 +477,6 @@ resource "kubernetes_deployment" "windows_kms" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_manifest.kms_slack_external_secret]

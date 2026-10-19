@@ -7,8 +7,9 @@ is described by a few files mounted at `/app`, and the entrypoint downloads,
 verifies and installs the app into a Wine prefix on the pod's volume on first
 start.
 
-The first app is Hikvision iVMS-4200 (`stacks/ivms/app/`). Paradox BabyWare is
-the likely second.
+No app uses it today. The first was Hikvision iVMS-4200, whose recipe is in
+git history (`git show ec0ecbdd3:stacks/ivms/app/install.sh`); iVMS moved back
+to Windows VM 300 on 2026-10-19.
 
 ```mermaid
 flowchart LR
@@ -93,7 +94,7 @@ picture of what went wrong).
   the gate.
 
 What an upgrade does to the app's data is app-specific; for iVMS see
-`stacks/ivms/app/README.md`.
+`git show ec0ecbdd3:stacks/ivms/app/README.md`.
 
 While installing, the pod is not Ready (see probes).
 

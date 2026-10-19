@@ -51,7 +51,6 @@
 | webhook_handler | Webhook processing | webhook_handler |
 | tuya-bridge | Smart home bridge | tuya-bridge |
 | android-emulator | Shared Android 16 test emulator (adb 10.0.20.200:5555, noVNC android-emulator.viktorbarzin.lan) | android-emulator |
-| ivms | iVMS-4200 under Wine for the Vermont complex's access control, noVNC at ivms.viktorbarzin.me, sleeps when idle (wine_app module, ADR-0035) | ivms |
 | anisette | Self-hosted Apple anisette-data server (Dadoum/anisette-v3-server, digest-pinned) for sideloading the TripIt iOS Shell via SideStore; internal-only http://anisette.viktorbarzin.lan, auth=none, LAN-only, stateless | anisette |
 | dawarich | Location history | dawarich |
 | owntracks | Location tracking | owntracks |
@@ -89,7 +88,7 @@
 | travel_blog | Travel blog | travel_blog |
 | dashy | Dashboard | dashy |
 | send | Firefox Send | send |
-| ytdlp | YouTube downloader | ytdlp |
+| ytdlp | MeTube video downloader (yt.viktorbarzin.me, replaced youtubedl-material 2026-10-19) and yt-highlights | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
 | audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
 | paperless-ngx | Document management. Mail ingest: forward document emails to `docs@viktorbarzin.me` — sender maps 1:1 to a paperless account (runbook `paperless-mail-ingest.md`). Native AI (since 2026-10-12): suggestions from llama-swap `qwen3-8b` (openai-like backend, env in the stack). A Document Added workflow (id 3, configured in the app, not Terraform) applies document type and tags only; titles and correspondents are left as they arrive (Viktor, 2026-10-12, after the model picked the recipient as correspondent on 7 of 20 test documents) | paperless-ngx |

@@ -529,12 +529,8 @@ resource "kubernetes_deployment" "llama_swap" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # Keel (retired) left keel.sh/update-time on the pod template and
-      # change-cause on the Deployment. Dropping the template annotation from
-      # this list would restart the pod, so it stays ignored.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 

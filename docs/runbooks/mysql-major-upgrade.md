@@ -1,12 +1,13 @@
 # MySQL major upgrade (blue-green) and rollback
 
-Last updated: 2026-10-15 (MySQL 8.4.8 to 26.7.0)
+Last updated: 2026-10-19 (rollback copy scaled to 0 after a restore test of the nightly 26.7 dump)
 
 The shared MySQL in `dbaas` moved from the 8.4 LTS to the 26.7 innovation
 release by building a second instance next to the first and switching the
 `mysql` Service over, rather than upgrading in place. The 8.4.8 instance stays
-running, read-only, so a rollback is a one-line change plus a restart of
-nothing.
+as a read-only copy, so a rollback is a one-line change. Since 2026-10-19 that
+copy runs at 0 replicas with its PVC kept, so a rollback first starts it
+again.
 
 ## Why not in place
 
@@ -33,7 +34,7 @@ Release notes that mattered for this move:
 | Piece | Value |
 |---|---|
 | Active instance | StatefulSet `mysql-v26`, image `docker.io/library/mysql:26.7.0`, PVC `data-mysql-v26-0` (30Gi, `proxmox-lvm-encrypted`, autoresizer limit 60Gi) |
-| Rollback copy | StatefulSet `mysql-standalone`, `mysql:8.4.8`, PVC `data-mysql-standalone-0` (30Gi), `super_read_only=ON` and `read_only=ON` set with `SET PERSIST` (stored in its datadir, so a restart keeps them), data as of 23:11 UTC on 2026-10-15 |
+| Rollback copy | StatefulSet `mysql-standalone`, `mysql:8.4.8`, PVC `data-mysql-standalone-0` (30Gi), `super_read_only=ON` and `read_only=ON` set with `SET PERSIST` (stored in its datadir, so a restart keeps them), data as of 23:11 UTC on 2026-10-15. At 0 replicas since 2026-10-19; Renovate holds its image pin |
 | The switch | `local.mysql_active` in `stacks/dbaas/modules/dbaas/main.tf` |
 | What follows the switch | the `mysql` Service, so every app, Vault's database secrets engine, `mysqld-exporter`, phpMyAdmin and both backup CronJobs (host `mysql.dbaas`); the `mysql_static_user`, `mysql_exporter_user` and `mysql_verify_probe_user` provisioners (they exec into `<active>-0`) |
 | Direct addresses | `mysql-v26.dbaas.svc.cluster.local` (new). `mysql-standalone` and `mysql-standalone-headless` are Services left over from the Bitnami chart and select the old pod. On 2026-10-16 only `mysql-standalone-headless` had an endpoint (the `mysql-standalone` EndpointSlice was empty and connections were refused), so reach the old server through `mysql-standalone-headless.dbaas.svc.cluster.local` |
@@ -55,6 +56,12 @@ matter, copy the changed tables back first (`mysqldump` from `mysql-v26-0` with
 the 8.4.8 client, which the old pod has; check FLOAT columns as described under
 "Gotchas").
 
+0. Start the rollback copy: set `replicas = 1` on
+   `kubernetes_stateful_set_v1.mysql_standalone`, commit, push, apply
+   `stacks/dbaas` from the main checkout, and wait for `mysql-standalone-0` to
+   be Ready (`kubectl -n dbaas rollout status statefulset mysql-standalone`).
+   It reattaches `data-mysql-standalone-0` and starts read-only. Then scale
+   Grafana to 0 (see "Write freezes: stop Grafana first" below).
 1. Make the new instance read-only so nothing writes to both:
    `kubectl -n dbaas exec mysql-v26-0 -c mysql -- bash -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SET PERSIST super_read_only=ON"'`.
 2. Open the old one:
@@ -71,7 +78,8 @@ the 8.4.8 client, which the old pod has; check FLOAT columns as described under
 5. Check: `kubectl -n dbaas get endpointslices -l kubernetes.io/service-name=mysql`
    shows the old pod IP, `SELECT @@super_read_only` is 0 on `mysql-standalone-0`,
    and the checks under "Proving it" pass.
-6. Point the `MysqlStandaloneDown` and `MySQLNotServing` alerts
+6. Scale Grafana back to 1 and check its `/api/health`.
+7. Point the `MysqlStandaloneDown` and `MySQLNotServing` alerts
    (`stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`) and
    `MYSQL_IMAGE` plus the workload name in `stacks/dbaas/verify.sh` back at
    `mysql-standalone` / `mysql:8.4.8`.
@@ -173,6 +181,56 @@ would have been about 7 minutes.
 - `scripts/verify/run dbaas`: the MySQL scratch write, read-back and drop pass
   against 26.7.0, and the backup CronJobs ran on the 26.7.0 client.
 
+## Restore test of the nightly 26.7 dump (2026-10-19)
+
+The design's condition for stopping the rollback copy was a restore test of
+the nightly 26.7 mysqldump. The full dump from 2026-10-19 00:30 UTC
+(`/srv/nfs/mysql-backup/dump_2026_10_19_00_30.sql.gz`, 717,161,278 bytes,
+`mysqldump --all-databases` on the 26.7.0 client) was copied into a throwaway
+Job in `dbaas` (`mysql:26.7.0`, the `mysql-v26-cnf` config, emptyDir, NFS
+backup PVC mounted read-only) and loaded with `mysql --force` into a freshly
+initialised server:
+
+- The load took 13.5 minutes and printed no error.
+- 24 schemas, 659 tables and 22 accounts in `mysql.user` on both the restore
+  and the live `mysql-v26`. The table count matched in each of the 17 schemas
+  that hold tables.
+- The five largest tables of each schema (82 tables) were counted with
+  `count(*)` on both sides, 17 hours after the dump. 59 matched exactly, 17
+  had fewer rows in the dump and 6 more, all consistent with the writes and
+  retention pruning since the dump (largest: `nextcloud.oc_activity` 2,911,987
+  restored against 2,911,966 live, `nextcloud.oc_calendarchanges` 2,132,454
+  against 2,136,750; `uptimekuma.heartbeat` and `freshrss.viktor_entry` are
+  pruned by their apps, so the dump holds more rows than live).
+- FLOAT columns are rounded by `mysqldump` (see "Gotchas"); a row count does
+  not detect that.
+
+## Write freezes: stop Grafana first
+
+Grafana keeps its own state (sessions, alerting, annotations) in the
+`grafana` schema and writes to it all the time. During the 2026-10-15 freeze
+(`super_read_only=ON` from 22:53:32 to 23:11:01 UTC) it crash-looped, with
+about 8 container restarts. Stop it for the length of any MySQL write freeze,
+including step 1 of the rollback above:
+
+1. Before setting `super_read_only=ON`:
+   `kubectl -n monitoring scale deployment grafana --replicas=0`, then wait for
+   the pod to go: `kubectl -n monitoring wait --for=delete pod -l app.kubernetes.io/name=grafana --timeout=120s`.
+2. Run the freeze and the flip.
+3. Once the active instance takes writes again (`SELECT @@super_read_only`
+   is 0 on it and the `mysql` Service points at it):
+   `kubectl -n monitoring scale deployment grafana --replicas=1`, then
+   `kubectl -n monitoring rollout status deployment grafana`, and check
+   `kubectl -n monitoring exec deploy/grafana -c grafana -- wget -qO- http://localhost:3000/api/health`
+   reports `"database": "ok"` (the public URL sits behind Authentik and
+   answers 302).
+
+The scale is a transient step: the replica count lives in
+`stacks/monitoring/modules/monitoring/grafana_chart_values.yaml`
+(`replicas: 1`), and the next `monitoring` apply restores it if step 3 is
+missed. Dashboards are unavailable while it is down; alerting runs in
+Prometheus and Alertmanager and is not affected.
+
 ## Next upgrade
 
 Innovation releases upgrade in place within their series and to the next LTS,
@@ -184,8 +242,9 @@ repeat this blue-green procedure with a new StatefulSet and flip
 
 ## Open items
 
-- `mysql-standalone` and its PVC `data-mysql-standalone-0` are kept until
-  Viktor decides to delete them. Its image stays on 8.4.8; do not bump it.
+- `mysql-standalone` runs at 0 replicas since 2026-10-19; it and its PVC
+  `data-mysql-standalone-0` are kept until Viktor decides to delete them. Its
+  image stays on 8.4.8; do not bump it (a Renovate rule holds the pin).
 - The off-cluster dump lives in `/mnt/backup/manual-upgrade-20261015/mysql/`
   on 192.168.1.127. The first copy, taken before the cutover, was deleted by
   the nfs-mirror run that finished at 23:28 UTC on 2026-10-15, because
