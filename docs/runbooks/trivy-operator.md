@@ -30,7 +30,7 @@ kubectl get clustercompliancereports
 | Alert | First look |
 |---|---|
 | `TrivyFixableCVEInternetReachable` | Fixable CVEs in that namespace (query above). The fix is a newer image or chart; Renovate picks it up on its next run once released. Bump by hand if it is urgent. |
-| `TrivyExposedSecretInImage` | `kubectl get exposedsecretreports -n <ns> -o json \| jq '.items[].report.secrets[] \| {ruleID, target, title}'`. A key inside a third-party library (for example yt-dlp's `extractor/*.py`) is usually a public value; silence it in Alertmanager on `alertname` and `image_repository`. A credential of ours means rotating it and rebuilding the image. |
+| `TrivyExposedSecretInImage` | `kubectl get exposedsecretreports -n <ns> -o json \| jq '.items[].report.secrets[] \| {ruleID, target, title}'`. A key inside a third-party library (for example yt-dlp's `extractor/*.py`) is usually a public value; add it to `trivy.ignoreFile` in `stacks/trivy-operator/main.tf` (see below), not an Alertmanager silence. A credential of ours means rotating it and rebuilding the image. |
 | `TrivyMetricsAbsent` | `kubectl -n trivy-system get pods`; then check that `trivy_.+` is still on the keep allowlist in `prometheus_chart_values.tpl`. |
 
 These alerts post at most once a day per alert (own Alertmanager route, `group_interval 24h`). The weekly digest section on Mondays covers everything that does not alert.
@@ -43,7 +43,34 @@ Reports expire after 72h and are rescanned automatically. To rescan one workload
 kubectl -n <ns> delete vulnerabilityreport <report-name>
 ```
 
-Deleting a report is a transient action on operator-owned output, not configuration. Do not bulk-delete every report: each rescan queues behind the 3-job concurrency limit and the first pass over the whole cluster takes hours.
+Deleting a report is a transient action on operator-owned output, not configuration. Do not bulk-delete every report: each rescan queues behind the 2-job concurrency limit and the first pass over the whole cluster takes hours.
+
+## Suppress a false-positive secret
+
+Image secrets that are confirmed not ours go in the `secrets` list of `trivy.ignoreFile` in `stacks/trivy-operator/main.tf`. The chart renders it into the `trivy-operator-trivy-config` ConfigMap as `.trivyignore.yaml`, and every scan Job mounts it at `/etc/trivy/.trivyignore.yaml` (`TRIVY_IGNOREFILE`). One entry:
+
+```hcl
+{
+  id        = "aws-access-key-id"              # ruleID from the report
+  paths     = ["/**/yt_dlp/extractor/shahid.py"] # doublestar glob on the report target
+  statement = "Public AWS key ID embedded by the yt-dlp Shahid extractor."
+}
+```
+
+Report targets start with `/`, so patterns need a leading `/` (or `/**/`). Keep the path as narrow as the finding allows, so the same rule elsewhere in the image still reports. After the apply, check the ConfigMap and rescan one affected workload:
+
+```sh
+kubectl -n trivy-system get cm trivy-operator-trivy-config -o jsonpath='{.data.trivy\.ignoreFile}'
+kubectl -n <ns> delete exposedsecretreport <report-name>
+# a minute or two later the new report has no entry for that path
+kubectl -n <ns> get exposedsecretreports -o json | jq '.items[].report.secrets[] | {ruleID, target}'
+```
+
+Reports of other workloads pick up the change at their next scan (72h TTL at the latest).
+
+## Completed one-shot Jobs stay scanned
+
+Standalone Jobs (db-init, migrations, one-off exports) keep their reports for as long as the Job object exists, and the operator rescans them at every 72h TTL, even after they completed. Operator v0.35.0 skips only CronJob-owned Jobs; there is no setting for completed ones. Deleting the report does not help: the operator sees the missing report and scans the Job again within a minute. Most of these Jobs are Terraform `kubernetes_job` resources, and adding `ttl_seconds_after_finished` to one would let Kubernetes delete it, after which the next apply recreates it and runs the job again. So they are left in place; the reports go when the Job object is deleted.
 
 ## Scan jobs fail
 
@@ -59,7 +86,7 @@ homelab logs query '{namespace="trivy-system"} |= "error"' --since 6h
 | `OOMKilled` scan pods | A very large image | Raise `trivy.resources.limits.memory` in `stacks/trivy-operator/main.tf`. |
 | `DeadlineExceeded` on first scans | Layer download from the cache took longer than `scanJobTimeout` | Raise `operator.scanJobTimeout` and `trivy.timeout` together. |
 | `toomanyrequests` in scan logs | A Docker Hub image the pull-through cache could not serve, so Trivy fell back to Docker Hub | Check the cache (`docs/architecture/networking.md`, registry VM 10.0.20.10). |
-| `failed to connect to trivy server` | trivy-server not Ready (DB download on start) | `kubectl -n trivy-system logs sts/trivy-server`. It retries; the operator retries the job after 30s. |
+| `failed to connect to trivy server` | trivy-server not Ready (DB download on start) | `kubectl -n trivy-system logs sts/trivy-server`. It retries; the operator retries a failed scan after 15 minutes (`scanJobsRetryDelay`). |
 
 ## Node-collector
 
