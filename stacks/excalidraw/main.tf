@@ -68,10 +68,6 @@ resource "kubernetes_deployment" "excalidraw" {
         labels = {
           app = "excalidraw"
         }
-        annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^latest$"
-        }
       }
       spec {
         # GHCR pull secret: the ghcr-credentials Secret in this namespace is
