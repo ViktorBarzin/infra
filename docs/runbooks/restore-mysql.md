@@ -1,11 +1,11 @@
 # Restore MySQL (Standalone)
 
-Last updated: 2026-10-15 (active instance is now `mysql-v26`, MySQL 26.7.0)
+Last updated: 2026-10-19 (rollback copy `mysql-standalone` scaled to 0)
 
 Applies to the `mysql-v26` StatefulSet in the `dbaas` namespace (raw
 `kubernetes_stateful_set_v1`, MySQL 26.7.0 since 2026-10-15). The previous
-instance, `mysql-standalone` (8.4.8), keeps running read-only as the rollback
-copy for that move; its rollback is in `docs/runbooks/mysql-major-upgrade.md`.
+instance, `mysql-standalone` (8.4.8), is the read-only rollback copy for that
+move, at 0 replicas with its PVC kept since 2026-10-19; its rollback is in `docs/runbooks/mysql-major-upgrade.md`.
 The historic InnoDB-Cluster recovery flow is gone.
 
 Restoring a dump made by the 8.4 servers into 26.7 is a supported logical

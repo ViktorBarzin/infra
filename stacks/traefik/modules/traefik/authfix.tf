@@ -190,8 +190,7 @@ resource "kubernetes_deployment" "authfix" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
     ]
   }
 }

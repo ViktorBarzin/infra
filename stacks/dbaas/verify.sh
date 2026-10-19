@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Verify checks for stacks/dbaas: the CNPG pg-cluster-v18 (PG18, active since
-# 2026-10-15; pg-cluster is the read-only PG16 rollback copy) and mysql-v26
+# 2026-10-15; pg-cluster, the PG16 rollback copy, is hibernated) and mysql-v26
 # (docs/runbooks/verify-jobs.md; software-currency design, Verification
 # contract, Databases row). Probes log in as verify_probe with the Vault
 # static-role passwords in secret verify-db-creds; they write only to the

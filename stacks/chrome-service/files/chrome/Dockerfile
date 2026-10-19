@@ -15,7 +15,13 @@
 # The base tag does not have to match callers' `playwright==X.Y.Z`: workers run
 # google-chrome-stable (latest at build time), never the bundled Chromium, so the
 # base only supplies Xvfb, python3, system libs and fonts. Keep it on the newest
-# tag so its Ubuntu packages and bundled npm stay patched (Trivy CVEs).
+# tag so its Ubuntu packages stay patched (Trivy CVEs).
+#
+# npm is removed: nothing in the worker runs it (worker_entrypoint.sh starts
+# Chrome and the python CDP bridge), and the npm the base bundles carries tar,
+# undici, ip-address and brace-expansion copies with HIGH CVEs. /root/.npm goes
+# with it; the base leaves an npm cache and debug log there that hold an
+# expired Azure SAS URL, which Trivy reports as an exposed secret.
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 RUN apt-get update \
@@ -26,7 +32,8 @@ RUN apt-get update \
       > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/lib/node_modules/npm /usr/bin/npm /usr/bin/npx /root/.npm
 
 # Fail the build if Chrome isn't runnable / the path moved.
 RUN /opt/google/chrome/chrome --version

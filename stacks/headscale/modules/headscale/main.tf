@@ -107,11 +107,6 @@ resource "kubernetes_deployment" "headscale" {
         labels = {
           app = "headscale"
         }
-        annotations = {
-          # "diun.enable"       = "true"
-          "diun.enable"       = "false"
-          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-        }
       }
       spec {
         container {
@@ -260,7 +255,6 @@ resource "kubernetes_deployment" "headscale" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config,
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -315,12 +309,12 @@ module "ingress" {
   # OIDC + preauth-key auth at the app layer; the web admin UI lives on a
   # separate /web ingress that remains auth=required.
   # auth = "app": Headscale control plane — native Tailscale clients register + exchange keys using headscale's own OIDC + preauth-key auth; backend manages authentication.
-  auth            = "app"
-  dns_type        = "non-proxied"
-  namespace       = kubernetes_namespace.headscale.metadata[0].name
-  name            = "headscale"
+  auth      = "app"
+  dns_type  = "non-proxied"
+  namespace = kubernetes_namespace.headscale.metadata[0].name
+  name      = "headscale"
   # No Turnstile gate: Tailscale clients open its OIDC/register pages in a browser (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   port            = 8080
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

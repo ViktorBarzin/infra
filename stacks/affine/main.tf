@@ -220,8 +220,6 @@ resource "kubernetes_deployment" "affine" {
           app = "affine"
         }
         annotations = {
-          "diun.enable"                    = "true"
-          "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis-master.redis:6379"
         }
       }
@@ -350,7 +348,6 @@ resource "kubernetes_deployment" "affine" {
       spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

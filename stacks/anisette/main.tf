@@ -71,13 +71,6 @@ resource "kubernetes_deployment" "anisette" {
         labels = {
           app = "anisette"
         }
-        annotations = {
-          # Diun notify-only watch. Upstream tags only :latest, so watch the
-          # digest of :latest rather than a semver pattern.
-          "diun.enable"       = "true"
-          "diun.watch_repo"   = "false"
-          "diun.include_tags" = "^latest$"
-        }
       }
       spec {
         container {
@@ -143,9 +136,6 @@ resource "kubernetes_deployment" "anisette" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }

@@ -37,13 +37,13 @@ These alerts post at most once a day per alert (own Alertmanager route, `group_i
 
 ## Force a rescan
 
-Reports expire after 72h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job. It starts within a minute when fewer than 2 scan Jobs are running; otherwise the operator retries after `scanJobsRetryDelay` (15 minutes):
+Reports expire after 72h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job. It starts within a minute when no scan Job is running; otherwise the operator retries after `scanJobsRetryDelay` (15 minutes):
 
 ```sh
 kubectl -n <ns> delete vulnerabilityreport <report-name>
 ```
 
-Deleting a report is a transient action on operator-owned output, not configuration. Do not bulk-delete every report: each rescan queues behind the 2-job concurrency limit and the first pass over the whole cluster takes hours.
+Deleting a report is a transient action on operator-owned output, not configuration. Do not bulk-delete every report: each rescan queues behind the 1-job concurrency limit and the first pass over the whole cluster takes hours.
 
 ## Suppress a false-positive secret
 
