@@ -147,12 +147,63 @@ resource "helm_release" "trivy_operator" {
       ignoreUnfixed = false
       timeout       = "10m0s"
 
-      # Chart default minus ResourceQuota. A ResourceQuota report is keyed on
-      # a hash of the whole object, status included, so every pod start or
-      # stop in a namespace re-evaluated and rewrote its report: about 920 of
-      # the ~1300 ConfigAuditReport writes per hour on 2026-10-10, 400 of them
-      # for trivy-system's own quota, which each scan Job changes.
-      supportedConfigAuditKinds = "Workload,Service,Role,ClusterRole,NetworkPolicy,Ingress,LimitRange,PersistentVolume,PersistentVolumeClaim"
+      # Chart default minus ResourceQuota, PersistentVolume and
+      # PersistentVolumeClaim. A ResourceQuota report is keyed on a hash of
+      # the whole object, status included, so every pod start or stop in a
+      # namespace re-evaluated and rewrote its report: about 920 of the ~1300
+      # ConfigAuditReport writes per hour on 2026-10-10, 400 of them for
+      # trivy-system's own quota, which each scan Job changes. The 170
+      # PersistentVolume and 159 PersistentVolumeClaim reports held no
+      # Critical or High finding on 2026-10-19 and nothing reads them.
+      supportedConfigAuditKinds = "Workload,Service,Role,ClusterRole,NetworkPolicy,Ingress,LimitRange"
+
+      # Suppressed exposed-secret findings, written to .trivyignore.yaml and
+      # mounted into every scan Job (TRIVY_IGNOREFILE). Each entry was
+      # reviewed on 2026-10-19 as a key that ships inside a third-party image
+      # and is not ours. Suppressing here keeps the finding out of the
+      # ExposedSecretReport, so TrivyExposedSecretInImage and the weekly
+      # digest stop counting it; a new secret at any other path still alerts.
+      # Paths are doublestar globs matched against the report target, which
+      # starts with "/". Changing this list takes effect at the next scan of
+      # each image (scannerReportTTL, or delete its ExposedSecretReport).
+      ignoreFileName = ".trivyignore.yaml"
+      ignoreFile = {
+        secrets = [
+          {
+            id = "private-key"
+            paths = [
+              "/etc/ssl/private/ssl-cert-snakeoil.key",
+              "/etc/ssl/apache2/server.key",
+            ]
+            statement = "Self-signed key the Debian ssl-cert package (snakeoil) or the phpipam-www image generates at build time. Not used for any TLS we serve."
+          },
+          {
+            id        = "private-key"
+            paths     = ["/**/site-packages/slapdtest/certs/*.key"]
+            statement = "python-ldap test fixtures (slapdtest), published in the python-ldap source tree."
+          },
+          {
+            id        = "private-key"
+            paths     = ["/usr/local/openresty/pod/**"]
+            statement = "Example key in the lua-resty-rsa documentation shipped with OpenResty."
+          },
+          {
+            id        = "azure-storage-account-key"
+            paths     = ["/usr/src/nextcloud/3rdparty/microsoft/azure-storage-common/**"]
+            statement = "Public Azurite emulator key (devstoreaccount1) in the Azure Storage SDK bundled with Nextcloud."
+          },
+          {
+            id        = "aws-access-key-id"
+            paths     = ["/**/yt_dlp/extractor/shahid.py"]
+            statement = "Public AWS key ID embedded by the yt-dlp Shahid extractor."
+          },
+          {
+            id        = "azure-sas-token"
+            paths     = ["/root/.npm/**"]
+            statement = "Expired read-only Azure SAS URL in the npm cache of the Playwright base image used by chrome-service."
+          },
+        ]
+      }
 
       # trivy-server cache on emptyDir: the DB and layer cache rebuild on their
       # own after a restart, and a PVC would add a Proxmox LUN or pin the pod
