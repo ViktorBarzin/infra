@@ -127,7 +127,7 @@ Every stack also gets the floor. "Full only" checks are skipped with `--quick`.
 | Stack | Group | Component checks |
 |---|---|---|
 | authentik | chart | server, worker, pgbouncer, public outpost converged; ready/live probes; API root config; default authentication flow renders; forward-auth route redirects to Authentik; public outpost ping; Authentik scrape targets up |
-| beads-server | db | Dolt answers `dolt_version()`; `code.issues` and `code.dolt_log` readable; scratch database created, written, read and dropped; beadboard and workbench converged; no panic/corruption logs; full only: `dolt-backup` Job (dump and restore check) and `dolt-history-backup` Job (history sync and restore check) |
+| beads-server | db | Dolt answers `dolt_version()`; `code.issues` and `code.dolt_log` readable; scratch database created, written, read and dropped; beadboard and workbench converged; no panic/corruption logs; full only: `dolt-backup` Job (dump and restore check) |
 | calico | chart | operator and calico-node converged; every tigerastatus Available and not Degraded; Installation reports a version; `v3.projectcalico.org` Available; a new pod gets an IP, resolves DNS and reaches a ClusterIP |
 | claude-agent-service | app | full only: `claude-oauth-expiry-monitor` Job completes (its curl image runs nowhere else) and its push reaches Prometheus |
 | cnpg | chart | operator converged; pg-cluster healthy with all instances ready; exporters up; primary streams to every replica; lag under 5 s; the validating webhook refuses an invalid Cluster (dry run) |
