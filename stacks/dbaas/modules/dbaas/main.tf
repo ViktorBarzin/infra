@@ -1875,6 +1875,7 @@ resource "null_resource" "pg_cluster_v18" {
     pg_params      = "v1-same-as-pg-cluster-v7"
     affinity       = "required-hostname-v1"
     monitoring     = "custom-queries-v1"
+    probes         = "isolation-check-relaxed-v1"
   }
 
   provisioner "local-exec" {
@@ -1906,6 +1907,26 @@ resource "null_resource" "pg_cluster_v18" {
         imageName: ${var.pg_cluster_v18_image}
         primaryUpdateStrategy: unsupervised
         primaryUpdateMethod: restart
+        # Liveness and the primary isolation check, loosened 2026-10-19 (Viktor
+        # chose this over moving etcd off the shared pve HDD). The primary's
+        # liveness probe asks the apiserver for this Cluster; with the 1000 ms
+        # default that GET timed out whenever etcd's WAL fsync stalled on sdc,
+        # and three failures (30 s) while a replica was also unreachable shut
+        # the primary down: the 2026-10-19 05:41 failover, ~3.5 min of outage.
+        # requestTimeout 3000 covers the 468 ms mean apiserver latency of the
+        # slow windows with room to spare; livenessProbeTimeout 60 gives
+        # failureThreshold 6, so self-fencing now takes ~60 s of isolation.
+        # timeoutSeconds 10 keeps the kubelet probe longer than the check
+        # (3 s apiserver + 1 s per peer). Cost: a genuinely isolated primary
+        # keeps accepting writes for up to ~60 s instead of ~30 s.
+        livenessProbeTimeout: 60
+        probes:
+          liveness:
+            timeoutSeconds: 10
+            isolationCheck:
+              enabled: true
+              requestTimeout: 3000
+              connectionTimeout: 1000
         bootstrap:
           initdb:
             database: app
