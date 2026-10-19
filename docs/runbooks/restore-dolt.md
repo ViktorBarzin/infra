@@ -21,9 +21,9 @@ Each row-backup run directory holds `<db>.sql.gz` per database, plus
 `views.tsv`, `databases` and `SHA256SUMS`.
 
 Each history run directory holds `<db>.tar` per database (a Dolt backup
-store written by `CALL dolt_backup('sync-url')`), plus `VERSION`,
-`commits.tsv` (database, commits on the default branch, branches, counted
-just before the sync), `databases` and `SHA256SUMS`.
+store written by `dolt backup sync-url`), `doltcfg.tar`, `VERSION`,
+`commits.tsv` (database, commits on the default branch, branches, as
+restored), `databases` and `SHA256SUMS`.
 
 Pick the history backup when commit history matters (for example, rolling back
 a Dolt version bump). Pick the row backup to restore table contents into the
@@ -49,18 +49,25 @@ comes back, and only then writes the run directory and pushes
 
 ## What the history backup contains
 
-`dolt_backup('sync-url')` copies the whole database: every commit, branch,
-tag and working set, including uncommitted changes. Users and grants are not
-part of it (they live in `.doltcfg/` and come from the `dolt-init`
-ConfigMap).
+Each `<db>.tar` is a Dolt backup store: every commit, branch, tag and working
+set, including uncommitted changes. `doltcfg.tar` holds `.doltcfg/`
+(`privileges.db`, users and grants).
 
-The server writes the snapshot to `/var/lib/dolt/.history-backup/<run>/` on
-its own PVC, because the URL is a path on the server's filesystem. The job
-mounts only that subdirectory (pod affinity to `dolt`, since the PVC is RWO),
-copies each store to NFS, restores the NFS copy with `dolt backup restore`,
-checks the commit and branch counts, and deletes the staging copy. Metrics go
-to `backup_last_success_timestamp{job="dolt-history-backup"}`; the generic
+The live server does not run the backup. The job runs on the server's node
+(pod affinity, since `dolt-data` is RWO), mounts `dolt-data` read-only, and
+copies each database into memory-backed scratch space in crash-consistent
+order: noms manifest, then table files, then the append-only chunk journal.
+`dolt fsck` must pass on the copy and its commit and branch counts must be at
+least what an SQL probe saw just before, or it copies again (3 tries). It then
+runs `dolt backup sync-url` from the copy, tars the store to NFS, restores the
+NFS copy with `dolt backup restore` and checks the counts. Metrics go to
+`backup_last_success_timestamp{job="dolt-history-backup"}`; the generic
 `BackupCronJobFailed` alert covers job failures.
+
+Do not run `CALL dolt_backup(...)` against the live server, and do not run the
+`dolt` CLI through `kubectl exec` in the `dolt` container. The server runs
+close to its 512Mi limit; on 2026-10-19 the first stalled it for 17 minutes and
+extra processes in its container led to an OOM kill.
 
 The Renovate rails run every `*-backup` CronJob in `beads-server` (both of
 these) before applying a Dolt bump, and the rails report names the Jobs.
@@ -73,8 +80,8 @@ kubectl -n beads-server logs -f job/<name> -c dump
 kubectl -n beads-server logs -f job/<name> -c verify
 
 kubectl -n beads-server create job --from=cronjob/dolt-history-backup dolt-history-backup-manual-$(date +%s)
-kubectl -n beads-server logs -f job/<name> -c sync
-kubectl -n beads-server logs -f job/<name> -c verify
+kubectl -n beads-server logs -f job/<name> -c probe
+kubectl -n beads-server logs -f job/<name> -c backup
 ```
 
 ## Restore a history backup
@@ -103,7 +110,7 @@ not have that database open. Scale `dolt` to 0, then start a pod that mounts
 `dolt-data` and the backup PVC, move `/var/lib/dolt/<db>` aside (do not delete
 it), run `dolt backup restore file:///<store> <db>` from `/var/lib/dolt`, and
 scale `dolt` back to 1. Users and grants are untouched because `.doltcfg/` is
-not replaced.
+not replaced; `doltcfg.tar` in the run directory has them if they are lost too.
 
 ## Restore into the live server
 
