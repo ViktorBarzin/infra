@@ -107,12 +107,18 @@ Since 2026-10-10 the Trivy Operator (`stacks/trivy-operator`, `docs/architecture
 
 ## Legacy markers left by Keel and DIUN
 
-The cutover changed no pod template, so two kinds of Keel and DIUN metadata are still on live workloads, and Terraform keeps tolerating them:
+The cutover changed no pod template, so it left Keel and DIUN metadata on live workloads. Most of it was removed on 2026-10-19, in batches of five to eight stacks, accepting one rolling restart per affected workload:
 
-- `keel.sh/update-time` on pod templates, ignored as `# LEGACY_TEMPLATE_ANNOTATIONS` (about 160 lines). Removing the ignore strips the stamp, which is a pod-template change and restarts the workload (84 workloads carried it on 2026-10-10).
-- `diun.*` pod-template annotations, declared in about 40 Deployments and in the authentik and Technitium configuration. They are inert since DIUN is gone; removing them restarts those pods (traefik, technitium, authentik server, nextcloud and immich among them), so each goes with the next change that rolls its workload anyway.
+- The `keel.sh/update-time` ignore entries (`# LEGACY_TEMPLATE_ANNOTATIONS`), the `diun.*` annotations and anisette's `keel.sh/policy|trigger|pollSchedule` ignores came out of about 120 stacks. The apply then stripped the stamps from the live pod templates.
+- The `keel.sh/policy|trigger|pollSchedule` metadata annotations that the deleted Kyverno policy had stamped on chart-rendered workloads, the authentik outposts and a few others (61 workloads) were removed with `kubectl annotate <kind>/<name> keel.sh/policy- ...`. That is a metadata-only change and restarted nothing.
 
-Chart-rendered workloads and the authentik outposts also keep `keel.sh/policy|trigger|pollSchedule` metadata annotations that the deleted Kyverno policy stamped; Terraform does not declare them and they are inert. Marker reference: `docs/agents/kyverno-drift.md`.
+Live Deployments, StatefulSets and DaemonSets carrying any `keel.sh/*` or `diun.*` annotation went from 169 to 36, and none of the 36 has one in its own metadata. What remains is inert and is all pod-template annotations:
+
+- Workloads where a restart means an outage window or touches the ingress and auth path, held for a scheduled session. Their markers are still in Terraform: traefik (the `diun.*` pair in `podAnnotations` in `stacks/traefik/modules/traefik/main.tf`), the authentik server (`diun.*` in `stacks/authentik/modules/authentik/values.yaml`) and pgbouncer, forgejo, the mailserver pod, the primary Technitium instance, nextcloud (`chart_values.yaml`) and pgadmin in dbaas.
+- `keel.sh/update-time` on pod templates that Terraform does not render itself, from Helm charts, operators and kubeadm: calico, cnpg, CoreDNS, crowdsec, kyverno, metrics-server, grafana, prometheus-server, loki, alloy, loki-canary, nfs-csi, the NVIDIA node-feature-discovery pods, reloader, sealed-secrets, woodpecker, and the authentik worker and postgres-ldap outpost. Helm's three-way merge keeps fields it did not write, so a chart upgrade leaves them in place. Each one goes the next time something edits that pod template.
+- `stacks/f1-stream/wt-tracker.tf` keeps one ignore line that matches nothing live; another session was changing that stack at the time.
+
+New workloads need no Keel or DIUN lines. Marker reference: `docs/agents/kyverno-drift.md`.
 
 ## History: DIUN and the upgrade agent (2026-04 to 2026-10)
 
