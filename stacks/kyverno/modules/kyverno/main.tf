@@ -18,6 +18,12 @@ resource "helm_release" "kyverno" {
   name             = "kyverno"
   atomic           = true
   cleanup_on_fail  = true
+  # The default 300s covers the three controller rollouts plus the
+  # kyverno-migrate-resources post-upgrade hook only on a quiet cluster. On
+  # 2026-10-19 the hook pod waited ~2 min for its sandbox and 2m27s for its
+  # image on a busy node, ran for 9s, and helm timed out at 5m33s, so atomic
+  # rolled a values-only change back.
+  timeout = 900
 
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno"
