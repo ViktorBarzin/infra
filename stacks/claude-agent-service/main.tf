@@ -923,9 +923,8 @@ resource "kubernetes_deployment" "claude_agent" {
 
   lifecycle {
     ignore_changes = [spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
-      spec[0].template[0].spec[0].container[0].image,                     # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      metadata[0].labels["tier"],                     # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       # The CI deploy (claude-agent-service/.woodpecker/deploy.yml) also sets
       # the image on the git-init and seed-beads-agent init containers
       # (init_container[2] and [3]; [0] and [1] are the pinned busybox ones).

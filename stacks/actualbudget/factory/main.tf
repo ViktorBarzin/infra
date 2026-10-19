@@ -102,10 +102,6 @@ resource "kubernetes_deployment" "actualbudget" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable"       = "false" # daily updates; pretty noisy
-          "diun.include_tags" = "^${var.tag}$"
-        }
         labels = {
           app = "actualbudget-${var.name}"
         }
@@ -147,7 +143,6 @@ resource "kubernetes_deployment" "actualbudget" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -265,7 +260,6 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
