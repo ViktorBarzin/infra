@@ -103,7 +103,6 @@ resource "kubernetes_deployment" "cloudflared" {
     # rolls the tunnel that fronts every proxied service (3 replicas, PDB).
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
