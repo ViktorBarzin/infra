@@ -65,9 +65,9 @@ NFS copy with `dolt backup restore` and checks the counts. Metrics go to
 `BackupCronJobFailed` alert covers job failures.
 
 Do not run `CALL dolt_backup(...)` against the live server, and do not run the
-`dolt` CLI through `kubectl exec` in the `dolt` container. The server runs
-close to its 512Mi limit; on 2026-10-19 the first stalled it for 17 minutes and
-extra processes in its container led to an OOM kill.
+`dolt` CLI through `kubectl exec` in the `dolt` container. On 2026-10-19, with
+the server at its then 512Mi limit (since raised to 1536Mi), the first stalled
+it for 17 minutes and extra processes in its container led to an OOM kill.
 
 The Renovate rails run every `*-backup` CronJob in `beads-server` (both of
 these) before applying a Dolt bump, and the rails report names the Jobs.
