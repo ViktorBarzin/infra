@@ -12,12 +12,18 @@ image:
   tag: "{{ .Chart.AppVersion }}"
 plugins:
   - netsage-sankey-panel
+# Limit 1Gi, request unchanged. At 512Mi the container sat at its limit
+# (536.7M of 536.9M on 2026-10-19: 266M anon, 259M page cache), so the
+# kernel kept evicting the grafana binary and the bundled datasource plugin
+# binaries (each plugin runs as its own process) and reading them back:
+# 58M refaulted pages in 10 hours, a steady 6-17 MB/s of reads from
+# k8s-node3's root disk on the shared pve HDD that etcd's WAL also uses.
 resources:
   requests:
     cpu: 50m
     memory: 512Mi
   limits:
-    memory: 512Mi
+    memory: 1Gi
 topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: kubernetes.io/hostname
