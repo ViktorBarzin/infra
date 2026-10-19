@@ -83,8 +83,8 @@ A small HTTP service that owns `/` of an on-demand Service, scales its Deploymen
 _Avoid_: "Sablier" for these; "autoscaler".
 
 **Wine app**:
-A Windows desktop application run under Wine in its own pod from `modules/kubernetes/wine_app`, shown in the browser through noVNC and asleep behind a **Wake gate** when unused (ADR-0035). The base image `wine-app` holds no app; each app installs into the Wine prefix on its own PVC on first start. iVMS-4200 is the first. The screen is drawn by TigerVNC's Xvnc and shown with noVNC (ADR-0036).
-_Avoid_: "Windows VM" (there is none); "the iVMS image" (the image is shared and app-free).
+A Windows desktop application run under Wine in its own pod from `modules/kubernetes/wine_app`, shown in the browser through noVNC and asleep behind a **Wake gate** when unused (ADR-0035). The base image `wine-app` holds no app; each app installs into the Wine prefix on its own PVC on first start. No app runs on it today; iVMS-4200 ran on it from 2026-10-17 to 2026-10-19 and moved back to VM 300. The screen is drawn by TigerVNC's Xvnc and shown with noVNC (ADR-0036).
+_Avoid_: "Windows VM" (that is VM 300, a separate thing); "the iVMS image" (the image is shared and app-free).
 
 ### GPU sharing
 
@@ -224,7 +224,7 @@ The residential complex in Simeonovo, Sofia, that the Sofia site's apartment and
 _Avoid_: "the camera network" (the home LAN has cameras too); "Vermont" alone when you mean the garage camera `vermont-garage`, which is on the home dCCTV segment.
 
 **Complex alias**:
-The range `10.77.1.0/24`, which rpi-sofia maps 1:1 onto the **Vermont complex** network, so `10.77.1.111` is the complex device `192.168.1.111`. It exists because the two `192.168.1.0/24` ranges overlap. Reachable from the `ivms` namespace, the devvm and VM 300 (ADR-0035).
+The range `10.77.1.0/24`, which rpi-sofia maps 1:1 onto the **Vermont complex** network, so `10.77.1.111` is the complex device `192.168.1.111`. It exists because the two `192.168.1.0/24` ranges overlap. Reachable from the devvm and VM 300 (ADR-0035; the cluster lost access on 2026-10-19 with the cluster iVMS).
 _Avoid_: calling the complex devices by their `192.168.1.x` address from the homelab side, where that address means a home device.
 
 ### London site
