@@ -101,10 +101,6 @@ resource "kubernetes_deployment" "freedify" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^${var.tag}$"
-        }
         labels = {
           app = "music-${var.name}"
         }
@@ -208,9 +204,8 @@ resource "kubernetes_deployment" "freedify" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # CI_SETS_IMAGE: first-party image, deployed by its own CI
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
     ]
   }
 }

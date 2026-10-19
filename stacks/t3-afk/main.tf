@@ -362,9 +362,8 @@ resource "kubernetes_deployment" "t3_afk" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }
