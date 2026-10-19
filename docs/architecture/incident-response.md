@@ -236,7 +236,7 @@ flowchart LR
 
 | Secret | Vault Path | Purpose |
 |--------|-----------|---------|
-| Agent API bearer token | `secret/claude-agent-service` → `api_bearer_token` | Bearer token for `claude-agent-service` `/execute`. Synced into both `claude-agent` ns (consumer) and `n8n` ns (caller) via ESO. n8n exposes it to the container as `CLAUDE_AGENT_API_TOKEN` env var. |
+| Agent API bearer token | `secret/claude-agent-service` → `api_bearer_token` | Bearer token for `claude-agent-service` `/execute`. Synced into the `claude-agent` ns via ESO. n8n no longer receives it: none of its workflows called the service after the DIUN upgrade workflow was retired, so its `claude-agent-token` ExternalSecret and `CLAUDE_AGENT_API_TOKEN` env var were removed on 2026-10-19. |
 | Claude OAuth (primary) | `secret/claude-agent-service` → `claude_oauth_token` | Long-lived 1-year token from `claude setup-token`. Consumed by the CLI via `CLAUDE_CODE_OAUTH_TOKEN` env var (set on the container via `envFrom`). Preferred over the short-lived `.credentials.json` — CLI skips the refresh dance entirely. Rotate yearly; alert fires 30d out. |
 | Claude OAuth (spares) | `secret/claude-agent-service-spare-{1,2}` → `claude_oauth_token` | Failover tokens. Minted alongside primary (verified Anthropic does NOT revoke earlier sessions on new mint). Swap into primary if revocation or compromise. |
 
