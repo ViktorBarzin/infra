@@ -49,6 +49,15 @@ the `apt-mark hold` keeps it that way. /etc/os-release lying about the
 OS only affects userland callers that key off it — none of our
 deployed services do (we verified by grepping the cluster).
 
+One host caller does: unattended-upgrades expands `${distro_codename}`
+from `lsb_release -cs`, which reads this file. Until 2026-10-19 node1's
+allowed origins therefore read `noble-*` while apt serves `resolute`, and
+every daily run installed nothing (211 packages pending, 152 of them
+security). `playbooks/k8s-node-tuning.yml` now writes
+`/etc/apt/apt.conf.d/53unattended-upgrades-apt-suite` with apt's own suite
+and holds `base-files` on any node where the two disagree, because a
+`base-files` upgrade restores the os-release symlink.
+
 **Trigger to un-mitigate.** Periodically check for ubuntu26.04 driver
 tags. Once they appear:
 
@@ -61,7 +70,9 @@ When that returns a non-zero count:
 
 1. Restore `/etc/os-release` from backup
     (`/etc/os-release.bak-pre-spoof-2026-05-17`) on k8s-node1.
-2. Remove apt-mark holds for the kernel packages.
+2. Remove apt-mark holds for the kernel packages. The playbook's patching
+   play removes the extra origins file and releases the `base-files` hold
+   on its next run, once `lsb_release -cs` and apt agree again.
 3. `apt full-upgrade` to land the latest 26.04 kernel + reboot.
 4. Bump the gpu-operator chart pin to the matching version that ships
    ubuntu26.04 driver images. Bump `driver.version` in values.yaml to
