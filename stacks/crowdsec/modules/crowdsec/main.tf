@@ -695,8 +695,12 @@ resource "kubernetes_deployment" "crowdsec-web" {
       spec {
         priority_class_name = "tier-1-cluster"
         container {
-          name  = "crowdsec-web"
-          image = "viktorbarzin/crowdsec_web"
+          name = "crowdsec-web"
+          # Own image (ADR-0002): viktor/crowdsec_web builds on GitHub Actions,
+          # pushes ghcr.io/viktorbarzin/crowdsec_web:<sha>, and its Woodpecker
+          # deploy (repo 444) sets this tag (CI_SETS_IMAGE below). Until
+          # 2026-10-19 this ran a hand-built Docker Hub :latest from 2025-10.
+          image = "ghcr.io/viktorbarzin/crowdsec_web:bc1d69cf"
           env {
             name  = "CS_API_URL"
             value = "http://crowdsec-service.crowdsec.svc.cluster.local:8080/v1"
@@ -741,8 +745,7 @@ resource "kubernetes_deployment" "crowdsec-web" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].template[0].spec[0].container[0].image,                     # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
     ]
   }
 }

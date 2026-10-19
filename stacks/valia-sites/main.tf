@@ -47,6 +47,14 @@ resource "cloudflare_pages_project" "site" {
   account_id        = local.cloudflare_account_id
   name              = each.key
   production_branch = "main"
+
+  # fail_open defaults to true in Cloudflare provider v5. stem95su was created
+  # with false, and with deployment_configs omitted the provider planned a
+  # perpetual update on it. Stating the default here converges both projects.
+  deployment_configs = {
+    preview    = { fail_open = true }
+    production = { fail_open = true }
+  }
 }
 
 # bridge was created by hand (wrangler) on 2026-07-03 and adopted with import

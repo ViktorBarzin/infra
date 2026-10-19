@@ -76,10 +76,6 @@ resource "kubernetes_deployment" "vaultwarden" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-        }
         labels = {
           "app" = "vaultwarden"
         }
@@ -179,7 +175,6 @@ resource "kubernetes_deployment" "vaultwarden" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].annotations["kubernetes.io/change-cause"],                                   # rollout tooling rewrites this
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
@@ -214,12 +209,12 @@ module "ingress" {
   # auth. Forward-auth would block every native client. Vaultwarden's own auth
   # is the gate.
   # auth = "app": Bitwarden-compatible API — mobile app, browser extension, desktop app use token auth against Vaultwarden's own auth; backend is the gate.
-  auth            = "app"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
-  name            = "vaultwarden"
+  auth      = "app"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.vaultwarden.metadata[0].name
+  name      = "vaultwarden"
   # No Turnstile gate: Bitwarden apps open its SSO/WebAuthn connector pages in a webview (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

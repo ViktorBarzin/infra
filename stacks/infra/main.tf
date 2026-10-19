@@ -145,13 +145,11 @@ module "docker-registry-template" {
     format("echo %s | base64 -d > /opt/registry/nginx.conf",
       base64encode(file("${path.root}/../../modules/docker-registry/nginx_registry.conf"))
     ),
-    # Write TLS certificate for private registry (*.viktorbarzin.me wildcard)
-    format("echo %s | base64 -d > /opt/registry/tls/fullchain.pem",
-      base64encode(file("${path.root}/../../secrets/fullchain.pem"))
-    ),
-    format("echo %s | base64 -d > /opt/registry/tls/privkey.pem && chmod 600 /opt/registry/tls/privkey.pem",
-      base64encode(file("${path.root}/../../secrets/privkey.pem"))
-    ),
+    # No TLS material is written. The wildcard cert went here for the private
+    # registry's TLS listener (5050), decommissioned 2026-05-07; nginx_registry.conf
+    # has no ssl server since. Embedding it also made upload_cloud_init re-plan
+    # after every renew-tls commit. /opt/registry/tls stays because
+    # docker-compose.yml still mounts it.
     # Write Docker Hub registry config (with auth)
     format("echo %s | base64 -d > /opt/registry/config-dockerhub.yml",
       base64encode(

@@ -14,25 +14,46 @@ between builds; the gate is what makes auto-tracking safe.
 
 ## How the tracker gates each bump  (`scripts/t3-autoupdate.sh`)
 
+0. **Update lock** — takes `/run/t3-autoupdate.lock` (flock) and holds it for the
+   whole run, dry runs included, through install, canary and any rollback.
+   `t3-watchdog` skips its sweeps and `t3-migrate-idle` skips its pass while it
+   is held; both take it themselves too, so the tracker waits up to 30 min
+   (`T3_LOCK_WAIT`) for a watchdog restart or an idle drain to finish, and a
+   second tracker run gives up. Added 2026-10-19 after the 2026-09-28 freeze, when
+   the watchdog restarted emo onto a half-installed 0.0.42 and both scripts rolled
+   back at once.
 1. **Freeze gate** — `/etc/t3-autoupdate.freeze` present (or `T3_PIN=<ver>` set) →
    hold at current, do nothing.
 2. **Resolve + downgrade-guard** — `npm view t3@latest version`; proceed only if
-   the target is strictly newer than installed AND a `-nightly.` build (the tag is
+   the target is strictly newer than installed (and, on the nightly track, a `-nightly.` build; the tag is
    mutable and can point backward).
 3. **Pre-bump backup** — online `VACUUM INTO` of every user's `state.sqlite` to
    `/var/backups/t3-state/<u>/state-prebump-<ver>-<ts>.sqlite` (runs AS the owner;
    never stops a serve). Rollback is then a RESTORE, not sqlite surgery.
-4. **Install + health-check** — `npm i -g t3@<ver>`, then start a throwaway serve
-   SEEDED WITH A COPY of wizard's real populated `state.sqlite` (scratch on
-   `/var/tmp`, not the 2 GB tmpfs `/tmp`) so it exercises the forward MIGRATION
-   (the 2026-06-09 failure class) + the real mint→exchange→`t3_session` pairing
-   handshake. Fail → roll back binary to last-good, exit (no serve migrated yet →
-   clean).
+4. **Install + health-check** — `npm i --prefix /usr/local/lib/t3/<ver> t3@<ver>`
+   (staged, then renamed into place). Nothing a running serve uses changes: until
+   2026-10-19 this was `npm i -g`, which rewrote the files under every running
+   serve and made them answer 404 for the whole install (2026-09-28). The
+   candidate is then gated from its own prefix: a throwaway serve SEEDED WITH A
+   COPY of wizard's real populated `state.sqlite` (scratch on `/var/tmp`, not the
+   2 GB tmpfs `/tmp`) exercises the forward MIGRATION (the 2026-06-09 failure
+   class) + the real mint→exchange→`t3_session` pairing handshake. The gate waits
+   up to `T3_SMOKE_READY_TIMEOUT` (default 1200s) for the serve to answer, since a
+   first start on a multi-GB DB can run a long import, and stops early if the
+   serve exits or logs a migration error. It runs the serve in its own process
+   group and stops the whole group afterwards: since 0.1.0 the npm launcher is a
+   node wrapper around a native server and does not forward signals. Fail → the
+   candidate was never activated, every user stays on the current build.
+   Pass → `/usr/bin/t3` (what `t3-serve@` and `t3-mint` run) is pointed at the new
+   build with one rename. Old builds stay on disk (newest 3, plus last-good, plus
+   any a running process still uses), so a rollback is a symlink swap.
 5. **Canary rollout** — restart IDLE instances one at a time, verifying pairing
    through the real dispatch after each. First failure → roll back binary +
    restore that user's DB from the pre-bump backup + **self-freeze** (touch the
    freeze file) so it cannot re-flap onto bad builds. Active-agent instances are
-   DEFERRED (never killed) and migrate on their next idle restart.
+   DEFERRED (never killed) and migrate on their next idle restart. "Active" means
+   a claude/codex/opencode process anywhere in the unit's cgroup (since 0.1.0 the
+   agents are not direct children of the unit's MainPID).
 6. **Last-good** — advanced to the new version only on full success
    (`/var/lib/t3-autoupdate/last-good`); it is the rollback target.
 
@@ -47,7 +68,7 @@ Alertmanager → Slack.
 Step 5 DEFERS any instance with an active agent, recording `/var/lib/t3-autoupdate/deferred/<user>` (= the target version). Without a drainer, a user busy at every 04:00 window never migrates and their client shows *"Client and server versions differ"* for days. `t3-migrate-idle.timer` (overnight, every 20 min 01:00–05:40) drains those markers:
 
 - Per marker: skip + clear if the unit is gone or was already restarted *after* the deferral; otherwise restart the still-stale `t3-serve@<u>` onto the current binary **only when that user is idle** — `state.sqlite` shows zero `active_turn_id` (no in-flight turn) AND ≥ `T3_MIGRATE_QUIET_SECONDS` (default 900 = 15 min) since the last thread activity — then verify pairing and clear the marker. **Fail-closed:** any query/parse doubt → skip, retry next tick.
-- It restarts via the SAME `safe_restart_unit` the daily canary uses (sourced `t3-safe-restart.sh`: backup → restart → verify → recover). The shared `/etc/t3-autoupdate.freeze` halts it too.
+- It restarts via the SAME `safe_restart_unit` the daily canary uses (sourced `t3-safe-restart.sh`: backup → restart → verify → recover). The shared `/etc/t3-autoupdate.freeze` halts it too, and it skips a pass while the tracker or a watchdog sweep holds `/run/t3-autoupdate.lock`.
 - **Force / preview:**
   ```bash
   sudo systemctl start t3-migrate-idle.service           # run a drain pass now (still idle-gated)
@@ -95,7 +116,11 @@ sudo systemctl start t3-autoupdate.service   # runs in its own cgroup, isolated 
 ```bash
 GOOD=$(cat /var/lib/t3-autoupdate/last-good)   # or the known-good version you want
 sudo touch /etc/t3-autoupdate.freeze           # stop the tracker FIRST
-sudo npm i -g "t3@$GOOD"
+# Point /usr/bin/t3 back at the good build (one rename). If it is no longer on
+# disk under /usr/local/lib/t3/$GOOD, `sudo npm i -g "t3@$GOOD"` still works and
+# puts /usr/bin/t3 back on the npm -g layout.
+E=$(readlink -f "/usr/local/lib/t3/$GOOD/node_modules/.bin/t3") && \
+  sudo ln -sfn "$E" /usr/bin/t3.new && sudo mv -Tf /usr/bin/t3.new /usr/bin/t3
 # Restore + restart each user's serve. The wizard/admin instance: run this from
 # OUTSIDE its own t3 session (stopping the serve you're running inside kills you);
 # or just let it pick up $GOOD on its next natural restart.

@@ -53,18 +53,15 @@ $PI_ADDR        = '192.168.1.10';
 $GW_NAME        = 'rpi_sofia';
 $CLIENTS_ALIAS  = 'vermont_complex_clients';
 $TARGET_ALIAS   = 'vermont_complex_alias';
-// k8s nodes (pod egress SNATs to the node address) and the devvm. Keep in
-// step with vermont_allowed_sources in playbooks/rpi-sofia-netmap.yml.
+// Only the devvm. The k8s nodes were removed on 2026-10-19 with the cluster
+// iVMS (stacks/ivms retired; iVMS runs on VM 300, which reaches the Pi
+// directly). Keep in step with vermont_allowed_sources in
+// playbooks/rpi-sofia-netmap.yml.
 $CLIENTS = [
-    '10.0.20.100/32' => 'k8s-master',
-    '10.0.20.101/32' => 'k8s-node1',
-    '10.0.20.102/32' => 'k8s-node2',
-    '10.0.20.103/32' => 'k8s-node3',
-    '10.0.20.104/32' => 'k8s-node4',
-    '10.0.20.105/32' => 'k8s-node5',
     '10.0.10.10/32'  => 'devvm',
 ];
 $NONAT_DESCR = 'no NAT to Vermont complex alias (ADR-0035)';
+// The rule is found by this description, so the text stays as first written.
 $BLOCK_DESCR = 'Vermont complex alias: only k8s nodes and devvm (ADR-0035)';
 $ROUTE_DESCR = 'Vermont complex alias via rpi-sofia (ADR-0035)';
 

@@ -172,7 +172,10 @@ Chromium — via different images since 2026-08-11:
   `google-chrome-stable`, built by
   `.github/workflows/build-chrome-service-browser.yml`). Its launcher resolves
   `CHROMIUM=/opt/google/chrome/chrome`. That image and its workflow stay — the
-  neko swap was master-only.
+  neko swap was master-only. Since 2026-10-19 the image drops the base's npm,
+  npx and `/root/.npm` cache: no worker process runs npm, and they carried
+  Trivy HIGH findings plus an expired Azure SAS URL flagged as a secret. Node
+  itself stays.
 
 **Why:** the Playwright-bundled Chromium has proprietary codecs **compiled out**,
 so H.264/AAC video (Instagram Reels, X, most `.mp4`) fails in the live view with

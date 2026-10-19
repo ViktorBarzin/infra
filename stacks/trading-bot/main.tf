@@ -386,8 +386,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
   depends_on = [kubernetes_job.migrations]
@@ -719,8 +718,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       spec[0].template[0].spec[0].container[3].image,
       spec[0].template[0].spec[0].container[4].image,
       spec[0].template[0].spec[0].container[5].image,
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
   depends_on = [kubernetes_job.migrations]
