@@ -144,8 +144,9 @@ resource "kubernetes_deployment" "dolt" {
           # Exact pin, owned by Terraform (the image is no longer in
           # lifecycle.ignore_changes, so changing this tag rolls the pod).
           # Strategy is Recreate, so only one Dolt process opens the store.
-          # Take a tarball of /var/lib/dolt before bumping: the daily
-          # dolt-backup CronJob below keeps current rows but not commit history.
+          # The Renovate rails run every "*-backup" CronJob in this namespace
+          # before applying a bump: dolt-backup (current rows) and
+          # dolt-history-backup (full stores with commit history), both below.
           image = "dolthub/dolt-sql-server:2.4.2"
 
           port {
@@ -323,7 +324,8 @@ resource "kubernetes_service" "dolt" {
 #     scratch Dolt directory, checks every table and view came back, then
 #     gzips it to /backup/<UTC yyyymmdd-hhmm>/ and pushes the metrics.
 #
-# What it does not keep: Dolt commit history. A restore gives the current
+# What it does not keep: Dolt commit history (dolt-history-backup below
+# does). A restore gives the current
 # rows of every table, including uncommitted working-set changes (the beads
 # database's presence_claims is never committed), as one new commit. Users
 # and grants come from the dolt-init ConfigMap, not from the dump.
@@ -486,6 +488,229 @@ resource "kubernetes_cron_job_v1" "dolt_backup" {
             volume {
               name = "work"
               empty_dir {}
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_dolt_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# ── Dolt history backup ──
+#
+# Daily full backup of every Dolt database with its commit history, branches,
+# tags and working sets, to /srv/nfs/dolt-backup/history/<UTC yyyymmdd-hhmm>/.
+# The row backup above keeps current rows only; this is the copy to restore
+# from when history matters, and the Renovate rails run it (with dolt-backup)
+# before applying a Dolt bump.
+#
+# Consistency comes from Dolt itself: CALL dolt_backup('sync-url', ...) writes
+# a point-in-time snapshot of each database while the server keeps running.
+# The URL is a path on the server's own filesystem, and the server pod mounts
+# no NFS, so the snapshot is staged in .history-backup/ on the dolt-data PVC.
+# This job mounts only that subdirectory (subPath, same node as the server
+# since the PVC is RWO), copies each store to NFS, deletes the staging copy,
+# and checks the NFS copy restores with at least as many commits and branches
+# as the source had before the sync.
+#
+#   - sync (init, mysql client): clears old staging runs, records commit and
+#     branch counts, calls dolt_backup('sync-url') per database.
+#   - verify (dolt image matching the server): tars each store into a
+#     .partial run directory, restores it with `dolt backup restore`, checks
+#     the counts, renames the run directory, keeps the newest 14 runs, pushes
+#     metrics.
+#
+# Retention is by count, not age, so a stalled job never ages out the last
+# good copies. It only touches /backup/history; the row backups at the top
+# level of the share are rotated by dolt-backup. Restore:
+# docs/runbooks/restore-dolt.md.
+resource "kubernetes_cron_job_v1" "dolt_history_backup" {
+  metadata {
+    name      = "dolt-history-backup"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    schedule                      = "45 1 * * *"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            affinity {
+              pod_affinity {
+                # dolt-data is RWO: the staging subdirectory can only be
+                # mounted on the node that runs the server.
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "dolt"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            init_container {
+              name  = "sync"
+              image = "mysql:8.4.11"
+              env {
+                name  = "DOLT_HOST"
+                value = "${kubernetes_service.dolt.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
+              }
+              env {
+                # /staging in this pod, as the server sees it.
+                name  = "SERVER_STAGING"
+                value = "/var/lib/dolt/.history-backup"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in mysql client image. Asks the server to snapshot every user database
+                # into /staging/<run>/<db>; the verify container copies them to NFS.
+                q() { mysql -h "$DOLT_HOST" -P 3306 -u root -N -B "$@"; }
+                rm -rf /staging/run-*
+                run=run-$(date -u +%Y%m%d-%H%M)
+                echo "$run" > /work/run
+                date -u +%s > /work/start
+                q -e "SELECT dolt_version()" > /work/VERSION
+                q -e "SHOW DATABASES" | grep -v -x -E 'information_schema|mysql|performance_schema|sys' > /work/databases
+                : > /work/commits.tsv
+                while read -r db; do
+                  # Counted before the sync, so the snapshot holds at least this many.
+                  commits=$(q -D "$db" -e "SELECT COUNT(*) FROM dolt_log")
+                  branches=$(q -D "$db" -e "SELECT COUNT(*) FROM dolt_branches")
+                  printf '%s\t%s\t%s\n' "$db" "$commits" "$branches" >> /work/commits.tsv
+                  st=$(q -D "$db" -e "CALL dolt_backup('sync-url', 'file://$SERVER_STAGING/$run/$db')")
+                  [ "$st" = 0 ] || { echo "dolt_backup sync-url for $db returned $st"; exit 1; }
+                done < /work/databases
+                echo "sync done:"; cat /work/VERSION /work/commits.tsv; du -sh /staging/$run/*
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+              volume_mount {
+                name       = "dolt-data"
+                mount_path = "/staging"
+                sub_path   = ".history-backup"
+              }
+            }
+            container {
+              name  = "verify"
+              image = "dolthub/dolt-sql-server:2.4.2"
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
+              }
+              env {
+                name  = "KEEP"
+                value = "14"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                # Runs in the dolt image that matches the server. Copies each staged store to
+                # NFS, restores the NFS copy into a scratch directory to check its history,
+                # then publishes the run directory, rotates, and pushes metrics.
+                export HOME=/tmp
+                dolt config --global --add user.name backup >/dev/null
+                dolt config --global --add user.email backup@beads-server >/dev/null
+                run=$(cat /work/run)
+                trap 'rm -rf "/staging/$run"' EXIT
+                out=/backup/history/$${run#run-}
+                mkdir -p "$out.partial"
+                fail=0
+                while IFS="$(printf '\t')" read -r db commits branches; do
+                  if [ ! -f "/staging/$run/$db/manifest" ]; then echo "database $db: no staged store"; fail=1; continue; fi
+                  tar -C "/staging/$run" -cf "$out.partial/$db.tar" "$db"
+                  rm -rf /tmp/check && mkdir -p /tmp/check/store
+                  tar -C /tmp/check/store -xf "$out.partial/$db.tar"
+                  (cd /tmp/check && dolt backup restore "file:///tmp/check/store/$db" "$db" >/dev/null)
+                  got_c=$(cd "/tmp/check/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM dolt_log" | tail -n 1) || got_c=0
+                  got_b=$(cd "/tmp/check/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM dolt_branches" | tail -n 1) || got_b=0
+                  echo "database $db commits source=$commits restored=$got_c branches source=$branches restored=$got_b"
+                  if [ "$got_c" -lt "$commits" ] || [ "$got_b" -lt "$branches" ]; then fail=1; fi
+                done < /work/commits.tsv
+                rm -rf /tmp/check
+                [ "$fail" -eq 0 ] || { echo "restore check failed, not publishing $out"; exit 1; }
+
+                cp /work/commits.tsv /work/VERSION /work/databases "$out.partial/"
+                (cd "$out.partial" && sha256sum * > SHA256SUMS)
+                mv "$out.partial" "$out"
+                # Keep the newest $KEEP complete runs; never touches the row backups in /backup.
+                ls -1d /backup/history/20* | grep -v '\.partial$' | sort | head -n "-$KEEP" | while read -r d; do
+                  echo "rotating out $d"; rm -rf "$d"
+                done
+                find /backup/history -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mtime +1 -exec rm -rf {} +
+
+                t0=$(cat /work/start)
+                dur=$(( $(date -u +%s) - t0 ))
+                bytes=$(du -sb "$out" | cut -f1)
+                echo "backup written: $out ($bytes bytes, $dur s)"; ls -l "$out"; df -h /backup
+                cat <<METRICS | curl -sf --data-binary @- "$PUSHGATEWAY/metrics/job/dolt-history-backup" || echo "pushgateway push failed"
+                backup_duration_seconds $dur
+                backup_output_bytes $bytes
+                backup_last_success_timestamp $(date -u +%s)
+                METRICS
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+              volume_mount {
+                name       = "dolt-data"
+                mount_path = "/staging"
+                sub_path   = ".history-backup"
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "work"
+              empty_dir {}
+            }
+            volume {
+              name = "dolt-data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.dolt_data.metadata[0].name
+              }
             }
             volume {
               name = "backup"
