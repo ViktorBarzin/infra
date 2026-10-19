@@ -2550,11 +2550,8 @@ resource "kubernetes_deployment" "pgadmin" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
-      # Left on the pod template by Keel's last bump; removing it would roll
-      # the pod template, so it stays ignored.
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].replicas,                                                                        # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
