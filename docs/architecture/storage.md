@@ -15,7 +15,7 @@ All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 
 
 **NFS storage (Proxmox host)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and app data are served directly from the Proxmox host at `192.168.1.127`. Two NFS export roots exist:
 - **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (4TB) — bulk media and backup targets
-- **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB) — high-performance data (Immich ML)
+- **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (200GB) — high-performance data (Immich ML)
 
 Three NFS StorageClasses exist, all served by the nfs-csi driver and all `reclaimPolicy: Retain`:
 
@@ -89,7 +89,7 @@ graph TB
         sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>~67 proxmox-lvm PVCs<br/>~28 proxmox-lvm-encrypted PVCs"]
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
         NFS_HDD["LV pve/nfs-data (4TB ext4)<br/>/srv/nfs<br/>~100 NFS shares<br/>Media + backup targets"]
-        NFS_SSD["LV ssd/nfs-ssd-data (100GB ext4)<br/>/srv/nfs-ssd<br/>High-performance data<br/>(Immich ML)"]
+        NFS_SSD["LV ssd/nfs-ssd-data (200GB ext4)<br/>/srv/nfs-ssd<br/>High-performance data<br/>(Immich ML)"]
         NFS_Exports["NFS Exports<br/>managed by /etc/exports"]
         NFS_HDD --> NFS_Exports
         NFS_SSD --> NFS_Exports
@@ -132,7 +132,7 @@ graph TB
 | **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Non-sensitive stateful apps |
 | **StorageClass `proxmox-lvm-encrypted`** | RWO, WaitForFirstConsumer, LUKS2 | Cluster-wide | **All sensitive data** (databases, auth, email, passwords, git) |
 | Proxmox NFS (HDD) | LV `pve/nfs-data`, 4TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
-| Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
+| Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 200GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
 | StorageClass `nfs-pve` | RWX, soft mount | Cluster-wide | Proxmox host at 192.168.1.127. **Use this for new volumes.** Added 2026-08-31; 67 PVs on 2026-09-03. |
 | StorageClass `nfs-synology` | RWX, soft mount | Cluster-wide | Synology NAS at 192.168.1.13. Added 2026-08-31; 1 PV on 2026-09-03. |
@@ -311,6 +311,24 @@ NFS exports are NOT managed by Terraform. To add a new service:
 - **Performance**: No NFS protocol overhead for random I/O, no network hop (LVM-thin hotplug direct to VM)
 - **Tested**: PostgreSQL CNPG and MySQL InnoDB Cluster both run on proxmox-lvm, zero corruption
 - **Single CoW layer**: LVM-thin only, no ZFS double-CoW issues
+
+### Why etcd Stays on the Shared HDD (decided 2026-10-19)
+
+etcd's data (`/var/lib/etcd`, 842 MB) is on k8s-master's root disk, the thin LV `pve/vm-200-disk-1` in the `local-lvm` pool on `sdc` (2x 12 TB 7200 rpm, RAID1), which it shares with every VM disk, every PVC and `/srv/nfs`. When other tenants load `sdc`, etcd's WAL fsync p99 rises past 1 s (4.7% of 2-minute windows over the 3 days to 2026-10-19, peaks of 7-8 s), the apiserver slows with it, and clients with short timeouts fail: controllers lose leader election and the CNPG primary's liveness probe times out.
+
+Measured medians in windows with fsync p99 over 1 s, against windows under 0.1 s: guest write await 40.5 ms vs 0.52 ms, etcd's thin LV 19.8 ms vs 0.22 ms, `sdc`'s own write await 19.3 ms vs 0.11 ms, thin-pool metadata reads 91.7 ms vs 13.3 ms. The delay sits in the spindle and controller, so only a different device removes it.
+
+Options researched on 2026-10-19:
+
+| Option | Downtime | Trade-off |
+|---|---|---|
+| A. Dedicated 16G thick disk for etcd on the `ssd` VG (`qm set 200 --scsi1 ssd:16`, copy `/var/lib/etcd`, mount by UUID) | control plane 1-3 min | moves etcd from RAID1 to one Samsung 850 EVO with no power-loss protection |
+| B. Online `qm move-disk 200 scsi0 ssd` | none | same single-SSD exposure for the whole root disk; reverted once on 2026-09-15 |
+| C. `promote-to-rt` IO priority for VM 200's cgroup on `sdc` | none | small expected effect: `sdc` queue depth is 256, so the host scheduler has little backlog to reorder |
+| D. Two new SSDs as a RAID1 virtual disk in the free bays, then A | control plane 1-3 min | needs a purchase; 3 of 8 LFF bays are free and the PERC creates virtual disks online |
+| E. Thick LV for etcd on `sdc` | 1-3 min | no gain: `sdc` itself is slow in the bad windows |
+
+Viktor chose to keep etcd on `sdc` and to make the clients more tolerant instead: kube-controller-manager, kube-scheduler, the CNPG operator, proxmox-csi, kyverno and the gpu-operator run 45 s leader-election renew deadlines (see `docs/agents/known-issues.md`), and the `pg-cluster-v18` liveness probe and isolation check were loosened (see `databases.md`). The weekly fstrim on k8s-master, which stalled etcd for 5-12 minutes every Sunday, is off (`docs/agents/nodes.md`). Reducing load on `sdc` remains the lever: large image pulls, Trivy scans of large images, bulk restores and containers thrashing their page cache at a memory limit all show up as etcd latency.
 
 ### Why Soft Mount for NFS?
 

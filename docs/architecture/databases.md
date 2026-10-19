@@ -366,6 +366,18 @@ kubectl -n cnpg-system get deploy cnpg-cloudnative-pg -o jsonpath='{.spec.templa
 homelab metrics query 'sum(increase(kube_pod_container_status_restarts_total{namespace="cnpg-system"}[24h]))'
 ```
 
+### PostgreSQL: Primary Shut Down by the Isolation Check While the Apiserver Is Slow
+
+**Cause**: in CNPG 1.30.1 the instance liveness probe runs the primary isolation check. The primary asks the apiserver for its Cluster; if that request fails and it also cannot reach another instance, the probe fails, and after `failureThreshold` failures the kubelet kills Postgres. With the defaults (1000 ms request timeout, 30 s liveness timeout) a slow-etcd window on the shared pve HDD was enough. On 2026-10-19 at 05:41 the k8s-node5 reboot took replica `pg-cluster-v18-2` away, the primary's apiserver GET failed three times at 10 s intervals ("Instance connectivity error - liveness probe failing ... context deadline exceeded"), and it shut down. Failover to `pg-cluster-v18-3` completed at 05:45:07, about 3.5 minutes without a primary. The same `10.96.0.1:443 ... context deadline exceeded` lines appear from every instance on every node during slow-etcd windows; they are apiserver latency, not a per-node network fault.
+
+**Fix in place** (2026-10-19, Viktor's choice over moving etcd off the HDD; see `storage.md`, "Why etcd Stays on the Shared HDD"): the `pg-cluster-v18` spec in `stacks/dbaas/modules/dbaas/main.tf` sets `livenessProbeTimeout: 60` (failureThreshold 6), `probes.liveness.timeoutSeconds: 10`, and `isolationCheck.requestTimeout: 3000` / `connectionTimeout: 1000`. A primary now self-fences after about 60 s of isolation instead of about 30 s, which is also how long a genuinely isolated primary can keep accepting writes. Changing these fields rolls the instances and restarts the primary in place (`primaryUpdateMethod: restart`), so apply at a quiet hour.
+
+```bash
+kubectl -n dbaas get pod -l cnpg.io/cluster=pg-cluster-v18,cnpg.io/instanceRole=primary \
+  -o jsonpath='{.items[0].spec.containers[?(@.name=="postgres")].livenessProbe}'
+kubectl -n dbaas get cluster pg-cluster-v18 -o jsonpath='{.spec.probes}'
+```
+
 ### MySQL: Pod Stuck on Excluded Node
 
 **Cause**: Anti-affinity rule not applied (should exclude k8s-node1)
