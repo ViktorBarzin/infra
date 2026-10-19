@@ -47,7 +47,7 @@ Status on 2026-10-15: the CronJob runs every 6 hours (every 30 minutes until 202
 | Pins under `modules/` (for example the `anubis_instance` image tag) | Manual for now | `ignorePaths` excludes `modules/**`, because a change there re-applies every platform stack |
 | `.woodpecker/*.yml` CI images | Manual | Excluded so a broken CI image cannot break the rails that would revert it |
 | First-party images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`, Forgejo registry) | The app's own CI | Renovate skips them (package rule "Our own images") |
-| CoreDNS | The K8s version chain | Postflight sets the image kubeadm ships for the target release, forward only (`coredns-sync.py`, since 2026-10-19). kubeadm's addon phase stays skipped because of the custom Corefile. Not in Terraform; Keel rolled it before 2026-10 |
+| CoreDNS | The K8s version chain | Postflight (`coredns-sync.py`, since 2026-10-19) sets the image kubeadm ships for the target release only when the live CoreDNS is older. It never downgrades: a newer live CoreDNS is logged, posted to Slack and left as is (v1.13.2 live against kubeadm v1.35.9's v1.13.1 on 2026-10-19). kubeadm's addon phase stays skipped because of the custom Corefile. Not in Terraform; Keel rolled it before 2026-10 |
 
 Components held for a supervised session are disabled `packageRules` with a `HELD:` description in `renovate.json5`: metallb, the CNPG operator chart, Nextcloud, Calico/tigera-operator, MySQL majors (9.x and 26.x), Woodpecker, Postgres majors, the NVIDIA driver major, the Loki chart repository switch, Kyverno 1.20 (chart 3.10), Forgejo, and Technitium 14 to 15.
 
