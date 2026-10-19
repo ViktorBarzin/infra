@@ -344,15 +344,17 @@
       enabled: false,
     },
     {
-      description: "HELD: every update in stacks/dbaas (2026-10-11). Before any dbaas bump the rails run all of the stack's backup CronJobs, and the full mysqldump | gzip -9 takes longer than RAILS_SNAPSHOT_TIMEOUT (1800 s; the nightly per-db backup alone takes ~1600 s). mysql 8.4.11 was held-reverted in pipeline 2244, and each held bump pauses Renovate for 2 h, so a pgadmin or phpmyadmin bump would stall the backlog the same way. Release once the snapshot fits (per-stack timeout plus a longer Woodpecker repo timeout, or a CSI volume snapshot). Tracked in bead code-f2u0.",
-      matchFileNames: ["stacks/dbaas/**"],
-      enabled: false,
-    },
-    {
       description: "HELD: MySQL majors. On 26.7.0 since 2026-10-15, moved blue-green from 8.4.8 to the mysql-v26 StatefulSet (mysql-standalone stays on 8.4.8, read-only, as the rollback copy). Oracle lists no in-place jump that skips an LTS, and innovation releases cannot be downgraded in place, so a major gets a dump and, where no in-place path is listed, its own blue-green copy (docs/runbooks/mysql-major-upgrade.md).",
       matchDatasources: ["docker"],
       matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
       matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: mysql-standalone, the MySQL 8.4.8 rollback copy for mysql-v26 (scaled to 0 since 2026-10-19, PVC kept). Its datadir was written by 8.4.8 and is set super_read_only, so its image stays on the exact version that wrote it. Released together with the rest of stacks/dbaas on 2026-10-19; this rule keeps only this one pin out. Remove it with the StatefulSet.",
+      matchFileNames: ["stacks/dbaas/**"],
+      matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
+      matchCurrentValue: "8.4.8",
       enabled: false,
     },
     {
