@@ -540,6 +540,13 @@ resource "kubernetes_cron_job_v1" "dolt_history_backup" {
     namespace = kubernetes_namespace.beads.metadata[0].name
   }
   spec {
+    # Suspended 2026-10-19: the first manual run stalled the server. The
+    # dolt_backup('sync-url') call for the `code` database ran for 17 minutes
+    # without writing a table file, and while it ran every new query (bd,
+    # presence, BeadBoard) took 50-60s, so BeadBoard failed its probes and
+    # restarted. Cancelling the Job cancelled the call and latency recovered.
+    # Suspended, the Renovate rails skip it and verify.sh no longer runs it.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     schedule                      = "45 1 * * *"
     starting_deadline_seconds     = 600
