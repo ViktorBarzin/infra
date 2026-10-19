@@ -164,7 +164,6 @@ resource "kubernetes_deployment" "tuya-bridge" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"],        # set by `kubectl rollout restart`
     ]
@@ -198,12 +197,12 @@ module "ingress" {
   # call this with SERVICE_API_KEY in headers. Programmatic clients can't
   # follow Authentik 302s.
   # auth = "none": Smart-home automation API — SERVICE_API_KEY in headers; programmatic clients cannot follow Authentik redirects.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
-  name            = "tuya-bridge"
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
+  name      = "tuya-bridge"
   # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

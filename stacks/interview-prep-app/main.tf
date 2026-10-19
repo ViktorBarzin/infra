@@ -39,10 +39,6 @@ resource "kubernetes_deployment" "interview-prep-app" {
     template {
       metadata {
         labels = { app = "interview-prep-app" }
-        annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^latest$"
-        }
       }
       spec {
         # ghcr-credentials Secret is cloned into this ns by the kyverno stack's
