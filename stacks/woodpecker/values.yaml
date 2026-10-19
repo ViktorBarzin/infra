@@ -58,6 +58,13 @@ server:
     # deadline exceeded" on every pipeline. 30s removes the false-positive timeouts
     # without regressing the legitimate-failure detection window meaningfully.
     WOODPECKER_FORGE_TIMEOUT: "30s"
+    # Must stay below the agent's keepalive ping interval (agent.env
+    # WOODPECKER_KEEPALIVE_TIME below, 10s). Unset, gRPC's server default of 5m
+    # applies: an agent pinging every 10s on an otherwise quiet stream collects
+    # ping strikes, the server answers GOAWAY ENHANCE_YOUR_CALM "too_many_pings"
+    # and the agent drops its Next()/lease streams. 5s leaves margin for
+    # network jitter.
+    WOODPECKER_KEEPALIVE_MIN_TIME: "5s"
   service:
     type: ClusterIP
     port: 80
@@ -89,6 +96,13 @@ agent:
     WOODPECKER_BACKEND_K8S_PULL_SECRET_NAMES: "registry-credentials"
     WOODPECKER_MAX_WORKFLOWS: "2"
     WOODPECKER_AGENT_SECRET: "${agent_secret}"
+    # The agent pings the server every 10s regardless of this value in v3.19.0:
+    # cmd/agent/core/agent.go reads the flag as "grpc-keepalive-time" while
+    # flags.go registers it as "keepalive-time", so the env var never arrives
+    # and gRPC raises the resulting 0 to its 10s minimum. Set to the same 10s so
+    # the pairing with the server's WOODPECKER_KEEPALIVE_MIN_TIME above still
+    # holds once upstream fixes the flag name.
+    WOODPECKER_KEEPALIVE_TIME: "10s"
   persistence:
     enabled: false
   rbac:

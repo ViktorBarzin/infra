@@ -384,6 +384,31 @@ Uses **numeric repo IDs** (`/api/repos/<id>/pipelines`), NOT owner/name paths
 mirror** repo (registered github-forge). IDs are stable across renames and must
 be looked up from the Woodpecker UI/DB.
 
+### Server and agent gRPC keepalive
+
+The agents hold long-lived gRPC streams to the server (`Next()` polls and
+workflow lease extensions). The server's `WOODPECKER_KEEPALIVE_MIN_TIME` must
+stay below the agents' ping interval, or the server counts each ping as a
+strike and closes the connection with `GOAWAY ENHANCE_YOUR_CALM
+"too_many_pings"`, which the agents log as `grpc error: next(): code:
+Unavailable`. Since 2026-10-19 `stacks/woodpecker/values.yaml` sets the server
+to `5s` and the agents' `WOODPECKER_KEEPALIVE_TIME` to `10s`. Before that the
+server ran gRPC's default of 5 minutes against agents pinging every 10s.
+
+In v3.19.0 the agent never reads `WOODPECKER_KEEPALIVE_TIME`: `agent.go` asks
+for the flag `grpc-keepalive-time` while `flags.go` registers
+`keepalive-time`, so the agent passes 0 and gRPC raises it to its 10s minimum.
+The 10s value is set anyway so the pair still matches once upstream fixes the
+name.
+
+`failed to extend workflow lease` with `queue: task not found` is unrelated
+to keepalive. 15 of the 16 lease errors between 2026-10-12 and 2026-10-19
+carried that message, and each one checked (5 of them) was logged in the same
+second its pipeline finished with `success`: the agent's lease extender fires
+once more after the server has already removed the finished workflow from its
+queue. The pipelines are unaffected, and the keepalive change does not remove
+these lines.
+
 ### Woodpecker YAML gotchas
 
 - Commands with `${VAR}:${VAR}` must be **quoted** — an unquoted `:` triggers
