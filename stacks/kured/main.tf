@@ -383,7 +383,7 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           # tags moved to bitnamilegacy in 2025), so this is latest@digest:
           # the digest makes the pin immutable and Renovate bumps it.
           image             = "bitnami/kubectl:latest@sha256:599e67d36ff511e071ffe9a002347e58cf395e9fbd5f4992c233fd5e089e333e"
-          image_pull_policy = "Always"
+          image_pull_policy = "IfNotPresent"
           command = [
             "/bin/bash",
             "-c",

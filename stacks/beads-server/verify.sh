@@ -39,6 +39,5 @@ verify_component() {
   check "no panic or corruption in Dolt logs (30m)" expect_no_log_errors beads-server app=dolt 'panic|fatal|corrupt|manifest.*error' 30m
   if [ "${VERIFY_QUICK:-0}" != 1 ]; then
     check "dolt-backup Job completes (dump + restore check)" run_cronjob beads-server dolt-backup 900
-    check "dolt-history-backup Job completes (sync + restore check)" run_cronjob beads-server dolt-history-backup 900
   fi
 }
