@@ -60,7 +60,15 @@ newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail 
 
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-# ---- 0. freeze gate -------------------------------------------------------------
+# ---- 0a. update lock: held for the whole run (install, canary, rollback) ---------
+# t3-watchdog and t3-migrate-idle skip while it is held. Taken before the freeze
+# gate so a recovery that froze while we waited is seen. Wait out a watchdog sweep
+# or an idle drain; a second t3-autoupdate (timer + a person) gives up.
+if ! take_update_lock "${T3_LOCK_WAIT:-1800}"; then
+  LOG "skipping: $UPDATE_LOCK held by another t3 update, migration or watchdog sweep for ${T3_LOCK_WAIT:-1800}s"; exit 0
+fi
+
+# ---- 0b. freeze gate ------------------------------------------------------------
 if [ -e "$FREEZE_FILE" ]; then
   LOG "FROZEN: $FREEZE_FILE present — holding at $(ver), not tracking $T3_TRACK"; exit 0
 fi
@@ -127,7 +135,8 @@ health_check() {
   # (found 2026-08-13, when the mobile app could not hold a session against the
   # stale server). Binding like production also keeps this gate honest about the
   # cookie NAME, which is exactly what t3-dispatch hardcodes.
-  "$t3bin" serve --host 0.0.0.0 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
+  # 9>&-: the throwaway serve must not inherit the update lock (see take_update_lock).
+  "$t3bin" serve --host 0.0.0.0 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 9>&- &
   pid=$!
   for _ in $(seq 1 15); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" = "200" ] && { live=1; break; }
