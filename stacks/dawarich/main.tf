@@ -52,6 +52,21 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.dawarich]
 }
 
+# Overrides Dawarich's stock Devise session settings so web sign-ins last a
+# year from the last visit. The reasoning lives in session_lifetime.rb.
+resource "kubernetes_config_map" "session_lifetime" {
+  metadata {
+    name      = "dawarich-session-lifetime"
+    namespace = kubernetes_namespace.dawarich.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  data = {
+    "zz_session_lifetime.rb" = file("${path.module}/session_lifetime.rb")
+  }
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.dawarich.metadata[0].name
@@ -242,6 +257,12 @@ resource "kubernetes_deployment" "dawarich" {
           #     name       = "watched"
           #     mount_path = "/var/app/tmp/imports/watched"
           #   }
+          volume_mount {
+            name       = "session-lifetime"
+            mount_path = "/var/app/config/initializers/zz_session_lifetime.rb"
+            sub_path   = "zz_session_lifetime.rb"
+            read_only  = true
+          }
           resources {
             requests = {
               cpu    = "15m"
@@ -433,6 +454,12 @@ resource "kubernetes_deployment" "dawarich" {
             initial_delay_seconds = 30
             period_seconds        = 15
             timeout_seconds       = 5
+          }
+        }
+        volume {
+          name = "session-lifetime"
+          config_map {
+            name = kubernetes_config_map.session_lifetime.metadata[0].name
           }
         }
       }
