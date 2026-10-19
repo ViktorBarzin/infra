@@ -89,7 +89,7 @@
 | travel_blog | Travel blog | travel_blog |
 | dashy | Dashboard | dashy |
 | send | Firefox Send | send |
-| ytdlp | YouTube downloader | ytdlp |
+| ytdlp | MeTube video downloader (yt.viktorbarzin.me, replaced youtubedl-material 2026-10-19) and yt-highlights | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
 | audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
 | paperless-ngx | Document management. Mail ingest: forward document emails to `docs@viktorbarzin.me` — sender maps 1:1 to a paperless account (runbook `paperless-mail-ingest.md`). Native AI (since 2026-10-12): suggestions from llama-swap `qwen3-8b` (openai-like backend, env in the stack). A Document Added workflow (id 3, configured in the app, not Terraform) applies document type and tags only; titles and correspondents are left as they arrive (Viktor, 2026-10-12, after the model picked the recipient as correspondent on 7 of 20 test documents) | paperless-ngx |
