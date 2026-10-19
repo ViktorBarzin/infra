@@ -184,7 +184,6 @@ resource "kubernetes_deployment" "paperless-mcp" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -214,12 +213,12 @@ module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": barryw/PaperlessMCP has no native auth; the bearer-auth
   # Middleware CRD attached below enforces Authorization: Bearer at Traefik.
-  auth              = "none"
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.paperless-mcp.metadata[0].name
-  name              = "paperless-mcp"
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.paperless-mcp.metadata[0].name
+  name      = "paperless-mcp"
   # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile         = false
   tls_secret_name   = var.tls_secret_name
   homepage_enabled  = false
   extra_middlewares = ["paperless-mcp-bearer-auth@kubernetescrd"]
