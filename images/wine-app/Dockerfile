@@ -19,6 +19,9 @@ ARG WINETRICKS_COMMIT=b76e1ee79ac57d7aceb384f74518fc423265810c
 ARG NOVNC_VERSION=1.6.0
 ARG NOVNC_SHA256=5066103959ef4e9b10f37e5a148627360dd8414e4cf8a7db92bdbd022e728aaa
 
+# ipp-usb (IPP-over-USB printer daemon) arrives as a recommend of libsane1 via
+# the Wine install. Nothing here uses it, and it is a Go 1.19 binary that Trivy
+# flags for Go stdlib CVEs, so it is purged with gnupg at the end.
 RUN set -eux; \
     dpkg --add-architecture i386; \
     apt-get update; \
@@ -45,7 +48,7 @@ RUN set -eux; \
     tar -xzf /tmp/novnc.tar.gz -C /usr/share/novnc --strip-components=1 \
       "noVNC-${NOVNC_VERSION}/vnc.html" "noVNC-${NOVNC_VERSION}/package.json" "noVNC-${NOVNC_VERSION}/app" "noVNC-${NOVNC_VERSION}/core" "noVNC-${NOVNC_VERSION}/vendor"; \
     rm /tmp/novnc.tar.gz; \
-    apt-get purge -y gnupg; apt-get autoremove -y; \
+    apt-get purge -y gnupg ipp-usb; apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
 
 # noVNC opens straight into the session: scaled to the browser, reconnecting.
