@@ -239,7 +239,6 @@ resource "kubernetes_deployment" "webhook_handler" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -270,11 +269,11 @@ module "ingress" {
   # Webhook receiver — third parties (Forgejo, GitHub, etc.) POST events without
   # browser sessions. Forward-auth would block all webhook deliveries.
   # auth = "none": Webhook receiver — third parties (Forgejo, GitHub, etc.) POST events without browser sessions; forward-auth blocks deliveries.
-  auth            = "none"
-  namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
-  name            = "webhook-handler"
+  auth      = "none"
+  namespace = kubernetes_namespace.webhook-handler.metadata[0].name
+  name      = "webhook-handler"
   # No Turnstile gate: machine-only webhooks (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   host            = "webhook"
   dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name
