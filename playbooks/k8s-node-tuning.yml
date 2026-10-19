@@ -1492,6 +1492,39 @@
       when: needrestart_bin.stat.exists
       tags: patching
 
+    # ---- GRUB installs onto the boot disk, named by a path that cannot move --
+    # grub-pc's postinst runs grub-install against the debconf answer
+    # grub-pc/install_devices. master, node1, node2 and node3 recorded a raw
+    # kernel name (/dev/sda, /dev/sdb) at install time. Proxmox CSI attaches
+    # every PVC as another SCSI disk, so those names move: on 2026-10-19 node1's
+    # root disk was /dev/sdn and /dev/sdb was a 2G PVC. The grub-pc upgrade in
+    # node1's first unattended run tried to write boot code to that PVC; only
+    # grub-install's "unable to identify a filesystem" safety check stopped it,
+    # which left grub-pc half-configured and failed the run. The by-id path of
+    # the disk that holds / names the Proxmox drive slot and does not move.
+    - name: Which disk holds the root filesystem, by a stable path
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          disk=/dev/$(lsblk -no PKNAME "$(findmnt -n -o SOURCE /)")
+          for link in /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi*; do
+            [ "$(readlink -f "$link")" = "$disk" ] && echo "$link" && exit 0
+          done
+          exit 1
+        executable: /bin/bash
+      register: boot_disk_by_id
+      changed_when: false
+      check_mode: false
+      tags: patching
+
+    - name: grub-pc installs onto that disk
+      ansible.builtin.debconf:
+        name: grub-pc
+        question: grub-pc/install_devices
+        vtype: multiselect
+        value: "{{ boot_disk_by_id.stdout | trim }}"
+      tags: patching
+
     # The blacklist above keeps unattended-upgrades off these, and the hold
     # keeps a manual `apt upgrade` off them too. The k8s-version-upgrade chain
     # unholds and re-holds the kube packages around each version step.
