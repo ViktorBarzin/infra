@@ -121,4 +121,12 @@ module.exports = {
   ],
 
   logContext: 'renovate-apps',
+
+  // Renovate logs "Reached commits per run limit - skipping branch" at debug
+  // (lib/workers/repository/update/branch/index.ts, 44.115.9) and the CronJob
+  // logs at info, so a run's log did not show which branches the
+  // prCommitsPerRunLimit held back. Raised to info so it does (2026-10-19).
+  logLevelRemap: [
+    { matchMessage: '/^Reached commits per run limit/', newLogLevel: 'info' },
+  ],
 };
