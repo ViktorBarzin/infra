@@ -1,18 +1,19 @@
 # pg-cluster major upgrade (blue-green) and rollback
 
-Last updated: 2026-10-15 (PostgreSQL 16.9 to 18.6)
+Last updated: 2026-10-19 (PG16 copy hibernated after a restore test of the nightly PG18 dump)
 
 The shared CNPG cluster in `dbaas` moved from PostgreSQL 16 to 18 by building a
 second cluster next to the first and switching consumers over, rather than
 upgrading in place. The PG16 cluster stays as a read-only copy so a rollback is
-a variable change, not a restore.
+a variable change, not a restore. Since 2026-10-19 that copy is hibernated: no
+pod runs, and its PVC is kept.
 
 ## Layout after the 2026-10-15 cutover
 
 | Piece | Value |
 |---|---|
 | Active cluster | `pg-cluster-v18`: PG 18.6, PostGIS 3.6.4, pgvector 0.8.7, image `ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7` |
-| Rollback copy | `pg-cluster`: PG 16.9, one instance, `default_transaction_read_only=on`, data as of the cutover |
+| Rollback copy | `pg-cluster`: PG 16.9, one instance, `default_transaction_read_only=on`, data as of the cutover. Hibernated since 2026-10-19 (`cnpg.io/hibernation: "on"`), PVC `pg-cluster-1` (35Gi) kept |
 | The switch | `var.pg_active_cluster` in `stacks/dbaas/modules/dbaas/main.tf` |
 | What follows the switch | the `postgresql` and `postgresql-lb` (10.0.20.200) Services, the `pg_*_db` provisioners, the backup CronJobs (host `postgresql.dbaas`) |
 | `pg-cluster-rw` | CoreDNS (`stacks/technitium/modules/technitium/main.tf`, Corefile `.:53` block) answers `pg-cluster-rw.dbaas.svc.cluster.local` with the `postgresql` Service, so the roughly 40 consumers that have `pg-cluster-rw` in their DSNs follow the switch too |
@@ -26,7 +27,7 @@ flowchart LR
   tf[Terraform state backend 10.0.20.200] --> lb[Service postgresql-lb]
   svc -->|selector cnpg.io/cluster = var.pg_active_cluster| v18[(pg-cluster-v18 PG18)]
   lb --> v18
-  old[(pg-cluster PG16, read-only, 1 instance)]
+  old[(pg-cluster PG16, read-only, hibernated)]
 ```
 
 The `pg-cluster-ro` and `pg-cluster-r` Services still belong to the PG16
@@ -39,6 +40,12 @@ Writes made on PG18 after the cutover are not on the PG16 copy. Before rolling
 back, dump anything written since then if it matters (`pg_dump` from
 `pg-cluster-v18-1`).
 
+0. Wake the PG16 copy: in `null_resource.pg_cluster` set the
+   `cnpg.io/hibernation` annotation and the `hibernation` trigger to `"off"`,
+   commit, push, apply `stacks/dbaas` from the main checkout, and wait for
+   `kubectl -n dbaas get cluster pg-cluster` to report `Cluster in healthy
+   state` with 1/1 ready. CNPG starts `pg-cluster-1` on the kept PVC, still
+   read-only. Then continue with step 1.
 1. In `stacks/dbaas/modules/dbaas/main.tf`:
    - `var.pg_active_cluster` default back to `"pg-cluster"`;
    - in `null_resource.pg_cluster`, set `default_transaction_read_only` to `"off"`
@@ -117,6 +124,39 @@ counts per table, roles and memberships) showed these expected differences:
   back as the default (empty);
 - SCRAM password hashes for `postgres` differ (same password, new salt).
 
+## Restore test of the nightly PG18 dump (2026-10-19)
+
+The design's condition for retiring the rollback copy was a restore test of the
+PG18 nightly backups. The full `pg_dumpall` from 2026-10-19 00:00 UTC
+(`/srv/nfs/postgresql-backup/dump_2026_10_19_00_00.sql.gz`, 1,014,190,479
+bytes, written by the `postgresql-backup` CronJob on the 18.6 client) was
+copied into a throwaway Job in `dbaas` (image
+`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7`, emptyDir, NFS
+backup PVC mounted read-only) and restored with `psql`:
+
+- The restore finished with one error, `role "postgres" already exists`,
+  which every `pg_dumpall` restore into a fresh server prints.
+- 39 databases on both sides. For the 34 databases that hold tables, the
+  table count matched the live cluster in every one (1,490 tables).
+- The five largest tables of each of those databases (149 tables) were
+  counted with `count(*)` on the restore and on the live replica
+  `pg-cluster-v18-1` (live counts taken 14 h after the dump). 112 matched
+  exactly. 31 had fewer rows in the dump and 6 more, all consistent with the
+  14 h of writes and retention pruning between the dump and the count
+  (largest: `technitium.dns_logs` 12,122,560 restored against 12,179,162
+  live, `dawarich.points` 1,858,141 against 1,866,734, `f1_stream.watch_samples`
+  75,539 against 92,760).
+- Every per-database dump from 00:15 UTC (38 files in
+  `/srv/nfs/postgresql-backup/per-db/`) read back with `pg_restore -l`.
+
+The restore took 3 h 1 min, most of it index builds on `dawarich.points`
+while the Proxmox HDD was saturated by other load; the test paused itself
+whenever etcd WAL fsync p99 went above 2-3.5 s. Notes for a repeat: start the
+scratch server with `-c dynamic_shared_memory_type=mmap -c
+max_parallel_maintenance_workers=0`, because the container's 64 MB `/dev/shm`
+otherwise fails parallel index builds, and use the cluster's own image so
+PostGIS and pgvector load.
+
 ## Next major
 
 1. Build the image for the new major: bump `PG_MAJOR`, the base tag and
@@ -131,8 +171,9 @@ counts per table, roles and memberships) showed these expected differences:
 
 ## Open items
 
-- The PG16 cluster and its PVC (`pg-cluster-1`, 35Gi) are kept until Viktor
-  decides to delete them. The two replica PVCs released by the scale-down keep
+- The PG16 cluster is hibernated since 2026-10-19; it and its PVC
+  (`pg-cluster-1`, 35Gi) are kept until Viktor decides to delete them. The two
+  replica PVs released by the scale-down (`pvc-fea47629`, `pvc-ba045c5d`) keep
   their Proxmox volumes because the storage class reclaims with `Retain`.
 - Immich runs its own Postgres (`immich-postgresql`, PG15 with VectorChord) and
   was not part of this upgrade. The `immich` database in pg-cluster had no

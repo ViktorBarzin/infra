@@ -167,7 +167,7 @@ kubectl get volumeattachment -o json \
 
 These services are single-replica and incur ~30s-2min outages while their PVC reattaches to the new node:
 
-- **Stateful databases**: `mysql-v26-0` (and the read-only rollback copy `mysql-standalone-0`), `pg-cluster-*` members (CNPG handles failover gracefully)
+- **Stateful databases**: `mysql-v26-0`, `pg-cluster-v18-*` members (the rollback copies `mysql-standalone` and `pg-cluster` run no pods since 2026-10-19) (CNPG handles failover gracefully)
 - **Mail**: `mailserver`, `roundcubemail` (Dovecot maildir locking — defer if mid-incident)
 - **Browser-trust services**: `nextcloud` (sessions reset), `vaultwarden` (active sessions blip)
 - **Observability**: `prometheus-server` (scrape data gap), `claude-memory`

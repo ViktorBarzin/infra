@@ -47,9 +47,9 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| PostgreSQL (CNPG) | PG 18.6 with PostGIS and pgvector (`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7`) | `dbaas` namespace | `pg-cluster-v18`: primary + 2 replicas, auto-failover. `pg-cluster` (PG 16, 1 instance) is the rollback copy since 2026-10-15 |
+| PostgreSQL (CNPG) | PG 18.6 with PostGIS and pgvector (`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7`) | `dbaas` namespace | `pg-cluster-v18`: primary + 2 replicas, auto-failover. `pg-cluster` (PG 16, 1 instance) is the rollback copy since 2026-10-15, hibernated since 2026-10-19 (no pod, PVC kept) |
 | PgBouncer | - | `authentik` namespace | Pools Authentik's own connections only. App databases have no pooler |
-| MySQL | 26.7.0 (`docker.io/library/mysql:26.7.0`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-v26`); `mysql-standalone` (8.4.8, read-only) is the rollback copy |
+| MySQL | 26.7.0 (`docker.io/library/mysql:26.7.0`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-v26`); `mysql-standalone` (8.4.8, read-only) is the rollback copy, at 0 replicas since 2026-10-19 (PVC kept) |
 | Redis | Latest | `redis` namespace | Shared cache layer |
 | Vault DB Engine | - | `vault` namespace | Automated credential rotation |
 
@@ -95,9 +95,9 @@ graph TB
 
 ### MySQL standalone
 
-1. **Topology**: one MySQL 26.7.0 instance, a raw `kubernetes_stateful_set_v1` (`mysql-v26`) in `stacks/dbaas/modules/dbaas/main.tf`. It took over from the 8.4.8 StatefulSet `mysql-standalone` on 2026-10-15 in a blue-green move (`docs/runbooks/mysql-major-upgrade.md`); `mysql-standalone` keeps running with `super_read_only` as the rollback copy, and `local.mysql_active` selects which one the `mysql` Service points at. `mysql-standalone` itself replaced the MySQL InnoDB Cluster on 2026-04-16.
+1. **Topology**: one MySQL 26.7.0 instance, a raw `kubernetes_stateful_set_v1` (`mysql-v26`) in `stacks/dbaas/modules/dbaas/main.tf`. It took over from the 8.4.8 StatefulSet `mysql-standalone` on 2026-10-15 in a blue-green move (`docs/runbooks/mysql-major-upgrade.md`); `mysql-standalone` stays as the rollback copy with `super_read_only` persisted in its datadir, scaled to 0 replicas on 2026-10-19 after a restore test of the nightly 26.7 dump, and `local.mysql_active` selects which one the `mysql` Service points at. `mysql-standalone` itself replaced the MySQL InnoDB Cluster on 2026-04-16.
 
-2. **Storage**: PVC `data-mysql-v26-0`, 30Gi on `proxmox-lvm-encrypted` (autoresizer limit 60Gi). The rollback copy keeps `data-mysql-standalone-0` (30Gi).
+2. **Storage**: PVC `data-mysql-v26-0`, 30Gi on `proxmox-lvm-encrypted` (autoresizer limit 60Gi). The rollback copy keeps `data-mysql-standalone-0` (30Gi) while scaled to 0.
 
 3. **Anti-Affinity**: excludes nodes labelled `nvidia.com/gpu.present=true`, keeping the database off the GPU node.
 

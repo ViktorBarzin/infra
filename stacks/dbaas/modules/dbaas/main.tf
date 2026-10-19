@@ -200,7 +200,12 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   }
   spec {
     service_name = "mysql-standalone"
-    replicas     = 1
+    # 0 since 2026-10-19: the rollback copy is stopped, its PVC
+    # data-mysql-standalone-0 is kept. The nightly 26.7 mysqldump was
+    # restore-tested first (docs/runbooks/mysql-major-upgrade.md). To bring
+    # it back, set 1 and apply dbaas: the pod reattaches the PVC and starts
+    # with super_read_only=ON from its persisted config.
+    replicas = 0
 
     selector {
       match_labels = {
@@ -1615,6 +1620,7 @@ resource "null_resource" "pg_cluster" {
     memory_request = "2816Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
     pg_params      = "v8-shared2048-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm-readonly"
     affinity       = "required-hostname-v1"
+    hibernation    = "on"
   }
 
   provisioner "local-exec" {
@@ -1625,6 +1631,15 @@ resource "null_resource" "pg_cluster" {
       metadata:
         name: pg-cluster
         namespace: dbaas
+        annotations:
+          # 2026-10-19: hibernated. CNPG deletes the pod and keeps PVC
+          # pg-cluster-1 (and the cluster's config), so the PG16 rollback copy
+          # costs no memory or CPU. The nightly PG18 pg_dumpall was
+          # restore-tested first (docs/runbooks/pg-cluster-major-upgrade.md).
+          # To bring it back, set this and the hibernation trigger above to
+          # "off" and apply dbaas: CNPG starts pg-cluster-1 on the same PVC,
+          # still read-only (default_transaction_read_only below).
+          cnpg.io/hibernation: "on"
       spec:
         # 3 instances (1 primary + 2 replicas) so a single-node drain (e.g.
         # kured's weekly OS-reboot wave) still leaves a primary candidate
