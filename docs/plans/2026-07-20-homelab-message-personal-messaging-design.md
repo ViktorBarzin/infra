@@ -203,7 +203,9 @@ homelab message send     --via wa --to "Alice" "text"   # preview + confirm → 
 - [ ] Selector-drift signal (Prometheus/Uptime-Kuma) — a verb breaking after a web-UI change is the DOM-fragility this design accepts.
 - [ ] Per-platform allowlists (one shared list today; a name allowlisted for WhatsApp is also allowed on Messenger). Optional aliases so a nickname (e.g. "emo") resolves to the saved title ("Tate").
 
-**Operator setup:** populate `~/.config/homelab/message-allowlist` (one exact WhatsApp contact name per line) — sends are refused until then (fail-closed).
+**Operator setup:** none beyond a logged-in WhatsApp Web in the chrome-service profile.
+
+**Update 2026-10-19:** the recipient allowlist was removed at Viktor's request. `--to` now names the chat directly (case-insensitive exact title), and the on-screen recipient check, preview/confirm gate and audit log stay. The same change fixed sends that were logged as sent but never left: the runner closed the tab as soon as the composer cleared, before WhatsApp had sent the message, which left it with a red "Something went wrong" badge. A send now waits for the Sent, Delivered or Read status and fails otherwise.
 
 ## References
 

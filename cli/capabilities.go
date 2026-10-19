@@ -403,7 +403,7 @@ func capabilities() []capability {
 				"Records the delegation in agent-api, sends Muse the task and its callback",
 				"        address on WhatsApp, and --wait prints Muse's result. Capped at 20 an",
 				"        hour and 100 a day. Needs WhatsApp Web linked in the shared browser",
-				"        and the Muse chat in delegate-contacts + the message allowlist.",
+				"        and the Muse chat named in delegate-contacts.",
 				"runbook: docs/runbooks/delegations.md",
 			},
 		},

@@ -49,20 +49,29 @@ async function ensureLoggedIn() {
   await sleep(1200);
 }
 
-// openExact opens the chat whose row title is EXACTLY `title` (send path: the
-// title has already been resolved against the allowlist by the Go layer).
+// openExact opens the chat whose row title is `title`, ignoring case, and
+// returns the title as WhatsApp shows it. A chat with no row in the list is
+// looked up through search; a miss lists what search did find.
 async function openExact(title) {
-  let row = page.locator(`${SEL.paneSide} div[role="row"]:has(${cssTitle(title)})`).first();
+  const sel = (scope) => `${scope}div[role="row"]:has(span[title=${JSON.stringify(title)} i])`;
+  let row = page.locator(sel(`${SEL.paneSide} `)).first();
   if (await row.count() === 0) {
     await page.locator(SEL.search).first().click();
     await sleep(400);
     await page.keyboard.type(title);
     await sleep(1800);
-    row = page.locator(`div[role="row"]:has(${cssTitle(title)})`).first();
+    row = page.locator(sel('')).first();
   }
-  if (await row.count() === 0) throw new Error('contact not found in WhatsApp: ' + title);
+  if (await row.count() === 0) {
+    const seen = await page.evaluate(() => [...new Set([...document.querySelectorAll('div[role="row"]')]
+      .map((r) => r.querySelector('span[title]')?.getAttribute('title')).filter(Boolean))].slice(0, 8));
+    throw new Error('contact not found in WhatsApp: ' + title + (seen.length ? ` (search found: ${seen.join(', ')})` : ''));
+  }
+  const titles = await row.locator('span[title]').evaluateAll((els) => els.map((e) => e.getAttribute('title')));
+  const opened = titles.find((t) => t.toLowerCase() === title.toLowerCase()) || title;
   await row.click();
   await sleep(2500);
+  return opened;
 }
 
 // openFuzzy opens the best matching chat for a free-text query (read path) and
@@ -96,11 +105,43 @@ async function verifyRecipient(title) {
   throw new Error(`recipient verification FAILED — opened chat is not ${JSON.stringify(title)} (composer aria=${JSON.stringify(aria)}). Not sending.`);
 }
 
+// The thread's message rows, by data-id, newest last.
+const rowIds = () => page.evaluate(() => [...document.querySelectorAll('#main div[data-id]')].map((e) => e.getAttribute('data-id')));
+
+// waitSent holds the tab open until WhatsApp marks every new outgoing row Sent,
+// Delivered or Read. Closing the tab sooner (the runner does, as soon as this
+// script returns) leaves the message stuck with a red "Something went wrong"
+// badge, which is how sends were failing while the audit log said "sent".
+async function waitSent(before) {
+  const deadline = Date.now() + 90000;
+  let state = 'no new message row appeared';
+  while (Date.now() < deadline) {
+    state = await page.evaluate((before) => {
+      const seen = new Set(before);
+      const labels = [...document.querySelectorAll('#main div[data-id]')]
+        .filter((e) => !seen.has(e.getAttribute('data-id')))
+        .map((e) => [...e.querySelectorAll('[aria-label]')].map((l) => l.getAttribute('aria-label').trim()))
+        .filter((ls) => ls.includes('You:')); // outgoing only; a reply arriving meanwhile has no status
+      if (labels.length === 0) return 'no new message row appeared';
+      if (labels.some((ls) => ls.some((l) => l.startsWith('Something went wrong')))) return 'failed';
+      if (labels.every((ls) => ls.some((l) => ['Sent', 'Delivered', 'Read'].includes(l)))) return 'ok';
+      return 'still pending';
+    }, before);
+    if (state === 'ok' || state === 'failed') break;
+    await sleep(1000);
+  }
+  if (state !== 'ok') {
+    const why = state === 'failed' ? 'it shows "Something went wrong" in the chat' : state + ' after 90s';
+    throw new Error(`WhatsApp did not send the message to ${JSON.stringify(TO)} (${why})`);
+  }
+}
+
 async function doSend() {
   if (!TO) throw new Error('HOMELAB_MSG_TO empty');
   if (!TEXT) throw new Error('HOMELAB_MSG_TEXT empty');
-  await openExact(TO);
-  const composer = await verifyRecipient(TO);
+  const title = await openExact(TO);
+  const composer = await verifyRecipient(title);
+  const before = await rowIds();
   await composer.click();
   await sleep(rnd(300, 800)); // pre-type pause
   await typeHuman(TEXT);
@@ -111,8 +152,9 @@ async function doSend() {
     const c = document.querySelector('footer div[contenteditable="true"][role="textbox"]');
     return c && (c.innerText || '').replace(/​/g, '').trim() === '';
   }, null, { timeout: 12000 });
-  log(`sent to ${TO} (${[...TEXT].length} chars)`);
-  return { sent: true, to: TO, chars: [...TEXT].length };
+  await waitSent(before);
+  log(`sent to ${title} (${[...TEXT].length} chars)`);
+  return { sent: true, to: title, chars: [...TEXT].length };
 }
 
 async function doRead() {

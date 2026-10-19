@@ -7,15 +7,15 @@ package main
 // The flow, in the order the contract fixes:
 //
 //  1. Refuse before anything is recorded unless the target Caller has a chat
-//     in delegate-contacts AND that exact chat is on the message allowlist.
+//     in delegate-contacts.
 //     A refusal here leaves no pending delegation behind to expire unseen.
 //  2. POST /v1/delegations as the local `homelab` Caller. agent-api renders
 //     the WhatsApp text, callback instructions included, so the CLI never
 //     builds or edits it.
 //  3. Send that text through the same path `homelab message send` uses
-//     (allowlist, wrong-recipient guard, audit log). This is the one
+//     (wrong-recipient guard, sent-status check, audit log). This is the one
 //     unattended send that path permits: no confirm prompt, because the
-//     recipient is pinned by two files a human wrote, not chosen per call.
+//     recipient is pinned by a file a human wrote, not chosen per call.
 //  4. POST /sent, or on any send failure POST /undelivered with a one-line
 //     reason and exit non-zero. agent-api traces the undelivered event and
 //     the Loki rule posts it to #alerts.
@@ -30,7 +30,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -286,10 +285,9 @@ func parseDelegateContacts(body string) map[string]string {
 	return out
 }
 
-// delegateChat resolves the chat a delegation to caller may go to. Both files
-// must agree, and the match against the allowlist is exact: the fuzzy --to
-// matching `message send` offers a human has no place in an unattended send.
-func delegateChat(caller, contactsPath, allowPath string) (string, error) {
+// delegateChat resolves the chat a delegation to caller may go to: the one
+// delegate-contacts names for it.
+func delegateChat(caller, contactsPath string) (string, error) {
 	var contacts map[string]string
 	b, err := os.ReadFile(contactsPath)
 	switch {
@@ -302,13 +300,6 @@ func delegateChat(caller, contactsPath, allowPath string) (string, error) {
 	chat, ok := contacts[caller]
 	if !ok {
 		return "", fmt.Errorf("no WhatsApp chat configured for caller %q: add a line %s=<exact chat name> to %s", caller, caller, contactsPath)
-	}
-	allow, err := loadAllowlist(allowPath)
-	if err != nil {
-		return "", fmt.Errorf("read allowlist %s: %w", allowPath, err)
-	}
-	if !slices.Contains(allow, chat) {
-		return "", fmt.Errorf("chat %q for caller %q is not on the message allowlist: add that exact line to %s", chat, caller, allowPath)
 	}
 	return chat, nil
 }
@@ -417,14 +408,13 @@ type delegateDeps struct {
 	api          delegationAPI
 	send         func(chat, text string) error
 	contactsPath string
-	allowPath    string
 	out          io.Writer
 	sleep        func(time.Duration)
 	now          func() time.Time
 }
 
 func runDelegate(o delegateOpts, deps delegateDeps) error {
-	chat, err := delegateChat(o.caller, deps.contactsPath, deps.allowPath)
+	chat, err := delegateChat(o.caller, deps.contactsPath)
 	if err != nil {
 		return err
 	}
@@ -555,7 +545,9 @@ func classifySendFailure(chat, stderr string, err error) string {
 	case strings.Contains(low, "not logged in"):
 		return "WhatsApp Web is logged out in the shared browser; re-link at chrome.viktorbarzin.me (noVNC, scan the QR code with the phone)"
 	case strings.Contains(low, "contact not found in whatsapp"):
-		return oneLine(fmt.Sprintf("chat %q not found in WhatsApp; fix the name in %s and on the message allowlist", chat, delegateContactsPath()))
+		return oneLine(fmt.Sprintf("chat %q not found in WhatsApp; fix the name in %s", chat, delegateContactsPath()))
+	case strings.Contains(low, "whatsapp did not send"):
+		return oneLine(fmt.Sprintf("WhatsApp did not send the message to %q (red \"Something went wrong\" or still pending); check the chat at chrome.viktorbarzin.me", chat))
 	case strings.Contains(low, "recipient verification failed"):
 		return oneLine(fmt.Sprintf("recipient verification failed: the chat that opened was not %q, so nothing was typed", chat))
 	case strings.Contains(low, "chrome-service") || strings.Contains(low, "cdp not ready"):
