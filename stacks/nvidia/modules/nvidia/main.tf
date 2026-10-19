@@ -701,11 +701,6 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
   }
 
   depends_on = [helm_release.nvidia-gpu-operator]
-  lifecycle {
-    ignore_changes = [
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-    ]
-  }
 }
 
 resource "kubernetes_service" "gpu_pod_exporter" {

@@ -494,7 +494,6 @@ resource "kubernetes_deployment" "claude-memory" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -553,12 +552,12 @@ module "ingress" {
   # MCP server — called by Claude Code (and other tools/agents) via app-layer
   # bearer-token auth; forward-auth would break programmatic clients.
   # auth = "none": MCP server called by Claude Code via bearer-token auth; forward-auth would break programmatic clients.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.claude-memory.metadata[0].name
-  name            = "claude-memory"
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.claude-memory.metadata[0].name
+  name      = "claude-memory"
   # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
-  turnstile = false
+  turnstile       = false
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
