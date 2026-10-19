@@ -407,6 +407,41 @@ module "ingress" {
   }
 }
 
+# The devvm (10.0.10.10) reaches Vault without the shared traefik-rate-limit
+# (10 req/s per client, burst 50, per Traefik pod). A terragrunt plan or apply
+# from the devvm reads many Vault paths in a burst, and the vault router
+# answered 1,233 requests with 429 in the 7 days to 2026-10-19. This route
+# matches only that client address, which Traefik reads from the TCP peer
+# (PROXY protocol from pfSense), not from a header, and has a higher priority
+# than the Ingress above. It carries no middlewares: Vault's own auth gates
+# every request, and its API clients read Vault's status codes directly.
+# Everyone else still goes through the Ingress and its rate limit.
+resource "kubernetes_manifest" "vault_devvm_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "vault-devvm"
+      namespace = kubernetes_namespace.vault.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match    = "Host(`vault.viktorbarzin.me`) && ClientIP(`10.0.10.10/32`)"
+        kind     = "Rule"
+        priority = 1000
+        services = [{
+          name = "vault-active"
+          port = 8200
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
 # --- Audit Logging ---
 
 resource "vault_audit" "file" {
