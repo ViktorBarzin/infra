@@ -1712,18 +1712,21 @@ serverFiles:
               severity: info
             annotations:
               summary: "sdc read {{ $value | printf \"%.0f\" }} GB in 24h (threshold 700 GB; 30d baseline was 606, expected lower now the nightly full image is weekly)"
-          # keep_firing_for: host load oscillates across the 50% line, so this
-          # fired and cleared 10 times in 7 days (20 Slack posts) for what is
-          # really one busy period. Held open so a busy stretch reads as one
-          # episode. Measured 2026-08-10.
+          # 15-minute load above 60% of the host's CPU threads (Viktor,
+          # 2026-10-19). Until then this read the 1-minute load against 50%,
+          # which oscillated across the line (10 fire/clear cycles in 7 days,
+          # 2026-08-10). load15 is
+          # already smoothed, so a shorter keep_firing_for is enough to keep
+          # one busy stretch as one episode. The inner count by (node, cpu)
+          # collapses duplicate series left by a node-exporter relabel.
           - alert: HighSystemLoad
-            expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
+            expr: max by (node) (node_load15{instance="pve-node-r730"}) / count by (node) (count by (node, cpu) (node_cpu_seconds_total{instance="pve-node-r730", mode="idle"})) > 0.6
             for: 30m
-            keep_firing_for: 2h
+            keep_firing_for: 1h
             labels:
               severity: info
             annotations:
-              summary: "System load: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
+              summary: "{{ $labels.node }} 15-minute load is {{ $value | humanizePercentage }} of its CPU threads (threshold: 60%)"
           - alert: FanFailure
             expr: r730_idrac_coolingDeviceStatus != 3
             for: 5m
@@ -5156,7 +5159,12 @@ serverFiles:
           # stacks/renovate pushes renovate_last_success_timestamp_seconds to
           # Pushgateway after every run that exits 0 (job="renovate",
           # instance="infra"; hand-started test runs use another instance).
-          # Quiet while the CronJob is suspended (the kill switch), which needs
+          # Quiet while the CronJob is suspended (the kill switch), and for 13h
+          # after it is unsuspended, so a resume gets one full window to
+          # produce a success before this fires (2026-10-19; it fired right
+          # after every unsuspend before). max_over_time rather than changes()
+          # because a kube-state-metrics restart starts a new series, which
+          # changes() would not see as a transition. Needs
           # kube_cronjob_spec_suspend in the KSM keep regex above.
           # Window 13h since the CronJob moved from every 10 minutes to every
           # 6 hours (2026-10-15): it tolerates one skipped run (etcd slow or a
@@ -5169,13 +5177,13 @@ serverFiles:
                 or
                 absent(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})
               )
-              unless on() (max(kube_cronjob_spec_suspend{namespace="renovate", cronjob="renovate"}) == 1)
+              unless on() (max(max_over_time(kube_cronjob_spec_suspend{namespace="renovate", cronjob="renovate"}[13h])) == 1)
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "Renovate has not completed a successful run in the last 13h (or has never pushed one) while its CronJob is not suspended"
-              description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate logged an ERROR). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
+              summary: "Renovate has not completed a successful run in the last 13h (or has never pushed one), and its CronJob has not been suspended in that time"
+              description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate exited non-zero or a repository aborted with external-host-error). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
@@ -6623,7 +6631,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "{{ $value | printf \"%.0f\" }} deployment(s) have their image rewritten by two owners — check `image_owner_conflict` for which, then give the workload keel.sh/policy=never (annotation AND label) or pin the image at its other owner"
+              summary: "{{ $value | printf \"%.0f\" }} deployment(s) have their image rewritten by two owners — check `image_owner_conflict` for which, then pin the image at one owner"
           - alert: ImageOwnershipDetectorStale
             # The detector runs every 6h; 14h means at least two runs were
             # missed. Without this the gauge above silently freezes at its last
@@ -6768,21 +6776,6 @@ serverFiles:
       # terminal.viktorbarzin.me, so ~70% of /token preflight requests routed
       # to that replica returned 404 with router="-". The WS upgrade failed
       # intermittently. Fix: `kubectl delete pod -n traefik <replica>`.
-          # A stack CI deliberately SKIPS still needs a human to apply it, and
-          # the Slack post saying so can be missed. This is the durable
-          # backstop: the gauge is pushed on every apply run and set to 0 when
-          # nothing is pending, so a stuck non-zero means a real change has been
-          # sitting unapplied. 2h, because the remediation is a person running
-          # `cd stacks/vault && ../../scripts/tg apply` (infra#84).
-          - alert: CIStackPendingHumanApply
-            expr: ci_stack_pending_human_apply > 0
-            for: 2h
-            labels:
-              severity: warning
-              subsystem: ci
-            annotations:
-              summary: "A stack changed in CI and was NOT applied — it needs a human run"
-              description: "infra CI skipped a Tier-0 stack (today only stacks/vault, which CI cannot apply because the shared runner holds no Vault-admin permissions) and the change has been pending over 2h, so the repo and the live estate disagree until someone runs it. Apply: cd stacks/vault && ../../scripts/tg apply. See docs/architecture/ci-cd.md."
       - name: Webterminal
         rules:
       # Traefik router parity — detects the root cause of the webterminal
