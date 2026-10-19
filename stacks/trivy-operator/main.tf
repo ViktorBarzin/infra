@@ -62,10 +62,16 @@ resource "helm_release" "trivy_operator" {
     excludeNamespaces = "verify,local-path-storage"
 
     operator = {
-      # At most 2 scan jobs at once (3 until 2026-10-10). Fewer concurrent
-      # first-time pulls through the registry cache, less node memory, and a
-      # lower peak of report writes into etcd, which shares an HDD.
-      scanJobsConcurrentLimit = 2
+      # One scan job at a time (3 until 2026-10-10, 2 until 2026-10-19). A
+      # scan unpacks the image's layers onto its node's disk, and every node
+      # disk lives in the same thin pool as etcd. On 2026-10-19 two parallel
+      # scans wrote 16.7 MB/s (frigate:0.18.2-tensorrt, node5) and 30 MB/s
+      # (calibre-web-automated, node2) while the thin pool sat at 100%
+      # utilisation and etcd WAL fsync p99 was 3-8 s. One at a time also
+      # means fewer first-time pulls through the registry cache and a lower
+      # peak of report writes into etcd. Cost: a full pass takes longer, and
+      # a deleted report can wait up to scanJobsRetryDelay for the slot.
+      scanJobsConcurrentLimit = 1
       scanNodeCollectorLimit  = 1
       # The first scan of a large image downloads every layer; the 5m default
       # is too short for multi-GB images.
