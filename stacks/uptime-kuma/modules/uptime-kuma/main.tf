@@ -118,7 +118,13 @@ resource "kubernetes_deployment" "uptime-kuma" {
           # kuma.db (SQLite) at boot and cannot read the v2 db-config.json,
           # which caused a 4h CrashLoopBackOff while the MariaDB store sat
           # intact. Never move this back to a major-only tag.
-          image = "louislam/uptime-kuma:2.5.6"
+          # -slim leaves out the bundled Chromium and MariaDB server (about
+          # 122 Chromium CVEs in the full image). Neither is used: the store is
+          # the external MariaDB in dbaas, and no monitor is of type
+          # "real-browser" (checked 2026-10-19: http, port, ping, postgres,
+          # push, redis, mysql). Adding a real-browser monitor needs the full
+          # image back, or a remote browser.
+          image = "louislam/uptime-kuma:2.5.6-slim"
           name  = "uptime-kuma"
 
           resources {

@@ -152,22 +152,13 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
-          # Consumed by service-upgrade agent to poll ci.viktorbarzin.me
-          # per-workflow status. Pod has no Vault CLI auth, so the old
-          # `vault kv get` path is dead — see bd code-3o3.
+          # The fixer reads Woodpecker pipeline status on ci.viktorbarzin.me
+          # with this token (mapped to FIXER_WOODPECKER_TOKEN below). The pod
+          # has no Vault CLI auth, so it ships as an env var (bd code-3o3).
           secretKey = "WOODPECKER_API_TOKEN"
           remoteRef = {
             key      = "ci/global"
             property = "woodpecker_api_token"
-          }
-        },
-        {
-          # Consumed by service-upgrade agent for Start/Success/Failure
-          # notifications. Same shared webhook as alertmanager.
-          secretKey = "SLACK_WEBHOOK_URL"
-          remoteRef = {
-            key      = "viktor"
-            property = "alertmanager_slack_api_url"
           }
         },
         {
