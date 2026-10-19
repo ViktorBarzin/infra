@@ -191,13 +191,20 @@ resource "kubernetes_deployment" "dolt" {
             period_seconds        = 10
           }
 
+          # 512Mi -> 1536Mi on 2026-10-19, request raised to match. At 512Mi
+          # the cgroup sat at its limit (memory.current 536.6M of 536.9M,
+          # workingset_refault_file 81.5M pages, 142k major faults in 5.5
+          # days), so the page cache kept being evicted and re-read: the
+          # server read 224 MB/s from disk on k8s-node3, MySQL handshakes
+          # took ~14s, BeadBoard crash-looped, and the sql-server process was
+          # OOM-killed once.
           resources {
             requests = {
-              memory = "256Mi"
+              memory = "1536Mi"
               cpu    = "50m"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1536Mi"
             }
           }
         }
