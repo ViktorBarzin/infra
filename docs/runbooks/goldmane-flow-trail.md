@@ -237,8 +237,9 @@ with this repo's global generate-providers/lockfile pattern), the stack
 Secret** (`calico-system`), copying its `tls.crt`/`tls.key` into the
 `goldmane-client-tls` Secret in the aggregator namespace. The CA *bundle* that
 verifies Goldmane's serving cert (`tigera-ca-bundle` ConfigMap, key
-`tigera-ca-bundle.crt`) is likewise copied verbatim (a ConfigMap can't be
-cross-namespace-mounted).
+`tigera-ca-bundle.crt`) is likewise copied, that one key only (a ConfigMap
+can't be cross-namespace-mounted). Copying the whole map drifted when calico
+3.33 added a `ca.crt` key to the source.
 
 > **GOTCHA — if the operator rotates `whisker-backend-key-pair`, re-apply
 > `stacks/goldmane-edge-aggregator`** to re-sync the copied cert. Symptom of a
