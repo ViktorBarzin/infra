@@ -28,6 +28,11 @@
 #   - freeze switch (/etc/t3-autoupdate.freeze) + optional hard pin (T3_PIN) for
 #     instant manual revert; a canary failure also self-freezes;
 #   - downgrade-guard (the nightly tag is mutable — never move backward);
+#   - versioned install (2026-10-19): each build gets its own npm prefix under
+#     /usr/local/lib/t3/<ver>, is gated from there, and only then is /usr/bin/t3
+#     swapped to it with one rename. Running serves never see their files change
+#     (the old `npm i -g` made them answer 404 mid-install, 2026-09-28), and a
+#     rollback is a symlink swap back to last-good;
 #   - pre-bump per-user state.sqlite backup BEFORE install (rollback => restore,
 #     not sqlite surgery), via the same online VACUUM INTO as t3-backup-state;
 #   - a health-check that seeds a throwaway instance with a COPY of a real
@@ -47,9 +52,7 @@ set -uo pipefail
 # ---- autoupdate-specific config (shared config + helpers come from the lib) -----
 T3_TRACK="${T3_TRACK:-latest}"             # npm dist-tag to follow (latest | nightly)
 T3_PIN="${T3_PIN:-}"                        # optional HARD pin to an exact version (disables tracking)
-SMOKE_PORT="${T3_SMOKE_PORT:-3799}"
 DRY_RUN="${T3_DRY_RUN:-0}"
-TMPROOT="${T3_TMPDIR:-/var/tmp}"           # health-check scratch on DISK — /tmp is a 2G tmpfs and a populated state.sqlite (~hundreds of MB) overflows it
 
 LOG_TAG=t3-autoupdate
 # shellcheck source=scripts/t3-safe-restart.sh
@@ -117,58 +120,8 @@ backup_all() {
   [ -n "$ADMIN_SEED" ] || ADMIN_SEED="$(ls -1t "$BACKUP_DIR"/*/"state-prebump-$target-"*.sqlite 2>/dev/null | head -1)"
 }
 
-# health_check <t3bin> [seed_db]: start a throwaway serve (seeded with a copy of a
-# real populated DB if given, so the forward migration runs on real data), then do
-# the real mint -> credential-exchange -> t3_session pairing handshake with the
-# dispatch's endpoint fallback, and sniff the serve log for a migration failure.
-health_check() {
-  local t3bin="$1" seed="${2:-}" dir logf pid live=0 pair=0 migerr=0 cred ep hdr code seeded=fresh
-  dir="$(mktemp -d -p "$TMPROOT")"; mkdir -p "$dir/userdata"; logf="$dir/serve.log"
-  if [ -n "$seed" ] && [ -f "$seed" ]; then cp "$seed" "$dir/userdata/state.sqlite"; seeded=populated; fi
-  # --host 0.0.0.0 MUST match how t3-serve@.service binds in production, and is
-  # not merely cosmetic: resolveSessionCookieName() (apps/server/src/auth/utils.ts)
-  # returns the plain `t3_session` ONLY for a remote-reachable host, and
-  # `t3_session_<port>_<instanceHash>` for a loopback one. Smoke-testing on
-  # 127.0.0.1 therefore produced an instance-scoped cookie that the pair grep
-  # below could never match — a FALSE NEGATIVE that silently pinned the fleet at
-  # 0.0.29 for 17 days while every daily run "correctly" rolled 0.0.34 back
-  # (found 2026-08-13, when the mobile app could not hold a session against the
-  # stale server). Binding like production also keeps this gate honest about the
-  # cookie NAME, which is exactly what t3-dispatch hardcodes.
-  # 9>&-: the throwaway serve must not inherit the update lock (see take_update_lock).
-  "$t3bin" serve --host 0.0.0.0 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 9>&- &
-  pid=$!
-  for _ in $(seq 1 15); do
-    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" = "200" ] && { live=1; break; }
-    sleep 2
-  done
-  if [ "$live" = "1" ]; then
-    cred="$("$t3bin" auth pairing create --base-dir "$dir" --ttl 5m --json 2>/dev/null | tr -d '\n ' | sed -n 's/.*"credential":"\([^"]*\)".*/\1/p')"
-    if [ -n "$cred" ]; then
-      for ep in /api/auth/browser-session /api/auth/bootstrap; do
-        hdr="$(curl -s -i --max-time 5 -X POST -H 'Content-Type: application/json' -d "{\"credential\":\"$cred\"}" "http://127.0.0.1:$SMOKE_PORT$ep" 2>/dev/null)"
-        code="$(printf '%s' "$hdr" | sed -n '1s#.* \([0-9][0-9][0-9]\).*#\1#p')"
-        [ "$code" = "404" ] && continue
-        printf '%s' "$hdr" | grep -qi '^set-cookie:[[:space:]]*t3_session=' && pair=1
-        break
-      done
-    fi
-  fi
-  grep -qiE 'migration failed|failed to migrate|no column named|NOT NULL constraint failed|PersistenceSqlError' "$logf" 2>/dev/null && migerr=1
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-  if [ "$live" = "1" ] && [ "$pair" = "1" ] && [ "$migerr" = "0" ]; then
-    LOG "health OK ($seeded: live + pairing handshake + clean migration)"
-    rm -rf "$dir"; return 0
-  fi
-  LOG "HEALTH-CHECK FAILED ($seeded: live=$live pair=$pair migerr=$migerr); serve log: $(tail -3 "$logf" 2>/dev/null | tr '\n' '|')"
-  rm -rf "$dir"; return 1
-}
-
-# is this t3-serve@<unit> running an active agent (claude/codex/opencode)? never restart those.
-unit_busy() {
-  local unit="$1" pid; pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)"
-  [ -n "$pid" ] && [ "$pid" != "0" ] && pgrep -aP "$pid" 2>/dev/null | grep -qiE 'claude|codex|opencode'
-}
+# health_check, unit_busy, install_version, activate_version and rollback_binary
+# live in the lib, shared with t3-watchdog and t3-migrate-idle.
 
 # ---- 3. DRY RUN: preview only (install candidate to temp prefix, gate it) -------
 if [ "$DRY_RUN" = "1" ]; then
@@ -183,19 +136,26 @@ if [ "$DRY_RUN" = "1" ]; then
   rm -rf "$tmp"; exit 0
 fi
 
-# ---- 4. pre-bump backup, then install -------------------------------------------
+# ---- 4. pre-bump backup, then install into the candidate's own prefix -----------
+# Nothing a running serve uses changes here: the build goes to
+# $T3_VERSIONS_DIR/<ver> and T3_LINK still points at the current one.
 backup_all
-if ! npm i -g "t3@$target" >/dev/null 2>&1; then
+if ! install_version "$target"; then
   LOG "npm install of t3@$target FAILED — staying on $current"; exit 0
 fi
-installed="$(ver)"
-[ "$installed" = "$target" ] || { LOG "post-install version is $installed, expected $target — rolling back"; rollback_binary; exit 1; }
 
-# ---- 5. gate the new binary on a POPULATED-DB migration + pairing ---------------
-if ! health_check "$(command -v t3)" "$ADMIN_SEED"; then
-  rollback_binary; exit 1   # nothing restarted yet -> binary rollback is clean
+# ---- 5. gate the new build on a POPULATED-DB migration + pairing, THEN activate --
+# The gate runs the candidate from its prefix before anything switches, so a
+# failure leaves every user on $current. "rolled back" keeps T3AutoUpdateRolledBack firing.
+if ! health_check "$(version_entry "$target")" "$ADMIN_SEED"; then
+  LOG "health gate failed for $target — rolled back (never activated; $current stays live)"; exit 1
 fi
-LOG "health gate passed for $target; canary-restarting idle instances one at a time"
+if ! activate_version "$target"; then
+  LOG "could not point $T3_LINK at $target — staying on $current"; exit 1
+fi
+installed="$(ver)"
+[ "$installed" = "$target" ] || { LOG "post-activate version is $installed, expected $target — rolling back"; rollback_binary; exit 1; }
+LOG "health gate passed for $target and $T3_LINK now points at it; canary-restarting idle instances one at a time"
 
 # ---- 6. canary rollout: idle instances one-by-one, verify pairing after each ----
 restarted=0; deferred=0
@@ -217,3 +177,4 @@ done
 # ---- 7. success: advance last-good ----------------------------------------------
 echo "$target" >"$LAST_GOOD_FILE"
 LOG "update complete: $target (restarted=$restarted deferred=$deferred); last_good now $target"
+prune_versions "$target" "$last_good"
