@@ -110,6 +110,8 @@ resource "helm_release" "kured" {
   cleanup_on_fail = true
   timeout         = 900
 
+  depends_on = [kubernetes_manifest.notify_external_secret]
+
   values = [yamlencode({
     configuration = {
       period    = "1h0m0s"
@@ -134,7 +136,6 @@ resource "helm_release" "kured" {
       # nodes stopped rebooting on 2026-05-10 when unattended-upgrades was
       # re-enabled. Fixed 2026-05-16.
       rebootSentinel = "/var/run/gated-reboot-required"
-      notifyUrl      = data.vault_kv_secret_v2.secrets.data["slack_kured_webhook"]
       concurrency    = 1
       rebootDelay    = "30s"
       # Fail closed instead of looping forever. Default is 0 (unlimited) — if
@@ -192,6 +193,19 @@ resource "helm_release" "kured" {
       alertFiringOnly      = true
       alertFilterMatchOnly = true
     }
+    # The Slack webhook reaches kured as KURED_NOTIFY_URL from a Secret
+    # (kured maps KURED_<FLAG> env vars onto its flags). The chart's
+    # configuration.notifyUrl would render it into the DaemonSet args as
+    # --notify-url, readable by anyone who can read DaemonSets.
+    extraEnvVars = [{
+      name = "KURED_NOTIFY_URL"
+      valueFrom = {
+        secretKeyRef = {
+          name = "kured-notify"
+          key  = "notify_url"
+        }
+      }
+    }]
     reboot_days  = "mon,tue,wed,thu,fri,sat,sun"
     window_end   = "06:00"
     window_start = "22:00"
@@ -220,9 +234,40 @@ resource "helm_release" "kured" {
   })]
 }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "kured"
+# Synced from Vault secret/kured by ESO. Terraform waits for the sync before
+# the Helm release, because kured pods cannot start without the Secret.
+resource "kubernetes_manifest" "notify_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "kured-notify"
+      namespace = kubernetes_namespace.kured.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "kured-notify"
+      }
+      data = [{
+        secretKey = "notify_url"
+        remoteRef = {
+          key      = "kured"
+          property = "slack_kured_webhook"
+        }
+      }]
+    }
+  }
+  wait {
+    condition {
+      type   = "Ready"
+      status = "True"
+    }
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -338,7 +383,7 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           # tags moved to bitnamilegacy in 2025), so this is latest@digest:
           # the digest makes the pin immutable and Renovate bumps it.
           image             = "bitnami/kubectl:latest@sha256:599e67d36ff511e071ffe9a002347e58cf395e9fbd5f4992c233fd5e089e333e"
-          image_pull_policy = "Always"
+          image_pull_policy = "IfNotPresent"
           command = [
             "/bin/bash",
             "-c",

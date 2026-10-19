@@ -120,3 +120,14 @@ daemonsets:
       operator: "Equal"
       value: "true"
       effect: "NoSchedule"
+
+# Operator leader election. The default renew deadline is 10s, and the lease
+# client times out at half of it, so one slow etcd write (the WAL shares the
+# pve HDD sdc with every VM disk) makes the operator lose its lease and exit:
+# 62 restarts in the 3 days to 2026-10-19, most in the same seconds as the
+# other controllers. The chart passes this as --leader-lease-renew-deadline,
+# and the operator sets the lease duration to the deadline plus 5s. 45s
+# matches the controller-manager, scheduler and CNPG operator tuning.
+operator:
+  leaderElection:
+    renewDeadline: 45s
