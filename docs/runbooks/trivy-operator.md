@@ -37,7 +37,7 @@ These alerts post at most once a day per alert (own Alertmanager route, `group_i
 
 ## Force a rescan
 
-Reports expire after 72h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job:
+Reports expire after 72h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job. It starts within a minute when fewer than 2 scan Jobs are running; otherwise the operator retries after `scanJobsRetryDelay` (15 minutes):
 
 ```sh
 kubectl -n <ns> delete vulnerabilityreport <report-name>
@@ -70,7 +70,7 @@ Reports of other workloads pick up the change at their next scan (72h TTL at the
 
 ## Completed one-shot Jobs stay scanned
 
-Standalone Jobs (db-init, migrations, one-off exports) keep their reports for as long as the Job object exists, and the operator rescans them at every 72h TTL, even after they completed. Operator v0.35.0 skips only CronJob-owned Jobs; there is no setting for completed ones. Deleting the report does not help: the operator sees the missing report and scans the Job again within a minute. Most of these Jobs are Terraform `kubernetes_job` resources, and adding `ttl_seconds_after_finished` to one would let Kubernetes delete it, after which the next apply recreates it and runs the job again. So they are left in place; the reports go when the Job object is deleted.
+Standalone Jobs (db-init, migrations, one-off exports) keep their reports for as long as the Job object exists, and the operator rescans them at every 72h TTL, even after they completed. Operator v0.35.0 skips only CronJob-owned Jobs; there is no setting for completed ones. Deleting the report does not help: the operator sees the missing report and scans the Job again at the next free scan slot (seen on 2026-10-19: a deleted report for the completed `broker-sync/imap-retry` Job came back 16 minutes later). Most of these Jobs are Terraform `kubernetes_job` resources, and adding `ttl_seconds_after_finished` to one would let Kubernetes delete it, after which the next apply recreates it and runs the job again. So they are left in place; the reports go when the Job object is deleted.
 
 ## Scan jobs fail
 
