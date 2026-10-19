@@ -8,6 +8,10 @@ FROM python:3.15-alpine3.24
 # postgresql-client: net-worth-to-ha (wealthfolio) reads the wealthfolio_sync DB
 RUN apk add --no-cache curl jq sqlite openssh-client postgresql-client
 
+# pip is removed once the pins are installed: nothing pip-installs at runtime,
+# and pip's vendored urllib3, msgpack and setuptools carry High CVEs that no
+# pip release has fixed yet (pip 26.2.1, 2026-10).
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+    && rm /tmp/requirements.txt \
+    && pip uninstall -y pip
