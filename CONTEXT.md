@@ -434,6 +434,24 @@ _Avoid_: syncing a folder root when the servable content lives in a subfolder (s
 The HTML file a **Valia site** serves at `/`. Defaults to `index.html`; per-site override when she names it differently (stem95su: `stem_board.html`). The override is a registration-time setting, not a constraint on her authoring.
 _Avoid_: asking Valia to rename her files to fit hosting conventions.
 
+### Showcase
+
+**Showcase**:
+The public page at `pages.viktorbarzin.me/homelab` that shows the homelab to other homelabbers. It is generated from live state on a schedule and never edited by hand. Design: `docs/plans/2026-10-20-homelab-showcase-design.md`.
+_Avoid_: "dashboard" (Homepage at `home.viktorbarzin.me` is the dashboard; the Showcase is a read-only tour), "status page".
+
+**Snapshot**:
+The `data.json` that `homelab showcase build` writes: stats, hardware, layers, services and edges at one moment, stamped with the generation time and infra commit. Every **Variant** reads the same Snapshot and nothing else.
+_Avoid_: "export", "dump".
+
+**Variant**:
+One way of rendering the **Snapshot**: layered map with tour, follow a request, live service graph, filterable catalog. Variants share the Snapshot and a switcher, and each has its own visual style.
+_Avoid_: "view" or "tab" when you mean the renderer itself.
+
+**Plumbing edge**:
+An observed flow that connects almost every namespace and says nothing about how the homelab is put together: DNS lookups, Prometheus scrapes, host traffic (source `-`), and traffic from `kube-system`, `monitoring`, `uptime-kuma`, `verify` and `traefik`. The Showcase graph leaves Plumbing edges out (ADR-0037).
+_Avoid_: "noise" (the flows are real and useful elsewhere).
+
 ## Relationships
 
 - A **Service** is defined by exactly one **Stack** — **flat** or wrapping a **Stack-local module** — which sources zero or more shared **Factory modules** and resolves to one or more K8s workloads.
@@ -446,6 +464,7 @@ _Avoid_: asking Valia to rename her files to fit hosting conventions.
 - An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
 - A **Valia site** mirrors exactly one **Content folder** and serves exactly one **Entry file** at `/`; the folder is hers, the subdomain name is Viktor's, the hosting is off-infra.
+- The **Showcase** is one **Snapshot** rendered by four **Variants**; the Snapshot is rebuilt from live state, so a **Service** appears on the Showcase once its ingress exists, unless the ingress opts out.
 
 ## Example dialogue
 
