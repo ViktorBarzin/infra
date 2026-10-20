@@ -357,7 +357,40 @@ module "ingress_whisker" {
   }
 }
 
-# Additive NetworkPolicy: permit Traefik -> whisker:8443. ORs with the
+# Since Calico 3.33 the operator puts calico-system behind its own Calico tier
+# (`calico-system`, end-of-tier Deny), evaluated before Kubernetes
+# NetworkPolicies, and its `calico-system.whisker` policy selects the whisker
+# pod with Ingress and no ingress rules. So Traefik's traffic is dropped in
+# that tier and the Kubernetes policy below is never reached. This allow sits
+# in the same tier, next to the operator's policy (same pattern as the
+# Prometheus -> kube-controllers allow above).
+resource "kubectl_manifest" "allow_traefik_whisker" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "NetworkPolicy"
+    metadata = {
+      name      = "calico-system.allow-traefik-whisker"
+      namespace = "calico-system"
+    }
+    spec = {
+      tier     = "calico-system"
+      order    = 1000
+      selector = "k8s-app == 'whisker'"
+      types    = ["Ingress"]
+      ingress = [{
+        action   = "Allow"
+        protocol = "TCP"
+        source = {
+          namespaceSelector = "kubernetes.io/metadata.name == 'traefik'"
+        }
+        destination = { ports = [8443] }
+      }]
+    }
+  })
+}
+
+# Additive NetworkPolicy: permit Traefik -> whisker:8443. Kept for the case
+# where the calico-system tier goes away; today the tier policy above decides. ORs with the
 # operator's default-deny `whisker` NP (selecting the same pod) so Traefik
 # can reach the UI without touching the operator-owned policy.
 resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {

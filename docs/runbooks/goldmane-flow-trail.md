@@ -207,7 +207,7 @@ Also in `stacks/calico/main.tf`:
   ingress**: the operator's own `whisker` NetworkPolicy (owned by the Whisker CR)
   is `policyTypes: [Ingress]` with no rules = default-deny ingress to the pod.
   This additive NP ORs in an allow for `namespaceSelector
-  kubernetes.io/metadata.name=traefik` on TCP 8443 (8081 before Calico 3.33). Without it Traefik 502s.
+  kubernetes.io/metadata.name=traefik` on TCP 8443 (8081 before Calico 3.33). Since Calico 3.33 the operator's `calico-system` tier decides first, so the allow that matters is the Calico policy `calico-system.allow-traefik-whisker` in that tier (stacks/calico). Without it Traefik times out.
 
 ### The aggregator + digest (the durable trail) — `stacks/goldmane-edge-aggregator`
 A Tier-1 stack (PG state) mirroring the claude-memory pattern. `scripts/tg
