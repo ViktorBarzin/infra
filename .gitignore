@@ -138,3 +138,6 @@ __pycache__/
 # Playwright MCP session artifacts (page-*.yml accessibility snapshots,
 # console-*.log browser logs) — written into the CWD on every browser call.
 .playwright-mcp/
+
+# homelab showcase build output, generated (ADR-0037)
+showcase/web/data.json

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service catalogue · Viktor's homelab</title>
+<meta name="description" content="Every self-hosted service in Viktor Barzin's homelab on one page: filter by group, login type and name, see how a request reaches each one, and open the Terraform that declares it.">
+<meta property="og:title" content="Service catalogue of Viktor's homelab">
+<meta property="og:description" content="139 self-hosted services on one Dell R730 and a 6-node Kubernetes cluster. Filter them, see each request route, and read the Terraform behind every one.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="catalog.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top__inner">
+    <p class="brand"><span class="brand__mark" aria-hidden="true"></span>Viktor's homelab</p>
+    <nav id="switcher"></nav>
+  </div>
+</header>
+
+<main>
+  <section class="mast wrap" aria-labelledby="title">
+    <p class="eyebrow"><span>Catalogue</span><span id="edition"></span></p>
+    <h1 id="title"><span class="h1__n" id="title-n">139</span> self&#8209;hosted services, <span class="h1__soft">indexed.</span></h1>
+    <p class="lede">Everything below runs on one server in Sofia and is declared in Terraform in a public repo. Filter by group or by how you log in, open a card to see how a request reaches it, and follow the link to the code that runs it.</p>
+    <button type="button" class="jump" id="jump">Go to the service index <span aria-hidden="true">&#8595;</span></button>
+  </section>
+
+  <section class="plate wrap" id="hardware" aria-labelledby="hw-title">
+    <h2 class="plate__title" id="hw-title"><span class="plate__no">Plate I</span> The hardware</h2>
+    <div class="plate__body" id="hw-body"></div>
+  </section>
+
+  <section class="index wrap" aria-labelledby="idx-title">
+    <h2 class="plate__title" id="idx-title"><span class="plate__no">Plate II</span> Index of services</h2>
+    <div class="index__layout">
+      <aside class="controls" aria-label="Filters">
+        <div class="ctl">
+          <label class="ctl__label" for="q">Search</label>
+          <div class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+            <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Name, purpose or group">
+          </div>
+        </div>
+        <div class="ctl">
+          <p class="ctl__label" id="acc-label">How you get in</p>
+          <div class="seg seg--access" id="access" role="group" aria-labelledby="acc-label"></div>
+        </div>
+        <div class="ctl">
+          <p class="ctl__label" id="sort-label">Order</p>
+          <div class="seg seg--sort" id="sort" role="group" aria-labelledby="sort-label"></div>
+        </div>
+        <div class="ctl ctl--groups">
+          <p class="ctl__label" id="grp-label">Group</p>
+          <div class="chips" id="groups" role="group" aria-labelledby="grp-label"></div>
+        </div>
+      </aside>
+      <div class="results">
+        <div class="tally">
+          <p id="tally" aria-live="polite"></p>
+          <button type="button" class="reset" id="reset" hidden>Clear filters</button>
+        </div>
+        <div class="grid" id="grid"></div>
+        <p class="empty" id="empty" hidden>Nothing matches those filters. Try a shorter search or another group.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot"><div id="footer"></div></footer>
+
+<script type="module" src="catalog.js"></script>
+</body>
+</html>
