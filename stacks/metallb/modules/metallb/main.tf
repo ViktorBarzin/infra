@@ -34,12 +34,19 @@ resource "helm_release" "metallb" {
     frrk8s = {
       enabled = false
     }
+    # Priority class, set explicitly (2026-10-20). metallb-system is excluded
+    # from Kyverno's inject-priority-class-from-tier, so the controller and all
+    # six speakers ran at priority 0 and could be preempted by any tiered pod.
+    # The speakers announce every LoadBalancer IP (traefik, DNS, forgejo-ssh),
+    # so they sit with traefik at tier-0-core.
     controller = {
+      priorityClassName = "tier-0-core"
       image = {
         pullPolicy = "IfNotPresent"
       }
     }
     speaker = {
+      priorityClassName = "tier-0-core"
       image = {
         pullPolicy = "IfNotPresent"
       }
