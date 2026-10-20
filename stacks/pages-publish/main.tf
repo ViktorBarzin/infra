@@ -296,10 +296,11 @@ resource "kubernetes_service" "pages_publish" {
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": bearer-token API, Authentik would break programmatic clients
-  auth      = "none"
-  dns_type  = "proxied"
-  namespace = local.namespace
-  name      = "pages-publish"
+  auth           = "none"
+  dns_type       = "proxied"
+  namespace      = local.namespace
+  name           = "pages-publish"
+  homepage_group = "Productivity"
   # No Turnstile gate: machine-only API (docs/plans/2026-10-16-turnstile-sitewide-design.md).
   turnstile = false
   # Route to the Service's 8080 (svc-builder put it on 8080, not the

@@ -232,7 +232,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Poison Fountain"
     "gethomepage.dev/description"  = "AI bot trap"
     "gethomepage.dev/icon"         = "mdi-shield-alert"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Identity & Security"
     "gethomepage.dev/pod-selector" = ""
   }
 }

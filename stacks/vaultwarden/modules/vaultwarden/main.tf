@@ -221,7 +221,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Vaultwarden"
     "gethomepage.dev/description"  = "Password manager"
     "gethomepage.dev/icon"         = "vaultwarden.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Identity & Security"
     "gethomepage.dev/pod-selector" = ""
   }
 }

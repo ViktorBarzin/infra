@@ -122,7 +122,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "City Guesser"
     "gethomepage.dev/description"  = "Geography game"
     "gethomepage.dev/icon"         = "mdi-earth"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
 }

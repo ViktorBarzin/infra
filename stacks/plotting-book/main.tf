@@ -251,7 +251,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Plotting Book"
     "gethomepage.dev/description"  = "Interactive fiction"
     "gethomepage.dev/icon"         = "mdi-book-open-variant"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
 }
