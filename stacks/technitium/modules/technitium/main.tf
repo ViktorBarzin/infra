@@ -267,10 +267,6 @@ resource "kubernetes_deployment" "technitium" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
-        }
         labels = {
           app          = "technitium"
           "dns-server" = "true"

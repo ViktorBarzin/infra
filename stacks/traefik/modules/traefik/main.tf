@@ -72,8 +72,6 @@ resource "helm_release" "traefik" {
         }
       }
       podAnnotations = {
-        "diun.enable"       = "true"
-        "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
         # Traefik reads localPlugins ONLY at startup, and a source change only
         # rewrites the plugin ConfigMap, so without this a plugin edit sat
         # unloaded until some unrelated restart picked it up, on whichever pod

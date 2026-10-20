@@ -4004,6 +4004,25 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Dolt (beads-server) backup has never reported a successful run to Pushgateway"
+          # Dolt history backup (beads-server/dolt-history-backup, added
+          # 2026-10-19): full stores with commit history, restored from the NFS
+          # copy and checked before it pushes backup_last_success_timestamp.
+          # Daily at 01:45 UTC; same 36h threshold as the row backup above.
+          - alert: DoltHistoryBackupStale
+            expr: (time() - backup_last_success_timestamp{job="dolt-history-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dolt (beads-server) history backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:45)"
+              description: "beads-server/dolt-history-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-dolt.md."
+          - alert: DoltHistoryBackupNeverRun
+            expr: absent(backup_last_success_timestamp{job="dolt-history-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dolt (beads-server) history backup has never reported a successful run to Pushgateway"
           # PostgreSQL dumps, grouped: dbaas full dump, dbaas per-database
           # dumps, and the Immich dump. Each job pushes
           # backup_last_success_timestamp after the dump is written. The
