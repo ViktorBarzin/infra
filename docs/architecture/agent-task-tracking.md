@@ -121,7 +121,7 @@ The root `.beads/metadata.json`:
 
 ### bd version and schema
 
-The `code` database is at bd schema v66 (bd 1.3.x) since 2026-10-20, migrated from v32. bd 1.3 never migrates a shared server on open, and a schema change locks out older clients, so the devvm `bd`, the claude-agent-service image and BeadBoard's SQL queries move together. Procedure and compatibility notes: `docs/runbooks/beads-bd-upgrade.md`.
+The `code` database is at bd schema v66 (bd 1.3.x) since 2026-10-20, migrated from v32. bd 1.3 never migrates a shared server on open, and a schema change locks out older clients, so the devvm `bd`, the claude-agent-service image, and BeadBoard (its SQL reads and the `bd` in its image) move together. Procedure and compatibility notes: `docs/runbooks/beads-bd-upgrade.md`.
 
 ## Known Issues
 
