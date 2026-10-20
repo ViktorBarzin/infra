@@ -201,7 +201,7 @@ resource "helm_release" "tigera_operator" {
 # FELIX_FLOWLOGSGOLDMANESERVER env (operator auto-wires Felix — do NOT patch
 # FelixConfiguration) => a supervised calico-node DaemonSet roll. Goldmane:
 # Deployment + Service goldmane:7443 (gRPC/mTLS) in calico-system. Whisker:
-# Deployment + Service whisker:8081 in calico-system; its backend dials
+# Deployment + Service whisker:8443 (HTTPS since Calico 3.33) in calico-system; its backend dials
 # goldmane, so Goldmane must exist first (depends_on). notifications=Disabled
 # so the UI does not call the external Tigera notifications endpoint.
 #
@@ -300,7 +300,7 @@ resource "kubectl_manifest" "allow_prometheus_kube_controllers_metrics" {
 # ---------------------------------------------------------------------------
 # Gated public ingress for the Whisker UI (infra #57 / ADR-0014).
 #
-# whisker.viktorbarzin.me -> whisker:8081, Authentik-gated (auth="required":
+# whisker.viktorbarzin.me -> whisker-ui:8443 (HTTPS), Authentik-gated (auth="required":
 # Whisker ships NO own login — it's an admin observability UI, so Authentik
 # forward-auth is the only gate between strangers and the flow view). The
 # operator replicated `tls-secret` into calico-system already.
@@ -310,13 +310,42 @@ resource "kubectl_manifest" "allow_prometheus_kube_controllers_metrics" {
 # with NO ingress rules => default-deny on ingress to the whisker pod. The
 # additive NP below ORs in a Traefik allow (k8s NetworkPolicies are additive
 # across policies selecting the same pod), so we never edit the operator NP.
+#
+# Port history: Whisker served plain HTTP on 8081 until the Calico 3.33
+# upgrade (2026-10-12). Since then the operator's `whisker` Service exposes only
+# 8443 and the pod serves HTTPS there with an operator-issued certificate, so
+# the ingress pointed at a port that no longer existed and Traefik logged
+# "service port not found" from 2026-10-13. The operator owns that Service and
+# rewrites it, so Traefik reaches the pod through `whisker-ui` below, a Service
+# of our own that carries the HTTPS scheme and the insecure-skip-verify
+# transport (the certificate is signed by the operator's private CA).
+resource "kubernetes_service" "whisker_ui" {
+  metadata {
+    name      = "whisker-ui"
+    namespace = "calico-system"
+    annotations = {
+      "traefik.ingress.kubernetes.io/service.serversscheme"    = "https"
+      "traefik.ingress.kubernetes.io/service.serverstransport" = "traefik-insecure-skip-verify@kubernetescrd"
+    }
+  }
+  spec {
+    selector = { "k8s-app" = "whisker" }
+    port {
+      name        = "https"
+      port        = 8443
+      target_port = 8443
+      protocol    = "TCP"
+    }
+  }
+}
+
 module "ingress_whisker" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
   namespace       = "calico-system"
   name            = "whisker"
-  service_name    = "whisker"
-  port            = 8081
+  service_name    = kubernetes_service.whisker_ui.metadata[0].name
+  port            = 8443
   auth            = "required"
   tls_secret_name = "tls-secret"
   extra_annotations = {
@@ -328,7 +357,7 @@ module "ingress_whisker" {
   }
 }
 
-# Additive NetworkPolicy: permit Traefik -> whisker:8081. ORs with the
+# Additive NetworkPolicy: permit Traefik -> whisker:8443. ORs with the
 # operator's default-deny `whisker` NP (selecting the same pod) so Traefik
 # can reach the UI without touching the operator-owned policy.
 resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {
@@ -352,7 +381,7 @@ resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {
         }
       }
       ports {
-        port     = "8081"
+        port     = "8443"
         protocol = "TCP"
       }
     }

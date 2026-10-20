@@ -42,7 +42,7 @@ source workload, destination workload, destination service, port and action.
   login; `auth = "required"`). Shows the live flow stream + a service graph for
   roughly the last hour. Use it for "what is talking right now"; it is **not**
   history.
-- In-cluster: `Service goldmane:7443` (gRPC/mTLS), `Service whisker:8081`
+- In-cluster: `Service goldmane:7443` (gRPC/mTLS), `Service whisker:8443` (HTTPS since Calico 3.33; Traefik uses our `whisker-ui` Service on 8443)
   (HTTP), both in `calico-system`.
 - **DNS fix + self-heal:** whisker's egress to the kube-dns ClusterIP is allowed
   by `whisker-allow-dns-clusterip` (`stacks/calico`) — without it the UI goes
@@ -193,7 +193,7 @@ operator-managed via the `goldmanes`/`whiskers.operator.tigera.io` CRDs):
   supervised `calico-node` DaemonSet roll. Yields `Deployment` + `Service
   goldmane:7443`.
 - `kubectl_manifest.whisker` (kind `Whisker`, `depends_on` goldmane;
-  `notifications = Disabled`). Yields `Deployment` + `Service whisker:8081`.
+  `notifications = Disabled`). Yields `Deployment` + `Service whisker:8443` (8081 before Calico 3.33).
 
 **To disable:** delete those two CRs and re-apply `stacks/calico`. Reversible
 toggle (Goldmane is tech-preview in OSS Calico 3.30 — the main standing risk per
@@ -207,7 +207,7 @@ Also in `stacks/calico/main.tf`:
   ingress**: the operator's own `whisker` NetworkPolicy (owned by the Whisker CR)
   is `policyTypes: [Ingress]` with no rules = default-deny ingress to the pod.
   This additive NP ORs in an allow for `namespaceSelector
-  kubernetes.io/metadata.name=traefik` on TCP 8081. Without it Traefik 502s.
+  kubernetes.io/metadata.name=traefik` on TCP 8443 (8081 before Calico 3.33). Without it Traefik 502s.
 
 ### The aggregator + digest (the durable trail) — `stacks/goldmane-edge-aggregator`
 A Tier-1 stack (PG state) mirroring the claude-memory pattern. `scripts/tg
