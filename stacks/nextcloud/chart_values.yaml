@@ -154,8 +154,6 @@ readinessProbe:
   successThreshold: 1
 
 podAnnotations:
-  diun.enable: "true"
-  diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
   dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis-master.redis:6379"
   secret.reloader.stakater.com/reload: "nextcloud-db-creds"
 
