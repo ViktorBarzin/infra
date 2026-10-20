@@ -1525,6 +1525,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 cd /backup
                 find . -name "dump_*.sql" -type f -mtime +14 -delete
                 find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                # A SIGKILLed run (OOM, node loss) skips the EXIT trap and leaves
+                # its .partial. The patterns above never match it, so clear those
+                # older than a day; the running dump's .partial is minutes old.
+                find . -name "dump_*.sql.gz.partial" -type f -mtime +0 -delete
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
