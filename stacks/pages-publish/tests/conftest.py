@@ -6,6 +6,7 @@ from app import config
 def make_cfg(repo_dir: str) -> config.Config:
     return config.Config(
         key_map={"tok-viktor": "wizard", "tok-emo": "emo"},
+        bundle_map={"tok-bundle": ("showcase", "homelab")},
         repo_dir=repo_dir,
         deploy_key_path="/etc/pages-deploy/id_ed25519",
         render_script="/repo/pages/tools/render.py",
@@ -64,6 +65,10 @@ def client(cfg, monkeypatch):
         }
         return True
 
+    def fake_stage_and_commit_bundle(_cfg, subdir, user, slug):
+        calls["commit_bundle"] = {"subdir": subdir, "user": user, "slug": slug}
+        return True
+
     def fake_push_to_master(_cfg, user):
         calls["push"] = {"user": user}
         return True, ""
@@ -72,6 +77,9 @@ def client(cfg, monkeypatch):
     monkeypatch.setattr(publisher, "sync_to_master", fake_sync_to_master)
     monkeypatch.setattr(publisher, "render_page", fake_render_page)
     monkeypatch.setattr(publisher, "stage_and_commit", fake_stage_and_commit)
+    monkeypatch.setattr(
+        publisher, "stage_and_commit_bundle", fake_stage_and_commit_bundle
+    )
     monkeypatch.setattr(publisher, "push_to_master", fake_push_to_master)
 
     test_client = TestClient(main.create_app(cfg))

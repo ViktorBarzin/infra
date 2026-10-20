@@ -10,9 +10,12 @@ or ``<repo>/pages/shared/``.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -39,6 +42,18 @@ _ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
 # Assets are text (css/js). A preview of a page with a mermaid diagram carries
 # mermaid.min.js, ~3.5 MB, so the ceiling is well above that and still bounded.
 MAX_ASSET_BYTES = 8 * 1024 * 1024
+
+
+# /publish-bundle limits. The showcase site is a handful of text files plus one
+# OpenGraph PNG; these leave room for growth while bounding one request.
+MAX_BUNDLE_FILES = 200
+MAX_BUNDLE_BYTES = 20 * 1024 * 1024
+MAX_BUNDLE_DEPTH = 3  # path segments, so "a/b/file" at most
+BUNDLE_ENCODINGS = ("utf-8", "base64")
+
+# Second-level dirs under pages/ that belong to the site itself, not to a
+# bundle owner.
+_RESERVED_SEGMENTS = ("shared", "assets", "tools")
 
 
 class PublishError(Exception):
@@ -408,3 +423,191 @@ def render_preview(
         "html": html,
         "assets": collect_assets(cfg, html),
     }
+
+
+# ---- bundles: raw multi-file publish into pages/<user>/<slug>/ -------------
+
+
+def _check_bundle_path(path: str) -> list[str]:
+    """Split a bundle file path into safe segments, or reject it.
+
+    Every segment must match the slug charset, contain no ``..`` and not start
+    with ``.`` (which rules out ``.git`` and other dotfiles git or Caddy would
+    treat specially). Empty segments catch a leading ``/``, ``a//b`` and a
+    trailing ``/``.
+    """
+    segments = path.split("/")
+    if len(segments) > MAX_BUNDLE_DEPTH or any(
+        not seg
+        or seg.startswith(".")
+        or ".." in seg
+        or not _SLUG_RE.fullmatch(seg)
+        for seg in segments
+    ):
+        raise PublishError(
+            f"invalid bundle path {path!r}: use up to {MAX_BUNDLE_DEPTH} "
+            "'/'-separated segments of [0-9A-Za-z._-], none starting with '.'"
+        )
+    return segments
+
+
+def validate_bundle_files(files: list[dict]) -> list[tuple[str, bytes]]:
+    """Check and decode a bundle's files into ``[(relative path, bytes)]``.
+
+    Runs before anything touches the clone, so a rejected bundle leaves the
+    repo exactly as it was.
+    """
+    if not files:
+        raise PublishError("a bundle needs at least one file")
+    if len(files) > MAX_BUNDLE_FILES:
+        raise PublishError(f"a bundle holds at most {MAX_BUNDLE_FILES} files")
+
+    out: list[tuple[str, bytes]] = []
+    seen: set[str] = set()
+    dirs: set[str] = set()
+    total = 0
+    for f in files:
+        path, content = f["path"], f["content"]
+        encoding = f.get("encoding", "utf-8")
+        segments = _check_bundle_path(path)
+        if path in seen:
+            raise PublishError(f"duplicate bundle path {path!r}")
+        seen.add(path)
+        dirs.update("/".join(segments[:i]) for i in range(1, len(segments)))
+
+        if encoding == "utf-8":
+            data = content.encode("utf-8")
+        elif encoding == "base64":
+            try:
+                data = base64.b64decode(content, validate=True)
+            except (binascii.Error, ValueError) as e:
+                raise PublishError(f"invalid base64 for {path!r}: {e}") from e
+        else:
+            raise PublishError(
+                f"encoding for {path!r} must be one of {BUNDLE_ENCODINGS}"
+            )
+        total += len(data)
+        if total > MAX_BUNDLE_BYTES:
+            raise PublishError(f"a bundle holds at most {MAX_BUNDLE_BYTES} bytes")
+        out.append((path, data))
+
+    clash = seen & dirs
+    if clash:
+        raise PublishError(f"bundle paths used as both file and directory: {sorted(clash)}")
+    return out
+
+
+def bundle_subdir(user: str, slug: str) -> str:
+    """Repo-relative bundle dir, ``pages/<user>/<slug>``, from token-bound values.
+
+    Both segments come from PAGES_BUNDLE_KEYS and were validated at config
+    load; re-checked here as defense in depth, plus the site's own dirs.
+    """
+    for seg in (user, slug):
+        if not seg or ".." in seg or not _SLUG_RE.fullmatch(seg):
+            raise PublishError(f"unsafe bundle segment {seg!r}")
+    if user in _RESERVED_SEGMENTS:
+        raise PublishError(f"bundle user {user!r} is a reserved pages/ dir")
+    return f"{PAGES_PREFIX}/{user}/{slug}"
+
+
+def stage_and_commit_bundle(cfg: Config, subdir: str, user: str, slug: str) -> bool:
+    """Stage the bundle dir, deletions included, and commit. False = unchanged.
+
+    ``add -A`` is what stages the files a new bundle dropped; the pathspec keeps
+    it, and the emptiness check, inside the bundle dir.
+    """
+    env = _git_env(cfg, author=user)
+    add = _run(["git", "-C", cfg.repo_dir, "add", "-A", "--", f"{subdir}/"], env=env)
+    if add.returncode != 0:
+        log.error("git add failed: %s", add.stderr.strip())
+        raise RenderError(f"git add failed: {add.stderr.strip()}")
+
+    st = _run(
+        ["git", "-C", cfg.repo_dir, "status", "--porcelain", "--", f"{subdir}/"],
+        env=env,
+    )
+    if not st.stdout.strip():
+        return False
+
+    msg = f"pages: publish bundle {user}/{slug}"
+    commit = _run(["git", "-C", cfg.repo_dir, "commit", "-m", msg], env=env)
+    if commit.returncode != 0:
+        log.error("git commit failed: %s", commit.stderr.strip())
+        raise RenderError(f"git commit failed: {commit.stderr.strip()}")
+    return True
+
+
+def _write_bundle(cfg: Config, subdir: str, files: list[tuple[str, bytes]]) -> None:
+    """Replace ``<repo>/<subdir>`` with exactly ``files``.
+
+    The realpath check runs here, after the sync, because the checkout it
+    guards is whatever master just put on disk: a symlink committed anywhere
+    on the path would otherwise point the rmtree outside the bundle dir.
+    """
+    abs_target = os.path.join(cfg.repo_dir, subdir)
+    expected = os.path.join(os.path.realpath(cfg.repo_dir), subdir)
+    if os.path.realpath(abs_target) != expected:
+        raise PublishError("bundle target resolves outside its pages/ dir")
+
+    if os.path.isdir(abs_target):
+        shutil.rmtree(abs_target)
+    for rel, data in files:
+        path = os.path.join(abs_target, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+
+
+def publish_bundle(
+    cfg: Config,
+    *,
+    user: str,
+    slug: str,
+    files: list[dict],
+    attempts: int = DEFAULT_ATTEMPTS,
+) -> dict:
+    """Validate -> (sync -> replace dir -> commit -> push), like :func:`publish`.
+
+    ``user`` and ``slug`` come from the bundle token, never the request body.
+    Rewriting the files after every sync is what makes a lost push race safe to
+    retry: the bundle is the whole content of its dir, so writing it over the
+    master that won gives the same tree with nothing to merge. Nothing is
+    rendered; the files are committed as sent.
+    """
+    decoded = validate_bundle_files(files)
+    subdir = bundle_subdir(user, slug)
+    result = {
+        "url": f"{cfg.base_url}/{slug}/",
+        "path": subdir,
+        "committed": False,
+        "files": len(decoded),
+    }
+
+    ensure_repo(cfg)
+
+    last_err = ""
+    for attempt in range(1, attempts + 1):
+        sync_to_master(cfg)
+        _write_bundle(cfg, subdir, decoded)
+
+        if not stage_and_commit_bundle(cfg, subdir, user, slug):
+            log.info("bundle %s: already current, nothing to push", subdir)
+            return result
+
+        pushed, err = push_to_master(cfg, user)
+        if pushed:
+            log.info("published bundle %s (%d files) -> %s", subdir, len(decoded), result["url"])
+            return {**result, "committed": True}
+
+        last_err = err
+        log.warning(
+            "push rejected for bundle %s (attempt %d/%d), rewriting onto master: %s",
+            subdir,
+            attempt,
+            attempts,
+            err,
+        )
+
+    log.error("bundle %s failed after %d attempts: %s", subdir, attempts, last_err)
+    raise RenderError(f"git push failed after {attempts} attempts: {last_err}")
