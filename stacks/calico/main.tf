@@ -209,12 +209,24 @@ resource "helm_release" "tigera_operator" {
 # Calico Cloud/Enterprise-gated (no OSS knob to aim it at Loki), so the trail
 # is a separate consumer of goldmane's gRPC Flows API (ADR-0014 / issue #58).
 # Whisker alone is a ~60-min in-memory live view. Reversible: delete to disable.
+#
+# Priority class (2026-10-20): calico-system is excluded from Kyverno's
+# inject-priority-class-from-tier, and the operator renders these Deployments
+# without a class, so goldmane, whisker and both calico-apiserver pods ran at
+# priority 0 and could be preempted by any tiered pod. The operator's
+# per-component override sets it; tier-1-cluster, like the rest of the
+# cluster plumbing.
 resource "kubectl_manifest" "goldmane" {
   depends_on = [helm_release.tigera_operator]
   yaml_body = yamlencode({
     apiVersion = "operator.tigera.io/v1"
     kind       = "Goldmane"
     metadata   = { name = "default" }
+    spec = {
+      goldmaneDeployment = {
+        spec = { template = { spec = { priorityClassName = "tier-1-cluster" } } }
+      }
+    }
   })
 }
 
@@ -224,7 +236,30 @@ resource "kubectl_manifest" "whisker" {
     apiVersion = "operator.tigera.io/v1"
     kind       = "Whisker"
     metadata   = { name = "default" }
-    spec       = { notifications = "Disabled" }
+    spec = {
+      notifications = "Disabled"
+      whiskerDeployment = {
+        spec = { template = { spec = { priorityClassName = "tier-1-cluster" } } }
+      }
+    }
+  })
+}
+
+# The APIServer CR "default" was created by hand with an empty spec in 2024
+# and was not in Terraform until 2026-10-20, when it was adopted here only to
+# carry the priority class above (kubectl_manifest applies over the existing
+# object; nothing else in its spec changes).
+resource "kubectl_manifest" "apiserver" {
+  depends_on = [helm_release.tigera_operator]
+  yaml_body = yamlencode({
+    apiVersion = "operator.tigera.io/v1"
+    kind       = "APIServer"
+    metadata   = { name = "default" }
+    spec = {
+      apiServerDeployment = {
+        spec = { template = { spec = { priorityClassName = "tier-1-cluster" } } }
+      }
+    }
   })
 }
 
