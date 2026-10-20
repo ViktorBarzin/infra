@@ -101,7 +101,8 @@ agent:
     # flags.go registers it as "keepalive-time", so the env var never arrives
     # and gRPC raises the resulting 0 to its 10s minimum. Set to the same 10s so
     # the pairing with the server's WOODPECKER_KEEPALIVE_MIN_TIME above still
-    # holds once upstream fixes the flag name.
+    # holds once upstream fixes the flag name. Tracked upstream in
+    # https://github.com/woodpecker-ci/woodpecker/issues/7350
     WOODPECKER_KEEPALIVE_TIME: "10s"
   persistence:
     enabled: false
