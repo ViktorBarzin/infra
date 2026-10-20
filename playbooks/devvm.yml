@@ -1371,6 +1371,7 @@
       delegate_to: localhost
       become: false
       check_mode: false
+      changed_when: false   # scratch on the controller, not state on the box
 
     - name: Build t3-dispatch from the repo source
       ansible.builtin.command:
@@ -1399,6 +1400,7 @@
       delegate_to: localhost
       become: false
       check_mode: false
+      changed_when: false   # scratch on the controller, not state on the box
 
     # The per-tool schedules this replaces. Stopped and disabled before their
     # unit files go, or systemd keeps an enabled symlink pointing at nothing.
