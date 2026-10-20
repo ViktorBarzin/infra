@@ -36,6 +36,8 @@ time.sleep(float(os.environ.get("FAKE_DELAY", "0")))
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
+        if os.environ.get("FAKE_LOG"):
+            open(os.environ["FAKE_LOG"], "a").write(self.path + "\n")
         self.send_response(200)
         if os.environ.get("FAKE_GET_COOKIE"):
             self.send_header("Set-Cookie", os.environ["FAKE_GET_COOKIE"] + "=x; Path=/")
@@ -215,6 +217,17 @@ touch "$TMP/unit-failed"; start=$(date +%s)
 DISPATCH="127.0.0.1:1" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=120 notok safe_restart_unit t3-serve@u.service u
 ok    test $(( $(date +%s) - start )) -lt 20
 rm -f "$TMP/unit-failed" "$TMP/freeze"
+# no pairing attempt (no mint) until the instance itself answers
+mkdir -p "$TMP/serve-env"; iport=$((T3_SMOKE_PORT + 5)); echo "T3_PORT=$iport" >"$TMP/serve-env/u.env"
+dport4=$((T3_SMOKE_PORT + 6)); : >"$TMP/dispatch-hits"
+FAKE_LOG="$TMP/dispatch-hits" FAKE_GET_COOKIE=t3_session_f8ce9cd41c1b python3 -I "$TMP/fake-server.py" "$dport4" & holders="$holders $!"
+until curl -s -o /dev/null "http://127.0.0.1:$dport4/"; do sleep 0.2; done; : >"$TMP/dispatch-hits"
+T3_SERVE_ENV_DIR="$TMP/serve-env" DISPATCH="127.0.0.1:$dport4" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=4 notok safe_restart_unit t3-serve@u.service u
+eq    "$(wc -l <"$TMP/dispatch-hits")" "0" "no dispatch call while the instance is down"
+rm -f "$TMP/freeze"
+FAKE_DELAY=3 python3 -I "$TMP/fake-server.py" "$iport" & holders="$holders $!"
+T3_SERVE_ENV_DIR="$TMP/serve-env" DISPATCH="127.0.0.1:$dport4" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=60 ok safe_restart_unit t3-serve@u.service u
+eq    "$(wc -l <"$TMP/dispatch-hits")" "1" "exactly one dispatch call once the instance answers"
 
 # --- unit_busy: an agent anywhere in the unit's cgroup counts ---
 cat >"$TMP/bin/systemctl" <<'EOF'

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -676,5 +677,86 @@ func TestHandlerRepairsLegacyCookieAgainstHashedInstance(t *testing.T) {
 	}
 	if cs := w.Result().Cookies(); len(cs) == 0 || cs[0].Name != hashedCookie || cs[0].Value != "fresh" {
 		t.Fatalf("want fresh %s relayed, got %+v", hashedCookie, cs)
+	}
+}
+
+// On 0.1.0 every `t3 auth pairing create` starts its own copy of the first-start
+// state import while the instance is still importing. On 2026-10-20 repeated
+// pairing attempts against a starting instance spawned ~70 of them and filled
+// the devvm disk. The dispatch must not mint until the instance answers.
+func TestAutoPairWaitsForInstance(t *testing.T) {
+	ts := httptest.NewServer(http.NotFoundHandler())
+	p := portOf(t, ts)
+	ts.Close() // nothing listening: the instance is still starting
+	setTable(p)
+	minted := 0
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) { minted++; return []byte(`{"credential":"tok"}`), nil }
+	defer func() { mintToken = orig }()
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 while the instance is down, got %d", w.Code)
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Fatal("want a Retry-After header")
+	}
+	if minted != 0 {
+		t.Fatalf("must not mint against a down instance, minted %d", minted)
+	}
+}
+
+// Only one mint per user at a time: a second request while one is in flight
+// gets 503 instead of starting another t3 CLI.
+func TestAutoPairOneMintPerUser(t *testing.T) {
+	ts := pairInstance("/api/auth/browser-session", nil)
+	defer ts.Close()
+	setTable(portOf(t, ts))
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	var mu2 sync.Mutex
+	minted := 0
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) {
+		mu2.Lock()
+		minted++
+		mu2.Unlock()
+		started <- struct{}{}
+		<-release
+		return []byte(`{"credential":"tok"}`), nil
+	}
+	defer func() { mintToken = orig }()
+
+	first := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+		handler(first, r)
+		close(done)
+	}()
+	<-started
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	second := httptest.NewRecorder()
+	handler(second, r)
+	if second.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second concurrent pair should get 503, got %d", second.Code)
+	}
+
+	close(release)
+	<-done
+	if first.Code != http.StatusFound {
+		t.Fatalf("first pair should complete with 302, got %d", first.Code)
+	}
+	mu2.Lock()
+	defer mu2.Unlock()
+	if minted != 1 {
+		t.Fatalf("want exactly one mint, got %d", minted)
 	}
 }
