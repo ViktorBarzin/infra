@@ -735,6 +735,7 @@ module "stacks_ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "stacks"
+  homepage_group  = "Media & Entertainment"
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name
   auth            = "required"

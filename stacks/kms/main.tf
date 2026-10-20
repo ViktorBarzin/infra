@@ -127,7 +127,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "KMS"
     "gethomepage.dev/description"  = "License activation server"
     "gethomepage.dev/icon"         = "microsoft.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
   }
 }
