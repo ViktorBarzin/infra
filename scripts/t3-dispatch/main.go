@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +28,33 @@ type entry struct {
 }
 
 const (
-	cookieName   = "t3_session" // discovered: apps/server/src/auth/utils.ts (web mode)
+	cookieName   = "t3_session" // web-mode name before 0.1.0 (apps/server/src/auth/utils.ts)
 	listenAddr   = ":3780"
 	dispatchFile = "/etc/t3-serve/dispatch.json"
 )
+
+// hashedCookieRe matches the name t3 0.1.0 issues in web mode on a
+// remote-reachable host: t3_session_ + the first 12 hex chars of
+// sha256(environment-id) (resolveSessionCookieName in the 0.1.0 server).
+var hashedCookieRe = regexp.MustCompile(`^t3_session_[0-9a-f]{12}$`)
+
+// sessionCookie returns the browser's t3 session cookie under either name, so
+// one dispatch binary works against 0.0.x (t3_session) and 0.1.0
+// (t3_session_<hash>) instances, including across the upgrade. The hashed name
+// wins when both are present: a leftover t3_session from before the upgrade
+// would otherwise be checked, fail, and force a needless re-pair.
+func sessionCookie(r *http.Request) (*http.Cookie, bool) {
+	var legacy *http.Cookie
+	for _, c := range r.Cookies() {
+		if hashedCookieRe.MatchString(c.Name) {
+			return c, true
+		}
+		if c.Name == cookieName && legacy == nil {
+			legacy = c
+		}
+	}
+	return legacy, legacy != nil
+}
 
 var (
 	mu    sync.RWMutex
@@ -68,7 +92,7 @@ var mintToken = func(osUser string) ([]byte, error) {
 
 var sessionClient = &http.Client{Timeout: 5 * time.Second}
 
-// sessionValid asks the user's instance whether the presented t3_session cookie
+// sessionValid asks the user's instance whether the presented session cookie
 // is still valid. Server-side sessions can be wiped/expired independently of the
 // 30-day cookie (e.g. an auth-schema rollback drops every session row), leaving
 // the browser with a live-looking but dead cookie. Fails OPEN: any error/non-200/
@@ -150,7 +174,7 @@ func exchangeCredential(port int, credential string) (*http.Response, string, er
 
 // autoPair mints a one-time pairing token for the user's instance (as that OS
 // user, via the scoped sudoers entry) and exchanges it at the instance's pairing
-// endpoint, relaying the returned t3_session Set-Cookie to the browser.
+// endpoint, relaying the returned session Set-Cookie to the browser.
 func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 	// t3-mint (root, via scoped sudoers) validates the OS user is in
 	// /etc/ttyd-user-map, then mints as that user. The dispatch service itself
@@ -181,7 +205,7 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, c := range resp.Cookies() {
-		http.SetCookie(w, c) // relays t3_session (HttpOnly; Path=/; SameSite=Lax)
+		http.SetCookie(w, c) // relays the session cookie, either name (HttpOnly; Path=/; SameSite=Lax)
 	}
 	// Success line is the steady-state signal: endpoint= which pairing path won,
 	// fallback=true iff we fell back off the first-preference endpoint (running
@@ -203,8 +227,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no t3 instance provisioned for this user", http.StatusForbidden)
 		return
 	}
-	c, err := r.Cookie(cookieName)
-	if err != nil {
+	c, ok := sessionCookie(r)
+	if !ok {
 		autoPair(e, w, r)
 		return
 	}

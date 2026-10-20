@@ -36,9 +36,14 @@ time.sleep(float(os.environ.get("FAKE_DELAY", "0")))
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+        self.send_response(200)
+        if os.environ.get("FAKE_GET_COOKIE"):
+            self.send_header("Set-Cookie", os.environ["FAKE_GET_COOKIE"] + "=x; Path=/")
+        self.end_headers(); self.wfile.write(b"ok")
     def do_POST(self):
-        self.send_response(200); self.send_header("Set-Cookie", "t3_session=x; Path=/"); self.end_headers()
+        self.send_response(200)
+        self.send_header("Set-Cookie", os.environ.get("FAKE_COOKIE", "t3_session") + "=x; Path=/")
+        self.end_headers()
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 EOF
 
@@ -160,6 +165,28 @@ FAKE_MODE=migerr SMOKE_READY_TIMEOUT=120 notok health_check "$(version_entry 0.6
 ok    test $(( $(date +%s) - start )) -lt 20
 ok    no_orphan
 grep -q 'migerr=1 wait=migration-error' "$TMP/calls"; eq "$?" 0 "migration error is named in the log line"
+
+# --- session cookie under either name: t3_session (0.0.x) or t3_session_<hash> (0.1.0) ---
+FAKE_COOKIE=t3_session_f8ce9cd41c1b SMOKE_READY_TIMEOUT=60 ok health_check "$(version_entry 0.6.0)"
+ok    no_orphan
+FAKE_COOKIE=t3_session_3773_f8ce9cd41c1b SMOKE_READY_TIMEOUT=60 notok health_check "$(version_entry 0.6.0)"   # loopback-style name is not what the dispatch relays
+ok    no_orphan
+grep -q 'live=1 pair=0' "$TMP/calls"; eq "$?" 0 "an unknown cookie name fails the pair step"
+
+# verify_pairing reads the dispatch's answer the same way
+echo "vbarzin=u" >"$TMP/user-map"
+dport=$((T3_SMOKE_PORT + 1))
+FAKE_GET_COOKIE=t3_session_f8ce9cd41c1b python3 -I "$TMP/fake-server.py" "$dport" & holders="$holders $!"
+until curl -s -o /dev/null "http://127.0.0.1:$dport/"; do sleep 0.2; done
+DISPATCH="127.0.0.1:$dport" USER_MAP="$TMP/user-map" ok verify_pairing u
+dport2=$((T3_SMOKE_PORT + 2))
+FAKE_GET_COOKIE=t3_session python3 -I "$TMP/fake-server.py" "$dport2" & holders="$holders $!"
+until curl -s -o /dev/null "http://127.0.0.1:$dport2/"; do sleep 0.2; done
+DISPATCH="127.0.0.1:$dport2" USER_MAP="$TMP/user-map" ok verify_pairing u
+dport3=$((T3_SMOKE_PORT + 3))
+python3 -I "$TMP/fake-server.py" "$dport3" & holders="$holders $!"
+until curl -s -o /dev/null "http://127.0.0.1:$dport3/"; do sleep 0.2; done
+DISPATCH="127.0.0.1:$dport3" USER_MAP="$TMP/user-map" notok verify_pairing u   # no cookie at all
 
 # --- unit_busy: an agent anywhere in the unit's cgroup counts ---
 cat >"$TMP/bin/systemctl" <<'EOF'

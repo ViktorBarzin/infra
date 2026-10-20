@@ -562,3 +562,119 @@ func TestHandlerLeavesHeadlessHTMLUntouched(t *testing.T) {
 		t.Errorf("headless HTML modified: %q -> %q", page, got)
 	}
 }
+
+// hashedCookie is the session cookie name t3 0.1.0 issues in web mode on a
+// remote-reachable host: t3_session_ + the first 12 hex chars of
+// sha256(environment-id). Before 0.1.0 it was plain t3_session.
+const hashedCookie = "t3_session_f8ce9cd41c1b"
+
+func TestSessionCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		names []string
+		want  string // "" = no session cookie
+	}{
+		{"legacy name (0.0.x)", []string{"t3_session"}, "t3_session"},
+		{"hashed name (0.1.0)", []string{hashedCookie}, hashedCookie},
+		{"both present: hashed wins", []string{"t3_session", hashedCookie}, hashedCookie},
+		{"both present, hashed first", []string{hashedCookie, "t3_session"}, hashedCookie},
+		{"none", nil, ""},
+		{"unrelated cookie", []string{"authentik_session"}, ""},
+		{"loopback-style port_hash name", []string{"t3_session_3773_f8ce9cd41c1b"}, ""},
+		{"too-short suffix", []string{"t3_session_f8ce"}, ""},
+		{"non-hex suffix", []string{"t3_session_zzzzzzzzzzzz"}, ""},
+		{"prefix only", []string{"t3_sessionx"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/", nil)
+			for _, n := range tc.names {
+				r.AddCookie(&http.Cookie{Name: n, Value: "v-" + n})
+			}
+			c, ok := sessionCookie(r)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("want no session cookie, got %q", c.Name)
+				}
+				return
+			}
+			if !ok || c.Name != tc.want || c.Value != "v-"+tc.want {
+				t.Fatalf("want %q, got ok=%v %+v", tc.want, ok, c)
+			}
+		})
+	}
+}
+
+// hashedInstance models a 0.1.0 serve: it issues and accepts only the hashed
+// cookie, and records which cookie names the session check received.
+func hashedInstance(sessionCookies *[]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/session":
+			_, err := r.Cookie(hashedCookie)
+			if sessionCookies != nil {
+				for _, c := range r.Cookies() {
+					*sessionCookies = append(*sessionCookies, c.Name)
+				}
+			}
+			_, _ = w.Write([]byte(`{"authenticated":` + strconv.FormatBool(err == nil) + `}`))
+		case "/api/auth/browser-session":
+			http.SetCookie(w, &http.Cookie{Name: hashedCookie, Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"authenticated":true}`))
+		default:
+			_, _ = w.Write([]byte("APP"))
+		}
+	}))
+}
+
+// A browser holding the 0.1.0 cookie must be proxied, not sent round the
+// pairing loop again (the dispatch used to look only for t3_session, so it
+// would re-pair on every request).
+func TestHandlerProxiesOnHashedCookie(t *testing.T) {
+	var got []string
+	ts := hashedInstance(&got)
+	defer ts.Close()
+	setTable(portOf(t, ts))
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) { t.Fatal("must not mint for a valid hashed cookie"); return nil, nil }
+	defer func() { mintToken = orig }()
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.AddCookie(&http.Cookie{Name: hashedCookie, Value: "good"})
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusOK || w.Body.String() != "APP" {
+		t.Fatalf("hashed cookie should proxy (200 APP), got %d %q", w.Code, w.Body.String())
+	}
+	if len(got) != 1 || got[0] != hashedCookie {
+		t.Fatalf("session check should carry the hashed cookie, got %v", got)
+	}
+}
+
+// After an upgrade the browser still holds the old t3_session next to nothing
+// else; 0.1.0 does not recognise it, so a document nav re-pairs and relays the
+// new hashed cookie.
+func TestHandlerRepairsLegacyCookieAgainstHashedInstance(t *testing.T) {
+	ts := hashedInstance(nil)
+	defer ts.Close()
+	setTable(portOf(t, ts))
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) { return []byte(`{"credential":"tok"}`), nil }
+	defer func() { mintToken = orig }()
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.AddCookie(&http.Cookie{Name: "t3_session", Value: "old"})
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("legacy cookie on a 0.1.0 instance should re-pair (302), got %d", w.Code)
+	}
+	if cs := w.Result().Cookies(); len(cs) == 0 || cs[0].Name != hashedCookie || cs[0].Value != "fresh" {
+		t.Fatalf("want fresh %s relayed, got %+v", hashedCookie, cs)
+	}
+}
