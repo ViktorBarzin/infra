@@ -37,6 +37,11 @@
 # old fixed 30s wait failed it on 2026-10-19 with no error in the log. The wait
 # ends early when the serve exits or logs a migration error.
 : "${SMOKE_READY_TIMEOUT:=${T3_SMOKE_READY_TIMEOUT:-1200}}"
+# How long safe_restart_unit waits for a restarted serve to pair through the
+# dispatch. Was 15 tries 2s apart (~30s); 0.1.0 needed 115s to answer on a copy
+# of wizard's 2.5 GB state.sqlite in the 2026-10-20 dry run, so a canary restart
+# of wizard would have been rolled back and frozen for being slow.
+: "${RESTART_VERIFY_TIMEOUT:=${T3_RESTART_VERIFY_TIMEOUT:-1200}}"
 : "${TMPROOT:=${T3_TMPDIR:-/var/tmp}}"   # health-check scratch on DISK: /tmp is a 2G tmpfs and a populated state.sqlite overflows it
 # Session cookie in a Set-Cookie line under either name: t3_session (0.0.x) or
 # t3_session_<12 hex> (0.1.0, sha256 of the environment-id). t3-dispatch accepts both.
@@ -246,14 +251,16 @@ verify_pairing() {
 # (the daily job's backup_all, or the idle job's backup_user, takes it first).
 # Returns 0 on verified success, non-zero after recovery+freeze on failure.
 safe_restart_unit() {
-  local unit="$1" u="$2" ok=0 _ bak
+  local unit="$1" u="$2" ok=0 bak start deadline
   systemctl restart "$unit" || LOG "WARN: systemctl restart $unit returned non-zero"
-  for _ in $(seq 1 15); do
+  start=$(date +%s); deadline=$(( start + RESTART_VERIFY_TIMEOUT ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
     if verify_pairing "$u"; then ok=1; break; fi
-    sleep 2
+    systemctl is-failed --quiet "$unit" && { LOG "$unit entered the failed state while starting"; break; }
+    sleep 5
   done
   if [ "$ok" = "1" ]; then
-    LOG "restarted $unit -> $target (pairing verified via dispatch)"; return 0
+    LOG "restarted $unit -> $target (pairing verified via dispatch after $(( $(date +%s) - start ))s)"; return 0
   fi
   LOG "HEALTH-CHECK FAILED: $u pairing broken AFTER restart onto $target — rolling back + restoring its DB"
   rollback_binary

@@ -48,7 +48,8 @@ between builds; the gate is what makes auto-tracking safe.
    build with one rename. Old builds stay on disk (newest 3, plus last-good, plus
    any a running process still uses), so a rollback is a symlink swap.
 5. **Canary rollout** — restart IDLE instances one at a time, verifying pairing
-   through the real dispatch after each. First failure → roll back binary +
+   through the real dispatch after each (waiting up to `T3_RESTART_VERIFY_TIMEOUT`,
+   default 1200s, since a first start of 0.1.0 on a 2.5 GB DB took 115s). First failure → roll back binary +
    restore that user's DB from the pre-bump backup + **self-freeze** (touch the
    freeze file) so it cannot re-flap onto bad builds. Active-agent instances are
    DEFERRED (never killed) and migrate on their next idle restart. "Active" means
