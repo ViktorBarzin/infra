@@ -1,5 +1,7 @@
 # London site
 
+<!-- showcase: A second site in a London flat: one GL.iNet router with a main and a guest network, joined to the Sofia network over a WireGuard tunnel. -->
+
 The London flat's network: one GL.iNet Flint 2 (GL-MT6000) router, a main LAN
 and a guest network, and a WireGuard tunnel to pfSense in Sofia. The router is
 configured through its own web UIs (GL admin UI and LuCI, under

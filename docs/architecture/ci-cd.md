@@ -1,5 +1,7 @@
 # CI/CD Pipeline
 
+<!-- showcase: Images are built and tested on GitHub Actions, never in the cluster. Woodpecker only deploys, and every push to master applies the Terraform stacks it changed. -->
+
 ## Overview
 
 **Doctrine (ADR-0002): all image builds and CI compute run OFF-infra.** Every

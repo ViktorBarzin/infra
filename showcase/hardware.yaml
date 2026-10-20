@@ -1,0 +1,31 @@
+# Physical kit the Showcase lists that no exporter reports (ADR-0037).
+# The Proxmox host's CPU, RAM, VMs and storage come live from the Proxmox
+# exporter; list here only what Prometheus cannot see. Model names and roles
+# only: no counts or sizes, which go stale.
+sites:
+  - name: Sofia
+    role: Main site. Everything in the cluster runs here.
+    kit:
+      - name: Dell PowerEdge R730
+        role: The one server. Runs Proxmox, which hosts the Kubernetes nodes, pfSense and the dev VM.
+        live: proxmox
+      - name: NVIDIA Tesla T4
+        role: GPU in the R730, shared by the media, photo and AI workloads.
+      - name: Synology DS218
+        role: Backup NAS. Receives the nightly NFS mirror and database dumps.
+      - name: Raspberry Pi 3 (rpi-sofia)
+        role: Camera gateway, solar inverter bridge and Home Assistant sensor publisher.
+      - name: TP-Link TL-SG105PE
+        role: PoE switch for the isolated camera network.
+  - name: London
+    role: A flat joined to Sofia over WireGuard.
+    kit:
+      - name: GL.iNet Flint 2 (GL-MT6000)
+        role: Router with a main and a guest network, and the WireGuard tunnel to Sofia.
+      - name: Raspberry Pi 4 (ha-london)
+        role: Home Assistant for the flat.
+  - name: Valchedrym
+    role: A family site joined over WireGuard.
+    kit:
+      - name: OpenWrt router
+        role: Site-to-site WireGuard tunnel into the Sofia network.

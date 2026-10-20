@@ -1,5 +1,7 @@
 # Compute & Resource Management
 
+<!-- showcase: One Dell server runs Proxmox, which hosts the Kubernetes nodes as VMs. Pods get no CPU limits and memory limits equal to their requests, a GPU is shared between workloads, and priority tiers decide what is evicted first. -->
+
 ## Overview
 
 The infrastructure runs on a single Dell R730 server with Proxmox VE, hosting a 7-node Kubernetes cluster. Compute resources are managed through a combination of Vertical Pod Autoscaler (VPA) recommendations, tier-based LimitRange defaults, and ResourceQuota enforcement. The cluster employs a no-CPU-limits policy to avoid CFS throttling while using memory requests=limits for stability. GPU workloads run on a dedicated node with Tesla T4 passthrough.

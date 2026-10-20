@@ -1,5 +1,7 @@
 # Authentication & Authorization
 
+<!-- showcase: Authentik is the identity provider: single sign-on over OIDC for apps that support it, and forward auth at Traefik for apps that do not. -->
+
 ## Overview
 
 The homelab uses Authentik as a centralized identity provider (IdP) for all services, providing single sign-on (SSO) via OIDC and forward authentication for ingress protection. Authentik integrates with social login providers (Google, GitHub, Facebook), manages user groups and RBAC policies, and enforces authentication at the Traefik ingress layer. The system supports both human authentication (OIDC SSO) and service-to-service authentication (Kubernetes SA JWT for CI/CD).

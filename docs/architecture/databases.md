@@ -1,5 +1,7 @@
 # Databases
 
+<!-- showcase: Shared PostgreSQL (CloudNativePG), MySQL and Redis serve every app, and Vault rotates the database credentials automatically. -->
+
 ## Overview
 
 The cluster provides shared database services (PostgreSQL, MySQL, Redis) for multi-tenant workloads with automated credential rotation via Vault. PostgreSQL uses CloudNativePG (CNPG), which apps reach directly with no pooler, MySQL runs as a single StatefulSet (`mysql-v26`), and Redis provides a shared cache layer. SQLite is used for per-app local storage with careful attention to filesystem compatibility.

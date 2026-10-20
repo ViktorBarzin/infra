@@ -1,5 +1,7 @@
 # VPN & Remote Access Architecture
 
+<!-- showcase: Remote access goes through Headscale, a self-hosted Tailscale control server, with pfSense advertising the home networks to the tailnet. WireGuard links the sites. -->
+
 Last updated: 2026-04-10
 
 > **Amendment (2026-08-03) — pfSense is now a real Tailscale subnet router.**

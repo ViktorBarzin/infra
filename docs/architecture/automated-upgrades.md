@@ -1,5 +1,7 @@
 # Automated Upgrades
 
+<!-- showcase: Renovate bumps third-party versions, and CI applies, verifies and reverts them on failure. Node OS packages and Kubernetes itself upgrade on their own schedules. -->
+
 Four automation paths keep the cluster current. Each owns a distinct set of versions:
 
 | What | Path | Section |
