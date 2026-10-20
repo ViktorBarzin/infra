@@ -27,7 +27,8 @@
 #      box had to be hard-killed. A machine built without them repeats that.
 #   2. The t3 service layer (section 9) — t3-dispatch, t3-serve@, the timers.
 #      The updater, idle-migrator and watchdog scripts are declared since
-#      2026-10-19; their units and timers are not.
+#      2026-10-19 and the t3-dispatch binary since 2026-10-20; their units,
+#      timers and the dispatch account are not.
 #   3. Per-user provisioning — accounts, groups, clones, kubeconfigs. That is
 #      ViktorBarzin/infra#88, deliberately last because it touches live access.
 #   Until those land, a machine built from this playbook serves the lobby but is
@@ -1353,6 +1354,51 @@
         - { src: t3-autoupdate.sh, dest: /usr/local/bin/t3-autoupdate, mode: "0755" }
         - { src: t3-migrate-idle.sh, dest: /usr/local/bin/t3-migrate-idle, mode: "0755" }
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
+
+    # t3-dispatch, the front door for t3.viktorbarzin.me: it routes each
+    # Authentik user to their own t3-serve@ instance and pairs them on first
+    # visit. Adopted 2026-10-20, when t3 0.1.0 renamed the session cookie to
+    # t3_session_<hash> and the dispatch had to accept both names. Built on the
+    # controller from the repo source with flags that make the build
+    # reproducible, so an unchanged source is a no-op here and in --check.
+    # setup-devvm.sh still creates the service account, the sudoers entry for
+    # t3-mint and the unit.
+    - name: Make a build directory for t3-dispatch
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: t3-dispatch
+      register: devvm_t3_dispatch_build
+      delegate_to: localhost
+      become: false
+      check_mode: false
+
+    - name: Build t3-dispatch from the repo source
+      ansible.builtin.command:
+        cmd: go build -trimpath -buildvcs=false -ldflags=-buildid= -o {{ devvm_t3_dispatch_build.path }}/t3-dispatch .
+        chdir: "{{ playbook_dir }}/../scripts/t3-dispatch"
+      environment:
+        CGO_ENABLED: "0"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      check_mode: false
+
+    - name: Install t3-dispatch
+      ansible.builtin.copy:
+        src: "{{ devvm_t3_dispatch_build.path }}/t3-dispatch"
+        dest: /usr/local/bin/t3-dispatch
+        mode: "0755"
+        owner: root
+        group: root
+      notify: restart t3-dispatch
+
+    - name: Remove the t3-dispatch build directory
+      ansible.builtin.file:
+        path: "{{ devvm_t3_dispatch_build.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false
 
     # The per-tool schedules this replaces. Stopped and disabled before their
     # unit files go, or systemd keeps an enabled symlink pointing at nothing.
@@ -2806,6 +2852,13 @@
       when: not ansible_check_mode
 
   handlers:
+    # A restart drops open t3 WebSockets for a second; clients reconnect on
+    # their own. Sessions live in each t3-serve@ instance, not here.
+    - name: restart t3-dispatch
+      ansible.builtin.systemd_service:
+        name: t3-dispatch
+        state: restarted
+
     # DefaultIOAccounting is a manager-level setting, so a reload is not
     # enough: systemd has to re-execute to pick it up. It is a re-exec of PID 1
     # and not a reboot, so nothing running is disturbed.

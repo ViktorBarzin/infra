@@ -38,6 +38,9 @@
 # ends early when the serve exits or logs a migration error.
 : "${SMOKE_READY_TIMEOUT:=${T3_SMOKE_READY_TIMEOUT:-1200}}"
 : "${TMPROOT:=${T3_TMPDIR:-/var/tmp}}"   # health-check scratch on DISK: /tmp is a 2G tmpfs and a populated state.sqlite overflows it
+# Session cookie in a Set-Cookie line under either name: t3_session (0.0.x) or
+# t3_session_<12 hex> (0.1.0, sha256 of the environment-id). t3-dispatch accepts both.
+SESSION_COOKIE_RE='^set-cookie:[[:space:]]*t3_session(_[0-9a-f]{12})?='
 MIGERR_RE='migration failed|failed to migrate|no column named|NOT NULL constraint failed|PersistenceSqlError'
 
 LOG() { logger -t "$LOG_TAG" "$*"; echo "$LOG_TAG: $*"; }
@@ -201,7 +204,7 @@ health_check() {
         hdr="$(curl -s -i --max-time 5 -X POST -H 'Content-Type: application/json' -d "{\"credential\":\"$cred\"}" "http://127.0.0.1:$SMOKE_PORT$ep" 2>/dev/null)"
         code="$(printf '%s' "$hdr" | sed -n '1s#.* \([0-9][0-9][0-9]\).*#\1#p')"
         [ "$code" = "404" ] && continue
-        printf '%s' "$hdr" | grep -qi '^set-cookie:[[:space:]]*t3_session=' && pair=1
+        printf '%s' "$hdr" | grep -qiE "$SESSION_COOKIE_RE" && pair=1
         break
       done
     fi
@@ -234,7 +237,7 @@ unit_busy() {
 verify_pairing() {
   local u="$1" ak out; ak="$(ak_for "$u")"; [ -n "$ak" ] || { LOG "no authentik mapping for $u — skipping dispatch verify"; return 0; }
   out="$(curl -s -i --max-time 10 -H "X-authentik-username: $ak" -H 'Sec-Fetch-Dest: document' "http://$DISPATCH/" 2>/dev/null)"
-  printf '%s' "$out" | grep -qi '^set-cookie:[[:space:]]*t3_session='
+  printf '%s' "$out" | grep -qiE "$SESSION_COOKIE_RE"
 }
 
 # safe_restart_unit <unit> <user>: restart the unit, verify pairing; on failure

@@ -37,7 +37,7 @@ between builds; the gate is what makes auto-tracking safe.
    candidate is then gated from its own prefix: a throwaway serve SEEDED WITH A
    COPY of wizard's real populated `state.sqlite` (scratch on `/var/tmp`, not the
    2 GB tmpfs `/tmp`) exercises the forward MIGRATION (the 2026-06-09 failure
-   class) + the real mint→exchange→`t3_session` pairing handshake. The gate waits
+   class) + the real mint→exchange→session-cookie pairing handshake (`t3_session` up to 0.0.x, `t3_session_<12 hex>` from 0.1.0; t3-dispatch and the gate accept both since 2026-10-20). The gate waits
    up to `T3_SMOKE_READY_TIMEOUT` (default 1200s) for the serve to answer, since a
    first start on a multi-GB DB can run a long import, and stops early if the
    serve exits or logs a migration error. It runs the serve in its own process
@@ -139,7 +139,7 @@ done
 ```bash
 for u in vbarzin emil.barzin ancaelena98; do
   curl -sI -H "X-authentik-username: $u" http://10.0.10.10:3780/ | grep -iE 'HTTP/|set-cookie: t3_session'
-done   # each must be 302 + t3_session
+done   # each must be 302 + t3_session (0.1.0 and later: t3_session_<hash>)
 t3 --version
 ```
 
