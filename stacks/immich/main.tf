@@ -1495,7 +1495,8 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             container {
               name  = "postgresql-backup"
               image = "docker.io/library/postgres:16.15-trixie"
-              command = ["/bin/sh", "-c", <<-EOT
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
                 # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl
                 # or wget, and installing one at run time broke when bullseye-pgdg left apt.
                 push_metrics() {
@@ -1506,11 +1507,24 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
+                # gzip, and a .partial name until the dump is complete (2026-10-20).
+                # The plain 3.5 GB .sql went to NFS faster than writeback drained
+                # it, and the dirty page cache counted against the 1Gi memory
+                # limit: the memcg OOM killer took pg_dump on 10-19 and 10-20
+                # (KernelOOMKiller), the Job retried, and each kill left a
+                # truncated dump_*.sql behind. set -euo pipefail makes a failed
+                # dump fail the pod instead of pushing a success timestamp.
+                out=/backup/dump_$now.sql.gz
+                trap 'rm -f "$out.partial"' EXIT
+                pg_dumpall -h immich-postgresql -U immich | gzip -6 > "$out.partial"
+                mv "$out.partial" "$out"
+                trap - EXIT
 
-                # Rotate - delete last log file
+                # 14 day retention. dump_*.sql are the uncompressed dumps from
+                # before 2026-10-20; they age out under the same rule.
                 cd /backup
-                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                find . -name "dump_*.sql" -type f -mtime +14 -delete
+                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -1519,9 +1533,9 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 echo "duration: $${_dur}s"
                 echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
                 echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
-                echo "output:  $(ls -lh /backup/dump_$now.sql | awk '{print $5}')"
+                echo "output:  $(ls -lh "$out" | awk '{print $5}')"
 
-                _out_bytes=$(stat -c%s /backup/dump_$now.sql)
+                _out_bytes=$(stat -c%s "$out")
                 push_metrics "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-postgresql-backup" <<PGEOF || true
                 backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
@@ -1538,6 +1552,16 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                     name = "immich-secrets"
                     key  = "db_password"
                   }
+                }
+              }
+              # Was the namespace LimitRange default (1Gi request and limit).
+              resources {
+                requests = {
+                  cpu    = "100m"
+                  memory = "256Mi"
+                }
+                limits = {
+                  memory = "1Gi"
                 }
               }
               volume_mount {
