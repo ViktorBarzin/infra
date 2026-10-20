@@ -408,6 +408,24 @@
         modification_time: preserve
         access_time: preserve
 
+    # ---- root filesystem fills the disk ----------------------------------
+    # pve-host.yml (tag registry-disk) sets the disk size on the Proxmox side.
+    # These two grow the root partition and its ext4 filesystem into whatever
+    # the disk now holds, online. The Ubuntu cloud image puts sda1 last on the
+    # disk, so it can always grow. growpart exits 1 with NOCHANGE when there is
+    # nothing to do, which is the steady state.
+    - name: Grow the root partition to the end of the disk
+      ansible.builtin.command: growpart /dev/sda 1
+      register: registry_growpart
+      changed_when: registry_growpart.rc == 0
+      failed_when: registry_growpart.rc != 0 and 'NOCHANGE' not in registry_growpart.stdout
+      tags: disk
+
+    - name: Grow the root filesystem into the partition
+      ansible.builtin.command: resize2fs /dev/sda1
+      when: registry_growpart is changed
+      tags: disk
+
     # ---- Phase 2 change 3: make the VM visible to Prometheus -------------
     # install_recommends: false is load-bearing, not tidiness. Measured
     # 2026-09-02 with apt-get -s on this VM: WITH recommends "0 upgraded, 18

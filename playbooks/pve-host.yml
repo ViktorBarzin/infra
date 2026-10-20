@@ -233,6 +233,29 @@
           Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
       tags: patching
 
+    # ---- registry cache VM root disk -----------------------------------------
+    # VM 220 (docker-registry) is outside Terraform like the VMs named at the top
+    # of this file, so its disk size is declared here as a floor. The cache filled
+    # its 64G disk four times between 2026-10-11 and 2026-10-20: one busy day of
+    # rollouts refills about 25 GB inside a single 168h proxy TTL. Viktor chose
+    # 150G on 2026-10-20, on the HDD thin pool where the disk already lives. The
+    # task only grows the disk (qm resize cannot shrink, and the condition skips
+    # it at or above the floor). registry-cache.yml, tag disk, then grows the
+    # partition and filesystem inside the guest.
+    - name: Read the registry VM's disk config
+      ansible.builtin.command: qm config 220
+      register: registry_vm_config
+      changed_when: false
+      check_mode: false
+      tags: registry-disk
+
+    - name: Grow the registry VM's root disk to 150G
+      ansible.builtin.command: qm resize 220 scsi0 150G
+      when: >-
+        (registry_vm_config.stdout
+         | regex_search('scsi0:.*size=([0-9]+)G', '\\1') | first | int) < 150
+      tags: registry-disk
+
     # ---- cloud-init snippets for k8s-node4 and k8s-node5 ---------------------
     # VMs 204 and 205 were built from hand-made snippets that were never in
     # git. Their runcmd uninstalled unattended-upgrades and reset containerd,
