@@ -181,7 +181,14 @@ bd assign <id> agent     # re-arm for next dispatcher tick
 - **`bd` JSON schema changes** — the reaper's `jq` reads `.id` and
   `.updated_at`. If a future `bd` upgrade renames these, the reaper breaks
   silently (no reaping, no alert). `BD_VERSION` is pinned in the image
-  Dockerfile.
+  Dockerfile (bd 1.3.1 since 2026-10-20, built from source against musl).
+  A version bump that moves the schema is a fleet change:
+  `docs/runbooks/beads-bd-upgrade.md`.
+- **Close ownership (bd 1.3).** `bd close` refuses when the bead's assignee
+  differs from the actor. Dispatched beads are assigned to `agent`, so the
+  `beads-task-runner` runs every bd command with `--actor agent`. A bead
+  dispatched from BeadBoard while assigned to someone else is not closed by
+  the agent; it stays `in_progress` with the agent's notes.
 
 ## Verification after change
 

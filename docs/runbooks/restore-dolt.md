@@ -15,6 +15,7 @@ CLI's lock table).
 | `/srv/nfs/dolt-backup/history/<yyyymmdd-hhmm>/` on the same share | CronJob `beads-server/dolt-history-backup`, daily 01:45 UTC | newest 14 runs |
 | `/mnt/backup/dolt-backup/` on the PVE host | `nfs-mirror`, daily 02:00 | mirror |
 | Synology `Backup/Viki/pve-backup/dolt-backup/` | `offsite-sync-backup` | offsite |
+| `/srv/nfs/dolt-backup/bd-export/<yyyymmdd>-pre-<version>/` on the same share | by hand before a bd upgrade (`bd export --all` with the old binary) | kept; the CronJobs only rotate `20*` directories |
 
 Each row-backup run directory holds `<db>.sql.gz` per database, plus
 `VERSION` (`dolt_version()` at dump time), `counts.tsv` (rows per table),
