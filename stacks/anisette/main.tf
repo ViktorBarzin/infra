@@ -170,6 +170,7 @@ module "ingress" {
   auth                    = "none"
   namespace               = kubernetes_namespace.anisette.metadata[0].name
   name                    = "anisette"
+  homepage_group          = "Development & CI"
   root_domain             = "viktorbarzin.lan"
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true

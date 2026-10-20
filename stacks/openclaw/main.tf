@@ -2254,6 +2254,7 @@ module "openlobster_ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.openclaw.metadata[0].name
   name            = "openlobster"
+  homepage_group  = "AI & Data"
   tls_secret_name = var.tls_secret_name
   host            = "openlobster"
   port            = 80

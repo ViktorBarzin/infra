@@ -406,7 +406,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "GrampsWeb"
     "gethomepage.dev/description"  = "Family tree"
     "gethomepage.dev/icon"         = "gramps-web.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
 }

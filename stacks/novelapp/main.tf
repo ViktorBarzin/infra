@@ -262,7 +262,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "NovelApp"
     "gethomepage.dev/description"  = "Web novel tracker"
     "gethomepage.dev/icon"         = "mdi-book-open-page-variant"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
 }

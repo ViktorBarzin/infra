@@ -489,6 +489,7 @@ module "ingress_plans" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.learn.metadata[0].name
   name            = "plans"
+  homepage_group  = "Productivity"
   service_name    = "learn"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
@@ -691,9 +692,10 @@ resource "kubernetes_service" "prep_sync" {
 # copy can sync from: that page runs on file:// with no cookie for this domain,
 # so any redirect to Authentik would fail its fetch.
 module "ingress_prep" {
-  source = "../../modules/kubernetes/ingress_factory"
-  name   = "prep"
-  host   = "pages"
+  source         = "../../modules/kubernetes/ingress_factory"
+  name           = "prep"
+  homepage_group = "Productivity"
+  host           = "pages"
   # Turnstile gate on this public page (2026-10-16). A carve-out path, so the
   # factory leaves it off by default; the page is HTML people open in a browser.
   turnstile       = true
@@ -722,9 +724,10 @@ module "ingress_prep" {
 # carve-out pattern as ingress_prep above, including auth = "none" rather than
 # "public" for the reason given there.
 module "ingress_pe_summit_trip" {
-  source = "../../modules/kubernetes/ingress_factory"
-  name   = "pe-summit-trip"
-  host   = "pages"
+  source         = "../../modules/kubernetes/ingress_factory"
+  name           = "pe-summit-trip"
+  homepage_group = "Productivity"
+  host           = "pages"
   # Turnstile gate on this public page (2026-10-16). A carve-out path, so the
   # factory leaves it off by default; the page is HTML people open in a browser.
   turnstile       = true
@@ -753,6 +756,7 @@ module "ingress_pe_summit_trip" {
 module "ingress_prep_api" {
   source          = "../../modules/kubernetes/ingress_factory"
   name            = "prep-api"
+  homepage_group  = "Productivity"
   host            = "pages"
   ingress_path    = ["/prep/api"]
   service_name    = kubernetes_service.prep_sync.metadata[0].name

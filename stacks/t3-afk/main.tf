@@ -396,6 +396,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.t3_afk.metadata[0].name
   name            = "t3-afk"
+  homepage_group  = "Infrastructure"
   service_name    = kubernetes_service.t3_afk.metadata[0].name
   port            = 3773
   tls_secret_name = var.tls_secret_name

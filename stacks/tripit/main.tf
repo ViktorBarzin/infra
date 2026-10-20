@@ -1063,6 +1063,7 @@ module "ingress" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit"
+  homepage_group   = "Productivity"
   port             = 8080
   tls_secret_name  = var.tls_secret_name
   # Photos tab bursts hundreds of thumbnail GETs (now via the gated /api host);

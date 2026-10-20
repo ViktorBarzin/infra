@@ -380,6 +380,7 @@ module "ingress" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.recruiter_responder.metadata[0].name
   name             = "recruiter-responder"
+  homepage_group   = "Automation"
   port             = 8080
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name

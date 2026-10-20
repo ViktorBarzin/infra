@@ -153,6 +153,7 @@ variable "ingress" {
     turnstile                      = optional(bool, false)
     homepage_description           = optional(string)
     homepage_icon                  = optional(string)
+    homepage_group                 = optional(string)
   })
   default     = {}
   description = <<-EOT
