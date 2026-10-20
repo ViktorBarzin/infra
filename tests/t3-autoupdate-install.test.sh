@@ -188,6 +188,34 @@ python3 -I "$TMP/fake-server.py" "$dport3" & holders="$holders $!"
 until curl -s -o /dev/null "http://127.0.0.1:$dport3/"; do sleep 0.2; done
 DISPATCH="127.0.0.1:$dport3" USER_MAP="$TMP/user-map" notok verify_pairing u   # no cookie at all
 
+# --- safe_restart_unit waits for a slow first start instead of ~30s ---
+cat >"$TMP/bin/systemctl" <<EOF
+#!/bin/sh
+echo "systemctl \$*" >>"$TMP/calls"
+[ "\$1" = is-failed ] && [ -e "$TMP/unit-failed" ] && exit 0
+[ "\$1" = is-failed ] && exit 1
+exit 0
+EOF
+chmod +x "$TMP/bin/systemctl"
+export T3_FREEZE_FILE="$TMP/freeze"; FREEZE_FILE="$TMP/freeze"
+target=0.6.0 last_good=0.6.0
+vport=$((T3_SMOKE_PORT + 4))
+start=$(date +%s)
+FAKE_DELAY=7 FAKE_GET_COOKIE=t3_session_f8ce9cd41c1b python3 -I "$TMP/fake-server.py" "$vport" & holders="$holders $!"
+DISPATCH="127.0.0.1:$vport" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=60 ok safe_restart_unit t3-serve@u.service u
+ok    test $(( $(date +%s) - start )) -ge 7
+ok    test ! -e "$TMP/freeze"
+# never pairs: gives up at the timeout, recovers, freezes
+start=$(date +%s)
+DISPATCH="127.0.0.1:1" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=3 notok safe_restart_unit t3-serve@u.service u
+ok    test $(( $(date +%s) - start )) -lt 20
+ok    test -e "$TMP/freeze"; rm -f "$TMP/freeze"
+# unit fails outright: no point waiting out a long timeout
+touch "$TMP/unit-failed"; start=$(date +%s)
+DISPATCH="127.0.0.1:1" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=120 notok safe_restart_unit t3-serve@u.service u
+ok    test $(( $(date +%s) - start )) -lt 20
+rm -f "$TMP/unit-failed" "$TMP/freeze"
+
 # --- unit_busy: an agent anywhere in the unit's cgroup counts ---
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/bin/sh
