@@ -22,7 +22,11 @@
 : "${BACKUP_DIR:=${T3_BACKUP_DEST:-/var/backups/t3-state}}"
 : "${DISPATCH:=${T3_DISPATCH:-127.0.0.1:3780}}"
 : "${USER_MAP:=${T3_USER_MAP:-/etc/ttyd-user-map}}"
-: "${T3_BACKUP_TIMEOUT:=900}"
+# 3600 (was 900): wizard's 2.85 GB DB did not finish a VACUUM INTO in 900s under
+# load on 2026-09-28 or 2026-10-20, so the 0.1.0 update ran with no pre-bump
+# backup for wizard.
+: "${T3_BACKUP_TIMEOUT:=3600}"
+: "${T3_HOME_BASE:=/home}"
 : "${UPDATE_LOCK:=${T3_UPDATE_LOCK:-/run/t3-autoupdate.lock}}"
 # Versioned installs (2026-10-19). Each build goes to its own npm prefix under
 # T3_VERSIONS_DIR and T3_LINK (what t3-serve@ ExecStart and t3-mint run) is
@@ -69,12 +73,20 @@ osusers() { awk -F= '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$2);print $2
 # authentik username for an OS user (reverse map; first match) — for dispatch verify.
 ak_for() { awk -F= -v u="$1" '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$1);gsub(/[[:space:]]/,"",$2);if($2==u){print $1;exit}}' "$USER_MAP" 2>/dev/null; }
 
+# state_db <user>: the database the user's serve actually uses. t3 0.1.0 imports
+# state.sqlite into statev2.sqlite on first start and leaves state.sqlite frozen,
+# so backups, restores and the idle gate must follow statev2.sqlite once it exists.
+state_db() {
+  local d="$T3_HOME_BASE/$1/.t3/userdata"
+  if [ -f "$d/statev2.sqlite" ]; then printf '%s\n' "$d/statev2.sqlite"; else printf '%s\n' "$d/state.sqlite"; fi
+}
+
 # Online consistent snapshot of ONE user's state.sqlite (run AS the owner so the
 # WAL stays owned; never stops the serve). Uses global $target for the filename.
 # Echoes the backup path on success; non-zero on failure.
 backup_user() {
   local u="$1" src out dst ts
-  src="/home/$u/.t3/userdata/state.sqlite"; [ -f "$src" ] || return 1
+  src="$(state_db "$u")"; [ -f "$src" ] || return 1
   ts="$(date +%Y%m%d-%H%M%S)"
   out="$BACKUP_DIR/$u"; dst="$out/state-prebump-$target-$ts.sqlite"
   install -d -o "$u" -g "$u" -m700 "$out" 2>/dev/null || mkdir -p "$out"
@@ -263,7 +275,7 @@ instance_up() {
 # (the daily job's backup_all, or the idle job's backup_user, takes it first).
 # Returns 0 on verified success, non-zero after recovery+freeze on failure.
 safe_restart_unit() {
-  local unit="$1" u="$2" ok=0 bak start deadline
+  local unit="$1" u="$2" ok=0 bak start deadline db
   systemctl restart "$unit" || LOG "WARN: systemctl restart $unit returned non-zero"
   start=$(date +%s); deadline=$(( start + RESTART_VERIFY_TIMEOUT ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -279,9 +291,10 @@ safe_restart_unit() {
   bak="$(prebump_of "$u")"
   if [ -n "$bak" ]; then
     systemctl stop "$unit" 2>/dev/null
-    if install -o "$u" -g "$u" -m600 "$bak" "/home/$u/.t3/userdata/state.sqlite" 2>/dev/null; then
-      rm -f "/home/$u/.t3/userdata/state.sqlite-wal" "/home/$u/.t3/userdata/state.sqlite-shm"
-      LOG "restored $u state.sqlite from $bak"
+    db="$(state_db "$u")"   # the backup was taken from this same file moments before
+    if install -o "$u" -g "$u" -m600 "$bak" "$db" 2>/dev/null; then
+      rm -f "$db-wal" "$db-shm"
+      LOG "restored $u $db from $bak"
     fi
     systemctl start "$unit" 2>/dev/null
   fi

@@ -1340,8 +1340,9 @@
     # update lock (/run/t3-autoupdate.lock): on 2026-09-28 t3-watchdog restarted
     # a serve onto a half-installed build while t3-autoupdate was mid-install,
     # and both rolled back at once. The four files only work as a set, so they
-    # are declared together. Their units and timers are still installed by
-    # setup-devvm.sh (section 9), which installs the same repo files.
+    # are declared together. t3-backup-state joined them on 2026-10-20, when it
+    # had to follow 0.1.0's statev2.sqlite. Their units and timers are still
+    # installed by setup-devvm.sh (section 9), which installs the same repo files.
     - name: Install the t3 updater, idle migrator and watchdog scripts
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/{{ item.src }}"
@@ -1354,6 +1355,7 @@
         - { src: t3-autoupdate.sh, dest: /usr/local/bin/t3-autoupdate, mode: "0755" }
         - { src: t3-migrate-idle.sh, dest: /usr/local/bin/t3-migrate-idle, mode: "0755" }
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
+        - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
 
     # t3-dispatch, the front door for t3.viktorbarzin.me: it routes each
     # Authentik user to their own t3-serve@ instance and pairs them on first

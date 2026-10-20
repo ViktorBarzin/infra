@@ -24,7 +24,11 @@ mapfile -t users < <(awk -F= '!/^[[:space:]]*#/ && NF==2 { gsub(/[[:space:]]/,""
 
 rc=0
 for u in "${users[@]}"; do
-  src="/home/$u/.t3/userdata/state.sqlite"
+  # t3 0.1.0 imports state.sqlite into statev2.sqlite on first start and stops
+  # writing state.sqlite, so back up whichever one the serve uses. The backup
+  # keeps the state-<ts> name so retention and the updater's seed glob still match.
+  src="${T3_HOME_BASE:-/home}/$u/.t3/userdata/statev2.sqlite"
+  [[ -f "$src" ]] || src="${T3_HOME_BASE:-/home}/$u/.t3/userdata/state.sqlite"
   if [[ ! -f "$src" ]]; then LOG "skip $u (no state.sqlite)"; continue; fi
   out="$DEST/$u"; dst="$out/state-$ts.sqlite"
   install -d -o "$u" -g "$u" -m 0700 "$out"
@@ -33,9 +37,10 @@ for u in "${users[@]}"; do
   # for the actively-used instance (the admin's own live session, which .backup would
   # loop on forever). Run as the owning user so WAL access keeps the live serve happy.
   # timeout caps a pathologically-slow copy (huge DB + concurrent writes on a contended
-  # disk) so the daily run can never wedge — it just logs + retries next cycle. The
+  # disk) so the daily run can never wedge — it just logs + retries next cycle.
+  # 3600s (was 900): a 2.85 GB DB under load needed more than 900s (2026-10-20). The
   # daily 03:30 slot normally finds instances idle, where even a large DB copies fast.
-  if runuser -u "$u" -- timeout "${T3_BACKUP_TIMEOUT:-900}" sqlite3 "$src" "VACUUM INTO '$dst'" 2>/dev/null && [[ -s "$dst" ]]; then
+  if runuser -u "$u" -- timeout "${T3_BACKUP_TIMEOUT:-3600}" sqlite3 "$src" "VACUUM INTO '$dst'" 2>/dev/null && [[ -s "$dst" ]]; then
     LOG "backed up $u -> $dst ($(stat -c%s "$dst" 2>/dev/null) bytes)"
   else
     LOG "WARN: backup FAILED for $u ($src)"; rc=1; rm -f "$dst"

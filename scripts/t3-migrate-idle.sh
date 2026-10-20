@@ -39,7 +39,7 @@ gate_query() {
 # safe_to_restart <user>: wire runuser + the user's DB into gate_query/gate_is_safe.
 safe_to_restart() {
   local u="$1" db row
-  db="/home/$u/.t3/userdata/state.sqlite"; [ -f "$db" ] || return 1
+  db="$(state_db "$u")"; [ -f "$db" ] || return 1   # statev2.sqlite since 0.1.0: the old file is frozen and would always look idle
   row="$(runuser -u "$u" -- sqlite3 -batch -noheader -separator '|' "file:$db?mode=ro" \
     "SELECT
        (SELECT count(*) FROM projection_thread_sessions WHERE active_turn_id IS NOT NULL),
