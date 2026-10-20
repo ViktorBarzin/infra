@@ -12,7 +12,7 @@ pod runs, and its PVC is kept.
 
 | Piece | Value |
 |---|---|
-| Active cluster | `pg-cluster-v18`: PG 18.6, PostGIS 3.6.4, pgvector 0.8.7, image `ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7` |
+| Active cluster | `pg-cluster-v18`: PG 18.6, PostGIS 3.6.4, pgvector 0.8.7, image `ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7-20261019` (pinned by digest; the 2026-10-19 rebuild, on since 2026-10-20) |
 | Rollback copy | `pg-cluster`: PG 16.9, one instance, `default_transaction_read_only=on`, data as of the cutover. Hibernated since 2026-10-19 (`cnpg.io/hibernation: "on"`), PVC `pg-cluster-1` (35Gi) kept |
 | The switch | `var.pg_active_cluster` in `stacks/dbaas/modules/dbaas/main.tf` |
 | What follows the switch | the `postgresql` and `postgresql-lb` (10.0.20.200) Services, the `pg_*_db` provisioners, the backup CronJobs (host `postgresql.dbaas`) |
