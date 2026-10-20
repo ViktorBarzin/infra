@@ -147,7 +147,7 @@ Single-replica Deployment `clickhouse` in the `rybbit` namespace (`clickhouse/cl
 
 ### Dolt (beads-server)
 
-Single-replica Deployment `dolt` in the `beads-server` namespace (`dolthub/dolt-sql-server:2.4.2`, `Recreate` strategy), MySQL-protocol on port 3306, data on the `dolt-data` proxmox-lvm PVC. Databases: `code` (beads issues, used by `bd` and BeadBoard) and `beads` (`presence_claims` for the presence CLI). Root has no password; access is in-cluster only.
+Single-replica Deployment `dolt` in the `beads-server` namespace (`dolthub/dolt-sql-server:2.4.2`, `Recreate` strategy), MySQL-protocol on port 3306, data on the `dolt-data` proxmox-lvm PVC. Databases: `code` (beads issues, used by `bd` and BeadBoard; bd schema v66 since 2026-10-20, see `docs/runbooks/beads-bd-upgrade.md`) and `beads` (`presence_claims` for the presence CLI). Root has no password; access is in-cluster only.
 
 **Backup** (added 2026-10-10, software-currency groundwork): CronJob `dolt-backup`, daily 01:25 UTC. An init container on `mysql:8.4.8` runs mysqldump per database (`dolt dump` has no remote mode in 2.4.2, and Dolt rejects `--single-transaction`), with view definitions appended from `dolt_schemas`. The main container, on the server's Dolt image, restores the dump into a scratch Dolt directory, checks every table and view, then writes `<db>.sql.gz` files to `/srv/nfs/dolt-backup/<yyyymmdd-hhmm>/` (PVC `beads-dolt-backup-host`) and pushes `backup_last_success_timestamp{job="dolt-backup"}`. 14-day retention. The dump holds current rows, including uncommitted working-set changes, but not Dolt commit history. Alerts: `DoltBackupStale` (36h), `DoltBackupNeverRun`. Restore: `docs/runbooks/restore-dolt.md`.
 

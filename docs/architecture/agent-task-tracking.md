@@ -116,8 +116,12 @@ The root `.beads/metadata.json`:
 ### Multi-User Access
 
 - Directory permissions: `2770 wizard:code-shared` (setgid)
-- Both `wizard` and `emo` are in the `code-shared` group
-- `bd` binary: `/home/wizard/.local/bin/bd` (symlinked for emo at `/home/emo/.local/bin/bd`)
+- `code-shared` holds the admin-tier accounts (`scripts/workstation/roster.yaml`); as of 2026-10-20 that is `wizard` only, so only wizard can open `~/code/.beads`
+- `bd` binary: bd 1.3.1, installed by `playbooks/devvm.yml` at `/usr/local/lib/bd/<version>/bd`. `/usr/local/bin/bd` is a wrapper that sets `BD_DISABLE_METRICS=1`; `/home/wizard/.local/bin/bd` links to the wrapper and `/home/emo/.local/bin/bd` links to that path
+
+### bd version and schema
+
+The `code` database is at bd schema v66 (bd 1.3.x) since 2026-10-20, migrated from v32. bd 1.3 never migrates a shared server on open, and a schema change locks out older clients, so the devvm `bd`, the claude-agent-service image and BeadBoard's SQL queries move together. Procedure and compatibility notes: `docs/runbooks/beads-bd-upgrade.md`.
 
 ## Known Issues
 
