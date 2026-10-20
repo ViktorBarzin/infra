@@ -47,7 +47,7 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| PostgreSQL (CNPG) | PG 18.6 with PostGIS and pgvector (`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7`) | `dbaas` namespace | `pg-cluster-v18`: primary + 2 replicas, auto-failover. `pg-cluster` (PG 16, 1 instance) is the rollback copy since 2026-10-15, hibernated since 2026-10-19 (no pod, PVC kept) |
+| PostgreSQL (CNPG) | PG 18.6 with PostGIS and pgvector (`ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7-20261019`, pinned by digest) | `dbaas` namespace | `pg-cluster-v18`: primary + 2 replicas, auto-failover. `pg-cluster` (PG 16, 1 instance) is the rollback copy since 2026-10-15, hibernated since 2026-10-19 (no pod, PVC kept) |
 | PgBouncer | - | `authentik` namespace | Pools Authentik's own connections only. App databases have no pooler |
 | MySQL | 26.7.0 (`docker.io/library/mysql:26.7.0`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-v26`); `mysql-standalone` (8.4.8, read-only) is the rollback copy, at 0 replicas since 2026-10-19 (PVC kept) |
 | Redis | Latest | `redis` namespace | Shared cache layer |

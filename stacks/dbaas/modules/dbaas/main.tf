@@ -1805,12 +1805,17 @@ resource "null_resource" "pg_cluster" {
 # coredns.tf) answers pg-cluster-rw.dbaas.svc.cluster.local with the active cluster's
 # -rw Service. Runbook: docs/runbooks/pg-cluster-major-upgrade.md.
 #
-# Image: ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7, built on GitHub
-# Actions from claude-memory-mcp deploy/infra/Dockerfile.pgvector (PG 18.6, PostGIS
-# 3.6.4, pgvector 0.8.7).
+# Image: ghcr.io/viktorbarzin/cnpg-postgis-pgvector, built on GitHub Actions from
+# claude-memory-mcp deploy/infra/Dockerfile.pgvector (PG 18.6, PostGIS 3.6.4,
+# pgvector 0.8.7). Pinned by tag and digest. 2026-10-20: moved from
+# 18-pgvector0.8.7 (sha256:30e0bbd9...) to the 2026-10-19 rebuild, which clears
+# the two libexpat HIGH findings (Trivy: 0 fixable CRITICAL/HIGH). Renovate
+# leaves ghcr.io/viktorbarzin/** alone (renovate.json5, "Our own images"), so a
+# new build lands here by hand. Changing this re-applies null_resource
+# pg_cluster_v18: CNPG restarts the replicas, then the primary in place.
 variable "pg_cluster_v18_image" {
   type    = string
-  default = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7"
+  default = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7-20261019@sha256:fb6c811d9f4f5ed3b9998fe24d8b572a191d826c083fb86b93ab9a5a470cd529"
 }
 
 # Which CNPG cluster consumers reach: the postgresql / postgresql-lb Services select
