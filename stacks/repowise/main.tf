@@ -791,6 +791,7 @@ module "ingress_web" {
 module "ingress_api" {
   source          = "../../modules/kubernetes/ingress_factory"
   name            = "repowise-api"
+  homepage_group  = "Core Platform"
   host            = local.app
   namespace       = kubernetes_namespace.repowise.metadata[0].name
   service_name    = kubernetes_service.api.metadata[0].name

@@ -240,6 +240,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.offline_reader.metadata[0].name
   name            = "offline-reader"
+  homepage_group  = "Productivity"
   port            = 8000
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
@@ -259,6 +260,7 @@ module "ingress_ingest" {
   dns_type          = "none" # DNS already created by module.ingress
   namespace         = kubernetes_namespace.offline_reader.metadata[0].name
   name              = "offline-reader-ingest"
+  homepage_group    = "Productivity"
   host              = "offline-reader"
   service_name      = kubernetes_service.offline_reader.metadata[0].name
   port              = 8000

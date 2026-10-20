@@ -206,6 +206,7 @@ module "ingress" {
   auth                    = "none"
   namespace               = kubernetes_namespace.nvidia.metadata[0].name
   name                    = "nvidia-exporter"
+  homepage_group          = "Infrastructure"
   root_domain             = "viktorbarzin.lan"
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true

@@ -334,6 +334,7 @@ module "ingress" {
   external_monitor = false
   namespace        = kubernetes_namespace.nextcloud_todos.metadata[0].name
   name             = "nextcloud-todos"
+  homepage_group   = "Automation"
   port             = 8080
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name

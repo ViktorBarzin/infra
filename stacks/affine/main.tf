@@ -398,7 +398,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Affine"
     "gethomepage.dev/description"  = "Knowledge base"
     "gethomepage.dev/icon"         = "affine.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
   }
 }

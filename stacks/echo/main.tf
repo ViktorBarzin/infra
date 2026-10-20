@@ -108,6 +108,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"
+  homepage_group  = "Infrastructure"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/description" = "Header-reflecting endpoint for ingress smoke tests"

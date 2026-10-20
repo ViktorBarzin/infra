@@ -6,6 +6,9 @@
   plus the assets it links. Nothing is committed or pushed. It exists so a
   caller with no monorepo checkout can look at a page before publishing it;
   the site itself is owner-gated and 403s every automated client.
+- POST /publish-bundle -> bearer-authenticated with a BUNDLE token (a separate
+  map from /publish's); replaces pages/<user>/<slug>/ with the files sent and
+  commits + pushes. No rendering.
 
 Concurrent publishes serialize on an asyncio lock; the blocking render + git
 work runs in a worker thread so /health stays responsive.
@@ -18,6 +21,8 @@ import logging
 import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from typing import Literal
+
 from pydantic import BaseModel
 
 from . import auth, config, publisher
@@ -49,6 +54,17 @@ class PublishRequest(BaseModel):
     # token; any extra body keys are ignored by pydantic.
 
 
+class BundleFile(BaseModel):
+    path: str  # relative, e.g. "assets/app.js"; validated in the publisher
+    content: str
+    encoding: Literal["utf-8", "base64"] = "utf-8"
+
+
+class BundleRequest(BaseModel):
+    files: list[BundleFile]
+    # NOTE: no user or slug field. Both come from the bundle token.
+
+
 def create_app(cfg: config.Config | None = None) -> FastAPI:
     cfg = cfg or config.load_config()
     app = FastAPI(title="pages-publish")
@@ -57,6 +73,11 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
 
     async def current_user(authorization: str | None = Header(default=None)) -> str:
         return auth.resolve_user(cfg.key_map, authorization)
+
+    async def current_bundle(
+        authorization: str | None = Header(default=None),
+    ) -> tuple[str, str]:
+        return auth.resolve_bundle(cfg.bundle_map, authorization)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -115,6 +136,29 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
         except Exception:
             log.exception("unhandled error publishing %s for %s", body.filename, user)
+            raise
+
+    @app.post("/publish-bundle")
+    async def publish_bundle_endpoint(
+        body: BundleRequest, target: tuple[str, str] = Depends(current_bundle)
+    ) -> dict:
+        user, slug = target
+        try:
+            async with lock:
+                return await asyncio.to_thread(
+                    publisher.publish_bundle,
+                    cfg,
+                    user=user,
+                    slug=slug,
+                    files=[f.model_dump() for f in body.files],
+                )
+        except publisher.PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except publisher.RenderError as e:
+            log.error("bundle publish failed for %s/%s: %s", user, slug, e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception:
+            log.exception("unhandled error publishing bundle %s/%s", user, slug)
             raise
 
     return app

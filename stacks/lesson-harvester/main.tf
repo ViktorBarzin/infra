@@ -250,6 +250,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.lesson_harvester.metadata[0].name
   name            = "lesson-harvester"
+  homepage_group  = "AI & Data"
   port            = 8080
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

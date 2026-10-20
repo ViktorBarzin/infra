@@ -327,6 +327,7 @@ module "ingress" {
   extra_middlewares              = var.ingress.extra_middlewares
   anti_ai_scraping               = var.ingress.anti_ai_scraping
   turnstile                      = var.ingress.turnstile
+  homepage_group                 = var.ingress.homepage_group
   extra_annotations = {
     for k, v in {
       "gethomepage.dev/description" = var.ingress.homepage_description

@@ -175,6 +175,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = "priority-pass"
   name            = "priority-pass"
+  homepage_group  = "Productivity"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   max_body_size   = "10m"

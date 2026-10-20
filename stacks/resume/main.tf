@@ -288,7 +288,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Resume"
     "gethomepage.dev/description"  = "Online resume"
     "gethomepage.dev/icon"         = "mdi-file-account"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
 }

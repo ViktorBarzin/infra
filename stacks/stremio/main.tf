@@ -444,9 +444,10 @@ module "cinemeta_ingress" {
   # record from the ingress-DNS-sync, so cinemeta.viktorbarzin.me resolves on
   # both the public internet and the home LAN. (Carved out of the outage-failover
   # Worker in stacks/cloudflared so it draws no Worker quota.)
-  dns_type  = "proxied"
-  namespace = kubernetes_namespace.stremio.metadata[0].name
-  name      = "cinemeta"
+  dns_type       = "proxied"
+  namespace      = kubernetes_namespace.stremio.metadata[0].name
+  name           = "cinemeta"
+  homepage_group = "Media & Entertainment"
   # No Turnstile gate: Stremio addon API, machine-only (docs/plans/2026-10-16-turnstile-sitewide-design.md).
   turnstile       = false
   service_name    = kubernetes_service.cinemeta_proxy.metadata[0].name
