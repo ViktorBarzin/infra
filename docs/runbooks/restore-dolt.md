@@ -61,8 +61,9 @@ order: noms manifest, then table files, then the append-only chunk journal.
 least what an SQL probe saw just before, or it copies again (3 tries). It then
 runs `dolt backup sync-url` from the copy, tars the store to NFS, restores the
 NFS copy with `dolt backup restore` and checks the counts. Metrics go to
-`backup_last_success_timestamp{job="dolt-history-backup"}`; the generic
-`BackupCronJobFailed` alert covers job failures.
+`backup_last_success_timestamp{job="dolt-history-backup"}`, which
+`DoltHistoryBackupStale` (older than 36h) and `DoltHistoryBackupNeverRun`
+watch; the generic `BackupCronJobFailed` alert covers job failures.
 
 Do not run `CALL dolt_backup(...)` against the live server, and do not run the
 `dolt` CLI through `kubectl exec` in the `dolt` container. On 2026-10-19, with
