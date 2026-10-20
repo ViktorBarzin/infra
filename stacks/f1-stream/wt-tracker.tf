@@ -35,6 +35,12 @@
 # signalling protocol p2p-media-loader v4 announces to, and it has the
 # provenance the Novage repo lacks.
 #
+# THE PACKAGE IS f1-wt-tracker. Until 2026-10-20 this pulled
+# ghcr.io/viktorbarzin/wt-tracker, a package first pushed by hand, which the
+# f1-stream repo's CI token could not write to (granting that is a GitHub web
+# UI step). CI now publishes to f1-wt-tracker, a package it created itself.
+# Both are private and pull with the namespace's ghcr-credentials secret.
+#
 # ORDER OF OPERATIONS: the image must be pushed BEFORE this stack applies, or
 # the pod sits in ImagePullBackOff until it appears. Nothing else breaks while
 # it does — see "NOT ON THE CRITICAL PATH" above.
@@ -79,7 +85,7 @@ resource "kubernetes_deployment" "wt_tracker" {
       spec {
         container {
           name              = "wt-tracker"
-          image             = "ghcr.io/viktorbarzin/wt-tracker:${var.wt_tracker_image_tag}"
+          image             = "ghcr.io/viktorbarzin/f1-wt-tracker:${var.wt_tracker_image_tag}"
           image_pull_policy = "Always"
 
           # `--ws` alone: no HTTP announce endpoint and no UDP socket, because
