@@ -107,18 +107,14 @@ Since 2026-10-10 the Trivy Operator (`stacks/trivy-operator`, `docs/architecture
 
 ## Legacy markers left by Keel and DIUN
 
-The cutover changed no pod template, so it left Keel and DIUN metadata on live workloads. Most of it was removed on 2026-10-19, in batches of five to eight stacks, accepting one rolling restart per affected workload:
+The cutover changed no pod template, so it left Keel and DIUN metadata on live workloads. All of it was removed on 2026-10-19 and 2026-10-20, accepting one rolling restart per affected workload. Live Deployments, StatefulSets and DaemonSets carrying a `keel.sh/*` or `diun.*` annotation went from 169 to 0.
 
-- The `keel.sh/update-time` ignore entries (`# LEGACY_TEMPLATE_ANNOTATIONS`), the `diun.*` annotations and anisette's `keel.sh/policy|trigger|pollSchedule` ignores came out of about 120 stacks. The apply then stripped the stamps from the live pod templates.
-- The `keel.sh/policy|trigger|pollSchedule` metadata annotations that the deleted Kyverno policy had stamped on chart-rendered workloads, the authentik outposts and a few others (61 workloads) were removed with `kubectl annotate <kind>/<name> keel.sh/policy- ...`. That is a metadata-only change and restarted nothing.
+- About 120 stacks lost their `keel.sh/update-time` ignore entries (`# LEGACY_TEMPLATE_ANNOTATIONS`), their `diun.*` annotations and anisette's `keel.sh/policy|trigger|pollSchedule` ignores, in batches of five to eight stacks. The apply stripped the stamps from the live pod templates.
+- The workloads where a restart touches ingress, auth, git, mail, DNS or files (traefik, the authentik server and pgbouncer, forgejo, the mailserver pod, the primary Technitium instance, nextcloud) followed one at a time on 2026-10-20, each checked through its own interface before the next.
+- The `keel.sh/policy|trigger|pollSchedule` metadata annotations that the deleted Kyverno policy had stamped (61 workloads) were removed with `kubectl annotate`, which changes no pod template.
+- `keel.sh/update-time` on pod templates that Terraform does not render itself (Helm charts, tigera-operator, kubeadm's CoreDNS, the authentik outpost controller; 29 workloads) was removed with a JSON patch on the pod template, one workload at a time. Helm's three-way merge keeps fields it did not write, so a chart upgrade would not have removed them. No operator put an annotation back.
 
-Live Deployments, StatefulSets and DaemonSets carrying any `keel.sh/*` or `diun.*` annotation went from 169 to 35, and none of the 35 has one in its own metadata. What remains is inert and is all pod-template annotations:
-
-- Workloads where a restart means an outage window or touches the ingress and auth path, held for a scheduled session. Their markers are still in Terraform: traefik (the `diun.*` pair in `podAnnotations` in `stacks/traefik/modules/traefik/main.tf`), the authentik server (`diun.*` in `stacks/authentik/modules/authentik/values.yaml`) and pgbouncer, forgejo, the mailserver pod, the primary Technitium instance and nextcloud (`chart_values.yaml`).
-- `keel.sh/update-time` on pod templates that Terraform does not render itself, from Helm charts, operators and kubeadm: calico, cnpg, CoreDNS, crowdsec, kyverno, metrics-server, grafana, prometheus-server, loki, alloy, loki-canary, nfs-csi, the NVIDIA node-feature-discovery pods, reloader, sealed-secrets, woodpecker, and the authentik worker and postgres-ldap outpost. Helm's three-way merge keeps fields it did not write, so a chart upgrade leaves them in place. Each one goes the next time something edits that pod template.
-- `stacks/f1-stream/wt-tracker.tf` keeps one ignore line that matches nothing live; another session was changing that stack at the time.
-
-New workloads need no Keel or DIUN lines. Marker reference: `docs/agents/kyverno-drift.md`.
+One ignore line remains in `stacks/f1-stream/wt-tracker.tf`; it matches nothing live. New workloads need no Keel or DIUN lines. Marker reference: `docs/agents/kyverno-drift.md`.
 
 ## History: DIUN and the upgrade agent (2026-04 to 2026-10)
 
