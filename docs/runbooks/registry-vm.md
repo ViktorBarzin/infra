@@ -1,6 +1,6 @@
 # Runbook: Registry VM (docker-registry, 10.0.20.10)
 
-Last updated: 2026-09-03
+Last updated: 2026-10-20
 
 The registry VM is an Ubuntu 24.04 VM on the cluster LAN subnet
 `10.0.20.0/24`, with a static netplan config (no DHCP). Because it
@@ -315,10 +315,21 @@ All five `/healthz` probes answered 200, and pulls of an expired GHCR image
 (`advplyr/audiobookshelf:2.37.1`) and an expired Docker Hub image
 (`viktorbarzin/book-search`) through k8s-node2's mirror completed from upstream.
 
-Four fills in ten days means one busy day of rollouts now fills the 61G disk
-inside a single 168h TTL window. The open options are a larger root disk for
-this VM (the thin pool has room; growing a VM's storage is Viktor's call) or a
-shorter `proxy.ttl` for the GHCR cache, which has no pull limit upstream.
+Four fills in ten days meant one busy day of rollouts filled the 61G disk
+inside a single 168h TTL window. On 2026-10-20 Viktor chose a larger disk
+over a shorter GHCR `proxy.ttl`, and the root disk went from 64G to 150G on
+the same HDD thin pool (145G filesystem, 116G free afterwards, all five
+`/healthz` probes 200). The size is a floor in `playbooks/pve-host.yml`
+(tag `registry-disk`, grow-only), and `playbooks/registry-cache.yml` (tag
+`disk`) grows the partition and filesystem inside the guest:
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --tags registry-disk
+ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml --tags disk
+```
+
+To grow it again, raise both `150` values in `pve-host.yml` and run the two
+commands. The expiry procedure above still applies if a fill recurs.
 
 ## Rollback
 

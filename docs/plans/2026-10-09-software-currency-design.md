@@ -363,19 +363,22 @@ Closed on 2026-10-19 and 2026-10-20:
 - Grafana has 1Gi of memory and is scaled down during a MySQL write freeze (runbook).
 - The Depeche Mode playlists match their files; the originals are kept as `.m3u.orig`.
 - The Immich Postgres backup no longer runs out of memory: it writes a gzipped dump under a temporary name (ba13cb559), and `docs/runbooks/restore-immich-postgresql.md` is tested against a real dump.
-- No recurrence or no impact: paperless OOM, the helm.ngc.nvidia.com certificate, osrm waypoint names, registry cache space, the Monday digest.
+- kured: Viktor chose on 2026-10-20 to keep the current Slack webhook. The URL was readable only by cluster users with DaemonSet read access, and the stack now reads it from a Secret.
+- wt-tracker: CI publishes to a new package the repository owns, `ghcr.io/viktorbarzin/f1-wt-tracker`, and the cluster runs the image without npm.
+- beads: the shared database is on schema v66 and every client, claude-agent-service and BeadBoard included, runs bd 1.3.1 (`docs/runbooks/beads-bd-upgrade.md`).
+- The six completed one-off Jobs are deleted. Their output was on PVCs, which are kept.
+- Trivy, again on 2026-10-20: 72 image-secret reports written before the ignore file existed kept 12 `TrivyExposedSecretInImage` alerts firing. They were deleted and the rescans came back with no findings.
+- The registry cache VM's root disk is 150G (from 64G), declared in `playbooks/pve-host.yml` and `playbooks/registry-cache.yml`, Viktor's choice after four fills in ten days.
+- The weekly claude-memory regression timer is not coming back. Its 119-query benchmark exercises the SQLite recall path, not the production Postgres one, so a production recall change is checked by replaying real prompts before and after and comparing the returned memory ids (Viktor, 2026-10-20).
+- No recurrence or no impact: paperless OOM, the helm.ngc.nvidia.com certificate, osrm waypoint names, the Monday digest.
 
 Still open:
 
 | Component | Why | What it needs |
 |---|---|---|
-| kured Slack webhook | the old URL was readable in the DaemonSet args and remains in old Helm release records | Viktor rotates it in Slack and updates Vault |
-| wt-tracker image | the ghcr package is not linked to the f1-stream repo, so CI cannot push the image that drops npm | Viktor grants the repo Write access under the package's Actions access settings |
-| `bd` in claude-agent-service | held at 1.0.4: bd 1.1 and later need the shared beads database migrated, which locks out every older client at once | a decision on a fleet-wide beads migration |
-| Completed one-off Jobs | six hand-made Jobs (broker-sync, paperless-ngx, dbaas) keep Trivy reports of old images | Viktor decides whether to delete the Jobs |
 | PGPASSWORD in Loki | Viktor chose to wait for retention | the lines age out around 2026-11-09 |
 | tigera-operator, nfs-csi, pvc-autoresizer restarts | their charts or binaries expose no leader-election setting | a Helm post-renderer or upstream change (`docs/agents/known-issues.md`) |
-| Woodpecker agent keepalive flag | the agent reads a mis-named flag upstream | Viktor decides whether to file it |
+| Woodpecker agent keepalive flag | the agent reads a mis-named flag upstream | filed as woodpecker-ci/woodpecker#7350; an upstream fix |
 | osrm-refresh | the 2026-11-01 run is the first on the retry logic | check that run |
 | Fixable CVEs in third-party images | about 50 internet-facing namespaces run images that are on their newest tag; Viktor chose to keep alerting on all of them | upstream releases, which Renovate lands |
 
