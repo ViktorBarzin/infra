@@ -1,5 +1,7 @@
 # Secrets Management Architecture
 
+<!-- showcase: Vault is the single source of truth for secrets. External Secrets copies them into Kubernetes, and CI logs in with service account tokens instead of stored keys. -->
+
 ## Overview
 
 Secrets management is centralized in HashiCorp Vault as the single source of truth for all API keys, tokens, passwords, SSH keys, and database credentials. External Secrets Operator (ESO) syncs secrets from Vault KV to Kubernetes Secrets. Vault's database engine handles automatic credential rotation for MySQL and PostgreSQL. CI/CD systems authenticate via Kubernetes service account tokens. Sealed Secrets provide user-managed encrypted secrets without Vault access. SOPS encrypts Terraform state files at rest.

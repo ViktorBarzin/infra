@@ -1,5 +1,7 @@
 # Monitoring & Alerting Architecture
 
+<!-- showcase: Prometheus, Grafana, Loki, Alertmanager and Uptime Kuma watch the cluster, its hosts and its backups, and alerts land in Slack. -->
+
 ## Overview
 
 The monitoring stack provides comprehensive observability for the home Kubernetes cluster through metrics collection (Prometheus), visualization (Grafana), log aggregation (Loki), alerting (Alertmanager), and uptime monitoring (Uptime Kuma). GPU metrics are collected via NVIDIA's dcgm-exporter. The system tracks infrastructure health, application performance, backup success, and resource utilization with intelligent alert inhibition to reduce noise during cascading failures.

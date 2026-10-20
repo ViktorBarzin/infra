@@ -1,5 +1,7 @@
 # Security & L7 Protection
 
+<!-- showcase: CrowdSec blocks known-bad IPs at the edge, Kyverno enforces policy on what may run in the cluster, and a layered defence keeps AI scrapers out. -->
+
 ## Overview
 
 The homelab implements defense-in-depth security using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 3-layer anti-AI scraping defense (reduced from 5 in April 2026 after removing the rewrite-body plugin). CrowdSec enforcement has **two surfaces** (see the CrowdSec section): an in-process Traefik plugin on the `websecure` entrypoint, which is what covers Cloudflare-proxied hosts — i.e. every HTTP host in the zone — and in-kernel nftables drops on every node, which cover direct hosts and non-HTTP ports. The Traefik hop costs one in-memory map lookup per request. All security components fail open (a CrowdSec outage stops new bans but never blocks legitimate traffic; the plugin keeps serving its last known decision set). Security policies are deployed in audit mode first, then selectively enforced after validation.

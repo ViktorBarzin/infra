@@ -1,5 +1,7 @@
 # Multi-Tenancy
 
+<!-- showcase: Each user gets their own namespaces, RBAC roles, quotas and CI access, generated from one entry in Vault, and logs in to the cluster through Authentik. -->
+
 ## Overview
 
 The cluster implements namespace-based multi-tenancy where each user receives their own Kubernetes namespace(s), RBAC roles, resource quotas, and CI/CD access. Onboarding is Vault-driven: add user metadata to `secret/platform → k8s_users`, apply Terraform stacks, and all resources (namespace, policies, RBAC, DNS, TLS) are auto-generated. Users access the cluster via OIDC authentication through Authentik and can self-service via k8s-portal.

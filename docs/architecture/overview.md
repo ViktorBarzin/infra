@@ -1,5 +1,7 @@
 # Infrastructure Overview
 
+<!-- showcase: A Kubernetes cluster on Proxmox, declared entirely in Terraform and Terragrunt, with one stack per service and a tier system that sets resource priority. -->
+
 ## Overview
 
 This homelab infrastructure runs a production-grade Kubernetes cluster on Proxmox, hosting 70+ services including web applications, databases, monitoring, security, and GPU-accelerated workloads. The entire infrastructure is managed declaratively using Terraform and Terragrunt, with automated CI/CD pipelines for continuous deployment. Services are organized into a five-tier system for resource isolation and priority-based scheduling.

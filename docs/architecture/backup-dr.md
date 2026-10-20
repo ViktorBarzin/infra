@@ -1,5 +1,7 @@
 # Backup & Disaster Recovery Architecture
 
+<!-- showcase: Data is snapshotted on the host, mirrored to a second disk and copied offsite to a Synology. Data that can be regenerated stays out of the offsite copy. -->
+
 Last updated: 2026-06-01
 
 > **2026-06-01 — regenerable services carved back out** (offsite Synology hit

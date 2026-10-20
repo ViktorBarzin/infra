@@ -1,5 +1,7 @@
 # Contributing to the Infrastructure
 
+<!-- showcase: Anyone can report an outage or request a change by filing an issue. An issue labelled broken dispatches an AI agent that diagnoses and fixes the problem. -->
+
 Welcome! This doc explains how to report issues, request features, and what happens behind the scenes.
 
 ## Quick Links

@@ -1,5 +1,7 @@
 # Networking Architecture
 
+<!-- showcase: pfSense splits the network into separate segments for management, Kubernetes and cameras. Traefik is the ingress controller, and every request passes a middleware chain for bot blocking, rate limits and login. -->
+
 Last updated: 2026-07-03 (dCCTV as-built after the single-switch swap — camera live on P1 trunk, ADR-0017 rev 4)
 
 ## Overview

@@ -1,5 +1,7 @@
 # Storage Architecture
 
+<!-- showcase: Databases get block volumes from a Proxmox thin pool, encrypted with LUKS when the data is sensitive. Everything else lives on NFS served by the Proxmox host. -->
+
 Last updated: 2026-05-24
 
 ## Overview
