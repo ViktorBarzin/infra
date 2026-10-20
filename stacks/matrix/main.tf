@@ -281,7 +281,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Matrix"
     "gethomepage.dev/description"  = "Secure messaging (tuwunel)"
     "gethomepage.dev/icon"         = "matrix.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
   }
 }

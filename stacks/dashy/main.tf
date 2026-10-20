@@ -144,6 +144,7 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.dashy.metadata[0].name
   name            = "dashy"
+  homepage_group  = "Core Platform"
   tls_secret_name = var.tls_secret_name
   auth            = "required" # hidden as we use homepage now
   extra_annotations = {

@@ -292,7 +292,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Roundcube Mail"
     "gethomepage.dev/description"  = "Webmail client"
     "gethomepage.dev/icon"         = "roundcube.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
   }
 }

@@ -664,7 +664,7 @@ module "ingress" {
     "gethomepage.dev/name"        = "FIRE Planner"
     "gethomepage.dev/description" = "Risk-adjusted retirement projections (ProjectionLab clone)"
     "gethomepage.dev/icon"        = "mdi-fire"
-    "gethomepage.dev/group"       = "Finance"
+    "gethomepage.dev/group"       = "Finance & Personal"
   }
 }
 

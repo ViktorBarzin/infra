@@ -54,5 +54,6 @@ module "app" {
   ingress = {
     homepage_description = "Reminders-style task PWA over Nextcloud CalDAV"
     homepage_icon        = "mdi-format-list-checks"
+    homepage_group       = "Productivity"
   }
 }

@@ -931,6 +931,7 @@ module "ingress_snapshot" {
   dns_type        = "none" # DNS already created by module.ingress
   namespace       = kubernetes_namespace.chrome_service.metadata[0].name
   name            = "chrome-snapshot"
+  homepage_group  = "Infrastructure"
   host            = "chrome"
   service_name    = kubernetes_service.chrome_snapshot.metadata[0].name
   port            = 8088

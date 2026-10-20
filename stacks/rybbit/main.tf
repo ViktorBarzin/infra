@@ -868,6 +868,7 @@ module "ingress-api" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
   name            = "rybbit-api"
+  homepage_group  = "Finance & Personal"
   host            = "rybbit"
   service_name    = "rybbit"
   ingress_path    = ["/api"]

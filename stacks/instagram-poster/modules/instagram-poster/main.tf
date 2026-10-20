@@ -469,6 +469,7 @@ module "ingress_protected" {
   dns_type        = "none" # DNS record already created by the public ingress above
   namespace       = kubernetes_namespace.instagram_poster.metadata[0].name
   name            = "instagram-poster"
+  homepage_group  = "Automation"
   host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
   auth            = "required"

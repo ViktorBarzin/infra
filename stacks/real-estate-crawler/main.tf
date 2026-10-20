@@ -575,7 +575,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Wrongmove"
     "gethomepage.dev/description"  = "Property search"
     "gethomepage.dev/icon"         = "home-assistant.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
 }
@@ -590,6 +590,7 @@ module "ingress-api" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
   name            = "wrongmove-api"
+  homepage_group  = "Finance & Personal"
   host            = "wrongmove"
   service_name    = "realestate-crawler-api"
   ingress_path    = ["/api"]

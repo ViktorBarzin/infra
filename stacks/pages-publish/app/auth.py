@@ -19,3 +19,16 @@ def resolve_user(key_map: dict[str, str], authorization: str | None) -> str:
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return user
+
+
+def resolve_bundle(
+    bundle_map: dict[str, tuple[str, str]], authorization: str | None
+) -> tuple[str, str]:
+    """Bundle-token -> ``(user, slug)``. Same 401 rules as ``resolve_user``."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+    target = bundle_map.get(token)
+    if target is None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return target

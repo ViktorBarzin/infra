@@ -281,6 +281,7 @@ module "ingress-internal-gate" {
   auth                    = "none"
   namespace               = kubernetes_namespace.android-emulator.metadata[0].name
   name                    = "android-emulator"
+  homepage_group          = "Development & CI"
   root_domain             = "viktorbarzin.lan"
   service_name            = kubernetes_service.gate.metadata[0].name
   tls_secret_name         = var.tls_secret_name
@@ -297,6 +298,7 @@ module "ingress-internal-novnc" {
   auth                    = "none"
   namespace               = kubernetes_namespace.android-emulator.metadata[0].name
   name                    = "android-emulator-novnc"
+  homepage_group          = "Development & CI"
   host                    = "android-emulator"
   root_domain             = "viktorbarzin.lan"
   service_name            = kubernetes_service.novnc.metadata[0].name
@@ -322,6 +324,7 @@ module "ingress-public-gate" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.android-emulator.metadata[0].name
   name            = "android-emulator-public"
+  homepage_group  = "Development & CI"
   host            = "android-emulator"
   service_name    = kubernetes_service.gate.metadata[0].name
   tls_secret_name = var.tls_secret_name
