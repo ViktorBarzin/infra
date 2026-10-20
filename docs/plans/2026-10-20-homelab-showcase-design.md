@@ -1,6 +1,6 @@
 # Homelab showcase page
 
-Status: approved 2026-10-20, from a `/grill-with-docs` interview and two independent challenger reviews.
+Status: done 2026-10-20. Approved the same day from a `/grill-with-docs` interview and two independent challenger reviews. Live at https://pages.viktorbarzin.me/homelab/, rebuilt daily at 06:30 UTC by `.woodpecker/showcase.yml`.
 
 ## Context
 
@@ -169,8 +169,14 @@ flowchart TD
 7. Add `kubectl` to the `infra-cli` image, the Woodpecker pipeline, and the cron schedule.
 8. Open the public URL in a desktop browser, on the shared Android emulator and on the iPhone (`homelab ios shot`). Paste the link into Discord and Slack to check the preview card.
 
+## Verification (2026-10-20)
+
+- From outside, through Cloudflare, with each platform's user agent: Discordbot, Slackbot, facebookexternalhit, Twitterbot, redditbot, TelegramBot and WhatsApp all received the page and `og.png` with HTTP 200. Before the `showcase-link-previews` rule, Discordbot and redditbot were sent to the Anubis challenge. A browser user agent gets the Turnstile check, and GPTBot gets 403.
+- The four Variants render with no console errors and no horizontal scroll in headless Chrome at 1440px and 390px, and the map renders in real Chrome on the shared Android emulator.
+- Not checked yet: the iPhone (`homelab ios doctor` could not reach the London Mac that drives it), and a real share into Discord or Slack. Those platforms fetch from their own networks, which the user-agent test above stands in for but does not reproduce.
+
 ## Open questions
 
-- Whether Cloudflare Bot Fight Mode (`fight_mode = true` in `stacks/cloudflared/cloudflare.tf`) blocks any link-preview bot before it reaches the Anubis rule. Step 8 tests a real share on each platform.
+- Whether Cloudflare Bot Fight Mode (`fight_mode = true` in `stacks/cloudflared/cloudflare.tf`) blocks a link-preview bot coming from the platforms' own networks. The user-agent tests passed through Cloudflare from the home connection; a real share on each platform settles it.
 - Which scrape ports to treat as plumbing. The generator test pins the list against current data.
 - The homelab v3 blog draft (`Website/content/blog/21-home-lab-v3-the-foundation.md`, a draft since 2026-03-01) covers the same layers. The page does not link to it, by decision. Whether the draft gets finished is outside this design.
