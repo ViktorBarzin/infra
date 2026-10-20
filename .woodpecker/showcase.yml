@@ -1,8 +1,10 @@
 # Daily homelab showcase: builds the Snapshot from live state and publishes the
 # page at pages.viktorbarzin.me/homelab/ (docs/plans/2026-10-20-homelab-showcase-design.md,
 # ADR-0037). Triggered by the Woodpecker cron schedule "showcase", registered
-# through the API like drift-detection:
-#   POST /api/repos/1/cron  {"name":"showcase","schedule":"0 30 6 * * *","branch":"master"}
+# through the API like drift-detection (cron id 70 on repo 1, 2026-10-20):
+#   POST /api/repos/1/cron  {"name":"showcase","schedule":"30 6 * * *","branch":"master"}
+# Run it on demand with POST /api/repos/1/cron/70 (token: Vault
+# secret/ci/global, woodpecker_api_token).
 # 06:30 UTC sits after the PVE backup chain (daily-backup 05:00) and the 04:00
 # drift-detection run.
 #
