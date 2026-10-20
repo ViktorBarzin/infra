@@ -141,7 +141,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Blog"
     "gethomepage.dev/description"  = "Personal blog"
     "gethomepage.dev/icon"         = "hugo.png"
-    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
 }

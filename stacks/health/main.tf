@@ -350,6 +350,7 @@ module "ingress_test" {
   auth                    = "none"
   namespace               = kubernetes_namespace.health.metadata[0].name
   name                    = "health-test"
+  homepage_group          = "Core Platform"
   root_domain             = "viktorbarzin.lan"
   service_name            = kubernetes_service.health.metadata[0].name
   tls_secret_name         = var.tls_secret_name
@@ -388,6 +389,7 @@ module "ingress_api" {
   dns_type          = "proxied"
   namespace         = kubernetes_namespace.health.metadata[0].name
   name              = "health-api"
+  homepage_group    = "Core Platform"
   service_name      = kubernetes_service.health.metadata[0].name
   tls_secret_name   = var.tls_secret_name
   ingress_path      = ["/api/ingest"]
