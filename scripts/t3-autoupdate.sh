@@ -114,7 +114,7 @@ backup_all() {
       LOG "pre-bump backup: $u -> $dst ($(stat -c%s "$dst" 2>/dev/null) bytes)"
       [ "$u" = "wizard" ] && ADMIN_SEED="$dst"
     else
-      LOG "WARN: pre-bump backup FAILED for $u (/home/$u/.t3/userdata/state.sqlite)"
+      LOG "WARN: pre-bump backup FAILED for $u ($(state_db "$u"))"
     fi
   done
   [ -n "$ADMIN_SEED" ] || ADMIN_SEED="$(ls -1t "$BACKUP_DIR"/*/"state-prebump-$target-"*.sqlite 2>/dev/null | head -1)"

@@ -229,6 +229,15 @@ FAKE_DELAY=3 python3 -I "$TMP/fake-server.py" "$iport" & holders="$holders $!"
 T3_SERVE_ENV_DIR="$TMP/serve-env" DISPATCH="127.0.0.1:$dport4" USER_MAP="$TMP/user-map" RESTART_VERIFY_TIMEOUT=60 ok safe_restart_unit t3-serve@u.service u
 eq    "$(wc -l <"$TMP/dispatch-hits")" "1" "exactly one dispatch call once the instance answers"
 
+# --- state_db: follow statev2.sqlite once 0.1.0 has imported into it ---
+mkdir -p "$TMP/home/u/.t3/userdata"; : >"$TMP/home/u/.t3/userdata/state.sqlite"
+eq    "$(T3_HOME_BASE="$TMP/home" state_db u)" "$TMP/home/u/.t3/userdata/state.sqlite" "0.0.x: state.sqlite"
+: >"$TMP/home/u/.t3/userdata/statev2.sqlite"
+eq    "$(T3_HOME_BASE="$TMP/home" state_db u)" "$TMP/home/u/.t3/userdata/statev2.sqlite" "0.1.0: statev2.sqlite"
+eq    "$T3_BACKUP_TIMEOUT" "3600" "pre-bump backup timeout long enough for a 2.85 GB DB"
+grep -q 'statev2.sqlite' "$HERE/scripts/t3-backup-state.sh"; eq "$?" 0 "nightly backup follows statev2.sqlite"
+grep -q 'state_db "$u"' "$HERE/scripts/t3-migrate-idle.sh"; eq "$?" 0 "idle gate reads the live DB"
+
 # --- unit_busy: an agent anywhere in the unit's cgroup counts ---
 cat >"$TMP/bin/systemctl" <<'EOF'
 #!/bin/sh
