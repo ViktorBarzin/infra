@@ -139,6 +139,12 @@ resource "kubernetes_deployment" "dolt" {
         }
       }
       spec {
+        # Dolt is the shared coordination store behind every session's bd and
+        # presence calls, so it runs above the namespace's tier-4-aux. At
+        # tier-4-aux (priority 200000, preemption Never) the scheduler
+        # preempted it on 2026-10-20 at 00:20 UTC, together with the
+        # workbench. The rest of beads-server stays tier-4-aux.
+        priority_class_name = "tier-3-edge"
         container {
           name = "dolt"
           # Exact pin, owned by Terraform (the image is no longer in
