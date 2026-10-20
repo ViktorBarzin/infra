@@ -60,6 +60,14 @@
     # SHASUMS256.txt.
     devvm_bun_version: "1.4.3"
     devvm_bun_sha256: 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
+    # bd, the beads CLI. Pinned because the version decides the schema of the
+    # shared beads database (Dolt on 10.0.20.200): every client of that server,
+    # this box and the claude-agent-service image, moves together, and the
+    # schema is migrated once after all of them run the new version. Procedure:
+    # docs/runbooks/beads-bd-upgrade.md. The checksum is the
+    # beads_<version>_linux_amd64.tar.gz line of the release's checksums.txt.
+    devvm_bd_version: "1.3.1"
+    devvm_bd_sha256: 3219443a9734b89b93fb16ee8d65844759fa1b3cd3cf139c606b7353cfb0715c
     # Latest, not pinned: nothing else in this pipeline pins versions either,
     # and these are tools rather than build inputs.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
@@ -449,6 +457,88 @@
         state: link
         force: true
       loop: [bun, bunx]
+
+    # ---- 2-ter) bd, pinned (added 2026-10-20) --------------------------------
+    # Same layout as bun: one folder per release under /usr/local/lib/bd, so a
+    # bump is a new folder plus a new wrapper and the previous release stays.
+    # /usr/local/bin/bd is a wrapper rather than a link because bd 1.3 sends
+    # anonymous usage metrics to gastownhall-eventsapi.com unless
+    # BD_DISABLE_METRICS is set, and this covers every caller, hooks included.
+    #
+    # The admin's ~/.local/bin/bd is a link to the wrapper. The Claude hooks
+    # call that path directly, and other users' ~/.local/bin/bd links point at
+    # it, so they all follow. Until 2026-10-20 it was a hand-installed bd 1.0.0.
+    - name: Create the bd release folder
+      tags: [bd]
+      ansible.builtin.file:
+        path: "/usr/local/lib/bd/{{ devvm_bd_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      check_mode: false
+
+    - name: Download bd
+      tags: [bd]
+      ansible.builtin.get_url:
+        url: "https://github.com/gastownhall/beads/releases/download/v{{ devvm_bd_version }}/beads_{{ devvm_bd_version }}_linux_amd64.tar.gz"
+        dest: "/usr/local/lib/bd/{{ devvm_bd_version }}/beads_linux_amd64.tar.gz"
+        checksum: "sha256:{{ devvm_bd_sha256 }}"
+        mode: "0644"
+      check_mode: false
+
+    - name: Unpack bd
+      tags: [bd]
+      ansible.builtin.unarchive:
+        src: "/usr/local/lib/bd/{{ devvm_bd_version }}/beads_linux_amd64.tar.gz"
+        dest: "/usr/local/lib/bd/{{ devvm_bd_version }}"
+        remote_src: true
+        include: [bd]
+        creates: "/usr/local/lib/bd/{{ devvm_bd_version }}/bd"
+
+    - name: Make the unpacked bd executable
+      tags: [bd]
+      ansible.builtin.file:
+        path: "/usr/local/lib/bd/{{ devvm_bd_version }}/bd"
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode
+
+    - name: Install the bd wrapper
+      tags: [bd]
+      ansible.builtin.copy:
+        dest: /usr/local/bin/bd
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # Managed by infra/playbooks/devvm.yml. bd {{ devvm_bd_version }} with its
+          # anonymous usage metrics off unless the caller sets BD_DISABLE_METRICS.
+          BD_DISABLE_METRICS="${BD_DISABLE_METRICS:-1}"
+          export BD_DISABLE_METRICS
+          exec /usr/local/lib/bd/{{ devvm_bd_version }}/bd "$@"
+
+    - name: Create the admin's ~/.local/bin
+      tags: [bd]
+      ansible.builtin.file:
+        path: "/home/{{ devvm_admin_user }}/{{ item }}"
+        state: directory
+        owner: "{{ devvm_admin_user }}"
+        group: "{{ devvm_admin_user }}"
+      loop: [.local, .local/bin]
+
+    - name: Point the admin's ~/.local/bin/bd at the wrapper
+      tags: [bd]
+      ansible.builtin.file:
+        src: /usr/local/bin/bd
+        dest: "/home/{{ devvm_admin_user }}/.local/bin/bd"
+        state: link
+        force: true
+        owner: "{{ devvm_admin_user }}"
+        group: "{{ devvm_admin_user }}"
+        follow: false
 
     # ---- 2a) ~/.local/bin on PATH for every login shell ---------------------
     - name: Put ~/.local/bin on PATH for login shells
