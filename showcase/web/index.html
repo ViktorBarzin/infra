@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viktor's Homelab Map</title>
+<meta name="description" content="An exploded map of Viktor Barzin's homelab: the hardware, network, platform and apps, and how it is run. Every number comes from the live cluster and every layer links to its design doc.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Viktor's homelab, layer by layer">
+<meta property="og:description" content="One server, a Kubernetes cluster and the self-hosted services on it, drawn as four layers you can open, with a guided tour.">
+<meta name="twitter:card" content="summary">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f2a4a'/%3E%3Cg fill='none' stroke='%23ffb454' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M16 6l10 5-10 5-10-5z'/%3E%3Cpath d='M6 16l10 5 10-5' /%3E%3Cpath d='M6 21l10 5 10-5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="map.css">
+</head>
+<body>
+<div class="sheet">
+  <header class="top">
+    <span class="mark" aria-hidden="true">HL</span>
+    <nav id="switcher"></nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">Drawing HL-01 &middot; exploded view &middot; <span id="rev">loading</span></p>
+      <h1 id="hero-title">Viktor's homelab</h1>
+      <p class="lede" id="lede">Loading the latest snapshot&hellip;</p>
+      <div class="hero-actions">
+        <button type="button" class="btn btn-primary" id="tour-start">Take the tour <span aria-hidden="true">&rarr;</span></button>
+        <a class="btn btn-quiet" href="https://github.com/ViktorBarzin/infra">Browse the repo</a>
+      </div>
+      <dl class="titleblock" id="stats" aria-label="Headline numbers"></dl>
+    </section>
+
+    <section class="drawing" aria-label="Layered map">
+      <div class="map-col">
+        <div class="map-head">
+          <h2>The map</h2>
+          <p>Tap a layer to open it. Apps sit on top, hardware at the bottom.</p>
+        </div>
+        <div class="map" id="map">
+          <ol class="stack" id="stack" aria-label="Layers, top to bottom"></ol>
+          <div class="ops" id="ops-slot"></div>
+        </div>
+      </div>
+
+      <aside class="panel" id="panel" aria-live="polite" tabindex="-1">
+        <div class="tourbar" id="tourbar" hidden></div>
+        <div id="panel-body"></div>
+      </aside>
+    </section>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
+<script type="module" src="map.js"></script>
+</body>
+</html>

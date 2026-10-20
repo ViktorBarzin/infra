@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Homelab service graph</title>
+<meta name="description" content="A force-directed map of the namespaces in Viktor Barzin's homelab, drawn from the network traffic Calico observed between them over the last 30 days.">
+<meta property="og:title" content="Homelab service graph">
+<meta property="og:description" content="Which self-hosted services talk to which: real traffic between Kubernetes namespaces over the last 30 days, with databases, Redis, Vault and mail shown as badges.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&display=swap">
+<link rel="stylesheet" href="graph.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span>Viktor's homelab</a>
+  <nav id="switcher"></nav>
+</header>
+
+<main>
+  <section class="intro">
+    <p class="eyebrow">Live service graph</p>
+    <h1>Who talks to whom</h1>
+    <p class="lede">Each point is a Kubernetes namespace. A line means Calico saw real traffic between two namespaces in the last 30 days, and a thicker line means more flows. Databases, Redis, Vault and mail are drawn as small marks on the namespace that uses them instead of as points of their own. Namespaces with no observed traffic sit in the outer ring, grouped by kind.</p>
+    <dl class="tally" id="tally"></dl>
+  </section>
+
+  <section class="viz" aria-label="Service graph">
+    <div class="controls">
+      <div class="view-toggle" role="group" aria-label="View">
+        <button type="button" id="view-graph" aria-pressed="true">Graph</button>
+        <button type="button" id="view-list" aria-pressed="false">List</button>
+      </div>
+      <div class="legend" id="legend" role="group" aria-label="Filter by group"></div>
+    </div>
+    <div class="key" id="key"></div>
+
+    <div class="stage" id="stage">
+      <svg id="sky" role="img" aria-label="Force-directed graph of namespaces and the traffic between them. The list view has the same information as text."></svg>
+      <p class="hint" id="hint">Drag to pan, scroll or pinch to zoom, tap a point for details.</p>
+      <div class="zoom" role="group" aria-label="Zoom">
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zoom-fit" aria-label="Fit the whole graph">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </button>
+      </div>
+      <aside class="panel" id="panel" hidden aria-live="polite"></aside>
+    </div>
+
+    <div class="list" id="list" hidden></div>
+  </section>
+</main>
+
+<footer id="footer"></footer>
+<p class="load-error" id="load-error" hidden></p>
+<script type="module" src="graph.js"></script>
+</body>
+</html>
