@@ -175,7 +175,39 @@ func exchangeCredential(port int, credential string) (*http.Response, string, er
 // autoPair mints a one-time pairing token for the user's instance (as that OS
 // user, via the scoped sudoers entry) and exchanges it at the instance's pairing
 // endpoint, relaying the returned session Set-Cookie to the browser.
+// instanceUp reports whether the user's instance answers HTTP at all. A t3 serve
+// that is still starting (0.1.0's first start imports the whole state DB, which
+// took over half an hour for a 2.85 GB DB on 2026-10-20) does not listen yet.
+var instanceUp = func(e entry) bool {
+	resp, err := readyClient.Get(fmt.Sprintf("http://127.0.0.1:%d/", e.Port))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
+}
+
+var readyClient = &http.Client{Timeout: 3 * time.Second}
+
+// minting holds the OS users with a mint in flight. A `t3 auth pairing create`
+// against a 0.1.0 instance whose import has not finished starts its own copy
+// of the import; on 2026-10-20 repeated attempts spawned ~70 of them and filled
+// the devvm disk. One mint per user at a time, and none until the instance is up.
+var minting sync.Map
+
 func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
+	if !instanceUp(e) {
+		log.Printf("pair for %s deferred: instance on port %d not answering yet", e.OsUser, e.Port)
+		w.Header().Set("Retry-After", "15")
+		http.Error(w, "t3 is starting (the first start after an update can take several minutes); retry shortly", http.StatusServiceUnavailable)
+		return
+	}
+	if _, busy := minting.LoadOrStore(e.OsUser, struct{}{}); busy {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "pairing already in progress; retry shortly", http.StatusServiceUnavailable)
+		return
+	}
+	defer minting.Delete(e.OsUser)
 	// t3-mint (root, via scoped sudoers) validates the OS user is in
 	// /etc/ttyd-user-map, then mints as that user. The dispatch service itself
 	// runs unprivileged and can invoke nothing else.

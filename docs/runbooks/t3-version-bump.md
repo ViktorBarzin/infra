@@ -55,6 +55,13 @@ between builds; the gate is what makes auto-tracking safe.
    DEFERRED (never killed) and migrate on their next idle restart. "Active" means
    a claude/codex/opencode process anywhere in the unit's cgroup (since 0.1.0 the
    agents are not direct children of the unit's MainPID).
+   No pairing attempt is made until the restarted instance answers on its own
+   port, and t3-dispatch answers 503 (Retry-After) instead of minting while an
+   instance is down or a mint for that user is already running. Since 0.1.0 a
+   `t3 auth pairing create` against an instance that has not finished its
+   first-start import starts another copy of the import; on 2026-10-20 the
+   canary's retries spawned about 70 of them while wizard's 2.85 GB import ran
+   (36 min, IO-starved by a nightly rsync) and filled the devvm disk.
 6. **Last-good** — advanced to the new version only on full success
    (`/var/lib/t3-autoupdate/last-good`); it is the rollback target.
 

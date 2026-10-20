@@ -245,6 +245,18 @@ verify_pairing() {
   printf '%s' "$out" | grep -qiE "$SESSION_COOKIE_RE"
 }
 
+# instance_up <user>: does the user's t3-serve@ answer on its own port? A 0.1.0
+# first start imports the whole state DB before it listens (36 min for 2.85 GB
+# on 2026-10-20), and every mint during that window starts another import copy.
+# Unknown port -> 0, so a provisioning gap never blocks the check (the dispatch
+# refuses to mint against a down instance as well).
+instance_up() {
+  local port
+  port="$(sed -n "s/^[[:space:]]*T3_PORT=[\"']\{0,1\}\([0-9][0-9]*\)[\"']\{0,1\}[[:space:]]*$/\1/p" "${T3_SERVE_ENV_DIR:-/etc/t3-serve}/$1.env" 2>/dev/null | tail -1)"
+  [ -n "$port" ] || return 0
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$port/" 2>/dev/null)" = "200" ]
+}
+
 # safe_restart_unit <unit> <user>: restart the unit, verify pairing; on failure
 # restore the user's DB from its pre-restart backup, roll the binary back, freeze.
 # Assumes a pre-restart backup already exists for <user> at the current $target
@@ -255,7 +267,7 @@ safe_restart_unit() {
   systemctl restart "$unit" || LOG "WARN: systemctl restart $unit returned non-zero"
   start=$(date +%s); deadline=$(( start + RESTART_VERIFY_TIMEOUT ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if verify_pairing "$u"; then ok=1; break; fi
+    if instance_up "$u" && verify_pairing "$u"; then ok=1; break; fi
     systemctl is-failed --quiet "$unit" && { LOG "$unit entered the failed state while starting"; break; }
     sleep 5
   done
