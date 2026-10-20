@@ -573,6 +573,18 @@ module "anubis" {
           - 'headers["X-Forwarded-Host"] == "f1.${local.domain}"'
           - 'path.matches("^/(s|p)/[A-Za-z0-9_:-]{6,64}(/thumb[.]jpg)?/?$")'
           - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
+    # The public homelab showcase (stacks/learn ingress_homelab_showcase). On
+    # 2026-10-20 Discordbot and redditbot were sent to the challenge here while
+    # Slack, Facebook and Twitter already passed; this lets the pages and the
+    # OpenGraph image through for the same preview agents as the f1 rule.
+    - name: showcase-link-previews
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "pages.${local.domain}"'
+          - 'path.matches("^/homelab(/([a-z-]+[.]html|og[.]png)?)?$")'
+          - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
     - name: allow-non-get-methods
       action: ALLOW
       expression: method != "GET"

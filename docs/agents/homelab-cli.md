@@ -13,3 +13,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 ## Maps (v0.27, 2026-10-08)
 
 `homelab map render|export|geocode` makes a map when a task needs one: a PNG with numbered pins, lines and polygons (Geoapify static maps), a KML or GPX file for a phone, or coordinates for an address. Input is GeoJSON; features with only an `address` are geocoded. `--share` prints a 30-day link from the caller's own Nextcloud. OpenStreetMap has no API key for reading, so the key to use is the Geoapify one at `secret/workstation/shared/maps`. Interactive maps in pages use the Leaflet snippet at the end of `homelab map --help`. Decision record: ADR-0028.
+
+## Showcase (v0.28, 2026-10-20)
+
+`homelab showcase build --out DIR` generates the public homelab page (pages.viktorbarzin.me/homelab/) from live state: a `data.json` Snapshot plus the four Variants in `showcase/web/`. `homelab showcase publish --dir DIR` sends it to pages-publish `/publish-bundle` with `PAGES_BUNDLE_TOKEN`. The daily `.woodpecker/showcase.yml` cron runs both, so a manual run is only needed to preview a change to the Variants (`--out` a scratch dir and serve it locally). Hand-written inputs: the `<!-- showcase: ... -->` summary in each mapped architecture doc and `showcase/hardware.yaml`. Design: `docs/plans/2026-10-20-homelab-showcase-design.md`, ADR-0037.

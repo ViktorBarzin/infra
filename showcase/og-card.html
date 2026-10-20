@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- Source of showcase/web/og.png, the 1200x630 link-preview card. It carries
+     no numbers, so it stays true between daily builds. Re-render it with any
+     headless browser at 1200x630 after editing. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Homelab preview card</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root { --paper:#f3f0e6; --ink:#14243a; --ink-2:#33445c; --line:#1f4f86; --accent:#b8430d; }
+  * { box-sizing:border-box; margin:0; }
+  body { width:1200px; height:630px; overflow:hidden; background:var(--paper); color:var(--ink);
+    font-family:"Atkinson Hyperlegible",system-ui,sans-serif;
+    background-image:
+      linear-gradient(rgba(23,58,99,.12) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(23,58,99,.12) 1px,transparent 1px),
+      linear-gradient(rgba(23,58,99,.06) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(23,58,99,.06) 1px,transparent 1px);
+    background-size:120px 120px,120px 120px,24px 24px,24px 24px; }
+  .frame { position:absolute; inset:28px; border:2px solid var(--line); }
+  .text { position:absolute; left:84px; top:84px; width:580px; }
+  .kicker { font:500 22px "JetBrains Mono",monospace; color:var(--accent); letter-spacing:.06em; text-transform:uppercase; }
+  h1 { font:700 88px/0.95 "Barlow Condensed",sans-serif; margin:20px 0 22px; letter-spacing:-.01em; }
+  p { font-size:26px; line-height:1.35; color:var(--ink-2); }
+  .url { position:absolute; left:84px; bottom:76px; font:500 24px "JetBrains Mono",monospace; color:var(--line); }
+  svg { position:absolute; right:60px; top:78px; }
+</style>
+</head>
+<body>
+<div class="frame"></div>
+<div class="text">
+  <div class="kicker">Self-hosted, generated daily</div>
+  <h1>Viktor's homelab, layer by layer</h1>
+  <p>Hardware, network, platform and apps, drawn from the live cluster. Follow a request or browse every service.</p>
+</div>
+<div class="url">pages.viktorbarzin.me/homelab</div>
+<svg width="420" height="446" viewBox="0 0 480 510" fill="none" stroke-linejoin="round">
+  <g font-family="JetBrains Mono, monospace" font-size="17" font-weight="500" fill="#1f4f86" stroke="none">
+    <text x="400" y="92">APPS</text>
+    <text x="400" y="192">PLATFORM</text>
+    <text x="400" y="292">NETWORK</text>
+    <text x="400" y="392">HARDWARE</text>
+  </g>
+  <g stroke-width="2.5">
+    <g transform="translate(0,300)"><path d="M20 90 L20 110 L200 200 L380 110 L380 90 L200 180 Z" fill="#dfe7f1" stroke="#1f4f86"/><path d="M200 0 L380 90 L200 180 L20 90 Z" fill="#c8d5e6" stroke="#1f4f86"/></g>
+    <g transform="translate(0,200)"><path d="M20 90 L20 110 L200 200 L380 110 L380 90 L200 180 Z" fill="#c8d5e6" stroke="#1f4f86"/><path d="M200 0 L380 90 L200 180 L20 90 Z" fill="#dfe7f1" stroke="#1f4f86"/></g>
+    <g transform="translate(0,100)"><path d="M20 90 L20 110 L200 200 L380 110 L380 90 L200 180 Z" fill="#dfe7f1" stroke="#1f4f86"/><path d="M200 0 L380 90 L200 180 L20 90 Z" fill="#ffffff" stroke="#1f4f86"/></g>
+    <g transform="translate(0,0)"><path d="M20 90 L20 110 L200 200 L380 110 L380 90 L200 180 Z" fill="#f3d9c9" stroke="#b8430d"/><path d="M200 0 L380 90 L200 180 L20 90 Z" fill="#fbf1ea" stroke="#b8430d"/></g>
+  </g>
+  <g fill="#b8430d" stroke="none">
+    <rect x="150" y="70" width="26" height="26" rx="4" transform="rotate(0)"/><rect x="190" y="50" width="26" height="26" rx="4"/><rect x="230" y="70" width="26" height="26" rx="4"/>
+    <rect x="190" y="92" width="26" height="26" rx="4"/><rect x="110" y="90" width="26" height="26" rx="4" opacity=".6"/><rect x="270" y="90" width="26" height="26" rx="4" opacity=".6"/>
+  </g>
+</svg>
+</body>
+</html>

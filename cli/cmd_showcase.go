@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,9 @@ func showcaseCommands() []Command {
 		{Path: []string{"showcase", "build"}, Tier: TierRead,
 			Summary: "generate the public homelab Showcase from live state: showcase build --out DIR [--src INFRA] [--data-only]",
 			Run:     showcaseBuild},
+		{Path: []string{"showcase", "publish"}, Tier: TierWrite,
+			Summary: "publish a built Showcase to pages.viktorbarzin.me/homelab via /publish-bundle: showcase publish --dir DIR (needs PAGES_BUNDLE_TOKEN)",
+			Run:     showcasePublish},
 	}
 }
 
@@ -491,4 +495,91 @@ func copyTree(from, to string) error {
 		}
 		return os.WriteFile(dst, b, 0o644)
 	})
+}
+
+// bundleFile is one entry of the pages-publish /publish-bundle body.
+type bundleFile struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+}
+
+// bundleTextExt are the files sent as text; anything else (the OpenGraph
+// image) goes as base64.
+var bundleTextExt = map[string]bool{".html": true, ".css": true, ".js": true, ".json": true, ".svg": true, ".txt": true}
+
+// bundleFiles reads a built Showcase directory into a sorted bundle, skipping
+// dotfiles. The server replaces the whole slug directory with what it is sent,
+// so an empty bundle is refused here rather than wiping the live page.
+func bundleFiles(dir string) ([]bundleFile, error) {
+	var files []bundleFile
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(d.Name(), ".") && p != dir {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		f := bundleFile{Path: filepath.ToSlash(rel), Content: string(b), Encoding: "utf-8"}
+		if !bundleTextExt[strings.ToLower(filepath.Ext(p))] {
+			f.Content, f.Encoding = base64.StdEncoding.EncodeToString(b), "base64"
+		}
+		files = append(files, f)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("%s has no files to publish", dir)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, nil
+}
+
+// showcasePublish sends a built Showcase to pages-publish. The bundle token
+// decides where it lands (pages/showcase/homelab), so nothing here names a path.
+func showcasePublish(args []string) error {
+	dir := flagValue(args, "--dir")
+	if dir == "" {
+		return fmt.Errorf("usage: homelab showcase publish --dir DIR")
+	}
+	tok := os.Getenv("PAGES_BUNDLE_TOKEN")
+	if tok == "" {
+		return fmt.Errorf("no bundle token: set PAGES_BUNDLE_TOKEN")
+	}
+	files, err := bundleFiles(dir)
+	if err != nil {
+		return err
+	}
+	c := &pagesClient{base: resolvePagesBase(), key: tok, http: &http.Client{Timeout: 2 * time.Minute}}
+	raw, err := c.do("POST", "/publish-bundle", map[string]any{"files": files})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		URL       string `json:"url"`
+		Committed bool   `json:"committed"`
+		Files     int    `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("cannot parse publish response: %w", err)
+	}
+	state := "unchanged"
+	if resp.Committed {
+		state = "committed"
+	}
+	fmt.Printf("%s (%d files, %s)\n", resp.URL, resp.Files, state)
+	return nil
 }

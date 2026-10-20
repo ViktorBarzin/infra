@@ -1,0 +1,62 @@
+# Daily homelab showcase: builds the Snapshot from live state and publishes the
+# page at pages.viktorbarzin.me/homelab/ (docs/plans/2026-10-20-homelab-showcase-design.md,
+# ADR-0037). Triggered by the Woodpecker cron schedule "showcase", registered
+# through the API like drift-detection:
+#   POST /api/repos/1/cron  {"name":"showcase","schedule":"0 30 6 * * *","branch":"master"}
+# 06:30 UTC sits after the PVE backup chain (daily-backup 05:00) and the 04:00
+# drift-detection run.
+#
+# The step runs the GHA-built infra-cli image (ADR-0002: nothing is built
+# here). It reads live state with the pipeline's service account, which is
+# cluster-admin, and fetches its pages-publish bundle token from Vault with the
+# ci role. A failed build publishes nothing, so the last good page stays up.
+
+# A manual run (POST /api/repos/1/pipelines with variables PIPELINE=showcase)
+# refreshes the page outside the schedule.
+when:
+  - event: cron
+    cron: showcase
+  - event: manual
+    evaluate: 'PIPELINE == "showcase"'
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: build-and-publish
+    image: ghcr.io/viktorbarzin/infra-cli:latest
+    pull: true
+    environment:
+      HOMELAB_TELEMETRY: "0"
+    commands:
+      - |
+        set -eu
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+        VAULT_TOKEN=$(curl -sf -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+        PAGES_BUNDLE_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+          "$VAULT_ADDR/v1/secret/data/pages-publish" \
+          | jq -r '.data.data.bundle_keys | fromjson | to_entries[] | select(.value.user == "showcase") | .key')
+        test -n "$PAGES_BUNDLE_TOKEN"
+        export PAGES_BUNDLE_TOKEN
+        /app/infra_cli showcase build --src "$CI_WORKSPACE" --out /tmp/showcase
+        /app/infra_cli showcase publish --dir /tmp/showcase
+
+  - name: notify-failure
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"alerts\",\"text\":\":red_circle: Showcase pipeline FAILED, pages.viktorbarzin.me/homelab keeps yesterday's page. $CI_PIPELINE_URL\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [failure]

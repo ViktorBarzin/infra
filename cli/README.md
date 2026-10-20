@@ -427,6 +427,24 @@ and first deletes `-map-` files in `/_share/` older than 30 days. `map --help` e
 with a Leaflet snippet for an interactive map in a pages doc, on keyless OSM tiles.
 Design: `docs/plans/2026-10-08-homelab-map-verb-design.md`, ADR-0028.
 
+### v0.28 verbs — showcase (the public homelab page)
+
+`showcase build` writes the page at pages.viktorbarzin.me/homelab/: `data.json`
+(the Snapshot, ADR-0037) plus the four Variants copied from `showcase/web/`. It
+reads ingresses, namespaces, PVCs and nodes with kubectl, the flow trail from
+`goldmane_edges`, Prometheus through the internal LB, and commit, CI and issue
+counts from the Forgejo and Woodpecker APIs. Any source failing fails the build.
+`showcase publish` sends a built directory to pages-publish `/publish-bundle`
+with a bundle token, which decides where it lands (`pages/showcase/homelab/`).
+The daily `.woodpecker/showcase.yml` run does both.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `showcase build --out DIR [--src INFRA] [--data-only]` | read | generate the Snapshot and the page files into `DIR`; `--data-only` writes just `data.json` |
+| `showcase publish --dir DIR` | write | publish `DIR` as one bundle; needs `PAGES_BUNDLE_TOKEN` (Vault `secret/pages-publish` → `bundle_keys`) |
+
+Design: `docs/plans/2026-10-20-homelab-showcase-design.md`.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning

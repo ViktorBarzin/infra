@@ -157,6 +157,22 @@ resource "kubernetes_config_map" "caddyfile" {
       		try_files {path} {path}index.html /index.html
       		file_server
       	}
+      	# pages.viktorbarzin.me/homelab/ — PUBLIC, no login (2026-10-20). The
+      	# homelab showcase (docs/plans/2026-10-20-homelab-showcase-design.md),
+      	# a static bundle the daily .woodpecker/showcase.yml run publishes to
+      	# pages/showcase/homelab through pages-publish /publish-bundle. Same
+      	# carve-out shape as /pe-summit-trip, root pinned to the one directory.
+      	@pages_homelab {
+      		host pages.viktorbarzin.me
+      		path /homelab /homelab/*
+      	}
+      	handle @pages_homelab {
+      		redir /homelab /homelab/ 308
+      		root * /repo/src/current/pages/showcase/homelab
+      		uri strip_prefix /homelab
+      		try_files {path} {path}index.html /index.html
+      		file_server
+      	}
       	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
       	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
       	# Every page is readable by every identity that clears the Authentik gate
@@ -734,6 +750,32 @@ module "ingress_pe_summit_trip" {
   namespace       = kubernetes_namespace.learn.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # auth = "none": a static trip page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
+  auth             = "none"
+  dns_type         = "none"
+  external_monitor = false
+  anti_ai_scraping = true
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
+  }
+}
+
+# pages.viktorbarzin.me/homelab/ — the homelab showcase, public with no login so
+# other homelabbers can open it from a shared link (2026-10-20, ADR-0037). Same
+# carve-out pattern as ingress_pe_summit_trip. Link-preview bots that the shared
+# Anubis would otherwise challenge are let through by the
+# showcase-link-previews rule in stacks/turnstile-gate.
+module "ingress_homelab_showcase" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "homelab-showcase"
+  host            = "pages"
+  turnstile       = true
+  ingress_path    = ["/homelab"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a static page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
   auth             = "none"
   dns_type         = "none"
   external_monitor = false
