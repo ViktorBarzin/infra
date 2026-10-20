@@ -13,7 +13,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Users (PAGES_API_KEYS keys) and slugs share this safe charset. Kept in sync
 # with publisher._SLUG_RE — both feed the same ``pages/<segment>/`` path.
@@ -53,6 +53,45 @@ def _invert_api_keys(raw: str) -> dict[str, str]:
     return key_map
 
 
+def _parse_bundle_keys(raw: str, api_tokens: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """Parse ``{token: {"user": ..., "slug": ...}}`` JSON into a token lookup.
+
+    A bundle token publishes exactly one directory, ``pages/<user>/<slug>/``,
+    so both segments get the same charset check as an API-key user. Bundle
+    tokens live in their own map and may not repeat an API token: each token
+    opens exactly one endpoint.
+    """
+    if not raw:
+        return {}
+    try:
+        token_to_target = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"PAGES_BUNDLE_KEYS is not valid JSON: {e}") from e
+    if not isinstance(token_to_target, dict):
+        raise ConfigError(
+            'PAGES_BUNDLE_KEYS must be a JSON object {token: {"user", "slug"}}'
+        )
+    bundle_map: dict[str, tuple[str, str]] = {}
+    for token, target in token_to_target.items():
+        if not token:
+            raise ConfigError("empty token in PAGES_BUNDLE_KEYS")
+        if token in api_tokens:
+            raise ConfigError("PAGES_BUNDLE_KEYS token duplicates a PAGES_API_KEYS token")
+        if not isinstance(target, dict):
+            raise ConfigError('PAGES_BUNDLE_KEYS values must be {"user", "slug"} objects')
+        user, slug = target.get("user"), target.get("slug")
+        for name, segment in (("user", user), ("slug", slug)):
+            if (
+                not isinstance(segment, str)
+                or not segment
+                or ".." in segment
+                or not _SAFE_RE.fullmatch(segment)
+            ):
+                raise ConfigError(f"unsafe {name} segment in PAGES_BUNDLE_KEYS: {segment!r}")
+        bundle_map[token] = (user, slug)
+    return bundle_map
+
+
 @dataclass
 class Config:
     key_map: dict[str, str]  # token -> resolved user (never from request body)
@@ -66,6 +105,8 @@ class Config:
     committer_email: str
     author_email_domain: str
     python_bin: str
+    # token -> (user, slug) for /publish-bundle; disjoint from key_map
+    bundle_map: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     @property
     def git_ssh_command(self) -> str:
@@ -81,8 +122,10 @@ class Config:
 def load_config(env: dict[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     repo_dir = env.get("REPO_DIR", "/repo")
+    key_map = _invert_api_keys(env.get("PAGES_API_KEYS", ""))
     return Config(
-        key_map=_invert_api_keys(env.get("PAGES_API_KEYS", "")),
+        key_map=key_map,
+        bundle_map=_parse_bundle_keys(env.get("PAGES_BUNDLE_KEYS", ""), key_map),
         repo_dir=repo_dir,
         deploy_key_path=env.get("DEPLOY_KEY_PATH", "/etc/pages-deploy/id_ed25519"),
         # Defaults follow the team spec (post plans/->pages/ migration). If the

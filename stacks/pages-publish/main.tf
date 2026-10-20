@@ -16,6 +16,9 @@
 #                  MUST match the learn Caddyfile's per-user dir names
 #                  (pages/wizard, pages/emo) — i.e. {"wizard": "...", "emo": "..."}
 #                  — NOT the Authentik usernames, or served pages 404.
+#   - bundle_keys: JSON {token: {"user": ..., "slug": ...}} → env
+#                  PAGES_BUNDLE_KEYS. Each token may only POST /publish-bundle,
+#                  into pages/<user>/<slug>/ (the showcase site: showcase/homelab).
 #   - deploy_key : SSH private key with READ+WRITE on ViktorBarzin/monorepo,
 #                  mounted 0400 at /etc/pages-deploy/id_ed25519 (never env).
 #
@@ -81,6 +84,13 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "pages-publish"
             property = "api_keys"
+          }
+        },
+        {
+          secretKey = "PAGES_BUNDLE_KEYS"
+          remoteRef = {
+            key      = "pages-publish"
+            property = "bundle_keys"
           }
         },
         {
@@ -160,6 +170,15 @@ resource "kubernetes_deployment" "pages_publish" {
               secret_key_ref {
                 name = "pages-publish-secrets"
                 key  = "PAGES_API_KEYS"
+              }
+            }
+          }
+          env {
+            name = "PAGES_BUNDLE_KEYS"
+            value_from {
+              secret_key_ref {
+                name = "pages-publish-secrets"
+                key  = "PAGES_BUNDLE_KEYS"
               }
             }
           }

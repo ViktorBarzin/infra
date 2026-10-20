@@ -1,3 +1,4 @@
+import base64
 import os
 
 import pytest
@@ -497,3 +498,242 @@ def test_collect_assets_skips_a_missing_file(tmp_path, monkeypatch):
     cfg, _ = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>", {})
     assets = publisher.collect_assets(cfg, '<link href="/assets/gone.css">')
     assert assets == {}
+
+
+# ---- bundles (raw multi-file publish) -------------------------------------
+
+
+def _f(path, content="x", encoding="utf-8"):
+    return {"path": path, "content": content, "encoding": encoding}
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["index.html", "assets/app.js", "a/b/c.css", "og.png", "data.v2.json", "A-B_c"],
+)
+def test_validate_bundle_files_accepts(path):
+    out = publisher.validate_bundle_files([_f(path, "hi")])
+    assert out == [(path, b"hi")]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        ".",
+        "..",
+        "../x",
+        "a/../b",
+        "a/..b/c",  # '..' anywhere, as sanitize_slug
+        "/abs",
+        "a//b",
+        "a/",
+        "./a",
+        ".git/config",
+        ".hidden",
+        "a/.htaccess",
+        "foo bar",
+        "a\\b",
+        "café.html",
+        "a/b/c/d",
+    ],
+)
+def test_validate_bundle_files_rejects_paths(path):
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f(path)])
+
+
+def test_validate_bundle_files_rejects_empty_set():
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([])
+
+
+def test_validate_bundle_files_rejects_duplicates():
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f("a.html"), _f("a.html")])
+
+
+def test_validate_bundle_files_rejects_file_dir_clash():
+    """'a' as a file and as the parent of 'a/b' cannot both be written."""
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f("a"), _f("a/b.html")])
+
+
+def test_validate_bundle_files_decodes_base64():
+    raw = b"\x89PNG\r\n\x1a\n\x00\xff"
+    out = publisher.validate_bundle_files(
+        [_f("og.png", base64.b64encode(raw).decode(), "base64")]
+    )
+    assert out == [("og.png", raw)]
+
+
+def test_validate_bundle_files_rejects_bad_base64():
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f("og.png", "@@@not-b64", "base64")])
+
+
+def test_validate_bundle_files_rejects_unknown_encoding():
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f("a.txt", "x", "latin-1")])
+
+
+def test_validate_bundle_files_caps_file_count(monkeypatch):
+    monkeypatch.setattr(publisher, "MAX_BUNDLE_FILES", 3)
+    publisher.validate_bundle_files([_f(f"{i}.html") for i in range(3)])
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f(f"{i}.html") for i in range(4)])
+
+
+def test_validate_bundle_files_caps_total_bytes(monkeypatch):
+    monkeypatch.setattr(publisher, "MAX_BUNDLE_BYTES", 10)
+    publisher.validate_bundle_files([_f("a", "12345"), _f("b", "12345")])
+    with pytest.raises(publisher.PublishError):
+        publisher.validate_bundle_files([_f("a", "12345"), _f("b", "123456")])
+
+
+def test_bundle_subdir_rejects_unsafe_segments():
+    assert publisher.bundle_subdir("showcase", "homelab") == "pages/showcase/homelab"
+    for user, slug in [("..", "x"), ("a/b", "x"), ("x", ".."), ("x", ""), ("shared", "x")]:
+        with pytest.raises(publisher.PublishError):
+            publisher.bundle_subdir(user, slug)
+
+
+def test_stage_and_commit_bundle_stages_deletions_scoped(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    fake = _dispatch({"status": _Proc(out=" D pages/showcase/homelab/old.js")})
+    monkeypatch.setattr(publisher, "_run", fake)
+    assert publisher.stage_and_commit_bundle(
+        cfg, "pages/showcase/homelab", "showcase", "homelab"
+    )
+    cmds = _subcmds(fake)
+    add = next(c for c in cmds if "add" in c)
+    assert "-A" in add and add[-1] == "pages/showcase/homelab/"
+    status = next(c for c in cmds if "status" in c)
+    assert status[-1] == "pages/showcase/homelab/"
+    commit = next(c for c in cmds if "commit" in c)
+    assert "pages: publish bundle showcase/homelab" in commit
+    envs = [e for c, e in fake.calls if "commit" in c]
+    assert envs[0]["GIT_AUTHOR_NAME"] == "showcase"
+
+
+def test_stage_and_commit_bundle_false_when_unchanged(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    fake = _dispatch({"status": _Proc(out="")})
+    monkeypatch.setattr(publisher, "_run", fake)
+    assert not publisher.stage_and_commit_bundle(
+        cfg, "pages/showcase/homelab", "showcase", "homelab"
+    )
+    assert not any("commit" in c for c in _subcmds(fake))
+
+
+def _stub_bundle_pipeline(tmp_path, monkeypatch, push_results, commit=True):
+    """Stub git; each sync puts master's copy of the bundle back on disk."""
+    target = tmp_path / "pages" / "showcase" / "homelab"
+    seen = {"sync": 0, "commit": 0, "push": 0, "on_disk_at_commit": []}
+
+    monkeypatch.setattr(publisher, "ensure_repo", lambda _c: None)
+
+    def fake_sync(_cfg):
+        seen["sync"] += 1
+        (target / "old").mkdir(parents=True, exist_ok=True)
+        (target / "old" / "stale.js").write_text("stale")
+        (target / "index.html").write_text("master's index")
+
+    def fake_commit(_cfg, subdir, user, slug):
+        seen["commit"] += 1
+        seen["on_disk_at_commit"].append(
+            sorted(str(p.relative_to(target)) for p in target.rglob("*") if p.is_file())
+        )
+        return commit
+
+    def fake_push(_cfg, user):
+        seen["push"] += 1
+        return push_results.pop(0)
+
+    monkeypatch.setattr(publisher, "sync_to_master", fake_sync)
+    monkeypatch.setattr(publisher, "stage_and_commit_bundle", fake_commit)
+    monkeypatch.setattr(publisher, "push_to_master", fake_push)
+    return target, seen
+
+
+def test_publish_bundle_replaces_the_dir_dropping_stale_files(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    target, seen = _stub_bundle_pipeline(tmp_path, monkeypatch, [(True, "")])
+    out = publisher.publish_bundle(
+        cfg,
+        user="showcase",
+        slug="homelab",
+        files=[_f("index.html", "new"), _f("assets/app.js", "js")],
+    )
+    assert out == {
+        "url": "https://pages.viktorbarzin.me/homelab/",
+        "path": "pages/showcase/homelab",
+        "committed": True,
+        "files": 2,
+    }
+    assert seen["on_disk_at_commit"] == [["assets/app.js", "index.html"]]
+    assert (target / "index.html").read_text() == "new"
+    assert not (target / "old").exists()
+
+
+def test_publish_bundle_rewrites_after_a_lost_race(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    target, seen = _stub_bundle_pipeline(
+        tmp_path, monkeypatch, [(False, "non-fast-forward"), (True, "")]
+    )
+    publisher.publish_bundle(
+        cfg, user="showcase", slug="homelab", files=[_f("index.html", "new")]
+    )
+    assert (seen["sync"], seen["commit"], seen["push"]) == (2, 2, 2)
+    # the second attempt rewrote the bundle over the master that won
+    assert seen["on_disk_at_commit"] == [["index.html"], ["index.html"]]
+    assert (target / "index.html").read_text() == "new"
+
+
+def test_publish_bundle_gives_up_after_attempts(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    _, seen = _stub_bundle_pipeline(
+        tmp_path, monkeypatch, [(False, "non-fast-forward")] * 3
+    )
+    with pytest.raises(publisher.RenderError):
+        publisher.publish_bundle(
+            cfg, user="showcase", slug="homelab", files=[_f("a.html")], attempts=3
+        )
+    assert seen["push"] == 3
+
+
+def test_publish_bundle_unchanged_returns_without_pushing(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    _, seen = _stub_bundle_pipeline(tmp_path, monkeypatch, [], commit=False)
+    out = publisher.publish_bundle(
+        cfg, user="showcase", slug="homelab", files=[_f("index.html")]
+    )
+    assert out["committed"] is False
+    assert seen["push"] == 0
+
+
+def test_publish_bundle_validates_before_touching_the_repo(tmp_path, monkeypatch):
+    cfg = make_cfg(str(tmp_path))
+    _, seen = _stub_bundle_pipeline(tmp_path, monkeypatch, [])
+    with pytest.raises(publisher.PublishError):
+        publisher.publish_bundle(
+            cfg, user="showcase", slug="homelab", files=[_f("../escape")]
+        )
+    assert seen["sync"] == 0
+
+
+def test_publish_bundle_refuses_a_symlinked_target(tmp_path, monkeypatch):
+    """A symlink committed at pages/<user>/ must not redirect the rmtree."""
+    cfg = make_cfg(str(tmp_path))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    (tmp_path / "pages").mkdir()
+    (tmp_path / "pages" / "showcase").symlink_to(outside)
+    monkeypatch.setattr(publisher, "ensure_repo", lambda _c: None)
+    monkeypatch.setattr(publisher, "sync_to_master", lambda _c: None)
+    with pytest.raises(publisher.PublishError):
+        publisher.publish_bundle(
+            cfg, user="showcase", slug="homelab", files=[_f("index.html")]
+        )
+    assert (outside / "keep.txt").read_text() == "keep"

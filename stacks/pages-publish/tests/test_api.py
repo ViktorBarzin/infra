@@ -1,3 +1,6 @@
+import base64
+import os
+
 import pytest
 
 AUTH_V = {"Authorization": "Bearer tok-viktor"}  # -> user "wizard"
@@ -192,3 +195,145 @@ def test_preview_bad_status_400(client):
         json={"content": "# Hi", "filename": "x.md", "status": "bogus"},
     )
     assert r.status_code == 400
+
+
+# ---- /publish-bundle: a separate token map, raw files, no render ----------
+
+AUTH_B = {"Authorization": "Bearer tok-bundle"}  # -> ("showcase", "homelab")
+
+
+def _bundle(*files):
+    return {"files": [dict(f) for f in files]}
+
+
+INDEX = {"path": "index.html", "content": "<h1>hi</h1>"}
+
+
+def test_bundle_token_rejected_on_publish(client):
+    r = client.post(
+        "/publish", headers=AUTH_B, json={"content": "# Hi", "filename": "x.md"}
+    )
+    assert r.status_code == 401
+    assert "render" not in client.calls
+
+
+def test_bundle_token_rejected_on_preview(client):
+    r = client.post(
+        "/preview", headers=AUTH_B, json={"content": "# Hi", "filename": "x.md"}
+    )
+    assert r.status_code == 401
+
+
+def test_api_token_rejected_on_publish_bundle(client):
+    r = client.post("/publish-bundle", headers=AUTH_V, json=_bundle(INDEX))
+    assert r.status_code == 401
+    assert "commit_bundle" not in client.calls
+
+
+def test_publish_bundle_unknown_token_401(client):
+    r = client.post(
+        "/publish-bundle",
+        headers={"Authorization": "Bearer nope"},
+        json=_bundle(INDEX),
+    )
+    assert r.status_code == 401
+
+
+def test_publish_bundle_missing_token_401(client):
+    r = client.post("/publish-bundle", json=_bundle(INDEX))
+    assert r.status_code == 401
+
+
+def test_publish_bundle_writes_files_and_returns_url(client, cfg):
+    png = bytes(range(256))
+    r = client.post(
+        "/publish-bundle",
+        headers=AUTH_B,
+        json=_bundle(
+            INDEX,
+            {"path": "assets/app.js", "content": "console.log(1)", "encoding": "utf-8"},
+            {
+                "path": "og.png",
+                "content": base64.b64encode(png).decode(),
+                "encoding": "base64",
+            },
+        ),
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "url": "https://pages.viktorbarzin.me/homelab/",
+        "path": "pages/showcase/homelab",
+        "committed": True,
+        "files": 3,
+    }
+    root = os.path.join(cfg.repo_dir, "pages", "showcase", "homelab")
+    with open(os.path.join(root, "og.png"), "rb") as f:
+        assert f.read() == png
+    with open(os.path.join(root, "assets", "app.js"), encoding="utf-8") as f:
+        assert f.read() == "console.log(1)"
+    assert client.calls["commit_bundle"] == {
+        "subdir": "pages/showcase/homelab",
+        "user": "showcase",
+        "slug": "homelab",
+    }
+    assert client.calls["push"] == {"user": "showcase"}
+
+
+def test_publish_bundle_identity_ignores_the_body(client, cfg):
+    body = _bundle(INDEX)
+    body.update(user="wizard", slug="evil")
+    r = client.post("/publish-bundle", headers=AUTH_B, json=body)
+    assert r.status_code == 200
+    assert r.json()["path"] == "pages/showcase/homelab"
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "wizard"))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../x.html",
+        "a/../../x.html",
+        "/etc/passwd",
+        "a//b.html",
+        "a/",
+        "",
+        ".",
+        "..",
+        ".git/config",
+        "foo bar.html",
+        "a\\b.html",
+        "a/b/c/d.html",  # deeper than the bundle allows
+    ],
+)
+def test_publish_bundle_rejects_bad_paths_400(client, cfg, bad):
+    r = client.post(
+        "/publish-bundle",
+        headers=AUTH_B,
+        json=_bundle(INDEX, {"path": bad, "content": "x"}),
+    )
+    assert r.status_code == 400
+    assert "commit_bundle" not in client.calls
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "showcase"))
+
+
+def test_publish_bundle_rejects_empty_file_set_400(client):
+    r = client.post("/publish-bundle", headers=AUTH_B, json={"files": []})
+    assert r.status_code == 400
+
+
+def test_publish_bundle_rejects_bad_base64_400(client):
+    r = client.post(
+        "/publish-bundle",
+        headers=AUTH_B,
+        json=_bundle({"path": "og.png", "content": "not base64!!", "encoding": "base64"}),
+    )
+    assert r.status_code == 400
+
+
+def test_publish_bundle_rejects_unknown_encoding_422(client):
+    r = client.post(
+        "/publish-bundle",
+        headers=AUTH_B,
+        json=_bundle({"path": "a.txt", "content": "x", "encoding": "latin-1"}),
+    )
+    assert r.status_code == 422

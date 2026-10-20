@@ -67,6 +67,10 @@ homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
 - `POST /preview` (Bearer): same body → `{"filename", "html", "assets"}`.
   Renders one page and hands back the bytes plus the `/assets/*` files that page
   links, keyed by the path it links them at. Nothing is committed or pushed.
+- `POST /publish-bundle` (Bearer, bundle token): body
+  `{"files": [{"path", "content", "encoding"?}]}` →
+  `{"url": "<base>/<slug>/", "path": "pages/<user>/<slug>", "committed", "files"}`.
+  See below.
 
 ### Why /preview exists
 
@@ -94,11 +98,39 @@ Two design notes worth keeping:
 - Only assets the page actually links are read, so a doc with no diagram does not
   carry mermaid.min.js (3.5 MB) through the API.
 
+## Publishing a multi-file bundle
+
+`/publish-bundle` is for a static site that CI generates as a set of files, such
+as the homelab showcase page (`pages/showcase/homelab/`, see
+`docs/plans/2026-10-20-homelab-showcase-design.md`). `/publish` renders one
+markdown doc, so it does not cover this case.
+
+- Tokens come from `PAGES_BUNDLE_KEYS`, a JSON `{token: {"user", "slug"}}` map.
+  Each token is bound to one directory, `pages/<user>/<slug>/`, and the request
+  body has no way to name another. Bundle tokens and `PAGES_API_KEYS` tokens are
+  separate: each one is accepted only by its own endpoints, and a token listed in
+  both maps stops the service at startup.
+- Each file has a relative `path` and `content`, with `encoding` either `utf-8`
+  (the default) or `base64` for binary files such as the OpenGraph PNG.
+- Paths are up to 3 `/`-separated segments of `[0-9A-Za-z._-]`, with no `..`
+  and no segment starting with `.`. A bundle holds 1 to 200 files and at most
+  20 MB decoded. Anything else is a 400, returned before the clone is touched.
+- Each attempt of the publish loop syncs to master, deletes
+  `pages/<user>/<slug>/`, writes the files, and runs `git add -A` scoped to
+  that directory, so files the new bundle no longer contains are removed in the
+  same commit. The commit is authored by `<user>` with the message
+  `pages: publish bundle <user>/<slug>`. Identical content returns
+  `"committed": false` without a commit. A lost push race retries the same way
+  `/publish` does.
+- Nothing is rendered. The files are committed as sent, and `render.py` skips
+  subdirectories when it rebuilds `pages/<user>/index.html`.
+
 ## Config (env)
 
 | var | default | notes |
 |-----|---------|-------|
 | `PAGES_API_KEYS` | — | JSON `{user: token}`; keys must equal the Caddyfile per-user dir names (`wizard`, `emo`) |
+| `PAGES_BUNDLE_KEYS` | empty | JSON `{token: {"user": ..., "slug": ...}}`; tokens for `/publish-bundle` only |
 | `REPO_DIR` | `/repo` | monorepo checkout (cloned on first run if absent) |
 | `DEPLOY_KEY_PATH` | `/etc/pages-deploy/id_ed25519` | ssh key, read+write on the monorepo |
 | `RENDER_SCRIPT` | `$REPO_DIR/pages/tools/render.py` | set to `.../plans/tools/render.py` pre-migration |
@@ -110,7 +142,7 @@ Two design notes worth keeping:
 
 ```bash
 pip install -r requirements.txt   # + pytest httpx for tests
-python3 -m pytest                  # 60 tests; git + render subprocess are stubbed
+python3 -m pytest                  # 158 tests; git + render subprocess are stubbed
 ```
 
 Build: `docker build -t pages-publish .` (context = this dir). Runs uvicorn on
