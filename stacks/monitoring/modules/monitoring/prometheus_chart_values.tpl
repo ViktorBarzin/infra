@@ -3090,6 +3090,29 @@ serverFiles:
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: last terminated OOMKilled"
               description: "The container's most recent exit was an OOM kill. Check `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` for the restart count, and the container's memory limit against its working set. A Ruby/Python service plateauing just under its limit is usually glibc arena fragmentation — see stacks/dawarich/main.tf for the MALLOC_ARENA_MAX precedent."
+          # A long-running pod with no priority class runs at priority 0, below
+          # every tiered pod, so the scheduler preempts it first under memory
+          # pressure. Classes normally come from Kyverno's
+          # inject-priority-class-from-tier (failurePolicy Ignore): a pod created
+          # while Kyverno is down gets none for life, and the excluded
+          # namespaces (kube-system, kyverno, metallb-system, calico-system)
+          # need it set explicitly in their charts. On 2026-10-20 nineteen pods
+          # ran this way and kyverno-admission-controller was preempted.
+          # post-boot-reconcile recycles tiered pods that miss a class every
+          # 10 minutes, so 30m means that did not happen or cannot (excluded
+          # namespace). Job pods are left out: they are short-lived.
+          - alert: PodWithoutPriorityClass
+            expr: |
+              count by (namespace, pod) (
+                kube_pod_info{priority_class="", created_by_kind!="Job"}
+                * on (namespace, pod) group_left() (kube_pod_status_phase{phase="Running"} == 1)
+              ) > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}: running with no priority class (priority 0, first to be preempted)"
+              description: "Set priorityClassName explicitly in the workload's Terraform or chart values (tier-<n> matching the namespace), or recreate the pod if Kyverno missed it at admission. See docs/agents/known-issues.md, 'Pods without a priority class'."
           - alert: PodUnschedulable
             expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 5m
