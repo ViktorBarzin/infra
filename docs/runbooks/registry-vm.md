@@ -305,6 +305,21 @@ is `/root/ghcr-scheduler-state.20261017T062852Z.bak`. A full disk here shows
 up as a truncated layer and a failed pull, not as an HTTP error, so check
 `df` on this VM before landing several large image bumps at once.
 
+Done a fourth time on 2026-10-20 at 05:46 UTC, after a day of first-party
+rebuilds, Keel-annotation rollouts and Trivy rescans (97% used, 2.1 GB free,
+`NodeFilesystemFull`). Expired every GHCR blob fetched more than 3 hours
+earlier (497 entries, 19.4 GB) and the Docker Hub blobs under `viktorbarzin/`
+(115 entries, 8.6 GB). Free space went from 2.1 GB to 29 GB. The pre-edit
+schedules are `/root/{ghcr,dockerhub}-scheduler-state.20261020T054620Z.bak`.
+All five `/healthz` probes answered 200, and pulls of an expired GHCR image
+(`advplyr/audiobookshelf:2.37.1`) and an expired Docker Hub image
+(`viktorbarzin/book-search`) through k8s-node2's mirror completed from upstream.
+
+Four fills in ten days means one busy day of rollouts now fills the 61G disk
+inside a single 168h TTL window. The open options are a larger root disk for
+this VM (the thin pool has room; growing a VM's storage is Viktor's call) or a
+shorter `proxy.ttl` for the GHCR cache, which has no pull limit upstream.
+
 ## Rollback
 
 A pre-change backup of `/etc/resolv.conf`, `/etc/systemd/resolved.conf`,
