@@ -140,8 +140,14 @@ resource "helm_release" "kyverno" {
     # background+cleanup 89 and admission 53 restarts in the 3 days to
     # 2026-10-19. 9s gives 54s/45s/9s, the same 45s renew deadline as the
     # controller-manager, scheduler and CNPG operator.
+    # Priority class, set explicitly (2026-10-20). The kyverno namespace is
+    # excluded from inject-priority-class-from-tier (Kyverno cannot be the
+    # webhook that admits its own pods), so these pods ran at priority 0 and
+    # the scheduler preempted kyverno-admission-controller on k8s-node4 on
+    # 2026-10-20. Same fix as Loki and Vault (memory 14516).
     backgroundController = {
-      extraArgs = { leaderElectionRetryPeriod = "9s" }
+      priorityClassName = "tier-1-cluster"
+      extraArgs         = { leaderElectionRetryPeriod = "9s" }
       resources = {
         # Bumped 2026-05-16 from 384Mi → 2Gi because the controller OOMKilled
         # while processing 176 UpdateRequests for the inject-keel-annotations
@@ -159,7 +165,8 @@ resource "helm_release" "kyverno" {
     }
 
     cleanupController = {
-      extraArgs = { leaderElectionRetryPeriod = "9s" }
+      priorityClassName = "tier-1-cluster"
+      extraArgs         = { leaderElectionRetryPeriod = "9s" }
       resources = {
         limits = {
           memory = "192Mi"
@@ -172,7 +179,8 @@ resource "helm_release" "kyverno" {
     }
 
     admissionController = {
-      replicas = 2
+      replicas          = 2
+      priorityClassName = "tier-1-cluster"
 
       updateStrategy = {
         type = "RollingUpdate"
