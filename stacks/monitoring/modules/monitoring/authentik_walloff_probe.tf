@@ -62,15 +62,17 @@ locals {
     "instagram-poster-image" = "https://instagram-poster.viktorbarzin.me/image"
     # trading-bot app root (auth="app"): WebAuthn/JWT in-app; was walled, now 200.
     "trading-bot-app" = "https://trading.viktorbarzin.me/"
-    # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
-    # + healthz for the t3-probe drop-attribution client (stacks/t3code).
+    # t3-dispatch probe surface (auth="none" path carve-out on /probe, its own
+    # Service t3-dispatch-probe): WS echo + healthz for the t3-probe
+    # drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
-    # t3 native-client descriptor (Authentik-less IngressRoute carve-out,
-    # stacks/t3code kubernetes_manifest.t3_native_ingressroute): the T3 mobile
-    # app fetches this BEFORE it has any credential, so an Authentik 302 here
-    # is exactly the failure that made the app unpairable — it parses the login
-    # HTML as the JSON descriptor and reports an invalid response. The probe
-    # sends no cookie, which is what the carve-out rule keys on.
+    # T3 native-client descriptor (Authentik-less IngressRoute carve-out,
+    # stacks/t3code kubernetes_manifest.t3_native_ingressroute), served by
+    # tl-t3-view (terminal-lobby ADR-0045): T3's desktop and phone apps fetch
+    # this BEFORE they hold any credential, so an Authentik 302 here makes them
+    # unpairable; they parse the login HTML as the JSON descriptor and report
+    # an invalid response. The probe sends no cookie, which is what the
+    # carve-out rule keys on.
     "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
     # tasks app root (auth="app", stacks/tasks module.app.module.ingress): the TypeScript
     # build runs its own OIDC sign-in. An Authentik 302 here breaks the
@@ -88,6 +90,20 @@ locals {
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.
+  }
+
+  # Carve-outs keyed on the request METHOD rather than the path, probed with an
+  # OPTIONS request through the `http_no_authentik_redirect_options` module.
+  # They join the same scrape job as the GET targets (the template sets
+  # `__param_module` per target), so AuthentikWallingOffPublicPath and the
+  # ingress-reachability alerts cover them without changes.
+  authentik_walloff_options_targets = {
+    # T3 native-client CORS preflight (rule 4 of stacks/t3code
+    # kubernetes_manifest.t3_native_ingressroute): T3 desktop's renderer
+    # preflights its bearer calls, and a preflight carries no Authorization
+    # header. Before that rule, this URL answered OPTIONS with a 302 to
+    # Authentik and the desktop app could not make a single API call.
+    "t3-native-preflight" = "https://t3.viktorbarzin.me/api/auth/session"
   }
 }
 
@@ -134,6 +150,34 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             # FAIL the probe if the response redirects to Authentik. This is the
             # walling-off signature: forward-auth 301/302 -> /application/o/authorize
             # on authentik.viktorbarzin.me (also matches /outpost.goauthentik.io).
+            fail_if_header_matches = [
+              {
+                header        = "Location"
+                regexp        = "(authentik\\.viktorbarzin\\.me|/outpost\\.goauthentik\\.io|/application/o/authorize)"
+                allow_missing = true
+              },
+            ]
+          }
+        }
+        # Same check as http_no_authentik_redirect, sent as a CORS preflight
+        # (OPTIONS) for the method-keyed carve-outs in
+        # authentik_walloff_options_targets. Shares the status-code list and
+        # the Authentik Location match.
+        http_no_authentik_redirect_options = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method = "OPTIONS"
+            headers = {
+              "Access-Control-Request-Method"  = "GET"
+              "Access-Control-Request-Headers" = "authorization"
+            }
+            no_follow_redirects   = true
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            fail_if_not_ssl       = false
+            valid_http_versions   = ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes    = [200, 201, 202, 204, 301, 302, 304, 400, 401, 403, 404, 405, 409, 410, 426, 429]
             fail_if_header_matches = [
               {
                 header        = "Location"
