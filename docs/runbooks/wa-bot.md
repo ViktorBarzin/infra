@@ -28,17 +28,19 @@ flowchart LR
 2. Only `secret/viktor/contact` `contact_number` is answered; other senders get nothing.
 3. A message id seen before (Meta retries for up to 7 days) or older than 30 minutes is
    dropped.
-4. PIN: a message that starts with the PIN unlocks the bot for 30 minutes; inside the
-   window no PIN is needed. Outside it, a message without the right PIN gets no reply
-   and counts as a failure. Five failures in an hour lock the bot for an hour and post
-   to #alerts through Loki (see "Alerts" below). The PIN is stored only as an scrypt hash (`secret/wa-bot` `pin_hash`).
+4. No PIN. Since Viktor's decision on 2026-10-21, the sender allowlist in step 2 is the
+   only auth: there is no unlock window, no failure count and no lockout, and every
+   message from the allowed number runs at once. A message whose first word is the old
+   PIN has it stripped, so `<PIN> ls` still runs `ls` and the digits never reach a
+   session; the PIN on its own gets "No PIN needed any more." The PIN's scrypt hash stays
+   in `secret/wa-bot` `pin_hash` (env `WA_PIN_HASH`) for that stripping and so the gate
+   can be re-enabled later; the gate's code is in wa-bot commit 012eb18 and earlier.
 5. A message that passes steps 1 to 3 is marked read (blue ticks) with the typing
    indicator on, in one Cloud API call (`POST /messages`, `status=read`,
    `typing_indicator.type=text`). WhatsApp drops the indicator after 25 s or at the next
    reply, so the bot repeats the call every 20 s while any command or watched turn is
    still pending. These calls are best effort: a failure is logged as a `typing_error`
-   audit line and the command carries on. A message that then fails the PIN check is
-   still marked read, and gets no reply.
+   audit line and the command carries on.
 6. The command runs. A turn still running after 60 s gets one `working` note; the reply
    is plain text, at most 1,000 characters, with `more` for the rest, and secret-shaped
    strings are replaced by `[redacted]`.
@@ -94,27 +96,25 @@ windows per calendar month (UTC) in its state file. At 80% of 1,000 it posts to
 ## Alerts
 
 The pod cannot reach Slack (egress lock), so it logs every alert as a line with
-`"event":"alert"` and the message in `"text"`. Two Loki-ruler rules, group `wa-bot` in
-`stacks/monitoring/modules/monitoring/loki.tf`, carry them to Alertmanager and #alerts,
+`"event":"alert"` and the message in `"text"`. A Loki-ruler rule, group `wa-bot` in
+`stacks/monitoring/modules/monitoring/loki.tf`, carries them to Alertmanager and #alerts,
 with the bot's text as the post's summary:
 
 | Alert | Fires on | Lane |
 |---|---|---|
-| `WaBotPinLockout` | an alert line containing `wrong PINs` | security ([SECURITY] styling, 1 h repeat) |
 | `WaBotFreeTierQuota` | an alert line containing `free-tier` (80% warning, cap reached) | event (one post) |
 
-Both look back 15 minutes and fire at once. Read the raw lines with
-`homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\""' --since 24h`.
+It looks back 15 minutes and fires at once. The `WaBotPinLockout` rule was removed on
+2026-10-21 along with the PIN, since the lockout it reported no longer exists. Read the
+raw lines with `homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\""' --since 24h`.
 
 ## Operating it
 
 - Audit trail: `homelab logs query '{namespace="wa-bot"} |= "\"audit\":true"' --since 24h`.
-  Every command, send, drop (sender, duplicate, stale, signature, locked) and reply is a
-  JSON line; message text is not logged.
-- State: `/data/state.json` on PVC `wa-bot-data`. Deleting it resets the PIN lockout,
-  the quota count and the quote map.
-- Lift a lockout early: restart the pod after clearing `locked_until` in the state file,
-  or wait an hour.
+  Every command, send, drop (sender, duplicate, stale, signature) and reply is a
+  JSON line; message text is not logged. A stripped old PIN logs `pin_stripped`.
+- State: `/data/state.json` on PVC `wa-bot-data`. Deleting it resets the quota count
+  and the quote map.
 - Revoke the bot's Lobby access: remove `whatsapp` from `devvm_external_agents` and run
   the playbook (or `scripts/agent-api-kill whatsapp`).
 - The test number is registered with the Cloud API (`POST /{phone-number-id}/register`,
@@ -128,8 +128,10 @@ Both look back 15 minutes and fire at once. Read the raw lines with
 ## Known limits
 
 - The test number is Meta's sandbox; Meta may retire test numbers or cap recipients.
-- Cloud API messages are decrypted on Meta's servers. The PIN guards a lost or borrowed
-  phone, not Meta.
+- Cloud API messages are decrypted on Meta's servers.
+- With no PIN, whoever holds Viktor's unlocked phone or a linked WhatsApp device can
+  drive the lab through the bot. Viktor chose allowlist-only auth on 2026-10-21 with
+  this in view; re-enabling the PIN is the way back if that changes.
 - The `whatsapp` Caller acts as `wizard` (sudo, cluster-admin, Vault), the same power
   Viktor accepted for Muse. agent-api has no scopes.
 - Egress is locked (Calico policy `wa-bot-egress`, 2026-10-21): DNS on 10.96.0.10, Traefik,
