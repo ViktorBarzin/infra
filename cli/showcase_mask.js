@@ -1,12 +1,14 @@
 // Masks a rendered Home Assistant dashboard before `homelab showcase shots`
-// takes its screenshot. Called as (dark) => JSON string of counts by reason.
+// takes its screenshot. Called as (dark, given) => JSON string of counts by
+// reason, where given = {areas: [...], extra: [...]} comes from the verb (HA
+// area names, and room headings kept in Vault rather than in this repo).
 //
 // It never edits HA's DOM: it draws blueprint-coloured overlays in a fixed
 // layer above the page, at the boxes of what must not be seen. The words it
 // redacts come from hass.states and hass.user at runtime (people, their
 // trackers, zones including a renamed home zone), so no name is ever written
 // into the repo or the output.
-(dark) => {
+(dark, given) => {
   const ha = document.querySelector("home-assistant");
   const hass = ha && ha.hass;
   const counts = { _words: 0 };
@@ -130,29 +132,64 @@
       if (parts.some((w) => personWords.has(w))) add(name, false);
     }
   }
+  // area names whole and word by word; extra words (room headings) whole
+  const areas = (given && given.areas) || [];
+  for (const a of areas) add(a, true);
+  for (const w of (given && given.extra) || []) add(w, false);
   counts._words = words.size;
+
+  // whole-word, case-insensitive, Cyrillic-aware: \b only knows ASCII
+  const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   const list = [...words].sort((a, b) => b.length - a.length);
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${list.map(esc).join("|")})(?![\\p{L}\\p{N}])`, "giu");
   const lower = list.map((w) => w.toLocaleLowerCase());
 
+  // Lit splits one visible string into several text nodes around its
+  // markers, so match over each run of sibling text nodes joined together.
   let hits = 0;
   for (const root of roots) {
+    const groups = new Map();
     const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = tw.nextNode(); n; n = tw.nextNode()) {
-      const text = n.nodeValue;
-      if (!text || text.length < 3) continue;
-      const low = text.toLocaleLowerCase();
-      for (const w of lower) {
-        let i = low.indexOf(w);
-        while (i !== -1) {
-          const range = document.createRange();
-          range.setStart(n, i);
-          range.setEnd(n, i + w.length);
-          for (const r of range.getClientRects()) bar(r);
-          hits++;
-          i = low.indexOf(w, i + w.length);
-        }
+      if (!n.nodeValue) continue;
+      const g = groups.get(n.parentNode) || [];
+      g.push(n);
+      groups.set(n.parentNode, g);
+    }
+    for (const nodes of groups.values()) {
+      let text = "";
+      const starts = [];
+      for (const n of nodes) { starts.push(text.length); text += n.nodeValue; }
+      if (text.trim().length < 3) continue;
+      const at = (pos) => {
+        let i = 0;
+        while (i + 1 < nodes.length && starts[i + 1] <= pos) i++;
+        return [nodes[i], pos - starts[i]];
+      };
+      re.lastIndex = 0;
+      for (let m = re.exec(text); m; m = re.exec(text)) {
+        const range = document.createRange();
+        const [sn, so] = at(m.index);
+        const [en, eo] = at(m.index + m[0].length - 1);
+        range.setStart(sn, so);
+        range.setEnd(en, eo + 1);
+        for (const r of range.getClientRects()) bar(r);
+        hits++;
       }
     }
+  }
+  // History timelines draw their row labels on a canvas, out of reach of the
+  // text walk above; cover the label column of any timeline naming a word.
+  const test = new RegExp(re.source, "iu");
+  for (const el of elements) {
+    const rows = el._chartData;
+    if (!Array.isArray(rows) || !rows.some((r) => r && typeof r.name === "string" && test.test(r.name))) continue;
+    const chart = el.shadowRoot && el.shadowRoot.querySelector("ha-chart-base");
+    if (!chart) continue;
+    const r = chart.getBoundingClientRect();
+    const w = (el._yWidth || 80) + 6;
+    bar({ left: r.left + 2, top: r.top, width: w, height: Math.max(0, r.height - 28) });
+    hits++;
   }
   // values typed into inputs are not text nodes
   for (const el of elements) {
