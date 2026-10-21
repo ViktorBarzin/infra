@@ -2225,6 +2225,43 @@ serverFiles:
             annotations:
               summary: "Terminal Lobby's API is not answering — nobody can open or list a session"
               description: "tmux-api serves every session list, open, rename and kill in the lobby, so while it is down the UI loads and does nothing. Check it: systemctl status tmux-api on devvm, and journalctl -u tmux-api -n 50. It binds 0.0.0.0:7684 and is scraped there directly. If the box itself is gone, DevvmDown fires alongside this and is the one to act on first; if the box is up and stalled on disk, DevvmIOStalled is the better description and this may just be the scrape timing out behind it."
+          # T3 Code upstream tracking (terminal-lobby ADR-0045). tl-t3-view
+          # serves T3's clients, and lobby CI checks every day for a new T3
+          # stable release, typechecks the sidecar against its contracts and
+          # tests it over recorded lobby sessions. A release that fails is held
+          # rather than shipped. A devvm timer that the lobby deb ships writes
+          # /var/lib/node_exporter/textfile/tl-t3-upstream.prom:
+          # tl_t3_upstream_unadopted_since_seconds is the unix publish time of
+          # the newest stable release not yet installed (0 when up to date),
+          # labelled latest and pinned.
+          #
+          # 36h leaves room for one daily CI run plus the deb rollout, so a
+          # release still unadopted after that was held, or its rollout stuck.
+          # The expression is written age-first so the alert's value is how
+          # long the release has waited.
+          - alert: T3StableHeld
+            expr: |
+              (time() - tl_t3_upstream_unadopted_since_seconds) > 36 * 3600
+              and tl_t3_upstream_unadopted_since_seconds > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "T3 {{ $labels.latest }} has been out for {{ $value | humanizeDuration }} and the lobby still runs {{ $labels.pinned }}"
+              description: "Lobby CI checks T3 stable releases daily and holds one that fails the sidecar's typecheck or the recorded-session tests. Read the latest run of https://github.com/ViktorBarzin/terminal-lobby/actions/workflows/t3-stable.yml to see which step held {{ $labels.latest }}; a green run means the release passed and the deb rollout to the devvm is what stalled. Background: terminal-lobby docs/adr/0045-t3-apps-are-clients-of-lobby-sessions.md."
+          # The check above reads a file a timer rewrites at least daily. If
+          # the timer stops, the gauge freezes at its last value and
+          # T3StableHeld can neither fire nor resolve, so watch the file's age.
+          # Before the lobby deb ships the timer, the file and this series do
+          # not exist and nothing fires.
+          - alert: T3UpstreamCheckStale
+            expr: time() - node_textfile_mtime_seconds{file=~".*/tl-t3-upstream.prom"} > 2 * 86400
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "The T3 upstream check on the devvm has not run for {{ $value | humanizeDuration }}"
+              description: "/var/lib/node_exporter/textfile/tl-t3-upstream.prom is more than two days old, so T3StableHeld is reading a frozen number. The timer that writes it ships in the terminal-lobby deb: find it on the devvm with systemctl list-timers | grep -i t3, then read its last run with journalctl -u on that unit. A run that fails before writing leaves the file at its old age, so the journal shows why."
           # NOT ADDED YET, deliberately: error-rate and latency rules on
           # tl_http_requests_total and tl_http_request_duration_ms. Both series
           # start today, so there is no history to set a threshold against, and
@@ -7929,6 +7966,14 @@ extraScrapeConfigs: |
       - targets: ["${url}"]
         labels:
           service: "${svc}"
+%{ endfor ~}
+      # Method-keyed carve-outs: same job, probed with OPTIONS. A target's
+      # __param_module label overrides the job-level `module` param.
+%{ for svc, url in authentik_walloff_options_targets ~}
+      - targets: ["${url}"]
+        labels:
+          service: "${svc}"
+          __param_module: "http_no_authentik_redirect_options"
 %{ endfor ~}
     relabel_configs:
       - source_labels: [__address__]
