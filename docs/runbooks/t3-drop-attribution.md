@@ -6,6 +6,15 @@ reconnects after >20s without a response. Any stall or break anywhere on
 browser → Cloudflare → tunnel → Traefik → t3-dispatch → `t3 serve` produces
 the identical symptom. This runbook attributes a drop to a segment in minutes.
 
+Since terminal-lobby ADR-0045, `t3.viktorbarzin.me` is served by `tl-t3-view`
+(devvm `:7690`) rather than `t3-dispatch` and `t3 serve`, so a user's path ends
+browser → Cloudflare → tunnel → Traefik → `tl-t3-view`. The probe below still
+reaches `t3-dispatch`'s `/probe` echo through its own Service. Its `cloudflare`
+and `internal` legs therefore still attribute drops in the shared Cloudflare
+and Traefik segments; the `t3serve` leg and the `t3-dispatch` journal no longer
+describe the server users are connected to. For that, read `tl-t3-view` in the
+devvm journal.
+
 ## 1. Check the probe (first stop)
 
 The in-cluster `t3-probe` (stacks/t3code, scrape job `t3-probe`) holds three
