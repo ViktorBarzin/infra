@@ -5,6 +5,8 @@ go 1.26.0
 require (
 	github.com/badoux/checkmail v1.2.1
 	github.com/brianvoe/gofakeit/v6 v6.3.0
+	github.com/chromedp/chromedp v0.21.0
+	github.com/coder/websocket v1.8.15
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
@@ -18,9 +20,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/chromedp/cdproto v0.157.8 // indirect
-	github.com/chromedp/chromedp v0.21.0 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
