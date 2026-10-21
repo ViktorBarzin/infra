@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly host-patch-status run
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

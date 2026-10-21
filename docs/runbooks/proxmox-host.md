@@ -1,6 +1,6 @@
 # Runbook: Proxmox host (pve, 192.168.1.127)
 
-Last updated: 2026-10-19
+Last updated: 2026-10-21
 
 The Proxmox host is a baremetal hypervisor on the storage LAN
 (192.168.1.0/24) with a single IP `192.168.1.127`. It hosts every
@@ -115,9 +115,38 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | promtail config (`scripts/pve-promtail.yaml`) | Redacts secret-shaped values before the journal reaches Loki |
 | LVM metadata archive kept 7 days (`/etc/lvm/lvmlocal.conf`) | The default 30 days held 9,810 files and 1.9 GB for the `pve` volume group |
 | unattended-upgrades, Debian-Security origin only, no automatic reboot (tag `patching`) | Nothing installed updates on the host until 2026-10-19, when 29 security updates were waiting. Proxmox packages (kernel, QEMU, pve-manager) and Debian point releases are still upgraded by hand, because they need a reboot or a VM stop/start to take effect. Kernel autoremoval is off, after the first run removed the fallback kernel 6.14.11-3 |
+| `host-patch-status` (script, service, hourly timer) and the node_exporter textfile collector (tag `patching`) | Reports how many Proxmox packages are waiting and since when, and whether the running kernel is older than the newest installed one. `ProxmoxHostUpdatesWaiting` and `ProxmoxHostRebootWaiting` fire after 30 days, `ProxmoxHostPatchStatusStale` when the script stops running |
+| Monthly Proxmox upgrade (tag `pve-upgrade`, runs only when asked for) | `apt full-upgrade` with no reboot. See below |
 
 The measurements and reasoning for each item sit next to its task in
 the playbook.
+
+## Monthly Proxmox updates
+
+Debian security updates install themselves every day. Proxmox packages
+(pve-manager, QEMU, kernels, firmware) need `apt full-upgrade`, so they
+are installed in a supervised run about once a month (Viktor, 2026-10-21).
+`ProxmoxHostUpdatesWaiting` is the reminder: it fires when the host has
+not been fully up to date for 30 days.
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --tags pve-upgrade
+```
+
+The task upgrades everything and does not reboot. Running VMs keep the
+QEMU binary they started with until they are stopped and started; the
+`pveproxy`, `pvedaemon` and `pvestatd` services restart on their own, so
+the web UI and API drop for a few seconds. Afterwards check
+`pveversion`, `qm list` (every VM still `running`) and
+`host_apt_upgrades_pending{job="proxmox-host"}` back at 0.
+
+A new kernel takes effect only at a reboot, which stops every VM, so it
+is scheduled with Viktor. `ProxmoxHostRebootWaiting` fires when a newer
+kernel has been installed for 30 days. `host_reboot_required` carries the
+`running` and `newest` kernel versions as labels. The host boots the
+newest installed kernel because none is pinned (`proxmox-boot-tool
+kernel list`); kernel autoremoval is off, so the previous kernels stay
+in the boot menu as a fallback.
 
 ## Related docs
 

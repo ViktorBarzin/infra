@@ -1,5 +1,5 @@
 # Renovate: lands third-party version bumps on viktor/infra master, one per run,
-# every 6 hours (skipped while an infra pipeline runs).
+# every 2 hours (skipped while an infra pipeline runs).
 #
 # A second CronJob, renovate-apps (bottom of this file), updates first-party app
 # repos on the default app stack (monorepo docs/adr/0001-default-app-stack.md,
@@ -45,14 +45,18 @@ variable "apps_schedule" {
 
 variable "schedule" {
   type = string
-  # Every 6 hours (2026-10-15). Was every 10 minutes from 2026-10-11 to clear
-  # the upgrade backlog; that backlog is done, so updates now arrive slowly.
-  # Each real run, and the applies it triggers, pulls images and writes
-  # through the docker-registry VM and the node disks, all on the shared sdc
-  # HDD: node4's VM disk went from 27-70 to 67-199 GB/day while the
-  # 10-minute schedule ran. The wrapper still skips a run while an infra
-  # pipeline is running or queued.
-  default = "17 */6 * * *"
+  # Every 2 hours (2026-10-21). Every 6 hours from 2026-10-15 left 34 updates
+  # queued: at one bump per run that is at most 4 a day, fewer when the calm
+  # gate skips a night run, and new releases arrived about as fast. Every 10
+  # minutes from 2026-10-11 to 2026-10-15 cleared the first backlog but drove
+  # node4's VM disk from 27-70 to 67-199 GB/day on the shared sdc HDD. The disk
+  # load comes from the bumps that land, not from runs that land nothing (those
+  # read the lookup cache), so 2 hours gives about 12 bumps a day while each
+  # one keeps its own pipeline, backup, verify and RENOVATE_MIN_GAP. Viktor
+  # chose this over raising prCommitsPerRunLimit, which would push several
+  # bumps per run and let their pipelines cancel each other. The wrapper still
+  # skips a run while an infra pipeline is running or queued.
+  default = "17 */2 * * *"
 }
 
 locals {

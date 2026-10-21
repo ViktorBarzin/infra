@@ -284,7 +284,7 @@ Notes on the status column:
 - Wave 7 (2026-10-12, supervised, with Renovate paused through its rails hold): the CNPG operator to 1.30.1 with in-place instance manager updates (no Postgres pod restarted); Woodpecker 3.14.1 to 3.19.0, applied from a workstation; Nextcloud 32.0.14 to 35.0.1 in four hops of about four minutes each, with LVM snapshots and a mysqldump first; Forgejo 11.0.14 to 15.0.9 to 16.0.5; the Kyverno policies moved to the CEL types; Calico 3.30.7 to 3.33.0 in three one-minor hops, each after an etcd snapshot. Keel is retired: the last seven apps it deployed now deploy through `first-party-deploy` (B18) and `stacks/keel` is deleted (B19). Findings from the session: Forgejo 15 replayed archive jobs that 11 had left queued and filled its 50 GB volume with about 25 GB of bundles of this repository (cleared with Forgejo's `delete_repo_archives` task, after which a pod restart reopened the queue); replacing a `force_new` Kyverno generate policy with `synchronize: true` deleted 28 of the 30 `ghcr-credentials` copies for under three minutes until the policy was replaced again with the orphan flag in place; and the newer tigera-operator deletes the `calico-apiserver` namespace and labels `calico-system`, which Terraform no longer fights.
 - Wave 8 (2026-10-15 to 2026-10-16, an unattended run while Viktor was away, with application-native backups first and the old data kept alive until the new version was proven): Postgres 16.9 to 18.6 blue-green to `pg-cluster-v18`; MySQL 8.4.8 to 26.7.0 blue-green to `mysql-v26`; Forgejo 16.0.6 to 17.0.0; Vault 2.1.2 to 2.2.0 with `stacks/vault` released; the NVIDIA driver 580.178.04 to 595.91.07; osrm-backend v26.4.0 to v26.10.0; the Prometheus sidecar pins; the Terraform providers hashicorp/vault 4.8.0 to 5.13.0, cloudflare 4.52.9 to 5.28.0, goauthentik 2025.12.1 to 2026.8.0 and telmate/proxmox rc07 to rc10; longer CNPG operator leader election (lease 60 s, renew 45 s), which ended its restart loop; and cleanups (Keel fork and package, 128 orphaned Kyverno UpdateRequests, 139 missing Navidrome tracks, the unused reactive-resume printer). Nextcloud, Technitium and Woodpecker were already on their newest releases. Nothing was rolled back. The nightly `nfs-mirror` deleted the run's off-cluster backup directory once, because its `rsync --delete` had no exclude for it; it now excludes `/manual-upgrade-*/`, and the MySQL backup was taken again and restore-tested. The rollback copies still running are listed under "Rollback copies from wave 8" below.
 
-## Not migrated yet (updated 2026-10-20)
+## Not migrated yet (updated 2026-10-21)
 
 Viktor's instruction for waves 4 to 6 was to move everything that could move cleanly to Renovate and record the rest for later. This section started as that record on 2026-10-11. The supervised session on 2026-10-12 (wave 7 in the build plan) cleared most of it, and the run on 2026-10-15 and 2026-10-16 (wave 8) took the remaining majors that had a release; what is below is what remains. The run on 2026-10-19 and 2026-10-20 closed the remaining leftovers and open items; the subsections below say what is still open.
 
@@ -350,7 +350,7 @@ All done on 2026-10-19 and 2026-10-20. Live workloads carrying a `keel.sh/*` or 
 
 ### Other findings from the run
 
-Closed on 2026-10-19 and 2026-10-20:
+Closed on 2026-10-19, 2026-10-20 and 2026-10-21:
 
 - Trivy: the 15 image-secret findings were all third-party test keys or defaults and are suppressed through the ignore file; PV and PVC config audits are off; 474 stale reports were deleted; scans run one at a time (82d3dd604). Eight first-party images were rebuilt or rebased, and phpMyAdmin and uptime-kuma moved to leaner images of the same version.
 - Drift: the 11 drifted stacks plan clean (bb137e2b5).
@@ -370,6 +370,9 @@ Closed on 2026-10-19 and 2026-10-20:
 - Trivy, again on 2026-10-20: 72 image-secret reports written before the ignore file existed kept 12 `TrivyExposedSecretInImage` alerts firing. They were deleted and the rescans came back with no findings.
 - The registry cache VM's root disk is 150G (from 64G), declared in `playbooks/pve-host.yml` and `playbooks/registry-cache.yml`, Viktor's choice after four fills in ten days.
 - The weekly claude-memory regression timer is not coming back. Its 119-query benchmark exercises the SQLite recall path, not the production Postgres one, so a production recall change is checked by replaying real prompts before and after and comparing the returned memory ids (Viktor, 2026-10-20).
+- Renovate runs every 2 hours instead of every 6 (2026-10-21). 34 updates had queued on the dashboard, and one bump per run at four runs a day did not keep up. Viktor chose the schedule change over several bumps per run: both land about 12 a day with the same apply load, and this keeps one bump per pipeline. `prCommitsPerRunLimit` counts pushes, two per bump, so a limit of N lands about N/2 bumps.
+- The registry cache playbook runs clean. The live VM was behind the playbook (nginx's healthcheck on `/healthz`, the unmounted `nginx_registry.conf`, blank lines in `config-dockerhub.yml`); the playbook writes files and restarts nothing, so it was applied with no outage. The nginx healthcheck takes effect at its next container restart. A plain run still needs `registry_cache_manage_unused_secrets: false` until the htpasswd and TLS keys are in Vault.
+- Proxmox host updates (2026-10-21). Debian security updates already installed themselves (since 2026-10-19). Proxmox packages now go through a monthly supervised `--tags pve-upgrade` run of `playbooks/pve-host.yml`, with no reboot, and `host-patch-status` feeds `ProxmoxHostUpdatesWaiting` and `ProxmoxHostRebootWaiting` (30 days each). The 11 waiting that day were installed. The reboot onto kernel 7.0 is not done yet.
 - No recurrence or no impact: paperless OOM, the helm.ngc.nvidia.com certificate, osrm waypoint names, the Monday digest.
 
 Still open:
@@ -380,6 +383,7 @@ Still open:
 | tigera-operator, nfs-csi, pvc-autoresizer restarts | their charts or binaries expose no leader-election setting | a Helm post-renderer or upstream change (`docs/agents/known-issues.md`) |
 | Woodpecker agent keepalive flag | the agent reads a mis-named flag upstream | filed as woodpecker-ci/woodpecker#7350; an upstream fix |
 | osrm-refresh | the 2026-11-01 run is the first on the retry logic | check that run |
+| Proxmox host reboot | kernel 7.0.14 is installed and the host runs 6.14.11 (94 days up on 2026-10-21); the reboot stops every VM | a window Viktor picks; `ProxmoxHostRebootWaiting` fires after 30 days |
 | Fixable CVEs in third-party images | about 50 internet-facing namespaces run images that are on their newest tag; Viktor chose to keep alerting on all of them | upstream releases, which Renovate lands |
 
 ## Accepted risks
