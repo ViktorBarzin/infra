@@ -94,6 +94,10 @@ windows per calendar month (UTC) in its state file. At 80% of 1,000 it posts to
   or wait an hour.
 - Revoke the bot's Lobby access: remove `whatsapp` from `devvm_external_agents` and run
   the playbook (or `scripts/agent-api-kill whatsapp`).
+- The test number is registered with the Cloud API (`POST /{phone-number-id}/register`,
+  2026-10-21). Its two-step PIN is `secret/wa-bot` `two_step_pin`; Meta asks for it if the
+  number is ever re-registered. Before registration every send failed with
+  `#133010 Account not registered`.
 - Meta webhook subscription: app `whatsapp_business_account` object, callback
   `https://wa.viktorbarzin.me/webhook`, field `messages`, verify token
   `secret/wa-bot` `verify_token`; the WABA is subscribed to the app.
