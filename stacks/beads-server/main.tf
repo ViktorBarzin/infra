@@ -818,7 +818,7 @@ resource "kubernetes_deployment" "workbench" {
           # which speaks an old GraphQL schema (missing `type` arg on
           # addDatabaseConnection) → seed-config fails, UI can't add the
           # connection. :0.3.73 was the last Keel-resolved good tag.
-          image = "dolthub/dolt-workbench:0.3.75"
+          image = "dolthub/dolt-workbench:0.3.76"
           command = ["sh", "-c", <<-EOT
             # Seed connection store
             cp /config/store.json /store/store.json
@@ -853,7 +853,7 @@ resource "kubernetes_deployment" "workbench" {
           # connection. :0.3.73 was the last Keel-resolved good tag; Keel then
           # rolled this container to :0.3.75, which is what runs at the Renovate
           # cutover (2026-10-10). Renovate proposes bumps from here.
-          image = "dolthub/dolt-workbench:0.3.75"
+          image = "dolthub/dolt-workbench:0.3.76"
           command = ["sh", "-c", <<-EOT
             # Patch GraphQL server to listen on 0.0.0.0 (IPv4) — Node 18+ defaults to IPv6
             sed -i 's|app.listen(9002)|app.listen(9002,"0.0.0.0")|g' /app/graphql-server/dist/main.js
