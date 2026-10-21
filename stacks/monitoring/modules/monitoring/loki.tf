@@ -751,6 +751,43 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # wa-bot (stacks/wa-bot, docs/runbooks/wa-bot.md). The bot used to post
+          # these to #alerts itself; since its egress lock (2026-10-21) it cannot
+          # reach Slack, so it logs each one as a line containing
+          # {"audit":true,"event":"alert","text":"wa-bot: ..."} and these rules
+          # carry the text to Alertmanager -> #alerts. The text holds the type
+          # and the numbers, and becomes the alert's `text` label.
+          #   lockout: "wa-bot: 5 wrong PINs within an hour from the allowed
+          #            number; locked for 1 hour."
+          #   quota:   "wa-bot: 800 of 1000 free-tier conversations used this
+          #            month." / "wa-bot: free-tier cap of 1000 ... reached ..."
+          # Approved by Viktor 2026-10-21. Any container in the namespace counts,
+          # which is how the route was tested (a TEST line from a debug container).
+          name = "wa-bot"
+          rules = [
+            {
+              alert  = "WaBotPinLockout"
+              expr   = "sum by (text) (count_over_time({namespace=\"wa-bot\"} |= `\"event\":\"alert\"` |= `wrong PINs` | regexp `\"text\":\"(?P<text>[^\"]*)\"` [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary     = "{{ $labels.text }}"
+                description = "Five wrong PINs within an hour came from Viktor's own WhatsApp number, so wa-bot ignores it for an hour. If Viktor did not mistype, his phone or a linked device may be in someone else's hands. Audit: homelab logs query '{namespace=\"wa-bot\"} |= \"pin_fail\"' --since 2h. Runbook: docs/runbooks/wa-bot.md."
+              }
+            },
+            {
+              alert  = "WaBotFreeTierQuota"
+              expr   = "sum by (text) (count_over_time({namespace=\"wa-bot\"} |= `\"event\":\"alert\"` |= `free-tier` | regexp `\"text\":\"(?P<text>[^\"]*)\"` [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", lane = "event" }
+              annotations = {
+                summary     = "{{ $labels.text }}"
+                description = "wa-bot counts 24-hour conversation windows against Meta's free tier (1,000 a month, no payment method on the app). At 80% it warns; at the cap it stops replying until the next month. Runbook: docs/runbooks/wa-bot.md."
+              }
+            },
+          ]
+        },
+        {
           # Terminal Lobby API (terminal-api.viktorbarzin.me, stacks/terminal/
           # terminal_api.tf). Moved here from a Prometheus rule on Traefik's
           # 401 count on 2026-10-07, when the host's source-IP allowlist was
