@@ -10,8 +10,10 @@
 #
 # The step runs the GHA-built infra-cli image (ADR-0002: nothing is built
 # here). It reads live state with the pipeline's service account, which is
-# cluster-admin, and fetches its pages-publish bundle token from Vault with the
-# ci role. A failed build publishes nothing, so the last good page stays up.
+# cluster-admin, and fetches its pages-publish bundle token and the ha-sofia
+# "showcase" token (secret/showcase) from Vault with the ci role. A failed
+# build publishes nothing, so the last good page stays up; Home Assistant being
+# unreachable is not a failure (the Home view keeps its last published numbers).
 
 # A manual run (POST /api/repos/1/pipelines with variables PIPELINE=showcase)
 # refreshes the page outside the schedule.
@@ -47,6 +49,11 @@ steps:
           | jq -r '.data.data.bundle_keys | fromjson | to_entries[] | select(.value.user == "showcase") | .key')
         test -n "$PAGES_BUNDLE_TOKEN"
         export PAGES_BUNDLE_TOKEN
+        # The Home view's read-only use of the "showcase" HA token. Missing is
+        # not fatal: the build then reuses the last published home section.
+        HA_SOFIA_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+          "$VAULT_ADDR/v1/secret/data/showcase" | jq -r '.data.data.ha_sofia_token // empty' || true)
+        export HA_SOFIA_TOKEN
         /app/infra_cli showcase build --src "$CI_WORKSPACE" --out /tmp/showcase
         /app/infra_cli showcase publish --dir /tmp/showcase
 

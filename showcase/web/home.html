@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viktor's Homelab Home</title>
+<meta name="description" content="The home automation side of Viktor Barzin's homelab: one Home Assistant instance running the family home, what is in it, how two of its automations work, and what its dashboards look like. Every number comes from the live system.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Viktor's homelab: the house">
+<meta property="og:description" content="One Home Assistant instance on the homelab server runs the family home. What is in it, how it works and what its dashboards look like.">
+<meta property="og:image" content="https://pages.viktorbarzin.me/homelab/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Four stacked plates labelled hardware, network, platform and apps">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f2a4a'/%3E%3Cg fill='none' stroke='%23ffb454' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M16 6l10 5-10 5-10-5z'/%3E%3Cpath d='M6 16l10 5 10-5' /%3E%3Cpath d='M6 21l10 5 10-5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+<div class="sheet">
+  <header class="top">
+    <a class="mark" href="index.html" aria-label="Viktor's homelab, home">HL</a>
+    <nav id="switcher"></nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">Drawing HL-05 &middot; home &middot; <span id="site">Sofia</span><span id="asof"></span></p>
+      <h1 id="hero-title">The house</h1>
+      <p class="lede" id="lede">Loading the latest snapshot&hellip;</p>
+      <dl class="titleblock" id="stats" aria-label="Headline numbers"></dl>
+    </section>
+
+    <section class="plate" id="inventory" aria-labelledby="inv-title" hidden>
+      <div class="plate__head">
+        <p class="plate__no">Plate I</p>
+        <h2 class="sec-title" id="inv-title">What's in it</h2>
+      </div>
+      <div class="inv">
+        <div class="inv__kinds">
+          <h3 class="rule-head">By kind</h3>
+          <dl class="kinds" id="kinds"></dl>
+          <div class="security" id="security"></div>
+        </div>
+        <div class="inv__bars">
+          <h3 class="rule-head">By radio, in devices</h3>
+          <ul class="bars" id="radios"></ul>
+          <h3 class="rule-head">Automations, by what they do</h3>
+          <ul class="bars" id="autos"></ul>
+        </div>
+      </div>
+      <h3 class="rule-head">Integrations, by devices</h3>
+      <ul class="integrations" id="integrations"></ul>
+      <p class="note" id="int-note"></p>
+    </section>
+
+    <section class="plate" id="how" aria-labelledby="how-title" hidden>
+      <div class="plate__head">
+        <p class="plate__no">Plate II</p>
+        <h2 class="sec-title" id="how-title">How it works</h2>
+      </div>
+      <div class="highlights" id="highlights"></div>
+    </section>
+
+    <section class="plate" id="dashboards" aria-labelledby="dash-title" hidden>
+      <div class="plate__head">
+        <p class="plate__no">Plate III</p>
+        <h2 class="sec-title" id="dash-title">The dashboards</h2>
+      </div>
+      <p class="dash-intro">Captured from the real dashboards, in Bulgarian as the family uses them. Names, presence and the security cards are masked.</p>
+      <div class="dash-bar">
+        <div class="seg" role="group" aria-label="Dashboard" id="dash-tabs"></div>
+        <div class="seg" role="group" aria-label="Screen size">
+          <button type="button" data-form="desktop" aria-pressed="true">Desktop</button>
+          <button type="button" data-form="phone" aria-pressed="false">Phone</button>
+        </div>
+      </div>
+      <div class="dashes" id="dashes"></div>
+    </section>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
+<script type="module" src="home.js"></script>
+</body>
+</html>

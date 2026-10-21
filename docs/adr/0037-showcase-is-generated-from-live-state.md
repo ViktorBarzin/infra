@@ -10,12 +10,15 @@ Viktor wants a public page that shows the homelab to other homelabbers and stays
 
 ## Decision
 
-The **Showcase** is rebuilt daily by `homelab showcase build` into one **Snapshot** (`data.json`). Four **Variants** render that Snapshot. Nothing on the page is written by hand except two things:
+The **Showcase** is rebuilt daily by `homelab showcase build` into one **Snapshot** (`data.json`). Five **Variants** render that Snapshot (the fifth, Home, added 2026-10-21). Nothing on the page is written by hand except two things:
 
 - a `<!-- showcase: ... -->` summary in each mapped architecture doc, which the build requires;
-- `showcase/hardware.yaml`, for physical kit no exporter reports.
+- `showcase/hardware.yaml`, for physical kit no exporter reports;
+- the `<!-- showcase-highlight: ... -->` sections of `docs/architecture/home-automation.md`, quoted on the Home view.
 
-Neither may contain numbers, so the prose cannot contradict the live stats beside it.
+None of these may contain numbers, so the prose cannot contradict the live stats beside it.
+
+The Home view's dashboard screenshots are the one exception to "generated daily": `homelab showcase shots` captures and masks them on demand, the repo owner approves each image, and they are committed under `showcase/web/home/`.
 
 The generator is deterministic: no LLM writes any text.
 
@@ -24,6 +27,7 @@ What it publishes:
 - The service catalog is published in full. The infra repo and Homepage's public API already expose it.
 - Flow data is published only between namespaces that have a visible catalog service. Shared infrastructure is reduced to "uses X" badges.
 - No service is labelled "public" or "no login"; the access states are SSO, app login and LAN only.
+- The Home view publishes counts from the Sofia Home Assistant only: devices, entities, integrations, automations by kind and dashboards. No names of people, rooms, entities or automations, no live states, and no brands for the alarm, lock and cameras, which are counted on one "security" line. The build reads HA with its own revocable token (`secret/showcase`, `ha_sofia_token`). If HA is unreachable, the build reuses the last published Home section and marks it stale instead of failing.
 
 ## Consequences
 

@@ -100,6 +100,28 @@
 .ops-band[aria-pressed="true"] svg path { stroke: var(--accent); }
 .ops-band:hover { border-color: var(--accent); }
 
+/* the house: the Map's pointer to the Home view (HL-05) */
+.ops { display: flex; flex-direction: column; gap: 18px; }
+.ops .ops-band { height: auto; flex: 1 1 auto; }
+.house {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 16px; text-decoration: none; color: var(--ink);
+  border: 1.5px solid var(--line); border-radius: 6px; background: var(--paper-2);
+}
+.house svg { width: 100%; max-width: 190px; height: auto; overflow: visible; display: block; align-self: center; }
+.house .txt { display: flex; flex-direction: column; gap: 6px; }
+.house .tag { font: 600 13px/1.3 var(--f-mono); color: var(--line); letter-spacing: 0.06em; text-transform: uppercase; }
+.house .name { font: 700 30px/1 var(--f-display); text-transform: uppercase; }
+.house .meta { font-size: 16px; line-height: 1.4; color: var(--ink-2); }
+.house .open { font: 600 14px/1.3 var(--f-mono); color: var(--line); }
+.house:hover, .house.is-open { border-color: var(--accent); color: var(--ink); }
+.house:hover .open, .house.is-open .tag, .house.is-open .open { color: var(--accent); }
+.house.is-open { box-shadow: inset 0 0 0 5px var(--accent-soft); }
+.house.is-open .p-top { fill: var(--accent-soft); stroke: var(--accent); }
+.house svg .plate { transition: transform 0.25s ease; }
+.house:hover svg .plate { transform: translateY(-4px); }
+.touring .house:not(.is-open) svg { opacity: 0.4; }
+.house { animation: rise 0.5s 0.55s ease both; }
+
 /* ---------- panel ---------- */
 .panel {
   position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto;
@@ -206,6 +228,15 @@ table.nodes { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
   .map { grid-template-columns: minmax(0, 1fr); }
   .ops-band { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 18px; }
   .ops-band .txt { flex: 1 1 200px; gap: 6px; }
+}
+@media (max-width: 1180px) {
+  .ops { flex-direction: column; }
+  .house { flex-direction: row; align-items: center; gap: 16px; padding: 14px 18px; }
+  .house svg { width: 150px; flex: none; }
+}
+@media (max-width: 640px) {
+  .house svg { width: 110px; }
+  .house .name { font-size: 26px; }
 }
 @media (max-width: 1100px) {
   .layer { grid-template-columns: 240px minmax(0, 1fr); }

@@ -180,3 +180,30 @@ flowchart TD
 - Whether Cloudflare Bot Fight Mode (`fight_mode = true` in `stacks/cloudflared/cloudflare.tf`) blocks a link-preview bot coming from the platforms' own networks. The user-agent tests passed through Cloudflare from the home connection; a real share on each platform settles it.
 - Which scrape ports to treat as plumbing. The generator test pins the list against current data.
 - The homelab v3 blog draft (`Website/content/blog/21-home-lab-v3-the-foundation.md`, a draft since 2026-03-01) covers the same layers. The page does not link to it, by decision. Whether the draft gets finished is outside this design.
+
+## Addendum (2026-10-21): the Home view
+
+A fifth Variant, Home (drawing HL-05), shows the home automation in Sofia. Decided with Viktor in a grilling session on 2026-10-21:
+
+| # | decision |
+|---|---|
+| H1 | Its own view, plus a small isometric house on the Map that links to it and a sixth tour stop |
+| H2 | Sofia's Home Assistant only. The family cleared publishing it |
+| H3 | Aggregates only: no names of people, rooms, entities or automations, no live states. The alarm, lock and cameras are counted on one "security" line with no brands |
+| H4 | The build reads HA with its own long-lived token named `showcase` (Vault `secret/showcase`). If HA is unreachable it reuses the last published Home section with its date |
+| H5 | Headline numbers: devices, integration kinds, automations, dashboards. Not automation runs, which are mostly thermostat syncs |
+| H6 | Two highlights quoted from `docs/architecture/home-automation.md`: the server fans on a PID loop, and the solar transfer switch with day and night tariffs |
+| H7 | Screenshots of the Energy, Heating and IT dashboards, in Bulgarian with English captions, at desktop and phone width in both themes. `homelab showcase shots` captures and masks them on demand; each image is approved before it is committed |
+| H8 | Layout: numbers, then inventory, then highlights, then dashboards |
+
+```mermaid
+flowchart LR
+  HA[ha-sofia API] -->|showcase token, counts only| GEN[homelab showcase build]
+  DOC[home-automation.md highlights] --> GEN
+  GEN --> SNAP[data.json home]
+  SHOTS[homelab showcase shots] -->|masked PNGs| REVIEW{owner approves}
+  REVIEW -->|commit| WEB[showcase/web/home/]
+  SNAP --> VIEW[Home view]
+  WEB --> VIEW
+```
+
