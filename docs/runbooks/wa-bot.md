@@ -30,8 +30,8 @@ flowchart LR
    dropped.
 4. PIN: a message that starts with the PIN unlocks the bot for 30 minutes; inside the
    window no PIN is needed. Outside it, a message without the right PIN gets no reply
-   and counts as a failure. Five failures in an hour lock the bot for an hour and log an
-   `alert` audit line (the egress policy blocks the #alerts Slack post). The PIN is stored only as an scrypt hash (`secret/wa-bot` `pin_hash`).
+   and counts as a failure. Five failures in an hour lock the bot for an hour and post
+   to #alerts through Loki (see "Alerts" below). The PIN is stored only as an scrypt hash (`secret/wa-bot` `pin_hash`).
 5. A message that passes steps 1 to 3 is marked read (blue ticks) with the typing
    indicator on, in one Cloud API call (`POST /messages`, `status=read`,
    `typing_indicator.type=text`). WhatsApp drops the indicator after 25 s or at the next
@@ -91,6 +91,21 @@ The Meta app has no payment method, deliberately. The bot counts 24-hour convers
 windows per calendar month (UTC) in its state file. At 80% of 1,000 it posts to
 #alerts; at 1,000 it stops sending until the next month, and says so in #alerts once.
 
+## Alerts
+
+The pod cannot reach Slack (egress lock), so it logs every alert as a line with
+`"event":"alert"` and the message in `"text"`. Two Loki-ruler rules, group `wa-bot` in
+`stacks/monitoring/modules/monitoring/loki.tf`, carry them to Alertmanager and #alerts,
+with the bot's text as the post's summary:
+
+| Alert | Fires on | Lane |
+|---|---|---|
+| `WaBotPinLockout` | an alert line containing `wrong PINs` | security ([SECURITY] styling, 1 h repeat) |
+| `WaBotFreeTierQuota` | an alert line containing `free-tier` (80% warning, cap reached) | event (one post) |
+
+Both look back 15 minutes and fire at once. Read the raw lines with
+`homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\""' --since 24h`.
+
 ## Operating it
 
 - Audit trail: `homelab logs query '{namespace="wa-bot"} |= "\"audit\":true"' --since 24h`.
@@ -119,5 +134,4 @@ windows per calendar month (UTC) in its state file. At 80% of 1,000 it posts to
   Viktor accepted for Muse. agent-api has no scopes.
 - Egress is locked (Calico policy `wa-bot-egress`, 2026-10-21): DNS on 10.96.0.10, Traefik,
   and TCP 443 to Meta's IPv4 ranges (from the CrowdSec `meta-asn.txt` list). Everything
-  else is denied, including Slack, so lockout and quota alerts reach Loki only:
-  `homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\""'`.
+  else is denied, including Slack; alerts reach #alerts through Loki instead (below).
