@@ -264,6 +264,12 @@
         os_user: wizard
         delegation_creator: true
         token_file: /home/wizard/.config/homelab/agent-api-token
+      # wa-bot (stacks/wa-bot), Viktor's WhatsApp bot, 2026-10-21. Its own
+      # Caller so it can be revoked alone and its trace reads separately. No
+      # pin: the bot asks for claude-opus-5 / max itself, and permission_mode
+      # stays the API default (bypassPermissions), as for muse.
+      - name: whatsapp
+        os_user: wizard
 
     # agentmd (github.com/ViktorBarzin/agentmd): one instance per user, each
     # reached through stacks/agentmd on its own hostname. Keep the users in
