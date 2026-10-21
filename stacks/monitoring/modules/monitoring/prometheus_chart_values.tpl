@@ -1727,6 +1727,36 @@ serverFiles:
               severity: info
             annotations:
               summary: "{{ $labels.node }} 15-minute load is {{ $value | humanizePercentage }} of its CPU threads (threshold: 60%)"
+          # Proxmox host patching (Viktor, 2026-10-21). Debian security updates
+          # install themselves; Proxmox packages and kernels wait for a monthly
+          # supervised run (playbooks/pve-host.yml --tags pve-upgrade), and the
+          # reboot that activates a new kernel is scheduled with Viktor. The
+          # metrics come from host-patch-status on the host (textfile
+          # collector, hourly). The *_since timestamps reset only when the
+          # count reaches zero, so these read "30 days since the host was last
+          # fully up to date", not "an update has waited 30 days". Runbook:
+          # docs/runbooks/proxmox-host.md, "Monthly Proxmox updates".
+          - alert: ProxmoxHostUpdatesWaiting
+            expr: (time() - host_apt_upgrades_pending_since_timestamp_seconds{job="proxmox-host", origin="proxmox"}) / 86400 > 30
+            for: 1h
+            labels:
+              severity: info
+            annotations:
+              summary: "Proxmox updates have waited {{ $value | printf \"%.0f\" }} days on the host: run the monthly upgrade (ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --tags pve-upgrade). Runbook: docs/runbooks/proxmox-host.md"
+          - alert: ProxmoxHostRebootWaiting
+            expr: (time() - host_reboot_required_since_timestamp_seconds{job="proxmox-host"}) / 86400 > 30
+            for: 1h
+            labels:
+              severity: info
+            annotations:
+              summary: "The host has needed a reboot for {{ $value | printf \"%.0f\" }} days (a newer kernel is installed). Schedule it with Viktor: every VM stops. Runbook: docs/runbooks/proxmox-host.md"
+          - alert: ProxmoxHostPatchStatusStale
+            expr: (time() - host_patch_status_last_run_timestamp_seconds{job="proxmox-host"}) > 3 * 3600 or absent(host_patch_status_last_run_timestamp_seconds{job="proxmox-host"})
+            for: 1h
+            labels:
+              severity: info
+            annotations:
+              summary: "host-patch-status has not run on the Proxmox host for 3 hours, so the two patching alerts cannot fire. Check: systemctl status host-patch-status.timer on 192.168.1.127"
           - alert: FanFailure
             expr: r730_idrac_coolingDeviceStatus != 3
             for: 5m

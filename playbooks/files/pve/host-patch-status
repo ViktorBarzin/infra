@@ -1,0 +1,66 @@
+#!/bin/bash
+# Writes the Proxmox host's patch state for node_exporter's textfile collector.
+# Installed by playbooks/pve-host.yml (tag patching); runs hourly from
+# host-patch-status.timer. Reads only: it simulates a full-upgrade against the
+# package lists apt-daily.timer refreshes, and installs nothing.
+#
+# Debian security updates install themselves (unattended-upgrades). Proxmox
+# packages wait for the monthly supervised upgrade, so the alerts read how long
+# the host has gone without being fully up to date, not whether one update is
+# waiting today. A "since" timestamp is kept in a state file and cleared once
+# the count reaches zero.
+set -euo pipefail
+
+textfile_dir=/var/lib/node_exporter/textfile
+state_file=/var/lib/node_exporter/host-patch-status.state
+out="$textfile_dir/host_patch_status.prom"
+now=$(date +%s)
+
+proxmox_since=""
+reboot_since=""
+# shellcheck source=/dev/null
+[[ -r "$state_file" ]] && . "$state_file"
+
+sim=$(apt-get -s -o Debug::NoLocking=1 full-upgrade 2>/dev/null)
+proxmox=$(grep -c '^Inst .*(.*Proxmox' <<<"$sim" || true)
+other=$(grep '^Inst ' <<<"$sim" | grep -vc '(.*Proxmox' || true)
+
+# A reboot is due when /run/reboot-required exists or the running kernel is not
+# the newest one installed. proxmox-boot-tool boots the newest unless one is
+# pinned, and none is pinned here (proxmox-boot-tool kernel list).
+running=$(uname -r)
+newest=$(find /boot -maxdepth 1 -name 'vmlinuz-*-pve' -printf '%f\n' | sed 's/^vmlinuz-//' | sort -V | tail -n 1)
+reboot=0
+if [[ -e /run/reboot-required || ( -n "$newest" && "$running" != "$newest" ) ]]; then
+  reboot=1
+fi
+
+if (( proxmox > 0 )); then proxmox_since=${proxmox_since:-$now}; else proxmox_since=""; fi
+if (( reboot > 0 )); then reboot_since=${reboot_since:-$now}; else reboot_since=""; fi
+printf 'proxmox_since=%s\nreboot_since=%s\n' "$proxmox_since" "$reboot_since" > "$state_file"
+
+tmp=$(mktemp "$textfile_dir/.host_patch_status.XXXXXX")
+{
+  echo '# HELP host_apt_upgrades_pending Packages a full-upgrade would install or upgrade, by origin.'
+  echo '# TYPE host_apt_upgrades_pending gauge'
+  echo "host_apt_upgrades_pending{origin=\"proxmox\"} $proxmox"
+  echo "host_apt_upgrades_pending{origin=\"other\"} $other"
+  if [[ -n "$proxmox_since" ]]; then
+    echo '# HELP host_apt_upgrades_pending_since_timestamp_seconds When Proxmox updates started waiting without a break.'
+    echo '# TYPE host_apt_upgrades_pending_since_timestamp_seconds gauge'
+    echo "host_apt_upgrades_pending_since_timestamp_seconds{origin=\"proxmox\"} $proxmox_since"
+  fi
+  echo '# HELP host_reboot_required 1 when the running kernel is not the newest installed, or /run/reboot-required exists.'
+  echo '# TYPE host_reboot_required gauge'
+  echo "host_reboot_required{running=\"$running\",newest=\"$newest\"} $reboot"
+  if [[ -n "$reboot_since" ]]; then
+    echo '# HELP host_reboot_required_since_timestamp_seconds When the host started needing a reboot.'
+    echo '# TYPE host_reboot_required_since_timestamp_seconds gauge'
+    echo "host_reboot_required_since_timestamp_seconds $reboot_since"
+  fi
+  echo '# HELP host_patch_status_last_run_timestamp_seconds Last run of host-patch-status.'
+  echo '# TYPE host_patch_status_last_run_timestamp_seconds gauge'
+  echo "host_patch_status_last_run_timestamp_seconds $now"
+} > "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" "$out"

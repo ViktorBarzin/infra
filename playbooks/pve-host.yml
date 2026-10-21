@@ -233,6 +233,109 @@
           Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
       tags: patching
 
+    # ---- Proxmox updates: monthly, supervised, with an alert -----------------
+    # Debian security updates install themselves (above). Proxmox packages do
+    # not: Proxmox needs `apt full-upgrade` for them, and a bad one stops every
+    # VM on our only hypervisor, so Viktor chose on 2026-10-21 to take them in a
+    # monthly supervised run instead. Until then nothing reported them waiting;
+    # on 2026-10-21 there were 11 (pve-manager, QEMU, a 7.0 kernel), and the host
+    # had run 94 days on kernel 6.14.
+    #
+    # host-patch-status writes, hourly, how many Proxmox packages are waiting and
+    # since when, and whether the running kernel is older than the newest one
+    # installed. node_exporter reads it through the textfile collector, and
+    # ProxmoxHostUpdatesWaiting / ProxmoxHostRebootWaiting fire after 30 days.
+    # The upgrade itself is the `pve-upgrade` task at the end of this section,
+    # which runs only when asked for by tag. Steps: docs/runbooks/proxmox-host.md.
+    - name: Create the node_exporter textfile directory
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: patching
+
+    - name: Create the node_exporter drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/node_exporter.service.d
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: patching
+
+    - name: Point node_exporter at the textfile directory
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service.d/textfile.conf
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by infra/playbooks/pve-host.yml.
+          [Service]
+          ExecStart=
+          ExecStart=/usr/local/bin/node_exporter --collector.textfile.directory=/var/lib/node_exporter/textfile
+      register: pve_node_exporter_dropin
+      tags: patching
+
+    - name: Restart node_exporter for the textfile collector
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: true
+      when: pve_node_exporter_dropin is changed
+      tags: patching
+
+    - name: Install host-patch-status
+      ansible.builtin.copy:
+        src: files/pve/host-patch-status
+        dest: /usr/local/bin/host-patch-status
+        mode: "0755"
+        owner: root
+        group: root
+      tags: patching
+
+    - name: Install the host-patch-status unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - host-patch-status.service
+        - host-patch-status.timer
+      register: pve_patch_status_units
+      tags: patching
+
+    - name: Enable the host-patch-status timer
+      ansible.builtin.systemd:
+        name: host-patch-status.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_patch_status_units is changed }}"
+      # In --check the unit file was not written, so systemd cannot find it yet.
+      when: not (ansible_check_mode and pve_patch_status_units is changed)
+      tags: patching
+
+    # Runs only with `--tags pve-upgrade`. Installs everything a full-upgrade
+    # would, Proxmox and Debian alike, and does not reboot: running VMs keep the
+    # QEMU binary they started with, and a new kernel waits for the reboot,
+    # which is scheduled with Viktor separately. host-patch-status runs straight
+    # after, so the alert clears without waiting for the hourly timer.
+    - name: Install every pending update (monthly, supervised, no reboot)
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: full
+      tags: [never, pve-upgrade]
+
+    - name: Refresh host-patch-status after the upgrade
+      ansible.builtin.systemd:
+        name: host-patch-status.service
+        state: started
+      tags: [never, pve-upgrade]
+
     # ---- registry cache VM root disk -----------------------------------------
     # VM 220 (docker-registry) is outside Terraform like the VMs named at the top
     # of this file, so its disk size is declared here as a floor. The cache filled

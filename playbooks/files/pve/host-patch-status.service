@@ -1,0 +1,9 @@
+[Unit]
+Description=Export the host's pending Proxmox updates and reboot state to node_exporter
+After=apt-daily.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/host-patch-status
+Nice=10
+IOSchedulingClass=idle
