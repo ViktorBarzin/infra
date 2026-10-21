@@ -170,6 +170,44 @@ func resolveSofiaToken() (string, error) {
 	return decodeSecretValue(b64)
 }
 
+// maskWordsVaultPath holds extra words to redact that hass.states cannot
+// supply (room headings, a building letter). They live in Vault, not in this
+// public repo, and SHOWCASE_MASK_WORDS overrides them for a one-off run.
+const maskWordsVaultPath = "secret/showcase"
+
+// parseMaskWords splits a comma-separated list, dropping blanks.
+func parseMaskWords(s string) []string {
+	var out []string
+	for _, w := range strings.Split(s, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// resolveMaskWords fails closed: without the extra words a capture would show
+// the room names Viktor asked to hide, so no words means no capture.
+func resolveMaskWords(getenv func(string) string, vault func() (string, error)) ([]string, error) {
+	if w := parseMaskWords(getenv("SHOWCASE_MASK_WORDS")); len(w) > 0 {
+		return w, nil
+	}
+	raw, err := vault()
+	if err != nil {
+		return nil, fmt.Errorf("no SHOWCASE_MASK_WORDS and cannot read %s mask_words (vault login?): %w", maskWordsVaultPath, err)
+	}
+	w := parseMaskWords(raw)
+	if len(w) == 0 {
+		return nil, fmt.Errorf("%s mask_words is empty; refusing to capture unmasked rooms", maskWordsVaultPath)
+	}
+	return w, nil
+}
+
+func vaultMaskWords() (string, error) {
+	out, err := exec.Command("vault", "kv", "get", "-field=mask_words", maskWordsVaultPath).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
 func sofiaBaseURL() string {
 	if u := strings.TrimRight(os.Getenv("HA_SOFIA_URL"), "/"); u != "" {
 		return u
@@ -253,9 +291,23 @@ func showcaseShots(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	res, err := haWS(ctx, base, token, []map[string]any{{"type": "lovelace/dashboards/list"}})
+	extra, err := resolveMaskWords(os.Getenv, vaultMaskWords)
 	if err != nil {
 		return err
+	}
+	res, err := haWS(ctx, base, token, []map[string]any{{"type": "lovelace/dashboards/list"}, {"type": "config/area_registry/list"}})
+	if err != nil {
+		return err
+	}
+	var areaRows []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(res[1], &areaRows); err != nil {
+		return err
+	}
+	words := maskWordList{Extra: extra}
+	for _, a := range areaRows {
+		words.Areas = append(words.Areas, a.Name)
 	}
 	var list []lovelaceDashboard
 	if err := json.Unmarshal(res[0], &list); err != nil {
@@ -303,12 +355,12 @@ func showcaseShots(args []string) error {
 			Files: map[string]string{}, Masked: map[string]map[string]int{}}
 		for _, v := range shotVariants {
 			name := shotFileName(id, v)
-			masked, err := captureDashboard(allocCtx, base, token, "/"+d.URLPath+"/"+view, v, filepath.Join(o.Out, name))
+			masked, err := captureDashboard(allocCtx, base, token, "/"+d.URLPath+"/"+view, v, words, filepath.Join(o.Out, name))
 			if err != nil {
 				// one retry: Chrome occasionally fails a load on a transient
 				// network or certificate-verifier hiccup
 				fmt.Printf("  %s: %v; retrying once\n", name, err)
-				masked, err = captureDashboard(allocCtx, base, token, "/"+d.URLPath+"/"+view, v, filepath.Join(o.Out, name))
+				masked, err = captureDashboard(allocCtx, base, token, "/"+d.URLPath+"/"+view, v, words, filepath.Join(o.Out, name))
 			}
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
@@ -413,7 +465,14 @@ const unpinThemeJS = `(() => {
   return n;
 })()`
 
-func captureDashboard(allocCtx context.Context, base, token, path string, v shotVariant, file string) (map[string]int, error) {
+// maskWordList is passed to showcase_mask.js next to the words it derives
+// from hass.states. Areas are matched whole and word by word; Extra whole.
+type maskWordList struct {
+	Areas []string `json:"areas"`
+	Extra []string `json:"extra"`
+}
+
+func captureDashboard(allocCtx context.Context, base, token, path string, v shotVariant, words maskWordList, file string) (map[string]int, error) {
 	tab, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 	tab, cancelT := context.WithTimeout(tab, 3*time.Minute)
@@ -487,7 +546,7 @@ func captureDashboard(allocCtx context.Context, base, token, path string, v shot
 			return nil, err
 		}
 	}
-	maskOut, err := chromedp.Run(tab, chromedp.Evaluate[string](fmt.Sprintf("(%s)(%t)", strings.TrimSpace(showcaseMaskJS), v.Theme == "dark")))
+	maskOut, err := chromedp.Run(tab, chromedp.Evaluate[string](fmt.Sprintf("(%s)(%t, %s)", strings.TrimSpace(showcaseMaskJS), v.Theme == "dark", mustJSON(words))))
 	if err != nil {
 		return nil, fmt.Errorf("mask script: %w", err)
 	}

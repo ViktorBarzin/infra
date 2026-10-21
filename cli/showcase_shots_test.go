@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -74,7 +75,28 @@ func TestMaskScriptIsAFunctionExpression(t *testing.T) {
 	for strings.HasPrefix(s, "//") {
 		s = strings.TrimSpace(s[strings.Index(s, "\n"):])
 	}
-	if !strings.HasPrefix(s, "(dark) =>") {
+	if !strings.HasPrefix(s, "(dark, given) =>") {
 		t.Fatalf("showcase_mask.js must be one function expression, starts %q", s[:20])
+	}
+}
+
+func TestResolveMaskWords(t *testing.T) {
+	env := func(v string) func(string) string { return func(string) string { return v } }
+	vaultOK := func() (string, error) { return " Den, Gnome Room ,, Shed B ", nil }
+	vaultDown := func() (string, error) { return "", errors.New("permission denied") }
+
+	got, err := resolveMaskWords(env(""), vaultOK)
+	if err != nil || !reflect.DeepEqual(got, []string{"Den", "Gnome Room", "Shed B"}) {
+		t.Fatalf("from vault: %v %v", got, err)
+	}
+	got, err = resolveMaskWords(env("Attic"), vaultDown)
+	if err != nil || !reflect.DeepEqual(got, []string{"Attic"}) {
+		t.Fatalf("env must win and skip vault: %v %v", got, err)
+	}
+	if _, err := resolveMaskWords(env(""), vaultDown); err == nil {
+		t.Fatal("no env and no vault must refuse to capture")
+	}
+	if _, err := resolveMaskWords(env(" , "), func() (string, error) { return "", nil }); err == nil {
+		t.Fatal("an empty list must refuse to capture")
 	}
 }
