@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "3.15.0-alpine",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-21 pipeline #2812: stack authentik failed after this bump: its terragrunt apply failed (commit 8f2d27b8)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "authentik"
+      ],
+      "matchNewValue": "2026.8.5",
+      "enabled": false
     }
   ]
 }
