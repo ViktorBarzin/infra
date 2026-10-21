@@ -1,0 +1,205 @@
+/* The one Showcase design, shared by every Variant: a calm blueprint drawing.
+   Light = drafting paper with navy ink; dark = cyanotype blueprint. Each
+   Variant's own stylesheet builds on these tokens and this page chrome. */
+
+:root {
+  --paper: #f3f0e6;
+  --paper-2: #fbf9f3;
+  --grid: rgba(23, 58, 99, 0.07);
+  --grid-major: rgba(23, 58, 99, 0.12);
+  --ink: #14243a;
+  --ink-2: #33445c;
+  --line: #1f4f86;
+  --line-soft: rgba(31, 79, 134, 0.35);
+  --plate-top: #ffffff;
+  --plate-side: #dfe7f1;
+  --plate-side-2: #c8d5e6;
+  --accent: #b8430d;
+  --accent-soft: rgba(184, 67, 13, 0.12);
+  --accent-ink: #ffffff;
+  --focus: #b8430d;
+  --shadow: 0 1px 0 rgba(20, 36, 58, 0.06), 0 10px 30px -18px rgba(20, 36, 58, 0.35);
+
+  /* group inks, one per catalog group (graph points, catalog chips) */
+  --g-core: #2c62c6;
+  --g-infra: #4f5d78;
+  --g-media: #b5601a;
+  --g-prod: #17855f;
+  --g-dev: #7146cf;
+  --g-sec: #c23a3a;
+  --g-home: #8a740a;
+  --g-ai: #0f7d97;
+  --g-auto: #b23f7c;
+  --g-fin: #55861a;
+  --g-other: #807259;
+
+  --f-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0d2240;
+    --paper-2: #112a4d;
+    --grid: rgba(170, 210, 255, 0.06);
+    --grid-major: rgba(170, 210, 255, 0.11);
+    --ink: #eef4fb;
+    --ink-2: #c3d3e6;
+    --line: #9ccbff;
+    --line-soft: rgba(156, 203, 255, 0.35);
+    --plate-top: #15335c;
+    --plate-side: #0f2a4d;
+    --plate-side-2: #0b2242;
+    --accent: #ffb454;
+    --accent-soft: rgba(255, 180, 84, 0.16);
+    --accent-ink: #1a1405;
+    --focus: #ffb454;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 14px 34px -18px rgba(0, 0, 0, 0.7);
+
+    --g-core: #8fbaff;
+    --g-infra: #b3c1d8;
+    --g-media: #f3ad6c;
+    --g-prod: #6fd4ae;
+    --g-dev: #c3a8ff;
+    --g-sec: #ff9a9a;
+    --g-home: #e8d56d;
+    --g-ai: #66d2e8;
+    --g-auto: #f295cc;
+    --g-fin: #afd977;
+    --g-other: #d2c7b2;
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  color: var(--ink);
+  font: 400 17px/1.6 var(--f-body);
+  overflow-x: hidden;
+}
+a { color: var(--line); text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+button, input { font: inherit; color: inherit; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* the drawing sheet every page sits on */
+.sheet {
+  max-width: 1280px;
+  margin: 16px auto;
+  padding: 0 28px 24px;
+  border: 1.5px solid var(--line-soft);
+  outline: 1px solid var(--line-soft);
+  outline-offset: 6px;
+  background: color-mix(in srgb, var(--paper) 70%, transparent);
+}
+/* the wide sheet leaves room for its double frame at the viewport edge */
+.sheet--wide { max-width: 1440px; }
+@media (min-width: 641px) { .sheet--wide { max-width: min(1440px, calc(100% - 32px)); } }
+
+/* ---------- top bar + switcher ---------- */
+.top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 0; border-bottom: 1.5px solid var(--line-soft);
+}
+.mark {
+  font: 700 18px/1 var(--f-display); letter-spacing: 0.08em; text-decoration: none;
+  color: var(--paper); background: var(--line);
+  padding: 9px 10px 8px; border-radius: 3px;
+}
+.mark:hover { color: var(--paper); background: var(--accent); }
+.sc-switcher { display: flex; flex-wrap: wrap; gap: 6px; }
+.sc-switcher a {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px;
+  font: 600 15px/1 var(--f-mono); text-decoration: none; color: var(--ink-2);
+  border: 1.5px solid transparent; border-radius: 4px;
+}
+.sc-switcher a:hover { color: var(--ink); border-color: var(--line-soft); }
+.sc-switcher a[aria-current="page"] {
+  color: var(--ink); border-color: var(--line); background: var(--paper-2);
+}
+
+/* ---------- hero ---------- */
+.hero { padding: 40px 0 32px; border-bottom: 1.5px solid var(--line-soft); }
+.eyebrow {
+  margin: 0 0 6px; font: 500 14px/1.4 var(--f-mono); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--line);
+}
+h1 {
+  margin: 0; font: 700 clamp(52px, 8vw, 104px)/0.92 var(--f-display);
+  letter-spacing: -0.01em; text-transform: uppercase;
+}
+h1 em { font-style: normal; color: var(--accent); }
+.lede { max-width: 42ch; margin: 16px 0 24px; font-size: clamp(19px, 2.1vw, 23px); line-height: 1.45; color: var(--ink-2); }
+.lede strong { color: var(--ink); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 0 22px;
+  font: 600 16px/1 var(--f-mono); border-radius: 4px; cursor: pointer; text-decoration: none;
+  border: 1.5px solid var(--line); background: var(--paper-2); color: var(--ink);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.btn:hover { transform: translateY(-1px); color: var(--ink); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { color: var(--accent-ink); filter: brightness(1.06); }
+.btn[disabled] { opacity: 0.4; cursor: default; transform: none; }
+
+/* section headings and drawing-style sub-heads */
+.sec-title { margin: 0; font: 700 34px/1 var(--f-display); text-transform: uppercase; letter-spacing: 0.01em; }
+.rule-head {
+  margin: 26px 0 10px; font: 600 14px/1.2 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--line); display: flex; align-items: center; gap: 10px;
+}
+.rule-head::after { content: ""; flex: 1; border-top: 1px solid var(--line-soft); }
+
+/* a card drawn on the sheet */
+.card {
+  background: var(--paper-2); border: 1.5px solid var(--line); border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+/* small labelled tag, as on a drawing */
+.chip { font: 600 13px/1 var(--f-mono); border: 1px solid var(--line-soft); padding: 5px 7px; border-radius: 3px; color: var(--ink-2); }
+.chip.sso { border-color: var(--line); color: var(--line); }
+.chip.lan { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- footer ---------- */
+.sc-footer { margin-top: 24px; padding-top: 16px; border-top: 1.5px solid var(--line-soft); font-size: 16px; color: var(--ink-2); }
+
+/* ---------- motion ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@media (max-width: 640px) {
+  body { font-size: 17px; background-size: 96px 96px, 96px 96px, 16px 16px, 16px 16px; }
+  .sheet { margin: 0; padding: 0 16px 20px; border: 0; outline: 0; }
+  .hero { padding-top: 24px; }
+}
+/* phones: the four links fit one row once the HL mark (a second link home) steps aside */
+@media (max-width: 480px) {
+  .top { gap: 0; }
+  .mark { display: none; }
+  .sc-switcher { flex-wrap: nowrap; gap: 2px; width: 100%; justify-content: space-between; }
+  .sc-switcher a { padding: 0 7px; font-size: 13.5px; white-space: nowrap; }
+}
+
+/* mdi and Simple Icons glyphs are black SVGs; invert them on dark backgrounds. */
+@media (prefers-color-scheme: dark) {
+  img[src*="/@mdi/svg"],
+  img[src*="/simple-icons"] { filter: invert(1) brightness(0.9); }
+}

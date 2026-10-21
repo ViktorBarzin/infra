@@ -34,7 +34,7 @@ const groups = [...new Set(services.map((s) => s.group))].sort((a, b) =>
 
 /* ---------- header copy ---------- */
 $("#title-n").textContent = fmt.int(services.length);
-$("#edition").textContent = `Snapshot ${new Date(snap.generated.at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`;
+$("#edition").textContent = `snapshot ${new Date(snap.generated.at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`;
 renderFooter($("#footer"), snap);
 
 /* ---------- hardware plate ---------- */
@@ -42,7 +42,7 @@ function renderHardware() {
   const hw = snap.hardware;
   const stats = STATS.filter((s) => HEADLINE.includes(s.key) && snap.stats[s.key] != null);
   const statsHTML = stats
-    .map((s) => `<li class="stat"><span class="stat__n">${esc(fmt.compact(snap.stats[s.key]))}</span><span class="stat__l">${esc(s.label)}</span></li>`)
+    .map((s) => `<div><dt>${esc(s.label)}</dt><dd>${esc(fmt.compact(snap.stats[s.key]))}</dd></div>`)
     .join("");
 
   const server = hw.sites.flatMap((s) => s.kit).find((k) => k.live === "proxmox") || { name: "Proxmox host", role: "" };
@@ -66,7 +66,7 @@ function renderHardware() {
     .join("");
 
   $("#hw-body").innerHTML = `
-    <ul class="stats">${statsHTML}</ul>
+    <dl class="titleblock" aria-label="Headline numbers">${statsHTML}</dl>
     <div class="hw">
       <div>
         <p class="fig__cap">Fig. 1 · The server</p>
@@ -82,13 +82,13 @@ function renderHardware() {
       <div>
         <p class="fig__cap">Fig. 2 · The Kubernetes nodes (VMs on that server)</p>
         <table class="nodes">
-          <thead><tr><th scope="col">Node</th><th scope="col" class="role">Role</th><th scope="col" class="num">vCPU</th><th scope="col" class="num">GiB</th><th scope="col" class="col-bar"><span class="sr">Memory share</span></th></tr></thead>
+          <thead><tr><th scope="col">Node</th><th scope="col" class="role">Role</th><th scope="col" class="num">vCPU</th><th scope="col" class="num">GiB</th><th scope="col" class="col-bar"><span class="sr-only">Memory share</span></th></tr></thead>
           <tbody>${nodeRows}</tbody>
         </table>
       </div>
     </div>
-    <p class="fig__cap" style="margin-top:32px">Fig. 3 · Sites and the kit at each</p>
-    <div class="sites" style="margin-top:0">${sitesHTML}</div>`;
+    <p class="fig__cap fig__cap--sites">Fig. 3 · Sites and the kit at each</p>
+    <div class="sites">${sitesHTML}</div>`;
 }
 renderHardware();
 
@@ -163,7 +163,7 @@ function cardHTML(s, i) {
       <span class="card__desc">${esc(s.description)}</span>
     </button>
     <div class="card__meta"><span class="acc acc--${esc(s.access)}">${esc(acc.label)}</span>${used}</div>
-    <div class="card__foot"><a class="tf" href="${esc(s.stack_url)}" target="_blank" rel="noopener"><span class="tf__k">Terraform</span><span class="tf__p">stacks/<wbr>${esc(s.stack)}</span>${tfIcon}</a></div>
+    <div class="card__foot"><a class="tf" href="${esc(s.stack_url)}" target="_blank" rel="noopener"><span class="tf__k">Terraform</span><span class="tf__p" title="stacks/${esc(s.stack)}">stacks/${esc(s.stack)}</span>${tfIcon}</a></div>
     <div class="detail" id="d-${esc(s._id)}"${open ? "" : " hidden"}>${open ? detailHTML(s) : ""}</div>
   </article>`;
 }
@@ -290,7 +290,7 @@ $("#grid").addEventListener("error", (e) => {
   img.replaceWith(span);
 }, true);
 
-$("#jump").addEventListener("click", () => $("#idx-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
+$("#jump").addEventListener("click", () => $("#idx-title").parentElement.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
 window.addEventListener("hashchange", () => { readHash(); render(); });
 
 readHash();

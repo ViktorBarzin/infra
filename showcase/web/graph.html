@@ -13,56 +13,64 @@
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Four stacked plates labelled hardware, network, platform and apps">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="color-scheme" content="dark light">
-<link rel="icon" href="data:,">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f2a4a'/%3E%3Cg fill='none' stroke='%23ffb454' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M16 6l10 5-10 5-10-5z'/%3E%3Cpath d='M6 16l10 5 10-5' /%3E%3Cpath d='M6 21l10 5 10-5'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="base.css">
 <link rel="stylesheet" href="graph.css">
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"></span>Viktor's homelab</a>
-  <nav id="switcher"></nav>
-</header>
+<div class="sheet sheet--wide">
+  <header class="top">
+    <a class="mark" href="index.html" aria-label="Viktor's homelab, home">HL</a>
+    <nav id="switcher"></nav>
+  </header>
 
-<main>
-  <section class="intro">
-    <p class="eyebrow">Live service graph</p>
-    <h1>Who talks to whom</h1>
-    <p class="lede">Each point is a Kubernetes namespace. A line means Calico saw real traffic between two namespaces in the last 30 days, and a thicker line means more flows. Databases, Redis, Vault and mail are drawn as small marks on the namespace that uses them instead of as points of their own. Namespaces with no observed traffic sit in the outer ring, grouped by kind.</p>
-    <dl class="tally" id="tally"></dl>
-  </section>
-
-  <section class="viz" aria-label="Service graph">
-    <div class="controls">
-      <div class="view-toggle" role="group" aria-label="View">
-        <button type="button" id="view-graph" aria-pressed="true">Graph</button>
-        <button type="button" id="view-list" aria-pressed="false">List</button>
+  <main>
+    <section class="hero intro" aria-labelledby="hero-title">
+      <div class="intro-text">
+        <p class="eyebrow">Drawing HL-03 &middot; service graph &middot; last 30 days of traffic</p>
+        <h1 id="hero-title">Who talks to whom</h1>
+        <p class="lede">Each point is a Kubernetes namespace. A line means Calico saw real traffic between two namespaces in the last 30 days, and a thicker line means more flows. Databases, Redis, Vault and mail are drawn as small marks on the namespace that uses them instead of as points of their own. Namespaces with no observed traffic sit in the outer ring, grouped by kind.</p>
       </div>
-      <div class="legend" id="legend" role="group" aria-label="Filter by group"></div>
-    </div>
-    <div class="key" id="key"></div>
+      <dl class="tally" id="tally" aria-label="Headline numbers"></dl>
+    </section>
 
-    <div class="stage" id="stage">
-      <svg id="sky" role="img" aria-label="Force-directed graph of namespaces and the traffic between them. The list view has the same information as text."></svg>
-      <p class="hint" id="hint">Drag to pan, scroll or pinch to zoom, tap a point for details.</p>
-      <div class="zoom" role="group" aria-label="Zoom">
-        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
-        <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
-        <button type="button" id="zoom-fit" aria-label="Fit the whole graph">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-        </button>
+    <section class="viz" aria-label="Service graph">
+      <div class="viz-head">
+        <h2 class="sec-title">The graph</h2>
       </div>
-      <aside class="panel" id="panel" hidden aria-live="polite"></aside>
-    </div>
+      <div class="controls">
+        <div class="view-toggle" role="group" aria-label="View">
+          <button type="button" id="view-graph" aria-pressed="true">Graph</button>
+          <button type="button" id="view-list" aria-pressed="false">List</button>
+        </div>
+        <div class="legend" id="legend" role="group" aria-label="Filter by group"></div>
+      </div>
+      <div class="key" id="key"></div>
 
-    <div class="list" id="list" hidden></div>
-  </section>
-</main>
+      <div class="stage" id="stage">
+        <svg id="sky" role="img" aria-label="Force-directed graph of namespaces and the traffic between them. The list view has the same information as text."></svg>
+        <p class="hint" id="hint">Drag to pan, scroll or pinch to zoom, tap a point for details.</p>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+          <button type="button" id="zoom-fit" aria-label="Fit the whole graph">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          </button>
+        </div>
+        <aside class="panel" id="panel" hidden aria-live="polite"></aside>
+      </div>
 
-<footer id="footer"></footer>
-<p class="load-error" id="load-error" hidden></p>
+      <div class="list" id="list" hidden></div>
+    </section>
+    <p class="load-error" id="load-error" hidden></p>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
 <script type="module" src="graph.js"></script>
 </body>
 </html>
