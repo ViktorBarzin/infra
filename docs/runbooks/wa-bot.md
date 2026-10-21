@@ -109,4 +109,7 @@ windows per calendar month (UTC) in its state file. At 80% of 1,000 it posts to
   phone, not Meta.
 - The `whatsapp` Caller acts as `wizard` (sudo, cluster-admin, Vault), the same power
   Viktor accepted for Muse. agent-api has no scopes.
-- No egress NetworkPolicy yet; the pod can reach anything the cluster can.
+- Egress is locked (Calico policy `wa-bot-egress`, 2026-10-21): DNS on 10.96.0.10, Traefik,
+  and TCP 443 to Meta's IPv4 ranges (from the CrowdSec `meta-asn.txt` list). Everything
+  else is denied, including Slack, so lockout and quota alerts reach Loki only:
+  `homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\""'`.
