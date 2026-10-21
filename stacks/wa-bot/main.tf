@@ -262,3 +262,70 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# Egress lock (design: "pod egress locked to Traefik and graph.facebook.com").
+#
+# A Calico policy with an explicit final Deny, like bastion-egress, because a
+# Kubernetes egress NetworkPolicy has no effect here: the GNP
+# wave1-egress-observe-tier34 (stacks/calico, order 2000) allows all egress for
+# tier 3-edge/4-aux namespaces, and wa-bot is 4-aux.
+#
+# Allowed, and nothing else:
+#   - DNS to NodeLocal DNS on 10.96.0.10 (the kube-dns ClusterIP it answers on).
+#   - Traefik, for terminal-api.viktorbarzin.me: pods resolve *.viktorbarzin.me
+#     to the LB 10.0.20.203, which kube-proxy DNATs to a Traefik pod on 8443
+#     before Calico sees it; the LB IP on 443 is listed too in case it is not.
+#   - graph.facebook.com on 443. Calico OSS has no FQDN rules, so this is Meta's
+#     announced IPv4 space, read from the reviewed static list the CrowdSec
+#     stack keeps (ConfigMap crowdsec-static-blocklist, meta-asn.txt). The pod
+#     has no IPv6, so the v6 entries are left out.
+#
+# Consequence, accepted with this policy: the #alerts Slack webhook is NOT
+# reachable, so lockout and quota alerts reach Loki only (the bot logs every
+# alert as an audit line with event=alert).
+data "kubernetes_config_map_v1" "meta_ranges" {
+  metadata {
+    name      = "crowdsec-static-blocklist"
+    namespace = "crowdsec"
+  }
+}
+
+locals {
+  meta_ipv4 = [
+    for l in split("\n", data.kubernetes_config_map_v1.meta_ranges.data["meta-asn.txt"]) : trimspace(l)
+    if trimspace(l) != "" && !startswith(trimspace(l), "#") && !strcontains(l, ":")
+  ]
+}
+
+resource "kubectl_manifest" "egress" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "NetworkPolicy"
+    metadata = {
+      name      = "wa-bot-egress"
+      namespace = kubernetes_namespace.wa_bot.metadata[0].name
+    }
+    spec = {
+      order    = 100
+      selector = "app == 'wa-bot'"
+      types    = ["Egress"]
+      egress = [
+        { action = "Allow", protocol = "UDP", destination = { nets = ["10.96.0.10/32"], ports = [53] } },
+        { action = "Allow", protocol = "TCP", destination = { nets = ["10.96.0.10/32"], ports = [53] } },
+        {
+          action   = "Allow"
+          protocol = "TCP"
+          destination = {
+            namespaceSelector = "kubernetes.io/metadata.name == 'traefik'"
+            selector          = "app.kubernetes.io/name == 'traefik'"
+            ports             = [8443]
+          }
+        },
+        { action = "Allow", protocol = "TCP", destination = { nets = ["10.0.20.203/32"], ports = [443] } },
+        { action = "Allow", protocol = "TCP", destination = { nets = local.meta_ipv4, ports = [443] } },
+        { action = "Deny" },
+      ]
+    }
+  })
+  depends_on = [kubernetes_namespace.wa_bot]
+}
