@@ -1,0 +1,86 @@
+[
+  {
+    "id": "energy",
+    "title": "Energy",
+    "caption": "Mains, the UPS, the solar transfer switch and the inverter, with day and night tariffs.",
+    "ha_title": "Енергия и захранване",
+    "url_path": "el-energiia-i-zahranvane",
+    "view": "obobshchen",
+    "files": {
+      "desktop-dark": "home/energy-desktop-dark.png",
+      "desktop-light": "home/energy-desktop-light.png",
+      "phone-dark": "home/energy-phone-dark.png",
+      "phone-light": "home/energy-phone-light.png"
+    },
+    "masked": {
+      "energy-desktop-dark.png": {
+        "name text": 7
+      },
+      "energy-desktop-light.png": {
+        "name text": 7
+      },
+      "energy-phone-dark.png": {
+        "name text": 7
+      },
+      "energy-phone-light.png": {
+        "name text": 7
+      }
+    }
+  },
+  {
+    "id": "heating",
+    "title": "Heating",
+    "caption": "A thermostat per room, the air conditioner and the gas boiler.",
+    "ha_title": "Отопление и климат",
+    "url_path": "otoplenie-i-klimat",
+    "view": "apartament",
+    "files": {
+      "desktop-dark": "home/heating-desktop-dark.png",
+      "desktop-light": "home/heating-desktop-light.png",
+      "phone-dark": "home/heating-phone-dark.png",
+      "phone-light": "home/heating-phone-light.png"
+    },
+    "masked": {
+      "heating-desktop-dark.png": {
+        "name text": 14
+      },
+      "heating-desktop-light.png": {
+        "name text": 14
+      },
+      "heating-phone-dark.png": {
+        "name text": 14
+      },
+      "heating-phone-light.png": {
+        "name text": 14
+      }
+    }
+  },
+  {
+    "id": "it",
+    "title": "IT",
+    "caption": "The R730's temperatures and power, and the faceplate of the fan PID.",
+    "ha_title": "Мрежа и IT",
+    "url_path": "dashboard-it",
+    "view": "server",
+    "files": {
+      "desktop-dark": "home/it-desktop-dark.png",
+      "desktop-light": "home/it-desktop-light.png",
+      "phone-dark": "home/it-phone-dark.png",
+      "phone-light": "home/it-phone-light.png"
+    },
+    "masked": {
+      "it-desktop-dark.png": {
+        "name text": 2
+      },
+      "it-desktop-light.png": {
+        "name text": 2
+      },
+      "it-phone-dark.png": {
+        "name text": 2
+      },
+      "it-phone-light.png": {
+        "name text": 2
+      }
+    }
+  }
+]
