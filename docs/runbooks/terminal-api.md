@@ -29,6 +29,11 @@ and strips `X-Authentik-Username`, `X-Forwarded-User` and `X-TL-Proxy-Secret` fr
 the Lobby header login path cannot succeed here. Never add the `tl-proxy-secret` middleware to
 these routes: with it, a forged identity header would be accepted as that user.
 
+Callers today: `muse`, `homelab` (the CLI, over loopback) and `whatsapp`
+([wa-bot](wa-bot.md), from the cluster through Traefik). Caller tokens also pass
+session-events' auth, so `/prompt/`, `/cancel/`, `/keys/` and `/answer-text/` accept them
+(checked 2026-10-21).
+
 A token acts as the OS user its entry maps to. `muse` maps to `wizard`, which has sudo, a
 cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026-10-02).
 
