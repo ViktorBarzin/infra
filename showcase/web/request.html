@@ -14,70 +14,75 @@
 <meta property="og:image:alt" content="Four stacked plates labelled hardware, network, platform and apps">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f2a4a'/%3E%3Cg fill='none' stroke='%23ffb454' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M16 6l10 5-10 5-10-5z'/%3E%3Cpath d='M6 16l10 5 10-5' /%3E%3Cpath d='M6 21l10 5 10-5'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400;1,9..144,600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Overpass:wght@500;700;800&family=Overpass+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="base.css">
 <link rel="stylesheet" href="request.css">
 </head>
 <body>
-<header class="masthead">
-  <div class="masthead__inner">
-    <p class="masthead__brand"><span class="masthead__roundel" aria-hidden="true"></span>Viktor's homelab <span class="masthead__sep">·</span> <em>a field guide</em></p>
+<div class="sheet">
+  <header class="top">
+    <a class="mark" href="index.html" aria-label="Viktor's homelab, home">HL</a>
     <nav id="switcher"></nav>
-  </div>
-</header>
+  </header>
 
-<main>
-  <section class="hero" aria-labelledby="headline">
-    <p class="kicker">Follow a request <span class="kicker__rule" aria-hidden="true"></span> <span id="issue">Route 1</span></p>
-    <h1 id="headline">One request, <em>stop by stop</em>.</h1>
-    <p class="dek" id="dek">Pick a service and watch a single request leave your browser and travel to the disk where the data lives.</p>
+  <main>
+    <section class="hero" aria-labelledby="headline">
+      <p class="eyebrow">Drawing HL-02 &middot; follow a request &middot; <span id="issue">Route 1</span></p>
+      <h1 id="headline">Follow a request</h1>
+      <p class="lede" id="dek">Pick a service and watch a single request leave your browser and travel to the disk where the data lives.</p>
 
-    <div class="picker">
-      <div class="combo" id="combo">
-        <label class="combo__label" for="svc-search">Choose a service</label>
-        <div class="combo__field">
-          <svg class="combo__glass" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
-          <input id="svc-search" type="text" role="combobox" autocomplete="off" spellcheck="false"
-                 aria-autocomplete="list" aria-expanded="false" aria-controls="svc-list" placeholder="Search services">
+      <div class="picker">
+        <div class="combo" id="combo">
+          <label class="combo__label" for="svc-search">Choose a service</label>
+          <div class="combo__field">
+            <svg class="combo__glass" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+            <input id="svc-search" type="text" role="combobox" autocomplete="off" spellcheck="false"
+                   aria-autocomplete="list" aria-expanded="false" aria-controls="svc-list" placeholder="Search services">
+          </div>
+          <ul id="svc-list" role="listbox" aria-label="Services" hidden></ul>
         </div>
-        <ul id="svc-list" role="listbox" aria-label="Services" hidden></ul>
+        <button type="button" class="btn" id="surprise">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 3.8c1.1 1.6 2.3 2.6 4.3 2.6H21M3 17h3.5c1.4 0 2.4-.5 3.2-1.3M14 8.3c.8-.8 1.8-1.3 3.3-1.3H21M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg>
+          Surprise me
+        </button>
       </div>
-      <button type="button" class="btn btn--ghost" id="surprise">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 3.8c1.1 1.6 2.3 2.6 4.3 2.6H21M3 17h3.5c1.4 0 2.4-.5 3.2-1.3M14 8.3c.8-.8 1.8-1.3 3.3-1.3H21M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg>
-        Surprise me
-      </button>
-    </div>
-  </section>
-
-  <div class="layout">
-    <section class="journey" aria-label="The request, stop by stop">
-      <p class="sr-only" aria-live="polite" id="live"></p>
-      <ol class="route" id="route"></ol>
     </section>
 
-    <aside class="ticket" aria-label="Journey controls">
-      <div class="ticket__card" id="ticket"></div>
-      <div class="controls" role="group" aria-label="Step through the request">
-        <button type="button" class="btn btn--round" id="back" aria-label="Previous stop">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-        </button>
-        <button type="button" class="btn btn--play" id="play" aria-pressed="false">
-          <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
-          <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
-          <span class="play__text">Play</span>
-        </button>
-        <button type="button" class="btn btn--round btn--next" id="next" aria-label="Next stop">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
-        </button>
-        <p class="controls__count" id="count" aria-hidden="true"></p>
-      </div>
-      <p class="ticket__hint">Tip: use the arrow keys, or tap any stop.</p>
-    </aside>
-  </div>
-</main>
+    <div class="layout">
+      <section class="journey" aria-label="The request, stop by stop">
+        <div class="journey__head">
+          <h2 class="sec-title">The route</h2>
+          <p>Tap any stop, or step through with the controls. The arrow keys work too.</p>
+        </div>
+        <p class="sr-only" aria-live="polite" id="live"></p>
+        <ol class="route" id="route"></ol>
+      </section>
 
-<footer id="footer"></footer>
+      <aside class="ticket" aria-label="Journey controls">
+        <div class="ticket__card" id="ticket"></div>
+        <div class="controls" role="group" aria-label="Step through the request">
+          <button type="button" class="btn btn--round" id="back" aria-label="Previous stop">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <button type="button" class="btn btn--play" id="play" aria-pressed="false">
+            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+            <span class="play__text">Play</span>
+          </button>
+          <button type="button" class="btn btn--round btn--next" id="next" aria-label="Next stop">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+          </button>
+          <p class="controls__count" id="count" aria-hidden="true"></p>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
 
 <script type="module" src="request.js"></script>
 </body>
