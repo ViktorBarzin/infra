@@ -808,6 +808,16 @@ module "ingress" {
 # originate from this same address space. Outbound is unaffected — our own
 # devices reaching Meta still work.
 #
+# WEBHOOK CARVE-OUT (Viktor, 2026-10-21). Meta's webhook deliveries also come
+# from this space, so the list refused every Messenger and WhatsApp Cloud API
+# callback. The Traefik bouncer now lets decisions with this list's scenario
+# (static-blocklist/meta-asn) through on exactly two routes:
+# webhook.viktorbarzin.me/fb/webhook and wa.viktorbarzin.me/webhook. It is
+# configured as exemptScenarios/exemptRoutes on the crowdsec Middleware in
+# stacks/traefik/modules/traefik/middleware.tf, because the bouncer, not LAPI,
+# is where a decision meets a host and path. Every other host and path stays
+# banned. Renaming the --reason below silently ends the carve-out.
+#
 # AS54115 IS DELIBERATELY NOT SWEPT (2026-09-11). It is FACEBOOK-CORP, the
 # network Meta employees browse from, and Viktor is one of them. The 2026-09-02
 # crawl came from AS32934, and measured on 2026-09-11 all 23 CORP prefixes are

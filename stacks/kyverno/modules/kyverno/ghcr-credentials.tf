@@ -18,6 +18,8 @@ locals {
     # Deployment references the cloned secret.
     "browser-bridge",
     "tripit",
+    # wa-bot: PRIVATE ghcr.io/viktorbarzin/wa-bot (WhatsApp bot, 2026-10-21).
+    "wa-bot",
     # tuya-bridge runs a PUBLIC-decision image, but new ghcr packages default
     # PRIVATE until their visibility is flipped (UI) — safety net so pulls
     # work from the first deploy; prune once the package is public.
