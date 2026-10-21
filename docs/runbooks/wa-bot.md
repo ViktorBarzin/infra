@@ -30,10 +30,18 @@ flowchart LR
    dropped.
 4. PIN: a message that starts with the PIN unlocks the bot for 30 minutes; inside the
    window no PIN is needed. Outside it, a message without the right PIN gets no reply
-   and counts as a failure. Five failures in an hour lock the bot for an hour and post
-   to #alerts. The PIN is stored only as an scrypt hash (`secret/wa-bot` `pin_hash`).
-5. The command runs; the reply is plain text, at most 1,000 characters, with `more`
-   for the rest, and secret-shaped strings are replaced by `[redacted]`.
+   and counts as a failure. Five failures in an hour lock the bot for an hour and log an
+   `alert` audit line (the egress policy blocks the #alerts Slack post). The PIN is stored only as an scrypt hash (`secret/wa-bot` `pin_hash`).
+5. A message that passes steps 1 to 3 is marked read (blue ticks) with the typing
+   indicator on, in one Cloud API call (`POST /messages`, `status=read`,
+   `typing_indicator.type=text`). WhatsApp drops the indicator after 25 s or at the next
+   reply, so the bot repeats the call every 20 s while any command or watched turn is
+   still pending. These calls are best effort: a failure is logged as a `typing_error`
+   audit line and the command carries on. A message that then fails the PIN check is
+   still marked read, and gets no reply.
+6. The command runs. A turn still running after 60 s gets one `working` note; the reply
+   is plain text, at most 1,000 characters, with `more` for the rest, and secret-shaped
+   strings are replaced by `[redacted]`.
 
 ## Threads
 
