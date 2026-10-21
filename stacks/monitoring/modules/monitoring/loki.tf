@@ -757,24 +757,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # {"audit":true,"event":"alert","text":"wa-bot: ..."} and these rules
           # carry the text to Alertmanager -> #alerts. The text holds the type
           # and the numbers, and becomes the alert's `text` label.
-          #   lockout: "wa-bot: 5 wrong PINs within an hour from the allowed
-          #            number; locked for 1 hour."
           #   quota:   "wa-bot: 800 of 1000 free-tier conversations used this
           #            month." / "wa-bot: free-tier cap of 1000 ... reached ..."
           # Approved by Viktor 2026-10-21. Any container in the namespace counts,
-          # which is how the route was tested (a TEST line from a debug container).
+          # which is how the route was tested (a TEST line pushed into Loki).
+          # WaBotPinLockout was removed the same day: Viktor dropped the bot's
+          # PIN, so its "wrong PINs" lockout line can no longer be logged.
           name = "wa-bot"
           rules = [
-            {
-              alert  = "WaBotPinLockout"
-              expr   = "sum by (text) (count_over_time({namespace=\"wa-bot\"} |= `\"event\":\"alert\"` |= `wrong PINs` | regexp `\"text\":\"(?P<text>[^\"]*)\"` [15m])) > 0"
-              for    = "0m"
-              labels = { severity = "warning", lane = "security" }
-              annotations = {
-                summary     = "{{ $labels.text }}"
-                description = "Five wrong PINs within an hour came from Viktor's own WhatsApp number, so wa-bot ignores it for an hour. If Viktor did not mistype, his phone or a linked device may be in someone else's hands. Audit: homelab logs query '{namespace=\"wa-bot\"} |= \"pin_fail\"' --since 2h. Runbook: docs/runbooks/wa-bot.md."
-              }
-            },
             {
               alert  = "WaBotFreeTierQuota"
               expr   = "sum by (text) (count_over_time({namespace=\"wa-bot\"} |= `\"event\":\"alert\"` |= `free-tier` | regexp `\"text\":\"(?P<text>[^\"]*)\"` [15m])) > 0"
