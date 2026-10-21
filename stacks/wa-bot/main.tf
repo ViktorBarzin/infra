@@ -253,4 +253,12 @@ module "ingress" {
   host            = "wa"
   dns_type        = "proxied"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "WhatsApp bot"
+    "gethomepage.dev/description"  = "WhatsApp access to Terminal Lobby sessions (Meta Cloud API webhook)"
+    "gethomepage.dev/icon"         = "whatsapp.png"
+    "gethomepage.dev/group"        = "Automation"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
