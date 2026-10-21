@@ -194,7 +194,7 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
 
         container {
           name  = "firewall-bouncer"
-          image = "debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
+          image = "debian:bookworm-20261020-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8"
           command = [
             local.firewall_bouncer_bin_path,
             "-c", local.firewall_bouncer_cfg_path,
