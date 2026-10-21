@@ -73,6 +73,24 @@ module "nfs_speedtest" {
   storage_class_name = "nfs-pve"
 }
 
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation, 2026-10-21.
+# Turns off the exploit paths the PHP advisory confirmed (fatal_error_backtraces
+# exists on PHP 8.5 only). It is not the fix: that is an image on PHP 8.5.12 /
+# 8.4.27 / 8.3.36 / 8.2.35 or later, and this ConfigMap can go once the pinned
+# image ships one.
+resource "kubernetes_config_map" "php2shell_mitigation" {
+  metadata {
+    name      = "php2shell-mitigation"
+    namespace = kubernetes_namespace.speedtest.metadata[0].name
+  }
+  data = {
+    "zz-php2shell.ini" = <<-EOT
+      session.upload_progress.enabled = 0
+      fatal_error_backtraces = 0
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "speedtest" {
   metadata {
     name      = "speedtest"
@@ -107,7 +125,13 @@ resource "kubernetes_deployment" "speedtest" {
       spec {
         container {
           image = "lscr.io/linuxserver/speedtest-tracker:1.15.0"
-          name  = "speedtest"
+          volume_mount {
+            name       = "php2shell-mitigation"
+            mount_path = "/etc/php85/conf.d/zz-php2shell.ini"
+            sub_path   = "zz-php2shell.ini"
+            read_only  = true
+          }
+          name = "speedtest"
           port {
             container_port = 80
           }
@@ -181,6 +205,12 @@ resource "kubernetes_deployment" "speedtest" {
           volume_mount {
             name       = "config"
             mount_path = "/config"
+          }
+        }
+        volume {
+          name = "php2shell-mitigation"
+          config_map {
+            name = kubernetes_config_map.php2shell_mitigation.metadata[0].name
           }
         }
         volume {

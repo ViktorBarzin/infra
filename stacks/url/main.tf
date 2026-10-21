@@ -156,6 +156,24 @@ resource "kubernetes_secret" "mysql_config" {
 #   #   - localhost
 # }
 
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation, 2026-10-21.
+# Turns off the exploit paths the PHP advisory confirmed (fatal_error_backtraces
+# exists on PHP 8.5 only). It is not the fix: that is an image on PHP 8.5.12 /
+# 8.4.27 / 8.3.36 / 8.2.35 or later, and this ConfigMap can go once the pinned
+# image ships one.
+resource "kubernetes_config_map" "php2shell_mitigation" {
+  metadata {
+    name      = "php2shell-mitigation"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+  }
+  data = {
+    "zz-php2shell.ini" = <<-EOT
+      session.upload_progress.enabled = 0
+      fatal_error_backtraces = 0
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "shlink" {
   metadata {
     name      = "shlink"
@@ -187,7 +205,13 @@ resource "kubernetes_deployment" "shlink" {
       spec {
         container {
           image = "shlinkio/shlink:5.1.7"
-          name  = "shlink"
+          volume_mount {
+            name       = "php2shell-mitigation"
+            mount_path = "/usr/local/etc/php/conf.d/zz-php2shell.ini"
+            sub_path   = "zz-php2shell.ini"
+            read_only  = true
+          }
+          name = "shlink"
           env {
             name  = "DEFAULT_DOMAIN"
             value = var.domain
@@ -258,6 +282,12 @@ resource "kubernetes_deployment" "shlink" {
             period_seconds        = 30
             timeout_seconds       = 5
             failure_threshold     = 3
+          }
+        }
+        volume {
+          name = "php2shell-mitigation"
+          config_map {
+            name = kubernetes_config_map.php2shell_mitigation.metadata[0].name
           }
         }
       }

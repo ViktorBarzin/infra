@@ -77,6 +77,12 @@ nextcloud:
       default_socket_timeout = 300
       opcache.enable_file_override = 1
       apc.shm_size = 128M
+    # PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation,
+    # 2026-10-21: turns off the exploit paths the PHP advisory confirmed. It is
+    # not the fix; drop it once the nextcloud image ships PHP 8.5.12 or later.
+    zz-php2shell.ini: |
+      session.upload_progress.enabled = 0
+      fatal_error_backtraces = 0
   extraVolumes:
     - name: apache-tuning
       configMap:
