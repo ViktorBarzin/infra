@@ -157,6 +157,22 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation, 2026-10-21.
+# Turns off the exploit paths the PHP advisory confirmed. It is not the
+# fix: that is an image on PHP 8.5.12 / 8.4.27 / 8.3.36 / 8.2.35 or later, and
+# this ConfigMap can go once the pinned image ships one.
+resource "kubernetes_config_map" "php2shell_mitigation" {
+  metadata {
+    name      = "php2shell-mitigation"
+    namespace = kubernetes_namespace.phpipam.metadata[0].name
+  }
+  data = {
+    "zz-php2shell.ini" = <<-EOT
+      session.upload_progress.enabled = 0
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "phpipam_web" {
   metadata {
     name      = "phpipam-web"
@@ -193,7 +209,13 @@ resource "kubernetes_deployment" "phpipam_web" {
       spec {
         container {
           image = "phpipam/phpipam-www:v1.8.3"
-          name  = "phpipam-web"
+          volume_mount {
+            name       = "php2shell-mitigation"
+            mount_path = "/etc/php83/conf.d/zz-php2shell.ini"
+            sub_path   = "zz-php2shell.ini"
+            read_only  = true
+          }
+          name = "phpipam-web"
           port {
             container_port = 80
           }
@@ -246,6 +268,12 @@ resource "kubernetes_deployment" "phpipam_web" {
             limits = {
               memory = "256Mi"
             }
+          }
+        }
+        volume {
+          name = "php2shell-mitigation"
+          config_map {
+            name = kubernetes_config_map.php2shell_mitigation.metadata[0].name
           }
         }
         volume {

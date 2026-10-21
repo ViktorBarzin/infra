@@ -1232,6 +1232,22 @@ resource "kubernetes_secret" "cluster-password" {
 
 
 # PHPMyAdmin instance
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation, 2026-10-21.
+# Turns off the exploit paths the PHP advisory confirmed. It is not the
+# fix: that is an image on PHP 8.5.12 / 8.4.27 / 8.3.36 / 8.2.35 or later, and
+# this ConfigMap can go once the pinned image ships one.
+resource "kubernetes_config_map" "php2shell_mitigation" {
+  metadata {
+    name      = "php2shell-mitigation"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  data = {
+    "zz-php2shell.ini" = <<-EOT
+      session.upload_progress.enabled = 0
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "phpmyadmin" {
   metadata {
     name      = "phpmyadmin"
@@ -1274,6 +1290,12 @@ resource "kubernetes_deployment" "phpmyadmin" {
           # rebuilt on 2026-10-14 while phpmyadmin/phpmyadmin:5.2.3 dated
           # from 2025-10-08.
           image = "phpmyadmin:5.2.3"
+          volume_mount {
+            name       = "php2shell-mitigation"
+            mount_path = "/usr/local/etc/php/conf.d/zz-php2shell.ini"
+            sub_path   = "zz-php2shell.ini"
+            read_only  = true
+          }
           port {
             container_port = 80
           }
@@ -1306,6 +1328,12 @@ resource "kubernetes_deployment" "phpmyadmin" {
             limits = {
               memory = "100Mi"
             }
+          }
+        }
+        volume {
+          name = "php2shell-mitigation"
+          config_map {
+            name = kubernetes_config_map.php2shell_mitigation.metadata[0].name
           }
         }
         dns_config {

@@ -54,6 +54,24 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619) interim mitigation, 2026-10-21.
+# Turns off the exploit paths the PHP advisory confirmed (fatal_error_backtraces
+# exists on PHP 8.5 only). It is not the fix: that is an image on PHP 8.5.12 /
+# 8.4.27 / 8.3.36 / 8.2.35 or later, and this ConfigMap can go once the pinned
+# image ships one.
+resource "kubernetes_config_map" "php2shell_mitigation" {
+  metadata {
+    name      = "php2shell-mitigation"
+    namespace = kubernetes_namespace.privatebin.metadata[0].name
+  }
+  data = {
+    "zz-php2shell.ini" = <<-EOT
+      session.upload_progress.enabled = 0
+      fatal_error_backtraces = 0
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "privatebin" {
   metadata {
     name      = "privatebin"
@@ -91,6 +109,12 @@ resource "kubernetes_deployment" "privatebin" {
           image             = "privatebin/nginx-fpm-alpine:2.0.6"
           name              = "privatebin"
           image_pull_policy = "IfNotPresent"
+          volume_mount {
+            name       = "php2shell-mitigation"
+            mount_path = "/etc/php85/conf.d/zz-php2shell.ini"
+            sub_path   = "zz-php2shell.ini"
+            read_only  = true
+          }
           port {
             container_port = 8080
           }
@@ -110,6 +134,12 @@ resource "kubernetes_deployment" "privatebin" {
           }
         }
 
+        volume {
+          name = "php2shell-mitigation"
+          config_map {
+            name = kubernetes_config_map.php2shell_mitigation.metadata[0].name
+          }
+        }
         volume {
           name = "data"
           persistent_volume_claim {

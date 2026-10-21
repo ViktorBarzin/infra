@@ -137,8 +137,9 @@ resource "kubernetes_deployment" "freshrss" {
       spec {
 
         container {
+          # 1.30.3 ships PHP 8.4.27, the PHP2Shell fix (CVE-2026-109618/109619).
           name  = "freshrss"
-          image = "freshrss/freshrss:1.30.2"
+          image = "freshrss/freshrss:1.30.3"
           env {
             name  = "CRON_MIN"
             value = "0,30"
