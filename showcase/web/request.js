@@ -163,11 +163,11 @@ function renderRoute() {
           <p class="endcard__big">This request touched <span class="endcard__n">${s.touched}</span> component${s.touched === 1 ? "" : "s"}.</p>
           <p class="endcard__sum">${esc(summary(s, svc))}</p>
           <div class="endcard__actions">
-            <a class="btn btn--ink" href="${esc(svc.stack_url)}" rel="noopener">
+            <a class="btn btn-primary" href="${esc(svc.stack_url)}" rel="noopener">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6 2.5 12 8 18M16 6l5.5 6-5.5 6"/></svg>
               <span>Read the <code>${esc(svc.stack)}</code> Terraform</span>
             </a>
-            <button type="button" class="btn btn--ghost" data-action="another">Follow another request</button>
+            <button type="button" class="btn" data-action="another">Follow another request</button>
           </div>
         </div>
       </li>`;

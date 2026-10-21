@@ -33,7 +33,7 @@ The page collects these into one generated **Snapshot** and renders it four ways
 | 4 | Every catalog service shows by default. An ingress opts out with `showcase.viktorbarzin.me/hidden = "true"` in `extra_annotations`, which `ingress_factory` already passes through. The same annotation on a namespace hides it from the graph |
 | 5 | Content comes from live state, generated deterministically into one `data.json`. No LLM-written text |
 | 6 | Four **Variants** share that `data.json`: layered map with a guided tour (the default), follow a request, live service graph, and a filterable catalog. One switcher moves between them |
-| 7 | Each Variant has its own visual style, designed with the `frontend-design` skill. Readability comes first, and every Variant works at phone width |
+| 7 | All four Variants share one visual style: the blueprint drawing first designed for the map (light drafting paper, dark cyanotype), kept in `showcase/web/base.css`. Readability comes first, and every Variant works at phone width. Revised 2026-10-21: the first build gave each Variant its own style for comparison, and Viktor picked the map's for all of them |
 | 8 | Numbers shown: size (services, stacks, pods, nodes, cores, RAM, Proxmox storage) and activity (requests a day, infra commits a week, CI runs, issues fixed by the agent), each from a pinned query |
 | 9 | Each service links to its stack's `main.tf` on GitHub, and each layer links to its architecture doc on GitHub |
 | 10 | The stack for a service is its namespace, with a 6-entry override map. A test fails the build when a visible service does not resolve to a `stacks/<dir>` |

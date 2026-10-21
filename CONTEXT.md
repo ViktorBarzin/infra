@@ -445,7 +445,7 @@ The `data.json` that `homelab showcase build` writes: stats, hardware, layers, s
 _Avoid_: "export", "dump".
 
 **Variant**:
-One way of rendering the **Snapshot**: layered map with tour, follow a request, live service graph, filterable catalog. Variants share the Snapshot and a switcher, and each has its own visual style.
+One way of rendering the **Snapshot**: layered map with tour, follow a request, live service graph, filterable catalog. Variants share the Snapshot, a switcher and one visual style, the blueprint drawing from the map (`showcase/web/base.css`).
 _Avoid_: "view" or "tab" when you mean the renderer itself.
 
 **Plumbing edge**:
