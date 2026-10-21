@@ -25,6 +25,9 @@ func showcaseCommands() []Command {
 		{Path: []string{"showcase", "publish"}, Tier: TierWrite,
 			Summary: "publish a built Showcase to pages.viktorbarzin.me/homelab via /publish-bundle: showcase publish --dir DIR (needs PAGES_BUNDLE_TOKEN)",
 			Run:     showcasePublish},
+		{Path: []string{"showcase", "shots"}, Tier: TierRead,
+			Summary: "capture the ha-sofia dashboards for the Showcase Home view, masked, into a local folder for review: showcase shots [--out DIR] [--dashboards energy,heating,it]",
+			Run:     showcaseShots},
 	}
 }
 
@@ -44,6 +47,7 @@ type snapshot struct {
 	Layers   []layer            `json:"layers"`
 	Services []showcaseService  `json:"services"`
 	Graph    graph              `json:"graph"`
+	Home     *homeSection       `json:"home"`
 }
 
 type showcaseHardware struct {
@@ -149,6 +153,10 @@ func showcaseBuild(args []string) error {
 	s.Stats["services"] = float64(len(s.Services))
 	s.Stats["stacks"] = float64(len(stacks))
 	s.Stats["vms"] = float64(len(s.Hardware.VMs))
+
+	if s.Home, err = showcaseHome(src); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err

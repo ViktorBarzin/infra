@@ -8,6 +8,7 @@ export const VARIANTS = [
   { href: "request.html", label: "Follow a request" },
   { href: "graph.html", label: "Graph" },
   { href: "catalog.html", label: "Catalog" },
+  { href: "home.html", label: "Home" },
 ];
 
 export async function loadSnapshot() {
@@ -103,6 +104,35 @@ export const STORAGE = {
   "nfs-truenas": "NFS share",
   "nfs-synology": "NFS share on the Synology",
   "local-path": "Node-local disk",
+};
+
+// HOME_* label the Home view's counts (snap.home). The ids come from the
+// generator; an id missing here falls back to the id itself.
+export const HOME_KINDS = {
+  lights: { label: "Lights", detail: "Ceiling, strip and lamp lights" },
+  climate: { label: "Climate", detail: "Thermostats and air conditioners" },
+  water: { label: "Water", detail: "Irrigation zones and valves" },
+  media: { label: "Media players", detail: "Speakers, receivers and TVs" },
+  switches: { label: "Switches", detail: "Relays, smart plugs and toggles" },
+  sensors: { label: "Sensors", detail: "Temperature, power, doors, air and more" },
+  energy: { label: "Energy meters", detail: "Solar, grid and gas readings" },
+};
+
+export const HOME_RADIOS = {
+  cloud: { label: "Wi-Fi and vendor clouds", detail: "Devices reached through their maker's cloud or the home Wi-Fi" },
+  ble: { label: "Bluetooth LE", detail: "Fans, locks and controllers within Bluetooth range" },
+  matter: { label: "Matter", detail: "The local smart-home standard" },
+  esphome: { label: "ESPHome", detail: "Home-built boards running ESPHome firmware" },
+  mqtt: { label: "MQTT", detail: "Devices that publish to the local Mosquitto broker" },
+};
+
+export const HOME_AUTOMATIONS = {
+  climate: { label: "Climate", detail: "Thermostat sync and heating" },
+  energy: { label: "Energy", detail: "Solar, tariffs, breakers and the UPS" },
+  lighting: { label: "Lighting", detail: "Timers that switch LEDs off" },
+  security: { label: "Security", detail: "Alarm, doors and cameras" },
+  it: { label: "IT", detail: "Server fans, gateways and disk alerts" },
+  other: { label: "Other", detail: "Everything else" },
 };
 
 export const BADGES = { postgres: "PostgreSQL", mysql: "MySQL", redis: "Redis", vault: "Vault", mail: "Mail" };

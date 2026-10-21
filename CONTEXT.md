@@ -445,7 +445,7 @@ The `data.json` that `homelab showcase build` writes: stats, hardware, layers, s
 _Avoid_: "export", "dump".
 
 **Variant**:
-One way of rendering the **Snapshot**: layered map with tour, follow a request, live service graph, filterable catalog. Variants share the Snapshot, a switcher and one visual style, the blueprint drawing from the map (`showcase/web/base.css`).
+One way of rendering the **Snapshot**: layered map with tour, follow a request, live service graph, filterable catalog, and the Home view of the Sofia home automation. Variants share the Snapshot, a switcher and one visual style, the blueprint drawing from the map (`showcase/web/base.css`).
 _Avoid_: "view" or "tab" when you mean the renderer itself.
 
 **Plumbing edge**:
@@ -464,7 +464,7 @@ _Avoid_: "noise" (the flows are real and useful elsewhere).
 - An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
 - A **Valia site** mirrors exactly one **Content folder** and serves exactly one **Entry file** at `/`; the folder is hers, the subdomain name is Viktor's, the hosting is off-infra.
-- The **Showcase** is one **Snapshot** rendered by four **Variants**; the Snapshot is rebuilt from live state, so a **Service** appears on the Showcase once its ingress exists, unless the ingress opts out.
+- The **Showcase** is one **Snapshot** rendered by five **Variants**; the Snapshot is rebuilt from live state, so a **Service** appears on the Showcase once its ingress exists, unless the ingress opts out.
 
 ## Example dialogue
 

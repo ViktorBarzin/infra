@@ -10,13 +10,14 @@ const esc = escapeHTML;
 
 // Map order, top to bottom. "operations" is drawn as the band beside them.
 const STACK = ["apps", "platform", "network", "hardware"];
-const TOUR = ["hardware", "network", "platform", "operations", "apps"];
+const TOUR = ["hardware", "network", "platform", "operations", "apps", "home"];
 const TOUR_TITLES = {
   hardware: "The hardware",
   network: "The network",
   platform: "The platform",
   operations: "How it is run",
   apps: "The apps",
+  home: "The house",
 };
 
 let snap, layers, statLabel;
@@ -125,6 +126,23 @@ function hardwareKit() {
   return s;
 }
 
+// houseSVG draws the family home as a small house on its own plate, the Map's
+// pointer to the Home view (HL-05).
+function houseSVG() {
+  const w = 110, d = 80, h = 34, r = 26, x = 25, y = 22;
+  const roof =
+    poly([P(x, y, h), P(x + w, y, h), P(x + w, y + d / 2, h + r), P(x, y + d / 2, h + r)], "p-r") +
+    poly([P(x + w, y, h), P(x + w, y + d, h), P(x + w, y + d / 2, h + r)], "p-l") +
+    poly([P(x, y + d, h), P(x + w, y + d, h), P(x + w, y + d / 2, h + r), P(x, y + d / 2, h + r)], "p-top");
+  const door = poly([P(x + w, y + d * 0.42, 0), P(x + w, y + d * 0.6, 0), P(x + w, y + d * 0.6, 18), P(x + w, y + d * 0.42, 18)], "p-fill p-hot");
+  const win = (u) => poly([P(x + u, y + d, 14), P(x + u + 16, y + d, 14), P(x + u + 16, y + d, 26), P(x + u, y + d, 26)], "p-fill-2");
+  const pw = 160, pd = 124, minX = -pd * C - 6, maxX = pw * C + 6;
+  return `<svg viewBox="${minX.toFixed(0)} -78 ${(maxX - minX).toFixed(0)} ${(pw + pd) / 2 + 92}" aria-hidden="true" focusable="false">` +
+    `<g class="plate">` + box(0, 0, pw, pd, 8, 0, ["p-l", "p-r", "p-top"]) +
+    `<g transform="translate(0,-8)">` + box(x, y, w, d, h, 0, ["p-fill", "p-fill-2", "p-fill"]) + door + win(18) + win(70) + roof + `</g>` +
+    `</g></svg>`;
+}
+
 // ---------- labels ----------
 function groups() {
   const m = new Map();
@@ -169,7 +187,15 @@ function renderMap() {
       <span class="name">${esc(ops.title)}</span>
       <span class="meta">${esc(layerMeta("operations"))}</span>
       <span class="open">Open &rarr;</span>
-    </span></button>`;
+    </span></button>
+    <a class="house" href="home.html" data-home>
+      ${houseSVG()}
+      <span class="txt">
+        <span class="tag">HL-05 &middot; Home</span>
+        <span class="name">The house</span>
+        ${snap.home ? `<span class="meta">${esc(fmt.int(snap.home.counts.devices))} devices, ${esc(fmt.int(snap.home.counts.automations))} automations</span>` : ""}
+        <span class="open">Open the Home view &rarr;</span>
+      </span></a>`;
 
   document.querySelectorAll("[data-layer]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -291,7 +317,28 @@ function layerStats(id) {
   }
 }
 
+function homePanelHTML() {
+  const h = snap.home;
+  const open = `<div class="hero-actions" style="margin:18px 0 0"><a class="btn btn-primary" href="home.html">Open the Home view <span aria-hidden="true">&rarr;</span></a></div>`;
+  if (!h) {
+    return `<div><p class="panel-tag">Beyond the cluster</p><h2 id="panel-title">The house</h2>
+      <p class="intro">The family home runs on one Home Assistant instance on the same server. Its numbers are unavailable right now.</p>${open}</div>`;
+  }
+  const c = h.counts;
+  return `<div><p class="panel-tag">Beyond the cluster</p><h2 id="panel-title">The house</h2>
+    <p class="intro">One Home Assistant instance, a VM on the same server as the cluster, runs the family home${h.site ? ` in ${esc(h.site)}` : ""}.</p>
+    ${kv([
+      { v: fmt.compact(c.devices), l: "devices" },
+      { v: fmt.compact(c.integration_kinds), l: "kinds of integration" },
+      { v: fmt.compact(c.automations), l: "automations" },
+      { v: fmt.compact(c.dashboards), l: "dashboards" },
+    ])}
+    ${(h.highlights || []).length ? `<h3>How it works</h3><ul class="docs">${h.highlights.map((x) => `<li><strong>${esc(x.title)}</strong></li>`).join("")}</ul>` : ""}
+    ${open}</div>`;
+}
+
 function panelHTML(id) {
+  if (id === "home") return homePanelHTML();
   const L = layers[id];
   const where = id === "operations" ? "Across all layers" : `Layer ${STACK.length - STACK.indexOf(id)} of ${STACK.length}`;
   const extra = { hardware: hardwareExtra, network: networkExtra, platform: platformExtra, apps: appsExtra }[id];
@@ -304,17 +351,18 @@ function panelHTML(id) {
 
 function introHTML() {
   return `<div><p class="panel-tag">Start here</p><h2>Pick a layer</h2>
-    <p class="intro">Tap any layer on the map to read how it works and open its design docs, or take the tour through all five stops, from the hardware up to the apps.</p>
+    <p class="intro">Tap any layer on the map to read how it works and open its design docs, or take the tour through all ${TOUR.length === 6 ? "six" : TOUR.length} stops, from the hardware up to the apps and the house they run.</p>
     <div class="hero-actions" style="margin:18px 0 0"><button type="button" class="btn btn-primary" data-start-tour>Take the tour <span aria-hidden="true">&rarr;</span></button></div></div>`;
 }
 
 function setPressed() {
   document.querySelectorAll("[data-layer]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.layer === state.open)));
+  document.querySelector("[data-home]")?.classList.toggle("is-open", state.open === "home");
   $("#map").classList.toggle("touring", state.tour >= 0);
 }
 
 function openLayer(id, { scroll = false, keepGroup = false } = {}) {
-  if (!layers[id]) return;
+  if (!layers[id] && id !== "home") return;
   if (!keepGroup && id !== state.open) state.group = null;
   state.open = id;
   const body = $("#panel-body");
@@ -345,7 +393,7 @@ function renderTourbar() {
   bar.hidden = false;
   bar.innerHTML = `<div class="tour-row"><span class="tour-step">Tour &middot; stop ${i + 1} of ${TOUR.length}</span>
       <button type="button" class="tour-exit" data-tour-exit>End tour</button></div>
-    <div class="tour-progress" role="group" aria-label="Tour progress">${TOUR.map((id, k) =>
+    <div class="tour-progress" role="group" aria-label="Tour progress" style="grid-template-columns:repeat(${TOUR.length},1fr)">${TOUR.map((id, k) =>
       `<button type="button" data-tour-go="${k}" aria-label="Stop ${k + 1}: ${esc(TOUR_TITLES[id])}" class="${k < i ? "done" : ""}"${k === i ? ' aria-current="step"' : ""}></button>`).join("")}</div>
     <div class="tour-row"><div class="tour-nav">
       <button type="button" class="btn" data-tour-prev${i === 0 ? " disabled" : ""}><span aria-hidden="true">&larr;</span> Back</button>
@@ -425,7 +473,7 @@ async function main() {
   const h = location.hash.slice(1);
   const tm = /^tour-(\d)$/.exec(h);
   if (tm) goTour(Math.min(TOUR.length, Math.max(1, +tm[1])) - 1);
-  else if (layers[h]) openLayer(h);
+  else if (layers[h] || h === "home") openLayer(h);
   else $("#panel-body").innerHTML = introHTML();
 }
 
