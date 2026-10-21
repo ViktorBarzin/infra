@@ -37,7 +37,7 @@ Then, without you:
   it, and posts what it did to `#alerts`.
 - **within the hour** — the devvm reconcile reads that committed roster,
   regenerates `/etc/ttyd-user-map` + `/etc/t3-serve/dispatch.json` without them
-  (`t3-dispatch` then answers **403**), disables `t3-serve@`, `playwright-mcp@`,
+  (`t3-dispatch` then answers **403**; since terminal-lobby ADR-0045, `t3.viktorbarzin.me` is served by `tl-t3-view`, which refuses a browser user tmux-api `/whoami` no longer maps; T3 apps they paired hold bearer tokens, listed and revocable in the lobby), disables `t3-serve@`, `playwright-mcp@`,
   `playwright-snapshot-refresh@`, `claude-auth-sync@` and `tl-t3-sync@`, and locks
   the login. Their account, home, clones, sticky ports and Vault backups are all
   left in place.

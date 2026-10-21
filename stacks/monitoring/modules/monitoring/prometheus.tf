@@ -85,7 +85,7 @@ resource "helm_release" "prometheus" {
   # same cap for the same reason.
   max_history = 10
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, authentik_walloff_targets = local.authentik_walloff_targets, dawarich_metrics_username = var.dawarich_metrics_username, dawarich_metrics_password = var.dawarich_metrics_password })]
+  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, authentik_walloff_targets = local.authentik_walloff_targets, authentik_walloff_options_targets = local.authentik_walloff_options_targets, dawarich_metrics_username = var.dawarich_metrics_username, dawarich_metrics_password = var.dawarich_metrics_password })]
 
   # The haos scrape job now reads its credential from this Secret's mount, so
   # the Secret has to exist before the pod is rescheduled onto the new values.

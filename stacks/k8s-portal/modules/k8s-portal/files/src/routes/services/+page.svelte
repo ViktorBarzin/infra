@@ -7,7 +7,8 @@
 		<table>
 			<thead><tr><th>Service</th><th>URL</th><th>Description</th></tr></thead>
 			<tbody>
-			<tr><td>Web Terminal</td><td><a href="https://t3.viktorbarzin.me">t3.viktorbarzin.me</a></td><td>Browser shell on the shared workstation — kubectl, Vault &amp; your repos preinstalled (zero setup)</td></tr>
+			<tr><td>Web Terminal</td><td><a href="https://terminal.viktorbarzin.me">terminal.viktorbarzin.me</a></td><td>Browser shell on the shared workstation — kubectl, Vault &amp; your repos preinstalled (zero setup)</td></tr>
+			<tr><td>T3 Code</td><td><a href="https://t3.viktorbarzin.me">t3.viktorbarzin.me</a></td><td>Chat UI over your Claude Code sessions in the web terminal, on the web, desktop or phone</td></tr>
 			<tr><td>Kubernetes Dashboard</td><td><a href="https://k8s.viktorbarzin.me">k8s.viktorbarzin.me</a></td><td>Point-and-click view of your workloads, auto-authenticated (zero setup)</td></tr>
 			<tr><td>Access Portal</td><td><a href="https://k8s-portal.viktorbarzin.me">k8s-portal.viktorbarzin.me</a></td><td>This portal — onboarding, kubeconfig download, setup script</td></tr>
 			<tr><td>Vault</td><td><a href="https://vault.viktorbarzin.me">vault.viktorbarzin.me</a></td><td>Secrets &amp; dynamic credentials — <code>vault login -method=oidc</code></td></tr>
