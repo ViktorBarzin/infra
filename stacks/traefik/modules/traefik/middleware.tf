@@ -833,6 +833,24 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           # wall someone out of the login / WebAuthn flow they would need to fix
           # it. Carried over from the Cloudflare WAF rule this replaces.
           skipHosts = ["authentik.viktorbarzin.me", "public-auth.viktorbarzin.me"]
+          # Meta's webhook callbacks come from the same address space as the
+          # static Meta blocklist (stacks/crowdsec), so that list refused every
+          # Messenger and WhatsApp Cloud API delivery and verify request with a
+          # 403. Viktor approved this carve-out on 2026-10-21. It lifts ONLY the
+          # meta-asn range decisions, ONLY on these exact host+path pairs; any
+          # other ban on the address (Ip-scope, CAPI, another static list)
+          # still blocks, and AppSec still inspects the request. Everywhere
+          # else the Meta ban is unchanged. The compensating control is the
+          # backend: webhook-handler answers 403 to any POST whose
+          # X-Hub-Signature (HMAC-SHA1 of the body with the app secret) does not
+          # match (chatbot/fbapi ValidSignature), and the GET handshake needs
+          # the verify token. wa.viktorbarzin.me/webhook is reserved for the
+          # wa-bot service, which does not exist yet; it must serve its Meta
+          # callback on exactly that path and check X-Hub-Signature-256 on
+          # every POST before it goes live.
+          # Allowed requests log `[crowdsec-bouncer] action=exempt-allow`.
+          exemptScenarios = ["static-blocklist/meta-asn"]
+          exemptRoutes    = ["webhook.viktorbarzin.me/fb/webhook", "wa.viktorbarzin.me/webhook"]
           # ENFORCING. It landed as dryRun=true first and the measured window was
           # clean: zero organic would-blocks in an hour, since the enforced set is
           # currently the 4 non-CAPI decisions (cscli-import scanner IPs). The

@@ -134,6 +134,20 @@ type Config struct {
 	// default listener (virtual patching and generic rules).
 	AppsecCrsURL   string   `json:"appsecCrsUrl,omitempty" yaml:"appsecCrsUrl,omitempty"`
 	AppsecCrsHosts []string `json:"appsecCrsHosts,omitempty" yaml:"appsecCrsHosts,omitempty"`
+
+	// ExemptScenarios and ExemptRoutes together lift RANGE bans from the named
+	// scenarios on the named routes only. Both are needed; either alone does
+	// nothing. A scenario entry matches a decision scenario that equals it or
+	// starts with it followed by a space, which is how `cscli decisions import
+	// --reason` names the static lists. A route is "host/exact-path", matched
+	// on the normalised host and the exact URL path (no prefix, no query).
+	//
+	// Every other ban on the same address still applies: an Ip-scope decision,
+	// a range from any other scenario, CAPI. The request still goes through
+	// AppSec. Built for Meta's webhook callbacks (2026-10-21), which come from
+	// the same address space as the static Meta blocklist.
+	ExemptScenarios []string `json:"exemptScenarios,omitempty" yaml:"exemptScenarios,omitempty"`
+	ExemptRoutes    []string `json:"exemptRoutes,omitempty" yaml:"exemptRoutes,omitempty"`
 }
 
 // CreateConfig returns the defaults. They are deliberately the safe end of every
@@ -182,9 +196,10 @@ type banEntry struct {
 }
 
 type rangeEntry struct {
-	n       *net.IPNet
-	enforce bool
-	origin  string
+	n        *net.IPNet
+	enforce  bool
+	origin   string
+	scenario string
 }
 
 func (d *decisionSet) size() int {
@@ -220,6 +235,12 @@ func (d *decisionSet) contains(ip net.IP) bool {
 // match reports whether ip is banned, whether that ban is enforced (any
 // enforcing decision wins over dry-run ones), and the origin to log.
 func (d *decisionSet) match(ip net.IP) (bool, bool, string) {
+	return d.matchExcept(ip, nil)
+}
+
+// matchExcept is match with the range decisions of exemptScenarios left out.
+// Ip-scope decisions are never left out.
+func (d *decisionSet) matchExcept(ip net.IP, exemptScenarios []string) (bool, bool, string) {
 	if d == nil || ip == nil {
 		return false, false, ""
 	}
@@ -231,7 +252,7 @@ func (d *decisionSet) match(ip net.IP) (bool, bool, string) {
 		}
 	}
 	for _, r := range d.ranges {
-		if r.n.Contains(ip) {
+		if r.n.Contains(ip) && !scenarioIn(r.scenario, exemptScenarios) {
 			if r.enforce {
 				return true, true, r.origin
 			}
@@ -241,6 +262,17 @@ func (d *decisionSet) match(ip net.IP) (bool, bool, string) {
 		}
 	}
 	return found, enforce, origin
+}
+
+// scenarioIn reports whether scenario is one of names, or one of them followed
+// by a space and a free-text reason.
+func scenarioIn(scenario string, names []string) bool {
+	for _, n := range names {
+		if scenario == n || strings.HasPrefix(scenario, n+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // parseIP canonicalises an address so that textual variants of the same IPv6
@@ -322,7 +354,7 @@ func parseDecisionsDryRun(decisions []decision, allowedOrigins, dryRunOrigins ma
 			}
 		case "range":
 			if _, n, err := net.ParseCIDR(value); err == nil {
-				set.ranges = append(set.ranges, rangeEntry{n: n, enforce: enforce, origin: logOrigin})
+				set.ranges = append(set.ranges, rangeEntry{n: n, enforce: enforce, origin: logOrigin, scenario: strings.TrimSpace(d.Scenario)})
 			}
 		}
 	}
@@ -505,6 +537,9 @@ type Bouncer struct {
 	appsecCrsURL    string
 	appsecCrsHosts  map[string]struct{}
 	dryRunOrigins   map[string]struct{}
+
+	exemptScenarios []string
+	exemptRoutes    map[string]struct{}
 }
 
 // newBouncer validates the configuration and builds the request-path state. It
@@ -594,6 +629,32 @@ func newBouncer(cfg *Config, next http.Handler, name string) (*Bouncer, error) {
 		}
 	}
 
+	// Like AppSec settings, a bad exemption never makes New fail: it is dropped
+	// and logged, so it can only narrow what is let through.
+	var exemptScenarios []string
+	for _, sc := range cfg.ExemptScenarios {
+		if sc = strings.TrimSpace(sc); sc != "" {
+			exemptScenarios = append(exemptScenarios, sc)
+		}
+	}
+	exemptRoutes := map[string]struct{}{}
+	for _, r := range cfg.ExemptRoutes {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		i := strings.Index(r, "/")
+		host := ""
+		if i > 0 {
+			host = normaliseHost(r[:i])
+		}
+		if host == "" {
+			stdoutLogf(fmt.Sprintf("[crowdsec-bouncer] action=exempt-route-ignored route=%q", r))
+			continue
+		}
+		exemptRoutes[host+r[i:]] = struct{}{}
+	}
+
 	return &Bouncer{
 		next:            next,
 		name:            name,
@@ -613,6 +674,8 @@ func newBouncer(cfg *Config, next http.Handler, name string) (*Bouncer, error) {
 		appsecCrsURL:    appsecCrsURL,
 		appsecCrsHosts:  appsecCrsHosts,
 		dryRunOrigins:   originSet(cfg.DryRunOrigins),
+		exemptScenarios: exemptScenarios,
+		exemptRoutes:    exemptRoutes,
 	}, nil
 }
 
@@ -756,6 +819,14 @@ func (b *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	found, enforce, origin := false, false, ""
 	if set.loaded && ip != nil {
 		found, enforce, origin = set.match(ip)
+	}
+	if found && len(b.exemptScenarios) > 0 {
+		if _, ok := b.exemptRoutes[host+req.URL.Path]; ok {
+			if found, enforce, origin = set.matchExcept(ip, b.exemptScenarios); !found {
+				b.logf(fmt.Sprintf("[crowdsec-bouncer] action=exempt-allow ip=%s host=%s method=%s path=%s",
+					ip, host, req.Method, req.URL.Path))
+			}
+		}
 	}
 	if found {
 		// Only decisions are logged, never allowed requests — at ~10 req/s

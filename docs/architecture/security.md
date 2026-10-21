@@ -220,6 +220,15 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   Terraform-managed static blocklist** of 117 collapsed ranges from AS32934,
   AS63293 and AS54115, re-imported daily at 04:00 so its 168h decisions never
   lapse.
+- **Webhook carve-out from the Meta blocklist (2026-10-21, Viktor).** Meta's
+  webhook callbacks come from the blocked space, so the Traefik bouncer's
+  `exemptScenarios = ["static-blocklist/meta-asn"]` and `exemptRoutes` let that
+  list's range decisions through on exactly `webhook.viktorbarzin.me/fb/webhook`
+  and `wa.viktorbarzin.me/webhook` (host and exact path; no prefix). An Ip-scope
+  ban, a CAPI ban or another static list on the same address still blocks, and
+  AppSec still inspects the request. The compensating control is the backend's
+  HMAC check: webhook-handler answers 403 to a POST whose `X-Hub-Signature` does
+  not match. Allowed requests log `[crowdsec-bouncer] action=exempt-allow`.
 - **Range-grouped detection is the axis that does work (added 2026-09-09).**
   `viktor/distributed-crawl-range` groups by `evt.Meta.SourceRange`, the
   source's registered prefix from `crowdsecurity/geoip-enrich`, and counts

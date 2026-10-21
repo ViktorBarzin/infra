@@ -765,3 +765,136 @@ func TestEmptyTrustedCIDRsFallsBackToPodCIDR(t *testing.T) {
 		t.Error("must never degrade to trust-nothing/trust-everything on empty input")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// scenario exemptions on named webhook routes
+// ---------------------------------------------------------------------------
+
+const metaScenario = "static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)"
+
+// metaWebhookConfig lets the Meta static list through on one webhook route.
+func metaWebhookConfig() *Config {
+	cfg := enforcing()
+	cfg.ExemptScenarios = []string{"static-blocklist/meta-asn"}
+	cfg.ExemptRoutes = []string{"webhook.viktorbarzin.me/fb/webhook"}
+	return cfg
+}
+
+func metaRange() []decision {
+	return []decision{{Origin: "cscli-import", Type: "ban", Scope: "Range", Value: "2a03:2880::/32", Scenario: metaScenario}}
+}
+
+func doPath(b *Bouncer, remoteAddr, host, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
+	req.RemoteAddr = remoteAddr
+	req.Host = host
+	rec := httptest.NewRecorder()
+	b.ServeHTTP(rec, req)
+	return rec
+}
+
+const metaPeer = "[2a03:2880:10ff:52::]:443"
+
+func TestExemptScenarioPassesOnExemptRoute(t *testing.T) {
+	var hit bool
+	b := testBouncer(t, metaWebhookConfig(), metaRange(), okNext(&hit))
+	lines := capture(b)
+	rec := doPath(b, metaPeer, "webhook.viktorbarzin.me", "/fb/webhook?hub.mode=subscribe")
+	if rec.Code != http.StatusOK || !hit {
+		t.Fatalf("Meta's webhook call must reach the backend, got %d", rec.Code)
+	}
+	if len(*lines) != 1 || !strings.Contains((*lines)[0], "action=exempt-allow") {
+		t.Errorf("an exempted request must be logged once as exempt-allow, got %q", *lines)
+	}
+}
+
+func TestExemptScenarioStillBlockedOffRoute(t *testing.T) {
+	cases := []struct{ host, path string }{
+		{"webhook.viktorbarzin.me", "/"},
+		{"webhook.viktorbarzin.me", "/fb/webhook/"},
+		{"webhook.viktorbarzin.me", "/fb/webhook/extra"},
+		{"webhook.viktorbarzin.me", "/fb"},
+		{"forgejo.viktorbarzin.me", "/fb/webhook"},
+	}
+	for _, c := range cases {
+		var hit bool
+		b := testBouncer(t, metaWebhookConfig(), metaRange(), okNext(&hit))
+		if rec := doPath(b, metaPeer, c.host, c.path); rec.Code != http.StatusForbidden || hit {
+			t.Errorf("%s%s: the Meta ban must still apply off the exempt route, got %d", c.host, c.path, rec.Code)
+		}
+	}
+}
+
+func TestExemptRouteMatchesHostCaseAndPort(t *testing.T) {
+	var hit bool
+	b := testBouncer(t, metaWebhookConfig(), metaRange(), okNext(&hit))
+	if rec := doPath(b, metaPeer, "Webhook.ViktorBarzin.me:443", "/fb/webhook"); rec.Code != http.StatusOK {
+		t.Errorf("host normalisation must apply to exempt routes, got %d", rec.Code)
+	}
+}
+
+func TestExemptRouteDoesNotLiftOtherBans(t *testing.T) {
+	others := map[string]decision{
+		"ip ban from a scenario":  {Origin: "crowdsec", Type: "ban", Scope: "Ip", Value: "2a03:2880:10ff:52::", Scenario: "crowdsecurity/http-probing"},
+		"ip ban with meta reason": {Origin: "cscli", Type: "ban", Scope: "Ip", Value: "2a03:2880:10ff:52::", Scenario: metaScenario},
+		"another static range":    {Origin: "cscli-import", Type: "ban", Scope: "Range", Value: "2a03:2880:10ff::/48", Scenario: "static-blocklist/proxy-asn (rotating-proxy crawl)"},
+		"look-alike scenario":     {Origin: "cscli-import", Type: "ban", Scope: "Range", Value: "2a03:2880:10ff::/48", Scenario: "static-blocklist/meta-asn-extra"},
+	}
+	for name, d := range others {
+		var hit bool
+		b := testBouncer(t, metaWebhookConfig(), append(metaRange(), d), okNext(&hit))
+		if rec := doPath(b, metaPeer, "webhook.viktorbarzin.me", "/fb/webhook"); rec.Code != http.StatusForbidden || hit {
+			t.Errorf("%s: only the exempt scenario is lifted, got %d", name, rec.Code)
+		}
+	}
+}
+
+func TestNoExemptionsByDefault(t *testing.T) {
+	var hit bool
+	b := testBouncer(t, enforcing(), metaRange(), okNext(&hit))
+	if rec := doPath(b, metaPeer, "webhook.viktorbarzin.me", "/fb/webhook"); rec.Code != http.StatusForbidden {
+		t.Errorf("with no exemptions configured the Meta range must block everywhere, got %d", rec.Code)
+	}
+}
+
+func TestExemptionNeedsBothHalves(t *testing.T) {
+	for name, cfg := range map[string]*Config{
+		"routes only":    func() *Config { c := metaWebhookConfig(); c.ExemptScenarios = nil; return c }(),
+		"scenarios only": func() *Config { c := metaWebhookConfig(); c.ExemptRoutes = nil; return c }(),
+	} {
+		var hit bool
+		b := testBouncer(t, cfg, metaRange(), okNext(&hit))
+		if rec := doPath(b, metaPeer, "webhook.viktorbarzin.me", "/fb/webhook"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s: an exemption needs a scenario and a route, got %d", name, rec.Code)
+		}
+	}
+}
+
+func TestMalformedExemptRouteIsIgnoredNotFatal(t *testing.T) {
+	cfg := metaWebhookConfig()
+	cfg.ExemptRoutes = []string{"no-path-here", "", "/fb/webhook"}
+	var hit bool
+	b, err := newBouncer(cfg, okNext(&hit), "test")
+	if err != nil {
+		t.Fatalf("a bad exemption must not take the entrypoint down: %v", err)
+	}
+	if len(b.exemptRoutes) != 0 {
+		t.Errorf("entries without a host and an absolute path must be dropped, got %v", b.exemptRoutes)
+	}
+}
+
+func TestExemptRequestStillGoesThroughAppsec(t *testing.T) {
+	appsec := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusForbidden)
+	}))
+	defer appsec.Close()
+	cfg := metaWebhookConfig()
+	cfg.LapiKey = "k"
+	cfg.AppsecEnabled = true
+	cfg.AppsecURL = appsec.URL
+	var hit bool
+	b := testBouncer(t, cfg, metaRange(), okNext(&hit))
+	if rec := doPath(b, metaPeer, "webhook.viktorbarzin.me", "/fb/webhook"); rec.Code != http.StatusForbidden || hit {
+		t.Errorf("the exemption lifts the ban only; AppSec must still inspect the request, got %d", rec.Code)
+	}
+}
