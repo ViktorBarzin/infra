@@ -124,7 +124,7 @@ pages, which is the signal to add pages.
 | kubernetes-namespace-owners | -- | No | K8s namespace-owner RBAC |
 | Task Submitters | -- | No | Task submission access |
 | Proxy Users | -- | No | `proxy.viktorbarzin.me` remote browser ONLY (parentless — confined; ADR-0023) |
-| T3 Users | -- | No | `t3.viktorbarzin.me` Workstation |
+| T3 Users | -- | No | `t3.viktorbarzin.me` (T3 Code over terminal-lobby sessions) and devvm Workstation access; synced into `roster.yaml` by `t3-membership-sync` |
 | TripIt Users | -- | No | TripIt app (OIDC binding, infra#82) |
 | Postiz Users | -- | No | `postiz.viktorbarzin.me` |
 | Chrome Users | -- | No | `chrome`/`chrome-fleet` shared browser (ADR-0023; deliberately tighter than admin) |

@@ -47,12 +47,16 @@
 			tool already set up.
 		</p>
 		<ol>
-			<li>Open <a href="https://t3.viktorbarzin.me" target="_blank">t3.viktorbarzin.me</a></li>
+			<li>Open <a href="https://terminal.viktorbarzin.me" target="_blank">terminal.viktorbarzin.me</a></li>
 			<li>Sign in with your Authentik account (the same SSO login as this portal)</li>
 			<li>You land in a ready-to-use shell. Try it:
 				<pre>kubectl get pods -n YOUR_NAMESPACE</pre>
 			</li>
 		</ol>
+		<p>
+			Prefer a chat view? <a href="https://t3.viktorbarzin.me" target="_blank">T3 Code</a> shows your
+			Claude Code sessions from the web terminal as a chat, in the browser, the desktop app or the phone app.
+		</p>
 		<div class="callout info">
 			<strong>Already done for you</strong> on the workstation:
 			<ul>
@@ -64,7 +68,7 @@
 		</div>
 		<div class="callout warning">
 			<strong>No access yet?</strong> The workstation is provisioned per person. If
-			<code>t3.viktorbarzin.me</code> says you're not authorized, ask Viktor to add you
+			<code>terminal.viktorbarzin.me</code> says you're not authorized, ask Viktor to add you
 			(<a href="mailto:vbarzin@gmail.com">vbarzin@gmail.com</a> or Slack).
 		</div>
 	</section>
