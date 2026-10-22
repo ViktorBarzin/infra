@@ -40,7 +40,7 @@ resource "helm_release" "kyverno" {
   # policy moved to the CEL types (policies/*.yaml, loaded by the kubectl_manifest
   # resources in this module), so nothing here uses kyverno.io/v1 or v2 any more.
   # Before 3.10: confirm `kubectl get cpol,ccleanpol,polex.kyverno.io -A` is empty.
-  version = "3.9.1"
+  version = "3.9.2"
 
   values = [yamlencode({
     # When Kyverno is unavailable, allow pod creation to proceed without
