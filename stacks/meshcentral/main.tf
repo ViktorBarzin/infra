@@ -125,7 +125,7 @@ resource "kubernetes_deployment" "meshcentral" {
 
         init_container {
           name              = "fix-config"
-          image             = "alpine:3.24.2"
+          image             = "alpine:3.24.3"
           image_pull_policy = "IfNotPresent"
           command           = ["/bin/sh"]
           args = ["-c", <<-EOT
