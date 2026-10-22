@@ -25,7 +25,7 @@ variable "immich_version" {
   # immich-machine-learning (with the -cuda suffix) and the
   # thumbnail-reconcile CronJob, so they always move together.
   # renovate: datasource=docker depName=ghcr.io/immich-app/immich-server
-  default = "v3.3.3"
+  default = "v3.3.5"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
