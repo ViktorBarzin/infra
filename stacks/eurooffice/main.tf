@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "eurooffice" {
       spec {
         container {
           name  = "eurooffice"
-          image = "ghcr.io/euro-office/documentserver:v9.3.5"
+          image = "ghcr.io/euro-office/documentserver:v9.3.6"
           # Docservice, converter, nginx and the bundled Postgres, Redis and
           # RabbitMQ share this one container. OnlyOffice with an external
           # database fitted in 1.5Gi; the limit leaves room for converting
