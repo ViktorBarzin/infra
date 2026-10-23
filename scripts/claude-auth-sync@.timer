@@ -4,7 +4,12 @@ Description=Keep Claude OAuth credentials valid and recoverable for %i
 [Timer]
 OnBootSec=10m
 OnUnitActiveSec=6h
-Persistent=true
+# No Persistent=. It only applies to OnCalendar=, and on a monotonic timer it
+# does harm: systemd restores the pre-reboot "last triggered" stamp, and with a
+# stamp present an OnBootSec point that passed before the timer started is
+# dropped as already used. OnUnitActiveSec then never arms because the service
+# never ran. Seen on devvm-pane-swap-guard.timer
+# after the 2026-10-23 reboot.
 RandomizedDelaySec=10m
 Unit=claude-auth-sync@%i.service
 
