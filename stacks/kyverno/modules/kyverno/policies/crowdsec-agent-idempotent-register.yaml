@@ -4,7 +4,7 @@ metadata:
   name: crowdsec-agent-idempotent-register
   annotations:
     policies.kyverno.io/title: CrowdSec Agent Idempotent LAPI Registration
-    policies.kyverno.io/description: "Replaces the crowdsec-agent wait-for-lapi-and-register init command with a variant that skips `cscli lapi register` when /tmp_config/local_api_credentials.yaml already exists (pod restart after a node reboot). The upstream chart re-registers unconditionally and LAPI 403s 'user already exist', wedging the agent."
+    policies.kyverno.io/description: "Replaces the crowdsec-agent and crowdsec-appsec wait-for-lapi-and-register init command with a variant that skips `cscli lapi register` when /tmp_config/local_api_credentials.yaml already exists (pod restart after a node reboot). The upstream chart re-registers unconditionally and LAPI 403s 'user already exist', wedging the agent."
 spec:
   failurePolicy: Ignore
   # No pod-controller variants. MutatingPolicy autogen is on by default for
@@ -22,10 +22,15 @@ spec:
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: crowdsec
+    # appsec runs the same upstream init command against the same emptyDir and
+    # wedged the same way after the 2026-10-23 PVE host reboot.
     objectSelector:
       matchLabels:
         k8s-app: crowdsec
-        type: agent
+      matchExpressions:
+        - key: type
+          operator: In
+          values: [agent, appsec]
   matchConditions:
     - name: has-register-init-container
       expression: "object.spec.?initContainers.orValue([]).exists(i, i.name == 'wait-for-lapi-and-register')"

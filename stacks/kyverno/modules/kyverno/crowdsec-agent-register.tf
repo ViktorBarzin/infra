@@ -22,6 +22,10 @@ locals {
 # (seen 2026-07-12 after kured rebooted k8s-node4: DS 4/5, pod wedged in
 # Init:Error until manual `cscli machines delete` + pod recreate).
 #
+# The appsec Deployment runs the same init command and wedged the same way
+# after the 2026-10-23 PVE host reboot (0/2 for ~2.5h), so the policy covers
+# both pod types.
+#
 # The credentials the original registration produced are still in the pod's
 # /tmp_config emptyDir (emptyDir contents live on node disk and survive node
 # reboots for as long as the pod object exists), so the fix is simply: skip
