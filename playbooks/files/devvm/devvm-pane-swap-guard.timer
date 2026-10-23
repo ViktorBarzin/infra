@@ -9,7 +9,11 @@ Description=Reconcile tmux pane swap protection every 5 minutes
 OnBootSec=3min
 OnUnitActiveSec=5min
 AccuracySec=30s
-Persistent=true
+# No Persistent=. It only applies to OnCalendar=, and on a monotonic timer it
+# does harm: systemd restores the pre-reboot "last triggered" stamp, and with a
+# stamp present an OnBootSec point that passed before the timer started is
+# dropped as already used. OnUnitActiveSec then never arms because the service
+# never ran. On 2026-10-23 the timer started 221s after boot, past this 3min.
 
 [Install]
 WantedBy=timers.target
