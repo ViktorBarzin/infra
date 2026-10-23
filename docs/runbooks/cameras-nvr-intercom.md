@@ -679,6 +679,36 @@ vermont-10 и vermont-15 точно в минутите, в които са см
 `password_old` от `secret/emo/vermont-panels`, останалите 25 с `password_old` от
 `secret/emo/vermont-intercom-admin`.
 
+#### Потребител `owners` на камерите (23.10.2026)
+
+Целта е съседите да добавят камера в монитора си, без да им трябва паролата на
+`admin`. По решение на Emil на всичките 21 камери има потребител `owners` със
+същата парола като `owners` на NVR-а (Vaultwarden „ha-sofia.viktorbarzin.me“,
+12 знака, един специален знак, без `#`). Когато паролата на `owners` се сменя на
+NVR-а, трябва да се смени и на камерите.
+
+Правата са същите като на `owners` в NVR-а, проверено с `GET
+/ISAPI/Security/UserPermission`:
+
+| | NVR `owners` (Viewer) | Камера `owners` (Viewer) |
+|---|---|---|
+| Гледане на живо, записи, журнал/състояние | да | да |
+| Запис, PTZ, настройки, рестарт, ъпгрейд, канали | не | не |
+
+Как е направено, по една камера:
+
+1. `POST /ISAPI/Security/users` с `id` 2, `userName`, `password`, `userLevel`
+   `Viewer` и `loginPassword` (паролата на `admin`).
+2. Новият потребител започва с всички права `false`. `PUT
+   /ISAPI/Security/UserPermission/2` вдига `preview`, `playBack` и
+   `logOrStateCheck`, включително за канал 1.
+3. Проверки: снимка с `owners` (`Streaming/channels/101/picture`), вход през SDK
+   на порт 8000 (така влизат мониторите DS-KH6320), `PUT` с `owners` връща 403,
+   `admin` работи, каналът в NVR-а е онлайн.
+
+И 21-те минаха всички проверки. Кодекът и паролата на `admin` не са пипани.
+Мониторът `.103` (А3) все още пази `admin` и може да мине на `owners`.
+
 ## Пълен инвентар на мрежата на комплекса (SADP, 20.08.2026)
 
 Един SADP кръг от `guestns` изброява **54 устройства**. SADP не иска
