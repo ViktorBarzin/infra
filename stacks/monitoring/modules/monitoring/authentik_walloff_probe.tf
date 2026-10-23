@@ -321,7 +321,7 @@ resource "kubernetes_deployment" "blackbox_exporter" {
       spec {
         container {
           name  = "blackbox-exporter"
-          image = "prom/blackbox-exporter:v0.29.0"
+          image = "prom/blackbox-exporter:v0.29.1"
           args  = ["--config.file=/etc/blackbox_exporter/blackbox.yml"]
           port {
             container_port = 9115
