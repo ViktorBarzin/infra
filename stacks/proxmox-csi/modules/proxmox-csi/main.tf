@@ -25,6 +25,14 @@ resource "helm_release" "proxmox_csi" {
   version    = "0.5.12"
 
   values = [yamlencode({
+    # Two controller pods, so a node going down does not stop volume attaches.
+    # The chart reads the top-level replicaCount; the controller.replicas key
+    # set here until 2026-10-24 was ignored, so the controller always ran as
+    # one pod. On 2026-10-23 that pod was evicted with its node and attaches
+    # stalled until 07:27. The sidecars elect a leader, and the chart's
+    # hostname spread (DoNotSchedule) puts the two pods on different nodes.
+    replicaCount = 2
+
     config = {
       clusters = [{
         url          = var.proxmox_url
@@ -84,7 +92,6 @@ resource "helm_release" "proxmox_csi" {
     # operator. The chart replaces its default args with these lists, so
     # --default-fstype=ext4 is repeated for the attacher and provisioner.
     controller = {
-      replicas = 2
       resources = {
         requests = { cpu = "10m", memory = "32Mi" }
         limits   = { memory = "64Mi" }
