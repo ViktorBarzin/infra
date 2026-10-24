@@ -421,14 +421,23 @@ resource "kubernetes_cron_job_v1" "digest" {
         }
       }
       spec {
-        backoff_limit              = 2
-        active_deadline_seconds    = 300
+        # 4 retries and a 1h deadline: the wait below loops until Postgres
+        # answers (the deadline is its cap), and is skipped if Kyverno itself
+        # is down.
+        backoff_limit              = 4
+        active_deadline_seconds    = 3600
         ttl_seconds_after_finished = 86400
 
         template {
           metadata {
             labels = {
               app = "goldmane-edge-aggregator"
+            }
+            # A host restart on 2026-10-23 ran this while Postgres and DNS were
+            # still starting, and it failed. Kyverno injects a wait-for init
+            # container, so the pod waits for Postgres instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "${var.postgresql_host}:5432"
             }
           }
           spec {

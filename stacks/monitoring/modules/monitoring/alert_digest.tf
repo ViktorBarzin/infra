@@ -60,12 +60,19 @@ resource "kubernetes_cron_job_v1" "alert_digest" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
+        # 4 retries: the wait below is skipped if Kyverno itself is down.
+        backoff_limit              = 4
         ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = {
               app = "alert-digest"
+            }
+            # A host restart on 2026-10-23 ran this while Alertmanager and DNS
+            # were still starting, and it failed. Kyverno injects a wait-for
+            # init container per entry, so the pod waits for them instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "prometheus-alertmanager.monitoring:9093,prometheus-server.monitoring:80"
             }
           }
           spec {

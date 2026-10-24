@@ -50,13 +50,22 @@ resource "kubernetes_cron_job_v1" "share_link_geo" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
-        active_deadline_seconds    = 1500
+        # 4 retries and a 1h deadline: the wait below loops until its
+        # dependencies answer (the deadline is its cap), and is skipped if
+        # Kyverno itself is down.
+        backoff_limit              = 4
+        active_deadline_seconds    = 3600
         ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = {
               app = "share-link-geo"
+            }
+            # A host restart on 2026-10-23 ran this while Loki and DNS were
+            # still starting, and it failed. Kyverno injects a wait-for init
+            # container per entry, so the pod waits for them instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "loki.monitoring:3100,prometheus-prometheus-pushgateway.monitoring:9091"
             }
           }
           spec {
