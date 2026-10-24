@@ -164,8 +164,8 @@ if [ -f "$CONFIG" ]; then
     sed -i 's/"TLSOffload": true/"TLSOffload": true,\n    "ignoreAgentHashCheck": true/' "$CONFIG"
   fi
 else
-  # First run: create config from template before startup.sh runs, so REVERSE_PROXY
-  # env var doesn't generate a bad certUrl. Pre-seed with correct values.
+  # First run: create config from template before MeshCentral starts, so the
+  # image's own template (no TLSOffload, NewAccounts on) is never used.
   cat > "$CONFIG" <<'CONF'
 {
   "$schema": "http://info.meshcentral.com/downloads/meshcentral-config-schema.json",
@@ -199,7 +199,11 @@ EOT
         }
 
         container {
-          image = "typhonragewind/meshcentral:1.1.53"
+          # Upstream's official image. typhonragewind/meshcentral stopped at
+          # 1.1.53 (Oct 2025), so Renovate had no newer tag to offer while
+          # upstream shipped security releases (1.3.1 fixed an actively
+          # exploited hole). Switched 2026-10-24.
+          image = "ghcr.io/ylianst/meshcentral:1.3.1"
           name  = "meshcentral"
           port {
             name           = "http"
@@ -209,20 +213,11 @@ EOT
             name  = "TZ"
             value = "Europe/Sofia"
           }
+          # config.json is owned by the fix-config init container. With
+          # DYNAMIC_CONFIG on, the entrypoint would rewrite it from env vars
+          # (HOSTNAME, REVERSE_PROXY, ...) on every start.
           env {
-            name  = "HOSTNAME"
-            value = "meshcentral.viktorbarzin.me"
-          }
-          env {
-            name  = "REVERSE_PROXY"
-            value = "false"
-          }
-          env {
-            name  = "ALLOW_NEW_ACCOUNTS"
-            value = "false"
-          }
-          env {
-            name  = "WEBRTC"
+            name  = "DYNAMIC_CONFIG"
             value = "false"
           }
 
@@ -237,10 +232,12 @@ EOT
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              # 1.1.53 sat at 247Mi of a 256Mi limit; 1.3.x runs on Node 24
+              # and caches the default agents at startup.
+              memory = "512Mi"
             }
           }
           volume_mount {
