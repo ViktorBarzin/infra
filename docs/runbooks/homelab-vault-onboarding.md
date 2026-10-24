@@ -89,9 +89,17 @@ to the npm `/usr` prefix; the guard checks the **system** path, not
 install, leaving non-admins with no backend). To install on a running box:
 
 ```bash
-sudo npm install -g --prefix /usr "@bitwarden/cli@^2024"
-bw --version            # confirm /usr/bin/bw resolves
+sudo npm install -g --prefix /usr "@bitwarden/cli@2026.10.0"
+bw --version            # confirm /usr/bin/bw resolves, and prints 2026.10.0
 ```
+
+The version is pinned in `playbooks/devvm.yml` (`devvm_bw_cli_version`) and
+mirrored in `setup-devvm.sh`; the playbook is the way to apply it. Keep `bw`
+in step with the Vaultwarden server: from 1.37.4 the server requires an
+`encryptedFor` key on `POST /api/ciphers`, which `bw` 2024.x never sends, so
+`homelab vault put` failed every create with `422 Unprocessable Entity` while
+reads and `--update` kept working (infra#145). The Vaultwarden log names the
+cause: `Data guard Json<CipherData> failed ... missing field encryptedFor`.
 
 After landing a `cli/` change, rebuild the binary so users pick it up:
 

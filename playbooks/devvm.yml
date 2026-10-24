@@ -199,6 +199,12 @@
     # Pinned on purpose: this npm package runs unattended as each user, so the
     # version is a reviewed choice. Bump it when you mean to.
     devvm_skills_cli: skills@1.5.23
+    # The Bitwarden CLI behind `homelab vault`. Pinned, not latest: it writes to
+    # every user's password vault unattended. It must be new enough for the
+    # Vaultwarden server: from 1.37.4 POST /api/ciphers requires `encryptedFor`,
+    # which bw 2024.x never sends, so `homelab vault put` 422'd on every create
+    # (infra#145). 2026.10.0 sends it. Needs node >= 22 (node_major above).
+    devvm_bw_cli_version: "2026.10.0"
     # Users whose Claude Code the nightly timer keeps current. Claude Code
     # installs PER USER (~/.local/share/claude/versions), so unlike codex there
     # is no single binary to swap and every account needs its own update run.
@@ -1215,6 +1221,19 @@
         owner: root
         group: root
       notify: reload systemd
+
+    # ---- 7a1b) the Bitwarden CLI behind `homelab vault` ---------------------
+    # System-wide (/usr/bin/bw under the NodeSource npm prefix) so every user's
+    # `homelab vault` resolves it, not just an admin with ~/.local/bin/bw.
+    # Before this task it came only from setup-devvm.sh, whose guard skipped the
+    # install once any bw existed, so the box sat on 2024.12.0 while Vaultwarden
+    # moved on and creating an item failed with 422 (infra#145).
+    - name: Install the Bitwarden CLI at the pinned version
+      community.general.npm:
+        name: "@bitwarden/cli"
+        version: "{{ devvm_bw_cli_version }}"
+        global: true
+        state: present
 
     # ---- 7a2) the codex CLI, and keeping it current -------------------------
     # Added 2026-09-06. Nothing in this repo installed codex: setup-devvm.sh and
