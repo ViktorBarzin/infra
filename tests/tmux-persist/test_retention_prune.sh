@@ -37,4 +37,30 @@ at_time 1786700300
 tp save >/dev/null
 assert_eq "$(snap_count)" "5" "an unchanged save does not prune further"
 
+echo "== a snapshot list longer than a pipe buffer still prunes cleanly =="
+
+# prune_snapshots used to pipe the file list into `head -n <excess>`. With a
+# small excess, head exits after a line or two while the writer still has more
+# than the 64 KiB pipe buffer to write, so the writer dies of SIGPIPE, and under
+# `set -o pipefail` that ended the whole save for every later user. Production
+# hit it in 6 of 33 runs in the week to 2026-10-23, with 200 snapshots (KEEP)
+# and an excess of 1; 3000 rows of ~60-byte paths make it certain rather than
+# likely.
+rm -f "$(snap_dir)"/*.tsv
+export TMUX_PERSIST_SNAPSHOT_KEEP=3000
+mkdir -p "$(snap_dir)"
+for ((i = 0; i < 3000; i++)); do
+  TZ=UTC printf -v ts '%(%Y%m%dT%H%M%S)T' "$((1780000000 + i * 60))"
+  printf 's\t/tmp\t-\n' > "$(snap_dir)/$ts.tsv"
+done
+oldest="$(ls -1 "$(snap_dir)"/*.tsv | sort | head -1)"
+tt kill-server 2>/dev/null
+mk_session biglist
+at_time 1786800000          # newer than every seeded snapshot
+out="$(tp save 2>&1)"; rc=$?
+assert_eq "$rc" "0" "save exits 0 with a list longer than the pipe buffer"
+assert_eq "$(snap_count)" "3000" "pruned down to SNAPSHOT_KEEP"
+assert_file_missing "$oldest" "the oldest snapshot was the one pruned"
+assert_contains "$(cat "$(newest_snap)")" "biglist" "the just-written snapshot survived the prune"
+
 finish
