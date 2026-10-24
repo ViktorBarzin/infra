@@ -323,15 +323,24 @@ resource "kubernetes_cron_job_v1" "digest" {
         labels = local.labels
       }
       spec {
-        backoff_limit              = 2
+        # 4 retries: the DNS wait below is skipped if Kyverno itself is down.
+        backoff_limit              = 4
         ttl_seconds_after_finished = 86400
-        # Bounded so a black-holed fetch cannot wedge the Job forever and block
-        # every later heartbeat under concurrency_policy Forbid.
-        active_deadline_seconds = 300
+        # Bounded so a black-holed fetch or DNS wait cannot wedge the Job
+        # forever and block every later heartbeat under concurrency_policy
+        # Forbid. 1h leaves room for cluster DNS to come back after a restart.
+        active_deadline_seconds = 3600
 
         template {
           metadata {
             labels = local.labels
+            # A host restart on 2026-10-23 ran this while cluster DNS was still
+            # starting, and the fetch failed to resolve. Its only in-cluster
+            # dependency is DNS, so Kyverno's wait-for init container waits
+            # for kube-dns to answer first.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "kube-dns.kube-system:53"
+            }
           }
           spec {
             restart_policy = "OnFailure"

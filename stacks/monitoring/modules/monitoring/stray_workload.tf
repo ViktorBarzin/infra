@@ -351,12 +351,20 @@ resource "kubernetes_cron_job_v1" "stray_workload_detect" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
+        # 4 retries: the wait below is skipped if Kyverno itself is down.
+        backoff_limit              = 4
         ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = {
               app = "stray-workload-detect"
+            }
+            # A host restart on 2026-10-23 ran this while Postgres was still
+            # starting, and it failed. Kyverno injects a wait-for init
+            # container per entry, prepended ahead of extract-declared, so the
+            # pod waits for Postgres and the Pushgateway instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "${var.postgresql_host}:5432,prometheus-prometheus-pushgateway.monitoring:9091"
             }
           }
           spec {
