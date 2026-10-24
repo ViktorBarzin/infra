@@ -155,10 +155,14 @@ fi
 #     resolves it. The guard tests the SYSTEM path, NOT `command -v bw`: the
 #     latter is satisfied by an admin's own ~/.local/bin/bw and would skip the
 #     system install, leaving non-admins (emo, anca, …) with no backend. Pinned
-#     major; best-effort (a failure only disables `homelab vault`).
-if [ ! -x /usr/bin/bw ] && [ ! -x /usr/local/bin/bw ]; then
-  log "npm: installing @bitwarden/cli system-wide (homelab vault backend)"
-  npm install -g --prefix /usr "@bitwarden/cli@^2024" >/dev/null 2>&1 || log "WARN: @bitwarden/cli install failed; homelab vault unavailable"
+#     to the same version as devvm_bw_cli_version in playbooks/devvm.yml, and
+#     upgraded when the installed one differs: Vaultwarden >= 1.37.4 rejects
+#     creates from bw 2024.x (missing `encryptedFor`, infra#145). Best-effort
+#     (a failure only disables `homelab vault`).
+BW_CLI_VER="${BW_CLI_VER:-2026.10.0}"
+if [[ "$(/usr/bin/bw --version 2>/dev/null | tail -1)" != "$BW_CLI_VER" ]]; then
+  log "npm: installing @bitwarden/cli@$BW_CLI_VER system-wide (homelab vault backend)"
+  npm install -g --prefix /usr "@bitwarden/cli@$BW_CLI_VER" >/dev/null 2>&1 || log "WARN: @bitwarden/cli install failed; homelab vault unavailable"
 fi
 
 # 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool).
