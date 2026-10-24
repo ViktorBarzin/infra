@@ -42,12 +42,19 @@ resource "kubernetes_cron_job_v1" "london_dns_digest" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
+        # 4 retries: the wait below is skipped if Kyverno itself is down.
+        backoff_limit              = 4
         ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = {
               app = "london-dns-digest"
+            }
+            # A host restart on 2026-10-23 ran this while Loki was still
+            # starting, and it failed. Kyverno injects a wait-for init
+            # container, so the pod waits for Loki instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "loki.monitoring:3100"
             }
           }
           spec {

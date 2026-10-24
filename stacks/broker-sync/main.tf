@@ -429,11 +429,19 @@ resource "kubernetes_cron_job_v1" "imap" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
+        # 4 retries: the wait below is skipped if Kyverno itself is down.
+        backoff_limit              = 4
         ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = { app = "broker-sync", component = "imap" }
+            # A host restart on 2026-10-23 ran this while its dependencies were
+            # still starting, and it failed. Kyverno injects a wait-for init
+            # container per entry, so the pod waits for Wealthfolio and the
+            # Pushgateway instead.
+            annotations = {
+              "dependency.kyverno.io/wait-for" = "wealthfolio.wealthfolio:80,prometheus-prometheus-pushgateway.monitoring:9091"
+            }
           }
           spec {
             restart_policy = "OnFailure"
