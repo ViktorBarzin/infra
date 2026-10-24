@@ -13,6 +13,10 @@
 #   TMUX_PERSIST_TEST_SOCKET run tmux directly on this -L socket instead of
 #                            runuser-ing into the target user (tests are not root)
 #   TMUX_PERSIST_NOW         fixed epoch, so snapshot timestamps are deterministic
+#   TMUX_PERSIST_SCOPE_PROBE command that says whether the user's systemd manager
+#                            answers (exit status); setup_env sets `false`, so no
+#                            test waits on the real probe
+#   TMUX_PERSIST_SCOPE_RUN   stands in for systemd-run (test_spawn_scope.sh)
 
 set -uo pipefail
 
@@ -72,6 +76,8 @@ setup_env() {
   # Restored panes must not launch a REAL claude against a fixture uuid; `true`
   # swallows the flags and the pane falls through to its `exec bash -l`.
   export TMUX_PERSIST_CLAUDE_BIN=true
+  # The real probe runs systemctl as the target user and waits up to 60s.
+  export TMUX_PERSIST_SCOPE_PROBE=false
   unset TMUX_PERSIST_NOW
 }
 

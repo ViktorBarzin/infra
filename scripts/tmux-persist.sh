@@ -62,6 +62,10 @@ TEST_SOCKET="${TMUX_PERSIST_TEST_SOCKET:-}"
 # Stands in for every user's home, so a test can own the projects tree that
 # transcript resolution reads instead of the real ~/.claude of whoever runs it.
 HOME_ROOT="${TMUX_PERSIST_HOME_ROOT:-}"
+# What starts a restored tmux server in a user scope, and what decides whether
+# the user's systemd manager can host one (exit status). See spawn_scope_ok.
+SCOPE_RUN="${TMUX_PERSIST_SCOPE_RUN:-systemd-run}"
+SCOPE_PROBE="${TMUX_PERSIST_SCOPE_PROBE:-}"
 MODE="${1:-}"
 
 log() { echo "[tmux-persist] $*"; }
@@ -473,13 +477,17 @@ capture_live() {   # $1 user -> TSV rows on stdout
   done
 }
 
+# Slices the array rather than piping the list into `head`: head exits once it
+# has its lines, the writer then dies of SIGPIPE, and under pipefail that ended
+# the whole save, skipping every later user (6 of 33 runs, week to 2026-10-23).
 prune_snapshots() {
-  local u="$1" total excess
-  total="$(snapshot_files "$u" | wc -l)"
-  (( total > SNAPSHOT_KEEP )) || return 0
-  excess=$(( total - SNAPSHOT_KEEP ))
+  local u="$1" excess f
+  local -a SNAPSHOT_FILES=()
+  snapshot_files_into "$u"
+  excess=$(( ${#SNAPSHOT_FILES[@]} - SNAPSHOT_KEEP ))
+  (( excess > 0 )) || return 0
   # Oldest first; the newest is never in this slice, so the pointer stays valid.
-  snapshot_files "$u" | head -n "$excess" | while read -r f; do rm -f "$f"; done
+  for f in "${SNAPSHOT_FILES[@]:0:excess}"; do rm -f "$f"; done
   log "pruned $excess old snapshot(s) for $u (keeping $SNAPSHOT_KEEP)"
 }
 
@@ -776,8 +784,70 @@ restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell), $3 optional first mess
 spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid, $5 optional first message
   local u="$1" target="$2" cwd="$3" uuid="$4"
   [[ -d "$cwd" ]] || { home_of "$u"; cwd="$HOME_OF"; }
-  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid" "${5:-}")" \; \
+  tmux_spawn_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid" "${5:-}")" \; \
     set-option -t "=$target:" @tl_origin "$ORIGIN_USER"
+}
+
+# The tmux server a restore starts belongs in the USER's systemd manager, not in
+# the caller's cgroup. `new-session` forks the server from whatever process ran
+# it, so with a bare `runuser -u <user> -- tmux` the server joined:
+#   - tmux-persist-restore.service at boot, a oneshot whose cgroup systemd kills
+#     when ExecStart returns. On 2026-10-23 emo's 11 restored sessions died 6s
+#     after they were restored (06:29:43 -> 06:29:49).
+#   - tmux-api.service from the restore picker, so the sessions died with any
+#     tmux-api restart, and their panes sat outside the per-pane memory cap.
+# `systemd-run --user --scope` parents the server to user@<uid>.service instead,
+# as terminal-lobby's tmux-user-attach does for the attach path. The bus
+# variables also let tmux put each pane in its own tmux-spawn-*.scope, which is
+# where the pane cap applies. runuser keeps the caller's environment, so they
+# are passed as plain assignments.
+#
+# Only the spawn needs this. has-session, list-panes and send-keys talk to a
+# server that already exists and never start one.
+tmux_spawn_as() {
+  local u="$1" uid; shift
+  local -a scope=()
+  spawn_scope_ok "$u" && scope=("$SCOPE_RUN" --user --scope --quiet --collect)
+  if [[ -n "$TEST_SOCKET" ]]; then
+    ${scope[@]+"${scope[@]}"} tmux -L "$TEST_SOCKET" "$@"
+  elif (( ${#scope[@]} )); then
+    uid="$(id -u "$u")"
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      runuser -u "$u" -- "${scope[@]}" tmux "$@"
+  else
+    runuser -u "$u" -- tmux "$@"
+  fi
+}
+
+# Whether the user's systemd manager answers, decided ONCE per user per run and
+# BEFORE spawning. A spawn is not retried without the scope after it fails,
+# because the failed attempt may already have created the session, and the retry
+# would then report a duplicate. At boot the manager can still be starting, so
+# this waits up to 60s for it; a restore of many sessions pays that at most once.
+declare -A SCOPE_OK=()
+spawn_scope_ok() {   # $1 user
+  local u="$1" rc=0
+  if [[ -z "${SCOPE_OK[$u]+x}" ]]; then
+    if [[ -n "$SCOPE_PROBE" ]]; then "$SCOPE_PROBE" "$u" || rc=1
+    else user_manager_answers "$u" || rc=1; fi
+    SCOPE_OK["$u"]="$rc"
+    (( rc == 0 )) || log "WARN: $u's systemd user manager is not answering; restoring outside a user scope, so these sessions die with the calling unit and their panes are not capped"
+  fi
+  return "${SCOPE_OK[$u]}"
+}
+
+user_manager_answers() {   # $1 user
+  local u="$1" uid i
+  uid="$(id -u "$u" 2>/dev/null)" || return 1
+  # Lingering users get their manager at boot; start it if it is not up yet.
+  systemctl is-active --quiet "user@$uid.service" \
+    || systemctl start --no-block "user@$uid.service" 2>/dev/null || true
+  for ((i = 0; i < 60; i++)); do
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      runuser -u "$u" -- systemctl --user show-environment >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
 }
 
 # Type the resume into a live session whose claude died but whose shell survived.
