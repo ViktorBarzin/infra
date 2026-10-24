@@ -185,9 +185,10 @@ resource "helm_release" "woodpecker" {
     })
   ]
 
-  # 1200, not 600: longer than the server's 10-minute liveness budget for DB
-  # migrations (values.yaml), so a slow migration is not cut short by an
-  # atomic rollback to the old image against an already migrated database.
+  # 1200, not 600: longer than the server's 15-minute startupProbe budget for
+  # DB migrations (woodpecker_server_host_alias below), so a slow migration is
+  # not cut short by an atomic rollback to the old image against an already
+  # migrated database.
   timeout         = 1200
   atomic          = true
   cleanup_on_fail = true
@@ -214,19 +215,51 @@ data "kubernetes_service" "traefik" {
   }
 }
 
+# The same patch adds a startupProbe to the server container, which chart 3.7.5
+# also does not expose. Migrations run before the HTTP listener starts, so a
+# long one (the 3.18 log_entries migration walks ~4.5M rows here) needs more
+# than liveness's 3 x 10s. The startupProbe allows 90 x 10s = 15 min, under the
+# helm_release timeout of 1200s, and liveness only starts once it has passed.
+# Fields the chart does not render survive Helm's three-way merge, as
+# hostAliases has.
+locals {
+  woodpecker_server_patch = jsonencode({
+    spec = {
+      template = {
+        spec = {
+          hostAliases = [{
+            ip        = data.kubernetes_service.traefik.spec[0].cluster_ip
+            hostnames = ["forgejo.viktorbarzin.me"]
+          }]
+          containers = [{
+            name = "server"
+            startupProbe = {
+              httpGet          = { path = "/healthz", port = 8000, scheme = "HTTP" }
+              periodSeconds    = 10
+              timeoutSeconds   = 10
+              failureThreshold = 90
+            }
+          }]
+        }
+      }
+    }
+  })
+}
+
 resource "null_resource" "woodpecker_server_host_alias" {
   triggers = {
-    # Re-run on helm version/values change, and when the Traefik ClusterIP
-    # changes (e.g. the Service is recreated) so the alias self-heals.
-    helm_version       = helm_release.woodpecker.version
-    helm_values        = sha256(join("", helm_release.woodpecker.values))
-    traefik_cluster_ip = data.kubernetes_service.traefik.spec[0].cluster_ip
+    # Re-run on helm version/values change, and when the patch itself changes
+    # (including the Traefik ClusterIP, e.g. the Service is recreated) so the
+    # alias and the startupProbe self-heal.
+    helm_version = helm_release.woodpecker.version
+    helm_values  = sha256(join("", helm_release.woodpecker.values))
+    patch        = sha256(local.woodpecker_server_patch)
   }
 
   provisioner "local-exec" {
     command     = <<-BASH
       set -euo pipefail
-      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '{"spec":{"template":{"spec":{"hostAliases":[{"ip":"${data.kubernetes_service.traefik.spec[0].cluster_ip}","hostnames":["forgejo.viktorbarzin.me"]}]}}}}'
+      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '${local.woodpecker_server_patch}'
       kubectl -n woodpecker rollout status statefulset/woodpecker-server --timeout=120s
     BASH
     interpreter = ["/bin/bash", "-c"]
