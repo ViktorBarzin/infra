@@ -1277,12 +1277,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # provisioner (deletes its helper pods for every Woodpecker workspace
             # PVC — >5/60s on any busy CI window), and post-boot-reconcile
             # (reboot self-heal: restarts pods that missed Kyverno wait-for
-            # injection on a cold boot — capped at 15/run). A human (me@viktorbarzin.me /
+            # injection on a cold boot — capped at 15/run), and the NVIDIA
+            # gpu-operator (deletes its ConfigMaps and pods while it reinstalls
+            # the driver after every GPU node reboot; 2026-10-24). A human (me@viktorbarzin.me /
             # kubernetes-admin) or an app-namespace SA doing >5 deletes/60s still
             # fires.
             {
               alert  = "K8sMassDelete"
-              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" | user_username!~\"^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller|daemon-set-controller)|woodpecker:.+|local-path-storage:local-path-provisioner-service-account|kyverno:post-boot-reconcile))$\" [1m])) > 5"
+              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" | user_username!~\"^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller|daemon-set-controller)|woodpecker:.+|local-path-storage:local-path-provisioner-service-account|kyverno:post-boot-reconcile|nvidia:gpu-operator))$\" [1m])) > 5"
               for    = "1m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
