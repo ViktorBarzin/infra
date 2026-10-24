@@ -1728,7 +1728,7 @@ resource "kubernetes_deployment" "task_webhook" {
         service_account_name = kubernetes_service_account.task_webhook.metadata[0].name
         container {
           name    = "webhook"
-          image   = "python:3.15.0-alpine"
+          image   = "python:3.15.1-alpine"
           command = ["sh", "-c", "apk add --no-cache curl > /dev/null 2>&1 && curl -sfL https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && exec python3 -u /app/server.py"]
           port {
             container_port = 8080
