@@ -23,14 +23,12 @@ server:
     # a UNIQUE(step_id,line) index added), so going back means restoring the
     # pre-upgrade pg_dump of the woodpecker database.
     tag: "v3.19.0"
-  # Migrations run before the HTTP listener starts, and /healthz has no
-  # startupProbe or initial delay: at the chart default (3 x 10s) a migration
-  # longer than ~30s gets the server killed and restarted mid-migration. The
-  # 3.18 log_entries migration walks ~4.5M rows here. 60 x 10s = 10 min, which
-  # stays under the helm_release timeout in main.tf.
-  probes:
-    liveness:
-      failureThreshold: 60
+  # Liveness stays at the chart default (3 x 10s). Long DB migrations, which
+  # run before the HTTP listener starts, are covered by a startupProbe that
+  # main.tf patches on (the chart has no value for one). A liveness override of
+  # 60 x 10s did that job from 2026-10-12 to 2026-10-24, but it also left the
+  # server NotReady for 10 minutes after every weekly DB password rotation
+  # before liveness restarted it.
   extraSecretNamesForEnvFrom:
     - woodpecker-db-creds
   env:
