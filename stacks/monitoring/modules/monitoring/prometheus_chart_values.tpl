@@ -399,6 +399,11 @@ alertmanager:
         email_configs:
           - to: "emil.barzin@gmail.com"
             send_resolved: true
+            # The global smarthost is the in-cluster service name, but the
+            # mailserver's certificate is *.viktorbarzin.me, so STARTTLS fails
+            # verification without this (first email receiver, 2026-10-25).
+            tls_config:
+              server_name: "mail.viktorbarzin.me"
             headers:
               Subject: '{{ if eq .Status "firing" }}[Аларма]{{ else }}[Отминало]{{ end }} {{ range .Alerts }}{{ or .Annotations.summary_bg .Annotations.summary }} {{ end }}'
             html: '{{ range .Alerts }}<p><b>{{ or .Annotations.summary_bg .Annotations.summary }}</b></p><p>{{ or .Annotations.description_bg .Annotations.description }}</p><p>Начало: {{ (.StartsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ if eq .Status "resolved" }}<br>Край: {{ (.EndsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ end }}</p>{{ end }}'
