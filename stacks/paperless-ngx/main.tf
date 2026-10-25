@@ -180,7 +180,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
         container {
           # Terraform owns the tag; Renovate proposes bumps. 3.3.0 is what
           # Keel had rolled (as :3.3) when it was retired (2026-10-10).
-          image = "ghcr.io/paperless-ngx/paperless-ngx:3.3.2"
+          image = "ghcr.io/paperless-ngx/paperless-ngx:3.3.4"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
