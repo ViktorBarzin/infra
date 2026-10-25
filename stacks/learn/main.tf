@@ -173,6 +173,20 @@ resource "kubernetes_config_map" "caddyfile" {
       		try_files {path} {path}index.html /index.html
       		file_server
       	}
+      	# pages.viktorbarzin.me/vietnam/ — PUBLIC, no login (2026-10-25). Viktor's
+      	# Vietnam travel guide, sent to a friend without an Authentik account. Same
+      	# carve-out shape as /pe-summit-trip, root pinned to the one directory.
+      	@pages_vietnam {
+      		host pages.viktorbarzin.me
+      		path /vietnam /vietnam/*
+      	}
+      	handle @pages_vietnam {
+      		redir /vietnam /vietnam/ 308
+      		root * /repo/src/current/pages/wizard/vietnam
+      		uri strip_prefix /vietnam
+      		try_files {path} {path}index.html /index.html
+      		file_server
+      	}
       	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
       	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
       	# Every page is readable by every identity that clears the Authentik gate
@@ -753,6 +767,31 @@ module "ingress_pe_summit_trip" {
   namespace       = kubernetes_namespace.learn.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # auth = "none": a static trip page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
+  auth             = "none"
+  dns_type         = "none"
+  external_monitor = false
+  anti_ai_scraping = true
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
+  }
+}
+
+# pages.viktorbarzin.me/vietnam/ — a Vietnam travel guide, public with no login
+# so a friend without an account can open it from a shared link (2026-10-25).
+# Same carve-out pattern as ingress_pe_summit_trip. Link-preview bots get through
+# the shared Anubis via the vietnam-link-previews rule in stacks/turnstile-gate.
+module "ingress_vietnam_guide" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "vietnam-guide"
+  host            = "pages"
+  turnstile       = true
+  ingress_path    = ["/vietnam"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a static page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
   auth             = "none"
   dns_type         = "none"
   external_monitor = false
