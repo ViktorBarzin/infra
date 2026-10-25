@@ -625,7 +625,7 @@ resource "kubernetes_deployment" "qbittorrent_exporter" {
       }
       spec {
         container {
-          image = "esanchezm/prometheus-qbittorrent-exporter:v1.7.0"
+          image = "esanchezm/prometheus-qbittorrent-exporter:v1.7.1"
           name  = "qbittorrent-exporter"
 
           port {
