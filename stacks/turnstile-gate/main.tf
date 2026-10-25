@@ -585,6 +585,16 @@ module "anubis" {
           - 'headers["X-Forwarded-Host"] == "pages.${local.domain}"'
           - 'path.matches("^/homelab(/([a-z-]+[.]html|og[.]png)?)?$")'
           - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
+    # The public Vietnam travel guide (stacks/learn ingress_vietnam_guide), so a
+    # link pasted into WhatsApp or Messenger shows its title and OpenGraph image.
+    - name: vietnam-link-previews
+      action: ALLOW
+      expression:
+        all:
+          - '"X-Forwarded-Host" in headers'
+          - 'headers["X-Forwarded-Host"] == "pages.${local.domain}"'
+          - 'path.matches("^/vietnam(/(index[.]html|og[.]jpg)?)?$")'
+          - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
     - name: allow-non-get-methods
       action: ALLOW
       expression: method != "GET"
