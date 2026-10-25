@@ -59,6 +59,23 @@ alertmanager:
       repeat_interval: 8760h
       receiver: slack-warning
       routes:
+        # Email copy for Emil (infra#142, 2026-10-25). Alerts that set
+        # `notify_emo = "true"` go to his Gmail and then, via the next route,
+        # to #alerts as usual. continue: true keeps the Slack route in play;
+        # without the explicit Slack sibling the root receiver would not apply,
+        # because a child route already matched.
+        - receiver: email-emo
+          group_by: ["alertname"]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 8760h
+          matchers:
+            - notify_emo = "true"
+          continue: true
+        - receiver: slack-warning
+          matchers:
+            - notify_emo = "true"
+          continue: false
         # Event lane (2026-09-27, London Flint design): alerts that describe one
         # finished event, such as a London internet drop reported after the
         # path came back. One post per event: grouped by drop_id, never
@@ -378,6 +395,13 @@ alertmanager:
         target_matchers:
           - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
+      - name: email-emo
+        email_configs:
+          - to: "emil.barzin@gmail.com"
+            send_resolved: true
+            headers:
+              Subject: '{{ if eq .Status "firing" }}[Аларма]{{ else }}[Отминало]{{ end }} {{ range .Alerts }}{{ or .Annotations.summary_bg .Annotations.summary }} {{ end }}'
+            html: '{{ range .Alerts }}<p><b>{{ or .Annotations.summary_bg .Annotations.summary }}</b></p><p>{{ or .Annotations.description_bg .Annotations.description }}</p><p>Начало: {{ (.StartsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ if eq .Status "resolved" }}<br>Край: {{ (.EndsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ end }}</p>{{ end }}'
       - name: slack-event
         slack_configs:
           - send_resolved: false
@@ -1764,6 +1788,47 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Fan unhealthy on R730 - check iDRAC"
+          # Second uplink (infra#142, 2026-10-24): bond0 active-backup, eno1 ->
+          # AX6000 port 1 is primary, eno2 -> SW2 P5 -> AX6000 port 2 is the
+          # standby. On standby eno2 transmits nothing (measured 0 packets over
+          # 12h), so any eno2 transmit means the host switched to the backup,
+          # however briefly. The bond's ARP monitor also catches the 2026-10-23
+          # case where eno1 kept carrier but AX6000 port 1 stopped forwarding.
+          # Scrape interval is 2m, hence the 5m windows.
+          - alert: R730OnBackupUplink
+            expr: increase(node_network_transmit_packets_total{job="proxmox-host", device="eno2"}[5m]) > 0
+            labels:
+              severity: warning
+              notify_emo: "true"
+            annotations:
+              summary: "R730 is running on its backup uplink eno2 (SW2 P5) - primary eno1 / AX6000 port 1 failed"
+              description: "eno2 has transmitted packets in the last 5m, so bond0 made it the active slave. Services keep working through SW2 and AX6000 port 2. Check AX6000 port 1 and cable SRV1; `cat /proc/net/bonding/bond0` on pve shows the active slave and failure counts. Context: infra#142."
+              summary_bg: "Сървърът R730 мина на резервния линк LAN2"
+              description_bg: "Основният линк LAN1 (порт 1 на AX6000, кабел SRV1) е отпаднал или е спрял да пренася трафик. Всичко продължава да работи през LAN2, SW2 и порт 2 на рутера. Провери порт 1 на рутера и кабела SRV1."
+          - alert: R730BackupUplinkDown
+            expr: |
+              node_bonding_active{job="proxmox-host", master="bond0"} < node_bonding_slaves{job="proxmox-host", master="bond0"}
+              unless on() increase(node_network_transmit_packets_total{job="proxmox-host", device="eno2"}[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+              notify_emo: "true"
+            annotations:
+              summary: "R730 backup uplink eno2 (SW2 P5) is down - the host has no second path"
+              description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."
+              summary_bg: "Резервният линк LAN2 на сървъра R730 не работи"
+              description_bg: "Сървърът работи нормално по LAN1, но резервата LAN2 (SW2 порт 5) е паднала. При следваща повреда на порт 1 на рутера няма да има резервен път. Провери кабела LAN2, порт 5 на SW2 и самия SW2."
+          # One-off delivery test of the email-emo route (2026-10-25). Fires
+          # once and expires by itself at 15:00 UTC; removed in the next commit.
+          - alert: EmailRouteTestEmo
+            expr: vector(1) and on() (time() < 1792940400)
+            labels:
+              severity: warning
+              notify_emo: "true"
+            annotations:
+              summary: "Test of the new email route to Emil (infra#142) - ignore"
+              summary_bg: "Тест: аларми по имейл от клъстера"
+              description_bg: "Това е еднократна проба на новия маршрут на алармите към Gmail. Нищо не е повредено."
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown
