@@ -91,7 +91,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # Viktor wants every upstream release here, majors included.
           # Renovate offers each bump (majors as their own commit); the tag
           # must stay a semver tag, never `latest`, so the bumps sort.
-          image = "stirlingtools/stirling-pdf:3.2.0"
+          image = "stirlingtools/stirling-pdf:3.2.2"
           name  = "stirling-pdf"
           # v2's entrypoint DYNAMICALLY sizes the JVM from the container memory
           # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
