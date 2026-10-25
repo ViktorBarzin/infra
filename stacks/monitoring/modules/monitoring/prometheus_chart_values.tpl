@@ -1823,17 +1823,6 @@ serverFiles:
               description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."
               summary_bg: "Резервният линк LAN2 на сървъра R730 не работи"
               description_bg: "Сървърът работи нормално по LAN1, но резервата LAN2 (SW2 порт 5) е паднала. При следваща повреда на порт 1 на рутера няма да има резервен път. Провери кабела LAN2, порт 5 на SW2 и самия SW2."
-          # One-off delivery test of the email-emo route (2026-10-25). Fires
-          # once and expires by itself at 15:00 UTC; removed in the next commit.
-          - alert: EmailRouteTestEmo
-            expr: vector(time()) < 1792940400
-            labels:
-              severity: warning
-              notify_emo: "true"
-            annotations:
-              summary: "Test of the new email route to Emil (infra#142) - ignore"
-              summary_bg: "Тест: аларми по имейл от клъстера"
-              description_bg: "Това е еднократна проба на новия маршрут на алармите към Gmail. Нищо не е повредено."
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown
