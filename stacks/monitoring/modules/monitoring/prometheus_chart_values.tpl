@@ -1821,7 +1821,7 @@ serverFiles:
           # One-off delivery test of the email-emo route (2026-10-25). Fires
           # once and expires by itself at 15:00 UTC; removed in the next commit.
           - alert: EmailRouteTestEmo
-            expr: vector(1) and on() (time() < 1792940400)
+            expr: vector(time()) < 1792940400
             labels:
               severity: warning
               notify_emo: "true"
