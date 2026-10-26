@@ -1,10 +1,14 @@
 # CCTV segment: dedicated pfSense interface, VLAN-30 trunk on the LAN1 cable
 
-Status: accepted (2026-07-02, rev 3 — single-switch)
+Status: accepted (2026-07-02, rev 3 — single-switch). Current cabling: rev 5
+(2026-10-26), see the last section.
 
 ![Network topology — dCCTV segment, flows, and camera-day steps](./0017-cctv-segment-topology.svg)
 
 ![Physical cabling — wires only, no VLANs](./0017-cctv-physical-cabling.svg)
+
+*The two diagrams above show the rev 4 cabling (2026-07-03). The current
+cabling is in the rev 5 section at the end of this ADR.*
 
 The first owned camera at the Sofia/Vermont site (`vermont-garage`, HiLook
 IPC-T241H-C at the garage entrance) needs to be network-isolated: its cable is
@@ -100,7 +104,7 @@ pfSense:
 - Frigate's ADR-0016 VRAM budget was bumped 2000 → 2300 MiB for the extra
   NVDEC stream.
 
-## As-built port map (rev 4, verified 2026-07-03)
+## As-built port map (rev 4, verified 2026-07-03, superseded by rev 5)
 
 After the physical swap, ports were assigned by a ping-burst counter test on
 the live switch (NOT the illustrative left-to-right order the earlier
@@ -120,3 +124,49 @@ P1), `untagMbrs [0x17, 0x08]` (VLAN 1 = P1/P2/P3/P5, VLAN 30 = P4),
 streaming into Frigate as `vermont-garage`; VLAN 30 never touches the
 apartment uplink (clean isolation). Camera config + activation details:
 memory #7066 / #7123.
+
+## As-built port map (rev 5, 2026-10-26)
+
+During the 2026-10-23 outage (infra#142) the rack cabling no longer matched
+rev 4: R730 `eno1` ran directly to AX6000 port 1 (an AX6000 reboot at
+10:29:49 dropped eno1 carrier), and the switch's P1 was the uplink to AX6000
+port 2. The same evening the spare LAN2 cable was brought into service for
+uplink redundancy. The source of truth for the cabling is emo's Visio
+`V4_Internal_IT_Topology_cables` (NAS: `Emo shared/Claude shared/vermont-network-topology/`).
+
+| Device | Port | Connected to | VLAN role |
+|--------|------|--------------|-----------|
+| AX6000 | 1 | R730 `eno1` (LAN1), bond0 primary | home LAN; carries VLAN 30 tagged frames from port 2 |
+| AX6000 | 2 | TL-SG105PE P1 | home LAN; carries VLAN 30 tagged frames |
+| TL-SG105PE | P1 | AX6000 port 2 | VLAN 1 untagged + VLAN 30 tagged |
+| TL-SG105PE | P2 | MR200 P1 | VLAN 1 untagged |
+| TL-SG105PE | P3 | UPS mgmt `192.168.1.5` | VLAN 1 untagged |
+| TL-SG105PE | P4 | camera (PoE) `10.0.30.70` | VLAN 30 untagged, PVID 30 |
+| TL-SG105PE | P5 | R730 `eno2` (LAN2), bond0 backup | VLAN 1 untagged + VLAN 30 tagged (added 2026-10-23) |
+| MR200 `192.168.1.7` | 2 | R730 iDRAC `192.168.1.4` | home LAN (moved from the switch's P5 on 2026-10-23) |
+
+Live 802.1Q table (read 2026-10-26): `vids [1,30]`, `tagMbrs [0x0, 0x11]`
+(VLAN 30 tagged = P1 and P5), `untagMbrs [0x17, 0x08]`, `pvids [1,1,1,30,1]`.
+
+On the host, `vmbr0` now sits on `bond0` (active-backup, `eno1` primary, ARP
+monitoring against `192.168.1.1` and `192.168.1.13`), and `vmbr2` was removed,
+so the dormant physical fallback leg described in rev 2 to rev 4 no longer
+exists. With `eno1` active, camera frames travel P4 → P1 → AX6000 port 2 →
+AX6000 port 1 → `eno1`; after a failover they travel P4 → P5 → `eno2` and stay
+on the switch. A failover test on 2026-10-24 (SRV1 cable pulled for about 8
+minutes) kept the camera streaming on the backup path.
+
+Other changes since rev 4:
+
+- The MR200 has no SIM card and no 4G uplink, so there is no backup WAN
+  through it. It is a switch with DHCP off; it is on the UPS.
+- All five switch ports and MR200 ports 1 and 2 are in use; MR200 ports 3 and
+  4 are free.
+
+Open question: rev 3's isolation argument relies on the managed switch being
+the only device in front of `eno1`, so that VLAN 30 membership is enforced at a
+single entry point. With `eno1` on the AX6000, which passes VLAN 30 tagged
+frames from port 2 to port 1, frames tagged 30 from other AX6000 LAN ports are
+likely to reach `vmbr0` and pfSense `net3` too (not tested). Whether that is acceptable, or
+whether `eno1` should move back behind the managed switch, is for Viktor to
+decide.
