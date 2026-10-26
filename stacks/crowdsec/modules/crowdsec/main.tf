@@ -92,6 +92,28 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         behavior: http:bruteforce
         remediation: true
     YAML
+    # Actual Budget (budget-viktor / budget-anca) password guessing. A wrong
+    # password on POST /account/login answers 400 (reason invalid-password),
+    # and Actual's own limiter answers 429 after 5 failures in 15 minutes
+    # (read from the running sync-server, 2026-10-26). Both count. A person
+    # who mistypes a few times stays under capacity; a 6th failure while the
+    # bucket drains one per minute bans. This is the detection that is meant
+    # to stay on Actual once viktor/actualbudget-app-files-whitelist below
+    # stops the app's own boot downloads from scoring.
+    "actualbudget-login-bf.yaml" = <<-YAML
+      type: leaky
+      name: viktor/actualbudget-login-bf
+      description: "Repeated failed logins on Actual Budget (password guessing)"
+      filter: "evt.Meta.log_type == 'http_access-log' && evt.Parsed.traefik_router_name startsWith 'actualbudget-budget-' && evt.Parsed.verb == 'POST' && evt.Parsed.request startsWith '/account/login' && evt.Parsed.status in ['400', '429']"
+      groupby: "evt.Meta.source_ip"
+      leakspeed: "1m"
+      capacity: 5
+      blackhole: 5m
+      labels:
+        service: http
+        behavior: http:bruteforce
+        remediation: true
+    YAML
     # ---------------------------------------------------------------------
     # Two hub scenarios re-declared LOCALLY to fix their groupby. Upstream both
     # group by "evt.Meta.source_ip + '/' + evt.Parsed.target_fqdn", but NEITHER
@@ -457,6 +479,31 @@ locals {
         - >
           evt.Parsed.traefik_router_name startsWith "homepage-homepage-home-viktorbarzin-me" &&
           evt.Parsed.request startsWith "/api/"
+    ---
+    name: viktor/actualbudget-app-files-whitelist
+    description: "Actual Budget downloads its own SQL migrations on every cold start"
+    # A browser without a cached copy of Actual (logged out, new device,
+    # cleared storage) fetches /data/default-db.sqlite and about 60
+    # /data/migrations/*.sql|js files in a few seconds. Every .sql path matches
+    # crowdsecurity/http-sensitive-files (capacity 4, no status filter), and
+    # the burst also fills http-crawl-non_statics. On 2026-10-26 at 11:59 UTC
+    # that banned Viktor's phone (148.252.141.221, Vodafone UK) for 4h from
+    # opening budget-viktor while logged out, confirmed with cscli explain on
+    # the real line.
+    #
+    # Scoped to responses the backend actually served (200, or 304 from
+    # cache), so a request for a migration file that does not exist still
+    # scores. Failed logins are covered by viktor/actualbudget-login-bf above.
+    # Router names are actualbudget-budget-<viktor|anca>-...@kubernetes in the
+    # live access log.
+    whitelist:
+      reason: "Actual Budget's bundled migration files, served by the app itself"
+      expression:
+        - >
+          evt.Parsed.traefik_router_name startsWith "actualbudget-budget-" &&
+          (evt.Parsed.request startsWith "/data/migrations/" ||
+           evt.Parsed.request == "/data/default-db.sqlite") &&
+          int(evt.Unmarshaled.traefik?.OriginStatus ?? 0) in [200, 304]
     ---
     name: viktor/bouncer-refusals-whitelist
     description: "Don't score the 403s our own Traefik bouncer returns"
