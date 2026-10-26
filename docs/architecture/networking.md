@@ -2,7 +2,7 @@
 
 <!-- showcase: pfSense splits the network into separate segments for management, Kubernetes and cameras. Traefik is the ingress controller, and every request passes a middleware chain for bot blocking, rate limits and login. -->
 
-Last updated: 2026-07-03 (dCCTV as-built after the single-switch swap — camera live on P1 trunk, ADR-0017 rev 4)
+Last updated: 2026-10-26 (R730 uplink on bond0 with eno2 as backup via the garage switch, vmbr2 removed, ADR-0017 rev 5 port map)
 
 ## Overview
 
@@ -26,10 +26,9 @@ graph TB
 
     CSdrop[CrowdSec drop<br/>nftables / CF edge<br/>out-of-band, pre-Traefik]
 
-    subgraph "Proxmox Host (eno1, eno2)"
+    subgraph "Proxmox Host (bond0 = eno1 + eno2)"
         vmbr0[vmbr0 Bridge<br/>192.168.1.127/24]
         vmbr1[vmbr1 Internal<br/>VLAN-aware]
-        vmbr2[vmbr2 Bridge<br/>eno2 → TL-SG105PE]
 
         subgraph "dCCTV - 10.0.30.0/24<br/>ADR-0017"
             Camera[vermont-garage<br/>10.0.30.70]
@@ -70,7 +69,7 @@ graph TB
     Retry --> Service
     Service --> Pod
 
-    vmbr0 -.physical link.- eno1
+    vmbr0 -.physical link.- bond0[bond0 active-backup<br/>eno1 → AX6000 port 1<br/>eno2 → TL-SG105PE P5]
     vmbr0 --> vmbr1
     vmbr1 -.VLAN 10.- Proxmox
     vmbr1 -.VLAN 10.- DevVM
@@ -78,9 +77,8 @@ graph TB
     vmbr1 -.VLAN 20.- Tech
     vmbr1 -.VLAN 20.- Master
     vmbr1 -.VLAN 20.- Node1
-    Camera -.P4 → P1 trunk → eno1, tag 30.- vmbr0
-    vmbr0 -.pfSense net3 = dCCTV 10.0.30.1 (vmbr0 tag 30).- pfSense
-    vmbr2 -.dormant fallback leg.- eno2
+    Camera -.P4 → P1 → AX6000 → eno1, or P5 → eno2, tag 30.- vmbr0
+    vmbr0 -."pfSense net3 = dCCTV 10.0.30.1 (vmbr0 tag 30)".- pfSense
 ```
 
 ## Components
@@ -89,9 +87,9 @@ graph TB
 |-----------|-------------|----------|---------|
 | pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for all subnets, Kea DDNS |
 | phpIPAM | v1.8.3 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
-| vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
+| vmbr0 | Linux bridge | 192.168.1.127/24 | Bridge on bond0, uplink to LAN |
+| bond0 | Linux bond (active-backup) | eno1 + eno2 | eno1 primary (AX6000 port 1), eno2 backup (TL-SG105PE P5); ARP monitoring, see "R730 uplink" below |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
-| vmbr2 | Linux bridge | Physical (eno2) | DORMANT fallback leg for dCCTV (ADR-0017 rev 4) — live dCCTV rides vmbr0 tag 30 over the P1 trunk (LAN1 cable) |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
@@ -128,7 +126,7 @@ Two consequences worth carrying:
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
-**Physical path (single switch, as-built)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1 trunk** (home LAN untagged + CCTV **tagged 30**) → the existing LAN1 cable → R730 `eno1` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE **replaced** the old garage TL-SG105E (retired to cold spare, PE inherited mgmt `192.168.1.6`) and carries everything on 5 ports — verified live 2026-07-03: **P1 = R730 eno1 trunk, P2 = 4G router, P3 = UPS, P4 = camera, P5 = apartment uplink** (ports assigned by a ping-burst test, NOT the diagrams' earlier illustrative order). 802.1Q: `tagMbrs [0x0,0x01]` (VLAN 30 tagged = P1 only), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]` — VLAN-30 membership is {P4 camera, P1 trunk} only, so tagged injection from any other port (incl. the apartment uplink) is dropped. `eno2`/`vmbr2` remain dormant as the fallback physical leg (rev 2).
+**Physical path (as-built 2026-10-26, ADR-0017 rev 5)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1** (VLAN 1 untagged + VLAN 30 tagged) → AX6000 port 2 → AX6000 port 1 → R730 `eno1` → `bond0` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. When `bond0` fails over to `eno2`, the camera path is P4 → **P5** (VLAN 30 tagged) → `eno2` and stays on the switch. Switch ports: **P1 = uplink to AX6000 port 2, P2 = MR200 `192.168.1.7`, P3 = UPS, P4 = camera, P5 = R730 `eno2`**. The iDRAC (`192.168.1.4`) is on MR200 port 2. 802.1Q (read live 2026-10-26): `tagMbrs [0x0,0x11]` (VLAN 30 tagged = P1 and P5), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]`. Because `eno1` now reaches the switch through the AX6000, VLAN 30 also crosses the AX6000; ADR-0017 rev 5 records the isolation question this raises. The rev 4 map (P1 = R730 eno1 trunk, P5 = apartment uplink) and the `eno2`/`vmbr2` fallback leg are superseded.
 
 **Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-import` records the leases in phpIPAM every 30 minutes.
 
@@ -139,6 +137,15 @@ Isolated camera segment for owned cameras at the Sofia site (first: `vermont-gar
 - Home-LAN clients need the **AX6000 static route** `10.0.30.0/24 via 192.168.1.2` (camera-day step) to reach the camera UI.
 
 **Consumers**: cluster Frigate (`/srv/nfs/frigate/config/config.yml` — NOT Terraform) pulls `rtsp://10.0.30.70:554` main+sub as `vermont-garage`; HA integrates via Frigate plus direct hikvision_next for tamper events.
+
+## R730 uplink redundancy — 2026-10-23 (infra#142)
+
+On 2026-10-23 AX6000 port 1 kept link but stopped forwarding from 05:02 to 10:31 EEST, which cut the whole rack off the LAN. The host now has a second path:
+
+- `bond0` in active-backup mode: `eno1` (AX6000 port 1) is primary, `eno2` (TL-SG105PE P5 → P1 → AX6000 port 2) is backup. Link state alone would not have caught the 2026-10-23 failure, so the bond uses ARP monitoring (`arp_interval 1000`, targets `192.168.1.1` and `192.168.1.13`, `arp_validate all`). ifupdown2 3.3.0 ignores `bond-arp-*` for active-backup, so `/etc/network/interfaces` applies these through a `post-up` line. The file is not managed by Terraform; the pre-bond copy is `/root/interfaces.bak-bond-20261023` on the host.
+- Failover test 2026-10-24: with the SRV1 cable pulled, `eno2` took over in the same second (one 1 s ping miss) and HA, the camera, the iDRAC and all k8s nodes stayed up for about 8 minutes; traffic returned to `eno1` on reconnect with no loss. The carrier-up-but-not-forwarding case has not been tested yet (it needs a `tc` drop on `eno1`).
+- Alerts (group "R730 Host" in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`): `R730OnBackupUplink` fires when `eno2` transmits packets within 5 minutes (it sends none while standby); `R730BackupUplinkDown` fires when one bond member has been down for 5 minutes and the host is not already running on `eno2`. Both carry `notify_emo="true"`, so they go to Slack #alerts and to emo's Gmail through the `email-emo` receiver.
+- Out-of-band watcher: when the rack is cut off, no alert from inside the cluster can leave. `home-uplink-watch.timer` on rpi-sofia (`192.168.1.10`) pings the AX6000, the R730, ha-sofia and the internet every minute and, after three failed runs, emails emo through the Vermont complex's own uplink (a temporary route in netns `guestns` via the complex gateway). It is configured on the Pi only, not in this repo.
 
 ## Vermont complex alias (10.77.1.0/24) — 2026-10-17 (ADR-0035)
 
@@ -227,7 +234,7 @@ flowchart LR
 ### VLAN Segmentation
 
 The Proxmox host uses a dual-bridge architecture:
-- **vmbr0**: Physical bridge on interface `eno1`, connected to upstream LAN (192.168.1.0/24). Proxmox management IP is 192.168.1.127.
+- **vmbr0**: Bridge on `bond0` (`eno1` primary, `eno2` backup), connected to upstream LAN (192.168.1.0/24). Proxmox management IP is 192.168.1.127.
 - **vmbr1**: Internal VLAN-aware bridge, acts as a trunk carrying:
   - **VLAN 10 (Management)**: 10.0.10.0/24 — Proxmox, DevVM
   - **VLAN 20 (Kubernetes)**: 10.0.20.0/24 — All K8s nodes, services, MetalLB IPs
