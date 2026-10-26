@@ -33,6 +33,12 @@ gap for every user in every directory.
   the `Home Server Admins` group (k8s RBAC can't scope to a JSON sub-key, hence
   the separate object). openclaw's own deployment keeps reading `openclaw-secrets`
   — this is purely additive.
+- **The same binding also covers the `chrome-service/emo-browser` ServiceAccount**
+  (2026-10-26). That SA is emo's default kubeconfig on the devvm, and agent
+  sessions cannot complete the browser-based OIDC login, so with the group grant
+  alone the verb returned 403 in every agent session. Scripts that ignored the
+  exit code then sent an empty Bearer token to ha-sofia, which showed up as
+  "Login attempt failed" notifications.
 - **`ha ssh` is deterministic and per-user.** Flags are fixed for unattended
   use: `-F /dev/null` (ignore user ssh-config), `StrictHostKeyChecking=no` +
   `UserKnownHostsFile=/dev/null` (no host-key prompt/record — agents have no
