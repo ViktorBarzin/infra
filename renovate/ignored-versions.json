@@ -34,6 +34,17 @@
       ],
       "matchNewValue": "3.15.1-alpine",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-10-26 pipeline #2953: stack android-emulator failed after this bump: its terragrunt apply failed (commit bf2aed47)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "library/python"
+      ],
+      "matchNewValue": "3.15.2-alpine",
+      "enabled": false
     }
   ]
 }
