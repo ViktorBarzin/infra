@@ -1296,11 +1296,13 @@ resource "kubernetes_deployment_v1" "f1_worker" {
             name       = "data"
             mount_path = "/data"
           }
-          # Read-only: qBittorrent owns these files, we only stream them out.
+          # Writable on the Worker only: qBittorrent owns the torrents here, and
+          # the Worker writes direct releases (file-host downloads) under
+          # direct/ beside them (f1-stream ADR-0052). Every other Role streams
+          # from this volume read-only.
           volume_mount {
             name       = "replay-cache"
             mount_path = "/replay-cache"
-            read_only  = true
           }
         }
         volume {
