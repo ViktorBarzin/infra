@@ -289,7 +289,7 @@ resource "kubernetes_deployment" "technitium" {
           }
         }
         container {
-          image = "technitium/dns-server:15.6.1"
+          image = "technitium/dns-server:15.6.2"
           name  = "technitium"
           resources {
             requests = {
