@@ -49,4 +49,16 @@ resource "kubernetes_role_binding" "ha_tokens_reader" {
     name      = "Home Server Admins"
     api_group = "rbac.authorization.k8s.io"
   }
+  # emo's default kubeconfig is this ServiceAccount (stacks/chrome-service/rbac.tf),
+  # not his OIDC identity, so agent sessions on the devvm never hold the group
+  # above: the OIDC login needs a browser and expires. Without this subject
+  # `homelab ha token` returned 403 in every agent session, and scripts that
+  # ignored the exit code sent an empty Bearer token, which ha-sofia raised as
+  # "Login attempt failed" notifications. The same token already sits in emo's
+  # Vaultwarden and ~/.config/ha-sofia-token, so this adds no new exposure.
+  subject {
+    kind      = "ServiceAccount"
+    name      = "emo-browser"
+    namespace = "chrome-service"
+  }
 }
