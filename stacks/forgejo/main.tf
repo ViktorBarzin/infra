@@ -136,7 +136,7 @@ resource "kubernetes_deployment" "forgejo" {
           # 17.0.0 since 2026-10-15 (16.0.6 -> 17.0.0, one major hop; a
           # forgejo dump, an LVM snapshot and a mysqldump were taken first,
           # under /mnt/backup/manual-upgrade-20261015/forgejo on the PVE host).
-          image = "codeberg.org/forgejo/forgejo:17.0.0"
+          image = "codeberg.org/forgejo/forgejo:17.0.1"
           env {
             name  = "USER_UID"
             value = 1000
