@@ -469,6 +469,15 @@ many 404s from tiles that have no matching workload. On 2026-10-13 that
 tripped `http-crawl-non_statics`, `http-probing` and `http-429-abuse` at once
 and banned Viktor's London address. The paths sit behind Anubis, and the
 default rate limit still applies to them.
+`viktor/actualbudget-app-files-whitelist` drops Actual Budget's own
+`/data/migrations/*` and `/data/default-db.sqlite` downloads when the backend
+served them (`OriginStatus` 200 or 304). A browser with no cached copy fetches
+about 60 of these files in a few seconds, and every `.sql` path matches
+`crowdsecurity/http-sensitive-files`; on 2026-10-26 opening budget-viktor
+while logged out banned Viktor's phone. Login guessing on Actual is covered
+separately by the `viktor/actualbudget-login-bf` scenario, which bans after
+more than 5 failed `POST /account/login` (400, or Actual's own 429) draining
+one per minute.
 `viktor/bouncer-refusals-whitelist` drops the 403s the Traefik bouncer returns
 itself (`OriginStatus` 0 in the access log), so a banned client's retries
 cannot renew its own ban; before it, one false positive stacked 24 decisions
