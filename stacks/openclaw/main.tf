@@ -1403,7 +1403,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Stdlib-only Python; no pip install at startup.
         container {
           name    = "openclaw-exporter"
-          image   = "library/python:3.15.1-slim"
+          image   = "library/python:3.15.2-slim"
           command = ["python3", "/scripts/exporter.py"]
           port {
             container_port = 9099
