@@ -614,7 +614,7 @@ resource "kubernetes_deployment" "prep_sync" {
       spec {
         container {
           name    = "prep-sync"
-          image   = "library/python:3.15.1-slim"
+          image   = "library/python:3.15.2-slim"
           command = ["python", "/app/prep_sync.py"]
           port {
             container_port = 8080
