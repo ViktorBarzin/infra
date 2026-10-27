@@ -1251,7 +1251,9 @@ uplink портовете е `SW02`, после `SW03` и така до посл
 
 ## Схема по портове (27.10.2026)
 
-Графичната схема (суичове с портове, в стила на соларната) е в Excalidraw
+Общата схема на цялата мрежа (видео, домофони, соларни острови, връзка с дома) е
+`draw.viktorbarzin.me/draw/vermont-mreja-kompleks` (27.10.2026, от версията с корекциите на
+Emil). Само видео частта: Excalidraw
 `draw.viktorbarzin.me/draw/vermont-video-mreja-shema`, табличната е в
 `draw.viktorbarzin.me/draw/vermont-video-mreja-portove`;
 копие като PNG и бележките по портове са в
