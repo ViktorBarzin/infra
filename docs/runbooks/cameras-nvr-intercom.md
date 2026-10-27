@@ -1227,7 +1227,9 @@ uplink портовете е `SW02`, после `SW03` и така до посл
 
 ## Схема по портове (27.10.2026)
 
-Подробната схема е в Excalidraw (`draw.viktorbarzin.me/draw/vermont-video-mreja-portove`),
+Графичната схема (суичове с портове, в стила на соларната) е в Excalidraw
+`draw.viktorbarzin.me/draw/vermont-video-mreja-shema`, табличната е в
+`draw.viktorbarzin.me/draw/vermont-video-mreja-portove`;
 копие като PNG и бележките по портове са в
 `Claude shared/vermont-network-topology/` на NAS-а. Съставена е от снимките на
 шкафовете (`Emo shared/3. Vermont, Симеоново/Общи части/Video&Intercom systems/`) и
