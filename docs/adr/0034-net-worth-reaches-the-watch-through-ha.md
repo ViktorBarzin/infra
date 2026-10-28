@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-15
+- Amended: 2026-10-28, intraday updates (decision 4)
 - Related: `stacks/wealthfolio/net_worth_to_ha.tf`, `stacks/wealthfolio/files/net_worth_to_ha.py` (with tests), `images/job-runtime/Dockerfile`, Grafana dashboard `wealth` ("Net worth (current)" tile)
 
 ## Context
@@ -18,6 +19,7 @@ What exists today:
   valuation rows. It runs after the UK close and in the middle of the US
   session, so US holdings carry an intraday price that the next day's run
   revises. Its schedule serves a "Grafana fresh by 6pm BST" target.
+  (Superseded by decision 4's amendment.)
 - Weekend rows exist and carry Friday forward, moving by a few pounds of FX.
 - The Grafana `wealth` dashboard is admin-only.
 - Viktor's iPhone runs the Home Assistant Companion app, registered with both
@@ -37,15 +39,15 @@ Companion app is already installed and needs no new account.
 
 ```mermaid
 flowchart TD
-  WF["Wealthfolio daily recalc<br/>16:00 UTC"] --> PG[("wealthfolio_sync<br/>dav_corrected, mirrored at :07")]
-  PG -->|"hourly at :15"| CJ["CronJob net-worth-to-ha<br/>(job-runtime image)"]
+  WF["Wealthfolio recalc<br/>every 15 min, weekdays 07-21 UTC"] --> PG[("wealthfolio_sync<br/>dav_corrected, mirrored 2 min later")]
+  PG -->|"every 15 min at :04/:19/:34/:49"| CJ["CronJob net-worth-to-ha<br/>(job-runtime image)"]
   CJ -->|"POST /api/states/sensor.net_worth"| HA["ha-sofia"]
   HA --> APP["HA Companion app on iPhone"]
   APP --> W["Apple Watch circular complication<br/>total + daily change"]
 ```
 
-1. **Path.** A CronJob in the wealthfolio stack (`net-worth-to-ha`, hourly at
-   :15, after the :07 mirror) reads `dav_corrected` and POSTs
+1. **Path.** A CronJob in the wealthfolio stack (`net-worth-to-ha`, every
+   15 min at :04/:19/:34/:49, after the mirror) reads `dav_corrected` and POSTs
    `sensor.net_worth` to ha-sofia. ha-sofia was chosen for the existing push
    pattern and its 30-day recorder.
 2. **Total.** The sum, over every account in `accounts`, of its last-known
@@ -56,8 +58,15 @@ flowchart TD
    weekday before it, both from the data. Saturday, Sunday and Monday before
    the recalc show Friday's move. A market-holiday weekday shows roughly £0
    (FX only).
-4. **Snapshot timing.** Unchanged: the 16:00 UTC recalc. The watch updates at
-   about 16:15 UTC.
+4. **Snapshot timing.** Amended 2026-10-28. The original decision kept the
+   16:00 UTC recalc, so on a weekday morning the watch showed only the FX
+   move on the US holding (£112 on 2026-10-28, when the market move was
+   larger). `wealthfolio-daily-sync` now runs every 15 min, 07:00-21:45 UTC on
+   weekdays, the pg-sync sidecar mirrors 2 min after each run, and
+   `net-worth-to-ha` pushes 2 min after that. The watch is at most about
+   20 min behind Yahoo's price, plus the Companion app's own ~15 min
+   complication refresh. Nights and weekends rely on Wealthfolio's internal
+   6-hourly recalc.
 5. **Watch face.** A circular complication built in the Companion app's
    complication builder (Settings → Companion app → Complications, app
    2026.9.3), source Template, server ha-sofia. Two lines, no gauge and no
@@ -98,10 +107,10 @@ The example values are illustrative.
 - The total is visible on the watch face to anyone nearby, at the rounded
   precision chosen for that reason.
 - Net worth history now also lives in ha-sofia's recorder (30 days).
-- A state set through `/api/states` does not survive an HA restart. The hourly
-  run restores it within an hour.
-- US holdings on the watch carry the 16:00 UTC intraday price, as on the
-  Grafana tile.
+- A state set through `/api/states` does not survive an HA restart. The
+  15-min run restores it within 15 minutes.
+- On weekdays the watch and the Grafana tiles carry intraday prices, and
+  today's change is measured against yesterday's close.
 
 ## Setup notes
 

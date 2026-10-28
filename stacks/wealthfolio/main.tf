@@ -329,6 +329,9 @@ resource "kubernetes_deployment" "wealthfolio" {
           cat >/etc/crontabs/root <<'CRON'
           # Hourly: snapshot SQLite, reload PG mirror.
           7 * * * * /scripts/sync.sh >>/proc/1/fd/1 2>&1
+          # Market hours: 2 min after each wealthfolio-daily-sync run, so the
+          # watch (net-worth-to-ha, 2 min later) sees intraday prices.
+          2,17,32,47 7-21 * * 1-5 /scripts/sync.sh >>/proc/1/fd/1 2>&1
           CRON
           cat >/scripts/sync.sh <<'SCRIPT'
           #!/bin/sh
@@ -977,29 +980,26 @@ resource "kubernetes_config_map" "grafana_wealth_datasource" {
 ############################################################################
 
 ############################################################################
-# Daily portfolio-recalc CronJob — keeps the Grafana wealth dashboard fresh.
+# Market-hours portfolio-recalc CronJob — keeps the wealth dashboard and the
+# watch (net-worth-to-ha, ADR-0034) on intraday prices.
 #
-# Wealthfolio writes new `daily_account_valuation` rows ONLY when a
-# PortfolioJob fires with ValuationRecalcMode != None. None of its built-in
-# schedulers do that for our deployment:
-#   * Internal 6h quote scheduler — refreshes the `quotes` table only.
-#   * Internal 4h broker scheduler — short-circuits if `sync_refresh_token`
-#     is unset (it is — we route broker imports through the external
-#     wealthfolio-sync CronJob).
-# Result: valuations only update when the Tauri/web UI hits
-# /api/v1/market-data/sync — i.e. when someone opens the dashboard.
+# Wealthfolio's internal schedulers run a quote sync and valuation recalc
+# about every 6h (02:02, 08:02, 14:02, 20:02 UTC on 2026-10-28). The 08:02
+# run lands before the LSE has a bar for the day, so until 14:02 the day's
+# row carried yesterday's ETF closes and moved only by FX.
 #
-# This CronJob mimics that: login → POST /api/v1/market-data/sync. The
-# server runs the portfolio job (Incremental quote sync + IncrementalFromLast
-# valuation recalc), backfilling missing daily_account_valuation rows up to
-# today. The pg-sync sidecar's :07 hourly tick mirrors them to PG, and
-# Grafana auto-refreshes within 5 min.
+# This CronJob mimics the UI: login → POST /api/v1/market-data/sync. The
+# server runs Incremental quote sync + IncrementalFromLast valuation recalc,
+# which writes the current Yahoo price as today's quote and recalculates
+# today's daily_account_valuation rows in under a second (measured
+# 2026-10-28 11:25 UTC: VUAG got its intraday 2026-10-28 quote).
 #
-# Schedule 16:00 UTC (= 17:00 BST in summer):
-#   - After UK market close (15:30 UTC BST), so EOD UK prices are settled
-#   - US market open ~2.5h (good intra-day US quotes)
-#   - pg-sync next tick at 16:07 → Grafana fresh by ~16:12 UTC ≈ 17:12 BST,
-#     well before the 18:00 BST "fresh data by 6pm" target.
+# Schedule every 15 min, 07:00-21:45 UTC on weekdays: covers the LSE session
+# (07:00/08:00 UTC open) through the US close (20:00/21:00 UTC). The pg-sync
+# sidecar mirrors to PG at :02/:17/:32/:47 in the same window, and
+# net-worth-to-ha pushes to HA at :04/:19/:34/:49. 15 min matches how often
+# the HA Companion app refreshes watch complications. Nights and weekends are
+# left to the internal 6h scheduler.
 #
 # Plaintext password lives at Vault `secret/wealthfolio.web_password`,
 # pulled into the existing `wealthfolio-secrets` K8s Secret by the
@@ -1013,7 +1013,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
   }
 
   spec {
-    schedule                      = "0 16 * * *"
+    schedule                      = "*/15 7-21 * * 1-5"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"

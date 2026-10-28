@@ -10,9 +10,11 @@ date's total is the sum of every account's last-known value on or before that
 date, so an account whose row lands late can't drop out of the sum. The total
 on the latest date matches the Grafana "Net worth (current)" tile.
 
-The change compares the last weekday with the weekday before it. Weekend rows
-only carry Friday forward, so Saturday, Sunday and Monday before the 16:00 UTC
-recalc all show Friday's move.
+The change compares the last weekday with the weekday before it. On a
+weekday that is today's intraday value (recalculated every 15 min in market
+hours) against yesterday's close. Weekend rows only carry Friday forward, so
+Saturday, Sunday and Monday before Wealthfolio's first recalc all show
+Friday's move.
 
 Runs on the job-runtime image (python3 + psql); stdlib only.
 Env:

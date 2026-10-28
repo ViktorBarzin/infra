@@ -1,14 +1,15 @@
 ############################################################################
 # net-worth-to-ha — net worth on the Apple Watch (ADR-0034).
 #
-# Hourly at :15 (after the pg-sync sidecar's :07 mirror), reads per-day
-# totals from the wealthfolio_sync mirror and POSTs sensor.net_worth to
-# ha-sofia. The HA Companion app turns the sensor into a watch corner
+# Every 15 min at :04/:19/:34/:49, 2 min after the pg-sync sidecar's
+# market-hours mirror (:02/:17/:32/:47, weekdays 07-21 UTC; hourly at :07
+# otherwise), reads per-day totals from the wealthfolio_sync mirror and POSTs
+# sensor.net_worth to ha-sofia. The HA Companion app turns the sensor into a watch corner
 # complication: total on the inner line, daily change on the outer arc.
 # Logic and tests: files/net_worth_to_ha.py, files/test_net_worth_to_ha.py.
 #
 # A state POSTed through /api/states is not persisted across an HA restart,
-# so the hourly cadence is also what restores the sensor after one.
+# so the 15-min cadence is also what restores the sensor after one.
 ############################################################################
 
 # ha-sofia long-lived token, read from its canonical home (secret/openclaw ->
@@ -68,7 +69,7 @@ resource "kubernetes_cron_job_v1" "net_worth_to_ha" {
   }
 
   spec {
-    schedule                      = "15 * * * *"
+    schedule                      = "4,19,34,49 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
