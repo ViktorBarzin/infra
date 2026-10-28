@@ -244,6 +244,36 @@ def test_the_milkshake_line_is_verified_by_its_own_published_claim():
     assert check.parse_variants(page(CRUMBLE_SHAKE_90))[0].protein_verified
 
 
+@pytest.mark.parametrize("amount", [
+    "435G - 15servings", "870G - 30servings", "2610g - 90servings",
+    "3480g - 120servings", "3600g - 120servings", "4350g - 150servings",
+    "4500g - 150servings", "465g - 15servings", "930G - 30servings",
+])
+def test_every_real_milkshake_pack_size_is_verified(amount):
+    """The live line on 2026-10-27: 29-31 g a serving across every size."""
+    v = check.parse_variants(page(variant(
+        f"Impact Whey Protein Powder - {amount} - Chocolate (Milkshake)",
+        "Chocolate (Milkshake)", amount, "101.99", "135.99", 18000020,
+    )))[0]
+    assert v.protein_verified
+
+
+def test_a_milkshake_listed_with_impossible_servings_is_not_verified():
+    """Seen live 2026-10-22 to 10-27: a 3600 g Chocolate Milkshake listed as 210
+    servings, 17 g a scoop, which cannot hold the 20 g the line claims. Priced
+    on that count it read £24.28/kg protein and alerted as a deal; relabelled to
+    120 servings at the same £101.99 it was £42.50."""
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 3600g - 210servings - Chocolate (Milkshake)",
+        "Chocolate (Milkshake)", "3600g - 210servings", "101.99", "135.99", 17998780,
+    )))
+    assert not v[0].protein_verified
+    assert check.find_deals(v, ALL, 28.0) == []
+    alerts, new_state = check.decide(v, {}, ALL, 28.0)
+    assert [a.kind for a in alerts] == []
+    assert "low:17998780" not in new_state
+
+
 def test_biscuit_piece_flavours_stay_verified_despite_a_bigger_scoop():
     """Their 20 g claim is published and already accounts for the pieces, so a
     32 g scoop is explained rather than unknown."""
@@ -355,10 +385,13 @@ def test_a_new_flavour_seeds_its_low_silently_on_first_sighting():
 # sharing a price are named together instead of repeated a line at a time.
 
 def _same_price_shake(flavours, price="55.00", servings=150, sku_base=18100000):
+    # 29 g a serving, the Milkshake line's real scoop, so any serving count
+    # yields a pack the page could actually list.
+    grams = servings * 29
     return [
         variant(
-            f"Impact Whey Protein Powder - 4350g - {servings}servings - {f} (Milkshake)",
-            f"{f} (Milkshake)", f"4350g - {servings}servings", price, "153.99",
+            f"Impact Whey Protein Powder - {grams}g - {servings}servings - {f} (Milkshake)",
+            f"{f} (Milkshake)", f"{grams}g - {servings}servings", price, "153.99",
             sku_base + i,
         )
         for i, f in enumerate(flavours)
@@ -936,3 +969,154 @@ def test_the_run_log_states_the_collagen_line_is_out_of_scope():
     lines = _scope_lines(check.parse_variants(page(VANILLA_90, col)))
     joined = " ".join(lines)
     assert "Collagen" in joined and "1" in joined
+
+
+# --- discount codes ----------------------------------------------------------
+# 2026-10-27: the page showed the 5 kg Original at £144.49 (£37.84/kg protein),
+# but code EXTRA took 15% off Impact Whey in the basket, £32.17/kg. The watcher
+# read only the shelf price, so a code that crossed £28 would have been a deal
+# it never mentioned. The page announces codes in a schema.org SaleEvent.
+
+def sale_event(name, description=""):
+    blob = json.dumps({
+        "@type": "SaleEvent",
+        "name": name,
+        "url": "https://www.myprotein.com/p/sports-nutrition/impact-whey-protein-powder/10530943/",
+        "description": description,
+    })
+    return f'<script type="application/ld+json">{{"@graph":[{blob}]}}</script>'
+
+
+def page_with(variants, extra):
+    return page(*variants).replace("</body>", f"{extra}</body>")
+
+
+EXTRA_15 = sale_event(
+    "PAYDAY SALE IS LIVE. <b>EXTRA 15% OFF ALMOST EVERYTHING.</b> USE CODE <b>EXTRA</b>.",
+    "<p>Shop your favourites &amp; our best sellers and save 25% on almost "
+    "everything. Plus when you use code EXTRA at basket, save an extra 15% off "
+    "your order.</p>",
+)
+
+# £84.99 for 90 x 23 g = £41.06/kg on the shelf, £34.90 with 15% off.
+VANILLA_90_SALE = variant(
+    "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
+    "Vanilla", "2.7kg - 90servings", "84.99", "97.49", 18500001,
+)
+# £68.99 = £33.33/kg on the shelf, £28.33 with 15% off, £26.66 with 20% off.
+VANILLA_90_CLOSE = variant(
+    "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
+    "Vanilla", "2.7kg - 90servings", "68.99", "97.49", 18500002,
+)
+
+
+def test_reads_the_code_and_its_percentage_from_the_sale_event():
+    assert check.parse_codes(page_with([VANILLA_90], EXTRA_15)) == [check.Code("EXTRA", 15)]
+
+
+def test_a_sale_banner_without_a_code_is_not_a_code():
+    """'SAVE 25% OFF ALMOST EVERYTHING' is already in the shelf price."""
+    html = page_with([VANILLA_90], sale_event("PAYDAY SALE. SAVE 25% OFF ALMOST EVERYTHING."))
+    assert check.parse_codes(html) == []
+
+
+def test_a_code_named_only_in_the_description_takes_the_percentage_next_to_it():
+    """The description names 25% first (the shelf sale) and 15% next to the code."""
+    html = page_with([VANILLA_90], sale_event(
+        "PAYDAY SALE IS LIVE.",
+        "Save 25% on almost everything. Plus when you use code BOOST at basket, "
+        "save an extra 15% off your order.",
+    ))
+    assert check.parse_codes(html) == [check.Code("BOOST", 15)]
+
+
+def test_no_sale_event_means_no_codes():
+    assert check.parse_codes(page(VANILLA_90)) == []
+
+
+def test_two_codes_keep_the_deeper_one_first():
+    html = page_with([VANILLA_90], sale_event("EXTRA 10% OFF. USE CODE TEN.")
+                     + sale_event("EXTRA 20% OFF. USE CODE TWENTY."))
+    assert check.parse_codes(html)[0] == check.Code("TWENTY", 20)
+
+
+def test_a_code_that_takes_a_price_under_the_threshold_alerts():
+    parsed = check.parse_variants(page(VANILLA_90_CLOSE))
+    alerts, new_state = check.decide(parsed, {}, ALL, 28.0, codes=[check.Code("EXTRA", 20)])
+    assert [a.kind for a in alerts] == ["code"]
+    assert alerts[0].code == check.Code("EXTRA", 20)
+    assert new_state["code:18500002"] == pytest.approx(55.19, abs=0.01)
+
+
+def test_a_code_that_does_not_reach_the_threshold_stays_quiet():
+    parsed = check.parse_variants(page(VANILLA_90_SALE))
+    alerts, _ = check.decide(parsed, {}, ALL, 28.0, codes=[check.Code("EXTRA", 15)])
+    assert "code" not in [a.kind for a in alerts]
+
+
+def test_a_shelf_deal_is_not_announced_a_second_time_as_a_code_deal():
+    cheap = variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
+        "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18500003,
+    )
+    alerts, _ = check.decide(check.parse_variants(page(cheap)), {}, ALL, 28.0,
+                             codes=[check.Code("EXTRA", 15)])
+    assert "deal" in [a.kind for a in alerts]
+    assert "code" not in [a.kind for a in alerts]
+
+
+def test_a_code_deal_is_said_once_then_dropped_when_the_code_ends():
+    parsed = check.parse_variants(page(VANILLA_90_CLOSE))
+    codes = [check.Code("EXTRA", 20)]
+    first, state1 = check.decide(parsed, {}, ALL, 28.0, codes=codes)
+    again, state2 = check.decide(parsed, state1, ALL, 28.0, codes=codes)
+    ended, state3 = check.decide(parsed, state2, ALL, 28.0, codes=[])
+    back, _ = check.decide(parsed, state3, ALL, 28.0, codes=codes)
+    assert [a.kind for a in first] == ["code"]
+    assert again == [] and ended == []
+    assert "code:18500002" not in state3
+    assert [a.kind for a in back] == ["code"]
+
+
+def test_a_code_never_prices_a_flavour_we_cannot_price():
+    twix = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "12.00", "39.99", 18500004,
+    )
+    alerts, _ = check.decide(check.parse_variants(page(twix)), {}, ALL, 28.0,
+                             codes=[check.Code("EXTRA", 50)])
+    assert "code" not in [a.kind for a in alerts]
+
+
+def test_the_code_message_names_the_code_and_says_to_check_the_basket():
+    parsed = check.parse_variants(page(VANILLA_90_CLOSE))
+    alerts, _ = check.decide(parsed, {}, ALL, 28.0, codes=[check.Code("EXTRA", 20)])
+    text = check.format_slack(alerts)["text"]
+    assert "EXTRA" in text
+    assert "£55.19" in text           # the price with the code
+    assert "£68.99" in text           # and the shelf price it came from
+    assert "£26.66/kg protein" in text
+    assert "basket" in text.lower()
+
+
+def test_the_digest_shows_the_price_with_a_live_code():
+    parsed = check.parse_variants(page(VANILLA_90_SALE))
+    line = check.digest_line(parsed, ALL, 28.0, codes=[check.Code("EXTRA", 15)])
+    assert "\n" not in line
+    assert "£41.06/kg protein" in line
+    assert "£34.90" in line and "EXTRA" in line
+    assert "nothing at or under £28.00" in line
+
+
+def test_the_digest_calls_a_code_deal_live():
+    parsed = check.parse_variants(page(VANILLA_90_CLOSE))
+    line = check.digest_line(parsed, ALL, 28.0, codes=[check.Code("EXTRA", 20)])
+    assert "deal is live" in line
+    assert "EXTRA" in line and "£26.66/kg protein" in line
+
+
+def test_the_run_log_names_the_code_it_saw():
+    out = []
+    check.print_scope(check.parse_variants(page(VANILLA_90_SALE)), ALL, out.append,
+                      codes=[check.Code("EXTRA", 15)])
+    assert any("EXTRA" in ln and "15%" in ln for ln in out)

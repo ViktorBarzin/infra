@@ -105,6 +105,13 @@ LICENSED_RE = re.compile(
 #    published claim (the biscuit-pieces 20 g) are exempt.
 STANDARD_SCOOP_G = 30.0
 SCOOP_TOLERANCE = 0.05
+# The Milkshake line publishes its own 20 g, but that figure is per serving, so
+# it is only as good as the serving count beside it. Real packs are 29-31 g a
+# serving. On 2026-10-22 a 3600 g tub was listed as 210 servings (17 g), read
+# as £24.28/kg protein, and alerted as a deal for five days; at its corrected
+# 120 servings it was £42.50. Only an undersized scoop is suspect: too many
+# servings overstates the protein, while a bigger scoop can only understate it.
+MILKSHAKE_SCOOP_G = 29.5
 
 # A "big sale" on MyProtein's own reckoning. Note their RRP is their number and
 # it drifts upward over time, which is why this supplements the £/serving
@@ -196,9 +203,15 @@ class Variant:
         Only the value triggers require this. See the notes on LICENSED_RE and
         STANDARD_SCOOP_G for why each signal marks a figure as unknown.
         """
-        # These three lines each publish their own per-serving figure, so their
-        # scoop size does not have to match the plain Original one.
-        if self.line in ("Milkshake", "Collagen"):
+        # These lines each publish their own per-serving figure, so their scoop
+        # size does not have to match the plain Original one. Milkshake still has
+        # to match its OWN scoop, or a mislabelled serving count prices it. A pack
+        # with no stated weight cannot be checked and is priced on its servings.
+        if self.line == "Milkshake":
+            if self.scoop_g is None:
+                return True
+            return self.scoop_g >= MILKSHAKE_SCOOP_G * (1 - SCOOP_TOLERANCE)
+        if self.line == "Collagen":
             return True
         if CRUNCH_RE.search(self.base_flavour):
             return True
@@ -239,9 +252,20 @@ class Variant:
 
 
 @dataclass(frozen=True)
+class Code:
+    """A discount code the page announces, taken off at the basket."""
+    code: str
+    pct: int
+
+    def apply(self, price: float) -> float:
+        return price * (1 - self.pct / 100)
+
+
+@dataclass(frozen=True)
 class Alert:
-    kind: str  # "deal" | "return"
+    kind: str  # "deal" | "code" | "low" | "discount" | "return"
     variant: Variant
+    code: Code | None = None
 
 
 def _json_objects(html: str, anchor: re.Pattern[str]):
@@ -312,6 +336,50 @@ def parse_variants(html: str) -> list[Variant]:
             rrp=rrp,
         ))
     return out
+
+
+SALE_EVENT_ANCHOR = re.compile(r'\{\s*"@type"\s*:\s*"SaleEvent"')
+CODE_RE = re.compile(r"\bcode\s+([A-Z0-9]{3,})\b", re.I)
+PCT_RE = re.compile(r"(\d{1,2})\s*%")
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _code_in(text: str) -> Code | None:
+    """The code a sentence announces, with the percentage written closest to it.
+
+    Closest rather than first: "save 25% on almost everything. Plus when you use
+    code EXTRA at basket, save an extra 15%" names the shelf sale before the code.
+    """
+    # Codes are printed in capitals; "code at basket" is prose, not a code.
+    m = next((c for c in CODE_RE.finditer(text) if c.group(1).isupper()), None)
+    if not m:
+        return None
+    pcts = [(abs(p.start() - m.start()), int(p.group(1))) for p in PCT_RE.finditer(text)]
+    if not pcts:
+        return None
+    return Code(m.group(1), min(pcts)[1])
+
+
+def parse_codes(html: str) -> list[Code]:
+    """Discount codes announced in the page's schema.org SaleEvent blocks.
+
+    A code only applies in the basket, so the shelf prices never reflect it. On
+    2026-10-27 code EXTRA took 15% off Impact Whey that the page did not show.
+    A sale with no code ("SAVE 25% OFF ALMOST EVERYTHING") is already in the
+    shelf price and is not returned. Deepest first.
+    """
+    found: dict[str, Code] = {}
+    for blob in _json_objects(html, SALE_EVENT_ANCHOR):
+        try:
+            obj = json.loads(blob)
+        except ValueError:
+            continue
+        for field in ("name", "description"):
+            code = _code_in(TAG_RE.sub("", str(obj.get(field) or "")))
+            if code:
+                found.setdefault(code.code, code)
+                break
+    return sorted(found.values(), key=lambda c: -c.pct)
 
 
 def _watched(variant: Variant, watch: list[str]) -> bool:
@@ -395,14 +463,27 @@ def find_returns(variants: list[Variant]) -> list[Variant]:
     ]
 
 
+def find_code_deals(variants: list[Variant], watch: list[str], threshold: float,
+                    codes: list[Code]) -> list[tuple[Variant, Code]]:
+    """Comparable variants the deepest code takes to the threshold, when the shelf
+    price alone does not. Those already at his price are the deal trigger's."""
+    if not codes:
+        return []
+    best = codes[0]
+    return [(v, best) for v in comparable(variants, watch)
+            if v.price_per_kg_protein > threshold
+            and best.apply(v.price_per_kg_protein) <= threshold]
+
+
 def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
-           low_margin=NEW_LOW_MARGIN, low_relevance=LOW_RELEVANCE_MARGIN):
+           low_margin=NEW_LOW_MARGIN, low_relevance=LOW_RELEVANCE_MARGIN, codes=()):
     """Work out what is worth saying, given what we already said.
 
-    Returns (alerts, new_state). Four triggers, each de-duplicated on its own
+    Returns (alerts, new_state). Five triggers, each de-duplicated on its own
     key so one can fire without silencing the others:
 
-      deal     — at or under the £/serving Viktor actually pays
+      deal     — at or under the £/kg of protein Viktor actually pays
+      code     — at or under it with a code the page announces
       low      — cheapest we have ever recorded for that variant
       discount — MyProtein's own displayed discount is unusually deep
       return   — plain Cookies and Cream is back in the Original line
@@ -427,6 +508,22 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
             if previous is None or v.price < float(previous):
                 alerts.append(Alert("deal", v))
                 new_state[key] = v.price
+        else:
+            new_state.pop(key, None)
+
+    # Keyed on the price with the code, so a deeper code re-announces and an
+    # ended one is forgotten, ready for the next.
+    with_code = {v.sku: (v, c) for v, c in find_code_deals(variants, watch, threshold,
+                                                          list(codes))}
+    for v in variants:
+        key = f"code:{v.sku}"
+        if v.sku in with_code:
+            _, code = with_code[v.sku]
+            effective = round(code.apply(v.price), 2)
+            previous = new_state.get(key)
+            if previous is None or effective < float(previous):
+                alerts.append(Alert("code", v, code))
+                new_state[key] = effective
         else:
             new_state.pop(key, None)
 
@@ -481,6 +578,7 @@ UNVERIFIED_CAVEAT = (
 HEADERS = {
     "return": "Cookies and Cream is back",
     "deal": "Impact Whey is at your buying price",
+    "code": "Impact Whey is at your buying price with a code",
     "low": "Cheapest we have seen it",
     "discount": "Big discount running",
 }
@@ -525,9 +623,22 @@ def _flavour_list(variants: list[Variant]) -> str:
     return ", ".join(shown) + (f" +{rest} more" if rest else "")
 
 
+def _code_detail(v: Variant, code: Code) -> str:
+    """The price with the code, beside the shelf price it was worked out from."""
+    effective = code.apply(v.price)
+    return (f"*£{effective:.2f} with code {code.code}* ({code.pct}% off in the basket; "
+            f"£{v.price:.2f} on the page) = *£{code.apply(v.price_per_kg_protein):.2f}"
+            f"/kg protein* (£{effective / v.servings:.2f}/serving at "
+            f"{v.whey_g_per_serving:.0f}g). _Codes exclude some products, so check "
+            f"the basket total._")
+
+
+ALERT_ORDER = ("return", "deal", "code", "low", "discount")
+
+
 def format_slack(alerts: list[Alert]) -> dict[str, Any]:
     lines: list[str] = []
-    for kind in ("return", "deal", "low", "discount"):
+    for kind in ALERT_ORDER:
         groups: dict[tuple, list[Variant]] = {}
         for a in [x for x in alerts if x.kind == kind]:
             groups.setdefault(_group_key(a.variant), []).append(a.variant)
@@ -542,6 +653,11 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
                 )
             elif kind == "deal":
                 lines.append(f":moneybag: *{flavours}* ({v.line}) — {_detail(v)}")
+            elif kind == "code":
+                code = next(a.code for a in alerts
+                            if a.kind == "code" and a.variant is v)
+                lines.append(f":ticket: *{flavours}* ({v.line}) — {v.servings} servings"
+                             f" — {_code_detail(v, code)}")
             elif kind == "low":
                 lines.append(
                     f":chart_with_downwards_trend: *{flavours}* ({v.line}) "
@@ -554,8 +670,7 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
                     f"— {_detail(v)}{caveat}"
                 )
 
-    present = [k for k in ("return", "deal", "low", "discount")
-               if any(a.kind == k for a in alerts)]
+    present = [k for k in ALERT_ORDER if any(a.kind == k for a in alerts)]
     header = HEADERS[present[0]] if present else ""
     return {
         "text": f"*{header}*\n" + "\n".join(lines),
@@ -570,7 +685,7 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
 LOG_CHEAPEST_N = 12
 
 
-def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
+def print_scope(variants: list[Variant], watch: list[str], out=None, codes=()) -> None:
     """Say what was in scope this run, and what was deliberately left out.
 
     Worth the lines: with every flavour in scope, "no alert" is only meaningful
@@ -595,6 +710,12 @@ def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
             f"= £{v.price_per_kg_protein:.2f}/kg protein "
             f"(£{v.price_per_serving:.3f}/serving at {v.whey_g_per_serving:.0f}g, "
             f"{v.discount_pct}% off)")
+    if codes and cmp_:
+        best = codes[0]
+        say(f"code {best.code} ({best.pct}% off in the basket) announced on the page; "
+            f"cheapest with it £{best.apply(cmp_[0].price_per_kg_protein):.2f}/kg protein")
+    else:
+        say("no discount code announced on the page")
     if unverified:
         say(f"{len(unverified)} flavour(s) held out of the value triggers — protein "
             f"per serving not published for them, big-sale trigger still covers "
@@ -606,7 +727,8 @@ def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
             f"product Viktor wants")
 
 
-def digest_line(variants: list[Variant], watch: list[str], threshold: float) -> str:
+def digest_line(variants: list[Variant], watch: list[str], threshold: float,
+                codes=()) -> str:
     """One line saying the watcher is alive and where the market sits.
 
     Exists because this job's normal state is silence: it alerts only when a
@@ -636,6 +758,18 @@ def digest_line(variants: list[Variant], watch: list[str], threshold: float) -> 
         return (f":moneybag: *MyProtein watcher OK — a deal is live* — cheapest "
                 f"*£{best.price_per_kg_protein:.2f}/kg protein* ({where}), "
                 f"at or under your £{threshold:.2f}. {in_scope} {noun} in scope.")
+    if codes:
+        code = codes[0]
+        with_code = code.apply(best.price_per_kg_protein)
+        if with_code <= threshold:
+            return (f":moneybag: *MyProtein watcher OK — a deal is live with code "
+                    f"{code.code}* — cheapest *£{with_code:.2f}/kg protein* with the "
+                    f"code ({where}), at or under your £{threshold:.2f}. {in_scope} "
+                    f"{noun} in scope.")
+        return (f":eyes: *MyProtein watcher OK* — {in_scope} {noun} in scope, cheapest "
+                f"*£{best.price_per_kg_protein:.2f}/kg protein* ({where}), "
+                f"£{with_code:.2f} with code {code.code} ({code.pct}% off); "
+                f"nothing at or under £{threshold:.2f}.")
     return (f":eyes: *MyProtein watcher OK* — {in_scope} {noun} in scope, cheapest "
             f"*£{best.price_per_kg_protein:.2f}/kg protein* ({where}); "
             f"nothing at or under £{threshold:.2f}.")
@@ -793,13 +927,14 @@ def main() -> int:
         print("parsed 0 variants — the page shape probably changed", file=sys.stderr)
         return 1
 
-    print_scope(variants, watch)
+    codes = parse_codes(html)
+    print_scope(variants, watch, codes=codes)
 
     # The digest deliberately returns before any state is read or written. It is
     # a heartbeat, not a second alerting path: sharing the dedup state would let
     # it mark a deal as "already announced" and silence the real alert.
     if digest:
-        payload = format_digest(digest_line(variants, watch, threshold))
+        payload = format_digest(digest_line(variants, watch, threshold, codes))
         print(payload["text"])
         if dry_run:
             print("(dry run — not posting)")
@@ -810,10 +945,11 @@ def main() -> int:
 
     state = load_state(state_target, backend)
     alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin,
-                               low_relevance)
+                               low_relevance, codes)
 
     if not alerts:
-        print(f"nothing at or under £{threshold:.2f}/kg protein, no new low, "
+        print(f"nothing at or under £{threshold:.2f}/kg protein (with or without a "
+              f"code), no new low, "
               f"nothing at {deep_pct}%+ off — no alert")
         save_state(state_target, new_state, backend)
         return 0

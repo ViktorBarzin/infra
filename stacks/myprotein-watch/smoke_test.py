@@ -74,10 +74,11 @@ def variant(sku, flavour, amount, price, rrp, in_stock=True):
     }
 
 
-def page(name, variants) -> str:
+def page(name, variants, extra="") -> str:
     body = ",".join(json.dumps(v, separators=(",", ":")) for v in variants)
     p = WORK / name
-    p.write_text(f'<html><body><script>window.__D__={{"variants":[{body}]}}</script></body></html>')
+    p.write_text(f'<html><body><script>window.__D__={{"variants":[{body}]}}</script>'
+                 f'{extra}</body></html>')
     return f"file://{p}"
 
 
@@ -280,6 +281,31 @@ expect(len(posts) == 0,
        "SILENT — a new low 63% worse than the best price on the page is not news")
 expect(any(k.startswith("low:") for k in state()),
        "but the price record is still kept")
+
+# 12. A code that only applies in the basket ---------------------------------
+# 2026-10-27: code EXTRA took 15% off Impact Whey that no shelf price showed.
+# £68.99 is £33.33/kg on the shelf and £26.66 with 20% off, inside the £28 bar.
+CODE_EVENT = ('<script type="application/ld+json">{"@type":"SaleEvent","name":'
+              '"FLASH SALE. <b>EXTRA 20% OFF ALMOST EVERYTHING.</b> USE CODE <b>BOOST</b>."}'
+              '</script>')
+WITH_CODE = page("code.html", [STRAWBERRY("68.99")], CODE_EVENT)
+CODE_ENDED = page("code_ended.html", [STRAWBERRY("68.99")])
+
+r, posts = run(WITH_CODE, "12a. a code takes the shelf price under the bar")
+expect(r.returncode == 0, "run succeeds")
+expect(len(posts) == 1 and "BOOST" in posts[0]["text"]
+       and "£26.66/kg protein" in posts[0]["text"],
+       "ALERTS — names the code and the price with it")
+r, posts = run(WITH_CODE, "12b. same code, next run")
+expect(len(posts) == 0, "SILENT — already announced")
+r, posts = run(WITH_CODE, "12c. digest while the code runs", digest=True)
+expect(len(posts) == 1 and "BOOST" in posts[0]["text"]
+       and "a deal is live" in posts[0]["text"],
+       "the digest reports the code deal")
+r, posts = run(CODE_ENDED, "12d. the code ends")
+expect(not any(k.startswith("code:") for k in state()), "its state is dropped")
+r, posts = run(WITH_CODE, "12e. the code comes back")
+expect(len(posts) == 1 and "BOOST" in posts[0]["text"], "ALERTS again")
 
 print("\n" + "=" * 70)
 if failures:
