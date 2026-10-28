@@ -243,7 +243,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           # removes the whole class. Renovate proposes bumps (never
           # downwards) through the CI rails; check the release notes of a
           # major before it lands.
-          image   = "docker.io/library/redis:8.10.2-alpine"
+          image   = "docker.io/library/redis:8.10.3-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
