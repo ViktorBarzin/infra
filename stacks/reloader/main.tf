@@ -21,7 +21,7 @@ resource "helm_release" "reloader" {
   chart      = "reloader"
   # Pinned 2026-10-09. Unpinned, every apply pulled the newest chart, including
   # a future 3.x once it leaves beta, and a rollback had no version to go back to.
-  version = "2.2.18"
+  version = "2.2.19"
 
   # Reload via a pod-template ANNOTATION instead of an injected env var.
   #
