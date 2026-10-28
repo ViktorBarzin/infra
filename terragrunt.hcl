@@ -94,7 +94,7 @@ terraform {
       # blocks, applied to every stack holding Cloudflare objects and then
       # removed the same day.
       # renovate: datasource=terraform-provider depName=cloudflare/cloudflare
-      version = "5.28.0"
+      version = "5.28.1"
     }
     authentik = {
       source = "goauthentik/authentik"
