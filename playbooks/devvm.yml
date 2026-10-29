@@ -918,6 +918,26 @@
       loop: [session-start, heartbeat, release]
       tags: [presence]
 
+    # Poetry at the version f1-stream's poetry.lock and its CI pin (2.1.3). The
+    # apt python3-poetry is 1.8.2, which cannot read a lock written by 2.x, and
+    # a per-user install in ~/.local/bin is not on PATH inside an agent's shell
+    # (emo's Claude shell snapshot carries the system PATH only, seen
+    # 2026-10-29). /usr/local/bin comes before /usr/bin, so this one wins for
+    # every user who has not installed their own.
+    - name: Install poetry into its own venv
+      ansible.builtin.pip:
+        name: poetry==2.1.3
+        virtualenv: /opt/poetry
+        virtualenv_command: python3 -m venv
+      tags: [poetry]
+    - name: Put poetry on every user's PATH
+      ansible.builtin.file:
+        src: /opt/poetry/bin/poetry
+        dest: /usr/local/bin/poetry
+        state: link
+        force: true
+      tags: [poetry]
+
     # ---- 5) /etc/skel for new accounts --------------------------------------
     # File by file, not the whole skel/ directory: the repo keeps the tmux
     # config as skel/tmux.conf so it shows in a listing, but a new account needs
