@@ -129,7 +129,7 @@ pages, which is the signal to add pages.
 | Postiz Users | -- | No | `postiz.viktorbarzin.me` |
 | Chrome Users | -- | No | `chrome`/`chrome-fleet` shared browser (ADR-0023; deliberately tighter than admin) |
 | Forgejo Users | -- | No | Forgejo (OIDC binding) |
-| F1 Users | -- | No | f1-stream households let in from an Access request (f1-stream ADR-0042): `modules/authentik/app_signup` in request mode from `stacks/f1-stream/members.tf`; bound on F1 Stream beside Home Users and Home Server Admins; TF declares the group, the app's approver token (`svc-f1-stream-approver`) adds members |
+| F1 Users | -- | No | f1-stream households let in from an Access request (f1-stream ADR-0042): `modules/authentik/app_signup` in request mode from `stacks/f1-stream/members.tf`; bound on TV (slug f1-stream) beside Home Users and Home Server Admins; TF declares the group, the app's approver token (`svc-f1-stream-approver`) adds members |
 | f1-stream membership readers | -- | No | holds svc-f1-stream only; role `f1-stream membership reader` = view_user + view_group |
 | tasks membership readers | -- | No | holds svc-tasks-reader only; role `tasks membership reader` = view_user + view_group on Tasks Users only (`modules/kubernetes/tanstack_app/authentik.tf`, called from `stacks/tasks`); its token is Secret `tasks-authentik-reader` |
 | Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
