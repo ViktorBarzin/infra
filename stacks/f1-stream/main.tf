@@ -404,9 +404,10 @@ locals {
     # connections between viewers' browsers behind a single env var.
     #
     # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
-    # on this same host under /tracker, so it follows f1 through the
-    # Cloudflare cutover with no second decision.
-    { name = "P2P_TRACKERS", value = "wss://f1.viktorbarzin.me/tracker" },
+    # under /tracker on every app host. It points at tv, the product's home
+    # since 2026-10-29 (f1-stream ADR-0053); a page still open on f1 reaches
+    # it cross-origin, which a WebSocket allows.
+    { name = "P2P_TRACKERS", value = "wss://tv.viktorbarzin.me/tracker" },
     # STUN only, no TURN. A STUN server learns a candidate address and
     # carries no media, so this leaks less than the segment request that
     # follows it; TURN would relay the video itself and defeat the point.
@@ -442,7 +443,9 @@ locals {
     # viktor/f1-stream as tv-feedback-bot. Mail goes From f1@, which the
     # mailserver's aliases.txt authorises for the spam@ login.
     { name = "PROMETHEUS_URL", value = "http://prometheus-server.monitoring.svc.cluster.local" },
-    { name = "PUBLIC_BASE_URL", value = "https://f1.viktorbarzin.me" },
+    # tv since 2026-10-29 (f1-stream ADR-0053); f1 redirects there after the
+    # cutover.
+    { name = "PUBLIC_BASE_URL", value = "https://tv.viktorbarzin.me" },
     { name = "REPORTS_FORGEJO_API", value = "https://forgejo.viktorbarzin.me/api/v1" },
     { name = "REPORTS_REPO", value = "viktor/f1-stream" },
     { name = "REPORTS_INTAKE_URL", value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080" },
@@ -1522,7 +1525,32 @@ module "tls_secret" {
 # The per-site Anubis instance was folded into the shared one in
 # stacks/turnstile-gate on 2026-10-16; see docs/plans/2026-10-16-turnstile-sitewide-design.md.
 
-# The single Authentik-gated path. Everything else on f1.viktorbarzin.me is
+# The hosts that serve the app. tv is the product's home from 2026-10-29
+# (f1-stream ADR-0053: the TV app comes first and F1 is one section of it).
+# f1 keeps serving the same app with the same settings until the cutover,
+# which turns it into Cloudflare redirect rules to tv and drops it from this
+# set. Every ingress below is one copy per host, so the main ingress and its
+# three carve-outs (/admin/login here, /pair in tv-pairing.tf, /tracker in
+# wt-tracker.tf) stay identical on both names by construction.
+locals {
+  app_hosts = toset(["f1", "tv"])
+  # The host that carries the one homepage tile.
+  app_primary_host = "tv"
+}
+
+# The f1 copies were single module instances before tv existed; these keep
+# their state, so adding tv creates the tv ingresses and changes nothing on f1.
+moved {
+  from = module.ingress
+  to   = module.ingress["f1"]
+}
+
+moved {
+  from = module.ingress_admin_login
+  to   = module.ingress_admin_login["f1"]
+}
+
+# The single Authentik-gated path. Everything else on the app hosts is
 # public and Anubis-fronted; this one route exists so a browser can prove who it
 # is once, by top-level navigation, which is the case forward-auth handles. The
 # app reads X-authentik-groups here and nowhere else, and exchanges it for a
@@ -1533,10 +1561,11 @@ module "tls_secret" {
 # app directly rather than through Anubis: a proof-of-work challenge in front of
 # a login redirect would only get in the way, and Authentik is the stronger gate.
 module "ingress_admin_login" {
+  for_each     = local.app_hosts
   source       = "../../modules/kubernetes/ingress_factory"
   auth         = "required"
-  host         = "f1"
-  name         = "f1-admin-login"
+  host         = each.key
+  name         = "${each.key}-admin-login"
   ingress_path = ["/admin/login"]
   namespace    = kubernetes_namespace.f1-stream.metadata[0].name
   service_name = kubernetes_service.f1-stream.metadata[0].name
@@ -1559,8 +1588,9 @@ module "ingress_admin_login" {
 }
 
 module "ingress" {
-  source = "../../modules/kubernetes/ingress_factory"
-  auth   = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  for_each = local.app_hosts
+  source   = "../../modules/kubernetes/ingress_factory"
+  auth     = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   # CUT OVER 2026-09-10. "proxied" removes the explicit A and AAAA records, so
   # the host falls through to the zone-wide `*` CNAME into the cloudflared
   # tunnel (ADR-0021) and no per-name record is created. Reverting is the same
@@ -1579,17 +1609,22 @@ module "ingress" {
   # share-link work landed: the shared `rate-limit` middleware has no
   # sourceCriterion and would key every viewer on the cloudflared pod, so f1
   # carries its own limiter keyed on X-Real-Ip (see below).
+  #
+  # tv was added on 2026-10-29 with exactly the same settings; it is a
+  # proxied name on the same `*` CNAME, so it needs no record of its own.
   dns_type  = "proxied"
   namespace = kubernetes_namespace.f1-stream.metadata[0].name
-  name      = "f1"
+  name      = each.key
   # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
   # and the shared Anubis (stacks/turnstile-gate) do the bot check.
   service_name     = kubernetes_service.f1-stream.metadata[0].name
   port             = 80
   turnstile_strict = true
-  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
-  # ingress_factory for anubis-* backends. f1 is non-proxied (pfSense
-  # PROXY-protocol) so the peer is already the real client.
+  # real-ip (sets X-Real-Ip, which the Turnstile gate and the rate limiter
+  # below key on) is auto-attached by ingress_factory because the gate is on.
+  # Both hosts are Cloudflare-proxied through the tunnel (see dns_type above),
+  # so the TCP peer is the cloudflared pod and real-ip is what recovers the
+  # client address.
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
   # Video rate limiting, not page-load rate limiting. The shared `rate-limit`
@@ -1607,14 +1642,17 @@ module "ingress" {
     "traefik-x402@kubernetescrd",
     "traefik-f1-rate-limit@kubernetescrd",
   ]
-  extra_annotations = {
+  # One app, one tile: the homepage shows it once, as "TV", launching tv.
+  # The href comes from the factory's default (https://<host>).
+  homepage_enabled = each.key == local.app_primary_host
+  extra_annotations = each.key == local.app_primary_host ? {
     "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "F1 Stream"
-    "gethomepage.dev/description"  = "Formula 1 live streams"
-    "gethomepage.dev/icon"         = "si-f1"
+    "gethomepage.dev/name"         = "TV"
+    "gethomepage.dev/description"  = "TV channels, with a Formula 1 section"
+    "gethomepage.dev/icon"         = "mdi-television-classic"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
-  }
+  } : {}
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

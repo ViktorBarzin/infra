@@ -558,19 +558,22 @@ module "anubis" {
           - '"X-Forwarded-Host" in headers'
           - 'headers["X-Forwarded-Host"] == "${local.domain}"'
           - 'path.matches("^/([A-Za-z0-9_-]+/)*index\\.xml$")'
+    # f1-stream's app paths and share-link previews. tv is the app's home since
+    # 2026-10-29 (f1-stream ADR-0053) and f1 serves the same app until its
+    # cutover to a redirect, so both rules admit both hosts.
     - name: f1-app-paths
       action: ALLOW
       expression:
         all:
           - '"X-Forwarded-Host" in headers'
-          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}"'
+          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}" || headers["X-Forwarded-Host"] == "tv.${local.domain}"'
           - 'path.matches("^/(_app/|openapi\\.json|docs|api/)") || path.matches("^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|feed|health|proxy|relay|replays/cache|replays/checks|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\\?|$)") || path.matches("^/watch/(f1/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}|channel/[A-Za-z0-9_-]{1,96})(/v[0-9]{1,2})?[.]m3u8$") || path.matches("^/(sw\\.js|manifest\\.webmanifest|icons/[A-Za-z0-9_-]+\\.png|apple-touch-icon(-precomposed)?\\.png)$") || path.matches("^/logos/[A-Za-z0-9_-]+\\.png$")'
     - name: f1-share-link-previews
       action: ALLOW
       expression:
         all:
           - '"X-Forwarded-Host" in headers'
-          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}"'
+          - 'headers["X-Forwarded-Host"] == "f1.${local.domain}" || headers["X-Forwarded-Host"] == "tv.${local.domain}"'
           - 'path.matches("^/(s|p)/[A-Za-z0-9_:-]{6,64}(/thumb[.]jpg)?/?$")'
           - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
     # The public homelab showcase (stacks/learn ingress_homelab_showcase). On

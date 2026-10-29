@@ -9,7 +9,7 @@
 # when a Tier 1 Channel has had no smooth Feed for 10 minutes posts one line to
 # #alerts and files a `broken` + `channel-source` issue on viktor/infra, which
 # dispatches `.claude/agents/channel-source-fixer.md`. The health card is at
-# https://f1.viktorbarzin.me/admin/channels.
+# https://tv.viktorbarzin.me/admin/channels.
 #
 # One replica, Recreate: two Watchers would double every watch and every
 # alert. No GPU and no Service: nothing routes to it. Prometheus scrapes it like
