@@ -3,17 +3,18 @@
 # playbooks/devvm.yml as /usr/local/libexec/claude-presence/release.
 #
 # Releases every active claim this session holds when the agent finishes its
-# turn. Best effort: it never blocks the session.
+# turn. The session is the one named in the hook input (session_id), so a turn
+# ending in one session never releases another session's claims. Best effort:
+# it never blocks the session.
 set -uo pipefail
 
 PRESENCE="${PRESENCE_BIN:-/usr/local/bin/presence}"
 DIR="${PRESENCE_STATE_DIR:-$HOME/.cache/claude-presence}"
-SESSION_FILE="$DIR/current.session"
-[[ -r "$SESSION_FILE" ]] || exit 0
 
-SESSION_ID="$(cat "$SESSION_FILE")"
-[[ -n "$SESSION_ID" ]] || exit 0
+SID="$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
+SID="${SID:-${CLAUDE_CODE_SESSION_ID:-}}"
+[[ "$SID" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0
 
-CLAUDE_SESSION_ID="$SESSION_ID" "$PRESENCE" release --all-mine >/dev/null 2>&1 || true
-rm -f "$DIR/last-heartbeat"
+CLAUDE_CODE_SESSION_ID="$SID" "$PRESENCE" release --all-mine >/dev/null 2>&1 || true
+rm -f "$DIR/heartbeat-$SID"
 exit 0

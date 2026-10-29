@@ -7,14 +7,18 @@ the same thing at the same time.
 
 Installed machine-wide as /usr/local/bin/presence by infra playbooks/devvm.yml
 (source: playbooks/files/devvm/presence; tests: presence-test.py beside it).
-The session id comes from the SessionStart hook in /etc/claude-code/
-managed-settings.json, which writes it under the invoking user's own $HOME.
+A claim belongs to one Claude Code session: <user>@<host>@<session uuid>,
+from the CLAUDE_CODE_SESSION_ID that Claude Code exports to every command it
+runs. The heartbeat and release hooks in /etc/claude-code/managed-settings.json
+read the same uuid from their hook input, so concurrent sessions of one user
+never extend or release each other's claims.
 
-Reads connection details from env:
-  PRESENCE_DSN          mysql DSN (default: beads@10.0.20.200:3306/beads)
-  CLAUDE_SESSION_ID     session identity (default: read from session-id file)
-  PRESENCE_STATE_DIR    where the session-id file lives
-                        (default: ~/.cache/claude-presence)
+Reads from env:
+  PRESENCE_DSN            mysql DSN (default: beads@10.0.20.200:3306/beads)
+  CLAUDE_SESSION_ID       full session identity, overrides everything below
+  CLAUDE_CODE_SESSION_ID  the Claude Code session uuid (set by Claude Code)
+Outside Claude Code, with neither set, every run gets a one-shot id: a claim
+made that way can only expire, so set CLAUDE_SESSION_ID in that shell first.
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ import socket
 import sys
 import urllib.parse
 import uuid
-from pathlib import Path
 
 try:
     import pymysql
@@ -35,23 +38,21 @@ try:
 except ImportError:
     pymysql = None  # graceful: handled in _connect
 
-SESSION_ID_FILE = (
-    Path(os.environ.get("PRESENCE_STATE_DIR") or Path.home() / ".cache" / "claude-presence")
-    / "current.session"
-)
 DEFAULT_DSN = "mysql://beads@10.0.20.200:3306/beads"
 DEFAULT_TTL_SECONDS = 15 * 60
 
 
 def get_session_id() -> str:
-    """Return the current session ID, generating a fallback if missing."""
+    """Return this session's id: <user>@<host>@<Claude Code session uuid>."""
     env = os.environ.get("CLAUDE_SESSION_ID")
     if env:
         return env
-    if SESSION_ID_FILE.exists():
-        return SESSION_ID_FILE.read_text().strip()
-    # Fallback: ephemeral one-shot id (won't be cleaned up by Stop hook)
-    return f"{getpass.getuser()}@{socket.gethostname().split('.')[0]}@{uuid.uuid4().hex[:8]}"
+    prefix = f"{getpass.getuser()}@{socket.gethostname().split('.')[0]}"
+    claude = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if claude:
+        return f"{prefix}@{claude}"
+    # Outside Claude Code: a one-shot id, which no hook will heartbeat or release.
+    return f"{prefix}@{uuid.uuid4().hex[:8]}"
 
 
 def build_parser() -> argparse.ArgumentParser:

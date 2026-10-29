@@ -3,27 +3,31 @@
 # by playbooks/devvm.yml as /usr/local/libexec/claude-presence/heartbeat.
 #
 # Extends the TTL on this session's active claims so they do not expire while
-# the session is working. Runs after every tool call, so it is throttled to one
-# database call per 120 s per session and does nothing else in between.
+# the session is working. The session is the one named in the hook input
+# (session_id), the same uuid Claude Code exports to the agent's commands as
+# CLAUDE_CODE_SESSION_ID, so each concurrent session extends only its own
+# claims. Runs after every tool call, so it is throttled to one database call
+# per 120 s per session and does nothing else in between.
 set -uo pipefail
 
 PRESENCE="${PRESENCE_BIN:-/usr/local/bin/presence}"
 DIR="${PRESENCE_STATE_DIR:-$HOME/.cache/claude-presence}"
-SESSION_FILE="$DIR/current.session"
-[[ -r "$SESSION_FILE" ]] || exit 0
 
-SESSION_ID="$(cat "$SESSION_FILE")"
-[[ -n "$SESSION_ID" ]] || exit 0
-# Kept beside the session file, in the user's own home: a stamp in the shared
-# /tmp is owned by whoever made it first.
-STAMP="$DIR/last-heartbeat"
+# Hook input is one JSON object on stdin, session_id first. Text inside other
+# fields (tool input and output) has its quotes escaped, so it cannot match
+# the unescaped "session_id" key below.
+SID="$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
+SID="${SID:-${CLAUDE_CODE_SESSION_ID:-}}"
+[[ "$SID" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0
 
+mkdir -p "$DIR" 2>/dev/null || exit 0
+STAMP="$DIR/heartbeat-$SID"
 NOW=$(date +%s)
 LAST=$(stat -c %Y "$STAMP" 2>/dev/null || echo 0)
 if (( NOW - LAST < 120 )); then
     exit 0
 fi
-touch "$STAMP"
+touch "$STAMP" 2>/dev/null
 
-CLAUDE_SESSION_ID="$SESSION_ID" "$PRESENCE" heartbeat >/dev/null 2>&1 || true
+CLAUDE_CODE_SESSION_ID="$SID" "$PRESENCE" heartbeat >/dev/null 2>&1 || true
 exit 0
