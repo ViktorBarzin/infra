@@ -412,7 +412,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # recursively and chmod the infra subdir for safety.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+          image   = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
           command = ["sh", "-c", "mkdir -p /workspace/infra /persistent && chown -R 1000:1000 /workspace /persistent && chmod 0775 /workspace/infra /persistent"]
           security_context {
             run_as_user = 0
@@ -438,7 +438,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # Copy Claude credentials to writable volume (CLI needs to refresh OAuth tokens)
         init_container {
           name    = "copy-claude-creds"
-          image   = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+          image   = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
           command = ["sh", "-c", "cp /secrets/claude/.credentials.json /home/agent/.claude/.credentials.json && chown 1000:1000 /home/agent/.claude/.credentials.json"]
           security_context {
             run_as_user = 0
