@@ -7,7 +7,7 @@
 |-------------|--------------|-----------|
 | Cloudflare Access | OAuth2/OIDC | implicit consent |
 | Domain wide catch all | Proxy (forward auth) | implicit consent |
-| F1 Stream | OAuth2/OIDC (confidential, TF: `stacks/f1-stream/members.tf`) | implicit consent |
+| TV (slug `f1-stream`) | OAuth2/OIDC (confidential, TF: `stacks/f1-stream/members.tf`) | implicit consent |
 | Forgejo | OAuth2/OIDC | implicit consent |
 | Grafana | OAuth2/OIDC | implicit consent |
 | Headscale | OAuth2/OIDC | implicit consent |
@@ -45,7 +45,7 @@ provider default.
 | `stacks/authentik/catchall-access-binding.tf` | Domain wide catch all |
 | `stacks/authentik/forward-auth-apps.tf` | every `(forward auth)` application |
 | `stacks/authentik/postgres-ldap.tf`, `rac.tf` | Postgres LDAP, Remote Access |
-| `stacks/f1-stream/members.tf` | F1 Stream |
+| `stacks/f1-stream/members.tf` | TV (slug `f1-stream`) |
 | `modules/kubernetes/tanstack_app/authentik.tf` (from `stacks/tasks`) | Tasks (Tasks Users, Tasks Admins, Home Server Admins) |
 | `stacks/authentik/guest.tf` | Public (allow-all policy `public-allow-all`) |
 
