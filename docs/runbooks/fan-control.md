@@ -75,8 +75,8 @@ applied % (`sensor.r730_fan_control_target`), and in AUTO calls
 `-1` for 10.6 s (the daemon held), then 30.1 % and, a second later, 31.0 %, with no IPMI
 write.
 Built from button-card cards inside a stack-in-card;
-the generator and the last card JSON are on the NAS
-(`Claude shared/spravochnici/r730-fan-pid/faceplate-generator/`).
+the generator and the last card JSON are in the private Forgejo repo
+`ebarzin/dom-skriptove` (`r730-faceplate-generator/`).
 
 **Bumpless MAN → AUTO (output tracking, since 2026-10-07).** simple-pid starts the
 integral at the value handed to `simple_pid_controller.set_output` and adds the P term
