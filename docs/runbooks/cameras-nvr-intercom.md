@@ -2504,7 +2504,7 @@ router с DHCP и LAN `192.168.0.1`, а **WAN кракът му влиза въ�
 там е и rpi-sofia, което държи `192.168.1.2` откъм комплексната мрежа и
 `192.168.1.10` откъм домашната зад AX6000.
 
-Схемата е на NAS: `Claude shared/2. spravochnici/vermont-solarna-mreja-shema-2026-09-27.png`.
+Схемата е на NAS: `Claude shared/2. spravochnici/schematics/vermont-afore-network/vermont-afore-network.png`.
 
 Съответствие с измереното на 27.09.2026: и четирите WAN адреса отговарят,
 порт 8899 отговаря и на четирите, а `.202` беше прочетен отвътре и потвърждава
