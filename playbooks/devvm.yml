@@ -889,7 +889,8 @@
     # with its hooks in that repo's .claude/settings.json, so it reached only
     # sessions started under /home/wizard/code and only users with that clone
     # (emo has none). The hooks are in managed-settings.json above; each one
-    # keeps its state under the calling user's own ~/.cache/claude-presence.
+    # keys on the Claude Code session it runs for, and the heartbeat throttle
+    # stamps live under the calling user's own ~/.cache/claude-presence.
     # pymysql comes from packages.txt (python3-pymysql). Tests:
     # python3 -m pytest -q playbooks/files/devvm/presence-test.py
     - name: Install presence
@@ -915,7 +916,16 @@
         mode: "0755"
         owner: root
         group: root
-      loop: [session-start, heartbeat, release]
+      loop: [heartbeat, release]
+      tags: [presence]
+    # A SessionStart hook used to write one session id per user to
+    # ~/.cache/claude-presence/current.session. Concurrent sessions overwrote
+    # it, so one session's Stop hook released another's claims. Claims are now
+    # keyed on each session's own id (hook input / CLAUDE_CODE_SESSION_ID).
+    - name: Remove the retired presence session-start hook
+      ansible.builtin.file:
+        path: /usr/local/libexec/claude-presence/session-start
+        state: absent
       tags: [presence]
 
     # Poetry at the version f1-stream's poetry.lock and its CI pin (2.1.3). The

@@ -203,86 +203,147 @@ def test_claim_returns_zero_when_db_unreachable(monkeypatch, capsys):
     assert "dolt unreachable" in err
 
 
-def test_session_id_comes_from_the_users_state_dir(tmp_path, monkeypatch):
+def test_session_id_is_this_claude_sessions_own_id(monkeypatch):
+    """Each Claude session exports its own id to the Bash tool, so two
+    sessions of one user never share an id (and never release each other's
+    claims). The user@host prefix keeps the board readable."""
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
-    monkeypatch.setenv("PRESENCE_STATE_DIR", str(tmp_path))
-    (tmp_path / "current.session").write_text("emo@devvm@12345678")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "15aba44f-f368-4b06-9bdd-30115cd22824")
     presence = _load_module()
-    assert presence.get_session_id() == "emo@devvm@12345678"
+    user, host, sid = presence.get_session_id().split("@")
+    assert user == getpass.getuser()
+    assert host
+    assert sid == "15aba44f-f368-4b06-9bdd-30115cd22824"
+
+
+def test_explicit_claude_session_id_wins(monkeypatch):
+    monkeypatch.setenv("CLAUDE_SESSION_ID", "wizard@devvm@pinned")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "15aba44f-f368-4b06-9bdd-30115cd22824")
+    presence = _load_module()
+    assert presence.get_session_id() == "wizard@devvm@pinned"
+
+
+def test_outside_claude_the_id_is_one_shot(monkeypatch):
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    presence = _load_module()
+    a, b = presence.get_session_id(), presence.get_session_id()
+    assert a != b
+    assert a.startswith(f"{getpass.getuser()}@")
 
 
 # ---- hooks -----------------------------------------------------------------
 
 def _stub_presence(tmp_path):
-    """A presence stand-in that records its arguments and session id."""
+    """A presence stand-in that records the session it was run for and its
+    arguments, one line per call."""
     log = tmp_path / "calls.log"
     stub = tmp_path / "presence-stub"
     stub.write_text(
         "#!/bin/sh\n"
-        f'echo "$CLAUDE_SESSION_ID $*" >> "{log}"\n'
+        f'echo "${{CLAUDE_CODE_SESSION_ID:-none}} $*" >> "{log}"\n'
     )
     stub.chmod(0o755)
     return stub, log
 
 
-def _run_hook(name, home, stub):
+def _run_hook(name, home, stub, session_id=None, env_extra=None):
+    """Runs a hook the way Claude Code does: hook input as JSON on stdin."""
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(home),
         "PRESENCE_BIN": str(stub),
     }
+    env.update(env_extra or {})
+    payload = {"hook_event_name": name, "cwd": str(home)}
+    if session_id is not None:
+        payload["session_id"] = session_id
     return subprocess.run([str(HERE / f"presence-{name}")], env=env,
+                          input=json.dumps(payload),
                           capture_output=True, text=True, timeout=10)
 
 
-def test_session_start_writes_a_per_user_id_under_home(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
-    stub, _ = _stub_presence(tmp_path)
-    assert _run_hook("session-start", home, stub).returncode == 0
-    sid = (home / ".cache/claude-presence/current.session").read_text()
-    user, host, rand = sid.split("@")
-    assert user == getpass.getuser()
-    assert host and len(rand) == 8
+def _calls(log):
+    return log.read_text().splitlines() if log.exists() else []
 
 
-def test_heartbeat_uses_the_session_id_and_is_throttled(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
+A = "aaaaaaaa-0000-4000-8000-000000000001"
+B = "bbbbbbbb-0000-4000-8000-000000000002"
+
+
+@pytest.fixture
+def home(tmp_path):
+    h = tmp_path / "home"
+    h.mkdir()
+    return h
+
+
+def test_heartbeat_uses_the_session_id_from_hook_input_and_is_throttled(tmp_path, home):
     stub, log = _stub_presence(tmp_path)
-    _run_hook("session-start", home, stub)
-    sid = (home / ".cache/claude-presence/current.session").read_text()
-    assert _run_hook("heartbeat", home, stub).returncode == 0
-    assert _run_hook("heartbeat", home, stub).returncode == 0
-    assert log.read_text().splitlines() == [f"{sid} heartbeat"]
+    assert _run_hook("heartbeat", home, stub, A).returncode == 0
+    assert _run_hook("heartbeat", home, stub, A).returncode == 0
+    assert _calls(log) == [f"{A} heartbeat"]
 
 
-def test_release_releases_all_of_this_sessions_claims(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
+def test_release_releases_all_of_this_sessions_claims(tmp_path, home):
     stub, log = _stub_presence(tmp_path)
-    _run_hook("session-start", home, stub)
-    sid = (home / ".cache/claude-presence/current.session").read_text()
-    assert _run_hook("release", home, stub).returncode == 0
-    assert log.read_text().splitlines() == [f"{sid} release --all-mine"]
+    assert _run_hook("release", home, stub, A).returncode == 0
+    assert _calls(log) == [f"{A} release --all-mine"]
 
 
-def test_hooks_do_nothing_without_a_session(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
+def test_two_interleaved_sessions_keep_their_own_claims(tmp_path, home):
+    """Session A claims and works; session B starts and works too. A's
+    heartbeat must keep extending A, and B finishing a turn must release
+    only B. With one shared session file, B starting took over A's id."""
+    stub, log = _stub_presence(tmp_path)
+    _run_hook("heartbeat", home, stub, A)
+    _run_hook("heartbeat", home, stub, B)   # not throttled by A's stamp
+    _run_hook("release", home, stub, B)     # B's turn ends
+    # A's next heartbeat, past the throttle window
+    for stamp in (home / ".cache/claude-presence").glob(f"heartbeat-{A}"):
+        os.utime(stamp, (0, 0))
+    _run_hook("heartbeat", home, stub, A)
+    assert _calls(log) == [
+        f"{A} heartbeat",
+        f"{B} heartbeat",
+        f"{B} release --all-mine",
+        f"{A} heartbeat",
+    ]
+
+
+def test_hook_input_beats_an_inherited_session_env(tmp_path, home):
+    """A subagent or child process may inherit another session's id in its
+    environment; the hook input names the session the event belongs to."""
+    stub, log = _stub_presence(tmp_path)
+    _run_hook("release", home, stub, A, {"CLAUDE_CODE_SESSION_ID": B})
+    assert _calls(log) == [f"{A} release --all-mine"]
+
+
+def test_hooks_fall_back_to_the_session_env(tmp_path, home):
+    stub, log = _stub_presence(tmp_path)
+    _run_hook("release", home, stub, None, {"CLAUDE_CODE_SESSION_ID": B})
+    assert _calls(log) == [f"{B} release --all-mine"]
+
+
+def test_hooks_do_nothing_without_a_session(tmp_path, home):
     stub, log = _stub_presence(tmp_path)
     for hook in ("heartbeat", "release"):
         assert _run_hook(hook, home, stub).returncode == 0
     assert not log.exists()
 
 
-def test_hooks_never_fail_when_presence_is_missing(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
-    missing = tmp_path / "no-such-presence"
-    _run_hook("session-start", home, missing)
+def test_hooks_ignore_a_session_id_that_is_not_a_plain_token(tmp_path, home):
+    stub, log = _stub_presence(tmp_path)
     for hook in ("heartbeat", "release"):
-        assert _run_hook(hook, home, missing).returncode == 0
+        assert _run_hook(hook, home, stub, "../../etc/x").returncode == 0
+    assert not log.exists()
+    assert not (tmp_path / "etc").exists()
+
+
+def test_hooks_never_fail_when_presence_is_missing(tmp_path, home):
+    missing = tmp_path / "no-such-presence"
+    for hook in ("heartbeat", "release"):
+        assert _run_hook(hook, home, missing, A).returncode == 0
 
 
 if __name__ == "__main__":
