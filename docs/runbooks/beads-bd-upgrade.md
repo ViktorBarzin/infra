@@ -16,7 +16,7 @@ fleet change rather than a single image rebuild.
 | claude-agent-service image (agent runs, `beads-dispatcher`, `beads-reaper`, `claude-breakglass`, other CronJobs on `:latest`) | `claude-agent-service/Dockerfile`: `BD_VERSION`, `BD_COMMIT` | built from source against musl in a `golang:alpine` stage; see below |
 | BeadBoard | `beadboard/Dockerfile`: `BD_VERSION`, `BD_COMMIT` (since 2026-10-20) | reads go straight to Dolt over SQL (`src/lib/read-issues-dolt.ts`), so check its queries against the new schema. Writes (new task, update, close, comment) and the swarm and mission views run `bd` in the pod, built against musl like the agent image, with `BEADS_ACTOR=beadboard` |
 | dolt-workbench | generic SQL UI | not schema-specific |
-| presence CLI (`~/code/scripts/presence`) | uses the `beads` database, table `presence_claims` | not touched by `bd migrate schema`, which only migrates `code` |
+| presence CLI (`/usr/local/bin/presence`) | uses the `beads` database, table `presence_claims` | not touched by `bd migrate schema`, which only migrates `code` |
 
 Only the admin account is in `code-shared`, so only wizard can open
 `~/code/.beads`. Other workstation users run `bd` but have no workspace on the

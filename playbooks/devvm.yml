@@ -307,6 +307,7 @@
              | reject('match', '^#')
              | reject('equalto', '')
              | list }}
+      tags: [packages]
 
     # Caddy was installed by hand at some point and left running: the stock
     # welcome page on :80, zero handled requests in 30 days, nothing depending
@@ -381,6 +382,7 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
+      tags: [packages]
 
     # ---- 2) node ------------------------------------------------------------
     # Needed for the t3 CLI. Deliberately NOT for claude-code: that is the
@@ -881,6 +883,40 @@
         mode: "0644"
         owner: root
         group: root
+
+    # The agent presence board (`presence claim <label> --purpose ...`), for
+    # every user. It lived in the private monorepo at ~/code/scripts/presence,
+    # with its hooks in that repo's .claude/settings.json, so it reached only
+    # sessions started under /home/wizard/code and only users with that clone
+    # (emo has none). The hooks are in managed-settings.json above; each one
+    # keeps its state under the calling user's own ~/.cache/claude-presence.
+    # pymysql comes from packages.txt (python3-pymysql). Tests:
+    # python3 -m pytest -q playbooks/files/devvm/presence-test.py
+    - name: Install presence
+      ansible.builtin.copy:
+        src: files/devvm/presence
+        dest: /usr/local/bin/presence
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [presence]
+    - name: Create the presence hook directory
+      ansible.builtin.file:
+        path: /usr/local/libexec/claude-presence
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [presence]
+    - name: Install the presence hooks named in managed-settings.json
+      ansible.builtin.copy:
+        src: "files/devvm/presence-{{ item }}"
+        dest: "/usr/local/libexec/claude-presence/{{ item }}"
+        mode: "0755"
+        owner: root
+        group: root
+      loop: [session-start, heartbeat, release]
+      tags: [presence]
 
     # ---- 5) /etc/skel for new accounts --------------------------------------
     # File by file, not the whole skel/ directory: the repo keeps the tmux

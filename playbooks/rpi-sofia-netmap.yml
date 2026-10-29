@@ -14,7 +14,7 @@
 # socat relays and the rest of the Pi stay hand-managed for now.
 #
 # RUN (from repo root; claim presence first:
-#      scripts/presence claim host:rpi-sofia --purpose "vermont-netmap"):
+#      presence claim host:rpi-sofia --purpose "vermont-netmap"):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-netmap.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-netmap.yml
 #

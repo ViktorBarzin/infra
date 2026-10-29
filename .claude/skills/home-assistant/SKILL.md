@@ -49,7 +49,7 @@ There are **two** Home Assistant instances:
 ## homelab CLI (preferred — works from any directory)
 - **Token**: `homelab ha token [--instance sofia|london]` resolves the long-lived API token live from the cluster. Use it directly in curl: `curl -H "Authorization: Bearer $(homelab ha token)" https://ha-sofia.viktorbarzin.me/api/states`. (The `home-assistant-sofia.py` script also auto-falls-back to this when its env var is unset.)
 - **Host shell** (ha-sofia): `homelab ha ssh -- <cmd>` runs a command on the HA host with deterministic non-interactive ssh (no host-key prompt) — e.g. `homelab ha ssh -- "sudo docker ps"`, `homelab ha ssh -- "cat /config/configuration.yaml"`. Replaces bespoke `ssh -o StrictHostKeyChecking=no …` invocations.
-- **Cluster metrics/logs** (not HA-specific): prefer `homelab metrics query "<promql>"` / `homelab logs query "<logql>"` over hand-rolled `curl …/api/v1/query`, and `homelab claim`/`release` over calling `scripts/presence` directly.
+- **Cluster metrics/logs** (not HA-specific): prefer `homelab metrics query "<promql>"` / `homelab logs query "<logql>"` over hand-rolled `curl …/api/v1/query`, and `homelab claim`/`release` over calling `presence` directly.
 
 ## API Control
 

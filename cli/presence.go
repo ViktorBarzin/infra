@@ -10,17 +10,33 @@ import (
 // validPresenceKinds is the fixed label taxonomy accepted by the presence board.
 var validPresenceKinds = []string{"node", "host", "stack", "service", "db", "pvc", "infra"}
 
+// machinePresence is where playbooks/devvm.yml installs presence for every user.
+const machinePresence = "/usr/local/bin/presence"
+
 // presenceScript locates the presence CLI — homelab WRAPS it, it does not
-// reimplement it. Override with HOMELAB_PRESENCE; defaults to ~/code/scripts/presence.
+// reimplement it. Override with HOMELAB_PRESENCE; otherwise the machine-wide
+// install, falling back to the old ~/code/scripts/presence monorepo copy.
 func presenceScript() string {
-	if p := os.Getenv("HOMELAB_PRESENCE"); p != "" {
-		return p
+	home, _ := os.UserHomeDir()
+	return resolvePresence(os.Getenv("HOMELAB_PRESENCE"), isExecutable, home)
+}
+
+func resolvePresence(override string, exists func(string) bool, home string) string {
+	if override != "" {
+		return override
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	if exists(machinePresence) {
+		return machinePresence
+	}
+	if home == "" {
 		return "presence"
 	}
 	return filepath.Join(home, "code", "scripts", "presence")
+}
+
+func isExecutable(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
 }
 
 // validateLabel checks a presence label is <kind>:<name> with a known kind.

@@ -121,7 +121,7 @@
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml
 #
-# Claim presence first: scripts/presence claim infra:registry-cache-vm
+# Claim presence first: presence claim infra:registry-cache-vm
 #
 # ORDER MATTERS ON THE FIRST APPLY. The VM had 497 MB free when this was written,
 # and installing prometheus-node-exporter WITH its recommends pulls 18 packages

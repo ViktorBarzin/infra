@@ -40,7 +40,7 @@ never open them for writing.
 This path was not run against production; the commands are the ones the
 scratch test below ran, pointed at `immich-postgresql`.
 
-1. Claim presence: `~/code/scripts/presence claim service:immich --purpose "restore immich DB from <dump>"`.
+1. Claim presence: `presence claim service:immich --purpose "restore immich DB from <dump>"`.
 2. If the current database is still readable, take a dump of it first:
    `kubectl -n immich create job immich-pre-restore-$(date +%s) --from=cronjob/postgresql-backup`
    and wait for it to complete.

@@ -26,7 +26,7 @@ Always claim presence first — this mutates the estate's single point of failur
 
 ```bash
 cd ~/code/infra
-scripts/presence claim infra:pfsense --purpose "tailscale subnet router"
+presence claim infra:pfsense --purpose "tailscale subnet router"
 
 ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml --check --diff   # dry run
 ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml                 # apply

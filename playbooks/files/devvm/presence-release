@@ -1,0 +1,19 @@
+#!/bin/bash
+# Claude Code Stop hook, machine-wide (managed-settings.json), installed by
+# playbooks/devvm.yml as /usr/local/libexec/claude-presence/release.
+#
+# Releases every active claim this session holds when the agent finishes its
+# turn. Best effort: it never blocks the session.
+set -uo pipefail
+
+PRESENCE="${PRESENCE_BIN:-/usr/local/bin/presence}"
+DIR="${PRESENCE_STATE_DIR:-$HOME/.cache/claude-presence}"
+SESSION_FILE="$DIR/current.session"
+[[ -r "$SESSION_FILE" ]] || exit 0
+
+SESSION_ID="$(cat "$SESSION_FILE")"
+[[ -n "$SESSION_ID" ]] || exit 0
+
+CLAUDE_SESSION_ID="$SESSION_ID" "$PRESENCE" release --all-mine >/dev/null 2>&1 || true
+rm -f "$DIR/last-heartbeat"
+exit 0

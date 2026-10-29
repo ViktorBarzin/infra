@@ -54,7 +54,7 @@ func capabilities() []capability {
 				"real device", "pwa", "responsive", "layout", "his phone", "her phone",
 				"my phone", "on the phone", "friend"},
 			Detail: []string{
-				"claim:  ~/code/scripts/presence claim service:android-emulator --purpose \"...\"",
+				"claim:  presence claim service:android-emulator --purpose \"...\"",
 				"adb:    adb connect 10.0.20.200:5555",
 				"why:    a resized desktop browser has no browser chrome, reports pointer:fine",
 				"        and cannot raise a soft keyboard, so it cannot verify a phone-only",

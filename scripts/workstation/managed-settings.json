@@ -33,6 +33,39 @@
     "OTEL_LOGS_EXPORT_INTERVAL": "30000"
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/libexec/claude-presence/session-start 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/libexec/claude-presence/heartbeat 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/libexec/claude-presence/release 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
