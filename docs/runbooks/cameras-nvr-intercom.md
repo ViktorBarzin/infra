@@ -321,7 +321,7 @@ iVMS, е изтрита и от устройствата (`UserInfo/Delete`). С
 ### Почистване на работните файлове (29.10.2026)
 
 По молба на Emil. Копията „преди“ и „след“ от 26–29.10 (33 монитора, NVR, `.117`, камерите,
-планът за Г7) са събрани в `Claude shared/vermont-2026-10-kopiya-firmware/` и се пазят до
+планът за Г7) са събрани в `Claude shared/vazstanoviavane/vermont-2026-10-kopiya-firmware/` и се пазят до
 12.11.2026; ако дотогава всичко работи, отиват в кошчето. В кошчето на NAS-а
 (`#recycle/vermont-pochistvane-2026-10-29/`, със `SPISAK-premesteni.txt`) са четирите междинни
 версии на схемата, двата еднократни скрипта за нея и неизползваният пакет V1.20.10 за `.117`.
@@ -694,7 +694,7 @@ nonce от другия хост, а панелът го брои за греш�
 ### Изравняване на часа и на потоците на панелите (25.10.2026)
 
 Направено по молба на Emil, по едно устройство с проверка след всяко. Копия на
-предишните настройки са в `Claude shared/vermont-2026-10-25-backup/` на NAS-а.
+предишните настройки са в `Claude shared/vazstanoviavane/vermont-2026-10-25-backup/` на NAS-а.
 
 Часова зона на камерите. И 21-те са на `CST-2:00:00DST01:00:00,M3.5.0/02:00:00,M10.5.0/03:00:00`
 (същата като на NVR-а), NTP остава `time.windows.com`. Шест (`.61`, `.63`, `.74`,
@@ -755,7 +755,7 @@ NVR-а (`PUT /ISAPI/Streaming/channels/<канал>01` и `02` на порт 81)
 са рестартирани. В дневника на NVR-а няма нито едно изключение между 08:00 и
 09:00, при контролна заявка за 25.10, която върна 63. HA дава кадър от
 всичките 27 камери. Копие на XML-ите отпреди смяната (84 файла):
-`/volume1/Emo shared/Claude shared/vermont-2026-10-kopiya-firmware/vermont-2026-10-26-camera-streams-backup/`
+`/volume1/Emo shared/Claude shared/vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-26-camera-streams-backup/`
 на NAS-а.
 
 GOP остана какъвто беше (50, а на `.56`, `.58`, `.59`, `.81` е 20). NVR-ът приема
@@ -869,7 +869,7 @@ rpi-sofia непрекъснато 2,5 часа, по същата връзка.
 Максимумът по капабилитите: основен 2560x1440 при 20 кадъра/s (1080p стига 22),
 VBR/CBR до 8192 kbps, качество до 90; допълнителен до 1280x720 и 2048 kbps.
 NVR DS-7632NXI-K2, един диск 4 TB, пълен (презаписва най-старото). XML-ите и
-таблицата са на NAS-а в `vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-streams-check/`.
+таблицата са на NAS-а в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-streams-check/`.
 
 Връщане на стандарта (27.10.2026, 21:14–21:16, по решение на Emil): `PUT` на
 `Streaming/channels/N01` в NVR-а за 12-те камери (`.51`, `.57`, `.74`, `.81` на
@@ -882,7 +882,7 @@ NVR DS-7632NXI-K2, един диск 4 TB, пълен (презаписва на
 времето, когато повторното четене минаваше през тази камера. Камерата не се е
 рестартирала (uptime 8,6 часа), каналът беше онлайн отново в 21:17:51. Връзката
 с четенето е вероятна, не е доказана. Скриптът е `restore.py` в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-streams-check/` на NAS-а, копията отпреди смяната са
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-streams-check/` на NAS-а, копията отпреди смяната са
 в `before/`.
 
 ### Камера 14 (`.74`) на 1440p и обновяване на всички камери до V5.7.26 (27.10.2026, вечер)
@@ -909,7 +909,7 @@ V5.7.26. Скриптът `batch.py` за всяка камера: копие н
 - Проверка накрая: фърмуер V5.7.26 на 21 от 21, потоците на стандарта на 21 от 21,
   27 от 27 канала онлайн.
 
-Копията по камери и логът са на NAS-а в `vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-firmware/`.
+Копията по камери и логът са на NAS-а в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-27-camera-firmware/`.
 
 Първа нощ след обновяването (27.10, 22:58 до 28.10, 05:30): в журнала на NVR-а няма
 нито едно `ipcDisconnect` и 27 от 27 канала са онлайн. Времето на работа на всички
@@ -948,7 +948,7 @@ V5.7.26. Скриптът `batch.py` за всяка камера: копие н
   проверена с нашите панели.
 
 Пакетите за панелите и терминала и бележките за NVR-а и мониторите са на NAS-а в
-`vermont-firmware/<модел>/`, а SADP списъкът е `vermont-firmware/sadp-2026-10-28.txt`.
+`spravochnici/vermont-firmware/<модел>/`, а SADP списъкът е `spravochnici/vermont-firmware/sadp-2026-10-28.txt`.
 Пакетите на hikvision.com се свалят с `curl` само с браузърен User-Agent и
 Referer (иначе 403), а UK порталът иска `curl -k`, защото сървърът не подава
 междинния сертификат.
@@ -984,13 +984,13 @@ DHCP: едно DHCPDISCOVER от `guestns` (измислен MAC, без REQUEST
 същата линия намалява записа на диска при AcuSearch моделиране. Пакетът е
 `Firmware_3000693671_ML_V4.84.101_251212.zip` от папката „D Model (K20A9)“ в UK
 портала (sha256 `ca1060bb…0a2c`, вътре `digicap.dav` от 330 MB). Копие има в
-`vermont-firmware/DS-7632NXI-K2/`. Бележките не искат междинна версия.
+`spravochnici/vermont-firmware/DS-7632NXI-K2/`. Бележките не искат междинна версия.
 
 Как мина:
 
 - Преди това: пълен образ на настройките (`configurationData?secretkey=`, ключът
   от `secret/emo/vermont-cfg-secretkey`) и 22 XML раздела, на NAS-а в
-  `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-nvr-firmware/pre-V4.83.013/`.
+  `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-nvr-firmware/pre-V4.83.013/`.
 - Два опита с `PUT /ISAPI/System/updateFirmware` от Pi-то (guestns, 3 MB/s
   лимит) спряха на едно и също място: 279 от 330 MB, `upgradeStatus` 45%. На
   това място NVR-ът спира да чете за повече от 20 s. Причината беше в клиента:
@@ -1009,7 +1009,7 @@ DHCP: едно DHCPDISCOVER от `guestns` (измислен MAC, без REQUEST
 От 22-те XML раздела се различават само `deviceInfo` и `time` и новото от
 версията: протокол `SDK_OVER_TLS` на порт 8443 (UPnP за него е изключен) и
 полетата `defaultAdminPortEnabled` и `certificateValidationEnabled` по каналите.
-Копията след това са в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-nvr-firmware/after-V4.84.101/`.
+Копията след това са в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-nvr-firmware/after-V4.84.101/`.
 
 Капан при проверките: търсенето в журнала (`logSearch`) и в записа
 (`ContentMgmt/search`) приема и връща **местно време**, макар да пише `Z`.
@@ -1027,7 +1027,7 @@ DS-K1T805MBFWX. V1.20.10 от hikvision.com не е сложена, защото
 - Копие преди: потребители, карти и отпечатъци с `hik-acs-records.sh` и
   `hik-acs-fingerprints.sh` през `socat` на 127.0.0.1:20117 към 10.77.1.117:80,
   пълен образ (`configurationData?secretkey=`) и 18 раздела. На NAS-а в
-  `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-acc117-firmware/` (mode 600, има биометрия).
+  `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-acc117-firmware/` (mode 600, има биометрия).
 - Качване от Pi-то (`guestns`) с `curl --digest -T digicap.dav` към
   `PUT /ISAPI/System/updateFirmware`: 171 MB за 185 s, отговор `Reboot Required /
   autoReboot`. Устройството се рестартира само и се върна за около 90 s.
@@ -1071,8 +1071,8 @@ Traikov“ е слят в `00000150` „A3 Petar Traikov“ заедно с от
 
 Фърмуерът е по веригата от бележките: V2.2.96 иска V2.2.92 преди себе си, V2.2.124
 иска V2.2.96. Трите пакета и бележките са на NAS-а в
-`vermont-firmware/DS-KH6320-WTE1/`, планът и XML шаблоните в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-407/`.
+`spravochnici/vermont-firmware/DS-KH6320-WTE1/`, планът и XML шаблоните в
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-407/`.
 
 Изпълнение на 28.10.2026 вечерта. Собственикът върна admin паролата на оригиналната
 (същата като `password_old` в `secret/emo/vermont-intercom-admin`). Направено по SDK
@@ -1080,13 +1080,13 @@ Traikov“ е слят в `00000150` „A3 Petar Traikov“ заедно с от
 
 - Заварено: IP `.3` статичен, `deviceId` unit 7, floor 4, room 407, главна станция
   `.114` (панелът на Г), управление и потвърждение `.116`, регистрационна парола от
-  10 знака, различна от тази на панелите. Копие в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/pre-V2.1.34-at-.3/`.
+  10 знака, различна от тази на панелите. Копие в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/pre-V2.1.34-at-.3/`.
 - `PUT VideoIntercom/deviceId` (unit 1, floor 1, room 407) се прилага веднага.
 - `PUT Network/interfaces/1/ipAddress` на `.147` (DNS `8.8.8.8`/`8.8.4.4`) се прилага
   веднага и без рестарт. SDK връща грешка 10 (таймаут), защото адресът се сменя
   по средата на заявката.
 - Фърмуерът V2.1.34 → V2.2.92 → V2.2.96 → V2.2.124 build 260814 с `run.sh 147`, около
-  20 минути, като при останалите монитори. Копия в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/`.
+  20 минути, като при останалите монитори. Копия в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/`.
 - `PUT VideoIntercom/relatedDeviceAddress` (главна `.116`, потвърждение `0.0.0.0` като
   при Г1–Г6) връща `statusCode 1 OK`, но стойностите не се променят. Три опита: два на
   V2.1.34 (с и без namespace) и един на V2.2.124 с тялото, прочетено от самото
@@ -1112,7 +1112,7 @@ Save → „Saved.“. Проверено по втори път директн�
 паролата на панелите. В списъка на `.116` (Device Management) 407 (Q13433314) е
 Online, нито един запис не е Offline (34 от 34). Колоните Floor и Current Version в
 този списък са от регистрацията и не се обновяват (там 307 още е с V2.1.34). Копие
-след промяната: `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/after-ivms/`. Monitor 147 остава
+след промяната: `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/after-ivms/`. Monitor 147 остава
 добавен в iVMS. Позвъняване към 407 предстои да се провери.
 
 Камери в Г7 (29.10.2026, по молба на Emil, с имената от таблото „Видеонаблюдение“ в
@@ -1137,7 +1137,7 @@ HA, без личната камера „Гараж Г04“): `PUT /ISAPI/Conte
 | 2–7 | Пътека "В", Вътрешен Двор 1, Вътрешен Двор 2, Двор изток 1, Двор изток 2, Вход гараж отвътре | `.61`, `.63`, `.62`, `.80`, `.79`, `.76` |
 | 8–13 | Подземен гараж "В" -1, Подземен гараж "В" -2, Тупик север, Вход/изход тупик, Двор Север "Б", Двор Север "Б" 2 | `.75`, `.74`, `.78`, `.77`, `.58`, `.59` |
 
-Скриптът и списъците са в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/g7cams/` на NAS-а.
+Скриптът и списъците са в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-g7-firmware/g7cams/` на NAS-а.
 
 Финална проверка след рестарт (29.10.2026, BootTime 07:18:15, върна се за около минута):
 V2.2.124, номер 1-1-1-1-407, станции `.116`/`.116`/`.116` (потвърждение), `.147`
@@ -1156,7 +1156,7 @@ V2.2.124, номер 1-1-1-1-407, станции `.116`/`.116`/`.116` (потв�
 (BootTime 11:49:44). Преди и след това са прочетени камерите, мрежата, номерът,
 главната станция и часът: всичко е същото, 8 от 8 камери онлайн, облакът
 онлайн, още през WiFi крака `.205`. Пазачът беше спрян по време на ъпгрейда и пуснат
-след това. Копията преди и след са на NAS-а в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-b4-firmware/`.
+след това. Копията преди и след са на NAS-а в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-b4-firmware/`.
 
 Мониторът `.136` (В6, стая 306) е обновен от V2.1.34 build 220216 до V2.2.124 на
 28.10.2026 по веригата V2.2.92 → V2.2.96 → V2.2.124, всяка стъпка по SDK с
@@ -1167,32 +1167,32 @@ V2.2.124, номер 1-1-1-1-407, станции `.116`/`.116`/`.116` (потв�
 рестартира сам за около 25 s. Номерът (306), главната станция (`.116`), мрежата и
 Hik-Connect (`registerStatus true`) са същите след всяка стъпка; V2.2.124
 добавя IPv6 полета (`ipVersion dual`). Копията преди и след са на NAS-а в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v6-firmware/`. Същия ден по същия начин е обновен и `.135` (В5,
-стая 305), със скрипта `vermont-firmware/DS-KH6320-WTE1/mon-upgrade-run.sh` на NAS-а
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v6-firmware/`. Същия ден по същия начин е обновен и `.135` (В5,
+стая 305), със скрипта `spravochnici/vermont-firmware/DS-KH6320-WTE1/mon-upgrade-run.sh` на NAS-а
 (`run.sh <октет>`: един вход, копие, трите стъпки с проверка на номера, главната
 станция и мрежата след всяка, рестарт по SDK само ако мониторът не се рестартира
-сам); около 15 минути, копията в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v5-firmware/`. След него `.140`
-(В10, стая 310), копията в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v10-firmware/`, и с
+сам); около 15 минути, копията в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v5-firmware/`. След него `.140`
+(В10, стая 310), копията в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v10-firmware/`, и с
 `mon-upgrade-chain.sh 139 138 137` последователно `.139` (В9, 309), `.138` (В8, 308) и
-`.137` (В7, 307), около 17 минути на монитор, копията в `vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v9|v8|v7-firmware/`.
+`.137` (В7, 307), около 17 минути на монитор, копията в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-28-v9|v8|v7-firmware/`.
 На 29.10.2026 с `mon-upgrade-chain.sh 141 143 144 145 146` е обновена цялата сграда Г
 (Г1, Г3–Г6, стаи 401, 403–406), по около 17-18 минути на монитор, 07:54–09:22, без нито
 една разлика в номера, главната станция и мрежата; копията са в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-29-g1|g3|g4|g5|g6-firmware/`. Г7 е обновен предната вечер.
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-29-g1|g3|g4|g5|g6-firmware/`. Г7 е обновен предната вечер.
 След това същия ден `mon-upgrade-chain.sh 131 132 133` (В1–В3, стаи 301–303), 09:51–10:45,
-също без разлики; копията в `vermont-2026-10-kopiya-firmware/vermont-2026-10-29-v1|v2|v3-firmware/`. Сгради В и Г са изцяло на
+също без разлики; копията в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-29-v1|v2|v3-firmware/`. Сгради В и Г са изцяло на
 V2.2.124.
 След това `.101`-`.107`, `.109`, `.110` (А1-А7, А9, А10), 10:53-13:32, без разлики; копията в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-29-a1`...`-a10-firmware/`. Веригата спря веднъж на `.104` преди качването
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-29-a1`...`-a10-firmware/`. Веригата спря веднъж на `.104` преди качването
 (`unzip НЕУСПЕШНО`): цялата папка с пакетите в scratchpad беше изчезнала. Оттогава пакетите
 и скриптовете са в `~/bin/vermont-mon/` (`run.sh`, `chain.sh`, `st.sh`, `arch.sh`). Пакетите
-`run.sh` тегли сам от NAS-а (`vermont-firmware/DS-KH6320-WTE1/`) в `~/.cache/vermont-fw/`, там са и
+`run.sh` тегли сам от NAS-а (`spravochnici/vermont-firmware/DS-KH6320-WTE1/`) в `~/.cache/vermont-fw/`, там са и
 работните копия на всеки монитор; `sadpraw.py` е в `/home/pi/bin/` на Pi-то. Копията на всеки
 монитор се качват на NAS-а веднага след него (`arch.sh <октет> <етикет>`, на NAS-а като
 `mon-upgrade-archive.sh`).
 Последна е сграда Б, 13:52-15:52: `.122`-`.127` (Б2-Б7, стаи 202-207), после `.121` (Б1, 201) със
 собствената си парола (`PWPATH=secret/emo/vermont-panels PWFIELD=password_old`; `run.sh` и `st.sh`
-вече приемат тези две променливи). Копията в `vermont-2026-10-kopiya-firmware/vermont-2026-10-29-b1`...`-b7-firmware/`. С това
+вече приемат тези две променливи). Копията в `vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-29-b1`...`-b7-firmware/`. С това
 всичките 32 отговарящи монитора са на V2.2.124.
 Веригата проверява крайната версия по SDK (`deviceInfo`), не по SADP: SADP понякога
 не отговаря навреме и даде фалшив „проблем“ на `.138`. Внимание: разархивиран `digicap.dav` в
@@ -1243,7 +1243,7 @@ NVR 159 ms; `.51`, `.54`, `.57`, `.62`, `.77`, `.78` 155–217 ms;
 Данните са в `~/.local/state/camera-stream-watch/` (`samples.jsonl`, `watch.log`).
 Веднъж дневно след 09:00 скриптът праща обобщение за последните 24 часа на
 телефона на Emil и в известията на HA и копира данните в
-`/volume1/Emo shared/Claude shared/vermont-camera-stream-watch/` на NAS-а.
+`/volume1/Emo shared/Claude shared/rabota/vermont-camera-stream-watch/` на NAS-а.
 
 Мерено е през NVR-а, защото той вече тегли потока и пробата не добавя товар по
 кабела до камерата. Скриптът има собствен RTSP клиент вместо `ffprobe`, защото
@@ -1294,7 +1294,7 @@ HWI-T240H(C) в подтип IPCE_R, но порталите не свързва
 която го обявява за HWI-T240H(2.8mm/4mm)(C)(HiWatchSTD). Самата бележка към
 V5.7.26 не изброява модела. Пакетът е `Firmware__V5.7.26_260827_S3000751686.zip`
 (sha256 `8e6b1940…3abf`, вътре един `digicap.dav`), копие има на NAS-а в
-`Claude shared/vermont-firmware/HWI-T240H/`. Порталите за изтегляне не го
+`Claude shared/spravochnici/vermont-firmware/HWI-T240H/`. Порталите за изтегляне не го
 показват при търсене по модел, само продуктовата страница.
 
 Как мина: `PUT /ISAPI/System/updateFirmware` с тялото на `digicap.dav`
@@ -1306,7 +1306,7 @@ V5.7.26 не изброява модела. Пакетът е `Firmware__V5.7.26
 със същата сесия се прави PUT. Двоичният експорт `/ISAPI/System/configurationData`
 дава `cfgFileSecretKeyError` (иска ключ, който уеб интерфейсът праща криптиран),
 затова копието преди обновяването е XML по раздели (на NAS-а в
-`vermont-2026-10-kopiya-firmware/vermont-2026-10-26-camera-streams-backup/cam51-firmware/`).
+`vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-26-camera-streams-backup/cam51-firmware/`).
 
 Обновяването запази потоците, потребителите, мрежата, часа, NTP, детекцията и
 надписите. Смени настройките на картината (шумоподтискане включено,
@@ -1718,7 +1718,7 @@ uplink портовете е `SW02`, после `SW03` и така до посл
 който е вързан, плюс пореден номер: `SW03-1` е допълнителен суич към `SW03`.
 
 Магистралата между сградите е А → Б → Г → В. Схемата на соларната мрежа
-(`Claude shared/vermont-network-topology/vermont-solarna-mreja-shema-osnova-2026-10-27.png`)
+(`Claude shared/spravochnici/vermont-network-topology/vermont-solarna-mreja-shema-osnova-2026-10-27.png`)
 показва по един суич в сграда; на място те са по три, вързани каскадно.
 Подробната схема с всички устройства се прави на нейна основа след
 пресвързването на 27.10.2026.
@@ -1731,7 +1731,7 @@ Emil). Само видео частта: Excalidraw
 `draw.viktorbarzin.me/draw/vermont-video-mreja-shema`, табличната е в
 `draw.viktorbarzin.me/draw/vermont-video-mreja-portove`;
 копие като PNG и бележките по портове са в
-`Claude shared/vermont-network-topology/` на NAS-а. Съставена е от снимките на
+`Claude shared/spravochnici/vermont-network-topology/` на NAS-а. Съставена е от снимките на
 шкафовете (`Emo shared/3. Vermont, Симеоново/Общи части/Video&Intercom systems/`) и
 от описанието на Emil порт по порт.
 
@@ -1765,7 +1765,7 @@ V1 е камера (`.56`), а панелът `.112` е на V2. C1 в Б и C3 
 отговарят на пинг (соларните рутери `.201`-`.204`), и състоянието на каналите на
 NVR-а. След всяко разкачване изчезналият адрес и паднал канал трябва да съвпаднат.
 Проверката е около 70 KB на стъпка и тече само при съобщение от Emil. Скриптовете
-и логът са на NAS-а в `vermont-mreja-shema/`. Мониторите, соларните рутери и
+и логът са на NAS-а в `spravochnici/vermont-mreja-shema/`. Мониторите, соларните рутери и
 портовете в рака на NVR-а не са минавани.
 
 | Сграда | Порт | Устройство | IP | MAC | NVR канал |
@@ -2155,7 +2155,7 @@ PUT /ISAPI/Streaming/channels/102
 канала, и в заглавията на картичките на таблото „Видеонаблюдение".
 
 Изходното състояние е снето преди всяка промяна на NAS-а:
-`Emo shared/Claude shared/vermont-domofoni-imena-2026-09-03/backup-preди-промени/`.
+`Emo shared/Claude shared/spravochnici/vermont-domofoni-imena-2026-09-03/backup-preди-промени/`.
 
 **Кирилицата минава по целия път.** Проверено на `.115`: панелът прие
 `<deviceName>Вход 2</deviceName>` (минимално тяло само с това поле),
@@ -2502,7 +2502,7 @@ router с DHCP и LAN `192.168.0.1`, а **WAN кракът му влиза въ�
 там е и rpi-sofia, което държи `192.168.1.2` откъм комплексната мрежа и
 `192.168.1.10` откъм домашната зад AX6000.
 
-Схемата е на NAS: `Claude shared/vermont-solarna-mreja-shema-2026-09-27.png`.
+Схемата е на NAS: `Claude shared/spravochnici/vermont-solarna-mreja-shema-2026-09-27.png`.
 
 Съответствие с измереното на 27.09.2026: и четирите WAN адреса отговарят,
 порт 8899 отговаря и на четирите, а `.202` беше прочетен отвътре и потвърждава
@@ -2589,7 +2589,7 @@ router с DHCP и LAN `192.168.0.1`, а **WAN кракът му влиза въ�
 Фирмуерът се вдига на две стъпки, защото TP-Link не пуска новия върху стария:
 `1.10.0 Build 211011` → `1.12.30 Build 250818` → `1.15.20 Build 260611`.
 Последният е необратим. Конфигурацията оцеля и двете стъпки непокътната;
-снимка преди и след е в NAS: `Claude shared/vermont-router-202-config-2026-09-26.txt`.
+снимка преди и след е в NAS: `Claude shared/vermont-router-202-config-2026-09-26.txt` (към 29.10.2026 файлът вече не е на NAS-а).
 
 Часовникът беше с час назад, защото лятното време стоеше изключено (същото като
 при монитора `.134`). Поправено на 26.09.2026 по API: запис в блок 28 с

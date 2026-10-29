@@ -14,7 +14,7 @@ The first owned camera at the Sofia/Vermont site (`vermont-garage`, HiLook
 IPC-T241H-C at the garage entrance) needs to be network-isolated: its cable is
 physically exposed outside the apartment, so anything plugged into that cable
 must land in a segment that can reach nothing. The original design doc
-(NAS: `Emo shared/Claude shared/garage-camera/`) called for an "802.1Q trunk
+(NAS: `Emo shared/Claude shared/spravochnici/garage-camera/`) called for an "802.1Q trunk
 to pfSense" — but nothing in this network terminates dot1q on pfSense; the
 site idiom is one vlan-aware Proxmox bridge → one tagged VM NIC → one clean
 untagged pfSense interface per segment.
@@ -132,7 +132,7 @@ rev 4: R730 `eno1` ran directly to AX6000 port 1 (an AX6000 reboot at
 10:29:49 dropped eno1 carrier), and the switch's P1 was the uplink to AX6000
 port 2. The same evening the spare LAN2 cable was brought into service for
 uplink redundancy. The source of truth for the cabling is emo's Visio
-`V4_Internal_IT_Topology_cables` (NAS: `Emo shared/Claude shared/vermont-network-topology/`).
+`V4_Internal_IT_Topology_cables` (NAS: `Emo shared/Claude shared/spravochnici/vermont-network-topology/`).
 
 | Device | Port | Connected to | VLAN role |
 |--------|------|--------------|-----------|

@@ -20,7 +20,7 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 > `r730_fan_duty_min/max`, `r730_fan_bias`, `r730_fan_hysteresis`),
 > `input_boolean.r730_fan_use_pid`, `sensor.r730_expected_equilibrium_temp`,
 > `input_select.r730_fan_mode` and the "R730 fan mode auto-revert" automation. Their
-> last configuration is in `Claude shared/r730-fan-pid/backup-before-cleanup-2026-10-07.json`
+> last configuration is in `Claude shared/spravochnici/r730-fan-pid/backup-before-cleanup-2026-10-07.json`
 > on the NAS.
 
 ## What it is
@@ -76,7 +76,7 @@ applied % (`sensor.r730_fan_control_target`), and in AUTO calls
 write.
 Built from button-card cards inside a stack-in-card;
 the generator and the last card JSON are on the NAS
-(`Claude shared/r730-fan-pid/faceplate-generator/`).
+(`Claude shared/spravochnici/r730-fan-pid/faceplate-generator/`).
 
 **Bumpless MAN → AUTO (output tracking, since 2026-10-07).** simple-pid starts the
 integral at the value handed to `simple_pid_controller.set_output` and adds the P term
@@ -133,7 +133,7 @@ of Dell auto before the readings returned.
 
 **PID controller:** Simple PID Controller (HACS `bvweerd/simple_pid_controller`,
 v1.6.2 since 2026-10-08; the v1.6.1 files are archived on the NAS in
-`Claude shared/r730-fan-pid/`), instance "R730 Fan PID". v1.6.2 uses probatio schemas on
+`Claude shared/spravochnici/r730-fan-pid/`), instance "R730 Fan PID". v1.6.2 uses probatio schemas on
 HA 2026.10 and later, so it has to be in place before that core update, and it refreshes
 the controller as soon as one of its inputs changes (Kp, Ki, SP, limits, auto mode,
 start mode): a single SP step reached the output at once, a second one 5 s later after
