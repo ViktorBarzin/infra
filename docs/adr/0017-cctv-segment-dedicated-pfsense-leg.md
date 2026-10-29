@@ -132,7 +132,7 @@ rev 4: R730 `eno1` ran directly to AX6000 port 1 (an AX6000 reboot at
 10:29:49 dropped eno1 carrier), and the switch's P1 was the uplink to AX6000
 port 2. The same evening the spare LAN2 cable was brought into service for
 uplink redundancy. The source of truth for the cabling is emo's Visio
-`V4_Internal_IT_Topology_cables` (NAS: `Emo shared/Claude shared/2. spravochnici/vermont-network-topology/`).
+`V4_Internal_IT_Topology_cables` (NAS: `Emo shared/Claude shared/2. spravochnici/schematics/vermont-network-topology/`).
 
 | Device | Port | Connected to | VLAN role |
 |--------|------|--------------|-----------|
