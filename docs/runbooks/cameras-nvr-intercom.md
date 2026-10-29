@@ -1718,7 +1718,7 @@ uplink портовете е `SW02`, после `SW03` и така до посл
 който е вързан, плюс пореден номер: `SW03-1` е допълнителен суич към `SW03`.
 
 Магистралата между сградите е А → Б → Г → В. Схемата на соларната мрежа
-(`Claude shared/2. spravochnici/vermont-network-topology/vermont-solarna-mreja-shema-osnova-2026-10-27.png`)
+(`Claude shared/2. spravochnici/schematics/vermont-network-topology/vermont-solarna-mreja-shema-osnova-2026-10-27.png`)
 показва по един суич в сграда; на място те са по три, вързани каскадно.
 Подробната схема с всички устройства се прави на нейна основа след
 пресвързването на 27.10.2026.
@@ -1731,7 +1731,7 @@ Emil). Само видео частта: Excalidraw
 `draw.viktorbarzin.me/draw/vermont-video-mreja-shema`, табличната е в
 `draw.viktorbarzin.me/draw/vermont-video-mreja-portove`;
 копие като PNG и бележките по портове са в
-`Claude shared/2. spravochnici/vermont-network-topology/` на NAS-а. Съставена е от снимките на
+`Claude shared/2. spravochnici/schematics/vermont-network-topology/` на NAS-а. Съставена е от снимките на
 шкафовете (`Emo shared/3. Vermont, Симеоново/Общи части/Video&Intercom systems/`) и
 от описанието на Emil порт по порт.
 
@@ -1765,7 +1765,7 @@ V1 е камера (`.56`), а панелът `.112` е на V2. C1 в Б и C3 
 отговарят на пинг (соларните рутери `.201`-`.204`), и състоянието на каналите на
 NVR-а. След всяко разкачване изчезналият адрес и паднал канал трябва да съвпаднат.
 Проверката е около 70 KB на стъпка и тече само при съобщение от Emil. Скриптовете
-и логът са на NAS-а в `2. spravochnici/vermont-mreja-shema/`. Мониторите, соларните рутери и
+и логът са на NAS-а в `2. spravochnici/schematics/vermont-mreja-shema/`. Мониторите, соларните рутери и
 портовете в рака на NVR-а не са минавани.
 
 | Сграда | Порт | Устройство | IP | MAC | NVR канал |
