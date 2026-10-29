@@ -22,7 +22,7 @@
 # autoApprovers.routes in the ACL, or the route registers unapproved.
 #
 # RUN (from repo root; claim presence first:
-#      scripts/presence claim infra:pfsense --purpose "tailscale subnet router"):
+#      presence claim infra:pfsense --purpose "tailscale subnet router"):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml
 #   re-register (node deleted/expired in Headscale):

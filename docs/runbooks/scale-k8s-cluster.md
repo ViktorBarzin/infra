@@ -110,7 +110,7 @@ kubectl get pvc -A -o json | jq -r --arg n "$NODE" '.items[]
   | "\(.metadata.namespace)/\(.metadata.name)"'
 
 # 3. Check presence board — is anyone mutating workloads on this node right now?
-~/code/scripts/presence list
+presence list
 # If a `service:*` claim covers any pod on $NODE, DEFER until released.
 
 # 4. Cordon (mark unschedulable, existing pods stay)
@@ -181,7 +181,7 @@ GPU pods scheduled via `nvidia.com/gpu.present=true` node selector. They **canno
 
 ### Active sessions
 
-Check `~/code/scripts/presence list` before any drain. If another session holds a claim on a service hosted on the target node, defer or coordinate.
+Check `presence list` before any drain. If another session holds a claim on a service hosted on the target node, defer or coordinate.
 
 ### Force-clean stuck VolumeAttachments
 

@@ -130,7 +130,7 @@
 # limit once, when it creates the socket. Roll the pods afterwards so they pick
 # up the new ceiling, then confirm with the verify step below.
 #
-# RUN (from repo root; claim presence first: scripts/presence claim stack:traefik):
+# RUN (from repo root; claim presence first: presence claim stack:traefik):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml
 #   sysctl only, then roll Traefik:

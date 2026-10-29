@@ -46,6 +46,7 @@ python3-xlsxwriter   # .xlsx generation
 python3-reportlab    # PDF generation
 python3-paramiko     # SSH from Python to LAN devices
 python3-paho-mqtt    # MQTT — Home Assistant / ESPHome device traffic
+python3-pymysql      # /usr/local/bin/presence, the agent presence board (beads MySQL)
 
 # --- installed by setup-devvm.sh via NON-apt paths (not apt-installable) ---
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)

@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Agent presence board CLI.
+
+Lets Claude Code agent sessions claim, heartbeat, release, list, and peek at
+shared infra resource claims so that two sessions don't unknowingly mutate
+the same thing at the same time.
+
+Installed machine-wide as /usr/local/bin/presence by infra playbooks/devvm.yml
+(source: playbooks/files/devvm/presence; tests: presence-test.py beside it).
+The session id comes from the SessionStart hook in /etc/claude-code/
+managed-settings.json, which writes it under the invoking user's own $HOME.
+
+Reads connection details from env:
+  PRESENCE_DSN          mysql DSN (default: beads@10.0.20.200:3306/beads)
+  CLAUDE_SESSION_ID     session identity (default: read from session-id file)
+  PRESENCE_STATE_DIR    where the session-id file lives
+                        (default: ~/.cache/claude-presence)
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import socket
+import sys
+import urllib.parse
+import uuid
+from pathlib import Path
+
+try:
+    import pymysql
+    import pymysql.cursors
+except ImportError:
+    pymysql = None  # graceful: handled in _connect
+
+SESSION_ID_FILE = (
+    Path(os.environ.get("PRESENCE_STATE_DIR") or Path.home() / ".cache" / "claude-presence")
+    / "current.session"
+)
+DEFAULT_DSN = "mysql://beads@10.0.20.200:3306/beads"
+DEFAULT_TTL_SECONDS = 15 * 60
+
+
+def get_session_id() -> str:
+    """Return the current session ID, generating a fallback if missing."""
+    env = os.environ.get("CLAUDE_SESSION_ID")
+    if env:
+        return env
+    if SESSION_ID_FILE.exists():
+        return SESSION_ID_FILE.read_text().strip()
+    # Fallback: ephemeral one-shot id (won't be cleaned up by Stop hook)
+    return f"{getpass.getuser()}@{socket.gethostname().split('.')[0]}@{uuid.uuid4().hex[:8]}"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="presence",
+        description="Agent presence board for coordinating shared-infra mutations.",
+    )
+    p.add_argument("--json", action="store_true", help="emit machine-readable output")
+    sub = p.add_subparsers(dest="verb", required=True)
+
+    c = sub.add_parser("claim", help="claim a resource you're about to mutate")
+    c.add_argument("label", help="resource label, e.g. node:k8s-node1")
+    c.add_argument("--purpose", required=True, help="what + why")
+    c.add_argument("--ttl", type=int, default=DEFAULT_TTL_SECONDS, help="seconds")
+
+    sub.add_parser("heartbeat", help="extend TTL on all my active claims")
+
+    r = sub.add_parser("release", help="release one or all of my claims")
+    r.add_argument("label", nargs="?", help="resource label; omit with --all-mine")
+    r.add_argument("--all-mine", action="store_true")
+
+    li = sub.add_parser("list", help="show active claims")
+    g = li.add_mutually_exclusive_group()
+    g.add_argument("--mine", action="store_true", help="only my session's claims")
+    g.add_argument("--all", action="store_true", help="all sessions' claims (default)")
+
+    pe = sub.add_parser("peek", help="show all active claims on a resource")
+    pe.add_argument("label", help="resource label")
+
+    return p
+
+
+def _connect():
+    if pymysql is None:
+        print(
+            "presence: warning: pymysql not installed; the devvm playbook "
+            "installs it as the apt package python3-pymysql",
+            file=sys.stderr,
+        )
+        return None
+    dsn = os.environ.get("PRESENCE_DSN", DEFAULT_DSN)
+    u = urllib.parse.urlparse(dsn)
+    try:
+        return pymysql.connect(
+            host=u.hostname,
+            port=u.port or 3306,
+            user=u.username or "beads",
+            password=u.password or "",
+            database=(u.path.lstrip("/") or "beads"),
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=3,
+            autocommit=True,
+        )
+    except pymysql.MySQLError as e:
+        print(f"presence: warning: dolt unreachable ({e}); continuing", file=sys.stderr)
+        return None
+
+
+def _claim(args, session_id: str) -> int:
+    conn = _connect()
+    if conn is None:
+        return 0  # graceful degradation
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            REPLACE INTO presence_claims
+                (session_id, resource_label, purpose, claimed_at, expires_at, host, user, agent_name)
+            VALUES
+                (%s, %s, %s, NOW(3), NOW(3) + INTERVAL %s SECOND, %s, %s, %s)
+            """,
+            (
+                session_id,
+                args.label,
+                args.purpose,
+                args.ttl,
+                socket.gethostname().split(".")[0],
+                getpass.getuser(),
+                "claude-code",
+            ),
+        )
+        cur.execute(
+            """
+            SELECT session_id, purpose, claimed_at, user, host
+              FROM presence_claims
+             WHERE resource_label = %s
+               AND session_id    != %s
+               AND expires_at    >  NOW(3)
+             ORDER BY claimed_at
+            """,
+            (args.label, session_id),
+        )
+        conflicts = cur.fetchall()
+    if not conflicts:
+        print(f"presence: claimed {args.label}")
+        return 0
+    print(f"presence: claimed {args.label} -- ALSO CLAIMED BY:")
+    for c in conflicts:
+        print(f"  - {c['session_id']} ({c['user']}@{c['host']}): {c['purpose']} since {c['claimed_at']}")
+    print("presence: per CLAUDE.md rule, default is to DEFER -- release your claim and confirm with the user.")
+    return 0
+
+
+def _peek(args, session_id: str) -> int:
+    conn = _connect()
+    if conn is None:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT session_id, purpose, claimed_at, expires_at, user, host
+              FROM presence_claims
+             WHERE resource_label = %s
+               AND expires_at    >  NOW(3)
+             ORDER BY claimed_at
+            """,
+            (args.label,),
+        )
+        rows = cur.fetchall()
+    if not rows:
+        print(f"presence: no active claim on {args.label}")
+        return 0
+    print(f"presence: active claims on {args.label}:")
+    for r in rows:
+        marker = " (me)" if r["session_id"] == session_id else ""
+        print(f"  - {r['session_id']}{marker} ({r['user']}@{r['host']}): {r['purpose']} since {r['claimed_at']} (expires {r['expires_at']})")
+    return 0
+
+
+def _list(args, session_id: str) -> int:
+    conn = _connect()
+    if conn is None:
+        return 0
+    query = """
+        SELECT session_id, resource_label, purpose, claimed_at, expires_at, user, host
+          FROM presence_claims
+         WHERE expires_at > NOW(3)
+    """
+    params: tuple = ()
+    if args.mine:
+        query += " AND session_id = %s"
+        params = (session_id,)
+    query += " ORDER BY claimed_at"
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    if args.json:
+        out = []
+        for r in rows:
+            out.append({
+                "session_id":      r["session_id"],
+                "resource_label":  r["resource_label"],
+                "purpose":         r["purpose"],
+                "claimed_at":      str(r["claimed_at"]),
+                "expires_at":      str(r["expires_at"]),
+                "user":            r["user"],
+                "host":            r["host"],
+                "is_me":           r["session_id"] == session_id,
+            })
+        print(json.dumps(out))
+        return 0
+    if not rows:
+        print("presence: no active claims")
+        return 0
+    for r in rows:
+        marker = " (me)" if r["session_id"] == session_id else ""
+        print(f"  {r['resource_label']:<32} {r['session_id']}{marker} -- {r['purpose']} ({r['claimed_at']})")
+    return 0
+
+
+def _heartbeat(args, session_id: str) -> int:
+    conn = _connect()
+    if conn is None:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE presence_claims
+               SET expires_at = NOW(3) + INTERVAL %s SECOND
+             WHERE session_id = %s
+               AND expires_at > NOW(3)
+            """,
+            (DEFAULT_TTL_SECONDS, session_id),
+        )
+    return 0
+
+
+def _release(args, session_id: str) -> int:
+    conn = _connect()
+    if conn is None:
+        return 0
+    with conn.cursor() as cur:
+        if args.all_mine:
+            cur.execute("DELETE FROM presence_claims WHERE session_id = %s", (session_id,))
+        else:
+            if not args.label:
+                print("presence: release requires <label> or --all-mine", file=sys.stderr)
+                return 2
+            cur.execute(
+                "DELETE FROM presence_claims WHERE session_id = %s AND resource_label = %s",
+                (session_id, args.label),
+            )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    # propagate top-level --json onto args.json (no-op if already there)
+    args.json = bool(getattr(args, "json", False))
+    session_id = get_session_id()
+    if args.verb == "claim":
+        return _claim(args, session_id)
+    if args.verb == "peek":
+        return _peek(args, session_id)
+    if args.verb == "list":
+        return _list(args, session_id)
+    if args.verb == "heartbeat":
+        return _heartbeat(args, session_id)
+    if args.verb == "release":
+        return _release(args, session_id)
+    print(f"verb={args.verb} not yet implemented", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

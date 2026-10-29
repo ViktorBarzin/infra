@@ -21,7 +21,7 @@ homelab version
 
 | Command | Tier | What it does |
 |---|---|---|
-| `claim <kind>:<name> --purpose "…"` | write | claim a shared resource on the presence board (wraps `scripts/presence`) |
+| `claim <kind>:<name> --purpose "…"` | write | claim a shared resource on the presence board (wraps `/usr/local/bin/presence`) |
 | `release <kind>:<name>` | write | release a presence claim |
 | `tf plan <stack>` | read | `scripts/tg plan` for a stack (resolved from cwd) |
 | `tf validate <stack>` | read | `scripts/tg validate` |

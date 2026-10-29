@@ -119,8 +119,8 @@ docker push "forgejo.viktorbarzin.me/viktor/chatterbox-tts:${SHA}"
 
 ```bash
 vault login -method=oidc
-~/code/scripts/presence claim node:k8s-node1 --purpose "chatterbox-tts first apply (GPU)"
-~/code/scripts/presence claim stack:tts      --purpose "chatterbox-tts stack apply"
+presence claim node:k8s-node1 --purpose "chatterbox-tts first apply (GPU)"
+presence claim stack:tts      --purpose "chatterbox-tts stack apply"
 
 # 1. The polite-tenant hardening (exclude tts from gpu-workload priority).
 ~/code/scripts/tg plan  --stack kyverno

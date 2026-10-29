@@ -22,3 +22,25 @@ func TestValidateLabelRejectsBadLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvePresence(t *testing.T) {
+	installed := func(p string) bool { return p == machinePresence }
+	missing := func(string) bool { return false }
+	cases := []struct {
+		name     string
+		override string
+		exists   func(string) bool
+		home     string
+		want     string
+	}{
+		{"override wins", "/opt/presence", installed, "/home/emo", "/opt/presence"},
+		{"machine-wide install", "", installed, "/home/emo", machinePresence},
+		{"old monorepo copy when not installed", "", missing, "/home/wizard", "/home/wizard/code/scripts/presence"},
+		{"bare name with no home", "", missing, "", "presence"},
+	}
+	for _, c := range cases {
+		if got := resolvePresence(c.override, c.exists, c.home); got != c.want {
+			t.Errorf("%s: resolvePresence = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

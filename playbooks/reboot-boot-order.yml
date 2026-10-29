@@ -14,7 +14,7 @@
 # tail. It also runs an anti-zombie guard: any onboot=1 non-template VM NOT in
 # the roster is forced onboot=0 (the k8s-node6/206 zombie-rejoin class).
 #
-# RUN (from repo root; claim presence first: scripts/presence claim host:proxmox-1):
+# RUN (from repo root; claim presence first: presence claim host:proxmox-1):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/reboot-boot-order.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/reboot-boot-order.yml
 #   report-only guard: ... -e enforce_decommission_onboot=false

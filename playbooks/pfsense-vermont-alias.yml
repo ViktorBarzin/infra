@@ -12,7 +12,7 @@
 # rpi-sofia-netmap.yml.
 #
 # RUN (from repo root; claim presence first:
-#      scripts/presence claim infra:pfsense --purpose "vermont alias route"):
+#      presence claim infra:pfsense --purpose "vermont alias route"):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-vermont-alias.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-vermont-alias.yml
 #

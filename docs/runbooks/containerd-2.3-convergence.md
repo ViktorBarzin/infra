@@ -535,7 +535,7 @@ kubectl get deploy -n kyverno
 Nothing here changes a node. Do it all on the devvm.
 
 ```bash
-~/code/scripts/presence claim infra:containerd-2.3-convergence \
+presence claim infra:containerd-2.3-convergence \
   --purpose "Phase 4 of code-g0va: containerd 1.7/2.2.x -> 2.3.4 across six nodes, one at a time"
 ```
 
@@ -686,7 +686,7 @@ Substitute per the step table in section 2: `NODE`, `VMID`, `IP`, `DEB`
 ### 5.0 Claim presence
 
 ```bash
-~/code/scripts/presence claim node:NODE \
+presence claim node:NODE \
   --purpose "containerd -> 2.3.4 (code-g0va Phase 4): snapshot, drain, upgrade, migrate config, verify"
 ```
 
@@ -1012,7 +1012,7 @@ elsewhere in the cluster.
 ### 5.10 Release presence and settle
 
 ```bash
-~/code/scripts/presence release node:NODE
+presence release node:NODE
 ```
 
 Then wait on the conditions in C5 (CNPG `readyInstances == instances`, Vault 3/3
@@ -1222,7 +1222,7 @@ df -h /
 ### 8.5 Presence and verification
 
 ```bash
-~/code/scripts/presence claim service:registry-cache \
+presence claim service:registry-cache \
   --purpose "code-g0va Phase 2: prune ~20 GB of decommissioned-registry residue by explicit list"
 ```
 
@@ -1246,7 +1246,7 @@ Pass: both fetches 200 on repeated attempts, avail in the tens of GB, all six
 registry containers `healthy` with `streak=0`. Then:
 
 ```bash
-~/code/scripts/presence release service:registry-cache
+presence release service:registry-cache
 ```
 
 ### 8.6 Two crontab lines that fail weekly
