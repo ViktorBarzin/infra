@@ -5,8 +5,8 @@
 #
 # A variable with a default rather than a local, because the entries mix
 # rotation_period and rotation_schedule and optional() fills the gaps with null.
-# New apps use a schedule with a window, e.g.
-#   myapp = { username = "myapp", rotation_schedule = "0 10 * * WED", rotation_window = 3600 }
+# New apps take a free Tuesday slot from the table in main.tf, e.g.
+#   myapp = { username = "myapp", rotation_schedule = "41 10 * * TUE", rotation_window = 3600 }
 # With a window, Vault rotates a schedule slot it missed only while that slot's
 # window is still open, so switching an existing role outside the window does
 # not rotate at apply time.
@@ -20,9 +20,8 @@ variable "pg_app_roles" {
     rotation_window   = optional(number)
   }))
   default = {
-    # tasks stays on its 7-day period. Moving it to a schedule is a planned
-    # update of the role, kept out of the zero-change move.
-    tasks = { username = "tasks", rotation_period = 604800 }
+    # Slot table: "Static role rotation slots" in main.tf.
+    tasks = { username = "tasks", rotation_schedule = "39 10 * * TUE", rotation_window = 3600 }
   }
 }
 

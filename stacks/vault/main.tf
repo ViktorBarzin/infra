@@ -1136,250 +1136,312 @@ resource "vault_database_secret_backend_connection" "postgresql" {
   depends_on = [vault_mount.database]
 }
 
+# --- Static role rotation slots ---
+#
+# Every static role rotates on Tuesday between 10:00 and 10:45 UTC, one slot per
+# consumer, so an app that reads several roles restarts once. The
+# db-rotation-watcher CronJob below runs through that hour and force-syncs each
+# role's ExternalSecrets seconds after Vault rotates it
+# (docs/runbooks/db-credential-rotation.md).
+#
+#   10:00 pg-f1-stream            10:20 mysql-phpipam          10:35 pg-instagram-poster
+#   10:02 Grafana and its sources 10:22 mysql-codimd           10:36 pg-lesson-harvester
+#         (mysql-grafana,         10:24 mysql-shlink           10:37 pg-nextcloud-todos
+#         pg-fire-planner,        10:26 pg-tripit              10:38 pg-recruiter-responder
+#         pg-wealthfolio-sync,    10:28 pg-affine              10:39 pg-tasks (app_db_roles.tf)
+#         pg-goldmane-edges,      10:30 pg-claude-memory       10:40 pg-trading
+#         pg-job-hunter,          10:32 pg-goodreads-sync      10:45 pg-terraform-state, away
+#         pg-payslip-ingest)      10:34 pg-health                    from the CI-heavy slots
+#   10:04 both verify-probe roles
+#   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
+#   10:12 both technitium roles   10:14 mysql-nextcloud   10:16 mysql-speedtest
+#   10:18 mysql-wrongmove
+#
+# rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
+# role switched to a schedule outside its window does not rotate at apply.
+
+locals {
+  # MySQL keeps the previous password valid alongside the new one (dual
+  # password, MySQL 8.0.14+), so a pod still holding it keeps logging in until
+  # it restarts. The next rotation replaces the retained password, so an old
+  # one lives at most one week. Applies to users at host '%', which all nine are.
+  mysql_dual_password_rotation = [
+    "ALTER USER '{{name}}'@'%' IDENTIFIED BY '{{password}}' RETAIN CURRENT PASSWORD",
+  ]
+}
+
 # --- MySQL Static Roles ---
 
 resource "vault_database_secret_backend_static_role" "mysql_speedtest" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-speedtest"
-  username        = "speedtest"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-speedtest"
+  username            = "speedtest"
+  rotation_schedule   = "16 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_wrongmove" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-wrongmove"
-  username        = "wrongmove"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-wrongmove"
+  username            = "wrongmove"
+  rotation_schedule   = "18 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_codimd" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-codimd"
-  username        = "codimd"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-codimd"
+  username            = "codimd"
+  rotation_schedule   = "22 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_nextcloud" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-nextcloud"
-  username        = "nextcloud"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-nextcloud"
+  username            = "nextcloud"
+  rotation_schedule   = "14 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_shlink" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-shlink"
-  username        = "shlink"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-shlink"
+  username            = "shlink"
+  rotation_schedule   = "24 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_grafana" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-grafana"
-  username        = "grafana"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-grafana"
+  username            = "grafana"
+  rotation_schedule   = "2 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_technitium" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-technitium"
-  username        = "technitium"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-technitium"
+  username            = "technitium"
+  rotation_schedule   = "12 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_phpipam" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-phpipam"
-  username        = "phpipam"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-phpipam"
+  username            = "phpipam"
+  rotation_schedule   = "20 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 # --- PostgreSQL Static Roles ---
 
 resource "vault_database_secret_backend_static_role" "pg_paperless_ngx" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-paperless-ngx"
-  username        = "paperless_ngx"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-paperless-ngx"
+  username          = "paperless_ngx"
+  rotation_schedule = "8 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_trading" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-trading"
-  username        = "trading"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-trading"
+  username          = "trading"
+  rotation_schedule = "40 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_health" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-health"
-  username        = "health"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-health"
+  username          = "health"
+  rotation_schedule = "34 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_linkwarden" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-linkwarden"
-  username        = "linkwarden"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-linkwarden"
+  username          = "linkwarden"
+  rotation_schedule = "10 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_affine" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-affine"
-  username        = "affine"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-affine"
+  username          = "affine"
+  rotation_schedule = "28 10 * * TUE"
+  rotation_window   = 3600
 }
 
-# Pinned to a SCHEDULE rather than a period, so the moment of rotation is known
-# (infra#45). woodpecker-server reads its datasource once at boot and exits on a
-# store-setup failure, so every rotation costs an outage bounded by how long the
-# pod holds the dead password. With rotation_period the tick drifted, and the
-# only way to shorten the outage was to poll Vault harder all week. With a
-# schedule, stacks/woodpecker's force-sync CronJob can concentrate that polling
-# into the one hour it matters.
-#
-# Measured before the change, four consecutive ticks in Loki: Fri 09:17:07 (4m41s),
-# 09:16:00 (7m12s), 09:15:57 (7m12s), 09:15:57 (4m0s) — all inside the 09:00 hour,
-# which is what the cron below encodes. rotation_window bounds how long Vault will
-# keep trying if the scheduled attempt fails.
+# woodpecker-server reads its datasource once at boot and exits on a
+# store-setup failure, so a rotation costs an outage until the pod restarts with
+# the new password (infra#45). It was pinned to Fri 09:00 with its own
+# force-sync CronJob in stacks/woodpecker; since 2026-10-30 it shares the
+# Tuesday slots and the db-rotation-watcher below.
 resource "vault_database_secret_backend_static_role" "pg_woodpecker" {
   backend           = vault_mount.database.path
   db_name           = vault_database_secret_backend_connection.postgresql.name
   name              = "pg-woodpecker"
   username          = "woodpecker"
-  rotation_schedule = "0 9 * * FRI"
+  rotation_schedule = "6 10 * * TUE"
   rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-claude-memory"
-  username        = "claude_memory"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-claude-memory"
+  username          = "claude_memory"
+  rotation_schedule = "30 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-terraform-state"
-  username        = "terraform_state"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-terraform-state"
+  username          = "terraform_state"
+  rotation_schedule = "45 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_payslip_ingest" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-payslip-ingest"
-  username        = "payslip_ingest"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-payslip-ingest"
+  username          = "payslip_ingest"
+  rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_job_hunter" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-job-hunter"
-  username        = "job_hunter"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-job-hunter"
+  username          = "job_hunter"
+  rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_lesson_harvester" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-lesson-harvester"
-  username        = "lesson_harvester"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-lesson-harvester"
+  username          = "lesson_harvester"
+  rotation_schedule = "36 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_wealthfolio_sync" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-wealthfolio-sync"
-  username        = "wealthfolio_sync"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-wealthfolio-sync"
+  username          = "wealthfolio_sync"
+  rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_fire_planner" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-fire-planner"
-  username        = "fire_planner"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-fire-planner"
+  username          = "fire_planner"
+  rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_instagram_poster" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-instagram-poster"
-  username        = "instagram_poster"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-instagram-poster"
+  username          = "instagram_poster"
+  rotation_schedule = "35 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_recruiter_responder" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-recruiter-responder"
-  username        = "recruiter_responder"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-recruiter-responder"
+  username          = "recruiter_responder"
+  rotation_schedule = "38 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_nextcloud_todos" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-nextcloud-todos"
-  username        = "nextcloud_todos"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-nextcloud-todos"
+  username          = "nextcloud_todos"
+  rotation_schedule = "37 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_tripit" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-tripit"
-  username        = "tripit"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-tripit"
+  username          = "tripit"
+  rotation_schedule = "26 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_technitium" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-technitium"
-  username        = "technitium"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-technitium"
+  username          = "technitium"
+  rotation_schedule = "12 10 * * TUE"
+  rotation_window   = 3600
 }
 
-# goldmane-edge-aggregator (ADR-0014 / infra #58) — 7-day rotation for the
+# goldmane-edge-aggregator (ADR-0014 / infra #58) — weekly rotation for the
 # goldmane_edges CNPG role. Consumed by stacks/goldmane-edge-aggregator via a
 # vault-database ExternalSecret -> DATABASE_URL (remoteRef static-creds/pg-goldmane-edges).
 resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-goldmane-edges"
-  username        = "goldmane_edges"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-goldmane-edges"
+  username          = "goldmane_edges"
+  rotation_schedule = "2 10 * * TUE"
+  rotation_window   = 3600
 }
 
 # State for the Goodreads -> Calibre pipeline: one row per shelf item recording
 # what happened to it, so a book is attempted once and misses stay explainable.
 resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-goodreads-sync"
-  username        = "goodreads_sync"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-goodreads-sync"
+  username          = "goodreads_sync"
+  rotation_schedule = "32 10 * * TUE"
+  rotation_window   = 3600
 }
 
 # The f1-stream site's visitor and viewing record (f1-stream ADR-0014).
@@ -1390,9 +1452,10 @@ resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
 # reloader.stakater.com/auto and a restart mid-race drops every viewer.
 #
 # Pinned to Tuesday for the gap that remains: new connections fail from the
-# rotation until ESO's next 15m refresh reaches the file, while connections
-# the pool already holds keep working. Tuesday is never a race day, so that
-# window cannot land in a session.
+# rotation until the file is refreshed (seconds, via db-rotation-watcher, or
+# ESO's 15m poll if the watcher is down), while connections the pool already
+# holds keep working. Tuesday is never a race day, so that window cannot land
+# in a session.
 resource "vault_database_secret_backend_static_role" "pg_f1_stream" {
   backend           = vault_mount.database.path
   db_name           = vault_database_secret_backend_connection.postgresql.name
@@ -1407,19 +1470,22 @@ resource "vault_database_secret_backend_static_role" "pg_f1_stream" {
 # databases are created in stacks/dbaas; ESO hands the passwords to the
 # verify namespace (secret verify-db-creds).
 resource "vault_database_secret_backend_static_role" "pg_verify_probe" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-verify-probe"
-  username        = "verify_probe"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-verify-probe"
+  username          = "verify_probe"
+  rotation_schedule = "4 10 * * TUE"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_verify_probe" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.mysql.name
-  name            = "mysql-verify-probe"
-  username        = "verify_probe"
-  rotation_period = 604800
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-verify-probe"
+  username            = "verify_probe"
+  rotation_schedule   = "4 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
 }
 
 # =============================================================================
