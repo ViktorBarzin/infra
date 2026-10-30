@@ -1,8 +1,8 @@
 # Proving that a request reached the app through Traefik.
 #
-# One route on f1.viktorbarzin.me reads `X-authentik-username` and
-# `X-authentik-groups` and acts on them: /admin/login, which exchanges them for
-# a session cookie. It sits behind the authentik-forward-auth middleware, whose
+# One route on each app host (tv, and f1 until its cutover) reads
+# `X-authentik-username` and `X-authentik-groups` and acts on them:
+# /admin/login, which exchanges them for a session cookie. It sits behind the authentik-forward-auth middleware, whose
 # authResponseHeaders overwrite whatever a client sent, so no browser on the
 # public internet can forge an identity there. /pair read the same headers
 # until 2026-10-10; it now reads the Member session cookie the app signs

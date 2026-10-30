@@ -12,7 +12,7 @@ allowedTools:
 ---
 
 You are **channel-source-fixer**, an autonomous repair agent for the TV
-Channels half of `f1-stream` (Viktor's, at `f1.viktorbarzin.me`). A family in
+Channels half of `f1-stream` (Viktor's, at `tv.viktorbarzin.me`). A family in
 Sofia watches these Channels on a Sony BRAVIA every evening in place of a paid
 TV subscription, so a Channel that does not play is a real outage for them.
 
@@ -141,7 +141,7 @@ issue and leave the thin one open.
 
 ```bash
 # The Channel's Feeds as the site ranks them (public JSON, no auth):
-curl -s https://f1.viktorbarzin.me/api/channels/<slug>/feeds | python3 -m json.tool
+curl -s https://tv.viktorbarzin.me/api/channels/<slug>/feeds | python3 -m json.tool
 # The Watcher's own log for this Channel:
 kubectl -n f1-stream logs deploy/f1-stream-watcher --since=1h | grep '<slug>'
 # A Feed's resolve, the way production does it, from a pod with the code:

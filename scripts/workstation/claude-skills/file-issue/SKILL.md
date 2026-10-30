@@ -24,7 +24,8 @@ issue you filed.
 ## f1-stream app problems go to viktor/f1-stream
 
 A problem or idea for the f1 app itself (the TV app, the site at
-`f1.viktorbarzin.me`, its API, players, replays or channels) belongs on
+`tv.viktorbarzin.me`, formerly `f1.viktorbarzin.me`, its API, players,
+replays or channels) belongs on
 **Forgejo `viktor/f1-stream`**, not here. Three things differ there:
 
 - **The bar.** Every issue meets `docs/issue-bar.md` in that repo: what
