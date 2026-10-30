@@ -81,7 +81,12 @@ fetches, merges master and **runs the verify command again on the merged tree**
 before the next push (up to three tries). It stops without pushing, and exits
 non-zero, when that merge conflicts (the worktree is left mid-merge and the
 error names the files), when the re-verify fails, or when master keeps moving.
-Only a refusal by the server itself (branch protection, a hook) falls back to
+Lands of one repo on the same machine take turns for that final
+merge-verify-push: a flock on `/run/lock/homelab-land-<repo>.lock` (every user
+can open it; `HOMELAB_LAND_LOCK_DIR` moves it) makes a land wait, printing who
+holds the turn, instead of losing push races. Its first verify still runs in
+parallel with the others. Without a lock directory (a laptop) it lands
+without taking turns. Only a refusal by the server itself (branch protection, a hook) falls back to
 pushing the feature branch for a PR, and that also exits non-zero with
 "not landed", because nothing reached master.
 

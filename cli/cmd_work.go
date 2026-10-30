@@ -121,7 +121,16 @@ func workLand(args []string) error {
 		fmt.Fprintln(os.Stderr, "homelab: re-verifying the merged tree before pushing it")
 		return verify()
 	}
-	if err := pushWithRetry(repoRoot, flags, remote, 3, reverify); err != nil {
+	// Take turns with other lands of this repo on this machine for the push,
+	// so a land waits for its turn instead of losing push races.
+	remoteURL, _ := gitOutput(repoRoot, "remote", "get-url", remote)
+	release, err := acquireLandLock(landLockKey(remoteURL), currentUser()+" "+branch, 60*time.Minute, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("not landed: %w", err)
+	}
+	err = pushWithRetry(repoRoot, flags, remote, 3, reverify)
+	release()
+	if err != nil {
 		var refused *pushRefusedError
 		if errors.As(err, &refused) {
 			return landFallback(repoRoot, flags, remote, branch, err)
