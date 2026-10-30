@@ -29,6 +29,8 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"read the systemd journal of this box", []string{"logs query", "devvm-journal"}},
 		{"plan or apply a terraform stack", []string{"homelab tf"}},
 		{"create a worktree for a task", []string{"homelab work start"}},
+		{"get my landed f1-stream change live", []string{"homelab deploy f1-stream"}},
+		{"publish the TV app by hand", []string{"homelab deploy f1-stream"}},
 		{"query a database in the cluster", []string{"homelab k8s db"}},
 		{"check whether a service is reachable from outside", []string{"homelab net check"}},
 	}
