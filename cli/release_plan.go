@@ -122,11 +122,12 @@ const (
 	actionSkipUnchanged
 	actionSkipNewer
 	actionRefuse
+	actionNotAsked
 )
 
 func (a releaseAction) String() string {
 	return [...]string{"build and publish", "publish the existing build", "already live",
-		"nothing changed", "live is newer", "refused"}[a]
+		"nothing changed", "live is newer", "refused", "not asked for"}[a]
 }
 
 func (a releaseAction) runs() bool { return a == actionBuild || a == actionPublishOnly }
