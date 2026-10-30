@@ -404,9 +404,8 @@ locals {
     # connections between viewers' browsers behind a single env var.
     #
     # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
-    # under /tracker on every app host. It points at tv, the product's home
-    # since 2026-10-29 (f1-stream ADR-0053); a page still open on f1 reaches
-    # it cross-origin, which a WebSocket allows.
+    # under /tracker on tv, the product's only host since 2026-10-29
+    # (f1-stream ADR-0053).
     { name = "P2P_TRACKERS", value = "wss://tv.viktorbarzin.me/tracker" },
     # STUN only, no TURN. A STUN server learns a candidate address and
     # carries no media, so this leaks less than the segment request that
@@ -443,8 +442,8 @@ locals {
     # viktor/f1-stream as tv-feedback-bot. Mail goes From f1@, which the
     # mailserver's aliases.txt authorises for the spam@ login.
     { name = "PROMETHEUS_URL", value = "http://prometheus-server.monitoring.svc.cluster.local" },
-    # tv since 2026-10-29 (f1-stream ADR-0053); f1 redirects there after the
-    # cutover.
+    # tv since 2026-10-29 (f1-stream ADR-0053); f1 redirects there
+    # (f1-redirect.tf).
     { name = "PUBLIC_BASE_URL", value = "https://tv.viktorbarzin.me" },
     { name = "REPORTS_FORGEJO_API", value = "https://forgejo.viktorbarzin.me/api/v1" },
     { name = "REPORTS_REPO", value = "viktor/f1-stream" },
@@ -1525,29 +1524,16 @@ module "tls_secret" {
 # The per-site Anubis instance was folded into the shared one in
 # stacks/turnstile-gate on 2026-10-16; see docs/plans/2026-10-16-turnstile-sitewide-design.md.
 
-# The hosts that serve the app. tv is the product's home from 2026-10-29
+# The hosts that serve the app. tv is the product's only host since 2026-10-30
 # (f1-stream ADR-0053: the TV app comes first and F1 is one section of it).
-# f1 keeps serving the same app with the same settings until the cutover,
-# which turns it into Cloudflare redirect rules to tv and drops it from this
-# set. Every ingress below is one copy per host, so the main ingress and its
-# three carve-outs (/admin/login here, /pair in tv-pairing.tf, /tracker in
-# wt-tracker.tf) stay identical on both names by construction.
+# f1.viktorbarzin.me serves nothing itself any more: f1-redirect.tf sends every
+# request on it to the same path on tv. The ingresses below stay keyed by host
+# so the main ingress and its three carve-outs (/admin/login here, /pair in
+# tv-pairing.tf, /tracker in wt-tracker.tf) keep their state addresses.
 locals {
-  app_hosts = toset(["f1", "tv"])
+  app_hosts = toset(["tv"])
   # The host that carries the one homepage tile.
   app_primary_host = "tv"
-}
-
-# The f1 copies were single module instances before tv existed; these keep
-# their state, so adding tv creates the tv ingresses and changes nothing on f1.
-moved {
-  from = module.ingress
-  to   = module.ingress["f1"]
-}
-
-moved {
-  from = module.ingress_admin_login
-  to   = module.ingress_admin_login["f1"]
 }
 
 # The single Authentik-gated path. Everything else on the app hosts is
@@ -1610,8 +1596,10 @@ module "ingress" {
   # sourceCriterion and would key every viewer on the cloudflared pod, so f1
   # carries its own limiter keyed on X-Real-Ip (see below).
   #
-  # tv was added on 2026-10-29 with exactly the same settings; it is a
-  # proxied name on the same `*` CNAME, so it needs no record of its own.
+  # tv is a proxied name on that `*` CNAME, so it has no record of its own.
+  # f1 still resolves through the same wildcard after its cutover to a
+  # redirect (f1-redirect.tf), which is what lets the Cloudflare redirect rule
+  # see its requests.
   dns_type  = "proxied"
   namespace = kubernetes_namespace.f1-stream.metadata[0].name
   name      = each.key

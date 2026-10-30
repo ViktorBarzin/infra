@@ -136,7 +136,7 @@ locals {
     "calibre", "cc", "changedetection", "chrome",
     "ci", "city-guesser", "crowdsec-web", "dashy",
     "dawarich", "dolt-workbench", "draw", "dronelog",
-    "ebook2audiobook", "f1", "family", "files",
+    "ebook2audiobook", "family", "files",
     "fire-planner", "forgejo", "frigate", "grafana",
     "gw", "ha-london", "ha-sofia", "hackmd",
     "health", "highlights-immich", "highlights-immich-emo", "home",
@@ -156,7 +156,7 @@ locals {
     "speedtest", "stacks", "stirling-pdf", "stremio",
     "tandoor", "tasks", "technitium", "test-failover",
     "torrserver", "trading", "traefik", "trek",
-    "tripit", "uptime", "url", "valchedrym",
+    "tripit", "tv", "uptime", "url", "valchedrym",
     "vaultwarden", "vpn", "wealthfolio", "whisker",
     "wrongmove", "yotovski-status", "yt", "yt-highlights",
   ]

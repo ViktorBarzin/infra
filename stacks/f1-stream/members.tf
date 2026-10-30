@@ -94,18 +94,13 @@ resource "authentik_provider_oauth2" "f1_stream" {
   # provider/server version skew. This is default-provider-invalidation-flow.
   invalidation_flow = "b0a43377-0fa6-45d1-89fc-ed298bb1bb53"
 
-  # The app builds redirect_uri from the host the browser used, so each app
-  # host needs its own callback. tv is the product's home since 2026-10-29
-  # (f1-stream ADR-0053); f1's entry goes once f1 only redirects to tv.
+  # The app builds redirect_uri from the host the browser used. tv is the
+  # only app host since 2026-10-29 (f1-stream ADR-0053); f1 redirects there
+  # (f1-redirect.tf), so a sign-in started on f1 finishes on tv.
   allowed_redirect_uris = [
     {
       matching_mode     = "strict"
       url               = "https://tv.viktorbarzin.me/auth/callback"
-      redirect_uri_type = "authorization"
-    },
-    {
-      matching_mode     = "strict"
-      url               = "https://f1.viktorbarzin.me/auth/callback"
       redirect_uri_type = "authorization"
     },
   ]
