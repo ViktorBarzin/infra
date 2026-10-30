@@ -524,7 +524,7 @@ resource "kubernetes_manifest" "anubis_auth" {
 module "anubis" {
   source = "../../modules/kubernetes/anubis_instance"
   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
-  image_tag        = "v1.28.1"
+  image_tag        = "v1.28.2"
   name             = "shared"
   namespace        = kubernetes_namespace.gate.metadata[0].name
   public_url       = "https://${local.anubis_host}"
