@@ -263,3 +263,54 @@ deliberately left on the plain interval: it polls a feed every 120s and a book
 shelved during the gap is picked up on the next cycle, so the downtime costs
 nothing a user would see. A per-stack force-sync CronJob here would add moving
 parts to save time that does not matter.
+
+## Follow-up, 2026-10-30: a shared watcher replaces the woodpecker CronJob
+
+The force-sync CronJob described under "What we changed" was removed on
+2026-10-30. Its job is now done for every database static role by the
+`db-rotation-watcher` CronJob in `stacks/vault`, which reads role metadata
+every 5s through the rotation hour and force-syncs the matching
+ExternalSecrets as soon as a role rotates. All roles, `pg-woodpecker`
+included, moved to Tuesday slots between 10:00 and 10:45 UTC
+(`pg-woodpecker` at 10:06). How it works and how to check it:
+[db-credential-rotation.md](../runbooks/db-credential-rotation.md).
+
+### The 10-minute rotation of 2026-10-23
+
+That rotation took woodpecker down for about 10 minutes, not the 4-7 measured
+earlier. The CronJob and ESO had the new password in the Secret by 09:00:41,
+and Reloader patched the StatefulSet then, but the old pod stayed until
+09:10:08.
+
+| time (UTC) | event | source |
+|---|---|---|
+| 09:00:05 | first `28P01` for `woodpecker` | Loki, woodpecker and dbaas |
+| ~09:00:26-36 | pod NotReady (readiness is 3 x 10s on `/healthz`, which pings the database) | inferred from probe settings and the 09:09:56 liveness kill |
+| 09:00:41 | Reloader patches the StatefulSet. The force-sync Job had spent 31s pulling its image | Reloader log, kubelet events |
+| 09:09:56 | liveness (then 60 x 10s) restarts the container, which boots on the new password | container logs |
+| 09:10:08 | StatefulSet controller replaces the now-Ready pod | Loki |
+
+This is upstream StatefulSet behaviour rather than our configuration. With
+`podManagementPolicy: OrderedReady`, the controller stops before its
+rolling-update delete when a pod is not Running and Ready
+(`stateful_set_control.go` in v1.35, and the "Forced rollback" section of the
+StatefulSet docs). `Parallel` would not change it: on 1.35 the
+`MaxUnavailableStatefulSet` gate is on by default and counts the unready pod
+against `maxUnavailable = 1`. So a Reloader patch that lands after the pod has
+gone NotReady waits for the liveness probe.
+
+What bounds it now:
+
+- The watcher has the Secret updated about 5s after rotation, so Reloader
+  patches while the pod is still Ready. The 2026-10-30 rotation (before the
+  watcher, through the old CronJob) shows that path: auth failures
+  from 09:00:07 to 09:00:18, Reloader patch at 09:00:20, new pod serving at
+  09:00:24.
+- If the race is lost, liveness has been back at the chart default since
+  2026-10-24 (3 x 10s, with slow boots covered by a startupProbe), so the
+  stuck pod restarts within about a minute instead of 10.
+
+An option if more margin is wanted: `probes.readiness.failureThreshold: 6` in
+the woodpecker chart values gives about 50-60s before NotReady. Liveness should
+stay at 3, since a liveness restart before the Secret syncs would boot on the
+old password.
