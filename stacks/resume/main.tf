@@ -116,7 +116,7 @@ resource "kubernetes_deployment" "resume" {
       spec {
         container {
           name  = "resume"
-          image = "amruthpillai/reactive-resume:v6.0.7"
+          image = "amruthpillai/reactive-resume:v6.0.10"
 
           port {
             container_port = 3000
