@@ -951,6 +951,36 @@
         force: true
       tags: [poetry]
 
+    # The f1-stream APK build lock, shared by every user. f1tv-apk-build.conf
+    # says why it is root's and 0666; f1-stream android/scripts/build-apk.sh
+    # takes it when it exists. /run is a tmpfs, so the rule recreates it at
+    # every boot and the task below creates it now.
+    - name: Install the f1-stream APK build lock rule
+      ansible.builtin.copy:
+        src: files/devvm/f1tv-apk-build.conf
+        dest: /etc/tmpfiles.d/f1tv-apk-build.conf
+        mode: "0644"
+        owner: root
+        group: root
+      tags: [f1tv-lock]
+
+    - name: Check the f1-stream APK build lock
+      ansible.builtin.stat:
+        path: /run/lock/f1tv-apk-build.lock
+        follow: false
+      register: devvm_f1tv_lock
+      tags: [f1tv-lock]
+
+    - name: Create the f1-stream APK build lock now rather than at the next boot
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/f1tv-apk-build.conf
+      when: >-
+        not (devvm_f1tv_lock.stat.isreg | default(false))
+        or devvm_f1tv_lock.stat.uid != 0
+        or devvm_f1tv_lock.stat.mode != '0666'
+      changed_when: true
+      tags: [f1tv-lock]
+
     # ---- 5) /etc/skel for new accounts --------------------------------------
     # File by file, not the whole skel/ directory: the repo keeps the tmux
     # config as skel/tmux.conf so it shows in a listing, but a new account needs
