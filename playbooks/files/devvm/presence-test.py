@@ -26,6 +26,15 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "presence"
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_identity(monkeypatch):
+    """The tests run inside Claude Code sessions, and inside a subagent the
+    tag-agent hook exports PRESENCE_AGENT_ID into this very command. Start
+    every test without the caller's identity; a test sets what it needs."""
+    for name in ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "PRESENCE_AGENT_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def fake_db(monkeypatch):
     """Mocks pymysql.connect to return a MagicMock cursor we can inspect."""
@@ -325,6 +334,68 @@ def test_sibling_subagents_see_each_others_claims_as_conflicts(fake_db, monkeypa
     select = [c for c in fake_db.execute.call_args_list if "SELECT" in c.args[0].upper()][-1]
     assert "session_id    != %s" in select.args[0] or "session_id != %s" in select.args[0]
     assert select.args[1][1].endswith("/aaaa1111")
+
+
+def _row(session_id, purpose):
+    return {"session_id": session_id, "purpose": purpose,
+            "claimed_at": "2026-10-30 09:00:00.000", "user": getpass.getuser(), "host": "devvm"}
+
+
+SESSION = "15aba44f-f368-4b06-9bdd-30115cd22824"
+
+
+def test_a_subagent_does_not_defer_to_its_own_parent(fake_db, monkeypatch, capsys):
+    """The parent claims stack:X and then sends a subagent to apply it. The
+    subagent's own claim must not tell it to defer to the session that sent it."""
+    monkeypatch.delenv("CLAUDE_SESSION_ID")  # set by fake_db
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("PRESENCE_AGENT_ID", "aaaa1111")
+    presence = _load_module()
+    parent = presence.parent_session_id()
+    fake_db.fetchall.return_value = [_row(parent, "apply stack:X")]
+    assert presence.main(["claim", "stack:X", "--purpose", "apply"]) == 0
+    out = capsys.readouterr().out
+    assert "DEFER" not in out
+    assert "ALSO CLAIMED BY" not in out
+    assert "presence: claimed stack:X" in out
+
+
+def test_a_parent_does_not_defer_to_its_own_subagent(fake_db, monkeypatch, capsys):
+    monkeypatch.delenv("CLAUDE_SESSION_ID")  # set by fake_db
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    presence = _load_module()
+    me = presence.get_session_id()
+    fake_db.fetchall.return_value = [_row(f"{me}/aaaa1111", "apply stack:X")]
+    assert presence.main(["claim", "stack:X", "--purpose", "apply"]) == 0
+    out = capsys.readouterr().out
+    assert "DEFER" not in out
+
+
+def test_a_sibling_still_conflicts_when_the_parent_also_holds_the_label(fake_db, monkeypatch, capsys):
+    monkeypatch.delenv("CLAUDE_SESSION_ID")  # set by fake_db
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("PRESENCE_AGENT_ID", "aaaa1111")
+    presence = _load_module()
+    parent = presence.parent_session_id()
+    fake_db.fetchall.return_value = [_row(parent, "parent"), _row(f"{parent}/bbbb2222", "sibling")]
+    presence.main(["claim", "stack:X", "--purpose", "apply"])
+    out = capsys.readouterr().out
+    assert "DEFER" in out
+    assert "/bbbb2222" in out
+    assert f"{parent} (" not in out
+
+
+def test_another_session_of_the_same_user_still_conflicts(fake_db, monkeypatch, capsys):
+    monkeypatch.delenv("CLAUDE_SESSION_ID")  # set by fake_db
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("PRESENCE_AGENT_ID", "aaaa1111")
+    presence = _load_module()
+    other = presence.parent_session_id().replace(SESSION, "99999999-0000-4000-8000-000000000009")
+    fake_db.fetchall.return_value = [_row(other, "other session"), _row(f"{other}/aaaa1111", "its subagent")]
+    presence.main(["claim", "stack:X", "--purpose", "apply"])
+    out = capsys.readouterr().out
+    assert "DEFER" in out
+    assert "other session" in out and "its subagent" in out
 
 
 def test_a_subagents_heartbeat_also_extends_its_parents_claims(fake_db, monkeypatch):

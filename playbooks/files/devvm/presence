@@ -20,6 +20,8 @@ subagent's agent_id from the hook input (Claude Code passes it to hooks, not
 to the commands a subagent runs) and exports it as PRESENCE_AGENT_ID into that
 subagent's presence and homelab commands. Its id is then
 <user>@<host>@<session uuid>/<agent id>. The SubagentStop hook releases it.
+A claim held by the session's own parent, or by a subagent it sent, is not
+reported as a conflict: they work on the same task. Siblings still are.
 
 Reads from env:
   PRESENCE_DSN            mysql DSN (default: beads@10.0.20.200:3306/beads)
@@ -102,6 +104,14 @@ def parent_session_id() -> str | None:
     if os.environ.get("CLAUDE_SESSION_ID") or not claude or not _agent_id():
         return None
     return f"{_prefix()}@{claude}"
+
+
+def same_session(other: str, session_id: str) -> bool:
+    """True when the claim `other` belongs to this session's own family: the
+    parent that sent this subagent, or a subagent this session sent. Those
+    work together, so their claims on one label are not a conflict. Sibling
+    subagents and other sessions still are."""
+    return other == parent_session_id() or other.startswith(f"{session_id}/")
 
 
 def _like_prefix(text: str) -> str:
@@ -203,7 +213,7 @@ def _claim(args, session_id: str) -> int:
             """,
             (args.label, session_id),
         )
-        conflicts = cur.fetchall()
+        conflicts = [c for c in cur.fetchall() if not same_session(c["session_id"], session_id)]
     if not conflicts:
         print(f"presence: claimed {args.label}")
         return 0
