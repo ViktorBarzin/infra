@@ -1196,7 +1196,6 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
   if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
        fetch --quiet origin master 2>/dev/null; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
-    if [[ "$DRY_RUN" != 1 ]]; then committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"; fi
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
@@ -1210,6 +1209,13 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
   else
     log "WARN: git fetch failed — running from the working tree at $WORKSTATION_DIR"
   fi
+fi
+# cli/ is extracted on both passes: the pass that self-deploys a new copy of
+# this script skips the fetch above, and that copy would otherwise build from
+# the working tree until the next hourly run. origin/master is whatever the
+# last fetch brought, which is committed content either way.
+if [[ "$DRY_RUN" != 1 ]]; then
+  committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"
 fi
 # Point the three inputs at whatever we managed to materialise; each falls back
 # independently, so a partial failure still runs with the rest committed.
