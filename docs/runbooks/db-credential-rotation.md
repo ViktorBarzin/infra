@@ -35,7 +35,7 @@ Four pieces:
 
 1. **Tuesday slots.** Every role has `rotation_schedule = "<m> 10 * * TUE"` and
    `rotation_window = 3600`. Roles that one app reads share a minute, so the
-   app restarts once (Grafana and its five Postgres datasources at 10:02). The
+   app restarts once (Grafana and the six Postgres roles behind its datasources at 10:02). The
    slot table is in `stacks/vault/main.tf`, "Static role rotation slots".
    `pg-tasks` lives in `stacks/vault/app_db_roles.tf`.
 2. **MySQL dual password.** The nine MySQL roles rotate with
