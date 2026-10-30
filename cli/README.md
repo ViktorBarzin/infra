@@ -468,6 +468,44 @@ The daily `.woodpecker/showcase.yml` run does both.
 
 Design: `docs/plans/2026-10-20-homelab-showcase-design.md`.
 
+### v0.32 verb — releasing f1-stream by hand
+
+`homelab deploy f1-stream [--check] [--server] [--tv] [--sha SHA]` builds a
+landed f1-stream commit on the devvm and puts it live the way
+`.github/workflows/build.yml` and `android.yml` would, for when GitHub Actions
+cannot build (infra#152) and so emo can release without Viktor (infra#153).
+
+- It clones `viktor/f1-stream` into a temporary directory under `/var/tmp`
+  and checks out master's tip, or `--sha` (which must be on master, because
+  the TV versionCode is master's commit count). It never builds from
+  someone's checkout or worktree.
+- Server image: skipped when `/api/version` already reports the commit, or
+  when nothing outside the workflow's `paths-ignore` changed since it. When
+  ghcr already has `:<sha8>` it is deployed without a rebuild. Otherwise
+  `docker buildx build` with the same build args and `previous` context as
+  `build.yml`, pushed as `:<sha8>` (plus `:latest` at master's tip). Then the
+  Woodpecker repo 10 deploy (`IMAGE_TAG`, `IMAGE_NAME`), waiting for the
+  pipeline, the `f1-stream-edge` rollout and `/api/version`. A deploy whose
+  `order` step fails (the GitHub mirror is behind) is started again.
+- TV app: versionCode `30000 + commit count`, versionName `<last tag>+<count>`
+  (`scripts/ci-version.sh`). Skipped when `/api/app/latest` already offers
+  the code or nothing under the app's paths changed since the live code's
+  commit; refused when the code is not above the live one. Built with
+  `android/scripts/build-apk.sh testDebugUnitTest assembleRelease` (which
+  takes the shared APK build lock), then checked for the shared signer,
+  `baseline.prof`, the versionCode and a non-debuggable build, pushed with
+  oras to `f1-stream-tv:<code>` (and `-mapping`), published with
+  `PIPELINE=publish-tv`, and confirmed by `/api/app/latest` and the sha256 of
+  `/api/app/f1tv.apk`.
+- One release at a time on the box: `/run/lock/f1-stream-release.lock`
+  (root-owned 0666, from `playbooks/files/devvm/f1-stream-release.conf`).
+  It also claims `service:f1-stream` on the presence board and refuses when
+  another session holds it.
+- Credentials: Vault `secret/ci/f1-stream-release` (`ghcr_username`,
+  `ghcr_token`, `woodpecker_token`), readable by admins and by emo through
+  `projects-emo` (`stacks/vault/main.tf`). The docker login goes into a
+  throwaway config with the token on stdin.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` by the hourly devvm provisioner

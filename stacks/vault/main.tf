@@ -1809,7 +1809,7 @@ resource "vault_policy" "personal_emo" {
   EOT
 }
 
-# emo project/service secrets — tuya-bridge (Viktor-approved 2026-07-07), shared maps key (2026-10-08)
+# emo project/service secrets — tuya-bridge (Viktor-approved 2026-07-07), shared maps key (2026-10-08), f1-stream release credential (2026-10-30)
 # ----------------------------------------------------------------------------------
 # emo authors + maintains the tuya-bridge "Саксии" (planters) HA-Sofia feature
 # (shipped in infra master bf604dbf, the emo/saksii-live-poller PR). To manage its
@@ -1837,6 +1837,15 @@ resource "vault_policy" "projects_emo" {
     }
     # Read the shared Geoapify key for `homelab map` (ADR-0028, 2026-10-08)
     path "secret/data/workstation/shared/maps" {
+      capabilities = ["read"]
+    }
+    # Read the f1-stream release credential for `homelab deploy f1-stream`
+    # (infra#153, 2026-10-30): a ghcr push token and a Woodpecker token, so
+    # emo can put his landed f1-stream changes live while GitHub Actions
+    # cannot build them (infra#152). Viktor chose a shared release command
+    # over per-user credentials; both tokens are copies of Viktor's own, so
+    # they act as his on ghcr and Woodpecker.
+    path "secret/data/ci/f1-stream-release" {
       capabilities = ["read"]
     }
   EOT
