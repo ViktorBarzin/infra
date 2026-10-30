@@ -33,6 +33,18 @@
     "OTEL_LOGS_EXPORT_INTERVAL": "30000"
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/libexec/claude-presence/tag-agent 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
@@ -45,6 +57,17 @@
       }
     ],
     "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/libexec/claude-presence/release 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
       {
         "hooks": [
           {

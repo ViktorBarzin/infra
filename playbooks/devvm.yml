@@ -891,6 +891,9 @@
     # (emo has none). The hooks are in managed-settings.json above; each one
     # keys on the Claude Code session it runs for, and the heartbeat throttle
     # stamps live under the calling user's own ~/.cache/claude-presence.
+    # tag-agent (PreToolUse, Bash) gives each subagent its own identity under
+    # its session, and SubagentStop releases it; see the header of
+    # files/devvm/presence-tag-agent for how and what it costs.
     # pymysql comes from packages.txt (python3-pymysql). Tests:
     # python3 -m pytest -q playbooks/files/devvm/presence-test.py
     - name: Install presence
@@ -916,7 +919,7 @@
         mode: "0755"
         owner: root
         group: root
-      loop: [heartbeat, release]
+      loop: [heartbeat, release, tag-agent]
       tags: [presence]
     # A SessionStart hook used to write one session id per user to
     # ~/.cache/claude-presence/current.session. Concurrent sessions overwrote

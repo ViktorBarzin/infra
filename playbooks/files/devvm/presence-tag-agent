@@ -1,0 +1,41 @@
+#!/bin/bash
+# Claude Code PreToolUse hook for Bash, machine-wide (managed-settings.json),
+# installed by playbooks/devvm.yml as /usr/local/libexec/claude-presence/tag-agent.
+#
+# Gives each subagent its own presence identity. A subagent runs its commands
+# with the parent's CLAUDE_CODE_SESSION_ID and no variable of its own, so two
+# sibling subagents claiming the same resource looked like one session and
+# neither saw a conflict. Claude Code does pass the subagent's agent_id to
+# hooks, so this hook puts it into the command:
+#
+#   export PRESENCE_AGENT_ID=<agent id>
+#   <the command as the subagent wrote it>
+#
+# and presence keys the claim on <user>@<host>@<session uuid>/<agent id>.
+#
+# Only commands that can reach presence are rewritten (ones that mention
+# presence or run homelab, whose claim, tf and browser verbs claim through
+# it), and only inside a subagent. The hook returns no permission decision,
+# so the rewritten command goes through the normal permission check. In
+# default permission mode that means a subagent's allowlisted presence or
+# homelab command now also asks about the export line; bypass and auto mode
+# are unaffected. Tested 2026-10-30 against Claude Code 2.1.314.
+set -uo pipefail
+
+IN="$(cat)"
+# Cheap exits first: this runs before every Bash call of every session.
+case "$IN" in *'"agent_id"'*) ;; *) exit 0 ;; esac
+case "$IN" in *presence*|*homelab*) ;; *) exit 0 ;; esac
+command -v jq >/dev/null 2>&1 || exit 0
+
+jq -c '
+  select(.tool_name == "Bash"
+         and (.agent_id | type) == "string"
+         and (.agent_id | test("^[A-Za-z0-9._-]+$"))
+         and (.tool_input.command | type) == "string"
+         and (.tool_input.command | test("presence|(^|[^A-Za-z0-9_-])homelab([^A-Za-z0-9_-]|$)")))
+  | {hookSpecificOutput: {
+       hookEventName: "PreToolUse",
+       updatedInput: (.tool_input + {command: ("export PRESENCE_AGENT_ID=" + .agent_id + "\n" + .tool_input.command)})
+     }}' <<<"$IN" 2>/dev/null
+exit 0
