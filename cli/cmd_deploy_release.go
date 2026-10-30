@@ -360,7 +360,7 @@ func (r *releaseRun) plan() error {
 	}
 	r.say("%s %s (%s): versionCode %d, versionName %s", r.spec.App, r.sha8, tipNote, r.version.Code, r.version.Name)
 
-	r.server = releaseDecision{actionSkipUnchanged, "not asked for (--tv)"}
+	r.server = releaseDecision{actionNotAsked, "--tv only"}
 	if r.serverOn {
 		live, err := r.liveVersion()
 		if err != nil {
@@ -387,7 +387,7 @@ func (r *releaseRun) plan() error {
 	}
 	r.say("server image %s:%s: %s (%s)", r.spec.Image, r.sha8, r.server.Action, r.server.Reason)
 
-	r.tv = releaseDecision{actionSkipUnchanged, "not asked for (--server)"}
+	r.tv = releaseDecision{actionNotAsked, "--server only"}
 	if r.tvOn {
 		code, sum, err := r.liveTVLatest()
 		f := tvFacts{Auto: r.opts.auto(), Code: r.version.Code, LiveCode: code, LiveUnknown: err != nil || code == 0}

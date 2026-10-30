@@ -188,3 +188,14 @@ func TestReleaseParseArgs(t *testing.T) {
 		t.Errorf("want an error for an unknown app")
 	}
 }
+
+func TestReleaseActionNamesCoverEveryAction(t *testing.T) {
+	for a := actionBuild; a <= actionNotAsked; a++ {
+		if a.String() == "" {
+			t.Errorf("action %d has no name", a)
+		}
+	}
+	if actionNotAsked.runs() || !actionPublishOnly.runs() {
+		t.Errorf("runs() is wrong")
+	}
+}
