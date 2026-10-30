@@ -604,12 +604,48 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.technitium]
 }
 
-data "kubernetes_secret" "technitium_db_creds" {
-  metadata {
-    name      = "technitium-db-creds"
-    namespace = kubernetes_namespace.technitium.metadata[0].name
+# The same pg-technitium password for Grafana's datasource below, as a Secret
+# in `monitoring` that Grafana loads through envFromSecrets
+# (stacks/monitoring/modules/monitoring/grafana_chart_values.yaml). Reloader
+# restarts Grafana when it rotates. The datasource used to embed the password
+# read at apply time, so it broke after every weekly rotation until the next
+# apply of this stack.
+resource "kubernetes_manifest" "grafana_technitium_pg_creds" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-technitium-pg-creds"
+      namespace = "monitoring"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-technitium-pg-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            TECHNITIUM_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-technitium"
+          property = "password"
+        }
+      }]
+    }
   }
-  depends_on = [kubernetes_manifest.external_secret]
 }
 
 # Grafana datasource for Technitium DNS query logs in PostgreSQL
@@ -638,11 +674,12 @@ resource "kubernetes_config_map" "grafana_technitium_datasource" {
           timescaledb     = false
         }
         secureJsonData = {
-          password = data.kubernetes_secret.technitium_db_creds.data["db_password"]
+          password = "$__env{TECHNITIUM_PG_PASSWORD}"
         }
       }]
     })
   }
+  depends_on = [kubernetes_manifest.grafana_technitium_pg_creds]
 }
 
 # Grafana dashboard for Technitium DNS query logs

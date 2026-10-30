@@ -1151,11 +1151,11 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #         pg-wealthfolio-sync,    10:28 pg-affine              10:39 pg-tasks (app_db_roles.tf)
 #         pg-goldmane-edges,      10:30 pg-claude-memory       10:40 pg-trading
 #         pg-job-hunter,          10:32 pg-goodreads-sync      10:45 pg-terraform-state, away
-#         pg-payslip-ingest)      10:34 pg-health                    from the CI-heavy slots
+#         pg-payslip-ingest,      10:34 pg-health                    from the CI-heavy slots
+#         both technitium roles)
 #   10:04 both verify-probe roles
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
-#   10:12 both technitium roles   10:14 mysql-nextcloud   10:16 mysql-speedtest
-#   10:18 mysql-wrongmove
+#   10:14 mysql-nextcloud   10:16 mysql-speedtest   10:18 mysql-wrongmove
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.
@@ -1237,7 +1237,7 @@ resource "vault_database_secret_backend_static_role" "mysql_technitium" {
   db_name             = vault_database_secret_backend_connection.mysql.name
   name                = "mysql-technitium"
   username            = "technitium"
-  rotation_schedule   = "12 10 * * TUE"
+  rotation_schedule   = "2 10 * * TUE"
   rotation_window     = 3600
   rotation_statements = local.mysql_dual_password_rotation
 }
@@ -1417,7 +1417,7 @@ resource "vault_database_secret_backend_static_role" "pg_technitium" {
   db_name           = vault_database_secret_backend_connection.postgresql.name
   name              = "pg-technitium"
   username          = "technitium"
-  rotation_schedule = "12 10 * * TUE"
+  rotation_schedule = "2 10 * * TUE"
   rotation_window   = 3600
 }
 
