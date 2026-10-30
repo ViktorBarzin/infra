@@ -6,8 +6,10 @@
 # the session is working. The session is the one named in the hook input
 # (session_id), the same uuid Claude Code exports to the agent's commands as
 # CLAUDE_CODE_SESSION_ID, so each concurrent session extends only its own
-# claims. Runs after every tool call, so it is throttled to one database call
-# per 120 s per session and does nothing else in between.
+# claims. Inside a subagent the hook input also carries agent_id, and the
+# heartbeat runs as that subagent (presence then extends the parent's claims
+# too). Runs after every tool call, so it is throttled to one database call
+# per 120 s per session or subagent and does nothing else in between.
 set -uo pipefail
 
 PRESENCE="${PRESENCE_BIN:-/usr/local/bin/presence}"
@@ -16,12 +18,16 @@ DIR="${PRESENCE_STATE_DIR:-$HOME/.cache/claude-presence}"
 # Hook input is one JSON object on stdin, session_id first. Text inside other
 # fields (tool input and output) has its quotes escaped, so it cannot match
 # the unescaped "session_id" key below.
-SID="$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
+IN="$(cat)"
+field() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" <<<"$IN" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/'; }
+SID="$(field session_id)"
 SID="${SID:-${CLAUDE_CODE_SESSION_ID:-}}"
 [[ "$SID" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0
+AGENT="$(field agent_id)"
+[[ "$AGENT" =~ ^[A-Za-z0-9._-]+$ ]] || AGENT=""
 
 mkdir -p "$DIR" 2>/dev/null || exit 0
-STAMP="$DIR/heartbeat-$SID"
+STAMP="$DIR/heartbeat-$SID${AGENT:+.$AGENT}"
 NOW=$(date +%s)
 LAST=$(stat -c %Y "$STAMP" 2>/dev/null || echo 0)
 if (( NOW - LAST < 120 )); then
@@ -29,5 +35,5 @@ if (( NOW - LAST < 120 )); then
 fi
 touch "$STAMP" 2>/dev/null
 
-CLAUDE_CODE_SESSION_ID="$SID" "$PRESENCE" heartbeat >/dev/null 2>&1 || true
+CLAUDE_CODE_SESSION_ID="$SID" PRESENCE_AGENT_ID="$AGENT" "$PRESENCE" heartbeat >/dev/null 2>&1 || true
 exit 0

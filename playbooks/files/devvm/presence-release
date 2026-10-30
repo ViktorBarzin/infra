@@ -1,20 +1,26 @@
 #!/bin/bash
-# Claude Code Stop hook, machine-wide (managed-settings.json), installed by
-# playbooks/devvm.yml as /usr/local/libexec/claude-presence/release.
+# Claude Code Stop and SubagentStop hook, machine-wide (managed-settings.json),
+# installed by playbooks/devvm.yml as /usr/local/libexec/claude-presence/release.
 #
 # Releases every active claim this session holds when the agent finishes its
 # turn. The session is the one named in the hook input (session_id), so a turn
-# ending in one session never releases another session's claims. Best effort:
-# it never blocks the session.
+# ending in one session never releases another session's claims. SubagentStop
+# input also carries agent_id, and then only that subagent's claims go: a
+# parent's claims outlive its subagents, and a background subagent's claims
+# outlive its parent's turn. Best effort: it never blocks the session.
 set -uo pipefail
 
 PRESENCE="${PRESENCE_BIN:-/usr/local/bin/presence}"
 DIR="${PRESENCE_STATE_DIR:-$HOME/.cache/claude-presence}"
 
-SID="$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
+IN="$(cat)"
+field() { grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" <<<"$IN" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/'; }
+SID="$(field session_id)"
 SID="${SID:-${CLAUDE_CODE_SESSION_ID:-}}"
 [[ "$SID" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0
+AGENT="$(field agent_id)"
+[[ "$AGENT" =~ ^[A-Za-z0-9._-]+$ ]] || AGENT=""
 
-CLAUDE_CODE_SESSION_ID="$SID" "$PRESENCE" release --all-mine >/dev/null 2>&1 || true
-rm -f "$DIR/heartbeat-$SID"
+CLAUDE_CODE_SESSION_ID="$SID" PRESENCE_AGENT_ID="$AGENT" "$PRESENCE" release --all-mine >/dev/null 2>&1 || true
+rm -f "$DIR/heartbeat-$SID${AGENT:+.$AGENT}"
 exit 0

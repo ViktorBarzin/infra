@@ -13,12 +13,27 @@ runs. The heartbeat and release hooks in /etc/claude-code/managed-settings.json
 read the same uuid from their hook input, so concurrent sessions of one user
 never extend or release each other's claims.
 
+A subagent runs with its parent's CLAUDE_CODE_SESSION_ID, so on its own it
+would share the parent's identity, and sibling subagents would never see each
+other's claims as conflicts. The PreToolUse hook presence-tag-agent reads the
+subagent's agent_id from the hook input (Claude Code passes it to hooks, not
+to the commands a subagent runs) and exports it as PRESENCE_AGENT_ID into that
+subagent's presence and homelab commands. Its id is then
+<user>@<host>@<session uuid>/<agent id>. The SubagentStop hook releases it.
+
 Reads from env:
   PRESENCE_DSN            mysql DSN (default: beads@10.0.20.200:3306/beads)
   CLAUDE_SESSION_ID       full session identity, overrides everything below
   CLAUDE_CODE_SESSION_ID  the Claude Code session uuid (set by Claude Code)
-Outside Claude Code, with neither set, every run gets a one-shot id: a claim
-made that way can only expire, so set CLAUDE_SESSION_ID in that shell first.
+  PRESENCE_AGENT_ID       the subagent's id (set by presence-tag-agent)
+Outside Claude Code, with neither session variable set, every run gets a
+one-shot id, <user>@<host>@shell-<8 hex>. `release <label>` from such a shell
+drops the same OS user's shell claim on that label on this host; a claim held
+by a Claude session needs that session's id in CLAUDE_SESSION_ID.
+
+The heartbeat and release hooks have a 3 s timeout, so a down database must
+fail well inside it: the connect and every read and write give up after 1 s,
+and presence then warns and exits 0.
 """
 
 from __future__ import annotations
@@ -27,6 +42,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import socket
 import sys
 import urllib.parse
@@ -38,21 +54,58 @@ try:
 except ImportError:
     pymysql = None  # graceful: handled in _connect
 
+_DB_ERRORS: tuple[type[BaseException], ...] = (pymysql.MySQLError,) if pymysql else ()
+
 DEFAULT_DSN = "mysql://beads@10.0.20.200:3306/beads"
 DEFAULT_TTL_SECONDS = 15 * 60
+# Below the hooks' 3 s timeout with room for Python's start-up. A reachable
+# database answers in milliseconds (7 ms connect, 2 ms query, 2026-10-30).
+DB_TIMEOUT_SECONDS = 1
+SHELL_ID_MARK = "shell-"
+_TOKEN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _prefix() -> str:
+    return f"{getpass.getuser()}@{_host()}"
+
+
+def _host() -> str:
+    return socket.gethostname().split(".")[0]
+
+
+def _agent_id() -> str | None:
+    agent = os.environ.get("PRESENCE_AGENT_ID", "")
+    return agent if _TOKEN.match(agent) else None
+
+
+def in_plain_shell() -> bool:
+    return not (os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID"))
 
 
 def get_session_id() -> str:
-    """Return this session's id: <user>@<host>@<Claude Code session uuid>."""
+    """Return this session's id: <user>@<host>@<Claude Code session uuid>,
+    with /<agent id> appended inside a subagent."""
     env = os.environ.get("CLAUDE_SESSION_ID")
     if env:
         return env
-    prefix = f"{getpass.getuser()}@{socket.gethostname().split('.')[0]}"
     claude = os.environ.get("CLAUDE_CODE_SESSION_ID")
     if claude:
-        return f"{prefix}@{claude}"
+        agent = _agent_id()
+        return f"{_prefix()}@{claude}/{agent}" if agent else f"{_prefix()}@{claude}"
     # Outside Claude Code: a one-shot id, which no hook will heartbeat or release.
-    return f"{prefix}@{uuid.uuid4().hex[:8]}"
+    return f"{_prefix()}@{SHELL_ID_MARK}{uuid.uuid4().hex[:8]}"
+
+
+def parent_session_id() -> str | None:
+    """The parent session's id when running inside a subagent, else None."""
+    claude = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if os.environ.get("CLAUDE_SESSION_ID") or not claude or not _agent_id():
+        return None
+    return f"{_prefix()}@{claude}"
+
+
+def _like_prefix(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,12 +156,18 @@ def _connect():
             password=u.password or "",
             database=(u.path.lstrip("/") or "beads"),
             cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=3,
+            connect_timeout=DB_TIMEOUT_SECONDS,
+            read_timeout=DB_TIMEOUT_SECONDS,
+            write_timeout=DB_TIMEOUT_SECONDS,
             autocommit=True,
         )
     except pymysql.MySQLError as e:
-        print(f"presence: warning: dolt unreachable ({e}); continuing", file=sys.stderr)
+        _warn_unreachable(e)
         return None
+
+
+def _warn_unreachable(e: Exception) -> None:
+    print(f"presence: warning: dolt unreachable ({e}); continuing", file=sys.stderr)
 
 
 def _claim(args, session_id: str) -> int:
@@ -226,35 +285,77 @@ def _heartbeat(args, session_id: str) -> int:
     conn = _connect()
     if conn is None:
         return 0
+    # A subagent also keeps its parent's claims alive: the parent makes no tool
+    # calls while it waits on its subagents, so its own heartbeat is quiet.
+    ids = (session_id, parent_session_id() or session_id)
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE presence_claims
                SET expires_at = NOW(3) + INTERVAL %s SECOND
-             WHERE session_id = %s
+             WHERE session_id IN (%s, %s)
                AND expires_at > NOW(3)
             """,
-            (DEFAULT_TTL_SECONDS, session_id),
+            (DEFAULT_TTL_SECONDS, *ids),
         )
     return 0
 
 
 def _release(args, session_id: str) -> int:
+    if not args.all_mine and not args.label:
+        print("presence: release requires <label> or --all-mine", file=sys.stderr)
+        return 2
     conn = _connect()
     if conn is None:
         return 0
+    shell_ids = _like_prefix(f"{_prefix()}@{SHELL_ID_MARK}") + "%"
     with conn.cursor() as cur:
         if args.all_mine:
-            cur.execute("DELETE FROM presence_claims WHERE session_id = %s", (session_id,))
-        else:
-            if not args.label:
-                print("presence: release requires <label> or --all-mine", file=sys.stderr)
-                return 2
-            cur.execute(
-                "DELETE FROM presence_claims WHERE session_id = %s AND resource_label = %s",
-                (session_id, args.label),
+            n = cur.execute("DELETE FROM presence_claims WHERE session_id = %s", (session_id,))
+            if in_plain_shell():
+                n += cur.execute(
+                    "DELETE FROM presence_claims WHERE user = %s AND host = %s AND session_id LIKE %s",
+                    (getpass.getuser(), _host(), shell_ids),
+                )
+            print(f"presence: released {n} claim(s)")
+            return 0
+        n = cur.execute(
+            "DELETE FROM presence_claims WHERE session_id = %s AND resource_label = %s",
+            (session_id, args.label),
+        )
+        if not n and in_plain_shell():
+            # This run's one-shot id never claimed anything; the shell that
+            # claimed had its own. Drop this user's plain-shell claim instead.
+            n = cur.execute(
+                "DELETE FROM presence_claims"
+                " WHERE resource_label = %s AND user = %s AND host = %s AND session_id LIKE %s",
+                (args.label, getpass.getuser(), _host(), shell_ids),
             )
-    return 0
+        if n:
+            print(f"presence: released {args.label}")
+            return 0
+        cur.execute(
+            """
+            SELECT session_id, user, host
+              FROM presence_claims
+             WHERE resource_label = %s
+               AND expires_at    >  NOW(3)
+             ORDER BY claimed_at
+            """,
+            (args.label,),
+        )
+        holders = cur.fetchall()
+    print(f"presence: no claim on {args.label} held by {session_id}; nothing released", file=sys.stderr)
+    for h in holders:
+        if h["user"] == getpass.getuser():
+            print(
+                f"presence: {h['session_id']} holds it; to release it: "
+                f"CLAUDE_SESSION_ID={h['session_id']} presence release {args.label}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"presence: {h['session_id']} ({h['user']}@{h['host']}) holds it", file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -263,6 +364,14 @@ def main(argv: list[str] | None = None) -> int:
     # propagate top-level --json onto args.json (no-op if already there)
     args.json = bool(getattr(args, "json", False))
     session_id = get_session_id()
+    try:
+        return _dispatch(args, session_id)
+    except _DB_ERRORS as e:  # a timeout or a dropped connection mid-query
+        _warn_unreachable(e)
+        return 0
+
+
+def _dispatch(args, session_id: str) -> int:
     if args.verb == "claim":
         return _claim(args, session_id)
     if args.verb == "peek":
