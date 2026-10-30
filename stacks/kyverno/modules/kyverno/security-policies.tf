@@ -73,6 +73,8 @@ locals {
     "mendhak/*",
     "mghee/*", "mindflavor/*", "mpepping/*", "netboxcommunity/*",
     "netsampler/*", "nousresearch/*", "nvidia/*",
+    # 2026-10-30: osminogin (tor-simple, replaced dperson/torproxy).
+    "osminogin/*",
     "openresty/*", "opentripplanner/*", "owntracks/*",
     "phpipam/*", "phpmyadmin/*", "privatebin/*", "prom/*",
     # 2026-07-12: sablierapp (scale-to-zero wake layer, ADR-0022).
