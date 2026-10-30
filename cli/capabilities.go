@@ -166,6 +166,19 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "get a landed f1-stream change live (server image or TV app) when CI has not",
+			Use:     "homelab deploy f1-stream [--check] [--server] [--tv] [--sha SHA]",
+			Instead: "scripts/deploy-server-image.sh / scripts/publish-tv.sh, or filing an issue and waiting for someone with access",
+			Synonyms: []string{"release", "publish", "deploy", "go live", "live", "tv app", "apk",
+				"f1-stream", "f1", "television", "github actions", "rollout", "by hand"},
+			Detail: []string{
+				"Builds master's tip (or --sha) from a fresh clone, never a worktree.",
+				"Skips what is already live or already on ghcr; refuses a TV versionCode",
+				"        not above the one televisions are offered. --check builds nothing.",
+				"Credential: Vault secret/ci/f1-stream-release (wizard, emo).",
+			},
+		},
+		{
 			Intent:  "start, land, or clean up work on a task",
 			Use:     "homelab work start <topic>  /  homelab work land  /  homelab work clean",
 			Instead: "git worktree add / git push HEAD:master / git worktree remove by hand",

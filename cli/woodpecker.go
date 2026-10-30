@@ -40,7 +40,11 @@ func wpToken() string {
 }
 
 func newWPClient() (*wpClient, error) {
-	tok := wpToken()
+	return newWPClientFor(wpToken())
+}
+
+// newWPClientFor builds a client for an explicit token.
+func newWPClientFor(tok string) (*wpClient, error) {
 	if tok == "" {
 		return nil, fmt.Errorf("no woodpecker token — set WOODPECKER_TOKEN or `vault login` (reads secret/ci/global)")
 	}

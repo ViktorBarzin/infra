@@ -981,6 +981,35 @@
       changed_when: true
       tags: [f1tv-lock]
 
+    # The f1-stream release lock: `homelab deploy f1-stream` holds it for a
+    # whole release, so wizard's and emo's releases take turns.
+    # f1-stream-release.conf says why it is root's and 0666.
+    - name: Install the f1-stream release lock rule
+      ansible.builtin.copy:
+        src: files/devvm/f1-stream-release.conf
+        dest: /etc/tmpfiles.d/f1-stream-release.conf
+        mode: "0644"
+        owner: root
+        group: root
+      tags: [f1tv-lock]
+
+    - name: Check the f1-stream release lock
+      ansible.builtin.stat:
+        path: /run/lock/f1-stream-release.lock
+        follow: false
+      register: devvm_f1_release_lock
+      tags: [f1tv-lock]
+
+    - name: Create the f1-stream release lock now rather than at the next boot
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/f1-stream-release.conf
+      when: >-
+        not (devvm_f1_release_lock.stat.isreg | default(false))
+        or devvm_f1_release_lock.stat.uid != 0
+        or devvm_f1_release_lock.stat.mode != '0666'
+      changed_when: true
+      tags: [f1tv-lock]
+
     # ---- 5) /etc/skel for new accounts --------------------------------------
     # File by file, not the whole skel/ directory: the repo keeps the tmux
     # config as skel/tmux.conf so it shows in a listing, but a new account needs
