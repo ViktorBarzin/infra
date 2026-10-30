@@ -261,6 +261,8 @@ func workClean(args []string) error {
 	}
 	if err := gitStream(repoRoot, flags, "branch", "-d", branch); err != nil {
 		fmt.Fprintf(os.Stderr, "homelab: note: could not delete branch %s (unmerged — use `git branch -D` if intended): %v\n", branch, err)
+		fmt.Printf("homelab: removed worktree %s; kept branch %s, which has work that is not on master\n", wtRel, branch)
+		return nil
 	}
 	fmt.Printf("homelab: removed worktree %s and branch %s\n", wtRel, branch)
 	return nil
