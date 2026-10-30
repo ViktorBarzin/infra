@@ -228,10 +228,10 @@ resource "kubernetes_service" "wt_tracker" {
   }
 }
 
-# Path carve-out on f1.viktorbarzin.me rather than a hostname of its own, so
-# the announce URL is `wss://f1.viktorbarzin.me/tracker` — same origin as the
-# page that opens it, no second DNS decision, and it follows f1 automatically
-# through the Cloudflare cutover instead of needing its own flip.
+# Path carve-out on each app host (local.app_hosts in main.tf: tv, and f1
+# until the cutover) rather than a hostname of its own, so the announce URL is
+# `wss://tv.viktorbarzin.me/tracker` — same origin as the page that opens it,
+# and no second DNS decision.
 #
 # WHY IT MUST NOT GO THROUGH ANUBIS. The public f1 ingress points at
 # `anubis-f1`; this one points at the tracker Service directly, which is the
@@ -247,20 +247,27 @@ resource "kubernetes_service" "wt_tracker" {
 # and documented — a finite value once truncated large downloads at 60s).
 # `idleTimeout = 600s` is survived because the tracker sends an announce
 # response every two minutes.
+# One copy per app host (main.tf). The f1 copy keeps its name and state.
+moved {
+  from = module.ingress_tracker
+  to   = module.ingress_tracker["f1"]
+}
+
 module "ingress_tracker" {
-  source = "../../modules/kubernetes/ingress_factory"
+  for_each = local.app_hosts
+  source   = "../../modules/kubernetes/ingress_factory"
   # auth = "none": WebRTC signalling for browsers that have not authenticated
   # to anything — the site itself is public. There is nothing to read here: a
   # stranger announcing an info-hash we are not serving is introduced to
   # nobody, and /stats.json is not reachable on this path. Authentik would 302
   # the upgrade to a login page and break peer discovery for every viewer.
   auth = "none"
-  # The public f1 ingress owns the DNS record and the uptime monitor for this
-  # host; this is a path carve-out on the same name.
+  # The public ingress on the same host owns the DNS record and the uptime
+  # monitor; this is a path carve-out on the same name.
   dns_type         = "none"
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
-  name             = "f1-tracker"
-  host             = "f1"
+  name             = "${each.key}-tracker"
+  host             = each.key
   service_name     = kubernetes_service.wt_tracker.metadata[0].name
   port             = 80
   ingress_path     = ["/tracker"]

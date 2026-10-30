@@ -138,7 +138,7 @@ resource "kubernetes_deployment" "drone_logbook" {
       spec {
         container {
           name  = "drone-logbook"
-          image = "ghcr.io/arpanghosh8453/open-dronelog:3.3.1"
+          image = "ghcr.io/arpanghosh8453/open-dronelog:3.3.2"
           env {
             name  = "RUST_LOG"
             value = "info"

@@ -1,5 +1,5 @@
-# Signed-in Members of f1.viktorbarzin.me (f1-stream ADR-0025, ADR-0021,
-# ADR-0042).
+# Signed-in Members of tv.viktorbarzin.me, formerly f1.viktorbarzin.me
+# (f1-stream ADR-0025, ADR-0021, ADR-0042, ADR-0053).
 #
 # Anyone in "Home Users" or "F1 Users" may sign in to the site, keep their own
 # channel order (My channels) and pair a TV that shows it. Home Server Admins
@@ -94,7 +94,15 @@ resource "authentik_provider_oauth2" "f1_stream" {
   # provider/server version skew. This is default-provider-invalidation-flow.
   invalidation_flow = "b0a43377-0fa6-45d1-89fc-ed298bb1bb53"
 
+  # The app builds redirect_uri from the host the browser used, so each app
+  # host needs its own callback. tv is the product's home since 2026-10-29
+  # (f1-stream ADR-0053); f1's entry goes once f1 only redirects to tv.
   allowed_redirect_uris = [
+    {
+      matching_mode     = "strict"
+      url               = "https://tv.viktorbarzin.me/auth/callback"
+      redirect_uri_type = "authorization"
+    },
     {
       matching_mode     = "strict"
       url               = "https://f1.viktorbarzin.me/auth/callback"
@@ -123,10 +131,12 @@ resource "authentik_provider_oauth2" "f1_stream" {
 }
 
 resource "authentik_application" "f1_stream" {
-  name               = "F1 Stream"
+  # Shown on the Authentik sign-in page and in the user's app list. The slug
+  # stays: app-access-guard.tf and the access-request policy key on it.
+  name               = "TV"
   slug               = "f1-stream"
   protocol_provider  = authentik_provider_oauth2.f1_stream.id
-  meta_launch_url    = "https://f1.viktorbarzin.me"
+  meta_launch_url    = "https://tv.viktorbarzin.me"
   policy_engine_mode = "any"
 }
 
@@ -197,7 +207,7 @@ module "f1_users" {
   app_slug    = authentik_application.f1_stream.slug
   group_name  = "F1 Users"
   mode        = "request"
-  pending_url = "https://f1.viktorbarzin.me/join/pending"
+  pending_url = "https://tv.viktorbarzin.me/join/pending"
 
   # /join/<ref> starts the authorize request with state j.<ref>.<random>.
   existing_account_state_prefix = "j."

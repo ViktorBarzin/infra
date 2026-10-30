@@ -26,7 +26,7 @@ Widget-capable matches (candidate): **27**
 | `ebook2audiobook` | `ebook2audiobook` | `https://ebook2audiobook.viktorbarzin.me` | `link-only` |
 | `echo` | `echo` | `https://echo.viktorbarzin.me` | `link-only` |
 | `excalidraw` | `draw` | `https://draw.viktorbarzin.me` | `link-only` |
-| `f1-stream` | `f1` | `https://f1.viktorbarzin.me` | `link-only` |
+| `f1-stream` | `tv` | `https://tv.viktorbarzin.me` | `link-only` |
 | `forgejo` | `forgejo` | `https://forgejo.viktorbarzin.me` | `link-only` |
 | `freedify` | `music-emo` | `https://music-emo.viktorbarzin.me` | `link-only` |
 | `freedify` | `music-viktor` | `https://music-viktor.viktorbarzin.me` | `link-only` |
