@@ -61,6 +61,14 @@ delegates to `scripts/tg` (which owns state decrypt/encrypt, the Vault lock, and
 the ingress auth-comment check). git-crypt filter flags are auto-injected on git
 operations in the encrypted infra repo.
 
+**A repo can declare its own land checks** in a `.land-verify` file at its
+root: the first line that is not blank or a `#` comment is the command. When
+the file exists, every `work land` in that repo runs it, in place of
+`--verify-cmd` and `--no-verify`, and says so. The checks belong to the repo
+rather than to whoever lands (an agent once landed a revert with a placeholder
+check although the repo's AGENTS.md named the real ones). The file is read
+from the merged tree, so a retry merge that brings a newer one uses it.
+
 **`work land` refuses to push when it cannot verify** (no `--verify-cmd` and no
 auto-detected suite) unless you pass `--no-verify` — landing to master unverified
 must be deliberate. After pushing it **watches CI to green** (`ci watch` on the

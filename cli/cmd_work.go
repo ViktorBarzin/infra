@@ -105,7 +105,12 @@ func workLand(args []string) error {
 	if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {
 		return fmt.Errorf("merging %s/master failed — resolve conflicts then re-run `homelab work land`: %w", remote, err)
 	}
-	verify := func() error { return runVerify(repoRoot, verifyCmd, containsArg(args, "--no-verify")) }
+	// Read on every run, from the merged tree, so a retry merge that brings a
+	// newer .land-verify uses it.
+	verify := func() error {
+		cmd, skip := effectiveVerify(repoRoot, verifyCmd, containsArg(args, "--no-verify"))
+		return runVerify(repoRoot, cmd, skip)
+	}
 	if err := verify(); err != nil {
 		return fmt.Errorf("not landing: %w", err)
 	}
@@ -164,6 +169,35 @@ func ciWaitArgs(args []string) []string {
 		}
 	}
 	return out
+}
+
+// landVerifyFile is where a repo declares the checks every land runs.
+const landVerifyFile = ".land-verify"
+
+// effectiveVerify returns the verify command and whether to skip verifying.
+// A repo that declares its checks in .land-verify (the first line that is not
+// blank or a # comment) gets them on every land, whatever --verify-cmd or
+// --no-verify say: the gate belongs to the repo, not to whoever lands
+// (DRILL R4 re-run, 2026-10-30, a revert landed with a placeholder check).
+func effectiveVerify(repoRoot, flagCmd string, noVerify bool) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(repoRoot, landVerifyFile))
+	if err != nil {
+		return flagCmd, noVerify
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if flagCmd != "" && flagCmd != line {
+			fmt.Fprintf(os.Stderr, "homelab: this repo declares its land checks in %s; running `%s` instead of --verify-cmd\n", landVerifyFile, line)
+		}
+		if noVerify {
+			fmt.Fprintf(os.Stderr, "homelab: --no-verify ignored: this repo declares its land checks in %s\n", landVerifyFile)
+		}
+		return line, false
+	}
+	return flagCmd, noVerify
 }
 
 // runVerify runs the explicit --verify-cmd, else auto-detects (go test). If
@@ -446,8 +480,10 @@ func workHelp(args []string) error {
                                  --no-verify            land without verifying (deliberate)
   homelab work clean <topic>     remove the worktree and the branch
 
-Verification is auto-detected from go.mod, Cargo.toml, pyproject.toml/pytest.ini/
-tox.ini, a Makefile "test" target, or a package.json test script. Pass
---verify-cmd when your repo does not match one of those.`)
+A repo that declares its checks in a .land-verify file at its root gets them on
+every land, in place of --verify-cmd and --no-verify. Otherwise verification is
+auto-detected from go.mod, Cargo.toml, pyproject.toml/pytest.ini/tox.ini, a
+Makefile "test" target, or a package.json test script. Pass --verify-cmd when
+your repo does not match one of those.`)
 	return nil
 }
