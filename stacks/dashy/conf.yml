@@ -299,9 +299,9 @@ sections:
         statusCheck: false
         id: 1_1475_excalidraw
       - &ref_31
-        title: Formula 1 Stream
+        title: TV
         icon: si-f1
-        url: http://f1.viktorbarzin.me/
+        url: https://tv.viktorbarzin.me/
         statusCheck: false
         id: 2_1475_formulastream
       - &ref_32

@@ -8,8 +8,8 @@
 # field on a TV remote is about forty D-pad presses.
 #
 # WHY THIS IS A PATH CARVE-OUT AND NOT A NEW HOST. Everything else the TV talks
-# to already lives on the app hosts (local.app_hosts in main.tf: tv, and f1
-# until the cutover), and the Anubis policy in main.tf
+# to already lives on the app host (local.app_hosts in main.tf: tv), and the
+# Anubis policy in main.tf
 # already allows `^/(_app/|openapi\.json|docs|api/)`, so the device endpoints
 # under /api/device/ reach the app without a proof-of-work challenge. A separate
 # api host (which is how tripit solved the same problem) would need its own DNS
@@ -28,18 +28,12 @@
 # for a token", which is identical whether the backend approves the code itself
 # or proxies Authentik's device endpoint. Moving to RFC 8628 later is a change
 # behind /api/device/ with no client release.
-# One copy per app host (main.tf). The f1 copy keeps its original name and
-# state; the tv copy is "tv-pairing".
-moved {
-  from = module.ingress_tv_pairing
-  to   = module.ingress_tv_pairing["f1"]
-}
-
+# One copy per app host (main.tf); since the f1 cutover that is tv only.
 module "ingress_tv_pairing" {
   for_each     = local.app_hosts
   source       = "../../modules/kubernetes/ingress_factory"
   host         = each.key
-  name         = each.key == "f1" ? "f1-tv-pairing" : "${each.key}-pairing"
+  name         = "${each.key}-pairing"
   ingress_path = ["/pair"]
   namespace    = kubernetes_namespace.f1-stream.metadata[0].name
   service_name = kubernetes_service.f1-stream.metadata[0].name

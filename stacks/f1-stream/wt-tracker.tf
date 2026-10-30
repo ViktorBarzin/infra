@@ -228,8 +228,8 @@ resource "kubernetes_service" "wt_tracker" {
   }
 }
 
-# Path carve-out on each app host (local.app_hosts in main.tf: tv, and f1
-# until the cutover) rather than a hostname of its own, so the announce URL is
+# Path carve-out on the app host (local.app_hosts in main.tf: tv) rather than
+# a hostname of its own, so the announce URL is
 # `wss://tv.viktorbarzin.me/tracker` — same origin as the page that opens it,
 # and no second DNS decision.
 #
@@ -247,12 +247,7 @@ resource "kubernetes_service" "wt_tracker" {
 # and documented — a finite value once truncated large downloads at 60s).
 # `idleTimeout = 600s` is survived because the tracker sends an announce
 # response every two minutes.
-# One copy per app host (main.tf). The f1 copy keeps its name and state.
-moved {
-  from = module.ingress_tracker
-  to   = module.ingress_tracker["f1"]
-}
-
+# One copy per app host (main.tf); since the f1 cutover that is tv only.
 module "ingress_tracker" {
   for_each = local.app_hosts
   source   = "../../modules/kubernetes/ingress_factory"

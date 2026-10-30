@@ -1,7 +1,7 @@
-# Cloudflare Cache Rules for the f1-stream app hosts: tv.viktorbarzin.me, its
-# home since 2026-10-29 (f1-stream ADR-0053), and f1.viktorbarzin.me, which
-# serves the same app until the cutover turns it into a redirect to tv. Each
-# rule matches both names, so the rule count stays at six.
+# Cloudflare Cache Rules for tv.viktorbarzin.me, the f1-stream app's only host
+# since 2026-10-29 (f1-stream ADR-0053). f1.viktorbarzin.me only redirects to
+# tv (f1-redirect.tf), and the redirect phase answers before any cache rule
+# runs, so these rules key on tv alone.
 #
 # Viktor asked for edge caching on 2026-09-10, having been shown the terms risk
 # below three times and having chosen it over two alternatives (an nginx cache
@@ -125,7 +125,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_bypass_large_files"
       description = "Never cache the library mp4s or the torrent-cache stream"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and (starts_with(http.request.uri.path, \"/replays/cache/\") or ends_with(http.request.uri.path, \".mp4\")))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/replays/cache/\") or ends_with(http.request.uri.path, \".mp4\")))"
       action      = "set_cache_settings"
       enabled     = true
 
@@ -148,7 +148,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_bypass_watch_playlists"
       description = "Never cache Watch link playlists, so every VLC reload reaches the origin"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and (starts_with(http.request.uri.path, \"/watch/f1/\") or starts_with(http.request.uri.path, \"/watch/channel/\")))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and (starts_with(http.request.uri.path, \"/watch/f1/\") or starts_with(http.request.uri.path, \"/watch/channel/\")))"
       action      = "set_cache_settings"
       enabled     = true
 
@@ -245,7 +245,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_cache_vod_ladder_playlists"
       description = "Replay ladder variant playlists: 1 year edge TTL, ffmpeg writes them once"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\") and not (ends_with(http.request.uri.path, \"/master.m3u8\")))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\") and not (ends_with(http.request.uri.path, \"/master.m3u8\")))"
       action      = "set_cache_settings"
       enabled     = true
 
@@ -307,7 +307,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_cache_ladder_segments"
       description = "Replay ladder segments: 1 year edge TTL, written once by ffmpeg"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".ts\"))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".ts\"))"
       action      = "set_cache_settings"
       enabled     = true
 
@@ -348,7 +348,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_cache_manifests_briefly"
       description = "HLS playlists: 2s edge TTL"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")) and not starts_with(http.request.uri.path, \"/watch/\"))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and (http.request.uri.path eq \"/proxy\" or ends_with(http.request.uri.path, \".m3u8\")) and not starts_with(http.request.uri.path, \"/watch/\"))"
       action      = "set_cache_settings"
       enabled     = true
 
@@ -374,7 +374,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     {
       ref         = "f1_cache_segments"
       description = "HLS segments: 1 day edge TTL, they are immutable"
-      expression  = "(http.host in {\"f1.viktorbarzin.me\" \"tv.viktorbarzin.me\"} and (http.request.uri.path eq \"/relay\" or ends_with(http.request.uri.path, \".ts\") or ends_with(http.request.uri.path, \".m4s\")))"
+      expression  = "(http.host eq \"tv.viktorbarzin.me\" and (http.request.uri.path eq \"/relay\" or ends_with(http.request.uri.path, \".ts\") or ends_with(http.request.uri.path, \".m4s\")))"
       action      = "set_cache_settings"
       enabled     = true
 

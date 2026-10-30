@@ -1,6 +1,6 @@
 # Proving that a request reached the app through Traefik.
 #
-# One route on each app host (tv, and f1 until its cutover) reads
+# One route on the app host (tv) reads
 # `X-authentik-username` and `X-authentik-groups` and acts on them:
 # /admin/login, which exchanges them for a session cookie. It sits behind the authentik-forward-auth middleware, whose
 # authResponseHeaders overwrite whatever a client sent, so no browser on the
