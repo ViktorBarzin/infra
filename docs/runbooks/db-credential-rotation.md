@@ -24,20 +24,11 @@ measurement before the change found 11 of 31 roles with auth failures after
 rotation, the longest being technitium at 232 minutes every week.
 
 ```mermaid
-sequenceDiagram
-    participant V as Vault (Tuesday slot)
-    participant W as db-rotation-watcher (Tue 09:58-11:02)
-    participant E as ExternalSecret
-    participant R as Reloader
-    participant A as App pod
-    W->>V: read database/static-roles/* every 5s (metadata only)
-    V->>V: rotate pg-X
-    W->>V: sees last_vault_rotation change
-    W->>E: force-sync every ES that references pg-X
-    E->>A: Secret updated (seconds after rotation)
-    R->>A: restart with the new password
-    W->>W: run CronJobs named in the ES annotation
-    W->>W: push lag to the Pushgateway
+flowchart TD
+    V["Vault rotates pg-X in its Tuesday slot"] --> W["db-rotation-watcher sees last_vault_rotation change (polls every 5s)"]
+    W --> E["force-sync the role's ExternalSecrets"]
+    E --> R["Secret updated, Reloader restarts the app"]
+    W --> F["run follow-up CronJobs, push lag to the Pushgateway"]
 ```
 
 Four pieces:
@@ -53,29 +44,35 @@ Four pieces:
    Postgres has no equivalent.
 3. **The watcher.** CronJob `vault/db-rotation-watcher`
    (`stacks/vault/db_rotation_watcher.tf`, script and tests in
-   `stacks/vault/files/`). It reads role metadata with its own Vault role,
-   whose policy grants `database/static-roles/*` only, never
-   `static-creds`. When a role's `last_vault_rotation` changes it:
-   - sets the `force-sync` annotation on every ExternalSecret whose remoteRef
-     key normalises to `static-creds/<role>`, and repeats every 15s until that
-     ExternalSecret is Ready with a `refreshTime` more than 1s after the
-     rotation;
-   - runs each CronJob named in the ExternalSecret's
-     `rotation.viktorbarzin.me/after-sync-cronjobs` annotation, as
-     `kubectl create job --from` would (job name `<cronjob>-rot-<epoch>`);
-   - pushes `db_rotation_sync_lag_seconds{role}` and
-     `db_rotation_last_seen_timestamp{role}` to the Pushgateway.
+   `stacks/vault/files/`), described below.
+4. **Alerts**, in the table below.
 
-   If the watcher fails, the 15-minute ESO poll still applies, the same
-   behaviour as before it existed.
-4. **Alerts.**
+The watcher reads role metadata with its own Vault role, whose policy grants
+`database/static-roles/*` only, never `static-creds`. When a role's
+`last_vault_rotation` changes, it:
 
-   | alert | source | fires when |
-   |---|---|---|
-   | `DbAuthFailuresAfterRotation` | Loki ruler | a Postgres user fails password auth in two 2-minute windows 5 minutes apart (failing for 3+ minutes) |
-   | `DbRotationSyncLagHigh` | Prometheus | a role's ExternalSecrets took more than 120s to refresh after rotation |
-   | `DbRotationWatcherSilent` | Prometheus | Tuesday from 11:00 UTC with no rotation reported today |
-   | `DbRotationWatcherFailed` | Prometheus | a watcher Job failed |
+- sets the `force-sync` annotation on every ExternalSecret whose remoteRef key
+  normalises to `static-creds/<role>`, and repeats every 15s until that
+  ExternalSecret is Ready with a `refreshTime` more than 1s after the rotation;
+- runs each CronJob named in the ExternalSecret's
+  `rotation.viktorbarzin.me/after-sync-cronjobs` annotation, as
+  `kubectl create job --from` would (job name `<cronjob>-rot-<epoch>`);
+- pushes `db_rotation_sync_lag_seconds{role}` and
+  `db_rotation_last_seen_timestamp{role}` to the Pushgateway.
+
+If the watcher fails, the 15-minute ESO poll still applies, the same behaviour
+as before it existed.
+
+| alert | source | fires when |
+|---|---|---|
+| `DbAuthFailuresAfterRotation` | Loki ruler | a Postgres user fails password auth in two 2-minute windows 5 minutes apart (failing for 3+ minutes) |
+| `DbRotationSyncLagHigh` | Prometheus | a role's ExternalSecrets took more than 120s to refresh after rotation |
+| `DbRotationWatcherSilent` | Prometheus | Tuesday from 11:00 UTC with no rotation reported today |
+| `DbRotationWatcherFailed` | Prometheus | a watcher Job failed |
+
+Measured on 2026-10-30 with manual rotations: the watcher saw each rotation
+0.2-4.7s after it happened, the ExternalSecrets refreshed 3.8-4.8s after it,
+and linkwarden was unreachable for 13s while Reloader restarted it.
 
 What remains: a Postgres app is down for its own restart time after rotation
 (11-96s measured, paperless about 100s). Apps that read the password from a
