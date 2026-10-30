@@ -404,9 +404,12 @@ alertmanager:
             # verification without this (first email receiver, 2026-10-25).
             tls_config:
               server_name: "mail.viktorbarzin.me"
+            # A resolved alert gets its own wording from resolved_summary_bg /
+            # resolved_description_bg; without them the firing text read as if
+            # the problem were still there (Emil, 2026-10-30).
             headers:
-              Subject: '{{ if eq .Status "firing" }}[Аларма]{{ else }}[Отминало]{{ end }} {{ range .Alerts }}{{ or .Annotations.summary_bg .Annotations.summary }} {{ end }}'
-            html: '{{ range .Alerts }}<p><b>{{ or .Annotations.summary_bg .Annotations.summary }}</b></p><p>{{ or .Annotations.description_bg .Annotations.description }}</p><p>Начало: {{ (.StartsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ if eq .Status "resolved" }}<br>Край: {{ (.EndsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}{{ end }}</p>{{ end }}'
+              Subject: '{{ if eq .Status "firing" }}[Аларма] {{ range .Alerts }}{{ or .Annotations.summary_bg .Annotations.summary }} {{ end }}{{ else }}[Отминало] {{ range .Alerts }}{{ or .Annotations.resolved_summary_bg (printf "Вече не е активно: %s" (or .Annotations.summary_bg .Annotations.summary)) }} {{ end }}{{ end }}'
+            html: '{{ range .Alerts }}{{ if eq .Status "resolved" }}<p><b>{{ or .Annotations.resolved_summary_bg (printf "Вече не е активно: %s" (or .Annotations.summary_bg .Annotations.summary)) }}</b></p><p>{{ or .Annotations.resolved_description_bg "Условието за алармата вече не е изпълнено." }}</p><p>Първоначална аларма: {{ or .Annotations.summary_bg .Annotations.summary }}<br>Начало: {{ (.StartsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}<br>Край: {{ (.EndsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}</p>{{ else }}<p><b>{{ or .Annotations.summary_bg .Annotations.summary }}</b></p><p>{{ or .Annotations.description_bg .Annotations.description }}</p><p>Начало: {{ (.StartsAt | tz "Europe/Sofia").Format "02.01.2006 15:04:05" }}</p>{{ end }}{{ end }}'
       - name: slack-event
         slack_configs:
           - send_resolved: false
@@ -1810,6 +1813,8 @@ serverFiles:
               description: "eno2 has transmitted packets in the last 5m, so bond0 made it the active slave. Services keep working through SW2 and AX6000 port 2. Check AX6000 port 1 and cable SRV1; `cat /proc/net/bonding/bond0` on pve shows the active slave and failure counts. Context: infra#142."
               summary_bg: "Сървърът R730 мина на резервния линк LAN2"
               description_bg: "Основният линк LAN1 (порт 1 на AX6000, кабел SRV1) е отпаднал или е спрял да пренася трафик. Всичко продължава да работи през LAN2, SW2 и порт 2 на рутера. Провери порт 1 на рутера и кабела SRV1."
+              resolved_summary_bg: "Сървърът R730 се върна на основния линк LAN1"
+              resolved_description_bg: "LAN2 не е пренасял трафик през последните 5 минути, тоест сървърът отново работи по LAN1, а LAN2 е в готовност. Нищо не е нужно да се прави. Часът „Край“ е до около 6 минути след реалното връщане, защото алармата гледа последните 5 минути."
           - alert: R730BackupUplinkDown
             expr: |
               node_bonding_active{job="proxmox-host", master="bond0"} < node_bonding_slaves{job="proxmox-host", master="bond0"}
@@ -1823,6 +1828,8 @@ serverFiles:
               description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."
               summary_bg: "Резервният линк LAN2 на сървъра R730 не работи"
               description_bg: "Сървърът работи нормално по LAN1, но резервата LAN2 (SW2 порт 5) е паднала. При следваща повреда на порт 1 на рутера няма да има резервен път. Провери кабела LAN2, порт 5 на SW2 и самия SW2."
+              resolved_summary_bg: "Резервният линк LAN2 на сървъра R730 отново работи"
+              resolved_description_bg: "LAN2 (SW2 порт 5) отново е в готовност. Ако LAN1 отпадне, сървърът пак ще може да мине на него. Нищо не е нужно да се прави."
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown
