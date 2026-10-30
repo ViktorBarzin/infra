@@ -9,8 +9,10 @@ import (
 
 func deployCommands() []Command {
 	return []Command{
+		{Path: []string{"deploy"}, Tier: TierWrite,
+			Summary: "build an app's landed master here and put it live as its CI would: deploy f1-stream [--server] [--tv] [--sha SHA] [--check]", Run: deployRelease},
 		{Path: []string{"deploy", "wait"}, Tier: TierRead,
-			Summary: "wait for <ns>/<deploy> to roll out the current (or --sha) image: deploy wait <ns>/<deploy> [--sha SHA]", Run: deployWait},
+			Summary: "wait for <ns>/<deploy> to roll out the current (or --sha) image: deploy wait <ns>/<deploy> [--sha SHA] [--timeout 10m]", Run: deployWait},
 	}
 }
 
@@ -29,7 +31,21 @@ func deployWait(args []string) error {
 	if sha == "" {
 		sha = short(currentHEAD())
 	}
-	deadline := time.Now().Add(10 * time.Minute)
+	timeout := 10 * time.Minute
+	if t := flagValue(args, "--timeout"); t != "" {
+		d, err := time.ParseDuration(t)
+		if err != nil {
+			return fmt.Errorf("bad --timeout %q: %v", t, err)
+		}
+		timeout = d
+	}
+	return waitDeployImage(ns, deploy, sha, timeout)
+}
+
+// waitDeployImage waits up to timeout for ns/deploy's image to reference sha
+// (when sha is set), then for its rollout to finish.
+func waitDeployImage(ns, deploy, sha string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 
 	if sha != "" {
 		fmt.Fprintf(os.Stderr, "homelab: waiting for %s/%s image to match %s...\n", ns, deploy, sha)
@@ -46,6 +62,10 @@ func deployWait(args []string) error {
 			return fmt.Errorf("timed out: %s/%s image never matched %q", ns, deploy, sha)
 		}
 	}
+	rollout := time.Until(deadline)
+	if rollout < 3*time.Minute {
+		rollout = 3 * time.Minute
+	}
 	fmt.Fprintf(os.Stderr, "homelab: rollout status %s/%s...\n", ns, deploy)
-	return kubectlStream(ns, "rollout", "status", "deploy/"+deploy, "--timeout=180s")
+	return kubectlStream(ns, "rollout", "status", "deploy/"+deploy, fmt.Sprintf("--timeout=%ds", int(rollout.Seconds())))
 }
