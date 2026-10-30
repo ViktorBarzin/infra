@@ -121,7 +121,7 @@ resource "kubernetes_deployment" "paperless-mcp" {
       spec {
         container {
           name  = "paperless-mcp"
-          image = "ghcr.io/barryw/paperlessmcp:v0.6.2"
+          image = "ghcr.io/barryw/paperlessmcp:v0.6.3"
           port {
             container_port = 5000
           }
