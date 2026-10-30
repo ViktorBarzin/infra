@@ -29,7 +29,7 @@ homelab version
 | `tf force-unlock <stack> <lock-id>` | write | release a stuck state lock |
 | `tf apply <stack> [tf args]` | write | `scripts/tg apply` — auto-claims `stack:<name>`, always releases, warns it's out-of-band. Extra args are forwarded, so `-target=<addr>` works (it was silently dropped before 2026-10-02, turning a targeted apply into a full one) |
 | `work start <topic>` | write | create `.worktrees/<topic>` on `<user>/<topic>` off `<remote>/master`; enter with native `EnterWorktree` |
-| `work land [--verify-cmd "…"] [--no-verify]` | write | merge master in → verify → push `HEAD:master` (non-ff retry; PR fallback) |
+| `work land [--verify-cmd "…"] [--no-verify]` | write | merge master in → verify → push `HEAD:master` (non-ff retry re-verifies the merge; PR fallback only when the server refuses the push) |
 | `work clean <topic>` | write | remove a task's worktree + branch (run from the main checkout) |
 
 ### v0.2 verbs — Kubernetes
@@ -67,6 +67,15 @@ must be deliberate. After pushing it **watches CI to green** (`ci watch` on the
 landed commit) and fails if the pipeline does; pass `--no-ci-watch` to skip.
 A commit that never gets a pipeline is reported as a note and exits zero, not as
 a failed build — repos that build off-infra legitimately never get one.
+
+When the push is refused because master moved during verify, `work land`
+fetches, merges master and **runs the verify command again on the merged tree**
+before the next push (up to three tries). It stops without pushing, and exits
+non-zero, when that merge conflicts (the worktree is left mid-merge and the
+error names the files), when the re-verify fails, or when master keeps moving.
+Only a refusal by the server itself (branch protection, a hook) falls back to
+pushing the feature branch for a PR, and that also exits non-zero with
+"not landed", because nothing reached master.
 
 Tiers are recorded per verb so a future PreToolUse classifier can auto-allow
 reads / prompt writes; v0.1 allows everything and relies on existing gates

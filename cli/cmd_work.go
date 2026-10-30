@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,11 +104,23 @@ func workLand(args []string) error {
 	if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {
 		return fmt.Errorf("merging %s/master failed — resolve conflicts then re-run `homelab work land`: %w", remote, err)
 	}
-	if err := runVerify(repoRoot, verifyCmd, containsArg(args, "--no-verify")); err != nil {
+	verify := func() error { return runVerify(repoRoot, verifyCmd, containsArg(args, "--no-verify")) }
+	if err := verify(); err != nil {
 		return fmt.Errorf("not landing: %w", err)
 	}
-	if err := pushWithRetry(repoRoot, flags, remote, 3); err != nil {
-		return landFallback(repoRoot, flags, remote, branch, err)
+	// Each retry merge is a new tree that nobody has checked yet, so it goes
+	// through the same verify step before it is pushed (2026-10-30 drills: two
+	// conflict-free merges reached master unverified).
+	reverify := func() error {
+		fmt.Fprintln(os.Stderr, "homelab: re-verifying the merged tree before pushing it")
+		return verify()
+	}
+	if err := pushWithRetry(repoRoot, flags, remote, 3, reverify); err != nil {
+		var refused *pushRefusedError
+		if errors.As(err, &refused) {
+			return landFallback(repoRoot, flags, remote, branch, err)
+		}
+		return fmt.Errorf("not landed: %w", err)
 	}
 	fmt.Printf("homelab: landed %s -> %s/master.\n", branch, remote)
 	if containsArg(args, "--no-ci-watch") {
@@ -206,39 +221,95 @@ func runVerify(repoRoot, verifyCmd string, allowSkip bool) error {
 	return fmt.Errorf("no verification detected for this repo (looked for go.mod, Cargo.toml, pyproject.toml/pytest.ini/tox.ini, a Makefile test target, and a package.json test script) — pass --verify-cmd \"...\" or --no-verify to land without verifying")
 }
 
-// pushWithRetry pushes HEAD:master, recovering from non-fast-forward rejections
-// by fetching + merging master and retrying.
-func pushWithRetry(repoRoot string, flags []string, remote string, attempts int) error {
+// pushRefusedError is a push the server refused for a reason other than
+// master having moved (branch protection, a hook). Only this one falls back to
+// pushing the feature branch for a PR.
+type pushRefusedError struct{ err error }
+
+func (e *pushRefusedError) Error() string { return "the server refused the push: " + e.err.Error() }
+func (e *pushRefusedError) Unwrap() error { return e.err }
+
+// mergeConflictError is a retry merge of master that stopped on conflicts.
+// The worktree is left mid-merge so the conflicted files can be resolved.
+type mergeConflictError struct {
+	remote string
+	files  []string
+}
+
+func (e *mergeConflictError) Error() string {
+	return fmt.Sprintf("CONFLICT merging %s/master into this branch (%s); nothing was pushed. "+
+		"The worktree is mid-merge: resolve each file keeping both changes' intent, "+
+		"commit the merge, then run `homelab work land` again",
+		e.remote, strings.Join(e.files, ", "))
+}
+
+// isNonFastForward reports whether git push's stderr says the push was refused
+// only because the remote branch has commits we do not have.
+func isNonFastForward(stderr string) bool {
+	return strings.Contains(stderr, "(non-fast-forward)") || strings.Contains(stderr, "(fetch first)")
+}
+
+// gitPushCapture runs `git push` with live output and also returns its stderr.
+func gitPushCapture(repoRoot string, flags []string, args ...string) (string, error) {
+	full := append(append([]string{}, flags...), append([]string{"-C", repoRoot, "push"}, args...)...)
+	cmd := exec.Command("git", full...)
+	var buf bytes.Buffer
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	err := cmd.Run()
+	return buf.String(), err
+}
+
+// pushWithRetry pushes HEAD:master. When master moved meanwhile it fetches,
+// merges master in, runs reverify on the merged tree, and pushes again. A
+// conflicting merge or a failed reverify stops it without pushing; a refusal
+// that is not about master moving comes back as a *pushRefusedError.
+func pushWithRetry(repoRoot string, flags []string, remote string, attempts int, reverify func() error) error {
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		if err := gitStream(repoRoot, flags, "push", remote, "HEAD:master"); err == nil {
+		stderr, err := gitPushCapture(repoRoot, flags, remote, "HEAD:master")
+		if err == nil {
 			return nil
-		} else {
-			lastErr = err
 		}
-		if i < attempts-1 {
-			fmt.Fprintln(os.Stderr, "homelab: push rejected — fetching + merging master, then retrying")
-			if err := gitStream(repoRoot, flags, "fetch", remote); err != nil {
-				return err
+		if !isNonFastForward(stderr) {
+			return &pushRefusedError{err: err}
+		}
+		lastErr = err
+		if i == attempts-1 {
+			break
+		}
+		fmt.Fprintln(os.Stderr, "homelab: push rejected — fetching + merging master, then retrying")
+		if err := gitStream(repoRoot, flags, "fetch", remote); err != nil {
+			return err
+		}
+		if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {
+			files, _ := gitOutput(repoRoot, "diff", "--name-only", "--diff-filter=U")
+			if files == "" {
+				return fmt.Errorf("merging %s/master failed: %w", remote, err)
 			}
-			if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {
-				return err
+			return &mergeConflictError{remote: remote, files: strings.Split(files, "\n")}
+		}
+		if reverify != nil {
+			if err := reverify(); err != nil {
+				return fmt.Errorf("the merge with %s/master failed verification, so it was not pushed; "+
+					"fix it on this branch and land again: %w", remote, err)
 			}
 		}
 	}
-	return fmt.Errorf("push to %s/master failed after %d attempts: %w", remote, attempts, lastErr)
+	return fmt.Errorf("push to %s/master failed after %d attempts because master kept moving; run `homelab work land` again: %w", remote, attempts, lastErr)
 }
 
-// landFallback pushes the feature branch when the direct master push is rejected
-// (e.g. branch protection), so the work isn't lost and a PR can be opened.
+// landFallback pushes the feature branch when the server refuses the direct
+// master push (e.g. branch protection), so the work isn't lost and a PR can be
+// opened. Nothing landed, so it returns an error: an agent that trusts the
+// exit code must not believe the change is on master.
 func landFallback(repoRoot string, flags []string, remote, branch string, pushErr error) error {
 	fmt.Fprintf(os.Stderr, "homelab: direct push to master failed (%v)\n", pushErr)
 	fmt.Fprintf(os.Stderr, "homelab: falling back to pushing the feature branch %q for a PR\n", branch)
 	if err := gitStream(repoRoot, flags, "push", "-u", remote, branch); err != nil {
-		return fmt.Errorf("fallback branch push also failed: %w", err)
+		return fmt.Errorf("not landed: the server refused the master push and the fallback branch push also failed: %w", err)
 	}
-	fmt.Printf("homelab: pushed %s to %s. Open a PR to land it (branch protection blocked the direct push).\n", branch, remote)
-	return nil
+	return fmt.Errorf("not landed: the server refused the push to master (%v); pushed %s to %s instead — open a PR to land it", pushErr, branch, remote)
 }
 
 // workClean removes a task's worktree and branch. Run from the main checkout.
