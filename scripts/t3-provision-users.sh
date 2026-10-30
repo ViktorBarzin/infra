@@ -1180,10 +1180,23 @@ committed() {  # committed <repo-path> <dest>; 0 when dest now holds origin/mast
     && [[ -s "$dst.tmp" ]] && mv "$dst.tmp" "$dst" && return 0
   rm -f "$dst.tmp"; return 1
 }
+# The homelab CLI's source tree, for step 0b. A whole directory, so it comes
+# out of `git archive` into a temp directory and replaces the last copy only
+# once it is complete; a failure keeps the last good tree.
+committed_cli() {  # committed_cli <dest>; 0 when dest now holds origin/master's cli/
+  local dst="$1" tmp
+  tmp="$(mktemp -d "$dst.XXXXXX")" || return 1
+  if runuser -u "$clone_owner" -- git -C "$clone_root" "${gitc[@]}" archive --format=tar origin/master cli 2>/dev/null \
+       | tar -x -C "$tmp" 2>/dev/null && [[ -s "$tmp/cli/VERSION" ]]; then
+    rm -rf "$dst" && mv "$tmp/cli" "$dst" && rm -rf "$tmp" && return 0
+  fi
+  rm -rf "$tmp"; return 1
+}
 if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
   if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
        fetch --quiet origin master 2>/dev/null; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
+    if [[ "$DRY_RUN" != 1 ]]; then committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"; fi
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
@@ -1289,8 +1302,21 @@ fi
 #     hourly run cheap: no go compile unless cli/VERSION moved. -buildvcs=false:
 #     root building in the admin-owned clone must not depend on git ownership
 #     checks; the version is stamped via -ldflags from cli/VERSION anyway.
+# Built from origin/master's cli/ (extracted in 0a), like the other inputs, and
+# from the working tree only until a first extraction succeeds. Building from
+# the shared checkout kept /usr/local/bin/homelab on the Oct 21 build until
+# 2026-10-30: that checkout fast-forwards only while it is clean, and an
+# uncommitted edit to one file held it behind origin/master.
+homelab_cli_src() {
+  if [[ -s "$STATEDIR/cli.committed/VERSION" ]]; then
+    echo "$STATEDIR/cli.committed"
+  else
+    echo "$WORKSTATION_DIR/../../cli"
+  fi
+}
 build_homelab_cli() {
-  local src="$WORKSTATION_DIR/../../cli" dst=/usr/local/bin/homelab
+  local src dst=/usr/local/bin/homelab
+  src="$(homelab_cli_src)"
   local semver srchash want have="" tmp
   semver="$(cat "$src/VERSION" 2>/dev/null || true)"
   [[ -n "$semver" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
