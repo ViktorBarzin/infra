@@ -751,6 +751,37 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # The outcome check for Vault database credential rotation
+          # (docs/runbooks/db-credential-rotation.md). The db-rotation-watcher
+          # alerts in Prometheus say whether the watcher did its job; this one
+          # says whether an app actually kept failing to log in, whatever the
+          # cause.
+          #
+          # SHAPE. A failure in the last 2m AND a failure in the 2m window
+          # ending 5m ago, per Postgres user. That needs failures at least 3
+          # minutes apart, so the expected burst while a pod restarts onto the
+          # new password (11-100s measured) never fires it, and a crash-looping
+          # app whose retries are minutes apart still does.
+          #
+          # BACKTESTED 2026-10-24..10-30: fired on exactly the four real
+          # rotation outages (paperless_ngx 10-27, goldmane_edges 10-28,
+          # technitium 10-29 for ~3.5h, linkwarden 10-30 from 14:37, six
+          # minutes after its 14:31:48 rotation) and on nothing else.
+          name = "Database credentials"
+          rules = [
+            {
+              alert  = "DbAuthFailuresAfterRotation"
+              expr   = "sum by (user) (count_over_time({namespace=\"dbaas\"} |= \"password authentication failed\" | json user=\"record.user_name\" [2m])) > 0 and sum by (user) (count_over_time({namespace=\"dbaas\"} |= \"password authentication failed\" | json user=\"record.user_name\" [2m] offset 5m)) > 0"
+              for    = "0m"
+              labels = { severity = "warning", subsystem = "vault" }
+              annotations = {
+                summary     = "Postgres user {{ $labels.user }} has been failing password authentication for 3+ minutes"
+                description = "An app is logging in to pg-cluster with a password Postgres no longer accepts, most likely a Vault static-role rotation its pod has not picked up. Compare `vault read database/static-roles/pg-<role>` (last_vault_rotation) with the ExternalSecret's status.refreshTime, and check the db-rotation-watcher Job logs in the vault namespace. Runbook: docs/runbooks/db-credential-rotation.md."
+              }
+            },
+          ]
+        },
+        {
           # wa-bot (stacks/wa-bot, docs/runbooks/wa-bot.md). The bot used to post
           # these to #alerts itself; since its egress lock (2026-10-21) it cannot
           # reach Slack, so it logs each one as a line containing
