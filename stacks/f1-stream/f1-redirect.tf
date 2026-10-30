@@ -4,9 +4,14 @@
 # root goes to the F1 section (tv/f1/) and every other path goes to the same
 # path and query on tv. The status is 308, so a client that follows it keeps
 # its method and body. Old TV builds update through this: their update check
-# and APK download are GETs (ops/UpdateTransport.kt in the app repo), OkHttp
-# follows those, and their POSTs (heartbeat, telemetry) fail until the TV
-# installs the new build at its next open. VLC watch links on f1 follow it too.
+# and APK download are anonymous GETs (ops/UpdateTransport.kt in the app
+# repo), and OkHttp follows those. OkHttp drops the Authorization header when
+# it follows a redirect to another host, so every authenticated call from an
+# old build (My channels, playback token, heartbeat, telemetry) reaches tv
+# without the member and gets 401 until the TV installs the new build at its
+# next open. Anonymous calls, POSTs included, still work, and the TV stays
+# paired (f1-stream ADR-0053, Consequences). VLC watch links on f1 follow it
+# too.
 #
 # Two places answer, because f1 resolves two ways:
 #
@@ -80,7 +85,9 @@ resource "cloudflare_ruleset" "f1_redirect" {
 
 # The internal-DNS half (see the top of this file). Traefik's redirectRegex
 # matches the whole request URL, query included. `permanent = true` answers 301
-# to a GET and 308 to anything else.
+# to a GET and 308 to anything else, so the method and body are still kept.
+# Traefik v3.7's redirectRegex has no option to send 308 to a GET, so this half
+# answers GETs with 301 where Cloudflare answers 308 (recorded in ADR-0053).
 resource "kubernetes_manifest" "f1_redirect_root" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
