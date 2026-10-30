@@ -555,7 +555,7 @@ resource "kubernetes_job" "pg_db_init" {
 }
 
 # ExternalSecret for the Technitium PostgreSQL query-log password (Vault
-# auto-rotation, 168h). MUST track the `pg-technitium` static role: the only
+# auto-rotation, weekly on Tuesday). MUST track the `pg-technitium` static role: the only
 # consumer is the technitium-password-sync CronJob below, which injects this
 # value into the "Query Logs (Postgres)" app's connectionString. It previously
 # read `static-creds/mysql-technitium` (a leftover from when query logging went
@@ -575,6 +575,13 @@ resource "kubernetes_manifest" "external_secret" {
     metadata = {
       name      = "technitium-db-creds"
       namespace = kubernetes_namespace.technitium.metadata[0].name
+      # The Tuesday db-rotation-watcher (stacks/vault) runs this CronJob as soon
+      # as the Secret holds the new password, instead of waiting up to 6h for
+      # its own schedule. Rotation used to leave query logging failing 28P01
+      # for up to 232 minutes a week.
+      annotations = {
+        "rotation.viktorbarzin.me/after-sync-cronjobs" = "technitium-password-sync"
+      }
     }
     spec = {
       refreshInterval = "15m"
@@ -655,7 +662,47 @@ resource "kubernetes_config_map" "grafana_technitium_dashboard" {
   }
 }
 
-# CronJob to sync Vault-rotated MySQL password into Technitium's app config
+# Lets the db-rotation-watcher (vault namespace) start technitium-password-sync
+# right after a pg-technitium rotation. `create jobs` cannot be narrowed by
+# name; reading the CronJob is limited to this one.
+resource "kubernetes_role" "db_rotation_watcher" {
+  metadata {
+    name      = "db-rotation-watcher"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  rule {
+    api_groups     = ["batch"]
+    resources      = ["cronjobs"]
+    resource_names = ["technitium-password-sync"]
+    verbs          = ["get"]
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "db_rotation_watcher" {
+  metadata {
+    name      = "db-rotation-watcher"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.db_rotation_watcher.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "db-rotation-watcher"
+    namespace = "vault"
+  }
+}
+
+# CronJob to sync the Vault-rotated Postgres password into Technitium's app
+# config. Runs every 6h, and on Tuesday right after rotation via the
+# db-rotation-watcher (annotation on technitium-db-creds above).
 resource "kubernetes_cron_job_v1" "technitium_password_sync" {
   metadata {
     name      = "technitium-password-sync"
