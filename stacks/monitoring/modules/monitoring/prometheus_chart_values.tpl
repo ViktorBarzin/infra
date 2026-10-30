@@ -4022,6 +4022,50 @@ serverFiles:
             annotations:
               summary: "Vault audit-log rotation failed to archive {{ $value | printf \"%.0f\" }} pod(s) — logs left intact, volume still growing"
               description: "The rotation job verifies each gzip archive before truncating the live log, so a failure here means the archive could not be written or did not verify. No audit data was lost, but the volume is not being reclaimed."
+          # db-rotation-watcher (stacks/vault/db_rotation_watcher.tf) pushes one
+          # group per static role after each Tuesday rotation:
+          # db_rotation_sync_lag_seconds (Vault rotation -> last ExternalSecret
+          # refresh) and db_rotation_last_seen_timestamp. The app-side outcome
+          # is the Loki rule DbAuthFailuresAfterRotation.
+          # Runbook: docs/runbooks/db-credential-rotation.md
+          - alert: DbRotationSyncLagHigh
+            # Pushgateway keeps the value all week, so only a lag from the
+            # last 6h counts.
+            expr: |
+              db_rotation_sync_lag_seconds > 120
+              and on(role) (time() - db_rotation_last_seen_timestamp) < 21600
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Vault role {{ $labels.role }}: ExternalSecrets took {{ $value | humanizeDuration }} to pick up the rotated password (threshold 2m)"
+              description: "The db-rotation-watcher saw the rotation but the role's ExternalSecrets did not refresh within 2 minutes (5 minutes means it gave up). Apps on that role may be failing to log in until ESO's 15m poll. Check the watcher Job logs: kubectl -n vault logs -l app=db-rotation-watcher --tail=200"
+          - alert: DbRotationWatcherSilent
+            # Tuesday from 11:00 UTC, the rotation hour is over: some role
+            # should have been seen rotating today. 3600 * (hour() + 1) is
+            # longer than the time since midnight, so a value from today
+            # always passes. Covers a watcher that never ran, crashed, could
+            # not push, and Vault not rotating at all.
+            expr: |
+              (day_of_week() == 2 and hour() >= 11)
+              and on() (
+                (time() - max(db_rotation_last_seen_timestamp)) > 3600 * (hour() + 1)
+                or on() absent(db_rotation_last_seen_timestamp)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "db-rotation-watcher reported no Vault DB rotation this Tuesday"
+              description: "Every database static role is scheduled between 10:00 and 10:45 UTC on Tuesday, and the db-rotation-watcher pushes db_rotation_last_seen_timestamp for each one it sees. Nothing arrived today. Either the CronJob did not run (kubectl -n vault get jobs), it could not log in to Vault or push to the Pushgateway, or Vault did not rotate (vault read database/static-roles/pg-linkwarden, last_vault_rotation)."
+          - alert: DbRotationWatcherFailed
+            expr: kube_job_status_failed{namespace="vault", job_name=~"db-rotation-watcher-.*"} > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "db-rotation-watcher Job {{ $labels.job_name }} failed"
+              description: "The Tuesday watcher exited with an error or hit its 11:05 deadline. Rotations fall back to the 15m ExternalSecret poll. Logs: kubectl -n vault logs job/{{ $labels.job_name }}"
           # vault_raft_storage_stats_applied_index, NOT vault_raft_last_index_gauge.
           # The latter is what this rule shipped with in April and it does not
           # exist in Vault 1.18.5 — checked against a live /v1/sys/metrics dump

@@ -56,6 +56,7 @@ and Terminal Lobby's own files ship in its Debian package.
 - **Vault is the sole source of truth** for secrets.
 - **`secret/viktor`** — go-to path for ALL personal secrets (135 keys). Contains every API key, token, password, SSH key, and config from the old terraform.tfvars. Check here first: `vault kv get -field=KEY secret/viktor`.
 - **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
+- **App DB passwords** are Vault static roles that rotate on Tuesday 10:00-10:45 UTC; the `db-rotation-watcher` CronJob force-syncs their `vault-database` ExternalSecrets within seconds, and ESO's 15m poll is the fallback. A new role takes a free slot: `docs/runbooks/db-credential-rotation.md`.
 
 ## Architecture
 Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxmox VMs.
