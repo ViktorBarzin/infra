@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func workCommands() []Command {
@@ -63,7 +64,7 @@ func workStart(args []string) error {
 	wtRel := filepath.Join(".worktrees", topic)
 
 	ensureWorktreesIgnored(repoRoot)
-	if err := gitStream(repoRoot, flags, "fetch", remote); err != nil {
+	if err := gitFetchRetry(repoRoot, flags, remote, 3, 2*time.Second); err != nil {
 		return fmt.Errorf("fetch %s failed: %w", remote, err)
 	}
 	if err := gitStream(repoRoot, flags, "worktree", "add", wtRel, "-b", branch, remote+"/master"); err != nil {
@@ -98,7 +99,7 @@ func workLand(args []string) error {
 	}
 	flags := cryptFlagsFor(repoRoot)
 
-	if err := gitStream(repoRoot, flags, "fetch", remote); err != nil {
+	if err := gitFetchRetry(repoRoot, flags, remote, 3, 2*time.Second); err != nil {
 		return fmt.Errorf("fetch failed: %w", err)
 	}
 	if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {
@@ -260,6 +261,24 @@ func gitPushCapture(repoRoot string, flags []string, args ...string) (string, er
 	return buf.String(), err
 }
 
+// gitFetchRetry fetches remote, trying again after a pause when it fails.
+// Every worktree of a clone shares refs/remotes/<remote>/*, so two lands that
+// fetch in the same second race for the ref lock and one fails with "cannot
+// lock ref" (DRILL R8 re-run, 2026-10-30); a second try a moment later works.
+func gitFetchRetry(repoRoot string, flags []string, remote string, attempts int, pause time.Duration) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = gitStream(repoRoot, flags, "fetch", remote); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			fmt.Fprintf(os.Stderr, "homelab: fetch %s failed, trying again in %s\n", remote, pause)
+			time.Sleep(pause)
+		}
+	}
+	return err
+}
+
 // pushWithRetry pushes HEAD:master. When master moved meanwhile it fetches,
 // merges master in, runs reverify on the merged tree, and pushes again. A
 // conflicting merge or a failed reverify stops it without pushing; a refusal
@@ -279,7 +298,7 @@ func pushWithRetry(repoRoot string, flags []string, remote string, attempts int,
 			break
 		}
 		fmt.Fprintln(os.Stderr, "homelab: push rejected — fetching + merging master, then retrying")
-		if err := gitStream(repoRoot, flags, "fetch", remote); err != nil {
+		if err := gitFetchRetry(repoRoot, flags, remote, 3, 2*time.Second); err != nil {
 			return err
 		}
 		if err := gitStream(repoRoot, flags, "merge", "--no-edit", remote+"/master"); err != nil {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // landRig is a bare "remote", a worktree-like clone on a feature branch, and a
@@ -200,5 +201,32 @@ func TestIsNonFastForward(t *testing.T) {
 		if got := isNonFastForward(c.stderr); got != c.want {
 			t.Errorf("isNonFastForward(%q) = %v, want %v", c.stderr, got, c.want)
 		}
+	}
+}
+
+// Several worktrees of one clone share refs/remotes/<remote>/*, so two lands
+// fetching in the same second race for the ref lock and one fails with
+// "cannot lock ref" (DRILL R8 re-run, 2026-10-30). The fetch is retried.
+func TestFetchRetriesWhenAnotherFetchHoldsTheRefLock(t *testing.T) {
+	r := newLandRig(t)
+	gitT(t, r.mine, "fetch", "-q", "origin")
+	r.theirsLands(t, "theirs.txt", "theirs\n")
+	lock := filepath.Join(r.mine, ".git", "refs", "remotes", "origin", "master.lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeT(t, lock, "")
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		os.Remove(lock)
+		close(done)
+	}()
+	if err := gitFetchRetry(r.mine, nil, "origin", 5, 200*time.Millisecond); err != nil {
+		t.Fatalf("fetch should succeed once the other fetch's lock is gone: %v", err)
+	}
+	<-done
+	if got, want := gitT(t, r.mine, "rev-parse", "origin/master"), r.remoteMaster(t); got != want {
+		t.Fatalf("origin/master = %s, want %s", got, want)
 	}
 }
