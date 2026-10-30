@@ -72,7 +72,8 @@ resource "kubernetes_deployment" "tor-proxy" {
           name = "tor-proxy"
           # dperson/torproxy (Tor 0.4.3.5, last pushed 2021) stopped working on
           # 2026-10-30: the consensus started requiring Desc=3 Microdesc=3 and
-          # tor exited on every start. tor-simple tags track Tor releases.
+          # tor exited on every start. tor-simple tags track Tor releases
+          # (osminogin/* is on the Kyverno trusted-registry allowlist).
           image = "osminogin/tor-simple:0.4.9.14@sha256:ea335859425375b3294b15a5df61ca317ca4fdd143cf7a8d568bb2cd48217774"
           # The image has SOCKS on 9050 only. Tor's own HTTPTunnelPort keeps
           # 8118 as an HTTP proxy (CONNECT only, so HTTPS targets; the old
