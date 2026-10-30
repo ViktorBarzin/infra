@@ -448,9 +448,13 @@ Design: `docs/plans/2026-10-20-homelab-showcase-design.md`.
 
 ## Build / install
 
-Built from source to `/usr/local/bin/homelab` during devvm provisioning
-(`scripts/workstation/setup-devvm.sh`, the `t3-dispatch` pattern); version is
-stamped from `cli/VERSION` via ldflags. Manual build:
+Built from source to `/usr/local/bin/homelab` by the hourly devvm provisioner
+(`scripts/t3-provision-users.sh`, step 0b). It builds origin/master's `cli/`,
+which step 0a extracts to `/var/lib/t3-provision/cli.committed`, and rebuilds
+whenever a hash of that source differs from the deployed binary's version
+(`vX.Y.Z+<hash>`). So a change reaches every user within the hour after it
+lands, whatever state the shared main checkout is in. To deploy right away,
+`sudo systemctl start t3-provision-users.service`. Manual build:
 
 ```
 cd cli && go build -ldflags "-X main.version=$(cat VERSION)" -o /usr/local/bin/homelab .
