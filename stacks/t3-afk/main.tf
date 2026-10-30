@@ -30,7 +30,7 @@ locals {
   # Fully-qualified (docker.io/library/...) to satisfy the Kyverno
   # require-trusted-registries allowlist via `docker.io/*` — bare `node*` is NOT
   # on the bare-DockerHub-library list (alpine*/busybox*/python* are).
-  image = "docker.io/library/node:24.22.1"
+  image = "docker.io/library/node:24.22.2"
   # Pinned npm versions installed at startup (the reproducibility anchor for the
   # pilot until a digest-pinned image exists).
   t3_version         = "0.0.27"
