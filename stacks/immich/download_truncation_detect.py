@@ -75,10 +75,33 @@ ASSET_PATH = re.compile(r'^/api/assets/(?P<aid>[0-9a-f-]{36})/original(?:[?/]|$)
 INTERNAL = re.compile(r'^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)')
 
 
+def is_viewer_load(rec):
+    """True for an <img>/<video> load by the web viewer, not a download.
+
+    The viewer fetches the full original when someone zooms, through a service
+    worker that aborts the fetch when they swipe on or close the viewer. That
+    cancel is by design and leaves nobody holding a file, but it is the same
+    URL the download button uses, so on bytes alone it looks like a partial
+    download. That was the 2026-10-31 false alarm.
+
+    The browser's Sec-Fetch-Mode tells them apart: an image or video load is
+    "no-cors" (the service worker's re-fetch keeps it), a download is
+    "navigate", or "same-origin" if a browser sends it through the worker.
+    Sec-Fetch-Dest would read more naturally but does not work: the worker's
+    re-fetch rewrites "image" to "empty". Measured live in Chromium.
+
+    A missing header counts as a download. The native apps and older browsers
+    send none, and skipping those would hide real failures.
+    """
+    mode = rec.get("request_Sec-Fetch-Mode")
+    return isinstance(mode, str) and mode.lower() == "no-cors"
+
+
 def parse_lines(lines):
     """Traefik JSON access-log lines -> [(ip, asset_id, status, bytes, ua)].
 
-    Anything that is not a GET of an original asset is dropped, including lines
+    Web-viewer image loads are dropped too (see is_viewer_load). Anything else
+    that is not a GET of an original asset is dropped, including lines
     that are not JSON at all: the nginx auth-proxy and bot-block-proxy live in
     the same namespace and still log CLF, and a Loki query that reaches them
     must skip their lines rather than half-read them.
@@ -102,6 +125,8 @@ def parse_lines(lines):
             continue
         ip = rec.get("ClientHost")
         if not isinstance(ip, str) or INTERNAL.match(ip):
+            continue
+        if is_viewer_load(rec):
             continue
         try:
             status = int(rec["DownstreamStatus"])

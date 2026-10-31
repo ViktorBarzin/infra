@@ -20,7 +20,8 @@ import unittest
 from download_truncation_detect import analyse, parse_lines
 
 
-def line(ip, aid, status, nbytes, proto="HTTP/2.0", ua=None, path=None):
+def line(ip, aid, status, nbytes, proto="HTTP/2.0", ua=None, path=None,
+         fetch_mode=None):
     """One Traefik JSON access-log line for a GET of an original asset."""
     obj = {
         "ClientAddr": f"{ip}:45246",
@@ -60,6 +61,8 @@ def line(ip, aid, status, nbytes, proto="HTTP/2.0", ua=None, path=None):
         "request_X-Authentik-Username": "viktor",
         "time": "2026-08-30T02:23:24Z",
     }
+    if fetch_mode is not None:
+        obj["request_Sec-Fetch-Mode"] = fetch_mode
     # Traefik's encoder HTML-escapes &, < and > inside string values, so a real
     # line never carries a bare & in the query string. json.dumps does not do
     # that by default, so do it here or the fixture is not what Loki holds.
@@ -237,6 +240,46 @@ class TestClientIsolation(unittest.TestCase):
         ], {A: 7792308})
         self.assertEqual(r["cut"], 1)
         self.assertEqual(r["unrecovered"], 1)
+
+
+class TestViewerLoads(unittest.TestCase):
+    """The 2026-10-31 false alarm: the photo viewer's own cancelled loads.
+
+    Immich's web viewer fetches the full original when someone zooms, and its
+    service worker aborts that fetch when they swipe on or close the viewer.
+    The URL is the same one the download button uses, so only the browser's
+    Sec-Fetch-Mode separates them. Measured live in Chromium against
+    traefik:v3.7: the viewer's load arrives as no-cors (with Sec-Fetch-Dest
+    already rewritten to "empty" by the service worker's re-fetch, which is
+    why the mode and not the destination is the test), the download as
+    navigate.
+    """
+
+    def test_viewer_image_load_is_not_scored(self):
+        lines = [line(IP1, A, 200, 7123507, ua=SAFARI, fetch_mode="no-cors")]
+        self.assertEqual(parse_lines(lines), [])
+
+    def test_browser_download_is_scored(self):
+        got = parse_lines([line(IP1, A, 200, 7123507, ua=SAFARI,
+                                fetch_mode="navigate")])
+        self.assertEqual(len(got), 1)
+
+    def test_download_routed_through_the_service_worker_is_scored(self):
+        # A browser that sends the download through the service worker
+        # re-fetches a navigate request as same-origin. Still a download.
+        got = parse_lines([line(IP1, A, 200, 7123507, ua=SAFARI,
+                                fetch_mode="same-origin")])
+        self.assertEqual(len(got), 1)
+
+    def test_missing_header_is_scored(self):
+        # The native apps and older browsers send no Sec-Fetch-Mode. Unknown
+        # must count, or a broken mobile-app download would go unreported.
+        got = parse_lines([line(IP1, A, 200, 7123507, ua="immich-android/2.3.1")])
+        self.assertEqual(len(got), 1)
+
+    def test_header_value_is_compared_case_insensitively(self):
+        lines = [line(IP1, A, 200, 7123507, ua=SAFARI, fetch_mode="No-CORS")]
+        self.assertEqual(parse_lines(lines), [])
 
 
 if __name__ == "__main__":

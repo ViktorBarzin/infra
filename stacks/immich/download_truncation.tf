@@ -30,6 +30,13 @@
 # on `unrecovered`, which in that same session was exactly 1 — the one photo
 # that really was broken.
 #
+# WEB-VIEWER LOADS ARE NOT DOWNLOADS (2026-10-31): Immich's photo viewer fetches
+# the full original when someone zooms, from the same URL as the download
+# button, and its service worker cancels the fetch when they swipe on. That
+# fired this alert for someone browsing a shared album on an iPhone. Traefik
+# now logs Sec-Fetch-Mode, and a "no-cors" request (an <img>/<video> load) is
+# skipped; see is_viewer_load() in the script.
+#
 # Detection logic + its tests: download_truncation_detect{,_test}.py. Run the
 # tests with `python3 download_truncation_detect_test.py`; they encode the real
 # log lines from that session, including the video-seeking case (206 with no
