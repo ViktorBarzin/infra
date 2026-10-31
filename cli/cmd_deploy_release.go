@@ -41,6 +41,9 @@ func deployRelease(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := leaveStartingDir(); err != nil {
+		return err
+	}
 	r := &releaseRun{spec: releaseSpecs[o.App](), opts: o, out: os.Stdout,
 		site: &http.Client{Timeout: 60 * time.Second}}
 	defer r.cleanup()
@@ -55,6 +58,18 @@ func deployRelease(args []string) error {
 	}()
 	defer signal.Stop(sig)
 	return r.run()
+}
+
+// leaveStartingDir moves the release out of the directory it was started
+// from. Nothing here reads a relative path, and that directory can go while
+// the release runs: on 2026-10-31 one started from a worktree died when
+// `homelab work clean` removed it: git clone reads its cwd, and stops with
+// "Unable to read current working directory" when that is gone.
+func leaveStartingDir() error {
+	if err := os.Chdir("/"); err != nil {
+		return fmt.Errorf("leaving the starting directory: %w", err)
+	}
+	return nil
 }
 
 const deployReleaseHelp = `homelab deploy <app> [--server] [--tv] [--sha SHA] [--check]
