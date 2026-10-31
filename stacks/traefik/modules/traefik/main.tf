@@ -488,8 +488,16 @@ resource "helm_release" "traefik" {
       }
     }
 
-    # Access logs, JSON since 2026-09-01. Headers default to DROP; the four
+    # Access logs, JSON since 2026-09-01. Headers default to DROP; the six
     # named below are kept.
+    #
+    # Sec-Fetch-Dest / Sec-Fetch-Mode (added 2026-10-31) let the Immich
+    # download-truncation detector tell a photo-viewer image load (dest
+    # "image") from a real download. Both hit the same URL through the same
+    # service worker, and the viewer cancels its loads by design when a person
+    # swipes on or closes it, which the detector was counting as partial
+    # files. Browsers set these headers; scripts usually do not, so a missing
+    # value is treated as a download.
     #
     # WHY JSON AND NOT CLF: CLF has fixed positions for Referer and User-Agent
     # and nowhere to put anything else, so the authenticated principal — which
@@ -566,6 +574,8 @@ resource "helm_release" "traefik" {
             "Referer"              = "keep"
             "X-Authentik-Username" = "keep"
             "X-Auth-Fallback"      = "keep"
+            "Sec-Fetch-Dest"       = "keep"
+            "Sec-Fetch-Mode"       = "keep"
           }
         }
       }
