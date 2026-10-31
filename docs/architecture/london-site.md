@@ -164,3 +164,13 @@ Edit `scripts/london-flint/drop-probe.sh`, bump `PROBE_VERSION` in
 ```sh
 python3 scripts/london-flint/build-ipk.py <version> <out-dir>
 ```
+
+## Alexa voice control
+
+The Echo Dot on the guest network ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`)
+controls ha-london devices through a private Alexa Smart Home skill and an AWS
+Lambda, with no Home Assistant Cloud subscription. Today it exposes one device,
+the air sensor's LED switch ("Air light"). The guest network is fine for this:
+the Echo only talks to Amazon, and Amazon reaches ha-london through
+`ha-london.viktorbarzin.me`. How it fits together, how to add a device, and what
+to watch for: `docs/runbooks/london-alexa.md`.
