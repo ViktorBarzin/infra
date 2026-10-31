@@ -496,7 +496,12 @@ cannot build (infra#152) and so emo can release without Viktor (infra#153).
   `baseline.prof`, the versionCode and a non-debuggable build, pushed with
   oras to `f1-stream-tv:<code>` (and `-mapping`), published with
   `PIPELINE=publish-tv`, and confirmed by `/api/app/latest` and the sha256 of
-  `/api/app/f1tv.apk`.
+  `/api/app/f1tv.apk`. `/api/app/latest` is read several times each round,
+  because each read lands on one Edge pod and each pod lists the release
+  directory over NFS on its own: on 2026-10-31 one pod kept offering 31521
+  for over 15 minutes after 31529 was published. The live code is the
+  highest any read reports, and a publish is confirmed only when every read
+  offers it.
 - One release at a time on the box: `/run/lock/f1-stream-release.lock`
   (root-owned 0666, from `playbooks/files/devvm/f1-stream-release.conf`).
   It also claims `service:f1-stream` on the presence board and refuses when

@@ -199,3 +199,35 @@ func TestReleaseActionNamesCoverEveryAction(t *testing.T) {
 		t.Errorf("runs() is wrong")
 	}
 }
+
+func TestReleaseJudgeTVAnswersAcrossEdgePods(t *testing.T) {
+	a := func(code int, sha string) tvAnswer { return tvAnswer{Code: code, SHA: sha} }
+	cases := []struct {
+		name    string
+		answers []tvAnswer
+		want    tvConfirm
+		whyHas  string
+	}{
+		{"every pod offers the build", []tvAnswer{a(31529, "x"), a(31529, "x"), a(31529, "x")}, tvConfirmed, ""},
+		// 2026-10-31: one Edge pod's NFS listing stayed on 31521 for 15+ minutes
+		// while the other offered 31529; a single read could land on either.
+		{"one pod is stale", []tvAnswer{a(31529, "x"), a(31521, "y"), a(31529, "x")}, tvPending, "1 of 3"},
+		{"wrong bytes under the code", []tvAnswer{a(31529, "x"), a(31529, "z")}, tvPending, "sha256 z"},
+		{"newer everywhere", []tvAnswer{a(31530, "n"), a(31531, "m")}, tvSuperseded, ""},
+		{"newer and ours", []tvAnswer{a(31530, "n"), a(31529, "x")}, tvSuperseded, ""},
+		{"no answers", nil, tvPending, "no answer"},
+	}
+	for _, c := range cases {
+		got, why := judgeTVAnswers(c.answers, 31529, "x")
+		if got != c.want || !strings.Contains(why, c.whyHas) {
+			t.Errorf("%s: judgeTVAnswers = %v %q, want %v containing %q", c.name, got, why, c.want, c.whyHas)
+		}
+	}
+}
+
+func TestReleaseHighestTVAnswerIsTheLiveCode(t *testing.T) {
+	got := highestTVAnswer([]tvAnswer{{31521, "a"}, {31529, "b"}, {31521, "a"}})
+	if got.Code != 31529 || got.SHA != "b" {
+		t.Errorf("highestTVAnswer = %+v", got)
+	}
+}

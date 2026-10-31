@@ -323,3 +323,61 @@ func parseReleaseArgs(args []string) (releaseOpts, error) {
 	}
 	return o, nil
 }
+
+// tvAnswer is one read of /api/app/latest. Each read lands on one Edge pod,
+// and the pods read the release directory over NFS independently: on
+// 2026-10-31 one pod's listing stayed on 31521 for over 15 minutes after
+// 31529 was published, so one read says nothing about the other pods.
+type tvAnswer struct {
+	Code int
+	SHA  string
+}
+
+type tvConfirm int
+
+const (
+	tvPending tvConfirm = iota
+	tvConfirmed
+	tvSuperseded
+)
+
+// highestTVAnswer is the code televisions can be offered now: the newest any
+// pod serves, which is the safe side for refusing a code that is not above it.
+func highestTVAnswer(answers []tvAnswer) tvAnswer {
+	var best tvAnswer
+	for _, a := range answers {
+		if a.Code > best.Code {
+			best = a
+		}
+	}
+	return best
+}
+
+// judgeTVAnswers says whether every read offers the published build (or a
+// newer one), and when not, why.
+func judgeTVAnswers(answers []tvAnswer, code int, expect string) (tvConfirm, string) {
+	if len(answers) == 0 {
+		return tvPending, "no answer from /api/app/latest"
+	}
+	stale, newer := 0, 0
+	staleCode := 0
+	for _, a := range answers {
+		switch {
+		case a.Code < code:
+			stale++
+			staleCode = a.Code
+		case a.Code > code:
+			newer++
+		case expect != "" && a.SHA != "" && a.SHA != expect:
+			return tvPending, fmt.Sprintf("/api/app/latest describes sha256 %s for %d, published %s", a.SHA, code, expect)
+		}
+	}
+	if stale > 0 {
+		return tvPending, fmt.Sprintf("%d of %d answers from /api/app/latest still offer %d (an Edge pod may be reading a stale release listing)",
+			stale, len(answers), staleCode)
+	}
+	if newer > 0 {
+		return tvSuperseded, ""
+	}
+	return tvConfirmed, ""
+}
