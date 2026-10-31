@@ -404,6 +404,9 @@ func (r *releaseRun) plan() error {
 		r.server = decideServer(f)
 	}
 	r.say("server image %s:%s: %s (%s)", r.spec.Image, r.sha8, r.server.Action, r.server.Reason)
+	if r.server.Action.runs() {
+		r.noteEmulatorClaims()
+	}
 
 	r.tv = releaseDecision{actionNotAsked, "--server only"}
 	if r.tvOn {
@@ -796,4 +799,23 @@ func (r *releaseRun) downloadSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// noteEmulatorClaims says who would be cut off: the deploy pipeline puts the
+// shared Android emulator to sleep while the Transcoder rolls
+// (.woodpecker/deploy.yml), and on 2026-10-30 a release did that to an agent
+// that held the emulator's claim.
+func (r *releaseRun) noteEmulatorClaims() {
+	bin, err := exec.LookPath("presence")
+	if err != nil {
+		return
+	}
+	for _, label := range []string{"infra:android-emulator", "service:android-emulator"} {
+		out, err := exec.Command(bin, "peek", label).Output()
+		if err != nil || !strings.Contains(string(out), "active claims") {
+			continue
+		}
+		r.say("note: the server deploy puts the shared Android emulator to sleep while the Transcoder rolls, and %s is claimed:\n%s",
+			label, strings.TrimSpace(string(out)))
+	}
 }
