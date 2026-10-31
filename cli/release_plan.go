@@ -179,10 +179,11 @@ type tvFacts struct {
 	Auto        bool
 	Code        int
 	LiveCode    int
-	LiveUnknown bool // /api/app/latest did not answer
-	Changed     bool // an app path changed since the live code's commit
-	ChangeKnown bool // the live code's commit was found on master
-	OnRegistry  bool // ghcr already has :<code>
+	LiveUnknown bool     // /api/app/latest did not answer
+	Changed     bool     // an app path changed since any of LiveCommits
+	ChangeKnown bool     // LiveCommits is not empty
+	LiveCommits []string // commits in the target's history with the live code's count
+	OnRegistry  bool     // ghcr already has :<code>
 }
 
 func decideTV(f tvFacts) releaseDecision {
@@ -199,31 +200,88 @@ func decideTV(f tvFacts) releaseDecision {
 		return releaseDecision{actionRefuse, fmt.Sprintf("televisions are offered %d; versionCode %d is not above it, and a television never takes a lower code", f.LiveCode, f.Code)}
 	}
 	if f.Auto && f.ChangeKnown && !f.Changed {
-		return releaseDecision{actionSkipUnchanged, fmt.Sprintf("nothing in the app changed since %d", f.LiveCode)}
+		return releaseDecision{actionSkipUnchanged, fmt.Sprintf("nothing in the app changed since %d (%s)", f.LiveCode, shortSHAs(f.LiveCommits))}
+	}
+	unknown := ""
+	if f.Auto && !f.ChangeKnown {
+		unknown = fmt.Sprintf("; no commit on master has %d's count, so what changed since it is unknown", f.LiveCode)
 	}
 	if f.OnRegistry {
-		return releaseDecision{actionPublishOnly, fmt.Sprintf("versionCode %d is already on ghcr; publishing it", f.Code)}
+		return releaseDecision{actionPublishOnly, fmt.Sprintf("versionCode %d is already on ghcr; publishing it%s", f.Code, unknown)}
 	}
-	return releaseDecision{actionBuild, fmt.Sprintf("building versionCode %d", f.Code)}
+	return releaseDecision{actionBuild, fmt.Sprintf("building versionCode %d%s", f.Code, unknown)}
 }
 
-// commitWithCount walks master's first-parent chain (newest first) for the
-// tip whose commit count is want. Tips' counts strictly fall along the chain,
-// so the walk stops as soon as it passes want.
-func commitWithCount(chain []string, count func(string) (int, error), want int) (string, bool) {
-	for _, sha := range chain {
+func shortSHAs(shas []string) string {
+	out := make([]string, len(shas))
+	for i, s := range shas {
+		if len(s) > 8 {
+			s = s[:8]
+		}
+		out[i] = s
+	}
+	return strings.Join(out, ", ")
+}
+
+// tvBaseCandidates finds the commits a TV build with commit count want could
+// have come from: every commit in the target's history whose count is want.
+// The count alone does not say which commit it was. `homelab work land`
+// merges a branch into master, so a build published from the branch before
+// the merge has a count no first-parent commit has, and a first-parent commit
+// can share a count with a branch commit. All of them are returned.
+//
+// firstParents is master's first-parent chain from the target, newest first;
+// since(b) lists the target's history minus b's ("" = all of it). A commit
+// with count want is never an ancestor of a commit with a lower count, so the
+// search starts after the newest first-parent commit below want.
+func tvBaseCandidates(firstParents []string, count func(string) (int, error), since func(string) ([]string, error), want int) ([]string, error) {
+	boundary := ""
+	for _, sha := range firstParents {
 		n, err := count(sha)
 		if err != nil {
-			return "", false
-		}
-		if n == want {
-			return sha, true
+			return nil, err
 		}
 		if n < want {
-			return "", false
+			boundary = sha
+			break
 		}
 	}
-	return "", false
+	shas, err := since(boundary)
+	if err != nil {
+		return nil, err
+	}
+	if len(shas) > maxTVBaseSearch {
+		return nil, fmt.Errorf("%d commits to search for count %d; more than %d", len(shas), want, maxTVBaseSearch)
+	}
+	var out []string
+	for _, sha := range shas {
+		n, err := count(sha)
+		if err != nil {
+			return nil, err
+		}
+		if n == want {
+			out = append(out, sha)
+		}
+	}
+	return out, nil
+}
+
+const maxTVBaseSearch = 500
+
+// tvChangedSinceAny reports whether an app path changed between any of bases
+// and the target. When several commits could be the live build's source,
+// a change since any of them means the televisions may lack it.
+func tvChangedSinceAny(bases []string, changedSince func(string) ([]string, error), isApp func([]string) bool) (bool, error) {
+	for _, b := range bases {
+		paths, err := changedSince(b)
+		if err != nil {
+			return false, err
+		}
+		if isApp(paths) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // parseSignerDigest reads the first "certificate SHA-256 digest" apksigner prints.

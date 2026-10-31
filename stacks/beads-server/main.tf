@@ -153,7 +153,7 @@ resource "kubernetes_deployment" "dolt" {
           # The Renovate rails run every "*-backup" CronJob in this namespace
           # before applying a bump: dolt-backup (current rows) and
           # dolt-history-backup (full stores with commit history), both below.
-          image = "dolthub/dolt-sql-server:2.4.2"
+          image = "dolthub/dolt-sql-server:2.6.1"
 
           port {
             name           = "mysql"
@@ -431,7 +431,7 @@ resource "kubernetes_cron_job_v1" "dolt_backup" {
             }
             container {
               name  = "verify"
-              image = "dolthub/dolt-sql-server:2.4.2"
+              image = "dolthub/dolt-sql-server:2.6.1"
               env {
                 name  = "PUSHGATEWAY"
                 value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
@@ -624,7 +624,7 @@ resource "kubernetes_cron_job_v1" "dolt_history_backup" {
             }
             container {
               name  = "backup"
-              image = "dolthub/dolt-sql-server:2.4.2"
+              image = "dolthub/dolt-sql-server:2.6.1"
               env {
                 name  = "PUSHGATEWAY"
                 value = "http://prometheus-prometheus-pushgateway.monitoring:9091"

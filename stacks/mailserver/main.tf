@@ -5,6 +5,7 @@
 variable "tls_secret_name" { type = string }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
+variable "redis_host" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -23,6 +24,7 @@ module "mailserver" {
   tls_secret_name         = var.tls_secret_name
   nfs_server              = var.nfs_server
   mysql_host              = var.mysql_host
+  redis_host              = var.redis_host
   mailserver_accounts     = local.mailserver_accounts
   postfix_account_aliases = local.mailserver_aliases
   opendkim_key            = local.mailserver_opendkim_key

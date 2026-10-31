@@ -490,7 +490,12 @@ cannot build (infra#152) and so emo can release without Viktor (infra#153).
 - TV app: versionCode `30000 + commit count`, versionName `<last tag>+<count>`
   (`scripts/ci-version.sh`). Skipped when `/api/app/latest` already offers
   the code or nothing under the app's paths changed since the live code's
-  commit; refused when the code is not above the live one. Built with
+  commit; refused when the code is not above the live one. The live code's
+  commit is every commit in master's history with that count: a build
+  published from a worktree branch before `homelab work land` merged it has
+  a count no first-parent commit has, and two commits can share a count, so
+  an app change since any of them counts. When none has the count, the plan
+  line says so and the app is rebuilt. Built with
   `android/scripts/build-apk.sh testDebugUnitTest assembleRelease` (which
   takes the shared APK build lock), then checked for the shared signer,
   `baseline.prof`, the versionCode and a non-debuggable build, pushed with

@@ -204,7 +204,7 @@ resource "kubernetes_deployment" "shlink" {
       }
       spec {
         container {
-          image = "shlinkio/shlink:5.1.7"
+          image = "shlinkio/shlink:5.1.8"
           volume_mount {
             name       = "php2shell-mitigation"
             mount_path = "/usr/local/etc/php/conf.d/zz-php2shell.ini"

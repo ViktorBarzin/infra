@@ -514,6 +514,9 @@ locals {
     "immich",
     "jsoncrack",
     "kms",
+    # mailserver, added 2026-10-31: rspamd keeps Bayes, history and replies
+    # state in db 5.
+    "mailserver",
     "netbox",
     "nextcloud",
     "paperless-ngx",
