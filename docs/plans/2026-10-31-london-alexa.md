@@ -1,6 +1,6 @@
 # Alexa voice control for the London air light
 
-Status: draft (grilling with Viktor, 2026-10-31). Building starts once Viktor confirms this plan.
+Status: approved (grilling with Viktor, 2026-10-31). Building started the same night.
 
 ## Goal
 
