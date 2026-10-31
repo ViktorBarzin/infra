@@ -1,0 +1,12 @@
+{
+  "accountLinkingRequest": {
+    "type": "AUTH_CODE",
+    "authorizationUrl": "https://ha-london.viktorbarzin.me/auth/authorize",
+    "accessTokenUrl": "https://ha-london.viktorbarzin.me/auth/token",
+    "clientId": "https://layla.amazon.com/",
+    "clientSecret": "home-assistant-does-not-check-this",
+    "accessTokenScheme": "REQUEST_BODY_CREDENTIALS",
+    "scopes": ["smart_home"],
+    "domains": []
+  }
+}
