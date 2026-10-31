@@ -1,6 +1,6 @@
 # Alexa voice control for the London air light
 
-Status: approved (grilling with Viktor, 2026-10-31). Building started the same night.
+Status: done (built and voice-tested 2026-10-31). How to run it and add devices: `docs/runbooks/london-alexa.md`.
 
 ## Goal
 
@@ -133,6 +133,19 @@ The Alexa developer account is free. No CloudWatch alarm is created.
 - Which Amazon account owns the Echo, and whether it is set to UK English. Step 1 answers both; a US English Echo moves the Lambda to `us-east-1` and the client ID to `https://pitangui.amazon.com/`.
 - Whether CrowdSec on Sofia's Traefik or HA's own login ban lets AWS addresses through. Step 6 shows it before anyone talks to the Echo.
 - Whether enabling a development skill and account linking can be done outside the Alexa phone app. Planned as one step on the owner's phone.
+
+## As built
+
+Built on 2026-10-31. Viktor and Anca linked the skill on Anca's phone, and the first voice commands (off, on, off at 18:09 UTC) show in HA's logbook under the `alexa` user. What differed from the plan:
+
+| planned | as built |
+|---|---|
+| Account to be determined | The Echo is "Milea's Echo Dot" on Anca's Amazon account, matched by its Wi-Fi MAC to the guest-network lease. Her account first needed an Amazon developer registration (sole proprietor "Milea Home", Viktor's phone number, the Pear Tree Street address) |
+| UK English, EU region | Confirmed: the refresh token HA issued at linking carries client ID `https://layla.amazon.com/` |
+| Lambda permission for `alexa-connectedhome.amazonaws.com` | The working principal is `alexa-connectedhome.amazon.com` |
+| Lambda first, then skill, then permission | A temporary unscoped permission was needed to create the skill, then replaced by the skill-scoped one |
+| Owner enables the skill in the Alexa app | Same, because SMAPI cannot enable development Smart Home skills |
+| AWS plan to check at step 2 | The account predates the July 2025 plan change (no Free plan record) and spent $0.00 over the previous three months |
 
 ## Out of scope
 
