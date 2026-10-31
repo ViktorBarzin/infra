@@ -330,15 +330,6 @@ resource "cloudflare_dns_record" "mail_mta_sts" {
   zone_id = var.cloudflare_zone_id
 }
 
-resource "cloudflare_dns_record" "mail_tlsrpt" {
-  content = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
-  name    = "_smtp._tls.viktorbarzin.me"
-  proxied = false
-  ttl     = 1
-  type    = "TXT"
-  zone_id = var.cloudflare_zone_id
-}
-
 resource "cloudflare_dns_record" "mail_dmarc" {
   content = "\"v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
   name    = "_dmarc.viktorbarzin.me"

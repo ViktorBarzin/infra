@@ -218,7 +218,6 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | TXT | `viktorbarzin.me` | `brevo-code:a6ef1dd9...` | Brevo domain verification |
 | TXT (DMARC) | `_dmarc` | `p=quarantine; pct=100; rua=mailto:dmarc@viktorbarzin.me` | DMARC enforcement; aggregate reports land in-domain at `dmarc@viktorbarzin.me` (tracked under code-569; current live record still points at `e21c0ff8@dmarc.mailgun.org` pending cutover) |
 | TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20260412` | TLS enforcement for inbound |
-| TXT (TLSRPT) | `_smtp._tls` | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS failure reporting |
 
 ### Known Limitation: PTR Mismatch
 
@@ -299,7 +298,7 @@ drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 | Stack | Path | Resources |
 |-------|------|-----------|
 | Mailserver | `stacks/mailserver/` | Namespace, deployment, service, CronJob, PVCs |
-| DNS | `stacks/cloudflared/modules/cloudflared/cloudflare.tf` | MX, SPF, DKIM, DMARC, MTA-STS, TLSRPT records |
+| DNS | `stacks/cloudflared/modules/cloudflared/cloudflare.tf` | MX, SPF, DKIM, DMARC, MTA-STS records |
 | Monitoring | `stacks/monitoring/` | Prometheus alert rules |
 | CrowdSec | `stacks/crowdsec/` | Collections, log acquisition (already configured) |
 
