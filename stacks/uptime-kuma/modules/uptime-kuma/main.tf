@@ -120,7 +120,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
           # "real-browser" (checked 2026-10-19: http, port, ping, postgres,
           # push, redis, mysql). Adding a real-browser monitor needs the full
           # image back, or a remote browser.
-          image = "louislam/uptime-kuma:2.5.6-slim"
+          image = "louislam/uptime-kuma:2.5.8-slim"
           name  = "uptime-kuma"
 
           resources {
