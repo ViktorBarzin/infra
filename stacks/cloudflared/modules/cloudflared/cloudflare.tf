@@ -322,7 +322,7 @@ resource "cloudflare_dns_record" "brevo_code" {
 }
 
 resource "cloudflare_dns_record" "mail_mta_sts" {
-  content = "\"v=STSv1; id=20260412\""
+  content = "\"v=STSv1; id=20261031\""
   name    = "_mta-sts.viktorbarzin.me"
   proxied = false
   ttl     = 1
