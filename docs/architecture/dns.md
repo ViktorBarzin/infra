@@ -416,7 +416,6 @@ Counts are exact as of the 2026-07-08 record cleanup (zone total **185**):
 | CNAME (DKIM, Brevo) | 2 | `b{1,2}.viktorbarzin-me.dkim.brevo.com` | brevo1/brevo2 selector delegation |
 | TXT (DMARC) | 1 | `v=DMARC1; p=quarantine; pct=100` | Email policy |
 | TXT (MTA-STS) | 1 | `v=STSv1; id=20260412` | TLS enforcement |
-| TXT (TLSRPT) | 1 | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS reporting |
 | TXT (Brevo verification) | 1 | `brevo-code:…` | Relay domain verification |
 | A (keyserver) | 1 | `130.162.165.220` (Oracle VPS) | PGP keyserver |
 | A (mx2) | 1 | `92.5.132.215` (Oracle VM, reserved IP) | Backup MX + external vantage (ADR-0019/0020) |
