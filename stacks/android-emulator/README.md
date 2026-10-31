@@ -84,6 +84,13 @@ uninstall your test app when done, and presence-claim
 (`presence claim service:android-emulator`) for long destructive sessions
 (wipes, system-image changes).
 
+`service:android-emulator` is the one label, the same one
+`homelab how "android emulator"` prints. Claims under different labels do not
+conflict, and some notes before 2026-10-31 used `infra:android-emulator`, so
+until those have aged out, `presence peek` both before driving it.
+`homelab deploy f1-stream` already checks both before it puts the emulator to
+sleep.
+
 ## How it works
 
 - The container image (built from `docker/`) holds only JDK 17, cmdline-tools,
