@@ -311,12 +311,30 @@ func (r *releaseRun) liveVersion() (string, error) {
 }
 
 func (r *releaseRun) liveTVLatest() (int, string, error) {
-	var v struct {
-		VersionCode int    `json:"versionCode"`
-		SHA256      string `json:"sha256"`
+	answers, err := r.tvAnswers(4)
+	if len(answers) == 0 {
+		return 0, "", err
 	}
-	err := r.getJSON("/api/app/latest", &v)
-	return v.VersionCode, v.SHA256, err
+	best := highestTVAnswer(answers)
+	return best.Code, best.SHA, nil
+}
+
+// tvAnswers reads /api/app/latest n times, to reach every Edge pod.
+func (r *releaseRun) tvAnswers(n int) ([]tvAnswer, error) {
+	var out []tvAnswer
+	var lastErr error
+	for i := 0; i < n; i++ {
+		var v struct {
+			VersionCode int    `json:"versionCode"`
+			SHA256      string `json:"sha256"`
+		}
+		if err := r.getJSON("/api/app/latest", &v); err != nil {
+			lastErr = err
+			continue
+		}
+		out = append(out, tvAnswer{v.VersionCode, v.SHA256})
+	}
+	return out, lastErr
 }
 
 // relation places commit relative to the target, both on master.
@@ -735,30 +753,30 @@ func (r *releaseRun) orasPush() error {
 // serves is the one published. The download briefly served an older APK
 // than /api/app/latest described on 2026-10-30, so a mismatch is retried.
 func (r *releaseRun) confirmTV(code int, expect string) error {
-	deadline := time.Now().Add(5 * time.Minute)
+	deadline := time.Now().Add(10 * time.Minute)
 	var why string
 	for {
-		live, sum, err := r.liveTVLatest()
-		switch {
-		case err != nil:
-			why = err.Error()
-		case live > code:
-			r.say("superseded: televisions are offered %d, newer than %d", live, code)
+		answers, err := r.tvAnswers(8)
+		state, reason := judgeTVAnswers(answers, code, expect)
+		switch state {
+		case tvSuperseded:
+			r.say("superseded: televisions are offered %d, newer than %d", highestTVAnswer(answers).Code, code)
 			return nil
-		case live < code:
-			why = fmt.Sprintf("/api/app/latest still offers %d", live)
-		case expect != "" && sum != "" && sum != expect:
-			why = fmt.Sprintf("/api/app/latest describes sha256 %s, published %s", sum, expect)
-		default:
+		case tvConfirmed:
 			got, err := r.downloadSHA256("/api/app/f1tv.apk")
 			if err == nil && (expect == "" || got == expect) {
-				r.say("%s/api/app/latest offers %d and /api/app/f1tv.apk has sha256 %s", r.spec.Site, live, got)
+				r.say("%s/api/app/latest offers %d on all %d reads and /api/app/f1tv.apk has sha256 %s", r.spec.Site, code, len(answers), got)
 				return nil
 			}
 			why = fmt.Sprintf("/api/app/f1tv.apk has sha256 %s (err %v), published %s", got, err, expect)
+		default:
+			why = reason
+			if err != nil {
+				why += fmt.Sprintf(" (last error: %v)", err)
+			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("after 5 minutes: %s", why)
+			return fmt.Errorf("published, but after 10 minutes %s", why)
 		}
 		time.Sleep(10 * time.Second)
 	}
