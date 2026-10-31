@@ -187,6 +187,29 @@
               retain_days = 7
           }
 
+    # ---- NFS server: no delegations --------------------------------------------
+    # nfsd grants delegations through kernel leases, so leases-enable=0 makes it
+    # stop granting them; existing ones drain as clients return them. Why
+    # (infra#159, 2026-10-31): nfsd does not recall a delegation when the
+    # conflicting change comes from the same NFSv4 client, and every k8s node
+    # is ONE client to us however many mounts it holds. A pod mounting a PVC
+    # read-only and another mounting it read-write on the same node get two
+    # superblocks, and a change made through the rw one never reaches the ro
+    # one while it holds a delegation. Reproduced on k8s-node2: the f1-stream
+    # Edge (ro) held a directory delegation, a rw pod on the same node created
+    # and deleted entries, and the Edge listed the old contents for as long as
+    # the delegation lived; the same write from k8s-node5 was visible in 1 s.
+    # The 7.0 kernels added directory delegations (client and server), which
+    # turned this from stale files (2026-10-12, file read delegations) into
+    # stale directory listings. Clients fall back to attribute caching, which
+    # is what the mount options (actimeo) already assume.
+    - name: Stop nfsd granting delegations
+      ansible.posix.sysctl:
+        name: fs.leases-enable
+        value: "0"
+        sysctl_file: /etc/sysctl.d/90-nfsd-no-delegations.conf
+        reload: true
+
     # ---- security updates ----------------------------------------------------
     # Nothing installed updates on this host until 2026-10-19, when 29 Debian
     # security updates were waiting. unattended-upgrades takes packages from
