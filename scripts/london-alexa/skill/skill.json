@@ -1,0 +1,28 @@
+{
+  "manifest": {
+    "manifestVersion": "1.0",
+    "publishingInformation": {
+      "locales": {
+        "en-GB": {
+          "name": "London Home",
+          "summary": "Private skill for the London flat's Home Assistant.",
+          "description": "Controls devices that ha-london exposes to Alexa. Private development skill, not published.",
+          "examplePhrases": ["Alexa, turn off the air light"],
+          "keywords": ["home assistant"]
+        }
+      },
+      "isAvailableWorldwide": false,
+      "distributionCountries": ["GB"],
+      "testingInstructions": "Private skill, not for certification.",
+      "category": "SMART_HOME"
+    },
+    "apis": {
+      "smartHome": {
+        "endpoint": {
+          "uri": "arn:aws:lambda:eu-west-1:924337254671:function:ha-london-alexa"
+        },
+        "protocolVersion": "3"
+      }
+    }
+  }
+}

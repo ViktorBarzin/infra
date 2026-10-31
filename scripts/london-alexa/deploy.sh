@@ -93,7 +93,7 @@ if [ -n "$SKILL_ID" ]; then
   if ! aws lambda get-policy --function-name "$FUNCTION" --query Policy --output text 2>/dev/null | grep -q "$SKILL_ID"; then
     aws lambda remove-permission --function-name "$FUNCTION" --statement-id alexa-skill >/dev/null 2>&1 || true
     aws lambda add-permission --function-name "$FUNCTION" --statement-id alexa-skill \
-      --action lambda:InvokeFunction --principal alexa-connectedhome.amazonaws.com \
+      --action lambda:InvokeFunction --principal alexa-connectedhome.amazon.com \
       --event-source-token "$SKILL_ID" >/dev/null
     echo "granted skill $SKILL_ID"
   fi
