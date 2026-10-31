@@ -217,8 +217,7 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | CNAME (DKIM) | `brevo2._domainkey` | b2.viktorbarzin-me.dkim.brevo.com | Brevo outbound DKIM (delegated) |
 | TXT | `viktorbarzin.me` | `brevo-code:a6ef1dd9...` | Brevo domain verification |
 | TXT (DMARC) | `_dmarc` | `p=quarantine; pct=100; rua=mailto:dmarc@viktorbarzin.me` | DMARC enforcement; aggregate reports land in-domain at `dmarc@viktorbarzin.me` (tracked under code-569; current live record still points at `e21c0ff8@dmarc.mailgun.org` pending cutover) |
-| TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20260412` | TLS enforcement for inbound |
-| TXT (TLSRPT) | `_smtp._tls` | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS failure reporting |
+| TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20261031` | Points senders at the MTA-STS policy (served by the `mta-sts` Worker) |
 
 ### Known Limitation: PTR Mismatch
 
@@ -241,6 +240,9 @@ docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FA
 - DKIM signing (selector `mail`, 2048-bit RSA)
 - DMARC verification on inbound mail
 - Auto-learns from Junk folder movements (`RSPAMD_LEARN=1`)
+- DNS through an `unbound` sidecar (loopback `127.0.0.1:5335`, cluster DNS as fallback), set in `override.d/options.inc`. DNS blocklists (Spamhaus, URIBL, DNSWL, SURBL) refuse queries forwarded through public resolvers, and both CoreDNS and pfSense forward to 8.8.8.8/1.1.1.1. Before 2026-10-31 Spamhaus answered `127.255.255.254` and rspamd switched those lists off. Check: `rspamc stat` scans should show `RBL_*`/`URIBL_*` hits and no `*_BLOCKED*` symbols.
+- State in the shared Redis, db 5 (`override.d/redis.conf`; `mailserver` is on the redis stack's client allowlist): Bayes, scan history, replies. Bayes autolearns from clear verdicts (`override.d/classifier-bayes.conf`) and from Junk moves, and starts scoring after 200 spam and 200 ham learns.
+- Greylisting, neural and reputation stay off (docker-mailserver defaults)
 - SRS **disabled** (2026-07-08, permanent): postsrsd 1.10 deterministically
   busy-loops on restart, 451-ing all mail; see Troubleshooting. Externally-
   forwarding aliases forward with the original envelope sender.
@@ -255,7 +257,8 @@ anvil_rate_time_unit = 60s
 ### TLS
 - Wildcard Let's Encrypt cert (`*.viktorbarzin.me`) for SMTP STARTTLS and IMAPS
 - Renewed via Woodpecker CI cron pipeline (DNS-01 challenge via Cloudflare)
-- MTA-STS enforces TLS for inbound delivery
+- MTA-STS policy at `https://mta-sts.viktorbarzin.me/.well-known/mta-sts.txt`, served by the `mta-sts` Cloudflare Worker (`stacks/cloudflared/modules/cloudflared/mta_sts.tf`). Mode `testing` since 2026-10-31, listing `mail` and `mx2`, `max_age` 1 day. In testing mode senders still deliver if TLS fails; `enforce` would make them refuse. Before switching to `enforce`, add an expiry alert for mx2's cert (the wildcard cert on `mail` already has `TLSCertExpiringSoon`). Any policy change needs a new `id` in the `_mta-sts` record.
+- No TLS-RPT record: the `_smtp._tls` reporting record was removed on 2026-10-31 because the daily reports were all clean
 
 ## Monitoring
 
@@ -299,7 +302,8 @@ drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 | Stack | Path | Resources |
 |-------|------|-----------|
 | Mailserver | `stacks/mailserver/` | Namespace, deployment, service, CronJob, PVCs |
-| DNS | `stacks/cloudflared/modules/cloudflared/cloudflare.tf` | MX, SPF, DKIM, DMARC, MTA-STS, TLSRPT records |
+| DNS | `stacks/cloudflared/modules/cloudflared/cloudflare.tf` | MX, SPF, DKIM, DMARC, MTA-STS records |
+| MTA-STS policy | `stacks/cloudflared/modules/cloudflared/mta_sts.tf` | `mta-sts` Worker + route serving the policy file |
 | Monitoring | `stacks/monitoring/` | Prometheus alert rules |
 | CrowdSec | `stacks/crowdsec/` | Collections, log acquisition (already configured) |
 

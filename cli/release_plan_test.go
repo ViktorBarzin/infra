@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -117,22 +118,121 @@ func TestReleaseDecisionsSayWhy(t *testing.T) {
 	}
 }
 
-func TestReleaseCommitWithCountWalksFirstParents(t *testing.T) {
-	counts := map[string]int{"e": 105, "d": 104, "c": 101, "b": 100, "a": 99}
-	chain := []string{"e", "d", "c", "b", "a"}
-	count := func(sha string) (int, error) { return counts[sha], nil }
-	if got, ok := commitWithCount(chain, count, 101); !ok || got != "c" {
-		t.Errorf("want c, got %q %v", got, ok)
+// fakeHistory is a small commit graph: each commit's parents, first parent first.
+type fakeHistory map[string][]string
+
+func (h fakeHistory) ancestors(sha string) map[string]bool {
+	seen := map[string]bool{}
+	stack := []string{sha}
+	for len(stack) > 0 {
+		c := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		stack = append(stack, h[c]...)
 	}
-	// 102 and 103 belong to merged side-branch commits, never a master tip.
-	if got, ok := commitWithCount(chain, count, 103); ok {
-		t.Errorf("want not found for a count no tip has, got %q", got)
+	return seen
+}
+
+// count is `git rev-list --count sha`.
+func (h fakeHistory) count(sha string) (int, error) { return len(h.ancestors(sha)), nil }
+
+func (h fakeHistory) firstParents(tip string) []string {
+	var out []string
+	for c := tip; c != ""; {
+		out = append(out, c)
+		if len(h[c]) == 0 {
+			break
+		}
+		c = h[c][0]
 	}
-	if _, ok := commitWithCount(chain, count, 200); ok {
-		t.Errorf("want not found above the tip")
+	return out
+}
+
+// since is `git rev-list tip ^boundary` (the whole history when boundary is "").
+func (h fakeHistory) since(tip string) func(string) ([]string, error) {
+	return func(boundary string) ([]string, error) {
+		skip := map[string]bool{}
+		if boundary != "" {
+			skip = h.ancestors(boundary)
+		}
+		var out []string
+		for c := range h.ancestors(tip) {
+			if !skip[c] {
+				out = append(out, c)
+			}
+		}
+		sort.Strings(out)
+		return out, nil
 	}
-	if got, ok := commitWithCount(chain, count, 99); !ok || got != "a" {
-		t.Errorf("want a, got %q %v", got, ok)
+}
+
+func TestReleaseTVBaseFoundOnALandedBranch(t *testing.T) {
+	// The shape `homelab work land` leaves: a worktree branch s1..s3 off m2,
+	// merged into master as M. The TV build was published from s2 before the
+	// merge, so its count (4) belongs to no first-parent commit.
+	h := fakeHistory{"m1": nil, "m2": {"m1"}, "m3": {"m2"},
+		"s1": {"m2"}, "s2": {"s1"}, "s3": {"s2"}, "M": {"m3", "s3"}}
+	got, err := tvBaseCandidates(h.firstParents("M"), h.count, h.since("M"), 4)
+	if err != nil || len(got) != 1 || got[0] != "s2" {
+		t.Errorf("want [s2], got %v (err %v)", got, err)
+	}
+}
+
+func TestReleaseTVBaseOnFirstParent(t *testing.T) {
+	h := fakeHistory{"m1": nil, "m2": {"m1"}, "m3": {"m2"}, "m4": {"m3"}}
+	got, err := tvBaseCandidates(h.firstParents("m4"), h.count, h.since("m4"), 2)
+	if err != nil || len(got) != 1 || got[0] != "m2" {
+		t.Errorf("want [m2], got %v (err %v)", got, err)
+	}
+	if got, _ := tvBaseCandidates(h.firstParents("m4"), h.count, h.since("m4"), 9); len(got) != 0 {
+		t.Errorf("a count above the tip has no base, got %v", got)
+	}
+}
+
+func TestReleaseTVBaseReturnsEveryCommitSharingTheCount(t *testing.T) {
+	// m4 on master's first parent and s2 on a merged branch both have count 4.
+	// Either could be the live build's source, so both come back.
+	h := fakeHistory{"m1": nil, "m2": {"m1"}, "m3": {"m2"}, "m4": {"m3"},
+		"s1": {"m2"}, "s2": {"s1"}, "s3": {"s2"}, "M": {"m4", "s3"}}
+	got, err := tvBaseCandidates(h.firstParents("M"), h.count, h.since("M"), 4)
+	sort.Strings(got)
+	if err != nil || strings.Join(got, ",") != "m4,s2" {
+		t.Errorf("want [m4 s2], got %v (err %v)", got, err)
+	}
+}
+
+func TestReleaseTVChangedSinceAnyBase(t *testing.T) {
+	// The live build came from s2, which lacks an app change m4 carries.
+	// The diff from m4 shows nothing, the diff from s2 shows the app change.
+	diffs := map[string][]string{"m4": {"backend/main.py"}, "s2": {"android/app/src/main/Foo.kt", "backend/main.py"}}
+	changed := func(from string) ([]string, error) { return diffs[from], nil }
+	isApp := func(paths []string) bool {
+		for _, p := range paths {
+			if strings.HasPrefix(p, "android/") {
+				return true
+			}
+		}
+		return false
+	}
+	if got, err := tvChangedSinceAny([]string{"m4", "s2"}, changed, isApp); err != nil || !got {
+		t.Errorf("an app change since any candidate counts, got %v (err %v)", got, err)
+	}
+	if got, err := tvChangedSinceAny([]string{"m4"}, changed, isApp); err != nil || got {
+		t.Errorf("no app change since m4, got %v (err %v)", got, err)
+	}
+}
+
+func TestReleaseTVReasonSaysWhenTheBaseIsUnknown(t *testing.T) {
+	d := decideTV(tvFacts{Auto: true, Code: 31537, LiveCode: 31534})
+	if d.Action != actionBuild || !strings.Contains(d.Reason, "31534") || !strings.Contains(d.Reason, "no commit") {
+		t.Errorf("an unknown base is named in the reason, got %v %q", d.Action, d.Reason)
+	}
+	d = decideTV(tvFacts{Auto: true, Code: 31537, LiveCode: 31534, ChangeKnown: true, LiveCommits: []string{"23c6de8a5f0d"}})
+	if d.Action != actionSkipUnchanged || !strings.Contains(d.Reason, "23c6de8a") {
+		t.Errorf("a skip names the base commit, got %v %q", d.Action, d.Reason)
 	}
 }
 

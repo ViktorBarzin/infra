@@ -322,17 +322,8 @@ resource "cloudflare_dns_record" "brevo_code" {
 }
 
 resource "cloudflare_dns_record" "mail_mta_sts" {
-  content = "\"v=STSv1; id=20260412\""
+  content = "\"v=STSv1; id=20261031\""
   name    = "_mta-sts.viktorbarzin.me"
-  proxied = false
-  ttl     = 1
-  type    = "TXT"
-  zone_id = var.cloudflare_zone_id
-}
-
-resource "cloudflare_dns_record" "mail_tlsrpt" {
-  content = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
-  name    = "_smtp._tls.viktorbarzin.me"
   proxied = false
   ttl     = 1
   type    = "TXT"
