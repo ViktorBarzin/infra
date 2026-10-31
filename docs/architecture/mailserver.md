@@ -240,6 +240,9 @@ docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FA
 - DKIM signing (selector `mail`, 2048-bit RSA)
 - DMARC verification on inbound mail
 - Auto-learns from Junk folder movements (`RSPAMD_LEARN=1`)
+- DNS through an `unbound` sidecar (loopback `127.0.0.1:5335`, cluster DNS as fallback), set in `override.d/options.inc`. DNS blocklists (Spamhaus, URIBL, DNSWL, SURBL) refuse queries forwarded through public resolvers, and both CoreDNS and pfSense forward to 8.8.8.8/1.1.1.1. Before 2026-10-31 Spamhaus answered `127.255.255.254` and rspamd switched those lists off. Check: `rspamc stat` scans should show `RBL_*`/`URIBL_*` hits and no `*_BLOCKED*` symbols.
+- State in the shared Redis, db 5 (`override.d/redis.conf`; `mailserver` is on the redis stack's client allowlist): Bayes, scan history, replies. Bayes autolearns from clear verdicts (`override.d/classifier-bayes.conf`) and from Junk moves, and starts scoring after 200 spam and 200 ham learns.
+- Greylisting, neural and reputation stay off (docker-mailserver defaults)
 - SRS **disabled** (2026-07-08, permanent): postsrsd 1.10 deterministically
   busy-loops on restart, 451-ing all mail; see Troubleshooting. Externally-
   forwarding aliases forward with the original envelope sender.

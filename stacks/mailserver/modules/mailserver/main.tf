@@ -5,6 +5,7 @@ variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
 variable "sasl_passwd" {} # SMTP relay (Brevo) SASL credentials
 variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
 # Build the virtual-alias map, dropping aliases where BOTH the source and
 # target are real mailboxes in var.mailserver_accounts (and are different).
 # Without this filter, docker-mailserver emits two passwd-file userdb lines
@@ -197,6 +198,59 @@ resource "kubernetes_config_map" "mailserver_config" {
             message = "capped to add_header: backup-MX drain is never rejected (ADR-0019)";
         }
     }
+    EOF
+    # Rspamd DNS: blocklists (Spamhaus, URIBL, DNSWL, SURBL) refuse queries
+    # that arrive through public resolvers. CoreDNS and pfSense both forward
+    # to 8.8.8.8/1.1.1.1, so Spamhaus answered 127.255.255.254 and rspamd
+    # disabled the lists (measured 2026-10-31: URIBL_BLOCKED/DNSWL_BLOCKED on
+    # most scans, RBL_SPAMHAUS_BLOCKED_OPENRESOLVER). The unbound sidecar
+    # resolves recursively from the home IP, which the lists answer. Cluster
+    # DNS stays as a fallback so SPF/DKIM/DMARC lookups keep working if
+    # unbound is down. override.d/options.inc is the file DMS's own
+    # set-common-option writes; its keys merge over local.d/options.inc.
+    "options.inc" = <<-EOF
+    dns {
+        nameserver = "master-slave:127.0.0.1:5335:10,10.96.0.10:53:1";
+    }
+    EOF
+    # Rspamd Redis: Bayes (backend = redis), history and the replies module
+    # need it. Shared Redis, db 5 (the mailserver namespace is on the redis
+    # stack's client allowlist). Bayes tokens carry no TTL until
+    # bayes_expiry sets one, and the shared instance evicts volatile-lru, so
+    # untimed tokens are never evicted.
+    "redis.conf" = <<-EOF
+    servers = "${var.redis_host}:6379";
+    db = "5";
+    EOF
+    # Learn automatically from clear verdicts on top of the Junk-folder
+    # learning RSPAMD_LEARN sets up. Bayes only starts scoring after 200
+    # spam AND 200 ham learns (min_learns).
+    "classifier-bayes.conf" = <<-EOF
+    autolearn = true;
+    EOF
+    # Recursive resolver for rspamd only (the pod's resolv.conf is
+    # unchanged). Loopback-only, no DNSSEC validation (rspamd does not need
+    # it, and validation would need a writable trust-anchor file).
+    "unbound.conf" = <<-EOF
+    server:
+      interface: 127.0.0.1@5335
+      access-control: 127.0.0.0/8 allow
+      do-ip6: no
+      username: ""
+      chroot: ""
+      directory: "/etc/unbound-pod"
+      use-syslog: no
+      logfile: ""
+      verbosity: 0
+      module-config: "iterator"
+      qname-minimisation: yes
+      harden-glue: yes
+      hide-identity: yes
+      hide-version: yes
+      prefetch: yes
+      num-threads: 1
+      msg-cache-size: 16m
+      rrset-cache-size: 32m
     EOF
     # Increase max IMAP connections per user+IP - all Roundcube connections come from same pod IP
     "dovecot.cf"  = <<-EOF
@@ -557,6 +611,24 @@ resource "kubernetes_deployment" "mailserver" {
             read_only  = true
           }
           volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/options.inc"
+            sub_path   = "options.inc"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/redis.conf"
+            sub_path   = "redis.conf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/classifier-bayes.conf"
+            sub_path   = "classifier-bayes.conf"
+            read_only  = true
+          }
+          volume_mount {
             name       = "data"
             mount_path = "/var/mail"
             sub_path   = "data"
@@ -674,6 +746,35 @@ resource "kubernetes_deployment" "mailserver" {
             timeout_seconds       = 15
           }
 
+        }
+        # Recursive DNS for rspamd (see options.inc in mailserver.config).
+        container {
+          name              = "unbound"
+          image             = "docker.io/klutchell/unbound:1.26.2"
+          image_pull_policy = "IfNotPresent"
+          args              = ["-d", "-p", "-c", "/etc/unbound-pod/unbound.conf"]
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/unbound-pod/unbound.conf"
+            sub_path   = "unbound.conf"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          liveness_probe {
+            tcp_socket {
+              port = 5335
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 30
+          }
         }
 
 
