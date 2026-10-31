@@ -217,7 +217,7 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | CNAME (DKIM) | `brevo2._domainkey` | b2.viktorbarzin-me.dkim.brevo.com | Brevo outbound DKIM (delegated) |
 | TXT | `viktorbarzin.me` | `brevo-code:a6ef1dd9...` | Brevo domain verification |
 | TXT (DMARC) | `_dmarc` | `p=quarantine; pct=100; rua=mailto:dmarc@viktorbarzin.me` | DMARC enforcement; aggregate reports land in-domain at `dmarc@viktorbarzin.me` (tracked under code-569; current live record still points at `e21c0ff8@dmarc.mailgun.org` pending cutover) |
-| TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20260412` | TLS enforcement for inbound |
+| TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20261031` | Points senders at the MTA-STS policy (served by the `mta-sts` Worker) |
 
 ### Known Limitation: PTR Mismatch
 
@@ -254,7 +254,8 @@ anvil_rate_time_unit = 60s
 ### TLS
 - Wildcard Let's Encrypt cert (`*.viktorbarzin.me`) for SMTP STARTTLS and IMAPS
 - Renewed via Woodpecker CI cron pipeline (DNS-01 challenge via Cloudflare)
-- MTA-STS enforces TLS for inbound delivery
+- MTA-STS policy at `https://mta-sts.viktorbarzin.me/.well-known/mta-sts.txt`, served by the `mta-sts` Cloudflare Worker (`stacks/cloudflared/modules/cloudflared/mta_sts.tf`). Mode `testing` since 2026-10-31, listing `mail` and `mx2`, `max_age` 1 day. In testing mode senders still deliver if TLS fails; `enforce` would make them refuse. Before switching to `enforce`, add an expiry alert for mx2's cert (the wildcard cert on `mail` already has `TLSCertExpiringSoon`). Any policy change needs a new `id` in the `_mta-sts` record.
+- No TLS-RPT record: the `_smtp._tls` reporting record was removed on 2026-10-31 because the daily reports were all clean
 
 ## Monitoring
 
@@ -299,6 +300,7 @@ drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 |-------|------|-----------|
 | Mailserver | `stacks/mailserver/` | Namespace, deployment, service, CronJob, PVCs |
 | DNS | `stacks/cloudflared/modules/cloudflared/cloudflare.tf` | MX, SPF, DKIM, DMARC, MTA-STS records |
+| MTA-STS policy | `stacks/cloudflared/modules/cloudflared/mta_sts.tf` | `mta-sts` Worker + route serving the policy file |
 | Monitoring | `stacks/monitoring/` | Prometheus alert rules |
 | CrowdSec | `stacks/crowdsec/` | Collections, log acquisition (already configured) |
 
