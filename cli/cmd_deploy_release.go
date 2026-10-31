@@ -414,13 +414,19 @@ func (r *releaseRun) plan() error {
 		f := tvFacts{Auto: r.opts.auto(), Code: r.version.Code, LiveCode: code, LiveUnknown: err != nil || code == 0}
 		r.liveTV, r.liveTVSHA = code, sum
 		if !f.LiveUnknown && f.Code > code {
-			if sha, ok := r.commitForTVCode(code); ok {
-				paths, err := r.changedSince(sha)
-				if err != nil {
+			bases, err := r.commitsForTVCode(code)
+			if err != nil {
+				r.say("could not find the commit TV build %d came from (%v); treating it as unknown", code, err)
+			}
+			if len(bases) > 0 {
+				isApp := func(paths []string) bool { _, tv := r.spec.classify(paths); return tv }
+				if f.Changed, err = tvChangedSinceAny(bases, r.changedSince, isApp); err != nil {
 					return err
 				}
-				_, f.Changed = r.spec.classify(paths)
-				f.ChangeKnown = true
+				f.ChangeKnown, f.LiveCommits = true, bases
+				if len(bases) > 1 {
+					r.say("TV build %d could have come from any of %s (same commit count); comparing against all of them", code, shortSHAs(bases))
+				}
 			}
 			_, ok, err := r.reg.manifest(r.spec.TVRepo, strconv.Itoa(r.version.Code))
 			if err != nil {
@@ -438,11 +444,12 @@ func (r *releaseRun) plan() error {
 	return nil
 }
 
-// commitForTVCode finds the master tip whose commit count gives code.
-func (r *releaseRun) commitForTVCode(code int) (string, bool) {
+// commitsForTVCode finds the commits in the target's history whose commit
+// count gives code (see tvBaseCandidates).
+func (r *releaseRun) commitsForTVCode(code int) ([]string, error) {
 	out, err := r.git("rev-list", "--first-parent", "--max-count=2000", r.target)
 	if err != nil {
-		return "", false
+		return nil, err
 	}
 	count := func(sha string) (int, error) {
 		s, err := r.git("rev-list", "--count", sha)
@@ -451,7 +458,18 @@ func (r *releaseRun) commitForTVCode(code int) (string, bool) {
 		}
 		return strconv.Atoi(s)
 	}
-	return commitWithCount(strings.Split(out, "\n"), count, code-r.spec.VersionFloor)
+	since := func(boundary string) ([]string, error) {
+		args := []string{"rev-list", r.target}
+		if boundary != "" {
+			args = append(args, "^"+boundary)
+		}
+		out, err := r.git(args...)
+		if err != nil || out == "" {
+			return nil, err
+		}
+		return strings.Split(out, "\n"), nil
+	}
+	return tvBaseCandidates(strings.Split(out, "\n"), count, since, code-r.spec.VersionFloor)
 }
 
 // claimPresence puts service:<app> on the presence board for the release and
