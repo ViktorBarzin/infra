@@ -150,6 +150,16 @@ async function closeContextlessTargets(cdpURL, log) {
   }
 }
 
+// What to close on exit: 'context', 'page' or 'none'. The runner opens a page
+// of its own before every script, and a --shared-context script often drives an
+// existing tab instead (context.pages().find(...)). --keep-open means "keep what
+// the script used", so a runner page still on about:blank is closed regardless;
+// otherwise every such run leaves one blank tab in the master browser.
+function exitCleanup({ createdContext, keepOpen, pageURL }) {
+  if (!keepOpen) return createdContext ? 'context' : 'page';
+  return pageURL === 'about:blank' ? 'page' : 'none';
+}
+
 async function main() {
   // Required lazily so the pure helpers above can be unit-tested without the
   // node_modules tree the CLI installs into its cache dir.
@@ -247,16 +257,15 @@ async function main() {
     console.error('homelab browser: script error:', e && e.stack ? e.stack : e);
     exitCode = 1;
   } finally {
-    if (!keepOpen) {
-      try {
-        // Close only what we created; never tear down the shared persistent context.
-        if (createdContext) {
-          await context.close();
-        } else {
-          await page.close();
-        }
-      } catch (_) { /* ignore */ }
-    }
+    try {
+      // Close only what we created; never tear down the shared persistent context.
+      const what = exitCleanup({ createdContext, keepOpen, pageURL: page.isClosed() ? '' : page.url() });
+      if (what === 'context') {
+        await context.close();
+      } else if (what === 'page') {
+        await page.close();
+      }
+    } catch (_) { /* ignore */ }
     // Disconnect from the CDP endpoint; this does NOT kill the remote browser.
     try {
       await browser.close();
@@ -273,4 +282,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { contextlessTargets, browserWSURL, closeContextlessTargets };
+module.exports = { contextlessTargets, browserWSURL, closeContextlessTargets, exitCleanup };

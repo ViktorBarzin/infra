@@ -128,6 +128,10 @@ CONTEXT (pool by default)
                      (e.g. Google Maps saved lists) and IndexedDB-bound auth.
   --viewport WxH:    context viewport (default 1920x1080 DPR1).
   --tall:            1280x2000 — pulls more lazy-loaded/virtualized DOM per snapshot.
+  --keep-open:       leave the pages your script used open on exit. The runner
+                     still closes its own page if the script never navigated it,
+                     so driving an existing tab via context.pages() leaves no
+                     blank tab behind.
   Watch live sessions in FleetView: https://chrome-fleet.viktorbarzin.me
 
 SCRIPT CONTRACT (run mode)

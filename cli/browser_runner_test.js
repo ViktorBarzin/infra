@@ -2,7 +2,7 @@
 // Run directly (`node cli/browser_runner_test.js`) or via TestBrowserRunnerJS.
 'use strict';
 const assert = require('assert');
-const { contextlessTargets, browserWSURL } = require('./browser_runner.js');
+const { contextlessTargets, browserWSURL, exitCleanup } = require('./browser_runner.js');
 
 let failures = 0;
 function check(name, fn) {
@@ -91,6 +91,31 @@ check('websocket url keeps the path but uses the port we dialled', () => {
     'http://127.0.0.1:35841'
   );
   assert.strictEqual(got, 'ws://127.0.0.1:35841/devtools/browser/0eb407ed-3b64-4a55-bf48-95c786293416');
+});
+
+// What the runner closes on exit. It opens a page of its own before every
+// script, and a --shared-context script often drives an existing tab instead.
+// On 2026-10-31 twenty-one such runs with --keep-open each left that unused
+// page behind as a blank tab in the master browser.
+check('keep-open on the shared profile still closes the runner page it never used', () => {
+  assert.strictEqual(exitCleanup({ createdContext: false, keepOpen: true, pageURL: 'about:blank' }), 'page');
+});
+
+check('keep-open leaves the runner page open once the script navigated it', () => {
+  assert.strictEqual(exitCleanup({ createdContext: false, keepOpen: true, pageURL: 'https://x.test/' }), 'none');
+});
+
+check('without keep-open the shared profile loses only the runner page', () => {
+  assert.strictEqual(exitCleanup({ createdContext: false, keepOpen: false, pageURL: 'https://x.test/' }), 'page');
+});
+
+check('a context the runner created is closed whole', () => {
+  assert.strictEqual(exitCleanup({ createdContext: true, keepOpen: false, pageURL: 'https://x.test/' }), 'context');
+});
+
+check('keep-open on a created context closes only an unused runner page', () => {
+  assert.strictEqual(exitCleanup({ createdContext: true, keepOpen: true, pageURL: 'about:blank' }), 'page');
+  assert.strictEqual(exitCleanup({ createdContext: true, keepOpen: true, pageURL: 'https://x.test/' }), 'none');
 });
 
 if (failures) {
