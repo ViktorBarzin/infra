@@ -229,11 +229,13 @@ resource "kubernetes_config_map" "mailserver_config" {
     autolearn = true;
     EOF
     # Recursive resolver for rspamd only (the pod's resolv.conf is
-    # unchanged). Loopback-only, no DNSSEC validation (rspamd does not need
-    # it, and validation would need a writable trust-anchor file).
+    # unchanged). It binds all interfaces so the kubelet's TCP liveness probe
+    # (which dials the pod IP) can connect, but access-control answers only
+    # loopback clients. No DNSSEC validation (rspamd does not need it, and
+    # validation would need a writable trust-anchor file).
     "unbound.conf" = <<-EOF
     server:
-      interface: 127.0.0.1@5335
+      interface: 0.0.0.0@5335
       access-control: 127.0.0.0/8 allow
       do-ip6: no
       username: ""
