@@ -6,7 +6,7 @@ noVNC screen; if it is scaled to zero, scale it to 1 and show a self-refreshing
 runs on a stock python image with no installs.
 
 It also makes the emulator yield its GPU seat. A background thread lists the
-pods labelled YIELD_SELECTOR in YIELD_NAMESPACE (the f1-stream Transcoder) and,
+pods labelled YIELD_SELECTOR in each YIELD_NAMESPACE (the app's Transcoder) and,
 when one waits Pending because k8s-node1 has no gpumem left, scales the
 emulator to 0, so the waiting pod gets the 800 the emulator held. While a pod
 waits, /wake does not scale the emulator up again. This covers every way that
@@ -40,7 +40,20 @@ API = "https://%s:%s" % (
 TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 VNC_PATH = "/vnc.html?autoconnect=1&resize=scale"
-YIELD_NAMESPACE = os.environ.get("YIELD_NAMESPACE", "f1-stream")
+
+
+def parse_namespaces(value):
+    """YIELD_NAMESPACE is a comma-separated list. The default names the app
+    under both its old and new name, f1-stream and tv, because the rename
+    (f1-stream plan 2026-11-01-tv-rebrand) has one namespace or the other live
+    at any moment; a namespace that cannot be read is skipped."""
+    if value is None:
+        value = "f1-stream,tv"
+    return [ns.strip() for ns in value.split(",") if ns.strip()]
+
+
+YIELD_NAMESPACES = parse_namespaces(os.environ.get("YIELD_NAMESPACE"))
+YIELD_NAMESPACE = ",".join(YIELD_NAMESPACES)
 YIELD_SELECTOR = os.environ.get("YIELD_SELECTOR", "android-emulator-yields-to=gpu-seat")
 YIELD_INTERVAL_SECONDS = float(os.environ.get("YIELD_INTERVAL_SECONDS", "10"))
 # How long one pod may keep the emulator asleep. With the emulator asleep a
@@ -175,8 +188,20 @@ def list_seat_waiters(kube_fn):
     query = urllib.parse.urlencode(
         {"labelSelector": YIELD_SELECTOR, "fieldSelector": "status.phase=Pending"}
     )
-    pods = kube_fn("GET", f"/api/v1/namespaces/{YIELD_NAMESPACE}/pods?{query}")
-    return seat_waits(pods.get("items") or [])
+    # A namespace that cannot be read (absent, or no Role there yet) is
+    # skipped as long as another one answers; when none does, the first error
+    # is raised, which is what callers treat as "could not list".
+    waits, errors = [], []
+    for ns in YIELD_NAMESPACES:
+        try:
+            pods = kube_fn("GET", f"/api/v1/namespaces/{ns}/pods?{query}")
+        except Exception as e:
+            errors.append(e)
+            continue
+        waits.extend(seat_waits(pods.get("items") or []))
+    if errors and len(errors) == len(YIELD_NAMESPACES):
+        raise errors[0]
+    return waits
 
 
 def within_limit(waits, now, log):

@@ -380,7 +380,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # once the starvation is resolved rather than pinning the guard on.
               # It is a first estimate; tune from observed behaviour.
               alert = "GpuCudaOom"
-              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory|cudaMalloc failed: out of memory\" [5m])) > 0"
+              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|tv|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory|cudaMalloc failed: out of memory\" [5m])) > 0"
               for   = "0m"
               labels = {
                 severity = "warning"

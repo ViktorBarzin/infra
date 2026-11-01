@@ -40,8 +40,12 @@ def pod(name, phase="Pending", reason="Unschedulable", message=GPUMEM_FULL, dele
 class FakeKube:
     """Answers the gate's three API calls from fixed state and records patches."""
 
-    def __init__(self, pods=(), replicas=1, ready=1, fail_pods=None, fail_patch=False):
+    def __init__(self, pods=(), replicas=1, ready=1, fail_pods=None, fail_patch=False, fail_namespaces=(), pods_namespace=None):
+        # The pods live in one namespace, the first configured one unless
+        # pods_namespace says otherwise; every other namespace is empty.
         self.pods = list(pods)
+        self.pods_namespace = pods_namespace
+        self.fail_namespaces = set(fail_namespaces)
         self.replicas = replicas
         self.ready = ready
         self.fail_pods = fail_pods
@@ -54,6 +58,10 @@ class FakeKube:
             self.pod_paths.append(path)
             if self.fail_pods is not None:
                 raise self.fail_pods
+            if path.split("/")[4] in self.fail_namespaces:
+                raise urllib.error.HTTPError(path, 403, "Forbidden", None, None)
+            if path.split("/")[4] != (self.pods_namespace or gate.YIELD_NAMESPACES[0]):
+                return {"items": []}
             return {"items": self.pods}
         if method == "GET":
             return {"spec": {"replicas": self.replicas}, "status": {"readyReplicas": self.ready}}
@@ -99,14 +107,34 @@ class YieldOnceTest(unittest.TestCase):
         self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
         self.assertTrue(any("f1-stream-transcoder-abc" in line for line in self.logs))
 
-    def test_reads_the_configured_namespace_and_selector(self):
+    def test_reads_every_configured_namespace_and_selector(self):
         fake = FakeKube()
         self.run_once(fake)
-        self.assertEqual(len(fake.pod_paths), 1)
-        path = fake.pod_paths[0]
-        self.assertTrue(path.startswith(f"/api/v1/namespaces/{gate.YIELD_NAMESPACE}/pods?"))
-        self.assertIn("labelSelector=", path)
-        self.assertIn("fieldSelector=status.phase%3DPending", path)
+        self.assertEqual(len(fake.pod_paths), len(gate.YIELD_NAMESPACES))
+        for ns, path in zip(gate.YIELD_NAMESPACES, fake.pod_paths):
+            self.assertTrue(path.startswith(f"/api/v1/namespaces/{ns}/pods?"))
+            self.assertIn("labelSelector=", path)
+            self.assertIn("fieldSelector=status.phase%3DPending", path)
+
+    def test_default_namespaces_are_the_old_and_new_app_names(self):
+        # f1-stream is being renamed to tv; the gate watches both until the
+        # old namespace is gone (f1-stream plan 2026-11-01-tv-rebrand).
+        self.assertEqual(gate.parse_namespaces(None), ["f1-stream", "tv"])
+        self.assertEqual(gate.parse_namespaces("tv"), ["tv"])
+        self.assertEqual(gate.parse_namespaces(" f1-stream , tv ,"), ["f1-stream", "tv"])
+
+    def test_an_unreadable_namespace_does_not_hide_the_others(self):
+        # Before the cutover tv does not exist yet, after it f1-stream is gone;
+        # either way the namespace that is there still counts.
+        first, second = gate.YIELD_NAMESPACES[0], "second-ns"
+        saved = gate.YIELD_NAMESPACES
+        gate.YIELD_NAMESPACES = [first, second]
+        try:
+            fake = FakeKube(pods=[pod("t-new")], replicas=1, fail_namespaces={first}, pods_namespace=second)
+            self.assertEqual(self.run_once(fake), ["t-new"])
+            self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        finally:
+            gate.YIELD_NAMESPACES = saved
 
     def test_asleep_emulator_is_not_patched_again(self):
         fake = FakeKube(pods=[pod("t-new")], replicas=0)

@@ -187,9 +187,13 @@ resource "kubernetes_deployment" "gate" {
             value = "android-emulator"
           }
           # Pods the emulator gives its GPU seat to (see the yield-watch Role).
+          # A comma-separated list: f1-stream is being renamed to tv
+          # (f1-stream plan 2026-11-01-tv-rebrand). The tv namespace and its
+          # yield-watch Role come with stacks/tv; until then the gate skips the
+          # namespace it cannot read.
           env {
             name  = "YIELD_NAMESPACE"
-            value = kubernetes_role.gate_yield_watch.metadata[0].namespace
+            value = "${kubernetes_role.gate_yield_watch.metadata[0].namespace},tv"
           }
           env {
             name  = "YIELD_SELECTOR"

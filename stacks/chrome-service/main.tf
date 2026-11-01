@@ -982,6 +982,15 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
           }
         }
       }
+      # tv is f1-stream renamed (f1-stream plan 2026-11-01-tv-rebrand); both
+      # stay admitted until the f1-stream namespace is gone after the cutover.
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "tv"
+          }
+        }
+      }
       # Also admit chrome-service's own namespace (the snapshot-harvester
       # CronJob runs here and needs to reach the CDP endpoint).
       from {

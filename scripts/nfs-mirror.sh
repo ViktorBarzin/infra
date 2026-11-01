@@ -147,6 +147,9 @@ EXCLUDES=(
     # scraped_links / sessions / source_state / streams at 4K each). So this
     # excludes the media subtree only.
     --exclude='/f1-stream/replays-mp4/'
+    # The same library under the project's new name, /srv/nfs/tv (f1-stream
+    # plan 2026-11-01-tv-rebrand). Both stay until /srv/nfs/f1-stream is gone.
+    --exclude='/tv/replays-mp4/'
 
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
