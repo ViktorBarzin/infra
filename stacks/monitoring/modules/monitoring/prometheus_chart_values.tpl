@@ -7204,6 +7204,37 @@ serverFiles:
             annotations:
               summary: "London Flint unreachable over the site-to-site tunnel (>10m)"
               description: "Blackbox ICMP from the cluster to 10.3.2.6 has failed for >10m. Either London's internet is down (the Flint's probe reports the drop once it returns), the WireGuard tunnel is stuck (toggle GL -> VPN -> WireGuard Client), or the Flint is off. Design: docs/plans/2026-09-27-london-flint-main-router.md; settings: docs/architecture/london-site.md."
+      - name: Alexa assistant
+        # The London Echo skill (stacks/alexa-assistant, viktor/alexa-assistant).
+        # Counters are created at 0 on startup, so increase() sees the first event.
+        rules:
+          - alert: AlexaAssistantErrors
+            # Turns that failed: a revoked agent-api token, agent-api or T3 down.
+            expr: increase(alexa_turns_total{outcome="error"}[15m]) > 2
+            labels:
+              severity: warning
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant: voice turns are failing"
+              description: "More than two Alexa turns failed in 15 minutes. Check the app logs (homelab logs query '{namespace=\"alexa-assistant\"}'), the `alexa` Caller line in /etc/terminal-lobby-tokens, and agent-api."
+          - alert: AlexaDeliveryExhausted
+            # A Result used all 12 Delivery attempts and is now held for its Person.
+            expr: increase(alexa_deliveries_total{outcome="exhausted"}[1h]) > 0
+            labels:
+              severity: info
+              lane: event
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant: a result could not be delivered"
+              description: "A finished job's result used all Delivery attempts and is held until its Person opens the skill. Usually ha-london is down, the Routine is off, or the delivery boolean was left on by hand."
+          - alert: AlexaHaUnreachable
+            expr: increase(alexa_ha_calls_total{outcome="error"}[1h]) > 2
+            labels:
+              severity: warning
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant cannot reach the ha-london delivery webhook"
+              description: "More than two webhook calls to ha-london failed in an hour, so results are not being spoken. ha-london has no uptime monitor of its own; check https://ha-london.viktorbarzin.me."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
