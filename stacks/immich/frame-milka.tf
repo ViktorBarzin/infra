@@ -17,10 +17,15 @@
 # 2026-08-06 and added on 2026-08-22 once the live 500s surfaced — the six
 # endpoints checked at mint time did not include this one.
 #
-# Her account has 3149 assets and ZERO albums, so this frame is account-wide on
-# a date window instead of album-filtered like Emo's. Note that a large share of
-# those assets are WhatsApp-received images; curating them the way frame-emo
-# does (keep/drop albums + the frame-sync CronJob) is a sensible follow-up.
+# The frame is account-wide on a date window rather than album-filtered like
+# Emo's: it shows her whole library minus one exclusion album, which
+# frame-milka-sync.tf keeps filled with chat clutter.
+#
+# Albums other people share with her are added on top, as a second account
+# (frame-milka-shared-albums.tf). Settings.yml below is a template: an init
+# container replaces its "# shared-albums-account" line with that account and
+# writes the result into the frame's config directory, and a nightly restart
+# picks up albums shared or unshared since.
 
 data "vault_kv_secret_v2" "emo_immich_frame_milka" {
   mount = "secret"
@@ -89,7 +94,11 @@ resource "kubernetes_config_map" "frame_config_milka" {
           # cards, joke text-images, courier-app screenshots and conversation
           # captures — none of which belong on a photo frame.
           ExcludedAlbums:
-            - 0d174625-d279-49dd-a446-0eaeda03d7ff
+            - ${local.milka_frame_excluded_albums[0]}
+        # Replaced at pod start by frame_shared_albums.py with a second account
+        # holding the albums shared with her; removed if there are none. Keep it
+        # as the last line, at the list-item indent of Accounts.
+        # shared-albums-account
     EOF
   }
 }
@@ -158,26 +167,82 @@ resource "kubernetes_deployment" "immich-frame-milka" {
           # (immichframe.db) in /app/Config and imports Settings.yml into it
           # only when the DB is empty. A read-only ConfigMap mount there
           # crash-looped v1.0.39.0 ("Cannot open the settings database in
-          # '/app/Config'"). The directory is now a writable emptyDir with
-          # Settings.yml mounted into it. Every new pod starts with an empty DB
-          # and re-imports the file, so the ConfigMap stays the source of
-          # truth (reloader restarts the pod when it changes) and nothing set
-          # in the /admin UI survives a restart. Having imported a config, the
-          # admin UI stays disabled because IMMICHFRAME_ADMIN_PASSWORD is unset.
+          # '/app/Config'"). The directory is now a writable emptyDir, and the
+          # render-settings init container writes Settings.yml into it. Every
+          # new pod starts with an empty DB and re-imports the file, so the
+          # ConfigMap stays the source of truth (reloader restarts the pod when
+          # it changes) and nothing set in the /admin UI survives a restart.
+          # Having imported a config, the admin UI stays disabled because
+          # IMMICHFRAME_ADMIN_PASSWORD is unset.
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/Config"
+          }
+        }
+        # Renders /app/Config/Settings.yml from the config-milka template plus
+        # the albums shared with Milka. See frame-milka-shared-albums.tf.
+        init_container {
+          name    = "render-settings"
+          image   = "docker.io/library/python:3.15-alpine"
+          command = ["python3", "/script/frame_shared_albums.py"]
+          env {
+            name  = "IMMICH_URL"
+            value = "http://immich-server.immich.svc.cluster.local:2283"
+          }
+          env {
+            # What the frame itself talks to; must match the first account.
+            name  = "FRAME_SERVER_URL"
+            value = "https://immich.viktorbarzin.me"
+          }
+          env {
+            name = "IMMICH_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.frame_milka_key.metadata[0].name
+                key  = "key"
+              }
+            }
+          }
+          env {
+            name  = "EXCLUDED_ALBUMS"
+            value = join(",", local.milka_frame_excluded_albums)
+          }
+          env {
+            name  = "TEMPLATE"
+            value = "/template/Settings.yml"
+          }
+          env {
+            name  = "OUTPUT"
+            value = "/app/Config/Settings.yml"
+          }
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { memory = "64Mi" }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/Config"
           }
           volume_mount {
             name       = "config"
-            mount_path = "/app/Config/Settings.yml"
-            sub_path   = "Settings.yml"
+            mount_path = "/template"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "shared-albums-script"
+            mount_path = "/script"
             read_only  = true
           }
         }
         volume {
           name = "data"
           empty_dir {}
+        }
+        volume {
+          name = "shared-albums-script"
+          config_map {
+            name = kubernetes_config_map.frame_milka_shared_albums_script.metadata[0].name
+          }
         }
         volume {
           name = "config"
@@ -194,6 +259,7 @@ resource "kubernetes_deployment" "immich-frame-milka" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"],        # set by the nightly frame-milka-refresh CronJob
     ]
   }
 }
