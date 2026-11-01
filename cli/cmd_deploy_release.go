@@ -343,7 +343,7 @@ func (r *releaseRun) tvAnswers(n int) ([]tvAnswer, error) {
 			VersionCode int    `json:"versionCode"`
 			SHA256      string `json:"sha256"`
 		}
-		if err := r.getJSON("/api/app/latest", &v); err != nil {
+		if err := r.getJSON(r.spec.appLatestPath(), &v); err != nil {
 			lastErr = err
 			continue
 		}
@@ -771,13 +771,13 @@ func (r *releaseRun) orasPush() error {
 		return r.stream("", nil, "docker", args...)
 	}
 	r.say("pushing %s:%s", r.spec.TVRepo, tag)
-	if err := push(r.apkOut(), r.spec.TVRepo+":"+tag, "--artifact-type", "application/vnd.viktorbarzin.f1tv.build",
+	if err := push(r.apkOut(), r.spec.TVRepo+":"+tag, "--artifact-type", tvArtifactType,
 		"app-release.apk:application/vnd.android.package-archive", "output-metadata.json:application/json"); err != nil {
 		return fmt.Errorf("oras push: %w", err)
 	}
 	mapping := filepath.Join(r.src, "android", "app", "build", "outputs", "mapping", "release")
 	if _, err := os.Stat(filepath.Join(mapping, "mapping.txt")); err == nil {
-		if err := push(mapping, r.spec.TVRepo+":"+tag+"-mapping", "--artifact-type", "application/vnd.viktorbarzin.f1tv.mapping",
+		if err := push(mapping, r.spec.TVRepo+":"+tag+"-mapping", "--artifact-type", tvMappingType,
 			"mapping.txt:text/plain"); err != nil {
 			r.say("the R8 mapping did not push (%v); the release goes ahead without it", err)
 		}
@@ -799,7 +799,7 @@ func (r *releaseRun) confirmTV(code int, expect string) error {
 			r.say("superseded: televisions are offered %d, newer than %d", highestTVAnswer(answers).Code, code)
 			return nil
 		case tvConfirmed:
-			got, err := r.downloadSHA256("/api/app/tv.apk")
+			got, err := r.downloadSHA256(r.spec.apkPath())
 			if err == nil && (expect == "" || got == expect) {
 				r.say("%s/api/app/latest offers %d on all %d reads and /api/app/tv.apk has sha256 %s", r.spec.Site, code, len(answers), got)
 				return nil

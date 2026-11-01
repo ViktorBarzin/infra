@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -25,6 +26,7 @@ type releaseSpec struct {
 	VaultPath      string // ghcr_username, ghcr_token, woodpecker_token
 	Signer         string // SHA-256 of the key every television accepts updates from
 	VersionFloor   int
+	TVPackage      string // the TV app's applicationId, sent as ?package= on the update endpoints
 	// GitHub's own path filters, copied from .github/workflows/build.yml
 	// (paths-ignore) and android.yml (paths). The image is chosen by
 	// EXCLUSION, so a directory nobody listed still deploys.
@@ -46,6 +48,7 @@ func tvRelease() releaseSpec {
 		VaultPath:      "secret/ci/tv-release",
 		Signer:         "7638449ed0971a8b1b634b3eff4d762b3f12aa203536dd62dba16b8495f036f7",
 		VersionFloor:   30000,
+		TVPackage:      "me.viktorbarzin.tv",
 		ServerIgnore: []string{"docs/**", "**.md", "android/**", ".woodpecker/publish-tv.yml",
 			".github/workflows/android.yml", "tracker/**", ".github/workflows/tracker.yml"},
 		TVPaths: []string{"android/**", ".woodpecker/publish-tv.yml", ".github/workflows/android.yml",
@@ -54,6 +57,24 @@ func tvRelease() releaseSpec {
 }
 
 var releaseSpecs = map[string]func() releaseSpec{"tv": tvRelease}
+
+// The OCI artifact types of the TV app build and its R8 mapping, matching
+// .github/workflows/android.yml in the tv repo.
+const (
+	tvArtifactType = "application/vnd.viktorbarzin.tv.build"
+	tvMappingType  = "application/vnd.viktorbarzin.tv.mapping"
+)
+
+// appLatestPath and apkPath name the TV app the server should answer for. The
+// server answers for one applicationId at a time, and with no ?package= it
+// answers for the retired me.viktorbarzin.f1tv app.
+func (s releaseSpec) appLatestPath() string {
+	return "/api/app/latest?package=" + url.QueryEscape(s.TVPackage)
+}
+
+func (s releaseSpec) apkPath() string {
+	return "/api/app/tv.apk?package=" + url.QueryEscape(s.TVPackage)
+}
 
 // renamedApps maps a former app name to its current one, so an old note or
 // memory that says `homelab deploy f1-stream` gets pointed at the new verb.

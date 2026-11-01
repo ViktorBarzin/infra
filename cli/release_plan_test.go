@@ -353,6 +353,7 @@ func TestReleaseSpecUsesTheTVNames(t *testing.T) {
 		Namespace:      "tv",
 		EdgeDeployment: "tv-edge",
 		VaultPath:      "secret/ci/tv-release",
+		TVPackage:      "me.viktorbarzin.tv",
 	}
 	got := spec
 	got.Signer, got.VersionFloor, got.ServerIgnore, got.TVPaths = "", 0, nil, nil
@@ -374,5 +375,21 @@ func TestReleaseOldAppNameSaysItIsTVNow(t *testing.T) {
 	_, err := parseReleaseArgs([]string{"f1-stream", "--check"})
 	if err == nil || !strings.Contains(err.Error(), "homelab deploy tv") {
 		t.Errorf("deploy f1-stream should point at deploy tv, got %v", err)
+	}
+}
+
+// The server answers /api/app/latest and the APK download for one app at a
+// time, chosen by ?package=; without it, it answers for the retired
+// me.viktorbarzin.f1tv app (tv ADR 2026-11-01-the-product-is-tv).
+func TestTheReleaseAsksForTheTVPackage(t *testing.T) {
+	spec := tvRelease()
+	if got := spec.appLatestPath(); got != "/api/app/latest?package=me.viktorbarzin.tv" {
+		t.Errorf("appLatestPath = %q", got)
+	}
+	if got := spec.apkPath(); got != "/api/app/tv.apk?package=me.viktorbarzin.tv" {
+		t.Errorf("apkPath = %q", got)
+	}
+	if tvArtifactType != "application/vnd.viktorbarzin.tv.build" || tvMappingType != "application/vnd.viktorbarzin.tv.mapping" {
+		t.Errorf("artifact types %q %q", tvArtifactType, tvMappingType)
 	}
 }
