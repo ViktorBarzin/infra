@@ -23,7 +23,7 @@ variable "discord_f1_channel_ids" { type = string }
 # the plan instead of starting the pods on an unknown build.
 variable "image_tag" {
   type    = string
-  default = "SET-TO-RELEASE-SHA"
+  default = "79e06f1f"
   validation {
     condition     = can(regex("^[0-9a-f]{8,40}$", var.image_tag))
     error_message = "image_tag must be the tv release commit sha (8 to 40 hex characters), not a placeholder or latest. See the comment above this variable."
