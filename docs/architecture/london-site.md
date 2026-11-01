@@ -174,3 +174,15 @@ the air sensor's LED switch ("Air light"). The guest network is fine for this:
 the Echo only talks to Amazon, and Amazon reaches ha-london through
 `ha-london.viktorbarzin.me`. How it fits together, how to add a device, and what
 to watch for: `docs/runbooks/london-alexa.md`.
+
+## Robot vacuum camera
+
+The robot vacuum Yiko (Ecovacs DEEBOT X8 PRO OMNI, 192.168.8.175) is
+controlled by ha-london's core Ecovacs integration through the Ecovacs cloud.
+Its camera is shown on demand: a "Camera" toggle on the `vacuum-yiko`
+dashboard scales the `ecovacs-video-proxy` bridge in the Sofia cluster from 0
+to 1 replica over the WireGuard tunnel, and the bridge serves the robot's
+video as RTSP on `10.0.20.200:8554`. The video itself travels robot → bridge
+over the tunnel after a WebRTC handshake through the Ecovacs cloud and AWS
+Kinesis. It switches off after 5 minutes. Details and re-verification steps:
+`docs/runbooks/london-yiko.md`.
