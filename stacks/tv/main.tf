@@ -477,6 +477,14 @@ locals {
     # Roles pass each other. Unset, the app issues and accepts nothing rather
     # than signing with a guessable key. The Transcoder sets it on its own.
     { name = "ADMIN_SESSION_KEY", secret = "tv-secrets", key = "admin_session_key", optional = false },
+    # Pinned on 2026-11-01 before the rebrand renamed the labels these were
+    # derived with (tv plan 2026-11-01-tv-rebrand, finding 1): they sign Feed
+    # paths, key the stored feed ids and sign playback-report tokens, so they
+    # must keep their values. Required, so a missing pin fails the rollout
+    # instead of silently deriving new keys.
+    { name = "URL_SIGNING_KEY", secret = "tv-secrets", key = "url_signing_key", optional = false },
+    { name = "FEED_ID_KEY", secret = "tv-secrets", key = "feed_id_key", optional = false },
+    { name = "PLAYBACK_REPORT_KEY", secret = "tv-secrets", key = "playback_report_key", optional = false },
     { name = "OIDC_CLIENT_SECRET", secret = kubernetes_secret.tv_members.metadata[0].name, key = "oidc_client_secret", optional = false },
     { name = "AUTHENTIK_API_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_api_token", optional = false },
     # Can add users to TV Users and nothing else (members.tf, ADR-0042).
@@ -491,7 +499,7 @@ locals {
     # incoming webhook. It comes from the Vault "tv" key through the
     # dataFrom.extract ExternalSecret above; optional=true so the pod
     # starts before the key exists, and the app skips the message.
-    { name = "SLACK_TV_WEBHOOK_URL", secret = "tv-secrets", key = "slack_f1_webhook_url", optional = true },
+    { name = "SLACK_TV_WEBHOOK_URL", secret = "tv-secrets", key = "slack_tv_webhook_url", optional = true },
     # Session notifications (app repo ADR-0020) sign Web Push with this
     # VAPID identity, from the Vault "tv" key through the same
     # dataFrom.extract ExternalSecret. optional=true: with any of the
@@ -1014,6 +1022,34 @@ resource "kubernetes_deployment_v1" "tv_transcoder" {
               secret_key_ref {
                 name = "tv-secrets"
                 key  = "admin_session_key"
+              }
+            }
+          }
+          # Pinned keys; see tv_env_secrets.
+          env {
+            name = "URL_SIGNING_KEY"
+            value_from {
+              secret_key_ref {
+                name = "tv-secrets"
+                key  = "url_signing_key"
+              }
+            }
+          }
+          env {
+            name = "FEED_ID_KEY"
+            value_from {
+              secret_key_ref {
+                name = "tv-secrets"
+                key  = "feed_id_key"
+              }
+            }
+          }
+          env {
+            name = "PLAYBACK_REPORT_KEY"
+            value_from {
+              secret_key_ref {
+                name = "tv-secrets"
+                key  = "playback_report_key"
               }
             }
           }
