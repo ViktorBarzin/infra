@@ -2321,43 +2321,29 @@ serverFiles:
             annotations:
               summary: "Terminal Lobby's API is not answering — nobody can open or list a session"
               description: "tmux-api serves every session list, open, rename and kill in the lobby, so while it is down the UI loads and does nothing. Check it: systemctl status tmux-api on devvm, and journalctl -u tmux-api -n 50. It binds 0.0.0.0:7684 and is scraped there directly. If the box itself is gone, DevvmDown fires alongside this and is the one to act on first; if the box is up and stalled on disk, DevvmIOStalled is the better description and this may just be the scrape timing out behind it."
-          # T3 Code upstream tracking (terminal-lobby ADR-0045). tl-t3-view
-          # serves T3's clients, and lobby CI checks every day for a new T3
-          # stable release, typechecks the sidecar against its contracts and
-          # tests it over recorded lobby sessions. A release that fails is held
-          # rather than shipped. A devvm timer that the lobby deb ships writes
-          # /var/lib/node_exporter/textfile/tl-t3-upstream.prom:
-          # tl_t3_upstream_unadopted_since_seconds is the unix publish time of
-          # the newest stable release not yet installed (0 when up to date),
-          # labelled latest and pinned.
+          # The lobby's calls to each user's T3 (terminal-lobby ADR-0046).
+          # tmux-api lists and starts T3 threads over the user's T3 MCP
+          # endpoint, and agent-api passes Muse's and the WhatsApp bot's /mcp
+          # calls through to it. Both count every call as
+          # tl_t3_calls_total{service,user,tool,result}.
           #
-          # 36h leaves room for one daily CI run plus the deb rollout, so a
-          # release still unadopted after that was held, or its rollout stuck.
-          # The expression is written age-first so the alert's value is how
-          # long the release has waited.
-          - alert: T3StableHeld
+          # Fires when a (service, user) pair made calls that failed to get an
+          # answer from T3 and made no successful call, over the same 15m.
+          # tool_error is left out: it means T3 answered and refused that one
+          # call (a thread id that does not exist, say), so T3 is reachable.
+          # Counters reset when either service restarts on an install, which
+          # increase() absorbs.
+          - alert: T3LobbyCallsFailing
             expr: |
-              (time() - tl_t3_upstream_unadopted_since_seconds) > 36 * 3600
-              and tl_t3_upstream_unadopted_since_seconds > 0
+              sum by (service, user) (increase(tl_t3_calls_total{result!~"ok|tool_error"}[15m])) > 0
+              unless on(service, user)
+              sum by (service, user) (increase(tl_t3_calls_total{result="ok"}[15m])) > 0
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "T3 {{ $labels.latest }} has been out for {{ $value | humanizeDuration }} and the lobby still runs {{ $labels.pinned }}"
-              description: "Lobby CI checks T3 stable releases daily and holds one that fails the sidecar's typecheck or the recorded-session tests. Read the latest run of https://github.com/ViktorBarzin/terminal-lobby/actions/workflows/t3-stable.yml to see which step held {{ $labels.latest }}; a green run means the release passed and the deb rollout to the devvm is what stalled. Background: terminal-lobby docs/adr/0045-t3-apps-are-clients-of-lobby-sessions.md."
-          # The check above reads a file a timer rewrites at least daily. If
-          # the timer stops, the gauge freezes at its last value and
-          # T3StableHeld can neither fire nor resolve, so watch the file's age.
-          # Before the lobby deb ships the timer, the file and this series do
-          # not exist and nothing fires.
-          - alert: T3UpstreamCheckStale
-            expr: time() - node_textfile_mtime_seconds{file=~".*/tl-t3-upstream.prom"} > 2 * 86400
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "The T3 upstream check on the devvm has not run for {{ $value | humanizeDuration }}"
-              description: "/var/lib/node_exporter/textfile/tl-t3-upstream.prom is more than two days old, so T3StableHeld is reading a frozen number. The timer that writes it ships in the terminal-lobby deb: find it on the devvm with systemctl list-timers | grep -i t3, then read its last run with journalctl -u on that unit. A run that fails before writing leaves the file at its old age, so the journal shows why."
+              summary: "{{ $labels.service }} cannot reach {{ $labels.user }}'s T3: every call in the last 15m failed"
+              description: "The lobby (tmux-api) or agent-api is calling {{ $labels.user }}'s T3 MCP endpoint and getting no answer, so the lobby's T3 thread list and Muse or WhatsApp T3 calls fail for that user. Check the server: systemctl status t3-serve@{{ $labels.user }} on the devvm. If it is running, check the service's token for that user in its state dir (an auth_error result means the token was refused). Which results: homelab metrics query 'sum by (result, tool) (increase(tl_t3_calls_total{service=\"{{ $labels.service }}\",user=\"{{ $labels.user }}\"}[15m]))'. Last success: tl_t3_last_success_timestamp_seconds."
           # NOT ADDED YET, deliberately: error-rate and latency rules on
           # tl_http_requests_total and tl_http_request_duration_ms. Both series
           # start today, so there is no history to set a threshold against, and
@@ -8326,6 +8312,28 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'tmux-api'
+  # agent-api's /metrics (terminal-lobby ADR-0046): T3 pass-through call
+  # counts by OS user, tool and result, tl_t3_calls_total and
+  # tl_t3_last_success_timestamp_seconds. Its own job for the same reason as
+  # terminal-lobby above. agent-api binds 10.0.10.10:8710; the devvm's
+  # nftables admits 8710 from the Traefik nodes (Prometheus runs on one of
+  # them), and the ClusterNetworkPolicy devvm-lobby-ports-monitoring in
+  # stacks/terminal lets the monitoring namespace reach 7684 and 8710. That
+  # policy is L4, so it cannot narrow 8710 to /metrics: /metrics needs no
+  # credential and holds only counts, and every other agent-api route needs a
+  # bearer token. The public host routes /v1/*, /mcp and /openapi.json only.
+  - job_name: 'agent-api'
+    static_configs:
+      - targets:
+        - "10.0.10.10:8710"
+        labels:
+          node: 'devvm'
+          service: 'agent-api'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'agent-api'
 
   # registry-cache VM (10.0.20.10): the five pull-through caches behind nginx.
   # Its node_exporter answers 200 and was scraped by nothing until 2026-09-03,
