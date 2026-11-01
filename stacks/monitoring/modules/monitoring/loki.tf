@@ -333,7 +333,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # the 5m lookback emptied, then fired again on the next kill.
               # Measured 2026-08-10: 21 fire/resolve pairs in 7 days = 42 Slack
               # posts, every firing duration <= 5m, driven by ONE leaking pod
-              # (f1-stream, OOMKilled roughly hourly). A 2h window spans that
+              # (f1-stream, now tv, OOMKilled roughly hourly). A 2h window spans that
               # cadence so a repeating OOM loop reads as one continuous alert
               # and resolves 2h after the last kill.
               alert = "KernelOOMKiller"
@@ -380,7 +380,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # once the starvation is resolved rather than pinning the guard on.
               # It is a first estimate; tune from observed behaviour.
               alert = "GpuCudaOom"
-              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|tv|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory|cudaMalloc failed: out of memory\" [5m])) > 0"
+              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|tv|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory|cudaMalloc failed: out of memory\" [5m])) > 0"
               for   = "0m"
               labels = {
                 severity = "warning"
@@ -1886,7 +1886,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # comparison, so an empty result already means "no activity" and
               # the guard would only make it evaluate 0 > 0, false, changing
               # nothing while inviting the next reader to think the gate can
-              # detect silence. Same reasoning the f1-stream rule below spells
+              # detect silence. Same reasoning the tv rule below spells
               # out at length.
               #
               # WINDOWS. 7 days for the silence test, not 24 hours. The caller
@@ -2004,10 +2004,10 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
-          # f1-stream. Until 2026-09-11 no Loki rule matched this namespace at
+          # tv. Until 2026-09-11 no Loki rule matched this namespace at
           # all, which is why a ladder build failing was one of four real
           # failures in two days that produced no Slack message.
-          name = "f1-stream"
+          name = "tv"
           rules = [
             {
               # A replay's HLS ladder is what makes the whole caching story
@@ -2023,7 +2023,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # the coming race weekend. Nothing watches it today.
               #
               # One log line covers both trigger paths. `_finish_ladder_inner`
-              # (backend/replays/library.py:809) is the single completion path
+              # (tv/f1/replays/library.py:809) is the single completion path
               # for every build, manual or automatic, and it logs
               #   [library] ladder failed for <info_hash>: <ffmpeg stderr>
               # then `shutil.rmtree`s the half-written directory, so a failure
@@ -2061,11 +2061,11 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # replay to the mp4 path, which still plays. It needs someone to
               # look, not to wake up.
               alert  = "F1LadderBuildFailed"
-              expr   = "sum(count_over_time({namespace=\"f1-stream\"} |= \"[library] ladder failed\" [15m])) > 0"
+              expr   = "sum(count_over_time({namespace=\"tv\"} |= \"[library] ladder failed\" [15m])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
-                summary     = "An f1-stream replay ladder build failed ({{ $value }} in 15m)"
+                summary     = "A tv replay ladder build failed ({{ $value }} in 15m)"
                 description = <<-EOT
                   ffmpeg could not build the HLS ladder for a replay, so that
                   session can only be served as the whole mp4 — one full 7-9 GB
@@ -2075,7 +2075,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                   The failing directory is deleted on failure, so there is no
                   partial ladder to clean up and re-triggering the build is
                   safe. Get the ffmpeg stderr first, it is on the same log line:
-                  homelab logs query '{namespace="f1-stream"} |= "[library] ladder failed"' --since 24h
+                  homelab logs query '{namespace="tv"} |= "[library] ladder failed"' --since 24h
                   Two known shapes from the 30 days to 2026-09-11: a bare
                   "ffmpeg failed" (non-zero exit with no usable stderr) and an
                   "[hls @ …] Failed to open" write error. Check free space on
