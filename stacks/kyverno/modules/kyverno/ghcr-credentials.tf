@@ -25,6 +25,9 @@ locals {
     # work from the first deploy; prune once the package is public.
     "tuya-bridge",
     "f1-stream",
+    # tv: the f1-stream project renamed (f1-stream plan 2026-11-01-tv-rebrand).
+    # Both names stay until the f1-stream namespace is gone after the cutover.
+    "tv",
     "job-hunter",
     "lesson-harvester",
     "instagram-poster",

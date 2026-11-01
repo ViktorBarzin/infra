@@ -30,57 +30,18 @@
 #   DNS (checked 2026-10-30 against 192.168.8.1 and 192.168.1.1), so the TVs
 #   there take the Cloudflare path.
 #
-# BEFORE CHANGING THE RULESET: like the cache ruleset in cloudflare-cache.tf,
-# this resource owns the zone's whole http_request_dynamic_redirect phase. On
-# 2026-10-30 GET /zones/<zone>/rulesets listed no ruleset in that phase, so
-# this created it rather than replacing anything. Any other redirect on the
-# zone belongs in this list, or it will be deleted on the next apply. The Free
-# plan allows 10 Single Redirect rules and no regex; concat() is not regex.
+# The Cloudflare half is handed over to stacks/tv (f1-stream plan
+# 2026-11-01-tv-rebrand). Its ruleset owns the zone's whole
+# http_request_dynamic_redirect phase, so destroying this stack must not
+# delete it (plan review finding 17). This stack stops tracking it, and
+# stacks/tv adopts it with an import block after the cutover; the definition
+# is in stacks/tv/f1-redirect.tf and in this file's history.
 
-resource "cloudflare_ruleset" "f1_redirect" {
-  zone_id     = "fd2c5dd4efe8fe38958944e74d0ced6d"
-  name        = "f1 to tv redirect"
-  description = "f1.viktorbarzin.me redirects to tv.viktorbarzin.me. See stacks/f1-stream/f1-redirect.tf."
-  kind        = "zone"
-  phase       = "http_request_dynamic_redirect"
-
-  # A redirect ends the phase, so the root rule has to come first.
-  rules = [
-    {
-      ref         = "f1_root_to_tv_f1"
-      description = "f1/ goes to the F1 section on tv, query kept (party rooms)"
-      expression  = "(http.host eq \"f1.viktorbarzin.me\" and http.request.uri.path eq \"/\")"
-      action      = "redirect"
-      enabled     = true
-
-      action_parameters = {
-        from_value = {
-          status_code           = 308
-          preserve_query_string = true
-          target_url = {
-            value = "https://tv.viktorbarzin.me/f1/"
-          }
-        }
-      }
-    },
-    {
-      ref         = "f1_path_to_tv"
-      description = "Every other f1 path goes to the same path and query on tv"
-      expression  = "(http.host eq \"f1.viktorbarzin.me\")"
-      action      = "redirect"
-      enabled     = true
-
-      action_parameters = {
-        from_value = {
-          status_code           = 308
-          preserve_query_string = true
-          target_url = {
-            expression = "concat(\"https://tv.viktorbarzin.me\", http.request.uri.path)"
-          }
-        }
-      }
-    },
-  ]
+removed {
+  from = cloudflare_ruleset.f1_redirect
+  lifecycle {
+    destroy = false
+  }
 }
 
 # The internal-DNS half (see the top of this file). Traefik's redirectRegex

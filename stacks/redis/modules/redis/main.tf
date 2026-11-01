@@ -527,6 +527,9 @@ locals {
     # db 13), the fallback for sites without their own Anubis. Same crashloop
     # as forgejo's below without it.
     "turnstile-gate",
+    # tv, added 2026-11-01: f1-stream renamed (f1-stream plan
+    # 2026-11-01-tv-rebrand). f1-stream stays above until its namespace is gone.
+    "tv",
     "uptime-kuma",
     # verify, added 2026-10-10: the redis verify Job (stacks/redis/verify.sh,
     # docs/runbooks/verify-jobs.md) writes, reads and deletes one key in db 15.

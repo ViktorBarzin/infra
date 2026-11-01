@@ -9081,16 +9081,20 @@ extraScrapeConfigs: |
   # 1m rather than the extraction cadence: the gauges are cheap (a handful of
   # series per pod) and a fast scrape keeps `up` meaningful and the alert
   # clocks honest without adding data the extraction loop does not produce.
+  #
+  # Namespace tv with label app=tv is the same app after its rename (f1-stream
+  # plan 2026-11-01-tv-rebrand). Both are listed until the f1-stream namespace
+  # is gone, so the scrape carries on across the cutover.
   - job_name: 'f1-stream'
     scrape_interval: 1m
     metrics_path: '/metrics'
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: ['f1-stream']
+          names: ['f1-stream', 'tv']
         selectors:
           - role: pod
-            label: 'app=f1-stream'
+            label: 'app in (f1-stream,tv)'
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: '8000'
