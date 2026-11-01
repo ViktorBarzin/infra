@@ -14,22 +14,22 @@ import (
 func TestReleaseLockSerialisesAndNamesTheHolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "release.lock")
 	var out strings.Builder
-	first, err := acquireReleaseLock(path, time.Second, "wizard: f1-stream abc", &out)
+	first, err := acquireReleaseLock(path, time.Second, "wizard: tv abc", &out)
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	_, err = acquireReleaseLock(path, 300*time.Millisecond, "emo: f1-stream def", &out)
+	_, err = acquireReleaseLock(path, 300*time.Millisecond, "emo: tv def", &out)
 	if err == nil {
 		t.Fatalf("second acquire succeeded while the first held the lock")
 	}
-	if !strings.Contains(err.Error(), "wizard: f1-stream abc") {
+	if !strings.Contains(err.Error(), "wizard: tv abc") {
 		t.Errorf("the timeout names the holder, got %v", err)
 	}
 	if !strings.Contains(out.String(), "waiting") {
 		t.Errorf("a blocked release says it is waiting, got %q", out.String())
 	}
 	first()
-	second, err := acquireReleaseLock(path, time.Second, "emo: f1-stream def", &out)
+	second, err := acquireReleaseLock(path, time.Second, "emo: tv def", &out)
 	if err != nil {
 		t.Fatalf("acquire after release: %v", err)
 	}
@@ -90,21 +90,21 @@ func TestReleaseRegistryManifestLookup(t *testing.T) {
 	  {"digest":"sha256:aaaa","annotations":{"org.opencontainers.image.title":"output-metadata.json"}},
 	  {"digest":"sha256:257ebe97","annotations":{"org.opencontainers.image.title":"app-release.apk"}}]}`
 	srv := newFakeRegistry(t, map[string]string{
-		"/v2/viktorbarzin/f1-stream/manifests/a020f2dc": `{"schemaVersion":2,"layers":[]}`,
-		"/v2/viktorbarzin/f1-stream-tv/manifests/31425": apk,
+		"/v2/viktorbarzin/tv/manifests/a020f2dc":      `{"schemaVersion":2,"layers":[]}`,
+		"/v2/viktorbarzin/tv-android/manifests/31425": apk,
 	})
 	defer srv.Close()
 	reg := &registryClient{base: srv.URL, user: "bot", token: "secret", http: srv.Client()}
 
-	m, ok, err := reg.manifest("ghcr.io/viktorbarzin/f1-stream", "a020f2dc")
+	m, ok, err := reg.manifest("ghcr.io/viktorbarzin/tv", "a020f2dc")
 	if err != nil || !ok || m == nil {
 		t.Fatalf("existing image: %v %v %v", m, ok, err)
 	}
-	_, ok, err = reg.manifest("ghcr.io/viktorbarzin/f1-stream", "deadbeef")
+	_, ok, err = reg.manifest("ghcr.io/viktorbarzin/tv", "deadbeef")
 	if err != nil || ok {
 		t.Fatalf("missing tag reads as absent, got ok=%v err=%v", ok, err)
 	}
-	m, ok, err = reg.manifest("ghcr.io/viktorbarzin/f1-stream-tv", "31425")
+	m, ok, err = reg.manifest("ghcr.io/viktorbarzin/tv-android", "31425")
 	if err != nil || !ok {
 		t.Fatalf("tv artifact: %v %v", ok, err)
 	}
@@ -113,7 +113,7 @@ func TestReleaseRegistryManifestLookup(t *testing.T) {
 	}
 
 	bad := &registryClient{base: srv.URL, user: "bot", token: "wrong", http: srv.Client()}
-	if _, _, err := bad.manifest("ghcr.io/viktorbarzin/f1-stream", "a020f2dc"); err == nil {
+	if _, _, err := bad.manifest("ghcr.io/viktorbarzin/tv", "a020f2dc"); err == nil {
 		t.Errorf("a refused login is an error, not an absent tag")
 	}
 }

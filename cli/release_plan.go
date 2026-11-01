@@ -11,7 +11,7 @@ import (
 
 // releaseSpec describes one app `homelab deploy <app>` can build and put live
 // from the devvm, doing by hand what the app's GitHub Actions workflows do.
-// Only f1-stream exists today; the fields say what a second app would need.
+// Only tv exists today; the fields say what a second app would need.
 type releaseSpec struct {
 	App            string
 	GitURL         string
@@ -32,18 +32,18 @@ type releaseSpec struct {
 	TVPaths      []string
 }
 
-func f1StreamRelease() releaseSpec {
+func tvRelease() releaseSpec {
 	return releaseSpec{
-		App:            "f1-stream",
-		GitURL:         "https://forgejo.viktorbarzin.me/viktor/f1-stream.git",
-		LocalClone:     "code/f1-stream",
-		Image:          "ghcr.io/viktorbarzin/f1-stream",
-		TVRepo:         "ghcr.io/viktorbarzin/f1-stream-tv",
+		App:            "tv",
+		GitURL:         "https://forgejo.viktorbarzin.me/viktor/tv.git",
+		LocalClone:     "code/tv",
+		Image:          "ghcr.io/viktorbarzin/tv",
+		TVRepo:         "ghcr.io/viktorbarzin/tv-android",
 		WoodpeckerRepo: 10,
 		Site:           "https://tv.viktorbarzin.me",
-		Namespace:      "f1-stream",
-		EdgeDeployment: "f1-stream-edge",
-		VaultPath:      "secret/ci/f1-stream-release",
+		Namespace:      "tv",
+		EdgeDeployment: "tv-edge",
+		VaultPath:      "secret/ci/tv-release",
 		Signer:         "7638449ed0971a8b1b634b3eff4d762b3f12aa203536dd62dba16b8495f036f7",
 		VersionFloor:   30000,
 		ServerIgnore: []string{"docs/**", "**.md", "android/**", ".woodpecker/publish-tv.yml",
@@ -53,7 +53,11 @@ func f1StreamRelease() releaseSpec {
 	}
 }
 
-var releaseSpecs = map[string]func() releaseSpec{"f1-stream": f1StreamRelease}
+var releaseSpecs = map[string]func() releaseSpec{"tv": tvRelease}
+
+// renamedApps maps a former app name to its current one, so an old note or
+// memory that says `homelab deploy f1-stream` gets pointed at the new verb.
+var renamedApps = map[string]string{"f1-stream": "tv"}
 
 // matchWorkflowPath implements the three pattern shapes the workflows use:
 // "dir/**", "**.ext" and an exact path.
@@ -342,7 +346,7 @@ type releaseOpts struct {
 
 func (o releaseOpts) auto() bool { return !o.Server && !o.TV }
 
-const releaseUsage = "usage: homelab deploy <app> [--server] [--tv] [--sha SHA] [--check]   (apps: f1-stream)"
+const releaseUsage = "usage: homelab deploy <app> [--server] [--tv] [--sha SHA] [--check]   (apps: tv)"
 
 func parseReleaseArgs(args []string) (releaseOpts, error) {
 	var o releaseOpts
@@ -377,6 +381,9 @@ func parseReleaseArgs(args []string) (releaseOpts, error) {
 		return o, fmt.Errorf("%s", releaseUsage)
 	}
 	if _, ok := releaseSpecs[o.App]; !ok {
+		if now, renamed := renamedApps[o.App]; renamed {
+			return o, fmt.Errorf("%q is called %q now: run homelab deploy %s\n%s", o.App, now, now, releaseUsage)
+		}
 		return o, fmt.Errorf("no release recipe for %q\n%s", o.App, releaseUsage)
 	}
 	return o, nil

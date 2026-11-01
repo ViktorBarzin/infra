@@ -21,7 +21,7 @@ import (
 // The file is opened WITHOUT O_CREAT first: /run/lock is sticky and
 // world-writable, and fs.protected_regular refuses an O_CREAT open of a file
 // there that another user owns, even with mode 0666. The devvm playbook
-// creates it root-owned (f1-stream-release.conf in tmpfiles.d); creating it
+// creates it root-owned (tv-release.conf in tmpfiles.d); creating it
 // here is only the fallback for a box without that entry.
 func acquireReleaseLock(path string, wait time.Duration, note string, out io.Writer) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)

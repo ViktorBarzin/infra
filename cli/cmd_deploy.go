@@ -10,7 +10,7 @@ import (
 func deployCommands() []Command {
 	return []Command{
 		{Path: []string{"deploy"}, Tier: TierWrite,
-			Summary: "build an app's landed master here and put it live as its CI would: deploy f1-stream [--server] [--tv] [--sha SHA] [--check]", Run: deployRelease},
+			Summary: "build an app's landed master here and put it live as its CI would: deploy tv [--server] [--tv] [--sha SHA] [--check]", Run: deployRelease},
 		{Path: []string{"deploy", "wait"}, Tier: TierRead,
 			Summary: "wait for <ns>/<deploy> to roll out the current (or --sha) image: deploy wait <ns>/<deploy> [--sha SHA] [--timeout 10m]", Run: deployWait},
 	}
