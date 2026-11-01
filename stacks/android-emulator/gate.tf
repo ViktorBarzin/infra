@@ -53,10 +53,10 @@ resource "kubernetes_role_binding" "gate" {
   }
 }
 
-# The f1-stream deploy puts the emulator to sleep before it rolls the
+# The tv deploy puts the emulator to sleep before it rolls the
 # Transcoder, whose surge pod needs the 800 gpumem the emulator holds on
-# k8s-node1 (Viktor, 2026-10-17; f1-stream .woodpecker/deploy.yml, infra
-# stacks/f1-stream/main.tf GPU seat note). It scales down the same way the idle
+# k8s-node1 (Viktor, 2026-10-17; tv repo .woodpecker/deploy.yml, infra
+# stacks/tv/main.tf GPU seat note). It scales down the same way the idle
 # sleeper does, a replicas patch on the named Deployment, and waits for the pod
 # to leave. It does not wake the emulator again; the gate does that on the next
 # visit.
@@ -67,7 +67,7 @@ resource "kubernetes_role_binding" "gate" {
 # deploy needs here, so the deploy keeps working if that binding is narrowed.
 resource "kubernetes_role" "deploy_yield" {
   metadata {
-    name      = "f1-stream-deploy-yield"
+    name      = "tv-deploy-yield"
     namespace = kubernetes_namespace.android-emulator.metadata[0].name
   }
   rule {
@@ -87,7 +87,7 @@ resource "kubernetes_role" "deploy_yield" {
 
 resource "kubernetes_role_binding" "deploy_yield" {
   metadata {
-    name      = "f1-stream-deploy-yield"
+    name      = "tv-deploy-yield"
     namespace = kubernetes_namespace.android-emulator.metadata[0].name
   }
   role_ref {
@@ -105,42 +105,16 @@ resource "kubernetes_role_binding" "deploy_yield" {
 # The gate also watches for a pod that waits Pending for the GPU seat the
 # emulator holds, and puts the emulator to sleep when it finds one (gate.py,
 # yield_loop). The pods it watches carry the label
-# android-emulator-yields-to=gpu-seat; today that is the f1-stream Transcoder,
-# whose surge pod needs a second 1850 gpumem on k8s-node1, and the f1-stream
+# android-emulator-yields-to=gpu-seat; today that is the tv Transcoder,
+# whose surge pod needs a second 1850 gpumem on k8s-node1, and the tv
 # Worker, whose replacement pod needs its 2000 back (infra
-# stacks/f1-stream/main.tf GPU seat note). A pod that still waits after
+# stacks/tv/main.tf GPU seat note). A pod that still waits after
 # YIELD_LIMIT_SECONDS stops holding the emulator asleep. The deploy pipeline above sleeps the
 # emulator before its own roll, but Reloader and Terraform roll the Transcoder
 # too, and only this watcher sees those. Reading pods there needs list on pods
 # in that namespace, and nothing more.
-resource "kubernetes_role" "gate_yield_watch" {
-  metadata {
-    name      = "android-emulator-yield-watch"
-    namespace = "f1-stream"
-  }
-  rule {
-    api_groups = [""]
-    resources  = ["pods"]
-    verbs      = ["list"]
-  }
-}
-
-resource "kubernetes_role_binding" "gate_yield_watch" {
-  metadata {
-    name      = "android-emulator-yield-watch"
-    namespace = "f1-stream"
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.gate_yield_watch.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.gate.metadata[0].name
-    namespace = kubernetes_namespace.android-emulator.metadata[0].name
-  }
-}
+# The Role that lets the gate list those pods lives in stacks/tv
+# (emulator-yield.tf), next to the namespace it is created in.
 
 resource "kubernetes_config_map" "gate" {
   metadata {
@@ -186,14 +160,12 @@ resource "kubernetes_deployment" "gate" {
             name  = "DEPLOYMENT"
             value = "android-emulator"
           }
-          # Pods the emulator gives its GPU seat to (see the yield-watch Role).
-          # A comma-separated list: f1-stream is being renamed to tv
-          # (f1-stream plan 2026-11-01-tv-rebrand). The tv namespace and its
-          # yield-watch Role come with stacks/tv; until then the gate skips the
-          # namespace it cannot read.
+          # Pods the emulator gives its GPU seat to (see the yield-watch Role
+          # in stacks/tv/emulator-yield.tf). A comma-separated list; a
+          # namespace the gate cannot read is skipped.
           env {
             name  = "YIELD_NAMESPACE"
-            value = "${kubernetes_role.gate_yield_watch.metadata[0].namespace},tv"
+            value = "tv"
           }
           env {
             name  = "YIELD_SELECTOR"

@@ -1,9 +1,9 @@
-# Pairing a television with the f1 API (f1-stream ADR-0007).
+# Pairing a television with the f1 API (tv ADR-0007).
 #
 # The TV shows a short code and polls; a member of "Home Users" opens /pair on a
-# phone, signs in through the f1-stream OIDC application (members.tf), types
+# phone, signs in through the tv OIDC application (members.tf), types
 # the code, and the backend records the TV and mints it a token bound to that
-# record (f1-stream ADR-0021).
+# record (tv ADR-0021).
 # Nothing is ever typed on the television, which is the whole point: a password
 # field on a TV remote is about forty D-pad presses.
 #
@@ -35,8 +35,8 @@ module "ingress_tv_pairing" {
   host         = each.key
   name         = "${each.key}-pairing"
   ingress_path = ["/pair"]
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  service_name = kubernetes_service.f1-stream.metadata[0].name
+  namespace    = kubernetes_namespace.tv.metadata[0].name
+  service_name = kubernetes_service.tv.metadata[0].name
   port         = 80
 
   # The public ingress owns the DNS record and the uptime monitor for this host;
@@ -49,14 +49,14 @@ module "ingress_tv_pairing" {
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
 
-  # No forward-auth since 2026-10-10 (f1-stream ADR-0021). Any member of
+  # No forward-auth since 2026-10-10 (tv ADR-0021). Any member of
   # "Home Users" may pair a TV now, and the domain-wide forward-auth application
   # admits Home Server Admins only, so it would refuse them here. The app is the
   # gate instead: /pair reads the Member session cookie that sign-in through the
   # f1-stream OIDC application mints (members.tf), and redirects to /login
   # without one. Paired TVs are recorded and can be unpaired, which is what
   # makes widening this safe to undo.
-  # auth = "app": the f1-stream Member session (OIDC sign-in, members.tf) gates /pair
+  # auth = "app": the tv Member session (OIDC sign-in, members.tf) gates /pair
   auth = "app"
 
   # No ingress-proof middleware any more: it guarded X-authentik-* headers, and

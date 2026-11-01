@@ -1119,7 +1119,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-tasks",
     "pg-goodreads-sync",
     "pg-paperless-ngx",
-    "pg-f1-stream",
+    "pg-tv",
     "pg-verify-probe",
     ], [
     # App databases from app_db_roles.tf. distinct() keeps the first
@@ -1144,7 +1144,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 # role's ExternalSecrets seconds after Vault rotates it
 # (docs/runbooks/db-credential-rotation.md).
 #
-#   10:00 pg-f1-stream            10:20 mysql-phpipam          10:35 pg-instagram-poster
+#   10:00 pg-tv                   10:20 mysql-phpipam          10:35 pg-instagram-poster
 #   10:02 Grafana and its sources 10:22 mysql-codimd           10:36 pg-lesson-harvester
 #         (mysql-grafana,         10:24 mysql-shlink           10:37 pg-nextcloud-todos
 #         pg-fire-planner,        10:26 pg-tripit              10:38 pg-recruiter-responder
@@ -1444,8 +1444,12 @@ resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
   rotation_window   = 3600
 }
 
-# The f1-stream site's visitor and viewing record (f1-stream ADR-0014).
-# Consumed by stacks/f1-stream through a vault-database ExternalSecret whose
+# The tv site's visitor and viewing record (tv ADR-0014). Was pg-f1-stream
+# with username f1_stream until the tv rename (f1-stream plan
+# 2026-11-01-tv-rebrand), when the database and role were renamed to tv by
+# hand (ALTER ... RENAME keeps the SCRAM password) before this role was
+# created, since Vault rotates the role's password as it creates it.
+# Consumed by stacks/tv through a vault-database ExternalSecret whose
 # Secret is MOUNTED AS A FILE and marked reloader.stakater.com/ignore, and the
 # app reads the password from that file on every new connection. So a rotation
 # never restarts the pod, which matters because the Deployment carries
@@ -1456,11 +1460,11 @@ resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
 # ESO's 15m poll if the watcher is down), while connections the pool already
 # holds keep working. Tuesday is never a race day, so that window cannot land
 # in a session.
-resource "vault_database_secret_backend_static_role" "pg_f1_stream" {
+resource "vault_database_secret_backend_static_role" "pg_tv" {
   backend           = vault_mount.database.path
   db_name           = vault_database_secret_backend_connection.postgresql.name
-  name              = "pg-f1-stream"
-  username          = "f1_stream"
+  name              = "pg-tv"
+  username          = "tv"
   rotation_schedule = "0 10 * * TUE"
   rotation_window   = 3600
 }
@@ -1875,7 +1879,7 @@ resource "vault_policy" "personal_emo" {
   EOT
 }
 
-# emo project/service secrets — tuya-bridge (Viktor-approved 2026-07-07), shared maps key (2026-10-08), f1-stream release credential (2026-10-30)
+# emo project/service secrets — tuya-bridge (Viktor-approved 2026-07-07), shared maps key (2026-10-08), tv release credential (2026-10-30)
 # ----------------------------------------------------------------------------------
 # emo authors + maintains the tuya-bridge "Саксии" (planters) HA-Sofia feature
 # (shipped in infra master bf604dbf, the emo/saksii-live-poller PR). To manage its
@@ -1905,13 +1909,14 @@ resource "vault_policy" "projects_emo" {
     path "secret/data/workstation/shared/maps" {
       capabilities = ["read"]
     }
-    # Read the f1-stream release credential for `homelab deploy f1-stream`
-    # (infra#153, 2026-10-30): a ghcr push token and a Woodpecker token, so
-    # emo can put his landed f1-stream changes live while GitHub Actions
+    # Read the tv release credential for `homelab deploy tv` (infra#153,
+    # 2026-10-30; secret/ci/f1-stream-release until the tv rename on
+    # 2026-11-01): a ghcr push token and a Woodpecker token, so
+    # emo can put his landed tv changes live while GitHub Actions
     # cannot build them (infra#152). Viktor chose a shared release command
     # over per-user credentials; both tokens are copies of Viktor's own, so
     # they act as his on ghcr and Woodpecker.
-    path "secret/data/ci/f1-stream-release" {
+    path "secret/data/ci/tv-release" {
       capabilities = ["read"]
     }
   EOT
