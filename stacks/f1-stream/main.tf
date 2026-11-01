@@ -45,7 +45,8 @@ resource "kubernetes_namespace" "f1-stream" {
 # the ReplicaSet controller and the rollout stalls, which is the stall ADR-0029
 # exists to remove. Only requests.memory moves; the other three values are the
 # tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,
-# limits.memory 16Gi, pods 20). Limits at the same peak come to about 13.7Gi.
+# limits.memory 16Gi, pods 20). Limits at the same peak come to about 13.7Gi,
+# and 14.7Gi since the Transcoder's limit went to 2560Mi (2026-11-01).
 resource "kubernetes_resource_quota_v1" "f1_stream" {
   metadata {
     name      = "f1-stream-quota"
@@ -897,8 +898,15 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
               # serving. Measure an HDR session at cutover.
               "viktorbarzin.me/gpumem" = "1850"
               # Two encoders at about 360 MB RSS each, the app, and the 256Mi
-              # memory emptyDir, which counts against this limit.
-              memory = "2Gi"
+              # memory emptyDir, which counts against this limit. Raised from
+              # 2Gi on 2026-11-01 for the channel deinterlace sessions (up to
+              # CHANNEL_DEINTERLACE_MAX_SESSIONS=2, f1-stream ADR-0029
+              # amendment) and their own 256Mi emptyDir below. The pod peaked
+              # at 706 MB working set in the 21 days to 2026-11-01; a
+              # deinterlace session's RSS on the card is not measured yet.
+              # Limits at a rollout's peak go from about 13.7Gi to 14.7Gi of
+              # the namespace's 16Gi.
+              memory = "2560Mi"
             }
           }
           # Ready once Redis has answered and ffmpeg is on PATH; 503 while
@@ -971,6 +979,13 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
             name  = "TRANSCODE_LIVE_HDR"
             value = "1"
           }
+          # Channel deinterlace sessions write their segments here, apart from
+          # the F1 ladders' /transcode: a 1080p rung fills a tmpfs several
+          # times faster (f1-stream backend/transcode.py, DEINTERLACE_WINDOW).
+          env {
+            name  = "CHANNEL_DEINTERLACE_DIR"
+            value = "/deinterlace"
+          }
           # The warm encoder reads its source through an Edge; loopback no
           # longer reaches one.
           env {
@@ -1002,6 +1017,10 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
             name       = "transcode"
             mount_path = "/transcode"
           }
+          volume_mount {
+            name       = "deinterlace"
+            mount_path = "/deinterlace"
+          }
         }
         # Encoder scratch. Six segments per rung is only a few MB, and it is
         # rewritten constantly — memory-backed keeps that churn off the shared
@@ -1009,6 +1028,17 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
         # with the pod. The size counts against the pod's memory limit.
         volume {
           name = "transcode"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "256Mi"
+          }
+        }
+        # Channel deinterlace scratch: 8 segments per rung at the 1080p and
+        # 540p rungs' peak rates, two sessions, come to about 200 MB during a
+        # takeover (f1-stream tests/test_channel_deinterlace.py). Memory-backed
+        # for the same reason as /transcode, and counted against the limit.
+        volume {
+          name = "deinterlace"
           empty_dir {
             medium     = "Memory"
             size_limit = "256Mi"
