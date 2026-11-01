@@ -22,49 +22,66 @@ resource "kubernetes_namespace" "t3code" {
 # cert material needed; the renewal pipeline updates the source and Kyverno
 # propagates within seconds.
 
-# === T3 Code over terminal-lobby sessions ====================================
-# t3.viktorbarzin.me is served by tl-t3-view, the terminal-lobby sidecar on the
-# DevVM (10.0.10.10:7690, unit tl-t3-view.service). T3's web, desktop and
-# phone apps all connect to it as their server, and every session they show is
-# a lobby session (terminal-lobby ADR-0045). It is one T3 environment for every
-# lobby user: browsers are told apart by their Authentik identity, native apps
-# by the bearer token they got from pairing in the lobby.
+# === Each user's T3 host ======================================================
+# Every lobby user's Claude sessions are hosted by their own `t3 serve`
+# (t3-serve@<user> on the DevVM, 10.0.10.10), and each user has their own host
+# in front of it: t3.viktorbarzin.me for wizard, t3-<user>.viktorbarzin.me for
+# everyone else. The hosts, ports and owners come from roster.yaml (t3_host,
+# t3_port, authentik_user); a row gets a host only when it has both fields.
 #
-# The same sidecar also answers t3view.viktorbarzin.me (stacks/terminal/
-# t3view.tf), the lobby's framed T3 view; that host keeps serving until a later
-# stage turns it into a redirect here.
+#   browsers:    Traefik (Authentik forward-auth, tl-proxy-secret) -> Service
+#                t3-dispatch -> 10.0.10.10:3780 -> that user's t3 serve
+#   native apps: the Authentik-less IngressRoute <host>-native -> Service
+#                t3-serve-<user> -> 10.0.10.10:<t3_port>
+#   /probe:      Service t3-dispatch-probe -> 10.0.10.10:3780 (t3-dispatch's echo)
 #
-# This stack owns only the K8s edge:
-#   browsers: Traefik (Authentik forward-auth, tl-proxy-secret) -> Service t3
-#             -> 10.0.10.10:7690
-#   native apps: the Authentik-less IngressRoute below -> Service t3-native
-#             -> 10.0.10.10:7690
-#   /probe: Service t3-dispatch-probe -> 10.0.10.10:3780 (t3-dispatch's echo)
-# Reach on the DevVM side is the same as for t3view: nftables in
-# playbooks/devvm.yml admits 7690 from the Traefik nodes only, and the
-# ClusterNetworkPolicy in stacks/terminal/devvm_lobby_anp.tf keeps every
-# namespace but traefik off it.
-resource "kubernetes_service" "t3code" {
+# Who may use a host: Authentik admits only its owner (a users-only entry in
+# stacks/authentik/forward-auth-apps.json, with no Home Server Admins binding,
+# since every devvm user is in that group), and t3-dispatch checks again that
+# X-authentik-username owns the requested host. Native apps pair with the
+# user's t3 serve itself and present its bearer tokens.
+#
+# Reach on the DevVM side: nftables in playbooks/devvm.yml admits 3773-3780
+# from the Traefik nodes and loopback only, and the ClusterNetworkPolicy in
+# stacks/terminal/devvm_lobby_anp.tf keeps every namespace but traefik (and
+# t3code, for t3-probe's leg on 3773) off those ports.
+#
+# Until 2026-11-01 t3.viktorbarzin.me was served by the lobby sidecar
+# tl-t3-view (10.0.10.10:7690) as one environment for every lobby user
+# (terminal-lobby ADR-0045). t3view.viktorbarzin.me (stacks/terminal/t3view.tf)
+# still points at the sidecar until the lobby release that retires it.
+locals {
+  roster_users = yamldecode(file("${path.module}/../../scripts/workstation/roster.yaml")).users
+
+  # os_user -> { label, host, port } for rows with both t3_host and t3_port.
+  t3_users = {
+    for os_user, u in local.roster_users : os_user => {
+      label = u.t3_host
+      host  = "${u.t3_host}.viktorbarzin.me"
+      port  = u.t3_port
+    } if try(u.t3_host, null) != null && try(u.t3_port, null) != null
+  }
+}
+
+resource "kubernetes_service" "t3_dispatch" {
   metadata {
-    name      = "t3"
+    name      = "t3-dispatch"
     namespace = kubernetes_namespace.t3code.metadata[0].name
-    labels = {
-      app = "t3"
-    }
+    labels    = { app = "t3-dispatch" }
   }
 
   spec {
     port {
       name        = "http"
       port        = 80
-      target_port = 7690
+      target_port = 3780
     }
   }
 }
 
-resource "kubernetes_endpoints" "t3code" {
+resource "kubernetes_endpoints" "t3_dispatch" {
   metadata {
-    name      = "t3"
+    name      = "t3-dispatch"
     namespace = kubernetes_namespace.t3code.metadata[0].name
   }
 
@@ -74,94 +91,94 @@ resource "kubernetes_endpoints" "t3code" {
     }
     port {
       name = "http"
-      port = 7690
+      port = 3780
     }
   }
 }
 
+moved {
+  from = module.ingress
+  to   = module.ingress["wizard"]
+}
+
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  for_each        = local.t3_users
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.t3code.metadata[0].name
-  name            = "t3"
-  service_name    = kubernetes_service.t3code.metadata[0].name
+  name            = each.value.label # host = <label>.viktorbarzin.me
+  service_name    = kubernetes_service.t3_dispatch.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # Authentik forward-auth gates the browser route and injects
-  # X-authentik-username. tl-t3-view asks tmux-api /whoami for that user on
-  # every request, and verifies X-TL-Proxy-Secret through tmux-api as well, so
-  # tl-proxy-secret (stacks/terminal) goes on this route like on t3view. The
-  # WebSocket at /ws carries the session cookie and goes through forward-auth
-  # on the upgrade.
+  # X-authentik-username; the host's application admits only its owner
+  # (stacks/authentik/forward-auth-apps.json, users-only entry), so
+  # allowed_groups stays at the default. t3-dispatch refuses any request
+  # without the lobby proxy secret, which tl-proxy-secret (stacks/terminal)
+  # stamps here. The WebSocket at /ws carries the session cookie and goes
+  # through forward-auth on the upgrade.
   auth = "required"
-  # ADR-0023: only T3 Users reach t3 (non-admin T3 users need this row); admins via bypass.
-  allowed_groups = ["T3 Users"]
   extra_middlewares = [
     "terminal-tl-proxy-secret@kubernetescrd",
   ]
   # A cold load of T3's client fetches 286 files, 155 of them in the first
   # second (measured 2026-10-12, see stacks/terminal/t3view.tf), and the
   # default per-client limit (10/s, burst 50) would answer most of them 429.
-  # The route is behind Authentik and T3 Users.
+  # The route is behind Authentik and admits one user.
   skip_default_rate_limit = true
   anti_ai_scraping        = false # behind Authentik
-  # Framing is narrowed to the lobby, which shows this client as its T3 view.
-  # The factory's default (frame-ancestors *.viktorbarzin.me) would let any
-  # page on the site frame a signed-in T3 client, including pages other users
-  # publish on pages.viktorbarzin.me.
+  # Framing stays narrowed to the lobby. The factory's default (frame-ancestors
+  # *.viktorbarzin.me) would let any page on the site frame a signed-in T3
+  # client, including pages other users publish on pages.viktorbarzin.me.
   custom_content_security_policy = "frame-ancestors https://terminal.viktorbarzin.me"
-  extra_annotations = {
+  # One tile for the app: wizard's host carries it.
+  homepage_enabled = each.key == "wizard"
+  extra_annotations = each.key == "wizard" ? {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "T3 Code"
-    "gethomepage.dev/description"  = "T3 Code over your terminal-lobby sessions"
+    "gethomepage.dev/description"  = "T3 Code, the host of your Claude sessions"
     "gethomepage.dev/icon"         = "mdi-robot"
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
-  }
+  } : {}
 }
 
 # === Native-client (desktop and phone app) access ============================
 # T3's desktop and phone apps are bearer-token clients: they cannot complete
 # Authentik's browser SSO redirect, so on the browser route every request they
-# make 302s to the login page. The routes below skip Authentik for the requests
-# only a native client makes, and send them to the same tl-t3-view.
+# make 302s to the login page. The routes below skip Authentik for the
+# requests only a native client makes, and send them straight to the host
+# owner's t3 serve, which checks its own bearer tokens, pairing codes, WebSocket
+# tickets and signed asset tokens.
 #
-# Native access is open to every lobby user. tl-t3-view is one environment for
-# all of them: it answers the credential-less descriptor fetch
-# (/.well-known/t3/environment) with one fixed environment id, and tells users
-# apart by the bearer token it checks against tmux-api on every request. Tokens
-# come from a pairing code the lobby shows ("Connect T3") and are listed and
-# revocable there (terminal-lobby ADR-0045).
-#
-# SECURITY: these routes skip Authentik, so the sidecar's bearer and pairing
-# checks are the only gate on them.
-#   * They do NOT carry tl-proxy-secret. Without Authentik in front, nothing
-#     overwrites X-authentik-* headers, so a client could send any username it
-#     liked. The sidecar trusts an identity header only when the proxy secret
-#     comes with it, so stamping the secret here would turn a forged header
-#     into a trusted one. Without the secret, an identity header on these
-#     routes is worthless, and the bearer path does not need one.
-#   * Anyone can reach the sidecar's token check by attaching an
+# SECURITY: these routes skip Authentik, so t3 serve's own checks are the only
+# gate on them.
+#   * They do NOT carry tl-proxy-secret. t3 serve does not read identity
+#     headers, and the secret must never reach a user's own process: with it,
+#     that user could speak to the lobby services as anyone.
+#   * Anyone can reach t3 serve's token check by attaching an
 #     `Authorization: Bearer` header; an invalid token gets a 401. The default
 #     rate-limit middleware stays attached to slow credential guessing.
-resource "kubernetes_service" "t3_native" {
+resource "kubernetes_service" "t3_serve" {
+  for_each = local.t3_users
   metadata {
-    name      = "t3-native"
+    name      = "t3-serve-${each.key}"
     namespace = kubernetes_namespace.t3code.metadata[0].name
-    labels    = { app = "t3" }
+    labels    = { app = "t3-serve", user = each.key }
   }
 
   spec {
     port {
       name        = "http"
       port        = 80
-      target_port = 7690
+      target_port = each.value.port
     }
   }
 }
 
-resource "kubernetes_endpoints" "t3_native" {
+resource "kubernetes_endpoints" "t3_serve" {
+  for_each = local.t3_users
   metadata {
-    name      = "t3-native"
+    name      = "t3-serve-${each.key}"
     namespace = kubernetes_namespace.t3code.metadata[0].name
   }
 
@@ -171,7 +188,7 @@ resource "kubernetes_endpoints" "t3_native" {
     }
     port {
       name = "http"
-      port = 7690
+      port = each.value.port
     }
   }
 }
@@ -179,8 +196,8 @@ resource "kubernetes_endpoints" "t3_native" {
 # Browser traffic is separated from native-client traffic two ways, and it
 # needs both. The T3 web client authenticates same-origin with cookies and
 # sends no Authorization header (apps/web/.../httpLayer.ts: bearer only when
-# `window.desktopBridge` exists), so none of these rules can capture another
-# user's browser session.
+# `window.desktopBridge` exists), so none of these rules can capture a
+# browser session.
 #
 # The first discriminator is the Authentik session cookie (`authentik_proxy_
 # <hash>`, scoped to viktorbarzin.me), which a browser always carries here.
@@ -202,82 +219,85 @@ resource "kubernetes_endpoints" "t3_native" {
 # set an Authorization header.
 #
 # Priority sits above the catch-all `Host(...)` Ingress that module.ingress
-# renders, so these four win; everything else still goes through Authentik and
-# tl-proxy-secret to the same sidecar.
+# renders, so these win; everything else goes through Authentik and
+# tl-proxy-secret to t3-dispatch.
+moved {
+  from = kubernetes_manifest.t3_native_ingressroute
+  to   = kubernetes_manifest.t3_native_ingressroute["wizard"]
+}
+
 resource "kubernetes_manifest" "t3_native_ingressroute" {
+  for_each = local.t3_users
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "IngressRoute"
     metadata = {
-      name      = "t3-native"
+      name      = "${each.value.label}-native" # t3-native for wizard
       namespace = kubernetes_namespace.t3code.metadata[0].name
     }
     spec = {
       entryPoints = ["websecure"]
       routes = [
-        # 1. Every authenticated API call the app makes after pairing.
-        {
+        for r in [
+          # 1. Every authenticated API call the app makes after pairing.
+          {
+            match       = "HeaderRegexp(`Authorization`, `(?i)^Bearer `)"
+            middlewares = local.t3_native_middlewares
+          },
+          # 2. The two pre-pairing endpoints, which carry no credential at
+          #    all: the descriptor fetch and the pairing-code -> bearer
+          #    exchange.
+          {
+            match       = "(Path(`/.well-known/t3/environment`) || Path(`/oauth/token`)) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
+            middlewares = local.t3_native_middlewares
+          },
+          # 3. The WebSocket. Its ticket rides the query string, not a header
+          #    (authorization/remote.ts:184-190), so rule 1 cannot catch it.
+          #    The ticket is ALSO the discriminator here, and a better one
+          #    than either signal above: the browser's t3 WebSocket is a bare
+          #    `GET /ws` authenticated by the session cookie, while a native
+          #    client always carries `?wsTicket=<signed, ~5min ticket>`.
+          #    Neither signal from rules 1-2 works for this request: the
+          #    app's WS upgrade sends NO User-Agent (logged as "-" 2026-08-13)
+          #    while still carrying the poisoned Authentik cookie.
+          {
+            match       = "Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`)"
+            middlewares = local.t3_native_middlewares
+          },
+          # 4. CORS preflights. T3 desktop's renderer preflights its bearer
+          #    calls, and a preflight never carries the Authorization header,
+          #    so rule 1 cannot catch it; on the browser route forward-auth
+          #    answers it with a 302 to Authentik and the real call is never
+          #    sent. A preflight carries no credential and reaches only t3
+          #    serve's CORS answer. Same-origin browser requests do not
+          #    preflight.
+          {
+            match       = "Method(`OPTIONS`)"
+            middlewares = local.t3_native_middlewares
+          },
+          # 5-6. Assets and attachment uploads. The app fetches these with a
+          #    signed token in the URL instead of a bearer header, so rule 1
+          #    cannot catch them. A signed token cannot be guessed, so these
+          #    skip the rate limit: a thread with many images would otherwise
+          #    load into 429s.
+          {
+            match       = "PathPrefix(`/api/assets/`)"
+            middlewares = local.t3_signed_url_middlewares
+          },
+          {
+            match       = "PathPrefix(`/api/attachments/upload/`)"
+            middlewares = local.t3_signed_url_middlewares
+          },
+          ] : {
           kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && HeaderRegexp(`Authorization`, `(?i)^Bearer `)"
+          match       = "Host(`${each.value.host}`) && ${r.match}"
           priority    = 1000
-          middlewares = local.t3_native_middlewares
+          middlewares = r.middlewares
           services = [{
-            name = kubernetes_service.t3_native.metadata[0].name
+            name = kubernetes_service.t3_serve[each.key].metadata[0].name
             port = 80
           }]
-        },
-        # 2. The two pre-pairing endpoints, which carry no credential at all:
-        #    the descriptor fetch and the pairing-code -> bearer exchange.
-        {
-          kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && (Path(`/.well-known/t3/environment`) || Path(`/oauth/token`)) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
-          priority    = 1000
-          middlewares = local.t3_native_middlewares
-          services = [{
-            name = kubernetes_service.t3_native.metadata[0].name
-            port = 80
-          }]
-        },
-        # 3. The WebSocket. Its ticket rides the query string, not a header
-        #    (authorization/remote.ts:184-190), so rule 1 cannot catch it.
-        #    The ticket is ALSO the discriminator here, and a better one than
-        #    either signal above: the browser's t3 WebSocket is a bare
-        #    `GET /ws` authenticated by the session cookie, while a native
-        #    client always carries `?wsTicket=<signed, ~5min ticket>` — so
-        #    presence of the ticket separates the two on its own, and it is a
-        #    real credential rather than a spoofable header.
-        #    Neither signal from rules 1-2 works for this request: the app's
-        #    WS upgrade sends NO User-Agent (logged as "-" 2026-08-13) while
-        #    still carrying the poisoned Authentik cookie, so requiring either
-        #    of them sent every upgrade to Authentik, which 302s it and kills
-        #    the connection.
-        {
-          kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`)"
-          priority    = 1000
-          middlewares = local.t3_native_middlewares
-          services = [{
-            name = kubernetes_service.t3_native.metadata[0].name
-            port = 80
-          }]
-        },
-        # 4. CORS preflights. T3 desktop's renderer preflights its bearer
-        #    calls, and a preflight never carries the Authorization header, so
-        #    rule 1 cannot catch it; on the browser route forward-auth answers
-        #    it with a 302 to Authentik and the real call is never sent.
-        #    A preflight carries no credential and reaches only the sidecar's
-        #    CORS answer, so routing every OPTIONS here exposes nothing new.
-        #    Same-origin browser requests do not preflight.
-        {
-          kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && Method(`OPTIONS`)"
-          priority    = 1000
-          middlewares = local.t3_native_middlewares
-          services = [{
-            name = kubernetes_service.t3_native.metadata[0].name
-            port = 80
-          }]
-        },
+        }
       ]
       tls = {
         secretName = var.tls_secret_name
@@ -292,22 +312,25 @@ locals {
   # tl-proxy-secret (see the SECURITY note above), and no anti-AI PoW/UA
   # filtering (it would block a non-browser client, same reason
   # module.ingress_probe sets anti_ai_scraping = false). error-pages only
-  # intercepts 500-504, so the sidecar's JSON 4xx bodies reach the app intact.
+  # intercepts 500-504, so t3 serve's JSON 4xx bodies reach the app intact.
   t3_native_middlewares = [
     { name = "retry", namespace = "traefik" },
     { name = "error-pages", namespace = "traefik" },
     { name = "rate-limit", namespace = "traefik" },
   ]
+  t3_signed_url_middlewares = [
+    { name = "retry", namespace = "traefik" },
+    { name = "error-pages", namespace = "traefik" },
+  ]
 }
 
 # === Drop-attribution probe surface ==========================================
 # /probe/* on the t3 host is t3-dispatch's unauthenticated echo surface (see
-# scripts/t3-dispatch/probe.go) for the t3-probe below. t3-dispatch no longer
-# serves t3.viktorbarzin.me itself, but it keeps running for this echo:
-# EgressOnlyDivergence (stacks/monitoring) compares the t3-probe legs that
-# reach it through Cloudflare and through Traefik only. So /probe has its own
-# Service, pointing at t3-dispatch, independent of Service t3. Guarded against
-# Authentik re-walling by `authentik_walloff_targets` in stacks/monitoring.
+# scripts/t3-dispatch/probe.go) for the t3-probe below. EgressOnlyDivergence
+# (stacks/monitoring) compares the t3-probe legs that reach it through
+# Cloudflare and through Traefik only. t3-dispatch answers /probe without the
+# proxy secret and without checking the host. Guarded against Authentik
+# re-walling by `authentik_walloff_targets` in stacks/monitoring.
 resource "kubernetes_service" "t3_dispatch_probe" {
   metadata {
     name      = "t3-dispatch-probe"
