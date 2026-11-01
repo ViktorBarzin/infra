@@ -26,7 +26,6 @@ Widget-capable matches (candidate): **27**
 | `ebook2audiobook` | `ebook2audiobook` | `https://ebook2audiobook.viktorbarzin.me` | `link-only` |
 | `echo` | `echo` | `https://echo.viktorbarzin.me` | `link-only` |
 | `excalidraw` | `draw` | `https://draw.viktorbarzin.me` | `link-only` |
-| `f1-stream` | `tv` | `https://tv.viktorbarzin.me` | `link-only` |
 | `forgejo` | `forgejo` | `https://forgejo.viktorbarzin.me` | `link-only` |
 | `freedify` | `music-emo` | `https://music-emo.viktorbarzin.me` | `link-only` |
 | `freedify` | `music-viktor` | `https://music-viktor.viktorbarzin.me` | `link-only` |
@@ -101,6 +100,7 @@ Widget-capable matches (candidate): **27**
 | `traefik` | `traefik` | `https://traefik.viktorbarzin.me` | `traefik` |
 | `travel-blog` | `travel` | `https://travel.viktorbarzin.me` | `link-only` |
 | `tuya-bridge` | `tuya-bridge` | `https://tuya-bridge.viktorbarzin.me` | `link-only` |
+| `tv` | `tv` | `https://tv.viktorbarzin.me` | `link-only` |
 | `uptime-kuma` | `uptime` | `https://uptime.viktorbarzin.me` | `uptime-kuma` |
 | `url` | `shlink` | `https://shlink.viktorbarzin.me` | `shlink` |
 | `url` | `url` | `https://url.viktorbarzin.me` | `link-only` |

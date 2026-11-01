@@ -76,7 +76,7 @@ and linkwarden was unreachable for 13s while Reloader restarted it.
 
 What remains: a Postgres app is down for its own restart time after rotation
 (11-96s measured, paperless about 100s). Apps that read the password from a
-mounted file on each new connection (f1-stream, ADR-0001 apps) skip the restart.
+mounted file on each new connection (tv, ADR-0001 apps) skip the restart.
 
 ## Adding a role
 

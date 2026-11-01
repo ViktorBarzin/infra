@@ -256,8 +256,8 @@ from start to finish, so it also counts:
 - **Streams.** `terminal-session-events` (SSE, 220-260s per response),
   `woodpecker` (`/api/stream/events`) and `paperless-mcp` (`GET /mcp`, up to
   1,001s) keep one response open by design, and are excluded.
-- **Work that is long by nature.** `loki` (log queries), `f1-stream` (replay
-  chunks; `F1IngressStalled` is its latency signal) and the error-pages
+- **Work that is long by nature.** `loki` (log queries), `tv` (replay
+  chunks; `TvIngressStalled` is its latency signal) and the error-pages
   service, whose latency is other upstreams' timeouts, are excluded.
 
 Backtested over 14 days, the warning went from 46 episodes to 16 and the
@@ -276,7 +276,7 @@ is not only Slack noise.
 at `> 0`, and the comment justifying that sensitivity said the only legitimate
 path through Anubis is a challenge or a redirect to the upstream. That was true
 of the seven instances in place when it was written. It stopped being true once
-Anubis was put in front of `f1-stream`, which proxies third-party stream
+Anubis was put in front of `tv` (then `f1-stream`), which proxies third-party stream
 origins and correctly answers 502 when one of them refuses: **88 such 502s in
 24h**, each firing a critical that `keep_firing_for: 1h` then held open, and
 each holding the kured reboot gate closed with it.
@@ -285,7 +285,7 @@ The status code separated the two populations cleanly. Over 7 days
 `f1-stream-anubis` carried **0** 500s and **876** 502s, while every other
 instance was the reverse (`forgejo` 39/6, `blog` 21/0, `wrongmove` 2/0,
 `homepage` 1/0). The rule now reads `code="500"`, which keeps the
-challenge-store coverage it exists for, and `F1RelayUpstreamFailing` watches
+challenge-store coverage it exists for, and `TvRelayUpstreamFailing` watches
 the 502/504 rate on that service at 0.3 req/s for 15m, set from its own 7-day
 distribution (p50 0, p99 0.033, max 0.833). What generalises: **an alert on a
 middleware is an alert on everything that middleware fronts**, so adding a

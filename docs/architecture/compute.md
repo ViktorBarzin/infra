@@ -168,7 +168,7 @@ the module, and the driver container recompiles it (about 21 minutes on
 node1). Two settings keep that eviction from failing, both added 2026-10-10
 after driver-manager v0.12.1 refused to proceed:
 `driver.manager.env DRAIN_DELETE_EMPTYDIR_DATA=true` in `values.yaml`
-(frigate, f1-stream and stremio use emptyDir), and a
+(frigate, tv and stremio use emptyDir), and a
 `nvidia.com/gpu.deploy.client: "true"` nodeSelector on any DaemonSet that
 requests `nvidia.com/gpu` (today only `gpu-pod-exporter`), so driver-manager
 moves it aside instead of counting it as a pod it cannot evict.

@@ -22,11 +22,11 @@ serves two distinct populations:
    fresh context: it needs the chess.com session Viktor logged in by hand
    via the live view, and attaching to the master profile lets session-cookie
    rotation persist instead of being discarded with a pool pod. It holds
-   the browser for ~20s once a day. The
-   `stacks/f1-stream/files/backend/playback_verifier.py` +
-   `chrome_browser.py` tree is a vestigial design — the deployed
-   f1-stream image (built from `github.com/ViktorBarzin/f1-stream`)
-   does not use this code path.
+   the browser for ~20s once a day. The `playback_verifier.py` +
+   `chrome_browser.py` tree that once sat under
+   `stacks/f1-stream/files/backend/` was a vestigial design — the deployed
+   tv image (built from `github.com/ViktorBarzin/tv`) does not use this
+   code path.
 2. **External dev-box Claude Code sessions** — pull an hourly snapshot
    of cookies + localStorage from `chrome.viktorbarzin.me/api/snapshot`
    (bearer-gated) and seed local `@playwright/mcp` instances in
@@ -36,7 +36,7 @@ serves two distinct populations:
 
 ## Why a separate stack
 
-In-process Chromium inside `f1-stream`:
+In-process Chromium inside `tv`:
 
 - Runs **headless** by default (no `Xvfb`/`DISPLAY`).
 - Has the `HeadlessChromium/...` UA suffix and `navigator.webdriver === true`.
@@ -64,7 +64,7 @@ In-process Chromium inside `f1-stream`:
                                             │
             ┌───────────────────────────────┼───────────────────────────────┐
             │ caller pod                    │                  chrome-service pod
-            │  (e.g. f1-stream)             │                  (single replica)
+            │  (e.g. tv)                    │                  (single replica)
             │                               │
             │  CHROME_CDP_URL ──────────────┘
             │
@@ -152,7 +152,8 @@ connected CDP client only knows the origins of pages open at that moment
 
 `files/broker/screenshot.py`, the FleetView thumbnail, moved to raw CDP on
 2026-09-23. It had the same exposure against POOL workers, which is where
-orphaned service workers were first documented (`f1-stream/backend/cdp.py`).
+orphaned service workers were first documented (the tv repo's `tv/cdp.py`, then f1-stream's
+`backend/cdp.py`).
 It lists targets, skips any without a `browserContextId`, attaches to one page
 and calls `Page.captureScreenshot`, which needs no domain enabled on the
 caller's page. It prefers a page in a context the caller created over the
@@ -226,7 +227,7 @@ browser download — that caller runs on a plain `python:3.12-slim` with
   `vault kv put secret/chrome-service api_bearer_token=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')`.
 - ESO syncs into namespace-local Secret `chrome-service-secrets`. The
   `snapshot-server` sidecar reads it via `secret_key_ref`.
-- f1-stream still imports the secret (via `chrome-service-client-secrets`)
+- tv still imports the secret (via `chrome-service-client-secrets`)
   for parity, but the CDP endpoint no longer requires it for connection —
   NetworkPolicy is the gate.
 - Reloader (`reloader.stakater.com/auto = "true"`) cascades token rotation
@@ -240,7 +241,8 @@ browser download — that caller runs on a plain `python:3.12-slim` with
 - **`kubernetes_network_policy_v1.ws_ingress`** — three ingress rules:
   - **TCP/9222** (Chromium CDP): only namespaces labelled
     `chrome-service.viktorbarzin.me/client = "true"` (plus an explicit
-    fallback for `f1-stream` by `kubernetes.io/metadata.name`, plus
+    fallback for `tv`, and `f1-stream` until that namespace is removed,
+    by `kubernetes.io/metadata.name`, plus
     `chrome-service`'s own namespace for the harvester CronJob).
   - **TCP/8080** (neko UI + WS signaling): only the `traefik` namespace.
   - **TCP/8088** (snapshot-server): only the `traefik` namespace
@@ -570,9 +572,9 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   `/json/list` through the release, and the next caller's
   `connectOverCDP` dies on that same target **after its own sweep has
   logged `cleared`**. So neither the client sweep nor the release reset
-  removes this class, and the `cleared` line is not evidence. f1-stream
-  had documented exactly this on 2026-09-06 in `backend/cdp.py`
-  (`Target.closeTarget`, `ServiceWorker.unregister` and
+  removes this class, and the `cleared` line is not evidence. tv (then
+  f1-stream) had documented exactly this on 2026-09-06 in `backend/cdp.py`,
+  now `tv/cdp.py` (`Target.closeTarget`, `ServiceWorker.unregister` and
   `Storage.clearDataForOrigin` all return success while the target
   stays), twelve days before infra #98 was filed against it.
   `reset_browser` now returns `(closed, stuck)` and a non-zero `stuck`
@@ -604,8 +606,8 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   label in place, so the pod returns to the pool warm. **Reclaim is
   opt-in by construction**: only a session that has sent at least one
   heartbeat is eligible (`should_reclaim_session`), so callers that
-  speak to the broker directly and never heartbeat, such as f1-stream's
-  `backend/chrome_fleet.py` lease, keep the previous behaviour, where
+  speak to the broker directly and never heartbeat, such as tv's
+  `tv/chrome_fleet.py` lease, keep the previous behaviour, where
   the reaper deletes the pod at the 60m `SESSION_DEADLINE_SECONDS` and
   the Deployment recreates a clean standby. That deadline stays as the
   backstop for those callers and for a pod too broken to reset.

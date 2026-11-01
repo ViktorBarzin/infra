@@ -1,7 +1,7 @@
 ---
 name: file-issue
 description: |
-  File an issue on Forgejo viktor/infra (or viktor/f1-stream for the f1 app) to report something broken or request a change.
+  File an issue on Forgejo viktor/infra (or viktor/tv for the tv app) to report something broken or request a change.
   Use when: (1) the user says "file an issue", "report a problem", "something is broken",
   (2) the user says "request a feature", "I want X deployed", "can we add X",
   (3) the user says "/file-issue" or "/report",
@@ -21,12 +21,12 @@ Not GitHub: the GitHub mirror's issue automation was retired on 2026-08-25, and
 `origin` in the infra clone points at Forgejo, so `fixes #N` there refers to the
 issue you filed.
 
-## f1-stream app problems go to viktor/f1-stream
+## tv app problems go to viktor/tv
 
-A problem or idea for the f1 app itself (the TV app, the site at
+A problem or idea for the tv app itself (the TV app, the site at
 `tv.viktorbarzin.me`, formerly `f1.viktorbarzin.me`, its API, players,
 replays or channels) belongs on
-**Forgejo `viktor/f1-stream`**, not here. Three things differ there:
+**Forgejo `viktor/tv`** (formerly `viktor/f1-stream`), not here. Three things differ there:
 
 - **The bar.** Every issue meets `docs/issue-bar.md` in that repo: what
   happened and where (client, version, device, screen, time in UTC), evidence
@@ -36,7 +36,7 @@ replays or channels) belongs on
   Nothing is dispatched until Viktor adds `approved`; you never add it
   yourself. A plain opinion is `feedback`, filed closed.
 - **The route.** Same API and token as below, with
-  `$FJ/repos/viktor/f1-stream/...` in place of `viktor/infra`.
+  `$FJ/repos/viktor/tv/...` in place of `viktor/infra`.
 
 One exception stays here: a dead or rotated upstream source (the `f1-source`
 guard's issues) is filed on `viktor/infra`, where the source guard and its

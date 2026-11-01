@@ -73,7 +73,7 @@ resource "kubernetes_manifest" "external_secret" {
           # secret/ci/global/forgejo_repo_token is viktor's git PAT (2026-07-25).
           # SECURITY: the shared claude-agent pod (all agents) can now clone/push
           # + open PRs on any Forgejo repo this PAT reaches — f1-source-fixer needs
-          # it to land f1-stream link fixes on the canonical Forgejo master.
+          # it to land tv link fixes on the canonical Forgejo master.
           secretKey = "FORGEJO_TOKEN"
           remoteRef = {
             key      = "ci/global"
@@ -131,10 +131,11 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
-          # Bearer token for POST /v1/intake/f1-report, the f1-stream User
-          # report intake (f1-stream ADR-0038). Its own token so f1-stream
-          # never holds the /execute one; f1-stream's copy is
-          # secret/f1-stream reports_intake_token, the same value.
+          # Bearer token for POST /v1/intake/f1-report, the tv User report
+          # intake (tv ADR-0038; the route path is defined in the
+          # claude-agent-service code). Its own token so tv never holds the
+          # /execute one; tv's copy is secret/tv reports_intake_token, the
+          # same value.
           secretKey = "INTAKE_API_TOKEN"
           remoteRef = {
             key      = "claude-agent-service"
@@ -667,7 +668,7 @@ resource "kubernetes_deployment" "claude_agent" {
           }
           env {
             name  = "AFK_ALLOWLIST"
-            value = "infra,f1-stream"
+            value = "infra,tv"
           }
           env {
             name  = "AFK_READY_LABEL"
@@ -1157,7 +1158,7 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
               }
               env {
                 name  = "AFK_ALLOWLIST"
-                value = "infra,f1-stream"
+                value = "infra,tv"
               }
               env {
                 name  = "AFK_READY_LABEL"

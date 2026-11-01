@@ -98,7 +98,7 @@ can't reach Forgejo's public hairpin.
 | Visibility | Packages | Pull mechanism |
 |------------|----------|----------------|
 | **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, android-emulator, wine-app | Anonymous |
-| **Private** | f1-stream, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
+| **Private** | tv, tv-android, tv-tracker, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
 
 Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
 kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit
@@ -114,7 +114,7 @@ Kyverno then re-syncs to the allowlisted namespaces).
 
 ### Migrated apps (issues #13–#27)
 
-f1-stream, job-hunter, tuya_bridge, beadboard, nextcloud-todos,
+tv (then f1-stream), job-hunter, tuya_bridge, beadboard, nextcloud-todos,
 claude-agent-service, claude-memory-mcp, kms-website, Freedify,
 instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
 fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
@@ -506,7 +506,7 @@ month on the account's GitHub Free plan, reset on the 1st. GitHub rounds every
 job up to a whole minute, so a six-second job costs a full minute, and macOS
 minutes count ten times.
 
-September 2026 reached 90% of the allowance by the 24th. f1-stream used 1,289
+September 2026 reached 90% of the allowance by the 24th. tv (then f1-stream) used 1,289
 minutes: 360 from one test job that hung until GitHub's six-hour default
 timeout, and about 330 from one-minute jobs doing a few seconds of work.
 tripit used about 340. The template changed in response on 2026-09-24: every

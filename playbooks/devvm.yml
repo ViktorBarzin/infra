@@ -931,7 +931,7 @@
         state: absent
       tags: [presence]
 
-    # Poetry at the version f1-stream's poetry.lock and its CI pin (2.1.3). The
+    # Poetry at the version tv's poetry.lock and its CI pin (2.1.3). The
     # apt python3-poetry is 1.8.2, which cannot read a lock written by 2.x, and
     # a per-user install in ~/.local/bin is not on PATH inside an agent's shell
     # (emo's Claude shell snapshot carries the system PATH only, seen
@@ -951,11 +951,13 @@
         force: true
       tags: [poetry]
 
-    # The f1-stream APK build lock, shared by every user. f1tv-apk-build.conf
-    # says why it is root's and 0666; f1-stream android/scripts/build-apk.sh
-    # takes it when it exists. /run is a tmpfs, so the rule recreates it at
-    # every boot and the task below creates it now.
-    - name: Install the f1-stream APK build lock rule
+    # The APK build lock of the tv app under its old f1-stream name, shared by
+    # every user. Kept beside the tv locks below until every build script and
+    # the release command use the new names; then these six tasks and both
+    # f1 conf files go. f1tv-apk-build.conf says why it is root's and 0666.
+    # /run is a tmpfs, so the rule recreates it at every boot and the task
+    # below creates it now.
+    - name: Install the old f1-stream APK build lock rule
       ansible.builtin.copy:
         src: files/devvm/f1tv-apk-build.conf
         dest: /etc/tmpfiles.d/f1tv-apk-build.conf
@@ -964,14 +966,14 @@
         group: root
       tags: [f1tv-lock]
 
-    - name: Check the f1-stream APK build lock
+    - name: Check the old f1-stream APK build lock
       ansible.builtin.stat:
         path: /run/lock/f1tv-apk-build.lock
         follow: false
       register: devvm_f1tv_lock
       tags: [f1tv-lock]
 
-    - name: Create the f1-stream APK build lock now rather than at the next boot
+    - name: Create the old f1-stream APK build lock now rather than at the next boot
       ansible.builtin.command:
         cmd: systemd-tmpfiles --create /etc/tmpfiles.d/f1tv-apk-build.conf
       when: >-
@@ -981,10 +983,11 @@
       changed_when: true
       tags: [f1tv-lock]
 
-    # The f1-stream release lock: `homelab deploy f1-stream` holds it for a
-    # whole release, so wizard's and emo's releases take turns.
-    # f1-stream-release.conf says why it is root's and 0666.
-    - name: Install the f1-stream release lock rule
+    # The release lock under its old f1-stream name: `homelab deploy` held it
+    # for a whole release before the rename to tv, so wizard's and emo's
+    # releases take turns. Kept until the cutover finishes, like the lock
+    # above. f1-stream-release.conf says why it is root's and 0666.
+    - name: Install the old f1-stream release lock rule
       ansible.builtin.copy:
         src: files/devvm/f1-stream-release.conf
         dest: /etc/tmpfiles.d/f1-stream-release.conf
@@ -993,14 +996,14 @@
         group: root
       tags: [f1tv-lock]
 
-    - name: Check the f1-stream release lock
+    - name: Check the old f1-stream release lock
       ansible.builtin.stat:
         path: /run/lock/f1-stream-release.lock
         follow: false
       register: devvm_f1_release_lock
       tags: [f1tv-lock]
 
-    - name: Create the f1-stream release lock now rather than at the next boot
+    - name: Create the old f1-stream release lock now rather than at the next boot
       ansible.builtin.command:
         cmd: systemd-tmpfiles --create /etc/tmpfiles.d/f1-stream-release.conf
       when: >-
@@ -1009,6 +1012,46 @@
         or devvm_f1_release_lock.stat.mode != '0666'
       changed_when: true
       tags: [f1tv-lock]
+
+    # The tv app's two locks: /run/lock/tv-apk-build.lock, which
+    # android/scripts/build-apk.sh in the tv repo takes, and
+    # /run/lock/tv-release.lock, which `homelab deploy tv` holds for a whole
+    # release. tv-locks.conf says why they are root's and 0666.
+    - name: Install the tv lock rule
+      ansible.builtin.copy:
+        src: files/devvm/tv-locks.conf
+        dest: /etc/tmpfiles.d/tv-locks.conf
+        mode: "0644"
+        owner: root
+        group: root
+      tags: [f1tv-lock, tv-lock]
+
+    - name: Check the tv APK build lock
+      ansible.builtin.stat:
+        path: /run/lock/tv-apk-build.lock
+        follow: false
+      register: devvm_tv_apk_lock
+      tags: [f1tv-lock, tv-lock]
+
+    - name: Check the tv release lock
+      ansible.builtin.stat:
+        path: /run/lock/tv-release.lock
+        follow: false
+      register: devvm_tv_release_lock
+      tags: [f1tv-lock, tv-lock]
+
+    - name: Create the tv locks now rather than at the next boot
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/tv-locks.conf
+      when: >-
+        not (devvm_tv_apk_lock.stat.isreg | default(false))
+        or devvm_tv_apk_lock.stat.uid != 0
+        or devvm_tv_apk_lock.stat.mode != '0666'
+        or not (devvm_tv_release_lock.stat.isreg | default(false))
+        or devvm_tv_release_lock.stat.uid != 0
+        or devvm_tv_release_lock.stat.mode != '0666'
+      changed_when: true
+      tags: [f1tv-lock, tv-lock]
 
     # ---- 5) /etc/skel for new accounts --------------------------------------
     # File by file, not the whole skel/ directory: the repo keeps the tmux

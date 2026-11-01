@@ -247,7 +247,7 @@ Levers (in order of leverage-per-effort):
 1. **Migrate non-DB workloads off block** to NFS. Pre-flight every candidate
    for embedded DBs (SQLite/LevelDB/RocksDB/H2/BoltDB) — they corrupt on NFS
    due to lock semantics. Wave 1 (2026-05-26) moved 5 services
-   (excalidraw, resume, whisper, onlyoffice, f1-stream). Wave 2 (2026-06-05)
+   (excalidraw, resume, whisper, onlyoffice, f1-stream (now tv)). Wave 2 (2026-06-05)
    moved 5 more (tandoor, speedtest, hackmd, changedetection, send — see
    History "2026-06-05"). Pre-flighted-and-rejected (stay on block): plotting-book
    (SQLite+WAL), stirling-pdf (H2), navidrome/ntfy/uptime-kuma/vaultwarden/
@@ -352,7 +352,7 @@ The Proxmox host runs with `fs.leases-enable = 0` (`/etc/sysctl.d/90-nfsd-no-del
 
 nfsd skips the recall when the change that conflicts with a delegation comes from the client that holds it. Each k8s node is one NFSv4 client, but a node often holds several superblocks of the same export: a pod that mounts a PVC read-only and a pod that mounts it read-write get separate ones. A change made through one superblock does not reach another that holds a delegation, so readers on that node keep their cached view until the delegation is returned.
 
-This showed up twice in f1-stream: on 2026-10-12 as replaced files served from read delegations on k8s-node5, and in infra#159 as `releases/` listings on k8s-node2 that stayed stale for 15-67 minutes after a TV publish ran on the same node. The second case needed directory delegations, which arrived with the 7.0 kernels on both the server and the nodes. The probe that confirmed it: the node2 Edge took a directory delegation on a test directory, a read-write pod on node2 created and removed entries, and the Edge kept listing the old entries (a removed file as `-?????????`) until the delegation went away; the same change made from node5 showed up on node2 within 1 s.
+This showed up twice in tv (then f1-stream): on 2026-10-12 as replaced files served from read delegations on k8s-node5, and in infra#159 as `releases/` listings on k8s-node2 that stayed stale for 15-67 minutes after a TV publish ran on the same node. The second case needed directory delegations, which arrived with the 7.0 kernels on both the server and the nodes. The probe that confirmed it: the node2 Edge took a directory delegation on a test directory, a read-write pod on node2 created and removed entries, and the Edge kept listing the old entries (a removed file as `-?????????`) until the delegation went away; the same change made from node5 showed up on node2 within 1 s.
 
 Without delegations, clients revalidate on their attribute cache timeout (`actimeo`), which is how the mounts were already configured.
 
