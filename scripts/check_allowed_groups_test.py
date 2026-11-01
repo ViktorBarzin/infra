@@ -173,10 +173,39 @@ class MapMismatches(unittest.TestCase):
         self.assertEqual(cag.map_mismatches([self.ing(None, [self.ADM])], {}), [])
 
 
+    # Users-only entries ({"users": [...]}) bind named users and no group, not
+    # even Home Server Admins. Their ingress leaves allowed_groups at the
+    # default, so the only disagreement is an ingress that names a group.
+    def test_users_only_entry_with_default_groups_is_fine(self):
+        fa = {"t3.x": {"users": ["vbarzin@gmail.com"]}}
+        self.assertEqual(cag.map_mismatches([self.ing("t3.x", [self.ADM])], fa), [])
+
+    def test_users_only_entry_with_a_named_group_is_flagged(self):
+        fa = {"t3.x": {"users": ["vbarzin@gmail.com"]}}
+        out = cag.map_mismatches([self.ing("t3.x", [self.ADM, "T3 Users"])], fa)
+        self.assertEqual(len(out), 1)
+        self.assertIn("users-only", out[0])
+
+
 class OrphanMapEntries(unittest.TestCase):
     def test_entry_without_ingress(self):
         ings = [{"module": "m", "host": "a.x", "groups": ["G"]}]
         self.assertEqual(cag.orphan_map_entries(ings, {"a.x": ["G"], "b.x": ["G"]}), ["b.x"])
+
+    def test_users_only_entry_is_not_an_orphan(self):
+        # Per-user hosts come from for_each ingresses (stacks/t3code), whose
+        # host is not a literal the scan can see.
+        self.assertEqual(cag.orphan_map_entries([], {"t3.x": {"users": ["u"]}}), [])
+
+
+class ValidateMap(unittest.TestCase):
+    def test_well_formed_entries(self):
+        fa = {"a.x": ["G"], "t3.x": {"users": ["u@x"]}}
+        self.assertEqual(cag.map_shape_problems(fa), [])
+
+    def test_malformed_entries(self):
+        for bad in ({"users": []}, {"users": "u"}, {"groups": ["G"]}, {"users": ["u"], "x": 1}, "G", [1]):
+            self.assertEqual(len(cag.map_shape_problems({"a.x": bad})), 1, bad)
 
 
 if __name__ == "__main__":

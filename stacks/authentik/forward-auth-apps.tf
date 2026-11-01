@@ -29,6 +29,14 @@
 # enforced). scripts/check-allowed-groups.py fails the stack before plan if they
 # differ. Home Server Admins is implied in the JSON and bound on every host.
 #
+# USERS-ONLY HOSTS. An entry may instead be {"users": ["<authentik username>"]}.
+# Its application is bound to those users and to nothing else, Home Server
+# Admins included. This is for a host that belongs to one person, such as each
+# user's T3 host (t3.viktorbarzin.me for wizard, t3-<user> for the rest): every
+# devvm user is in Home Server Admins, so the implied admin binding would let
+# them into each other's hosts. Authentik usernames here are emails. Such a
+# host's ingress declares no allowed_groups beyond the default.
+#
 # ORDERING. With `core_default_app_access` off (system-settings.tf), an
 # application with no bindings admits nobody; with it on, it would admit any
 # signed-in user, including the silent `guest` identity. The outpost therefore
@@ -38,6 +46,10 @@
 
 locals {
   forward_auth_apps = jsondecode(file("${path.module}/forward-auth-apps.json"))
+
+  # The two entry types: a list of groups, or {"users": [...]}.
+  forward_auth_user_apps  = { for host, v in local.forward_auth_apps : host => v.users if try(v.users, null) != null }
+  forward_auth_group_apps = { for host, v in local.forward_auth_apps : host => v if try(v.users, null) == null }
 
   # Groups this stack creates. Looked up by resource, because a data source
   # cannot read a group that the same apply is creating.
@@ -54,16 +66,23 @@ locals {
 
   # host/group -> binding. Admins at order 0, listed groups after.
   forward_auth_bindings = merge([
-    for host, groups in local.forward_auth_apps : merge(
+    for host, groups in local.forward_auth_group_apps : merge(
       { "${host}/Home Server Admins" = { host = host, group = "Home Server Admins", order = 0 } },
       { for i, g in groups : "${host}/${g}" => { host = host, group = g, order = i + 1 } },
     )
+  ]...)
+
+  # host/user -> binding for the users-only hosts. No admin binding.
+  forward_auth_user_bindings = merge([
+    for host, users in local.forward_auth_user_apps : {
+      for i, u in users : "${host}/${u}" => { host = host, user = u, order = i }
+    }
   ]...)
 }
 
 data "authentik_group" "forward_auth" {
   for_each = setsubtract(
-    toset(concat(["Home Server Admins"], flatten(values(local.forward_auth_apps)))),
+    toset(concat(["Home Server Admins"], flatten(values(local.forward_auth_group_apps)))),
     keys(local.forward_auth_tf_groups),
   )
   name          = each.value
@@ -102,5 +121,18 @@ resource "authentik_policy_binding" "forward_auth" {
 
   target = authentik_application.forward_auth[each.value.host].uuid
   group  = local.forward_auth_group_ids[each.value.group]
+  order  = each.value.order
+}
+
+data "authentik_user" "forward_auth" {
+  for_each = toset(flatten(values(local.forward_auth_user_apps)))
+  username = each.value
+}
+
+resource "authentik_policy_binding" "forward_auth_user" {
+  for_each = local.forward_auth_user_bindings
+
+  target = authentik_application.forward_auth[each.value.host].uuid
+  user   = data.authentik_user.forward_auth[each.value.user].id
   order  = each.value.order
 }
