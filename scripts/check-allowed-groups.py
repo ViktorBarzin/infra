@@ -19,6 +19,12 @@ plan/apply/destroy/refresh, stack-scoped; the sibling of
    not show. Home Server Admins is implied in the JSON. Scanning
    stacks/authentik (or --all) also flags JSON entries with no ingress.
 
+   A JSON entry may instead be {"users": ["<authentik username>", ...]}: a host
+   bound to those users only, with no group and no implied Home Server Admins
+   (each user's T3 host). Its ingress must leave allowed_groups at the default.
+   Those hosts come from for_each ingresses (stacks/t3code) whose host is not
+   a literal, so they are exempt from the orphan check.
+
 Usage:
   check-allowed-groups.py <stack-path>   # scan one stack
   check-allowed-groups.py --all          # scan every stack
@@ -132,6 +138,24 @@ def extract_forward_auth_ingresses(tf_text):
     return out
 
 
+def _users_only(entry):
+    return isinstance(entry, dict)
+
+
+def map_shape_problems(forward_auth_map):
+    """Entries that are neither a list of groups nor {"users": [non-empty strings]}."""
+    out = []
+    for host, entry in forward_auth_map.items():
+        if isinstance(entry, list) and all(isinstance(g, str) for g in entry):
+            continue
+        if (isinstance(entry, dict) and set(entry) == {"users"}
+                and isinstance(entry["users"], list) and entry["users"]
+                and all(isinstance(u, str) and u for u in entry["users"])):
+            continue
+        out.append(f'{host}: entry must be a list of groups or {{"users": [...]}}, got {entry!r}')
+    return out
+
+
 def map_mismatches(ingresses, forward_auth_map):
     """Disagreements between ingress allowed_groups and the forward-auth map."""
     out = []
@@ -142,6 +166,11 @@ def map_mismatches(ingresses, forward_auth_map):
             if extra:
                 out.append(f"{where}: names {', '.join(extra)} but its host is not a "
                            "string literal, so it cannot be matched to forward-auth-apps.json")
+            continue
+        if _users_only(forward_auth_map.get(ing["host"])):
+            if extra:
+                out.append(f'{where} ({ing["host"]}): forward-auth-apps.json makes this a '
+                           f'users-only host, but allowed_groups names {", ".join(extra)}')
             continue
         listed = sorted(set(forward_auth_map.get(ing["host"], [])) - {ADMIN_GROUP})
         if extra == listed:
@@ -161,7 +190,8 @@ def map_mismatches(ingresses, forward_auth_map):
 def orphan_map_entries(ingresses, forward_auth_map):
     """Hosts in the forward-auth map that no forward-auth ingress declares."""
     hosts = {i["host"] for i in ingresses}
-    return sorted(h for h in forward_auth_map if h not in hosts)
+    return sorted(h for h, e in forward_auth_map.items()
+                  if h not in hosts and not _users_only(e))
 
 
 def _read_tf(root):
@@ -207,7 +237,8 @@ def forward_auth_ingresses(root):
 def scan_forward_auth(stack_path, repo_root, all_ingresses):
     """Map disagreements for one stack; the authentik stack also gets orphans."""
     fa_map = load_forward_auth_map(repo_root)
-    problems = map_mismatches(forward_auth_ingresses(stack_path), fa_map)
+    problems = map_shape_problems(fa_map)
+    problems += map_mismatches(forward_auth_ingresses(stack_path), fa_map)
     if os.path.realpath(stack_path) == os.path.realpath(
         os.path.join(repo_root, "stacks", "authentik")
     ):

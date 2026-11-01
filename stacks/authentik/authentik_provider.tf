@@ -92,7 +92,7 @@ resource "authentik_outpost" "embedded" {
     [authentik_provider_proxy.catchall.id],
     [for host in sort(keys(local.forward_auth_apps)) : authentik_provider_proxy.forward_auth[host].id],
   )
-  depends_on         = [authentik_policy_binding.forward_auth]
+  depends_on         = [authentik_policy_binding.forward_auth, authentik_policy_binding.forward_auth_user]
   service_connection = "99e227a7-4562-4888-9660-4c27da678c50"
   config = jsonencode({
     # info, not trace: the outpost sits on the hot path of every request to
