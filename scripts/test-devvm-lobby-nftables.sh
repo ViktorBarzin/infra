@@ -119,7 +119,7 @@ listen "$C" 7681
 listen "$C2" 5432
 listen "$L" 9000
 listen "$H" 7681   # ttyd itself
-listen "$H" 7690   # tl-t3-view, the lobby's T3 view
+listen "$H" 7690   # acd-demux
 listen "$H" 3773   # a user's t3 serve
 listen "$H" 3780   # t3-dispatch
 listen "$H" 2022   # any other host port
@@ -138,7 +138,7 @@ ok "lan reaches a host port the table does not name" reach "$L" 10.99.0.1 2022
 
 # The rules that were there before.
 no "lan (not a Traefik node) reaches ttyd" reach "$L" 10.99.0.1 7681
-no "lan (not a Traefik node) reaches the T3 view" reach "$L" 10.99.0.1 7690
+no "lan (not a Traefik node) reaches acd-demux" reach "$L" 10.99.0.1 7690
 
 # Each user's T3 (2026-11-01): t3 serve and t3-dispatch take Traefik only.
 no "lan (not a Traefik node) reaches a t3 serve" reach "$L" 10.99.0.1 3773

@@ -17,7 +17,8 @@
 locals {
   devvm_lobby_network      = "10.0.10.10/32"
   devvm_lobby_port_numbers = concat(range(3773, 3781), [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7690, 8710])
-  # 7690 is tl-t3-view, the lobby's T3 view (terminal-lobby ADR-0044).
+  # 7690 is acd-demux (stacks/ac). Until 2026-11-01 the lobby's T3 view
+  # sidecar tl-t3-view also listened there; it is retired (ADR-0046).
   # 3773-3779 are the users' t3-serve@ instances (roster.yaml t3_port) and 3780
   # is t3-dispatch; Traefik routes each user's T3 host to them (stacks/t3code).
 
@@ -29,16 +30,19 @@ locals {
     { tcp = { destinationPort = { number = 8710 } } },
   ]
 
-  # Namespaces that need exactly one Lobby port, each with its own policy.
-  # One shared policy would let every namespace in it reach every port any of
-  # them needs.
+  # Namespaces that need a few Lobby ports, each with its own policy. One
+  # shared policy would let every namespace in it reach every port any of them
+  # needs.
   devvm_lobby_observers = {
     # the subnet-router probe checks ttyd (stacks/headscale/subnet-router-probe.tf)
-    headscale = { port = 7681, priority = 11 }
-    # Prometheus scrapes tmux-api metrics (prometheus_chart_values.tpl)
-    monitoring = { port = 7684, priority = 12 }
+    headscale = { ports = [7681], priority = 11 }
+    # Prometheus scrapes tmux-api (7684) and agent-api (8710) /metrics
+    # (prometheus_chart_values.tpl). The policy is L4, so it admits every path
+    # on 8710; agent-api's other routes require a bearer token, and /metrics
+    # needs none but holds only call counts.
+    monitoring = { ports = [7684, 8710], priority = 12 }
     # t3-probe's t3serve leg times wizard's t3-serve directly (stacks/t3code/probe.py)
-    t3code = { port = 3773, priority = 13 }
+    t3code = { ports = [3773], priority = 13 }
   }
 
   devvm_lobby_cnps = merge(
@@ -79,12 +83,12 @@ locals {
           }
         }
         egress = [{
-          name   = "deny-devvm-lobby-except-${o.port}"
+          name   = "deny-devvm-lobby-except-${join("-", o.ports)}"
           action = "Deny"
           to     = [{ networks = [local.devvm_lobby_network] }]
           protocols = [
             for p in local.devvm_lobby_port_numbers :
-            { tcp = { destinationPort = { number = p } } } if p != o.port
+            { tcp = { destinationPort = { number = p } } } if !contains(o.ports, p)
           ]
         }]
       }

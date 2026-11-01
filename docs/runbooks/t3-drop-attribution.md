@@ -6,14 +6,15 @@ reconnects after >20s without a response. Any stall or break anywhere on
 browser → Cloudflare → tunnel → Traefik → t3-dispatch → `t3 serve` produces
 the identical symptom. This runbook attributes a drop to a segment in minutes.
 
-Since terminal-lobby ADR-0045, `t3.viktorbarzin.me` is served by `tl-t3-view`
-(devvm `:7690`) rather than `t3-dispatch` and `t3 serve`, so a user's path ends
-browser → Cloudflare → tunnel → Traefik → `tl-t3-view`. The probe below still
-reaches `t3-dispatch`'s `/probe` echo through its own Service. Its `cloudflare`
-and `internal` legs therefore still attribute drops in the shared Cloudflare
-and Traefik segments; the `t3serve` leg and the `t3-dispatch` journal no longer
-describe the server users are connected to. For that, read `tl-t3-view` in the
-devvm journal.
+Since 2026-11-01 (terminal-lobby ADR-0046) each user's T3 host is served by
+`t3-dispatch` and that user's own `t3 serve` again: `t3.viktorbarzin.me` for
+wizard (`:3773`), `t3-<user>.viktorbarzin.me` for everyone else. From October
+2026 until that date `t3.viktorbarzin.me` was served by the lobby sidecar
+`tl-t3-view` (devvm `:7690`, ADR-0045), which is now retired; the lobby lists
+T3 threads over each user's T3 MCP endpoint instead. The probe's `t3serve` leg
+times wizard's `t3 serve`, so it describes the server wizard's browser is
+connected to; for another user's server, read that user's `t3-dispatch` lines
+and `t3-serve@<user>` in the devvm journal.
 
 ## 1. Check the probe (first stop)
 
