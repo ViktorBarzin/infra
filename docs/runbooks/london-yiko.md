@@ -46,7 +46,8 @@ sequenceDiagram
 | Bridge Deployment, LB Service (10.0.20.200:8554 RTSP, :8080 HTTP), RBAC, camera-cap CronJob | `stacks/ecovacs-video-proxy/main.tf` |
 | Bridge secrets (env vars, one key per variable) | Vault `secret/ecovacs-video-proxy` |
 | Alerts `YikoCameraLeftOn`, `YikoCameraStartFailed` | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`, group "Yiko camera" |
-| HA side: `input_boolean.yiko_camera`, `rest_command.yiko_camera_on/off`, `binary_sensor.yiko_camera_ready` (command_line), automations "Yiko camera on/off", generic camera "Yiko camera", card on the `vacuum-yiko` dashboard | HA London `/config/configuration.yaml`, `/config/secrets.yaml` (`k8s_yiko_camera_token`, `yiko_rtsp_password`), UI-managed entities |
+| HA side, YAML (needs an HA restart to change) | `/config/configuration.yaml`: `rest_command.yiko_camera_scale` (PATCH replicas), `command_line` `binary_sensor.yiko_camera_ready` (curl /snapshot.jpg every 5 s, on when 200). Secrets in `/config/secrets.yaml`: `k8s_yiko_camera_bearer`, `yiko_rtsp_password`, `yiko_camera_ready_cmd` |
+| HA side, UI-managed | `input_boolean.yiko_camera`; automation `automation.yiko_camera` (id `yiko_camera`: on → replicas 1; off, 5 min on, or HA start → replicas 0); generic camera `camera.yiko` "Yiko camera" (stream `rtsp://10.0.20.200:8554/live` over TCP, still image `/snapshot.jpg`, user `yiko`); Camera card + conditional live `picture-entity` in the first section of the `vacuum-yiko` dashboard |
 
 ## Common tasks
 
@@ -97,6 +98,30 @@ Delete the `camera-switch-token` Secret in the `ecovacs-video-proxy` namespace
 and re-apply the stack to mint a new one, then update `k8s_yiko_camera_token`
 in HA London's `secrets.yaml`.
 
+## Measured behaviour (2026-11-01)
+
+| Step | Time |
+|---|---|
+| Image pull, first start on a node (400 MB) | 61 s |
+| Container start to Ecovacs login | 2-9 s |
+| Login to first frame, robot free | 3 s |
+| Tap on the card to "Live", image cached and robot free | 19 s |
+
+- **Robot cooldown.** For roughly 3-5 minutes after a video session ends, the
+  robot refuses a new one: Ecovacs answers `start_watch` with
+  `20303 send cmd to mqserver error`. The bridge retries with a growing delay
+  (up to 30 s), so the card stays on "Starting…" until the robot accepts. Ending
+  the session cleanly first (`POST /api/robot/sleep`) made no difference. The
+  robot answers ordinary commands normally during this time.
+- **Image cache.** Nodes delete images unused for 7 days, so the first start
+  after a quiet week, or on a different node, pulls the image again (about a
+  minute).
+- The direct WebRTC path works across the tunnel. The bridge logs a harmless
+  `STUN transaction failed (403 - Forbidden IP)` from the Kinesis TURN
+  fallback, which it does not need.
+- HA plays the stream over WebRTC (`ha-web-rtc-player`, 1280x720) in a browser
+  outside the London LAN.
+
 ## Known limits
 
 - Start-up takes the pod start, an Ecovacs login and the WebRTC handshake. The
@@ -108,5 +133,5 @@ in HA London's `secrets.yaml`.
   only from the LAN and tunnel, with credentials, for minutes at a time: it runs
   as root, its web UI session key derives from the RTSP credentials, it accepts
   credentials in query strings, and it logs the one-time verification code.
-- Viewing from outside the London LAN goes through HA's own stream handling,
-  which may fall back to HLS.
+- A camera re-opened within a few minutes of closing waits out the robot
+  cooldown described above.
