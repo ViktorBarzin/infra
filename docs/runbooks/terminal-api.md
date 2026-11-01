@@ -143,9 +143,11 @@ duration. To lift a ban on a legitimate caller:
 
 ## Defence in depth around the devvm ports
 
-- devvm nftables: `7681`, `7690` (tl-t3-view, the lobby's T3 view on `t3view.viktorbarzin.me`)
-  and `8710` accept only the Traefik node addresses and loopback; the Lobby ports are dropped on
-  IPv6.
+- devvm nftables: `7681`, `7690` (tl-t3-view, the lobby's T3 view on `t3view.viktorbarzin.me`),
+  `8710` and `3773-3780` (each user's `t3-serve@` and `t3-dispatch`, behind
+  `t3.viktorbarzin.me` and `t3-<user>.viktorbarzin.me`, see `stacks/t3code`) accept only the
+  Traefik node addresses and loopback; the Lobby ports are dropped on IPv6. `t3-dispatch` also
+  requires the lobby proxy secret (`/etc/t3-dispatch.env`).
 - devvm nftables, forward hook: a port published with `docker run -p` is reachable only from the
   devvm itself. A connection DNATed into `docker0` or a `br-*` bridge from anywhere else is
   dropped. Added on 2026-10-02 after a month-old test container (`tl-live`) was found publishing
@@ -153,9 +155,11 @@ duration. To lift a ban on a legitimate caller:
   through docker-proxy on the input path and are not covered by this rule. Tests:
   `sudo bash scripts/test-devvm-lobby-nftables.sh`.
 - ClusterNetworkPolicy (`policy.networking.k8s.io/v1alpha2`, tier `Admin`) `devvm-lobby-ports` (priority 10): no namespace except `traefik` may reach
-  `10.0.10.10` on 7681, 7683-7688, 7690 or 8710. `devvm-lobby-ports-headscale` (priority 11) lets
-  `headscale` reach only 7681 (subnet-router probe), and `devvm-lobby-ports-monitoring`
-  (priority 12) lets `monitoring` reach only 7684 (tmux-api metrics). Each observer namespace has
+  `10.0.10.10` on 3773-3780, 7681, 7683-7688, 7690 or 8710. `devvm-lobby-ports-headscale` (priority 11) lets
+  `headscale` reach only 7681 (subnet-router probe), `devvm-lobby-ports-monitoring`
+  (priority 12) lets `monitoring` reach only 7684 (tmux-api metrics), and
+  `devvm-lobby-ports-t3code` (priority 13) lets `t3code` reach only 3773 (`t3-probe`'s leg on
+  wizard's `t3 serve`). Each observer namespace has
   its own policy, since one shared policy lets every namespace in it reach every port any of them
   needs. Needed because Calico SNATs pod egress to the node address, which the nftables rules
   admit. The policy data is in `stacks/terminal/devvm_lobby_anp.tf`, and

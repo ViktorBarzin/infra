@@ -37,7 +37,7 @@ Then, without you:
   it, and posts what it did to `#alerts`.
 - **within the hour** — the devvm reconcile reads that committed roster,
   regenerates `/etc/ttyd-user-map` + `/etc/t3-serve/dispatch.json` without them
-  (`t3-dispatch` then answers **403**; since terminal-lobby ADR-0045, `t3.viktorbarzin.me` is served by `tl-t3-view`, which refuses a browser user tmux-api `/whoami` no longer maps; T3 apps they paired hold bearer tokens, listed and revocable in the lobby), disables `t3-serve@`, `playwright-mcp@`,
+  (`t3-dispatch` then answers **403** on their T3 host, `t3-<user>.viktorbarzin.me`), disables `t3-serve@`, `playwright-mcp@`,
   `playwright-snapshot-refresh@`, `claude-auth-sync@` and `tl-t3-sync@`, and locks
   the login. Their account, home, clones, sticky ports and Vault backups are all
   left in place.
@@ -48,6 +48,13 @@ its table on a **60-second tick**, so for up to a minute a removed user gets a
 **500** (their entry is still cached and the session mint fails) rather than a 403
 — verified 2026-08-17 while cutting `ancamilea`. And the reconcile now acts on the
 **committed** roster, so a working tree that is behind no longer matters.
+
+Their T3 host stays defined until someone removes it: the commented-out row no
+longer has `t3_host`, so the next `stacks/t3code` apply drops the host, and their
+`{"users": [...]}` entry comes out of `stacks/authentik/forward-auth-apps.json` by
+hand (then apply `stacks/authentik`). CI does not apply `stacks/t3code` for a
+roster-only commit. Until then nothing answers on the host: the dispatch has no
+entry for them and their `t3-serve@` is disabled.
 
 An admin (`tier: admin`) is never cut by a membership diff: group membership is
 exactly what it would revoke, and an admin locked out cannot undo it. They are
@@ -72,8 +79,9 @@ reported as `protected` in the sync's output instead.
    ```
    Note: their already-running sessions keep dropped groups until cycled — restart
    `t3-serve@<os_user>` to enforce immediately.
-5. **Verify:** they can no longer reach `t3.viktorbarzin.me` (302 → Authentik, then
-   denied once removed from the `T3 Users` group — Part C) and cannot log in. Nothing
+5. **Verify:** their T3 host `t3-<user>.viktorbarzin.me` answers 403 from
+   `t3-dispatch` (or Authentik denies them once the host's entry is gone) and
+   they cannot log in. Nothing
    is deleted; re-adding the roster entry + reconcile fully restores them.
 
 ### A2. Destructive removal (explicit, gated — NEVER automatic)

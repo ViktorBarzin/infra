@@ -54,8 +54,9 @@
 			</li>
 		</ol>
 		<p>
-			Prefer a chat view? <a href="https://t3.viktorbarzin.me" target="_blank">T3 Code</a> shows your
-			Claude Code sessions from the web terminal as a chat, in the browser, the desktop app or the phone app.
+			Prefer a chat view? T3 Code runs your Claude sessions as a chat, in the browser, the desktop app
+			or the phone app. Each user has their own T3 host: <code>t3-&lt;your devvm username&gt;.viktorbarzin.me</code>
+			(<a href="https://t3.viktorbarzin.me" target="_blank">t3.viktorbarzin.me</a> is Viktor's).
 		</p>
 		<div class="callout info">
 			<strong>Already done for you</strong> on the workstation:

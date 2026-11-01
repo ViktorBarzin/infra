@@ -72,6 +72,7 @@ while True:
   pids+=($!)
 }
 reach() { nsx "$1" nc -z -w 2 "$2" "$3" 2>/dev/null; }
+reach_from() { nsx "$1" nc -z -w 2 -s "$2" "$3" "$4" 2>/dev/null; }  # ns src dst port
 
 for n in "$H" "$L" "$C" "$C2"; do ip netns add "$n"; nsx "$n" ip link set lo up; done
 
@@ -79,6 +80,9 @@ for n in "$H" "$L" "$C" "$C2"; do ip netns add "$n"; nsx "$n" ip link set lo up;
 ip link add lan0 netns "$H" type veth peer name eth0 netns "$L"
 nsx "$H" ip addr add 10.99.0.1/24 dev lan0; nsx "$H" ip link set lan0 up
 nsx "$L" ip addr add 10.99.0.2/24 dev eth0; nsx "$L" ip link set eth0 up
+# A Traefik node's address on the lan side, for the ports only Traefik reaches.
+nsx "$L" ip addr add 10.0.20.102/32 dev eth0
+nsx "$H" ip route add 10.0.20.102/32 dev lan0
 
 # host docker0 <-> ctr, host br-rvtest <-> ctr2
 mkbridge() {  # bridge subnet-prefix ctr-ns
@@ -116,6 +120,8 @@ listen "$C2" 5432
 listen "$L" 9000
 listen "$H" 7681   # ttyd itself
 listen "$H" 7690   # tl-t3-view, the lobby's T3 view
+listen "$H" 3773   # a user's t3 serve
+listen "$H" 3780   # t3-dispatch
 listen "$H" 2022   # any other host port
 sleep 0.5  # listeners binding; the reach() checks below retry nothing
 
@@ -133,6 +139,13 @@ ok "lan reaches a host port the table does not name" reach "$L" 10.99.0.1 2022
 # The rules that were there before.
 no "lan (not a Traefik node) reaches ttyd" reach "$L" 10.99.0.1 7681
 no "lan (not a Traefik node) reaches the T3 view" reach "$L" 10.99.0.1 7690
+
+# Each user's T3 (2026-11-01): t3 serve and t3-dispatch take Traefik only.
+no "lan (not a Traefik node) reaches a t3 serve" reach "$L" 10.99.0.1 3773
+no "lan (not a Traefik node) reaches t3-dispatch" reach "$L" 10.99.0.1 3780
+ok "a Traefik node reaches a t3 serve" reach_from "$L" 10.0.20.102 10.99.0.1 3773
+ok "a Traefik node reaches t3-dispatch" reach_from "$L" 10.0.20.102 10.99.0.1 3780
+ok "the box reaches t3-dispatch on loopback" reach "$H" 127.0.0.1 3780
 
 echo "$pass passed, $fail failed"
 [[ $fail -eq 0 ]]

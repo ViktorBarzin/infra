@@ -53,7 +53,7 @@ vault write kubernetes/creds/{data.namespaces[0]}-deployer \
 		<h3>No setup — start now</h3>
 		<ol>
 			<li><a href="https://terminal.viktorbarzin.me">Open the web terminal</a> — a ready shell with kubectl, Vault and your repos already set up</li>
-			<li><a href="https://t3.viktorbarzin.me">Open T3 Code</a> — your Claude Code sessions from the web terminal as a chat, on the web, desktop or phone</li>
+			<li>Open T3 Code — your Claude sessions as a chat, on the web, desktop or phone. Each user has their own host: <a href="https://t3.viktorbarzin.me">t3.viktorbarzin.me</a> for Viktor, <code>t3-&lt;your devvm username&gt;.viktorbarzin.me</code> for everyone else</li>
 			<li><a href="https://k8s.viktorbarzin.me">Open the dashboard</a> — point-and-click view of your workloads</li>
 		</ol>
 		<h3>On your own machine</h3>

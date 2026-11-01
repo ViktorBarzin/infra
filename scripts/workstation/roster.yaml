@@ -65,6 +65,11 @@
 #                        admits only this row's authentik_user to it, both for
 #                        rows that have the two fields. t3-dispatch serves the
 #                        host only to its owner.
+#   CI applies only the stacks whose own files changed, so a roster edit does
+#   not reach the cluster by itself. After adding or changing these two fields:
+#   add {"users": ["<authentik login>"]} for the host to
+#   stacks/authentik/forward-auth-apps.json, then apply stacks/t3code and
+#   stacks/authentik (homelab tf apply <stack>).
 #
 # wizard IS listed (as admin): the reconcile REGENERATES /etc/ttyd-user-map +
 # dispatch.json from this file, so omitting him would drop his t3 instance. The
