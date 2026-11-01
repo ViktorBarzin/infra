@@ -42,6 +42,7 @@ cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026
 | Path | Backend | Notes |
 |---|---|---|
 | `/v1/*` | agent-api `10.0.10.10:8710` | conversations, messages, transcripts, tasks, delegation results |
+| `/mcp` (exact path) | agent-api `10.0.10.10:8710` | MCP pass-through to the caller's own T3 (terminal-lobby ADR-0046); bearer token required; long-poll transport, so `t3_thread_wait` can hold up to 300 s |
 | `/openapi.json` (exact path) | agent-api `10.0.10.10:8710` | the API description; served without a token, holds routes and no data |
 | `/api/sessions/*` | tmux-api `:7684` (prefix stripped) | except `/metrics`, `/health`, `/push*`, `/internal/*`, which need no login |
 | `/events/` `/prompt/` `/cancel/` `/earlier/` `/result/` `/pane/` `/keys/` `/commands/` `/search/` `/answer-text/` `/answer/` `/model/` | session-events `:7685` | `/keys/` and `/pane/` type into tmux panes |
@@ -49,7 +50,8 @@ cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026
 | `/skills`, `/skills/*` | skills-api `:7688` | |
 
 Not exposed: ttyd (`/`, `/ws`, `/token`, an interactive shell), clipboard-upload (it parses the
-upload body before checking auth), static assets, build stamps and agent-api `/health`.
+upload body before checking auth), static assets, build stamps, agent-api `/health` and agent-api
+`/metrics`.
 Unmatched paths get Traefik's catch-all error page, which answers `GET /health` with 200, so a 200
 there says nothing about agent-api. Check a real route instead: `/openapi.json` with no token.
 
@@ -143,8 +145,8 @@ duration. To lift a ban on a legitimate caller:
 
 ## Defence in depth around the devvm ports
 
-- devvm nftables: `7681`, `7690` (tl-t3-view, the lobby's T3 view on `t3view.viktorbarzin.me`),
-  `8710` and `3773-3780` (each user's `t3-serve@` and `t3-dispatch`, behind
+- devvm nftables: `7681`, `7690` (acd-demux, `stacks/ac`; until 2026-11-01 also the lobby's
+  retired T3 view sidecar `tl-t3-view`), `8710` and `3773-3780` (each user's `t3-serve@` and `t3-dispatch`, behind
   `t3.viktorbarzin.me` and `t3-<user>.viktorbarzin.me`, see `stacks/t3code`) accept only the
   Traefik node addresses and loopback; the Lobby ports are dropped on IPv6. `t3-dispatch` also
   requires the lobby proxy secret (`/etc/t3-dispatch.env`).
@@ -157,7 +159,9 @@ duration. To lift a ban on a legitimate caller:
 - ClusterNetworkPolicy (`policy.networking.k8s.io/v1alpha2`, tier `Admin`) `devvm-lobby-ports` (priority 10): no namespace except `traefik` may reach
   `10.0.10.10` on 3773-3780, 7681, 7683-7688, 7690 or 8710. `devvm-lobby-ports-headscale` (priority 11) lets
   `headscale` reach only 7681 (subnet-router probe), `devvm-lobby-ports-monitoring`
-  (priority 12) lets `monitoring` reach only 7684 (tmux-api metrics), and
+  (priority 12) lets `monitoring` reach only 7684 and 8710 (tmux-api and agent-api `/metrics`;
+  the policy is L4, so it admits every path on 8710, where everything but `/metrics` and
+  `/health` needs a bearer token), and
   `devvm-lobby-ports-t3code` (priority 13) lets `t3code` reach only 3773 (`t3-probe`'s leg on
   wizard's `t3 serve`). Each observer namespace has
   its own policy, since one shared policy lets every namespace in it reach every port any of them

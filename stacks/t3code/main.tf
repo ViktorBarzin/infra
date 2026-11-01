@@ -48,8 +48,9 @@ resource "kubernetes_namespace" "t3code" {
 #
 # Until 2026-11-01 t3.viktorbarzin.me was served by the lobby sidecar
 # tl-t3-view (10.0.10.10:7690) as one environment for every lobby user
-# (terminal-lobby ADR-0045). t3view.viktorbarzin.me (stacks/terminal/t3view.tf)
-# still points at the sidecar until the lobby release that retires it.
+# (terminal-lobby ADR-0045). The sidecar and its t3view.viktorbarzin.me host
+# are retired: the lobby lists each user's T3 threads over that user's T3 MCP
+# endpoint (terminal-lobby ADR-0046).
 locals {
   roster_users = yamldecode(file("${path.module}/../../scripts/workstation/roster.yaml")).users
 
@@ -121,7 +122,7 @@ module "ingress" {
     "terminal-tl-proxy-secret@kubernetescrd",
   ]
   # A cold load of T3's client fetches 286 files, 155 of them in the first
-  # second (measured 2026-10-12, see stacks/terminal/t3view.tf), and the
+  # second (measured 2026-10-12 against the pinned build), and the
   # default per-client limit (10/s, burst 50) would answer most of them 429.
   # The route is behind Authentik and admits one user.
   skip_default_rate_limit = true

@@ -8,7 +8,8 @@
 # allow) then answers "can namespace N reach 10.0.10.10:P" for every Lobby port
 # and compares it with the runbook (docs/runbooks/terminal-api.md):
 #   traefik    reaches every port (it is the proxy);
-#   monitoring reaches only 7684 (Prometheus scrapes tmux-api);
+#   monitoring reaches only 7684 and 8710 (Prometheus scrapes tmux-api and
+#              agent-api);
 #   headscale  reaches only 7681 (the subnet-router probe checks ttyd);
 #   t3code     reaches only 3773 (t3-probe times wizard's t3-serve);
 #   any other namespace reaches none.
@@ -32,7 +33,7 @@ DEVVM = "10.0.10.10/32"
 PORTS = list(range(3773, 3781)) + [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7690, 8710]
 EXPECT = {
     "traefik": set(PORTS),
-    "monitoring": {7684},
+    "monitoring": {7684, 8710},
     "headscale": {7681},
     "t3code": {3773},
     "default": set(),
