@@ -22,6 +22,11 @@
 : "${BACKUP_DIR:=${T3_BACKUP_DEST:-/var/backups/t3-state}}"
 : "${DISPATCH:=${T3_DISPATCH:-127.0.0.1:3780}}"
 : "${USER_MAP:=${T3_USER_MAP:-/etc/ttyd-user-map}}"
+# The dispatch serves a user only on their own host (dispatch.json "host") and
+# only with the lobby proxy secret, which its unit reads from DISPATCH_ENV.
+: "${DISPATCH_TABLE:=${T3_DISPATCH_TABLE:-/etc/t3-serve/dispatch.json}}"
+: "${DISPATCH_ENV:=${T3_DISPATCH_ENV:-/etc/t3-dispatch.env}}"
+: "${T3_DOMAIN:=viktorbarzin.me}"
 # 3600 (was 900): wizard's 2.85 GB DB did not finish a VACUUM INTO in 900s under
 # load on 2026-09-28 or 2026-10-20, so the 0.1.0 update ran with no pre-bump
 # backup for wizard.
@@ -250,10 +255,17 @@ unit_busy() {
   return 1
 }
 
-# verify a user's pairing through the REAL dispatch (mint -> exchange -> cookie).
+# verify a user's pairing through the REAL dispatch (mint -> exchange -> cookie),
+# sent to the user's own host with the proxy secret, as Traefik would send it.
+# The secret goes to curl on stdin (printf is a builtin), never on a command
+# line another account could read from /proc.
 verify_pairing() {
-  local u="$1" ak out; ak="$(ak_for "$u")"; [ -n "$ak" ] || { LOG "no authentik mapping for $u — skipping dispatch verify"; return 0; }
-  out="$(curl -s -i --max-time 10 -H "X-authentik-username: $ak" -H 'Sec-Fetch-Dest: document' "http://$DISPATCH/" 2>/dev/null)"
+  local u="$1" ak host secret out; ak="$(ak_for "$u")"; [ -n "$ak" ] || { LOG "no authentik mapping for $u — skipping dispatch verify"; return 0; }
+  host="$(jq -r --arg ak "$ak" '.[$ak].host // empty' "$DISPATCH_TABLE" 2>/dev/null)"
+  [ -n "$host" ] || { LOG "no t3 host for $u — skipping dispatch verify"; return 0; }
+  secret="$(sed -n 's/^TL_PROXY_SECRET=//p' "$DISPATCH_ENV" 2>/dev/null | tail -1)"
+  out="$(printf 'X-TL-Proxy-Secret: %s\n' "$secret" | curl -s -i --max-time 10 -H @- \
+    -H "Host: $host.$T3_DOMAIN" -H "X-authentik-username: $ak" -H 'Sec-Fetch-Dest: document' "http://$DISPATCH/" 2>/dev/null)"
   printf '%s' "$out" | grep -qiE "$SESSION_COOKIE_RE"
 }
 

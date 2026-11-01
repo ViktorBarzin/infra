@@ -16,10 +16,13 @@
 # that apply it are in terminal_api.tf.
 locals {
   devvm_lobby_network      = "10.0.10.10/32"
-  devvm_lobby_port_numbers = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7690, 8710]
+  devvm_lobby_port_numbers = concat(range(3773, 3781), [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7690, 8710])
   # 7690 is tl-t3-view, the lobby's T3 view (terminal-lobby ADR-0044).
+  # 3773-3779 are the users' t3-serve@ instances (roster.yaml t3_port) and 3780
+  # is t3-dispatch; Traefik routes each user's T3 host to them (stacks/t3code).
 
   devvm_lobby_ports = [
+    { tcp = { destinationPort = { range = { start = 3773, end = 3780 } } } },
     { tcp = { destinationPort = { number = 7681 } } },
     { tcp = { destinationPort = { range = { start = 7683, end = 7688 } } } },
     { tcp = { destinationPort = { number = 7690 } } },
@@ -34,6 +37,8 @@ locals {
     headscale = { port = 7681, priority = 11 }
     # Prometheus scrapes tmux-api metrics (prometheus_chart_values.tpl)
     monitoring = { port = 7684, priority = 12 }
+    # t3-probe's t3serve leg times wizard's t3-serve directly (stacks/t3code/probe.py)
+    t3code = { port = 3773, priority = 13 }
   }
 
   devvm_lobby_cnps = merge(
