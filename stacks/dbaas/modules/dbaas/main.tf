@@ -807,7 +807,7 @@ resource "kubernetes_deployment" "mysqld_exporter" {
       spec {
         container {
           name  = "mysqld-exporter"
-          image = "docker.io/prom/mysqld-exporter:v0.20.0"
+          image = "docker.io/prom/mysqld-exporter:v0.21.0"
           args = [
             "--mysqld.address=${var.cluster_master_service}.dbaas.svc.cluster.local:3306",
             "--mysqld.username=${local.mysql_exporter_user}",
