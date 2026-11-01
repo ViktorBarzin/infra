@@ -21,6 +21,13 @@ from typing import Iterable
 import yaml
 
 BASE_PORT = 3773
+# The ports a t3-serve may listen on. The devvm firewall (playbooks/devvm.yml,
+# table devvm_lobby) admits only Traefik and loopback to 3773-3780, and 3780 is
+# t3-dispatch itself, so a T3 port outside this range would either be open to
+# the LAN or collide with the dispatch.
+T3_PORT_MAX = 3779
+# t3_host is the first DNS label of the user's T3 host (t3 -> t3.viktorbarzin.me).
+_T3_HOST_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 # Per-user playwright-mcp HTTP port (the browser MCP each user's Claude sessions
 # connect to). Distinct range from T3_PORT, allocated for EVERY roster user incl.
 # the admin (wizard is listed). Sticky from existing, so the live in-session
@@ -90,6 +97,12 @@ class User:
     # Deliberately reversible: flip to false and the next reconcile brings the
     # whole set back, because nothing was removed.
     parked: bool = False
+    # Pinned T3 port and host label. Terraform (stacks/t3code) builds a T3 host
+    # only for rows that have both, and routes that host's native requests
+    # straight to the port, so the port is written here rather than chosen on
+    # the box. A row without t3_port keeps the sticky allocation.
+    t3_port: int | None = None
+    t3_host: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +197,26 @@ def _parse_user(os_user: str, spec: dict) -> User:
         raise RosterError(
             f"user {os_user!r}: parked must be true or false, got {parked!r}"
         )
+    t3_port = spec.get("t3_port")
+    if t3_port is not None and (
+        type(t3_port) is not int or not BASE_PORT <= t3_port <= T3_PORT_MAX
+    ):
+        raise RosterError(
+            f"user {os_user!r}: t3_port must be an integer from {BASE_PORT} to "
+            f"{T3_PORT_MAX}, got {t3_port!r}"
+        )
+    t3_host = spec.get("t3_host")
+    if t3_host is not None:
+        if not isinstance(t3_host, str) or not _T3_HOST_RE.match(t3_host):
+            raise RosterError(
+                f"user {os_user!r}: t3_host must be one lowercase DNS label "
+                f"(t3 for t3.viktorbarzin.me), got {t3_host!r}"
+            )
+        if t3_port is None:
+            raise RosterError(
+                f"user {os_user!r}: t3_host needs a pinned t3_port, which "
+                f"Terraform routes the host's native requests to"
+            )
     return User(
         os_user,
         spec["authentik_user"],
@@ -194,13 +227,31 @@ def _parse_user(os_user: str, spec: dict) -> User:
         repos,
         claude_auth,
         parked,
+        t3_port,
+        t3_host,
     )
+
+
+def _refuse_duplicates(users: dict[str, User], attr: str) -> None:
+    seen: dict[object, str] = {}
+    for name in sorted(users):
+        value = getattr(users[name], attr)
+        if value is None:
+            continue
+        if value in seen:
+            raise RosterError(
+                f"users {seen[value]!r} and {name!r} both set {attr}: {value}"
+            )
+        seen[value] = name
 
 
 def load_roster(text: str) -> Roster:
     data = yaml.safe_load(text) or {}
     users_raw = data.get("users") or {}
-    return Roster({name: _parse_user(name, spec) for name, spec in users_raw.items()})
+    users = {name: _parse_user(name, spec) for name, spec in users_raw.items()}
+    _refuse_duplicates(users, "t3_port")
+    _refuse_duplicates(users, "t3_host")
+    return Roster(users)
 
 
 def load_roster_file(path: str) -> Roster:
@@ -264,19 +315,34 @@ def has_blocking_errors(issues: list[ValidationIssue]) -> bool:
 
 
 def _allocate_ports(
-    roster: Roster, existing_ports: dict[str, int], base: int = BASE_PORT
+    roster: Roster,
+    existing_ports: dict[str, int],
+    base: int = BASE_PORT,
+    pinned: dict[str, int] | None = None,
+    limit: int | None = None,
 ) -> dict[str, int]:
-    """Sticky port allocation: keep every roster user's existing port, then assign
-    each new user the next free port from `base`. Used for both T3_PORT (base 3773)
-    and the per-user playwright-mcp port (base 8932)."""
-    ports = {u: existing_ports[u] for u in roster.users if u in existing_ports}
+    """Sticky port allocation: pinned ports first, then keep every other roster
+    user's existing port unless a pin took it, then assign each remaining user
+    the next free port from `base` (never past `limit`). Used for both T3_PORT
+    (base 3773, pins from t3_port) and the per-user playwright-mcp port (base
+    8931)."""
+    ports = dict(pinned or {})
     used = set(ports.values())
+    for u in sorted(roster.users):
+        if u in ports or u not in existing_ports or existing_ports[u] in used:
+            continue
+        ports[u] = existing_ports[u]
+        used.add(existing_ports[u])
     for os_user in sorted(roster.users):
         if os_user in ports:
             continue
         candidate = base
         while candidate in used:
             candidate += 1
+        if limit is not None and candidate > limit:
+            raise RosterError(
+                f"no free T3 port for {os_user!r}: {base}-{limit} are all taken"
+            )
         ports[os_user] = candidate
         used.add(candidate)
     return ports
@@ -319,13 +385,16 @@ _TTYD_USER_COMMANDS = (
     "/usr/local/bin/skills-api",
 )
 
-# What it may run as root: the three wrappers that need privilege of their own.
+# What it may run as root: the wrappers that need privilege of their own.
 # Each validates its arguments against the user map, so the grant is narrow in
 # what it can be pointed at as well as in what it can run.
 _TTYD_ROOT_COMMANDS = (
     "/usr/local/bin/tmux-restore-user",
     "/usr/local/bin/tmux-user-setfacl",
     "/usr/local/bin/tmux-persist-forget",
+    # Mints a one-time T3 pairing code as the named user, so the lobby can pair
+    # a user's T3 app. Validates its argument against /etc/ttyd-user-map.
+    "/usr/local/bin/t3-mint",
 )
 
 _TTYD_SUDOERS_HEADER = (
@@ -360,7 +429,12 @@ def derive_desired_state(
     existing_ports: dict[str, int],
     existing_playwright_ports: dict[str, int] | None = None,
 ) -> DesiredState:
-    ports = _allocate_ports(roster, existing_ports)
+    ports = _allocate_ports(
+        roster,
+        existing_ports,
+        pinned={u.os_user: u.t3_port for u in roster.users.values() if u.t3_port},
+        limit=T3_PORT_MAX,
+    )
     playwright_ports = _allocate_ports(
         roster, existing_playwright_ports or {}, base=PLAYWRIGHT_BASE_PORT
     )
@@ -371,8 +445,12 @@ def derive_desired_state(
     # people as often as by services, and its order carries no meaning.
     admin_lines = sorted(u.os_user for u in ordered if u.tier == "admin")
     ttyd_admins = _TTYD_ADMINS_HEADER + "".join(f"{u}\n" for u in admin_lines)
+    # host is what t3-dispatch keys on: a request for <host>.viktorbarzin.me
+    # is served only to the Authentik user who owns that host. A row without a
+    # t3_host has no web host, so its entry carries no host.
     dispatch = {
         u.authentik_user: {"os_user": u.os_user, "port": ports[u.os_user]}
+        | ({"host": u.t3_host} if u.t3_host else {})
         for u in ordered
     }
     accounts = {
