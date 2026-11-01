@@ -1,7 +1,10 @@
 # wa-bot: WhatsApp access to Terminal Lobby
 
-wa-bot lets Viktor drive his Terminal Lobby sessions from WhatsApp. He messages the
+wa-bot lets Viktor drive his Claude sessions from WhatsApp. He messages the
 WhatsApp Cloud API test number (+1 555 671 2257) and the bot answers from the lab.
+It reaches two kinds of session: his T3 threads, through agent-api's `POST /mcp`
+pass-through to his own T3 (terminal-lobby ADR-0046), and tmux sessions, through
+agent-api `/v1` and session-events.
 
 - Code: Forgejo `viktor/wa-bot` (Go). GitHub Actions builds `ghcr.io/viktorbarzin/wa-bot`
   (private), Woodpecker rolls the Deployment.
@@ -10,7 +13,9 @@ WhatsApp Cloud API test number (+1 555 671 2257) and the bot answers from the la
 - Meta app: "HomeLab Messaging" (1498024285865316), WABA 2579571402516711,
   phone_number_id 1411075355419083, system user `wa-bot`.
 - Lobby access: the `whatsapp` Caller (`devvm_external_agents` in `playbooks/devvm.yml`,
-  token in Vault `secret/terminal-lobby` field `agent_api_whatsapp_token`).
+  token in Vault `secret/terminal-lobby` field `agent_api_whatsapp_token`). The same
+  token reaches `/v1`, `/mcp` and session-events, so revoking the Caller cuts the bot's
+  T3 access too.
 
 ```mermaid
 flowchart LR
@@ -18,6 +23,8 @@ flowchart LR
   M -->|"POST /webhook, X-Hub-Signature-256"| T["Traefik + CrowdSec bouncer<br/>wa.viktorbarzin.me"]
   T --> B["wa-bot pod"]
   B -->|"Bearer, Caller 'whatsapp'"| A["terminal-api: agent-api /v1,<br/>session-events /prompt/ /cancel/ /keys/"]
+  B -->|"Bearer, Caller 'whatsapp'"| C["terminal-api: agent-api POST /mcp"]
+  C --> D["wizard's T3 (t3-serve@wizard)"]
   B -->|"replies"| M
 ```
 
@@ -47,7 +54,7 @@ flowchart LR
 
 ## Threads
 
-Each Lobby session is a thread inside the one chat. Session output starts with
+Each session, a T3 thread or a tmux session, is a thread inside the one chat. Session output starts with
 `[<session>]`, the bot's own messages with `[bot]`, and the last message of a session
 that has gone away with `[<session>] (ended)`.
 
@@ -59,29 +66,45 @@ period WhatsApp keeps quote context). Plain text goes to:
 3. the current session (set by `use`, `new` or the first `main`);
 4. `main`, created when no session exists.
 
-New sessions come only from `new`, `ask`, or a reply to an ended session's output,
-which starts a session with the same name in the same directory and says so. An
-unknown or expired quoted message falls back to the current session, with a note.
+New sessions come only from `new`, `ask`, the first `main`, or a reply to an ended
+session's output, which starts a session with the same name in the same directory and
+says so. An unknown or expired quoted message falls back to the current session, with
+a note.
 
-Sessions the bot started are driven through agent-api. Sessions started at the
-keyboard are read through agent-api and steered through session-events (`/prompt/`,
-`/cancel/`, `/keys/`, `/answer-text/`), which accept the Caller's bearer token
-(checked 2026-10-21).
+New sessions are T3 threads. Each goes in the T3 project whose workspace root is
+exactly the session's directory (`~/code/infra`, or `~/code/<repo>` with `@repo`);
+the bot registers the project when there is none. A name that a live T3 thread or
+tmux session already has moves the new one to `name-2` to `name-5`.
+
+Paths per backend:
+
+| | T3 threads | tmux sessions |
+|---|---|---|
+| Listed from | `t3_thread_list` (unsettled, top-level) over `POST /mcp` | agent-api `GET /v1/conversations` |
+| Send | `t3_thread_send`, mode `auto` (starts, steers or queues) | agent-api `/v1` messages (bot-started) or session-events `/prompt/` (keyboard) |
+| Answer | `t3_pending_request` | agent-api `/v1` answer, or session-events `/keys/`, `/answer-text/` |
+| Stop | `t3_thread_interrupt` | agent-api `/v1` cancel, or session-events `/cancel/` |
+| Read | `t3_thread_read` | agent-api `/v1` transcript |
+
+session-events accepts the Caller's bearer token (checked 2026-10-21). tmux
+conversations the bot started before T3 keep running through `/v1` until they end.
+When T3 does not answer, tmux sessions still work, `ls` says T3 is unreachable, and
+new sessions fail with that error.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `ls` | numbered sessions; `*` marks the current one, `desk` a keyboard session |
+| `ls` | numbered sessions; `*` marks the current one, `t3` or `tmux` where it runs, `desk` a session the bot did not start |
 | `use <name\|n>` | switch the current session |
 | `<text>` | send to the routed session |
 | `s <name\|n> <text>` | send once without switching |
-| `new <name> [@repo] [text]` | new session in `~/code/infra` or `~/code/<repo>`, claude-opus-5, effort max |
-| `ask <text>` | one-off question in a new `ask-N` session |
+| `new <name> [@repo] [text]` | new T3 thread in `~/code/infra` or `~/code/<repo>`, claude-opus-5, effort max |
+| `ask <text>` | one-off question in a new `ask-N` T3 thread |
 | `t [name\|n] [k]` | last k messages (default 3) |
-| `st [name\|n]` | state, queue, last turn |
+| `st [name\|n]` | state, queue, last turn; a T3 thread has no queue count |
 | `x [name\|n]` | stop the running turn |
-| `a [name\|n] <n\|text>` | answer a waiting question |
+| `a [name\|n] <n\|text>` | answer a waiting question: a number picks that option, other text is a custom answer; for a T3 request with several questions, `;` separates the answers and `1,3` picks several options (`a 2; 1,3`) |
 | `more` | next page |
 | `h` | help |
 
@@ -113,10 +136,15 @@ raw lines with `homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\"
 - Audit trail: `homelab logs query '{namespace="wa-bot"} |= "\"audit\":true"' --since 24h`.
   Every command, send, drop (sender, duplicate, stale, signature) and reply is a
   JSON line; message text is not logged. A stripped old PIN logs `pin_stripped`.
+  `send`, `create` and `answer` carry `backend` (`t3` for T3 threads), and a failed T3
+  call logs `t3_error` with the error.
+- Roll back the T3 side: set env `T3=off` on the Deployment in `stacks/wa-bot`. The bot
+  then lists and creates tmux sessions only, as before T3.
 - State: `/data/state.json` on PVC `wa-bot-data`. Deleting it resets the quota count
   and the quote map.
 - Revoke the bot's Lobby access: remove `whatsapp` from `devvm_external_agents` and run
-  the playbook (or `scripts/agent-api-kill whatsapp`).
+  the playbook (or `scripts/agent-api-kill whatsapp`). This cuts `/v1`, `/mcp` (T3) and
+  session-events together.
 - The test number is registered with the Cloud API (`POST /{phone-number-id}/register`,
   2026-10-21). Its two-step PIN is `secret/wa-bot` `two_step_pin`; Meta asks for it if the
   number is ever re-registered. Before registration every send failed with
@@ -134,6 +162,11 @@ raw lines with `homelab logs query '{namespace="wa-bot"} |= "\"event\":\"alert\"
   this in view; re-enabling the PIN is the way back if that changes.
 - The `whatsapp` Caller acts as `wizard` (sudo, cluster-admin, Vault), the same power
   Viktor accepted for Muse. agent-api has no scopes.
+- The bot sees and drives all of Viktor's unsettled T3 threads, not only the ones it
+  started.
+- T3 cannot approve permission requests over MCP, so a thread waiting on one gets a
+  note to approve it in T3.
+- With many unsettled T3 threads, `ls` can run to several pages (`more`).
 - Egress is locked (Calico policy `wa-bot-egress`, 2026-10-21): DNS on 10.96.0.10, Traefik,
   and TCP 443 to Meta's IPv4 ranges (from the CrowdSec `meta-asn.txt` list). Everything
   else is denied, including Slack; alerts reach #alerts through Loki instead (below).

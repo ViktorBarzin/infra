@@ -12,7 +12,7 @@
 #      X-Authentik-Username cannot authenticate. A bearer token is the only
 #      way in. Do not add tl-proxy-secret to these routes.
 #
-# Exposed: agent-api /v1/* and /openapi.json, tmux-api (minus /metrics,
+# Exposed: agent-api /v1/*, /mcp and /openapi.json, tmux-api (minus /metrics,
 # /health, /push*, /internal/*), session-events, file-api /files/*,
 # skills-api. NOT exposed: ttyd (/, /ws, /token — an interactive shell),
 # clipboard-upload (reads the body before checking auth), assets and build
@@ -207,6 +207,22 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
           }]
         },
         {
+          # agent-api's MCP endpoint (POST /mcp): a pass-through to the
+          # caller's own T3 MCP server (terminal-lobby ADR-0046), so Muse and
+          # the WhatsApp bot drive T3 threads with their lobby bearer token.
+          # t3_thread_wait can hold the request for up to 300 s, hence the
+          # long-poll transport. Exact Path, so agent-api's /metrics and
+          # /health stay unrouted.
+          match       = "Host(`${local.api_host}`) && Path(`/mcp`)"
+          kind        = "Rule"
+          middlewares = local.api_middlewares
+          services = [{
+            name             = kubernetes_service.agent_api.metadata[0].name
+            port             = 80
+            serversTransport = kubernetes_manifest.terminal_api_longpoll_transport.manifest.metadata.name
+          }]
+        },
+        {
           # tmux-api serves /metrics, /health, /push/* and /internal/* without
           # a login (they assume a private listener); keep them off this host.
           match = "Host(`${local.api_host}`) && PathPrefix(`/api/sessions/`) && !PathRegexp(`^/api/sessions/(metrics|health|internal|push)`)"
@@ -271,8 +287,9 @@ resource "cloudflare_dns_record" "terminal_api_aaaa" {
 
 # --- in-cluster reach to the devvm Lobby ports ---
 # Policy data and the reasoning are in devvm_lobby_anp.tf (ClusterNetworkPolicy, tier Admin). Who reaches which
-# port: traefik all of them, headscale only 7681, monitoring only 7684, t3code
-# only 3773, every other namespace none (pinned by tests/devvm-lobby-anp.test.sh).
+# port: traefik all of them, headscale only 7681, monitoring only 7684 and 8710,
+# t3code only 3773, every other namespace none (pinned by
+# tests/devvm-lobby-anp.test.sh).
 resource "kubernetes_manifest" "devvm_lobby_cnp" {
   for_each = local.devvm_lobby_cnps
   manifest = {
