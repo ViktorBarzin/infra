@@ -171,6 +171,37 @@ resource "kubernetes_deployment_v1" "tv_watcher" {
               }
             }
           }
+          # Pinned keys; see tv_env_secrets in main.tf.
+          env {
+            name = "URL_SIGNING_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "tv-secrets"
+                key      = "url_signing_key"
+                optional = false
+              }
+            }
+          }
+          env {
+            name = "FEED_ID_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "tv-secrets"
+                key      = "feed_id_key"
+                optional = false
+              }
+            }
+          }
+          env {
+            name = "PLAYBACK_REPORT_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "tv-secrets"
+                key      = "playback_report_key"
+                optional = false
+              }
+            }
+          }
           # Set on every Role, so this pod never trusts Authentik headers from
           # anything that can reach it (see the Edge).
           env {
