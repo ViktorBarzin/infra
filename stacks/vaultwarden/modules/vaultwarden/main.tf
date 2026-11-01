@@ -82,7 +82,7 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.37.4"
+          image = "vaultwarden/server:1.37.5"
           name  = "vaultwarden"
 
           resources {
