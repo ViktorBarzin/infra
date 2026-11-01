@@ -67,13 +67,14 @@ locals {
     # drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
     # T3 native-client descriptor (Authentik-less IngressRoute carve-out,
-    # stacks/t3code kubernetes_manifest.t3_native_ingressroute), served by
-    # tl-t3-view (terminal-lobby ADR-0045): T3's desktop and phone apps fetch
-    # this BEFORE they hold any credential, so an Authentik 302 here makes them
-    # unpairable; they parse the login HTML as the JSON descriptor and report
-    # an invalid response. The probe sends no cookie, which is what the
-    # carve-out rule keys on.
-    "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
+    # stacks/t3code kubernetes_manifest.t3_native_ingressroute), served by the
+    # host owner's t3 serve: T3's desktop and phone apps fetch this BEFORE they
+    # hold any credential, so an Authentik 302 here makes them unpairable; they
+    # parse the login HTML as the JSON descriptor and report an invalid
+    # response. The probe sends no cookie, which is what the carve-out rule
+    # keys on. One per user's T3 host (wizard on t3, emo on t3-emo).
+    "t3-native-descriptor"     = "https://t3.viktorbarzin.me/.well-known/t3/environment"
+    "t3-emo-native-descriptor" = "https://t3-emo.viktorbarzin.me/.well-known/t3/environment"
     # tasks app root (auth="app", stacks/tasks module.app.module.ingress): the TypeScript
     # build runs its own OIDC sign-in. An Authentik 302 here breaks the
     # bearer-token API, the OAuth callback and cookie-less OS icon fetchers.
@@ -103,7 +104,8 @@ locals {
     # preflights its bearer calls, and a preflight carries no Authorization
     # header. Before that rule, this URL answered OPTIONS with a 302 to
     # Authentik and the desktop app could not make a single API call.
-    "t3-native-preflight" = "https://t3.viktorbarzin.me/api/auth/session"
+    "t3-native-preflight"     = "https://t3.viktorbarzin.me/api/auth/session"
+    "t3-emo-native-preflight" = "https://t3-emo.viktorbarzin.me/api/auth/session"
   }
 }
 
