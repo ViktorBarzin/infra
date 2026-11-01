@@ -45,6 +45,17 @@
       ],
       "matchNewValue": "3.15.2-alpine",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-01 pipeline #3159: stack dbaas failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: mysql-backup Job) (commit 5f4efb2f)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "dpage/pgadmin4"
+      ],
+      "matchNewValue": "9.19",
+      "enabled": false
     }
   ]
 }
