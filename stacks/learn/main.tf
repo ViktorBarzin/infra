@@ -355,7 +355,7 @@ resource "kubernetes_deployment" "learn" {
 
         container {
           name  = "git-sync"
-          image = "registry.k8s.io/git-sync/git-sync:v4.7.1"
+          image = "registry.k8s.io/git-sync/git-sync:v4.8.0"
           args = [
             "--repo=git@github.com:ViktorBarzin/monorepo.git",
             "--ref=master",
