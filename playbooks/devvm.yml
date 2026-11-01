@@ -2534,11 +2534,11 @@
               tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 8710 drop
 
-              # tl-t3-view, the lobby's T3 view (terminal-lobby ADR-0044), for
-              # t3view.viktorbarzin.me. It checks the proxy secret itself; this
-              # keeps the LAN and the tunnels off it too. Same sources as ttyd,
-              # and the same AdminNetworkPolicy keeps pods other than traefik's
-              # off it.
+              # acd-demux (stacks/ac), the browser WebSocket front of acd.
+              # Until 2026-11-01 the lobby's T3 view sidecar tl-t3-view also
+              # used 7690; it is retired (terminal-lobby ADR-0046). Same
+              # sources as ttyd, and the same ClusterNetworkPolicy keeps pods
+              # other than traefik's off it.
               tcp dport 7690 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 7690 drop
 
