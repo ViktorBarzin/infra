@@ -499,7 +499,7 @@ resource "kubernetes_stateful_set_v1" "mysql_v26" {
           # Exact pin. 26.x innovation releases upgrade in place within the
           # series and to the next LTS; they cannot be downgraded in place.
           # Take a dump before every bump.
-          image = "docker.io/library/mysql:26.7.0"
+          image = "docker.io/library/mysql:26.10.0"
 
           port {
             container_port = 3306
@@ -933,7 +933,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
           spec {
             container {
               name  = "mysql-backup"
-              image = "docker.io/library/mysql:26.7.0"
+              image = "docker.io/library/mysql:26.10.0"
               env {
                 name = "MYSQL_PWD"
                 value_from {
@@ -1025,7 +1025,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
           spec {
             container {
               name  = "mysql-backup-per-db"
-              image = "docker.io/library/mysql:26.7.0"
+              image = "docker.io/library/mysql:26.10.0"
               env {
                 name = "MYSQL_PWD"
                 value_from {
