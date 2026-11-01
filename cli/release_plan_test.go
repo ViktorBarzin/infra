@@ -393,3 +393,20 @@ func TestTheReleaseAsksForTheTVPackage(t *testing.T) {
 		t.Errorf("artifact types %q %q", tvArtifactType, tvMappingType)
 	}
 }
+
+// A new applicationId has nothing published yet: the site answers 404 for its
+// package, which is a known "nothing", not an unknown. The first release of
+// me.viktorbarzin.tv (2026-11-01) was refused until this was told apart.
+func TestTheFirstReleaseOfAPackageBuilds(t *testing.T) {
+	got := decideTV(tvFacts{Code: 31639, NonePublished: true})
+	if got.Action != actionBuild {
+		t.Errorf("decideTV(first release) = %v (%s), want build", got.Action, got.Reason)
+	}
+	got = decideTV(tvFacts{Code: 31639, NonePublished: true, OnRegistry: true})
+	if got.Action != actionPublishOnly {
+		t.Errorf("decideTV(first release, on ghcr) = %v (%s), want publish only", got.Action, got.Reason)
+	}
+	if !isNotFound(fmt.Errorf("wrapped: %w", errNotFound)) || isNotFound(fmt.Errorf("HTTP 502")) {
+		t.Errorf("isNotFound does not tell a 404 from other errors")
+	}
+}

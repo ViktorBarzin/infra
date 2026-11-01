@@ -311,6 +311,9 @@ func (r *releaseRun) getJSON(path string, v interface{}) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%s%s -> HTTP 404: %w", r.spec.Site, path, errNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s%s -> HTTP %d", r.spec.Site, path, resp.StatusCode)
 	}
@@ -426,9 +429,11 @@ func (r *releaseRun) plan() error {
 	r.tv = releaseDecision{actionNotAsked, "--server only"}
 	if r.tvOn {
 		code, sum, err := r.liveTVLatest()
-		f := tvFacts{Auto: r.opts.auto(), Code: r.version.Code, LiveCode: code, LiveUnknown: err != nil || code == 0}
+		none := code == 0 && isNotFound(err)
+		f := tvFacts{Auto: r.opts.auto(), Code: r.version.Code, LiveCode: code, NonePublished: none,
+			LiveUnknown: !none && (err != nil || code == 0)}
 		r.liveTV, r.liveTVSHA = code, sum
-		if !f.LiveUnknown && f.Code > code {
+		if !f.LiveUnknown && !f.NonePublished && f.Code > code {
 			bases, err := r.commitsForTVCode(code)
 			if err != nil {
 				r.say("could not find the commit TV build %d came from (%v); treating it as unknown", code, err)
@@ -649,7 +654,7 @@ func (r *releaseRun) releaseTV() error {
 		expect = sum
 		// Master and the televisions may have moved during a 10-minute build;
 		// check again right before anything leaves this machine.
-		if live, _, err := r.liveTVLatest(); err != nil || live >= code {
+		if live, _, err := r.liveTVLatest(); (err != nil && !isNotFound(err)) || live >= code {
 			return fmt.Errorf("televisions are now offered %d (err %v); %d is not above it, so this build is not published", live, err, code)
 		}
 		if _, ok, err := r.reg.manifest(r.spec.TVRepo, tag); err != nil || ok {

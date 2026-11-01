@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -64,6 +65,11 @@ const (
 	tvArtifactType = "application/vnd.viktorbarzin.tv.build"
 	tvMappingType  = "application/vnd.viktorbarzin.tv.mapping"
 )
+
+// errNotFound marks an HTTP 404 from the site.
+var errNotFound = errors.New("not found")
+
+func isNotFound(err error) bool { return errors.Is(err, errNotFound) }
 
 // appLatestPath and apkPath name the TV app the server should answer for. The
 // server answers for one applicationId at a time, and with no ?package= it
@@ -204,14 +210,23 @@ type tvFacts struct {
 	Auto        bool
 	Code        int
 	LiveCode    int
-	LiveUnknown bool     // /api/app/latest did not answer
-	Changed     bool     // an app path changed since any of LiveCommits
-	ChangeKnown bool     // LiveCommits is not empty
-	LiveCommits []string // commits in the target's history with the live code's count
-	OnRegistry  bool     // ghcr already has :<code>
+	LiveUnknown bool // /api/app/latest did not answer
+	// NonePublished: the site answered 404 for this app's package, so nothing
+	// is offered yet. The first release of a new applicationId builds.
+	NonePublished bool
+	Changed       bool     // an app path changed since any of LiveCommits
+	ChangeKnown   bool     // LiveCommits is not empty
+	LiveCommits   []string // commits in the target's history with the live code's count
+	OnRegistry    bool     // ghcr already has :<code>
 }
 
 func decideTV(f tvFacts) releaseDecision {
+	if f.NonePublished {
+		if f.OnRegistry {
+			return releaseDecision{actionPublishOnly, fmt.Sprintf("nothing is published for this app yet; versionCode %d is already on ghcr, publishing it", f.Code)}
+		}
+		return releaseDecision{actionBuild, fmt.Sprintf("nothing is published for this app yet; building versionCode %d", f.Code)}
+	}
 	if f.LiveUnknown {
 		return releaseDecision{actionRefuse, "the site did not say which versionCode televisions are offered, so a new code cannot be checked against it"}
 	}
