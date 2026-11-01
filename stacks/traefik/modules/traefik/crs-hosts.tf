@@ -61,6 +61,9 @@ locals {
     "tandoor.viktorbarzin.me",
     "recruiter-responder.viktorbarzin.me",
     "json.viktorbarzin.me",
+    # Alexa skill endpoint: POST /alexa bodies carry free-text utterances, and
+    # every request is verified against Amazon's signature by the app.
+    "alexa-assistant.viktorbarzin.me",
     # Bearer-token API whose request bodies are whole documents (markdown and
     # rendered HTML full of code). CRS blocked `homelab pages preview` from
     # the devvm on go-live (2026-10-02).

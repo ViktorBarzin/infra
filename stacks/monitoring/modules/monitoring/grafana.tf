@@ -140,6 +140,7 @@ locals {
     # sat there unseen from 2026-08-03 until 2026-08-15.
     "terminal-lobby-usage.json" = "Applications"
     "claude-usage.json"         = "Applications"
+    "alexa-assistant.json"      = "Applications"
     "uk-payslip.json"           = "Finance (Personal)"
     "wealth.json"               = "Finance (Personal)"
     "job-hunter.json"           = "Finance"
