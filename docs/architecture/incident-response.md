@@ -175,8 +175,8 @@ For contributors who want to understand how the automation works.
 ```mermaid
 flowchart LR
     subgraph "Forgejo (viktor/infra)"
-        A0["f1-stream source guard<br/>(hourly, calendar-gated)"] --> A
-        W0["f1-stream Watcher<br/>(Tier 1 Channel down 10 min,<br/>or thin 24 h)"] --> A
+        A0["tv source guard<br/>(hourly, calendar-gated)"] --> A
+        W0["tv Watcher<br/>(Tier 1 Channel down 10 min,<br/>or thin 24 h)"] --> A
         A["Issue labelled<br/>'broken'"] --> B[Webhook fires]
     end
 
@@ -191,7 +191,7 @@ flowchart LR
         I --> K[Terraform Apply / push + CI]
         I --> L[Post-Mortem Pipeline]
         H -->|"also labelled<br/>'f1-source'"| R[f1-source-fixer agent]
-        R --> S["push viktor/f1-stream<br/>watch deploy, verify,<br/>close the issue"]
+        R --> S["push viktor/tv<br/>watch deploy, verify,<br/>close the issue"]
         H -->|"also labelled<br/>'channel-source'"| CR[channel-source-fixer agent]
         CR --> S
     end
@@ -217,11 +217,11 @@ flowchart LR
 | Forgejo webhook | `viktor/infra` -> `POST /hooks/forgejo` | Fires on the `broken` label; signature-verified, gated, dispatches a fixer run |
 | fixer-tick CronJob | `stacks/claude-agent-service` | Drains queued `broken` issues and follows pushed commits through CI |
 | Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
-| f1-stream source guard | `stacks/f1-stream/f1-source-guard.tf` | Hourly CronJob, calendar-gated to T-2h and T-30m before a session. Plays each source's stream in a leased chrome-fleet worker and files `broken` + `f1-source` when the chain does not produce a moving picture |
-| f1-stream Watcher | `stacks/f1-stream/watcher.tf` | `ROLE=watcher` pod (f1-stream ADR-0044). Watches every Feed of the hand-picked Tier 1 TV Channels through the Edges; when one has had no smooth Feed for 10 minutes it posts one line to `#alerts` and files `broken` + `channel-source`, one open issue per Channel (`[channel-source: <slug>]`). When one has had fewer than 2 clean Feeds for 24 hours (thin) it files a `thin:` issue on the same labels with no Slack line, asking for more sources. Health card at `https://tv.viktorbarzin.me/admin/channels` |
-| Channel Source Fixer | `.claude/agents/channel-source-fixer.md` | Repairs a Tier 1 Channel's resolvers or catalogue aliases from a `channel-source` issue, ships to `viktor/f1-stream`, confirms through the Watcher that the Channel is up, closes the issue or reverts |
-| f1 Source Fixer | `.claude/agents/f1-source-fixer.md` | Repairs an f1-stream extractor or resolver from an `f1-source` issue, ships to `viktor/f1-stream`, verifies recovery, closes the issue |
-| f1 Feedback Fixer | `.claude/agents/f1-feedback-fixer.md` | Works a User report issue on `viktor/f1-stream` once Viktor adds `approved` (f1-stream ADR-0047): fixes a problem or plans and builds an idea, pushes to master, watches the deploy, re-checks live, closes or asks on the issue with `needs-human`. A reply comment from `viktor` starts the next run |
+| tv source guard | `stacks/tv/tv-source-guard.tf` | Hourly CronJob, calendar-gated to T-2h and T-30m before a session. Plays each source's stream in a leased chrome-fleet worker and files `broken` + `f1-source` when the chain does not produce a moving picture |
+| tv Watcher | `stacks/tv/watcher.tf` | `ROLE=watcher` pod (tv ADR-0044). Watches every Feed of the hand-picked Tier 1 TV Channels through the Edges; when one has had no smooth Feed for 10 minutes it posts one line to `#alerts` and files `broken` + `channel-source`, one open issue per Channel (`[channel-source: <slug>]`). When one has had fewer than 2 clean Feeds for 24 hours (thin) it files a `thin:` issue on the same labels with no Slack line, asking for more sources. Health card at `https://tv.viktorbarzin.me/admin/channels` |
+| Channel Source Fixer | `.claude/agents/channel-source-fixer.md` | Repairs a Tier 1 Channel's resolvers or catalogue aliases from a `channel-source` issue, ships to `viktor/tv`, confirms through the Watcher that the Channel is up, closes the issue or reverts |
+| f1 Source Fixer | `.claude/agents/f1-source-fixer.md` | Repairs an F1 extractor or resolver in tv from an `f1-source` issue, ships to `viktor/tv`, verifies recovery, closes the issue |
+| TV Feedback Fixer | `.claude/agents/tv-feedback-fixer.md` | Works a User report issue on `viktor/tv` once Viktor adds `approved` (tv ADR-0047): fixes a problem or plans and builds an idea, pushes to master, watches the deploy, re-checks live, closes or asks on the issue with `needs-human`. A reply comment from `viktor` starts the next run |
 | Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
 | SEV Triage | `.claude/agents/sev-triage.md` | Fast cluster scan + severity classification |
 | SEV Historian | `.claude/agents/sev-historian.md` | Cross-references past incidents |
@@ -282,8 +282,8 @@ The automated agent follows strict rules:
 | `sev1` / `sev2` / `sev3` | Severity classification |
 | `postmortem-required` | SEV1/SEV2 — the post-mortem pipeline owes a writeup |
 | `needs-human` | Escalated — handed back to a human |
-| `f1-source` | An f1-stream upstream source stopped producing playable streams — **routes the issue to `f1-source-fixer`** rather than being fixed in place |
-| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes, or has been thin (fewer than 2 clean Feeds for 24 hours) — **routes the issue to `channel-source-fixer`** |
+| `f1-source` | An upstream F1 source of tv stopped producing playable streams — **routes the issue to `f1-source-fixer`** rather than being fixed in place |
+| `channel-source` | A Tier 1 TV Channel on tv has had no smooth Feed for 10 minutes, or has been thin (fewer than 2 clean Feeds for 24 hours) — **routes the issue to `channel-source-fixer`** |
 
 #### Recreating a label
 
@@ -308,17 +308,17 @@ print(next((l["id"] for l in ls if l["name"]==n), "missing"))' "$NAME"
 # only if that printed "missing"
 curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
   "$FJ/repos/viktor/infra/labels" \
-  -d '{"name":"f1-source","color":"#1d76db","description":"f1-stream upstream source is not producing playable streams"}'
+  -d '{"name":"f1-source","color":"#1d76db","description":"tv upstream F1 source is not producing playable streams"}'
 ```
 
 `channel-source` (created 2026-10-16) is recreated the same way, with
-`{"name":"channel-source","color":"#0e8a16","description":"f1-stream Tier 1 TV Channel has no smooth Feed"}`;
+`{"name":"channel-source","color":"#0e8a16","description":"tv Tier 1 TV Channel has no smooth Feed"}`;
 while it is missing the Watcher posts its `#alerts` line and files nothing
-(`backend/watcher/alerts.py` resolves labels by name the same way).
+(`tv/watcher/alerts.py` in the tv repo resolves labels by name the same way).
 
-What breaks while `f1-source` is missing: the f1-stream source guard resolves
+What breaks while `f1-source` is missing: the tv source guard resolves
 label names to ids before it files and refuses to file when one is absent
-(`backend/guard_issues.py`, `resolve_label_ids`), on the reasoning that an
+(`tv/guard_issues.py`, `resolve_label_ids`), on the reasoning that an
 unlabelled issue would look handled while dispatching nothing. So a real fault
 is logged and posted to `#alerts`, and no issue is opened — the fault is visible
 but nothing repairs it. `broken` missing has the same effect for every filer.

@@ -956,9 +956,9 @@ about 115 ingresses:
 variable on the shared one:
 - `skip_default_rate_limit = true` detaches the shared limiter entirely.
   Immich, Nextcloud's ingresses, Authentik, tripit, health, actualbudget,
-  dawarich, android-emulator, prometheus and f1-stream use it, mostly because
+  dawarich, android-emulator, prometheus and tv use it, mostly because
   parallel asset loads or sync clients exceed 10/s legitimately.
-- `f1-rate-limit` (200/2000, also keyed on `X-Real-Ip`) fronts f1-stream, where
+- `f1-rate-limit` (200/2000, also keyed on `X-Real-Ip`) fronts tv, where
   HLS makes one request per video segment.
 
 **What a per-client limit cannot do**: catch a crawl that sends one request
@@ -1071,7 +1071,7 @@ module "myapp_ingress" {
 
 There is no `rate_limit` variable. The shared limiter is either attached (the
 default) or detached with `skip_default_rate_limit`; a service needing a
-different ceiling gets its own Middleware, as f1-stream does.
+different ceiling gets its own Middleware, as tv does.
 
 ### Kyverno Policy Example
 

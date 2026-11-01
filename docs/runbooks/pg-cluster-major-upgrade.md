@@ -107,7 +107,7 @@ minutes, because the lanes competed for the same disks (dawarich alone took
 - While the old cluster keeps running, two pods carry
   `cnpg.io/instanceRole=primary`. Anything that picks a pod by that label alone
   can land on the frozen cluster and read stale data. On 2026-10-15
-  `homelab k8s db` did exactly that, and the f1-stream viewing record looked
+  `homelab k8s db` did exactly that, and the tv (then f1-stream) viewing record looked
   empty from 18:11 UTC although every row was on PG18. Since CLI v0.27.2 the
   verb follows the `postgresql` Service's selector. Read the new cluster with
   `homelab k8s db` (or `kubectl exec pg-cluster-v18-1`) when comparing.
@@ -144,7 +144,7 @@ backup PVC mounted read-only) and restored with `psql`:
   exactly. 31 had fewer rows in the dump and 6 more, all consistent with the
   14 h of writes and retention pruning between the dump and the count
   (largest: `technitium.dns_logs` 12,122,560 restored against 12,179,162
-  live, `dawarich.points` 1,858,141 against 1,866,734, `f1_stream.watch_samples`
+  live, `dawarich.points` 1,858,141 against 1,866,734, `f1_stream.watch_samples` (now `tv`)
   75,539 against 92,760).
 - Every per-database dump from 00:15 UTC (38 files in
   `/srv/nfs/postgresql-backup/per-db/`) read back with `pg_restore -l`.

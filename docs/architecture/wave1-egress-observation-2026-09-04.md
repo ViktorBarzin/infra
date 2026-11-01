@@ -153,7 +153,7 @@ exactly one, which is what a rotating CDN address looks like.
 | lesson-harvester | 4-aux | 648 | 68 | 12 | 0 | 9 | 3 | 86 |
 | tripit | 4-aux | 664 | 223 | 12 | 0 | 6 | 6 | 214 |
 | valia-sites | 4-aux | 335 | 92 | 12 | 0 | 10 | 2 | 169 |
-| f1-stream | 4-aux | 664 | 60 | 13 | 0 | 11 | 2 | 32 |
+| f1-stream (now tv) | 4-aux | 664 | 60 | 13 | 0 | 11 | 2 | 32 |
 | realestate-crawler | 4-aux | 664 | 39 | 15 | 0 | 8 | 7 | 36 |
 | mailserver | 3-edge | 664 | 83 | 17 | 0 | 13 | 4 | 144 |
 | vaultwarden | 3-edge | 664 | 9 | 21 | 0 | 1 | 20 | 8 |

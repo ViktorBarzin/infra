@@ -125,8 +125,8 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
 | `agent-in-progress` | A run holds this issue. Applied for you; leave it while you work and drop it when you close (Step 5). |
 | `paused` | A human brake. If you see it, stop and say you stopped. |
 | `needs-human` | Escalated. |
-| `f1-source` | An f1-stream upstream source is not producing playable streams. Filed automatically by the f1-stream source guard. **You do not fix these yourself** — see "Routing: `f1-source`" in Step 4. |
-| `channel-source` | A Tier 1 TV Channel on f1-stream has had no smooth Feed for 10 minutes (down), or fewer than 2 clean Feeds for 24 hours (thin; the title reads `thin:`). Filed automatically by the f1-stream Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
+| `f1-source` | An upstream F1 source of the tv app is not producing playable streams. Filed automatically by the tv source guard. **You do not fix these yourself** — see "Routing: `f1-source`" in Step 4. |
+| `channel-source` | A Tier 1 TV Channel on tv has had no smooth Feed for 10 minutes (down), or fewer than 2 clean Feeds for 24 hours (thin; the title reads `thin:`). Filed automatically by the tv Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
 | `incident`, `sev1`/`sev2`/`sev3`, `postmortem-required` | You apply these during triage. |
 
 An issue labelled `change` is never yours to implement autonomously. If you were
@@ -194,13 +194,13 @@ The same care applies to anything whose failure would take out the fixer itself.
 
 ### Routing: `f1-source`
 
-An issue labelled `broken` **and** `f1-source` is an f1-stream upstream source
-that stopped producing playable streams. The f1-stream source guard files these
+An issue labelled `broken` **and** `f1-source` is an upstream F1 source of the tv app
+that stopped producing playable streams. The tv source guard files these
 automatically, one open thread per source, and comments onto the existing thread
 when the same source fails again.
 
 **Hand it to `f1-source-fixer` — do not repair it yourself.** Two reasons: the
-fix lives in the `viktor/f1-stream` repo, which your repo-scope rule below puts
+fix lives in the `viktor/tv` repo, which your repo-scope rule below puts
 out of reach, and the knowledge of how those extractors and their de-obfuscation
 resolvers work lives in that agent rather than in this prompt.
 
@@ -230,13 +230,13 @@ You still own the issue. Your part:
 
    > **Never write a `Pushed-Commit:` line for this route.** That marker is
    > machine-read, and what reads it watches `viktor/infra` CI. The sub-agent's
-   > sha is a `viktor/f1-stream` commit, so a marker carrying it sends the
+   > sha is a `viktor/tv` commit, so a marker carrying it sends the
    > watcher looking for a pipeline that will never exist, and the run hangs
    > waiting on it. Name the sha in prose instead, with its repo, like
-   > ``pushed `viktor/f1-stream@abc1234` `` — prose is not parsed. The marker is
+   > ``pushed `viktor/tv@abc1234` `` — prose is not parsed. The marker is
    > only ever for a commit you pushed to `viktor/infra` yourself.
 
-The sub-agent ships and closes: it pushes to `viktor/f1-stream`, watches the
+The sub-agent ships and closes: it pushes to `viktor/tv`, watches the
 deploy, verifies the source recovered, and closes the issue itself with the
 verification output. It is the only actor that observes recovery, so that
 closure is correctly its own.
@@ -249,17 +249,17 @@ fallback.
 ### Routing: `channel-source`
 
 An issue labelled `broken` **and** `channel-source` is a Tier 1 TV Channel on
-f1-stream (BNT 1, bTV, Nova and the rest of the hand-picked list) that has had
-no smooth Feed for 10 minutes. The f1-stream Watcher (`ROLE=watcher`, f1-stream
+tv (BNT 1, bTV, Nova and the rest of the hand-picked list) that has had
+no smooth Feed for 10 minutes. The tv Watcher (`ROLE=watcher`, tv
 ADR-0044) files these, one open thread per Channel, marked
 `[channel-source: <slug>]` in the title, and posts one line to `#alerts`.
 
 **Hand it to `channel-source-fixer`, the same way as `f1-source`** — the fix
-lives in `viktor/f1-stream`, and the knowledge of the channel resolvers lives in
+lives in `viktor/tv`, and the knowledge of the channel resolvers lives in
 that agent.
 
 1. **Read the thread** (Step 1) and **verify the fault is current** (Step 2):
-   `f1_watcher_channel_up{channel="<slug>"}` in Prometheus reads 1 when the
+   `tv_watcher_channel_up{channel="<slug>"}` in Prometheus reads 1 when the
    Channel is up again. If it recovered on its own, comment with what you read,
    close the issue, and stop.
 2. **Classify** (Step 3). One Tier 1 Channel down is SEV3; several at once, or
@@ -268,7 +268,7 @@ that agent.
    issue number, the slug from the title marker, the Feed table from the body
    (site, Reputation, last failure) and any earlier attempt in the thread.
 4. **Relay its result back onto the issue** as a comment. As with `f1-source`,
-   **never write a `Pushed-Commit:` line** for its `viktor/f1-stream` sha; name
+   **never write a `Pushed-Commit:` line** for its `viktor/tv` sha; name
    it in prose with its repo.
 
 The sub-agent ships, verifies recovery through the Watcher, and closes the
@@ -285,9 +285,9 @@ body says the Channel still plays. A down issue can also carry a thin comment
 that starts `<!-- f1-watcher: thin -->`. A thin issue asks for more sources;
 it is not an outage. It differs from the down route in four places:
 
-1. **Skip the recovery check.** `f1_watcher_channel_up` reads 1 for a thin
+1. **Skip the recovery check.** `tv_watcher_channel_up` reads 1 for a thin
    Channel, so it says nothing about whether the issue still holds. Read
-   `f1_watcher_channel_thin{channel="<slug>"}` and the card's `clean_feeds`
+   `tv_watcher_channel_thin{channel="<slug>"}` and the card's `clean_feeds`
    and `thin` for the Channel instead, and note them in a comment. Do not close
    the issue and do not relabel it `change` because the Channel is up.
 2. **No incident.** Do not add `incident` or a sev label; comment
@@ -311,7 +311,7 @@ and where, then escalate. Do not clone and push to another repo.
 
 The exceptions are the `f1-source` and `channel-source` routes above, and they
 do not bend this rule: `f1-source-fixer` and `channel-source-fixer` are the
-agents that hold `viktor/f1-stream` write access, so the push happens there,
+agents that hold `viktor/tv` write access, so the push happens there,
 not here.
 
 ### Out of cluster

@@ -13,17 +13,17 @@ gate owns `/` on both hostnames. Warm boot is ~90s. Idle is measured from
 real interaction, not connection count, so a forgotten `adb connect` (left
 ESTABLISHED) no longer keeps it awake — but `adb disconnect` anyway.
 
-An f1-stream deploy also puts it to sleep (since 2026-10-17): the f1
+A tv deploy also puts it to sleep (since 2026-10-17): the tv
 Transcoder rolls with a surge pod that needs the emulator's 800 gpumem on
-k8s-node1, so `.woodpecker/deploy.yml` in the f1-stream repo scales the
+k8s-node1, so `.woodpecker/deploy.yml` in the tv repo scales the
 emulator to 0 before that roll and leaves it asleep. A session on the emulator
 at that moment is cut off; wake it again through the gate. The deploy's
-grant is the `f1-stream-deploy-yield` Role in `gate.tf`.
+grant is the `tv-deploy-yield` Role in `gate.tf`.
 
 The Transcoder also rolls when Reloader sees its Secret change and when a
 Terraform apply changes its pod template, and neither passes through that
 pipeline. So the gate watches too (since 2026-10-17): every 10 s it lists the
-pods labelled `android-emulator-yields-to=gpu-seat` in namespace `f1-stream`
+pods labelled `android-emulator-yields-to=gpu-seat` in namespace `tv`
 (the Transcoder, and since 2026-10-18 the Worker, which also requests gpumem),
 and when one waits Pending with `Insufficient viktorbarzin.me/gpumem` it scales
 the emulator to 0 and logs which pod it yields to. While such a pod waits,
@@ -37,7 +37,7 @@ emulator's 800 gpumem (another GPU tenant took the seat), so the gate logs
 why, lists it under `"gave_up_on"` in `/status`, does any held-back wake, and
 wakes the emulator on visits as usual; the `PodUnschedulable` alert reports
 that pod. A new pod (the next rollout) gets its own 15 min. The grant is the
-`android-emulator-yield-watch` Role in namespace `f1-stream` (list pods).
+`android-emulator-yield-watch` Role in namespace `tv` (list pods).
 
 `/healthz` answers JSON with `"yield_watcher"`: `alive`, `dead` (the thread
 exited) or `stuck` (no finished pass for 2 min), plus `last_pass_s_ago`. It
@@ -88,7 +88,7 @@ uninstall your test app when done, and presence-claim
 `homelab how "android emulator"` prints. Claims under different labels do not
 conflict, and some notes before 2026-10-31 used `infra:android-emulator`, so
 until those have aged out, `presence peek` both before driving it.
-`homelab deploy f1-stream` already checks both before it puts the emulator to
+`homelab deploy tv` already checks both before it puts the emulator to
 sleep.
 
 ## How it works

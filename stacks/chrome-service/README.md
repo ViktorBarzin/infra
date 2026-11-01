@@ -28,7 +28,8 @@ async with async_playwright() as p:
 ```
 
 NetworkPolicy is the only gate on the CDP endpoint — labelled client
-namespaces or explicit fallback (`f1-stream`). No bearer token is
+namespaces or explicit fallback (`tv`, and `f1-stream` until that
+namespace is removed after the rename). No bearer token is
 required for the connection itself.
 
 ## Snapshot endpoint (external callers)

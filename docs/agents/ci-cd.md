@@ -42,9 +42,9 @@ on Woodpecker repo 1 instead, with `PIPELINE=first-party-deploy`, `APP` and
 StatefulSets (memory id=740). Onboarding tool: `scripts/offinfra-onboard` +
 `scripts/offinfra-templates/`; mirror + workflow commits via the Forgejo API over
 the internal Traefik LB (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`).
-Reference impls: tripit (the original pilot), f1-stream, job-hunter, tuya_bridge.
+Reference impls: tripit (the original pilot), tv (then f1-stream), job-hunter, tuya_bridge.
 
-**Migrated apps (issues #13–#27):** f1-stream, job-hunter, tuya_bridge,
+**Migrated apps (issues #13–#27):** tv (then f1-stream), job-hunter, tuya_bridge,
 beadboard, nextcloud-todos, claude-agent-service, **claude-memory-mcp** (GHA →
 ghcr, NOT DockerHub), kms-website, Freedify, instagram-poster, payslip-ingest,
 broker-sync (image `wealthfolio-sync`), fire-planner, recruiter-responder,
@@ -54,7 +54,7 @@ audiobook-search) now also land on ghcr.
 - **PUBLIC ghcr packages:** beadboard, nextcloud-todos, claude-agent-service,
   claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
   android-emulator.
-- **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
+- **PRIVATE ghcr:** tv, tv-android, tv-tracker, job-hunter, instagram-poster, payslip-ingest,
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
   infra-ci, k8s-portal, excalidraw-library, chesscom-streak. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
