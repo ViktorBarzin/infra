@@ -1,8 +1,8 @@
-# The Watcher (f1-stream ADR-0040, amended by ADR-0044, ADR-0045, ADR-0046).
+# The Watcher (tv ADR-0040, amended by ADR-0044, ADR-0045, ADR-0046).
 #
 # A fourth Role on the same image, `ROLE=watcher`. It watches every Feed of the
 # hand-picked Tier 1 Channels through the Edges' in-cluster reader path
-# (http://f1.f1-stream.svc.cluster.local/proxy), so it shares the viewers'
+# (http://tv.tv.svc.cluster.local/proxy), so it shares the viewers'
 # upstream session and costs download only. It keeps a Reputation and a Watch
 # score per Feed in the viewing Postgres, publishes the order a press on a
 # Tier 1 Channel opens Feeds in (Redis), keeps the first of them resolved, and
@@ -13,8 +13,8 @@
 #
 # One replica, Recreate: two Watchers would double every watch and every
 # alert. No GPU and no Service: nothing routes to it. Prometheus scrapes it like
-# every app pod (job f1-stream, by pod), which is where f1_watcher_* and
-# f1_stgledai_exit_* come from.
+# every app pod (job tv, by pod), which is where tv_watcher_* and
+# tv_stgledai_exit_* come from.
 #
 # Memory: the process is the full app (about 250 MiB, like an Edge at rest)
 # plus up to ~10 full watches and ~40 light ones, each streaming segments
@@ -24,12 +24,12 @@
 # Transcoder still terminating while the Edge surge pod starts +1536Mi, and the
 # hourly source-guard job +768Mi come to 14528Mi. Requests peak at 3776Mi of
 # 6Gi memory and 910m of 2 CPU. The quota is unchanged.
-resource "kubernetes_deployment_v1" "f1_watcher" {
+resource "kubernetes_deployment_v1" "tv_watcher" {
   metadata {
-    name      = "f1-stream-watcher"
-    namespace = local.f1_namespace
+    name      = "tv-watcher"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "watcher"
       tier = local.tiers.aux
     }
@@ -44,14 +44,14 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
     }
     selector {
       match_labels = {
-        app  = "f1-stream"
+        app  = "tv"
         role = "watcher"
       }
     }
     template {
       metadata {
         labels = {
-          app  = "f1-stream"
+          app  = "tv"
           role = "watcher"
         }
       }
@@ -59,10 +59,10 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
         termination_grace_period_seconds = 30
         automount_service_account_token  = false
         container {
-          # deploy.yml in the f1-stream repo sets the image by this name, after
+          # deploy.yml in the tv repo sets the image by this name, after
           # the Edges (it reads through them).
-          name  = "f1-stream"
-          image = local.f1_image
+          name  = "tv"
+          image = local.tv_image
           port {
             container_port = 8000
           }
@@ -75,7 +75,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
               memory = "768Mi"
             }
           }
-          # Ready once its scheduler runs (backend/readiness.py). Nothing routes
+          # Ready once its scheduler runs (tv/readiness.py). Nothing routes
           # here; the probe only tells a rollout the pod came up.
           readiness_probe {
             http_get {
@@ -95,7 +95,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
           # /proxy needs no signature and the rewritten playlist points back here.
           env {
             name  = "WATCHER_EDGE_BASE"
-            value = local.f1_edge_url
+            value = local.tv_edge_url
           }
           # About this many full (Learning) watches at once (ADR-0044).
           env {
@@ -104,8 +104,8 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
           }
           # What full watches may bring the Watcher's download up to, in Mbit/s
           # (ADR-0044, Download budget). Raised from 30 to 45 on 2026-10-18.
-          # Alert: F1WatcherDownloadOverBudget, which reads this value back
-          # from the f1_watcher_download_budget_mbps gauge.
+          # Alert: TvWatcherDownloadOverBudget, which reads this value back
+          # from the tv_watcher_download_budget_mbps gauge.
           env {
             name  = "WATCHER_DOWNLOAD_BUDGET_MBPS"
             value = "45"
@@ -134,7 +134,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
             value = "viktor/infra"
           }
           # The #alerts webhook and the Forgejo token the source guard already
-          # carries in this namespace (f1-source-guard.tf). The token is
+          # carries in this namespace (tv-source-guard.tf). The token is
           # `viktor`'s, which is NOT the fixer's bot actor, so a filed issue
           # survives the webhook's loop guard and dispatches. optional, so the
           # pod starts before the ExternalSecret syncs; the app then logs the
@@ -143,7 +143,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
             name = "WATCHER_SLACK_WEBHOOK"
             value_from {
               secret_key_ref {
-                name     = "f1-stream-guard-secrets"
+                name     = "tv-guard-secrets"
                 key      = "slack_webhook"
                 optional = true
               }
@@ -153,7 +153,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
             name = "WATCHER_FORGEJO_TOKEN"
             value_from {
               secret_key_ref {
-                name     = "f1-stream-guard-secrets"
+                name     = "tv-guard-secrets"
                 key      = "forgejo_token"
                 optional = true
               }
@@ -165,7 +165,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
             name = "ADMIN_SESSION_KEY"
             value_from {
               secret_key_ref {
-                name     = "f1-stream-secrets"
+                name     = "tv-secrets"
                 key      = "admin_session_key"
                 optional = false
               }
@@ -186,7 +186,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
           # live in the viewing Postgres (schema version 7).
           env {
             name  = "VIEWING_DATABASE_URL"
-            value = "postgresql://f1_stream@${var.postgresql_host}:5432/f1_stream"
+            value = "postgresql://tv@${var.postgresql_host}:5432/tv"
           }
           env {
             name  = "VIEWING_DATABASE_PASSWORD_FILE"
@@ -206,7 +206,7 @@ resource "kubernetes_deployment_v1" "f1_watcher" {
         volume {
           name = "viewing-db"
           secret {
-            secret_name = "f1-stream-viewing-db"
+            secret_name = "tv-viewing-db"
             optional    = true
           }
         }

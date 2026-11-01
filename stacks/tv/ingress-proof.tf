@@ -50,8 +50,8 @@ resource "random_password" "ingress_proof" {
 
 resource "kubernetes_secret" "ingress_proof" {
   metadata {
-    name      = "f1-stream-ingress-proof"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "tv-ingress-proof"
+    namespace = kubernetes_namespace.tv.metadata[0].name
   }
   data = {
     proof = random_password.ingress_proof.result
@@ -64,12 +64,12 @@ resource "kubernetes_manifest" "ingress_proof" {
     kind       = "Middleware"
     metadata = {
       name      = "ingress-proof"
-      namespace = kubernetes_namespace.f1-stream.metadata[0].name
+      namespace = kubernetes_namespace.tv.metadata[0].name
     }
     spec = {
       headers = {
         customRequestHeaders = {
-          "X-F1-Ingress-Proof" = random_password.ingress_proof.result
+          "X-TV-Ingress-Proof" = random_password.ingress_proof.result
         }
       }
     }

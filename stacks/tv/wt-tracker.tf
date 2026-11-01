@@ -30,14 +30,14 @@
 # deliberately not used.
 #
 # So this runs OUR image, built per ADR-0002 from `tracker/Dockerfile` in the
-# f1-stream repo over `bittorrent-tracker` from npm (webtorrent-org, MIT,
+# tv repo over `bittorrent-tracker` from npm (webtorrent-org, MIT,
 # 11.2.3 published 2026-05-25). That package is the same WebTorrent-style
 # signalling protocol p2p-media-loader v4 announces to, and it has the
 # provenance the Novage repo lacks.
 #
 # THE PACKAGE IS f1-wt-tracker. Until 2026-10-20 this pulled
 # ghcr.io/viktorbarzin/wt-tracker, a package first pushed by hand, which the
-# f1-stream repo's CI token could not write to (granting that is a GitHub web
+# tv repo's CI token could not write to (granting that is a GitHub web
 # UI step). CI now publishes to f1-wt-tracker, a package it created itself.
 # Both are private and pull with the namespace's ghcr-credentials secret.
 #
@@ -52,7 +52,7 @@ variable "wt_tracker_image_tag" {
 resource "kubernetes_deployment" "wt_tracker" {
   metadata {
     name      = "wt-tracker"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
       app  = "wt-tracker"
       tier = local.tiers.aux
@@ -85,7 +85,7 @@ resource "kubernetes_deployment" "wt_tracker" {
       spec {
         container {
           name              = "wt-tracker"
-          image             = "ghcr.io/viktorbarzin/f1-wt-tracker:${var.wt_tracker_image_tag}"
+          image             = "ghcr.io/viktorbarzin/tv-tracker:${var.wt_tracker_image_tag}"
           image_pull_policy = "Always"
 
           # `--ws` alone: no HTTP announce endpoint and no UDP socket, because
@@ -199,7 +199,7 @@ resource "kubernetes_deployment" "wt_tracker" {
 resource "kubernetes_service" "wt_tracker" {
   metadata {
     name      = "wt-tracker"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
       app = "wt-tracker"
     }
@@ -212,7 +212,7 @@ resource "kubernetes_service" "wt_tracker" {
       # dns_type = "none", and an external probe of /tracker would 404 by
       # design (see the readiness-probe comment above).
       "uptime.viktorbarzin.me/internal-monitor"      = "true"
-      "uptime.viktorbarzin.me/internal-monitor-name" = "F1 WebTorrent Tracker"
+      "uptime.viktorbarzin.me/internal-monitor-name" = "TV WebTorrent Tracker"
       "uptime.viktorbarzin.me/internal-monitor-path" = "/stats.json"
     }
   }
@@ -260,7 +260,7 @@ module "ingress_tracker" {
   # The public ingress on the same host owns the DNS record and the uptime
   # monitor; this is a path carve-out on the same name.
   dns_type         = "none"
-  namespace        = kubernetes_namespace.f1-stream.metadata[0].name
+  namespace        = kubernetes_namespace.tv.metadata[0].name
   name             = "${each.key}-tracker"
   host             = each.key
   service_name     = kubernetes_service.wt_tracker.metadata[0].name

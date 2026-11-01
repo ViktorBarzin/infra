@@ -43,12 +43,10 @@ VNC_PATH = "/vnc.html?autoconnect=1&resize=scale"
 
 
 def parse_namespaces(value):
-    """YIELD_NAMESPACE is a comma-separated list. The default names the app
-    under both its old and new name, f1-stream and tv, because the rename
-    (f1-stream plan 2026-11-01-tv-rebrand) has one namespace or the other live
-    at any moment; a namespace that cannot be read is skipped."""
+    """YIELD_NAMESPACE is a comma-separated list, the tv app's namespace by
+    default; a namespace that cannot be read is skipped."""
     if value is None:
-        value = "f1-stream,tv"
+        value = "tv"
     return [ns.strip() for ns in value.split(",") if ns.strip()]
 
 

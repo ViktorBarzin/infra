@@ -1,4 +1,4 @@
-# f1-stream source-guard — playback verification and fault filing.
+# tv source-guard — playback verification and fault filing.
 #
 # The community aggregators f1-stream extracts from break in two distinct ways.
 # They rotate hosts and paths (dead domains, TLD hops, legal-takedown
@@ -14,7 +14,7 @@
 # resolve, and actually play the m3u8 in a browser — and files a Forgejo issue
 # rather than dispatching directly.
 #
-# Design: f1-stream repo docs/playback-guard.md (supersedes the trigger and
+# Design: tv repo docs/playback-guard.md (supersedes the trigger and
 # dispatch halves of docs/source-guard.md; the per-source source_health() check
 # it describes still runs inside the app).
 
@@ -53,7 +53,7 @@
 # Slack path existed before this change but no webhook was ever configured, so
 # three failed repair runs on 2026-09-05 degraded to logger.info and reached
 # nobody.
-resource "kubernetes_manifest" "f1_stream_guard_secrets" {
+resource "kubernetes_manifest" "tv_guard_secrets" {
   field_manager {
     force_conflicts = true
   }
@@ -61,8 +61,8 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "f1-stream-guard-secrets"
-      namespace = "f1-stream"
+      name      = "tv-guard-secrets"
+      namespace = "tv"
     }
     spec = {
       refreshInterval = "1h"
@@ -71,7 +71,7 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
         kind = "ClusterSecretStore"
       }
       target = {
-        name = "f1-stream-guard-secrets"
+        name = "tv-guard-secrets"
       }
       data = [
         {
@@ -96,20 +96,20 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
       ]
     }
   }
-  depends_on = [kubernetes_namespace.f1-stream]
+  depends_on = [kubernetes_namespace.tv]
 }
 
-resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
+resource "kubernetes_cron_job_v1" "tv_source_guard" {
   metadata {
-    name      = "f1-stream-source-guard"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "tv-source-guard"
+    namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
-      app  = "f1-stream-source-guard"
+      app  = "tv-source-guard"
       tier = local.tiers.aux
     }
   }
   spec {
-    # Hourly, but the run itself is calendar-gated: backend.guard reads
+    # Hourly, but the run itself is calendar-gated: tv.guard reads
     # /api/schedule and returns within a second unless the next session falls
     # inside the T-2h or T-30m band. Hourly is what makes those bands reachable
     # — they are bands rather than instants precisely because a cron tick lands
@@ -124,7 +124,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
     job_template {
       metadata {
         labels = {
-          app = "f1-stream-source-guard"
+          app = "tv-source-guard"
         }
       }
       spec {
@@ -139,7 +139,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
         template {
           metadata {
             labels = {
-              app = "f1-stream-source-guard"
+              app = "tv-source-guard"
             }
           }
           spec {
@@ -158,47 +158,15 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               # Runs the SAME image as the Deployment so its extractor code (and
               # thus the playback chain it exercises) matches production.
               # :latest + Always pull — a CronJob spawns a fresh pod each run.
-              image             = "ghcr.io/viktorbarzin/f1-stream:latest"
+              image             = "ghcr.io/viktorbarzin/tv:latest"
               image_pull_policy = "Always"
-              # Version gate, because infra CI auto-applies on push and this
-              # stack cannot wait for the f1-stream image.
-              #
-              # This commit removes GUARD_AGENT_TOKEN and moves the schedule
-              # from 6h to hourly. The image currently on :latest still reads
-              # GUARD_AGENT_TOKEN and POSTs /execute with a bare `Bearer `,
-              # then raise_for_status — so applied ahead of the f1-stream
-              # rollout it would fail every hour, and pitsport is dead right
-              # now, so it would take that path every time.
-              #
-              # backend/chrome_fleet.py ships with the new guard and exists in
-              # no earlier image, which makes importing it an exact test for
-              # "does this image carry the code these env vars describe". On an
-              # older image the probe fails, the pod logs one line and exits 0,
-              # and nothing dispatches. On the new image it execs the guard
-              # unchanged. So the apply is inert until the code is present, and
-              # arms itself on the next rollout with no second apply.
-              # The gate EXPIRES. Left open-ended it is a silent kill switch:
-              # any later image where that import fails for any reason (module
-              # renamed, moved, a packaging change that drops it) would skip
-              # every hour with exit 0 and nobody would learn the guard had
-              # stopped. Past the cutoff a failed import exits 1 instead, so the
-              # CronJob starts failing visibly. The window only has to cover the
-              # gap between this apply and the f1-stream rollout, which is
-              # minutes; a week is generous.
-              command = ["/bin/sh", "-c", <<-EOT
-                GATE_UNTIL="2026-09-13"
-                if ! python -c 'import backend.chrome_fleet' 2>/dev/null; then
-                  TODAY=$(date -u +%Y-%m-%d)
-                  if [ "$TODAY" \> "$GATE_UNTIL" ]; then
-                    echo "image still predates the playback guard (no backend.chrome_fleet) after $GATE_UNTIL - failing loudly rather than skipping forever"
-                    exit 1
-                  fi
-                  echo "image predates the playback guard (no backend.chrome_fleet) - skipping this run, gate open until $GATE_UNTIL"
-                  exit 0
-                fi
-                exec python -m backend.guard
-              EOT
-              ]
+              # The guard module moved with the package rename (backend -> tv,
+              # f1-stream plan 2026-11-01-tv-rebrand). The version gate that
+              # used to wrap this (an import probe of backend.chrome_fleet,
+              # expired 2026-09-13) is gone: every image on ghcr.io/viktorbarzin/tv
+              # carries the guard, and an old probe would fail on the new
+              # package name.
+              command = ["python", "-m", "tv.guard"]
 
               resources {
                 requests = {
@@ -229,14 +197,14 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               }
               # Playback goes through our own /proxy, never straight at the CDN:
               # the videocdn token is bound to the requesting IP, and /proxy
-              # re-originates from an f1-stream Edge, so the token stays valid
+              # re-originates from a tv Edge, so the token stays valid
               # whichever node the leased browser sits on. The code default is
               # 127.0.0.1:8000, which is right for the app's in-process use and
               # wrong here — a cron pod runs no FastAPI, so an unset value would
               # send every playback attempt at nothing and read as a dead source.
               env {
                 name  = "PLAYBACK_VERIFY_PROXY_BASE"
-                value = "http://f1.f1-stream.svc.cluster.local"
+                value = "http://tv.tv.svc.cluster.local"
               }
               # Set explicitly: when the verifier is disabled it returns
               # is_playable=true with error="disabled", so an accidental false
@@ -260,22 +228,22 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               # of season JSON, /schedule returns 1,504 bytes of HTML.
               env {
                 name  = "GUARD_SCHEDULE_URL"
-                value = "http://f1.f1-stream.svc.cluster.local/api/schedule"
+                value = "http://tv.tv.svc.cluster.local/api/schedule"
               }
               # The source history the guard reads before filing, from /metrics.
-              # Straight at the Worker since ADR-0029 (f1-stream repo): only the
+              # Straight at the Worker since ADR-0029 (tv repo): only the
               # Worker extracts, so only its exposition carries the per-source
-              # extraction families, and the `f1` Service reaches an Edge. The
-              # app's default is the `f1` Service, which is right only for the
+              # extraction families, and the `tv` Service reaches an Edge. The
+              # app's default is the `tv` Service, which is right only for the
               # single pre-ADR-0029 Deployment. /api/schedule above stays on `f1`,
               # which any Edge answers.
               env {
                 name  = "GUARD_METRICS_URL"
-                value = "${local.f1_worker_url}/metrics"
+                value = "${local.tv_worker_url}/metrics"
               }
               # Faults are filed against the infra tracker, where the
               # broken-label webhook and issue-responder already live — not
-              # against viktor/f1-stream, which the old GUARD_REPO pointed at
+              # against viktor/tv, which the old GUARD_REPO pointed at
               # only to count commit trailers.
               env {
                 name  = "GUARD_ISSUE_REPO"
@@ -289,7 +257,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
                 name = "GUARD_FORGEJO_TOKEN"
                 value_from {
                   secret_key_ref {
-                    name = "f1-stream-guard-secrets"
+                    name = "tv-guard-secrets"
                     key  = "forgejo_token"
                   }
                 }
@@ -315,7 +283,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
                 name = "GUARD_SLACK_WEBHOOK"
                 value_from {
                   secret_key_ref {
-                    name = "f1-stream-guard-secrets"
+                    name = "tv-guard-secrets"
                     key  = "slack_webhook"
                   }
                 }
@@ -333,7 +301,7 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
   }
 
   depends_on = [
-    kubernetes_manifest.f1_stream_guard_secrets,
+    kubernetes_manifest.tv_guard_secrets,
     kubernetes_manifest.external_secret,
   ]
 }

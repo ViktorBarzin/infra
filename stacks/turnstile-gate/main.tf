@@ -558,17 +558,17 @@ module "anubis" {
           - '"X-Forwarded-Host" in headers'
           - 'headers["X-Forwarded-Host"] == "${local.domain}"'
           - 'path.matches("^/([A-Za-z0-9_-]+/)*index\\.xml$")'
-    # f1-stream's app paths and share-link previews, on tv, the app's only host
-    # since 2026-10-29 (f1-stream ADR-0053). f1 redirects to tv at Cloudflare
+    # The tv app's paths and share-link previews, on tv, the app's only host
+    # since 2026-10-29 (tv ADR-0053). f1 redirects to tv at Cloudflare
     # and never reaches this gate.
-    - name: f1-app-paths
+    - name: tv-app-paths
       action: ALLOW
       expression:
         all:
           - '"X-Forwarded-Host" in headers'
           - 'headers["X-Forwarded-Host"] == "tv.${local.domain}"'
           - 'path.matches("^/(_app/|openapi\\.json|docs|api/)") || path.matches("^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|feed|health|proxy|relay|replays/cache|replays/checks|replays/early|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\\?|$)") || path.matches("^/watch/(f1/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}|channel/[A-Za-z0-9_-]{1,96})(/v[0-9]{1,2})?[.]m3u8$") || path.matches("^/(sw\\.js|manifest\\.webmanifest|icons/[A-Za-z0-9_-]+\\.png|apple-touch-icon(-precomposed)?\\.png)$") || path.matches("^/logos/[A-Za-z0-9_-]+\\.png$")'
-    - name: f1-share-link-previews
+    - name: tv-share-link-previews
       action: ALLOW
       expression:
         all:
@@ -579,7 +579,7 @@ module "anubis" {
     # The public homelab showcase (stacks/learn ingress_homelab_showcase). On
     # 2026-10-20 Discordbot and redditbot were sent to the challenge here while
     # Slack, Facebook and Twitter already passed; this lets the pages and the
-    # OpenGraph image through for the same preview agents as the f1 rule.
+    # OpenGraph image through for the same preview agents as the tv rule.
     - name: showcase-link-previews
       action: ALLOW
       expression:

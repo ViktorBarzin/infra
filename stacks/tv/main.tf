@@ -7,18 +7,32 @@ variable "postgresql_host" { type = string }
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
-# Image tag for the Forgejo-registry image. The app lives in its own repo
-# (viktor/f1-stream, extracted 2026-06-04). CI builds + pushes `latest` and
-# `<short-sha>`, then drives the rollout via `kubectl set image`, so the
-# running tag is managed outside Terraform (see CI_SETS_IMAGE below).
+# Image tag of ghcr.io/viktorbarzin/tv. The app lives in its own repo
+# (viktor/tv, extracted 2026-06-04 as f1-stream). Its release builds and
+# pushes `latest` and `<8-char sha>`, then drives each rollout with
+# `kubectl set image`, so after the first apply the running tag is managed
+# outside Terraform (see CI_SETS_IMAGE below) and this value no longer matters.
+#
+# PINNED FOR THE FIRST APPLY (f1-stream plan 2026-11-01-tv-rebrand, review
+# finding 19). This stack's first apply creates every Deployment, and the
+# image it names is the one they start on. Before infra branch
+# wizard/tv-cutover lands, set the default below to the first 8 characters of
+# the tv release commit whose image is already on ghcr (the release step pushes
+# tv:<sha>; check with `docker manifest inspect ghcr.io/viktorbarzin/tv:<sha>`).
+# The validation refuses the placeholder and `latest`, so a missing pin stops
+# the plan instead of starting the pods on an unknown build.
 variable "image_tag" {
   type    = string
-  default = "latest"
+  default = "SET-TO-RELEASE-SHA"
+  validation {
+    condition     = can(regex("^[0-9a-f]{8,40}$", var.image_tag))
+    error_message = "image_tag must be the tv release commit sha (8 to 40 hex characters), not a placeholder or latest. See the comment above this variable."
+  }
 }
 
-resource "kubernetes_namespace" "f1-stream" {
+resource "kubernetes_namespace" "tv" {
   metadata {
-    name = "f1-stream"
+    name = "tv"
     labels = {
       "istio-injection" : "disabled"
       tier                                    = local.tiers.aux
@@ -35,7 +49,7 @@ resource "kubernetes_namespace" "f1-stream" {
 }
 
 # Namespace quota, replacing the generated tier-4-aux one (opted out by the
-# resource-governance/custom-quota label above). ADR-0029 in the f1-stream repo
+# resource-governance/custom-quota label above). ADR-0029 in the tv repo
 # runs the app as three Roles: two Edges and a Transcoder that roll with a surge
 # pod, and a Worker that is recreated. Memory requests at the peak of a rollout
 # come to about 3.7Gi (three Edges at 384Mi, two Transcoders at 512Mi, the
@@ -47,10 +61,10 @@ resource "kubernetes_namespace" "f1-stream" {
 # tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,
 # limits.memory 16Gi, pods 20). Limits at the same peak come to about 13.7Gi,
 # and 14.7Gi since the Transcoder's limit went to 2560Mi (2026-11-01).
-resource "kubernetes_resource_quota_v1" "f1_stream" {
+resource "kubernetes_resource_quota_v1" "tv" {
   metadata {
-    name      = "f1-stream-quota"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "tv-quota"
+    namespace = kubernetes_namespace.tv.metadata[0].name
   }
   spec {
     hard = {
@@ -70,8 +84,8 @@ resource "kubernetes_manifest" "external_secret" {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "f1-stream-secrets"
-      namespace = "f1-stream"
+      name      = "tv-secrets"
+      namespace = "tv"
     }
     spec = {
       refreshInterval = "1h"
@@ -80,16 +94,16 @@ resource "kubernetes_manifest" "external_secret" {
         kind = "ClusterSecretStore"
       }
       target = {
-        name = "f1-stream-secrets"
+        name = "tv-secrets"
       }
       dataFrom = [{
         extract = {
-          key = "f1-stream"
+          key = "tv"
         }
       }]
     }
   }
-  depends_on = [kubernetes_namespace.f1-stream]
+  depends_on = [kubernetes_namespace.tv]
 }
 
 # Pull the chrome-service bearer token into this namespace as a separate
@@ -103,7 +117,7 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
     kind       = "ExternalSecret"
     metadata = {
       name      = "chrome-service-client-secrets"
-      namespace = "f1-stream"
+      namespace = "tv"
     }
     spec = {
       refreshInterval = "1h"
@@ -121,11 +135,11 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
       }]
     }
   }
-  depends_on = [kubernetes_namespace.f1-stream]
+  depends_on = [kubernetes_namespace.tv]
 }
 
-# The visitor and viewing record's database password (f1-stream ADR-0014), from
-# the Vault database engine's static role `pg-f1-stream`.
+# The visitor and viewing record's database password (tv ADR-0014), from
+# the Vault database engine's static role `pg-tv`.
 #
 # MOUNTED AS A FILE, NOT AN ENV VAR, and marked for Reloader to ignore. The
 # Deployments below carry reloader.stakater.com/auto, so any Secret they
@@ -144,8 +158,8 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "f1-stream-viewing-db"
-      namespace = "f1-stream"
+      name      = "tv-viewing-db"
+      namespace = "tv"
     }
     spec = {
       refreshInterval = "15m"
@@ -154,7 +168,7 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
         kind = "ClusterSecretStore"
       }
       target = {
-        name = "f1-stream-viewing-db"
+        name = "tv-viewing-db"
         template = {
           metadata = {
             annotations = {
@@ -169,13 +183,13 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
       data = [{
         secretKey = "password"
         remoteRef = {
-          key      = "static-creds/pg-f1-stream"
+          key      = "static-creds/pg-tv"
           property = "password"
         }
       }]
     }
   }
-  depends_on = [kubernetes_namespace.f1-stream]
+  depends_on = [kubernetes_namespace.tv]
 }
 
 # Replay torrent cache. Shares the servarr qBittorrent downloads export so the
@@ -185,8 +199,8 @@ resource "kubernetes_manifest" "viewing_db_external_secret" {
 # separate from everything else servarr downloads.
 module "nfs_replay_cache" {
   source             = "../../modules/kubernetes/nfs_volume"
-  name               = "f1-stream-replay-cache"
-  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
+  name               = "tv-replay-cache"
+  namespace          = kubernetes_namespace.tv.metadata[0].name
   nfs_server         = var.nfs_server
   nfs_path           = "/srv/nfs/servarr/downloads/f1-replays"
   storage            = "200Gi"
@@ -194,7 +208,7 @@ module "nfs_replay_cache" {
   storage_class_name = "nfs-pve"
 }
 
-# The app's data volume from the ADR-0029 cutover on (f1-stream repo): replay
+# The app's data volume from the ADR-0029 cutover on (tv repo): replay
 # library, Early copies, the TV app and the small JSON state files. ReadWriteMany
 # because the Edges mount it read-only beside the Worker, which is the only Role
 # that writes it.
@@ -202,7 +216,7 @@ module "nfs_replay_cache" {
 # The directory the single pre-cutover Deployment used through a ReadWriteOnce
 # claim (f1-stream-data-host, removed 2026-10-12 with its data left in place).
 # An access mode cannot change on an existing claim, so this is a second static
-# PV and claim onto /srv/nfs/f1-stream. The cutover first used a dynamic claim filled
+# PV and claim onto /srv/nfs/f1-stream (copied to /srv/nfs/tv at the tv rename). The cutover first used a dynamic claim filled
 # by a copy Job; the directory turned out to hold 46.7 GiB (46.5 GiB of it the
 # replay library) and copied at about 5 MB/s, so on 2026-10-12 Viktor chose to
 # point at the existing directory instead. The NFS CSIDriver has
@@ -210,10 +224,10 @@ module "nfs_replay_cache" {
 # either way.
 module "nfs_data" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "f1-stream-data-shared"
-  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
+  name       = "tv-data-shared"
+  namespace  = kubernetes_namespace.tv.metadata[0].name
   nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/f1-stream"
+  nfs_path   = "/srv/nfs/tv"
   # Nominal on NFS, which enforces no size. REPLAY_LIBRARY_CAP_GB (180)
   # below is what bounds the library.
   storage            = "200Gi"
@@ -222,14 +236,14 @@ module "nfs_data" {
 }
 
 # ---------------------------------------------------------------------------
-# The app runs as three Roles from one image (ADR-0029 in the f1-stream repo,
+# The app runs as three Roles from one image (ADR-0029 in the tv repo,
 # "Rollouts never stall a playing stream"). The ROLE env picks what a pod does:
 #
-#   f1-stream-edge        2 replicas, no GPU. The site, the API, /proxy,
-#                         /relay and replays; the `f1` Service selects these.
-#   f1-stream-transcoder  1 replica on the GPU. Live quality ladders; Edges
-#                         start sessions through the f1-transcoder Service.
-#   f1-stream-worker      1 replica on the GPU. Scheduler, extraction,
+#   tv-edge               2 replicas, no GPU. The site, the API, /proxy,
+#                         /relay and replays; the `tv` Service selects these.
+#   tv-transcoder         1 replica on the GPU. Live quality ladders; Edges
+#                         start sessions through the tv-transcoder Service.
+#   tv-worker             1 replica on the GPU. Scheduler, extraction,
 #                         scrapes, replay ladders and Early copies, and the
 #                         only Role that writes /data.
 #
@@ -262,7 +276,7 @@ module "nfs_data" {
 # viewers 25 to 60 s without a picture on every deploy.
 #
 # Since 2026-10-17 the emulator yields to deploys (Viktor's decision): the
-# deploy pipeline (.woodpecker/deploy.yml in the f1-stream repo) scales the
+# deploy pipeline (.woodpecker/deploy.yml in the tv repo) scales the
 # android-emulator Deployment to 0 and waits for its pod to leave before it
 # rolls the Transcoder, and does not wake it again; the emulator's gate wakes
 # it on the next visit. With the emulator asleep the node is at 13150, and the
@@ -272,7 +286,7 @@ module "nfs_data" {
 # fails the run.
 #
 # Two other things roll the Transcoder without that pipeline: Reloader, when
-# f1-stream-secrets changes (its ExternalSecret refreshes hourly), and a
+# tv-secrets changes (its ExternalSecret refreshes hourly), and a
 # Terraform apply that changes the pod template (this resource waits for the
 # rollout, 10 minutes by default). For those the emulator's gate watches: the
 # Transcoder pod carries the label android-emulator-yields-to=gpu-seat, and
@@ -288,30 +302,28 @@ module "nfs_data" {
 # ---------------------------------------------------------------------------
 
 locals {
-  f1_image = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
+  tv_image = "ghcr.io/viktorbarzin/tv:${var.image_tag}"
 
   # Plain env shared by the Edge and the Worker, which both run backend
   # features. Kept as an ORDERED LIST, never a map: Kubernetes expands $(VAR)
   # only against entries earlier in the list, and a map would sort by key. The
   # Transcoder reads none of these and has its own short list.
-  f1_env_values = [
+  tv_env_values = [
     # Early copies of HDR replays (app ADR-0024). Off in the app by default;
     # on here now that the Worker's gpumem declaration fits one.
     { name = "REPLAY_EARLY_HDR", value = "1" },
-    # Member sign-in and the membership check (f1-stream ADR-0025, ADR-0021;
+    # Member sign-in and the membership check (tv ADR-0025, ADR-0021;
     # members.tf). The issuer and client id are public; the client secret and
     # the Authentik API token come from the Secret members.tf writes. Unset,
     # /login answers 503 and nothing else changes, so the image and this stack
     # can land in either order.
-    # The application and provider are released to stacks/tv (members.tf), so
-    # their public names are written out here.
-    { name = "OIDC_ISSUER", value = "https://authentik.viktorbarzin.me/application/o/f1-stream/" },
-    { name = "OIDC_CLIENT_ID", value = "f1-stream" },
+    { name = "OIDC_ISSUER", value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.tv.slug}/" },
+    { name = "OIDC_CLIENT_ID", value = authentik_provider_oauth2.tv.client_id },
     # MEMBER_GROUP is what images before ADR-0042 read; later ones read
-    # MEMBER_GROUPS and approve Access requests into F1 Users by its pk.
+    # MEMBER_GROUPS and approve Access requests into TV Users by its pk.
     { name = "MEMBER_GROUP", value = data.authentik_group.home_users.name },
-    { name = "MEMBER_GROUPS", value = "${data.authentik_group.home_users.name},${data.authentik_group.f1_users.name}" },
-    { name = "F1_USERS_GROUP_ID", value = data.authentik_group.f1_users.id },
+    { name = "MEMBER_GROUPS", value = "${data.authentik_group.home_users.name},${module.tv_users.group_name}" },
+    { name = "TV_USERS_GROUP_ID", value = module.tv_users.group_id },
     { name = "DISCORD_CHANNELS", value = var.discord_f1_channel_ids },
     # Verifier connects to in-cluster headed Chromium pool — see
     # stacks/chrome-service/. Falls back to in-process headless if unset.
@@ -319,7 +331,7 @@ locals {
     # NetworkPolicy-gated). Token is no longer needed for the
     # connection itself; the chrome-service-client-secrets ExternalSecret
     # above stays in place because the snapshot endpoint (dev-box only,
-    # not used by f1-stream) reuses the same Vault key.
+    # not used by tv) reuses the same Vault key.
     #
     # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
     # proposes as build step 2. Two things measured 2026-09-05 say that swap
@@ -327,14 +339,14 @@ locals {
     #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
     #     /json/version returns the FleetView HTML page, so
     #     connect_over_cdp() against it fails. Leasing is a code change
-    #     (backend/chrome_fleet.py), not an env value.
+    #     (tv/chrome_fleet.py), not an env value.
     #   - the address below now answers. From this pod,
     #     chrome-service:9222/json/version returned 200 Chrome/147.0.7727.55.
     #     The connection-refused the design recorded was the neko container
     #     in that pod being taskless after a restart; the pod has since
     #     restarted again and reads 3/3 Running.
     # The guard CronJob does not set this var at all — it leases a worker
-    # per run and injects that worker's URL directly. See f1-source-guard.tf.
+    # per run and injects that worker's URL directly. See tv-source-guard.tf.
     { name = "CHROME_CDP_URL", value = "http://chrome-service.chrome-service.svc.cluster.local:9222" },
     # The streamed extractor resolves embed pages by loading them in a
     # browser, and leases a worker from the fleet broker to do it rather
@@ -344,7 +356,7 @@ locals {
     # 2026-09-06: registered, deployed, and quietly yielding nothing.
     # Note this is the BROKER, not a CDP endpoint — :8080 serves
     # /acquire and /release, and the worker's own podIP:9222 is what
-    # gets dialled. See backend/chrome_fleet.py.
+    # gets dialled. See tv/chrome_fleet.py.
     { name = "CHROME_FLEET_URL", value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080" },
     # Replay torrent streaming: qBittorrent does the fetching (auth is
     # bypassed for 10.0.0.0/8, so no credentials), we read the partial
@@ -360,7 +372,7 @@ locals {
     # days after the torrent is gone.
     #
     # SET EXPLICITLY ON 2026-09-11. It was unset, so the cap was the code
-    # default in backend/replays/library.py:617 — `int(os.getenv(
+    # default in tv/f1/replays/library.py:617 — `int(os.getenv(
     # "REPLAY_LIBRARY_CAP_GB", "120")) * 1024**3`, i.e. 120 GiB. Note the
     # units: GiB, not GB, and `int()` rather than the `float()` the cache
     # cap above uses, so this value must stay a whole number.
@@ -396,7 +408,7 @@ locals {
     # would take the volume past the 95% where PVFillingUp pages.
     { name = "REPLAY_LIBRARY_CAP_GB", value = "180" },
     # Peer-assisted delivery. The backend injects these into the served
-    # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
+    # HTML shell as `window.__TV_CONFIG__` (tv/runtime_config.py),
     # rather than the frontend baking them at build time, because the
     # frontend is built once into the image while the tracker URL is
     # deployment config that follows the ingress.
@@ -408,7 +420,7 @@ locals {
     #
     # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
     # under /tracker on tv, the product's only host since 2026-10-29
-    # (f1-stream ADR-0053).
+    # (tv ADR-0053).
     { name = "P2P_TRACKERS", value = "wss://tv.viktorbarzin.me/tracker" },
     # STUN only, no TURN. A STUN server learns a candidate address and
     # carries no media, so this leaks less than the segment request that
@@ -432,7 +444,7 @@ locals {
     # new connection, which is what lets a rotation land without a
     # restart (see the ExternalSecret above). Unset or unreachable, the
     # app records nothing and serves exactly as before.
-    { name = "VIEWING_DATABASE_URL", value = "postgresql://f1_stream@${var.postgresql_host}:5432/f1_stream" },
+    { name = "VIEWING_DATABASE_URL", value = "postgresql://tv@${var.postgresql_host}:5432/tv" },
     { name = "VIEWING_DATABASE_PASSWORD_FILE", value = "/secrets/viewing-db/password" },
     # Where the daily job asks which other homelab hosts and Authentik
     # usernames a viewer's address used that week. One batched query a
@@ -442,14 +454,14 @@ locals {
     # docs/design/2026-10-16-user-reports-build-contract.md). The intake
     # job gathers Loki and Prometheus evidence, asks the f1-report-intake
     # agent in claude-agent-service for a verdict, and files the issue on
-    # viktor/f1-stream as tv-feedback-bot. Mail goes From f1@, which the
+    # viktor/tv as tv-feedback-bot. Mail goes From f1@, which the
     # mailserver's aliases.txt authorises for the spam@ login.
     { name = "PROMETHEUS_URL", value = "http://prometheus-server.monitoring.svc.cluster.local" },
-    # tv since 2026-10-29 (f1-stream ADR-0053); f1 redirects there
+    # tv since 2026-10-29 (tv ADR-0053); f1 redirects there
     # (f1-redirect.tf).
     { name = "PUBLIC_BASE_URL", value = "https://tv.viktorbarzin.me" },
     { name = "REPORTS_FORGEJO_API", value = "https://forgejo.viktorbarzin.me/api/v1" },
-    { name = "REPORTS_REPO", value = "viktor/f1-stream" },
+    { name = "REPORTS_REPO", value = "viktor/tv" },
     { name = "REPORTS_INTAKE_URL", value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080" },
     { name = "REPORTS_NTFY_URL", value = "https://ntfy.viktorbarzin.me" },
     { name = "REPORTS_NTFY_TOPIC", value = "fixer" },
@@ -460,66 +472,66 @@ locals {
   ]
 
   # Secret-backed env shared by the Edge and the Worker.
-  f1_env_secrets = [
+  tv_env_secrets = [
     # Signs the admin session cookie, and the URLs and internal header the
     # Roles pass each other. Unset, the app issues and accepts nothing rather
     # than signing with a guessable key. The Transcoder sets it on its own.
-    { name = "ADMIN_SESSION_KEY", secret = "f1-stream-secrets", key = "admin_session_key", optional = false },
-    { name = "OIDC_CLIENT_SECRET", secret = "f1-stream-members", key = "oidc_client_secret", optional = false },
-    { name = "AUTHENTIK_API_TOKEN", secret = "f1-stream-members", key = "authentik_api_token", optional = false },
-    # Can add users to F1 Users and nothing else (members.tf, ADR-0042).
-    { name = "AUTHENTIK_APPROVER_TOKEN", secret = "f1-stream-members", key = "authentik_approver_token", optional = true },
-    { name = "DISCORD_TOKEN", secret = "f1-stream-secrets", key = "discord_user_token", optional = false },
+    { name = "ADMIN_SESSION_KEY", secret = "tv-secrets", key = "admin_session_key", optional = false },
+    { name = "OIDC_CLIENT_SECRET", secret = kubernetes_secret.tv_members.metadata[0].name, key = "oidc_client_secret", optional = false },
+    { name = "AUTHENTIK_API_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_api_token", optional = false },
+    # Can add users to TV Users and nothing else (members.tf, ADR-0042).
+    { name = "AUTHENTIK_APPROVER_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_approver_token", optional = true },
+    { name = "DISCORD_TOKEN", secret = "tv-secrets", key = "discord_user_token", optional = false },
     # Announces a television taking a different build, to the same
     # #alerts webhook the source-guard already carries in this namespace.
     # optional=true so the pod starts before the guard's ExternalSecret
     # has synced; the app logs the line instead of posting it when unset.
-    { name = "TV_SLACK_WEBHOOK", secret = "f1-stream-guard-secrets", key = "slack_webhook", optional = true },
+    { name = "TV_SLACK_WEBHOOK", secret = "tv-guard-secrets", key = "slack_webhook", optional = true },
     # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
-    # incoming webhook. It comes from the Vault "f1-stream" key through the
+    # incoming webhook. It comes from the Vault "tv" key through the
     # dataFrom.extract ExternalSecret above; optional=true so the pod
     # starts before the key exists, and the app skips the message.
-    { name = "SLACK_F1_WEBHOOK_URL", secret = "f1-stream-secrets", key = "slack_f1_webhook_url", optional = true },
+    { name = "SLACK_TV_WEBHOOK_URL", secret = "tv-secrets", key = "slack_f1_webhook_url", optional = true },
     # Session notifications (app repo ADR-0020) sign Web Push with this
-    # VAPID identity, from the Vault "f1-stream" key through the same
+    # VAPID identity, from the Vault "tv" key through the same
     # dataFrom.extract ExternalSecret. optional=true: with any of the
     # three missing the app keeps notifications off and hides the bell.
-    { name = "PUSH_VAPID_PRIVATE_KEY", secret = "f1-stream-secrets", key = "push_vapid_private_key", optional = true },
-    { name = "PUSH_VAPID_PUBLIC_KEY", secret = "f1-stream-secrets", key = "push_vapid_public_key", optional = true },
-    { name = "PUSH_VAPID_SUBJECT", secret = "f1-stream-secrets", key = "push_vapid_subject", optional = true },
+    { name = "PUSH_VAPID_PRIVATE_KEY", secret = "tv-secrets", key = "push_vapid_private_key", optional = true },
+    { name = "PUSH_VAPID_PUBLIC_KEY", secret = "tv-secrets", key = "push_vapid_public_key", optional = true },
+    { name = "PUSH_VAPID_SUBJECT", secret = "tv-secrets", key = "push_vapid_subject", optional = true },
     # Replays feature (app repo ADR-0002). optional=true so the pod still
     # starts before the Reddit app credentials exist; the app treats missing
     # creds as "replays off" (logs "Replays pipeline disabled"). The
-    # ExternalSecret above uses dataFrom.extract on the Vault "f1-stream"
+    # ExternalSecret above uses dataFrom.extract on the Vault "tv"
     # key, so adding reddit_client_id / reddit_client_secret there auto-syncs
     # them into this Secret — no ExternalSecret change needed, just a pod
     # restart to pick them up.
-    { name = "REDDIT_CLIENT_ID", secret = "f1-stream-secrets", key = "reddit_client_id", optional = true },
-    { name = "REDDIT_CLIENT_SECRET", secret = "f1-stream-secrets", key = "reddit_client_secret", optional = true },
+    { name = "REDDIT_CLIENT_ID", secret = "tv-secrets", key = "reddit_client_id", optional = true },
+    { name = "REDDIT_CLIENT_SECRET", secret = "tv-secrets", key = "reddit_client_secret", optional = true },
     # User reports. All optional: each piece of the pipeline turns itself
     # off when its secret is missing, and reports are still stored.
-    { name = "REPORTS_FORGEJO_TOKEN", secret = "f1-stream-secrets", key = "reports_forgejo_token", optional = true },
-    { name = "REPORTS_WEBHOOK_SECRET", secret = "f1-stream-secrets", key = "reports_webhook_secret", optional = true },
-    { name = "REPORTS_INTAKE_TOKEN", secret = "f1-stream-secrets", key = "reports_intake_token", optional = true },
-    { name = "REPORTS_NTFY_TOKEN", secret = "f1-stream-secrets", key = "reports_ntfy_token", optional = true },
-    { name = "REPORTS_SMTP_PASSWORD", secret = "f1-stream-secrets", key = "reports_smtp_password", optional = true },
+    { name = "REPORTS_FORGEJO_TOKEN", secret = "tv-secrets", key = "reports_forgejo_token", optional = true },
+    { name = "REPORTS_WEBHOOK_SECRET", secret = "tv-secrets", key = "reports_webhook_secret", optional = true },
+    { name = "REPORTS_INTAKE_TOKEN", secret = "tv-secrets", key = "reports_intake_token", optional = true },
+    { name = "REPORTS_NTFY_TOKEN", secret = "tv-secrets", key = "reports_ntfy_token", optional = true },
+    { name = "REPORTS_SMTP_PASSWORD", secret = "tv-secrets", key = "reports_smtp_password", optional = true },
   ]
 
-  f1_namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  tv_namespace = kubernetes_namespace.tv.metadata[0].name
   # In-cluster addresses the Roles use to reach each other.
-  f1_edge_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
-  f1_worker_url     = "http://${kubernetes_service_v1.f1_worker.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
-  f1_transcoder_url = "http://${kubernetes_service_v1.f1_transcoder.metadata[0].name}.${local.f1_namespace}.svc.cluster.local"
+  tv_edge_url       = "http://${kubernetes_service.tv.metadata[0].name}.${local.tv_namespace}.svc.cluster.local"
+  tv_worker_url     = "http://${kubernetes_service_v1.tv_worker.metadata[0].name}.${local.tv_namespace}.svc.cluster.local"
+  tv_transcoder_url = "http://${kubernetes_service_v1.tv_transcoder.metadata[0].name}.${local.tv_namespace}.svc.cluster.local"
 }
 
 # Edge: the site, the API, /proxy, /relay and replays. Every viewer byte passes
 # through an Edge, so this is the Role a rollout must not interrupt.
-resource "kubernetes_deployment_v1" "f1_edge" {
+resource "kubernetes_deployment_v1" "tv_edge" {
   metadata {
-    name      = "f1-stream-edge"
-    namespace = local.f1_namespace
+    name      = "tv-edge"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "edge"
       tier = local.tiers.aux
     }
@@ -541,14 +553,14 @@ resource "kubernetes_deployment_v1" "f1_edge" {
     }
     selector {
       match_labels = {
-        app  = "f1-stream"
+        app  = "tv"
         role = "edge"
       }
     }
     template {
       metadata {
         labels = {
-          app  = "f1-stream"
+          app  = "tv"
           role = "edge"
         }
       }
@@ -557,9 +569,9 @@ resource "kubernetes_deployment_v1" "f1_edge" {
         # shutdown + 5s margin. 45s is above Traefik's p99.9 request time of
         # 29s, so a TV's segment load in flight at SIGTERM finishes.
         termination_grace_period_seconds = 70
-        # Its own account, so the Edge can list the f1-edge-peers
+        # Its own account, so the Edge can list the tv-edge-peers
         # EndpointSlices (the Role below) to find the Ready Edges.
-        service_account_name            = kubernetes_service_account_v1.f1_edge.metadata[0].name
+        service_account_name            = kubernetes_service_account_v1.tv_edge.metadata[0].name
         automount_service_account_token = true
         # The two Edges of one revision on different nodes, so losing a node
         # leaves one serving. A spread per revision (pod-template-hash) rather
@@ -574,15 +586,15 @@ resource "kubernetes_deployment_v1" "f1_edge" {
           match_label_keys   = ["pod-template-hash"]
           label_selector {
             match_labels = {
-              app  = "f1-stream"
+              app  = "tv"
               role = "edge"
             }
           }
         }
         container {
-          # deploy.yml in the f1-stream repo sets the image by this name.
-          name  = "f1-stream"
-          image = local.f1_image
+          # deploy.yml in the tv repo sets the image by this name.
+          name  = "tv"
+          image = local.tv_image
           port {
             container_port = 8000
           }
@@ -651,7 +663,7 @@ resource "kubernetes_deployment_v1" "f1_edge" {
           #
           # The pod IP rather than the ClusterIP service, changed 2026-09-18
           # from the live streaming audit. Routing through
-          # f1.f1-stream.svc.cluster.local closes a loop on every cold start:
+          # tv.tv.svc.cluster.local closes a loop on every cold start:
           # the Service only carries endpoints for a READY pod, readiness is
           # /health/ready, and reaching ready involves the verification that
           # has to call back through this address. So the first verification
@@ -679,20 +691,20 @@ resource "kubernetes_deployment_v1" "f1_edge" {
           # start work or write /data are forwarded here.
           env {
             name  = "WORKER_URL"
-            value = local.f1_worker_url
+            value = local.tv_worker_url
           }
           # Where an Edge asks for a live quality ladder. Reads of a running
           # session go to the owning Transcoder's pod IP from Redis.
           env {
             name  = "TRANSCODER_URL"
-            value = local.f1_transcoder_url
+            value = local.tv_transcoder_url
           }
           # The base the Transcoder's ffmpeg reads the source through: the
           # in-cluster Edge Service rather than Cloudflare and Anubis, so a
           # read cut by an Edge drain reconnects to the other Edge.
           env {
             name  = "TRANSCODE_SOURCE_BASE"
-            value = local.f1_edge_url
+            value = local.tv_edge_url
           }
           # Share-link thumbnails are a regenerable cache, so each Edge keeps
           # its own outside the read-only /data.
@@ -701,8 +713,8 @@ resource "kubernetes_deployment_v1" "f1_edge" {
             value = "/tmp/share-thumbs"
           }
           # Proves to the app that a request came through the ingress rather
-          # than straight at a pod. From the f1-stream-ingress-proof Secret in
-          # ingress-proof.tf rather than f1-stream-secrets: the Middleware
+          # than straight at a pod. From the tv-ingress-proof Secret in
+          # ingress-proof.tf rather than tv-secrets: the Middleware
           # there reads the same random_password, so there is nothing for
           # Vault or an ExternalSecret to add. A Secret reference rather than
           # a literal value, because anything that may list pods in this
@@ -723,14 +735,14 @@ resource "kubernetes_deployment_v1" "f1_edge" {
             }
           }
           dynamic "env" {
-            for_each = local.f1_env_values
+            for_each = local.tv_env_values
             content {
               name  = env.value.name
               value = env.value.value
             }
           }
           dynamic "env" {
-            for_each = local.f1_env_secrets
+            for_each = local.tv_env_secrets
             content {
               name = env.value.name
               value_from {
@@ -743,12 +755,12 @@ resource "kubernetes_deployment_v1" "f1_edge" {
             }
           }
           # Last, so adding it appends to the env list rather than shifting it.
-          # One upstream reader per Feed (ADR-0045 in the f1-stream repo).
+          # One upstream reader per Feed (ADR-0045 in the tv repo).
           # Each upstream URL is owned by one Ready Edge, found through this
           # headless Service; the other Edge asks the owner on POD_IP:8000.
           env {
             name  = "EDGE_PEERS_DNS"
-            value = "${kubernetes_service_v1.f1_edge_peers.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
+            value = "${kubernetes_service_v1.tv_edge_peers.metadata[0].name}.${kubernetes_namespace.tv.metadata[0].name}.svc.cluster.local"
           }
           volume_mount {
             name       = "viewing-db"
@@ -782,7 +794,7 @@ resource "kubernetes_deployment_v1" "f1_edge" {
         volume {
           name = "viewing-db"
           secret {
-            secret_name = "f1-stream-viewing-db"
+            secret_name = "tv-viewing-db"
             optional    = true
           }
         }
@@ -815,15 +827,15 @@ resource "kubernetes_deployment_v1" "f1_edge" {
 }
 
 # Transcoder: live quality ladders on the GPU. Edges start a session through
-# the f1-transcoder Service and read its playlist and segments from the owning
+# the tv-transcoder Service and read its playlist and segments from the owning
 # pod's IP, which the session record in Redis names. Segments stay in this
 # pod's memory, as before the split.
-resource "kubernetes_deployment_v1" "f1_transcoder" {
+resource "kubernetes_deployment_v1" "tv_transcoder" {
   metadata {
-    name      = "f1-stream-transcoder"
-    namespace = local.f1_namespace
+    name      = "tv-transcoder"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "transcoder"
       tier = local.tiers.aux
     }
@@ -847,14 +859,14 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
     }
     selector {
       match_labels = {
-        app  = "f1-stream"
+        app  = "tv"
         role = "transcoder"
       }
     }
     template {
       metadata {
         labels = {
-          app  = "f1-stream"
+          app  = "tv"
           role = "transcoder"
           # The Android emulator's gate puts the emulator to sleep when a pod
           # with this label waits Pending for gpumem (infra
@@ -875,9 +887,9 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
           effect   = "NoSchedule"
         }
         container {
-          # deploy.yml in the f1-stream repo sets the image by this name.
-          name  = "f1-stream"
-          image = local.f1_image
+          # deploy.yml in the tv repo sets the image by this name.
+          name  = "tv"
+          image = local.tv_image
           port {
             container_port = 8000
           }
@@ -902,7 +914,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
               # Two encoders at about 360 MB RSS each, the app, and the 256Mi
               # memory emptyDir, which counts against this limit. Raised from
               # 2Gi on 2026-11-01 for the channel deinterlace sessions (up to
-              # CHANNEL_DEINTERLACE_MAX_SESSIONS=2, f1-stream ADR-0029
+              # CHANNEL_DEINTERLACE_MAX_SESSIONS=2, tv ADR-0029
               # amendment) and their own 256Mi emptyDir below. The pod peaked
               # at 706 MB working set in the 21 days to 2026-11-01; a
               # deinterlace session's RSS on the card is not measured yet.
@@ -933,7 +945,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
               # An exec hook talks to localhost and adds no HTTP route that
               # Anubis, which passes every non-GET method, could reach.
               exec {
-                command = ["python", "-m", "backend.transcode_handover", "--deadline", "75"]
+                command = ["python", "-m", "tv.transcode_handover", "--deadline", "75"]
               }
             }
           }
@@ -983,7 +995,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
           }
           # Channel deinterlace sessions write their segments here, apart from
           # the F1 ladders' /transcode: a 1080p rung fills a tmpfs several
-          # times faster (f1-stream backend/transcode.py, DEINTERLACE_WINDOW).
+          # times faster (tv/transcode.py, DEINTERLACE_WINDOW).
           env {
             name  = "CHANNEL_DEINTERLACE_DIR"
             value = "/deinterlace"
@@ -992,7 +1004,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
           # longer reaches one.
           env {
             name  = "WARM_ENCODER_PROXY_BASE"
-            value = local.f1_edge_url
+            value = local.tv_edge_url
           }
           # Signs the source URLs the warm encoder fetches and keys the header
           # the internal /internal/transcode routes require.
@@ -1000,7 +1012,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
             name = "ADMIN_SESSION_KEY"
             value_from {
               secret_key_ref {
-                name = "f1-stream-secrets"
+                name = "tv-secrets"
                 key  = "admin_session_key"
               }
             }
@@ -1037,7 +1049,7 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
         }
         # Channel deinterlace scratch: 8 segments per rung at the 1080p and
         # 540p rungs' peak rates, two sessions, come to about 200 MB during a
-        # takeover (f1-stream tests/test_channel_deinterlace.py). Memory-backed
+        # takeover (tv repo tests/test_channel_deinterlace.py). Memory-backed
         # for the same reason as /transcode, and counted against the limit.
         volume {
           name = "deinterlace"
@@ -1066,12 +1078,12 @@ resource "kubernetes_deployment_v1" "f1_transcoder" {
 
 # Worker: scheduler, extraction, scrapes, replay ladders and Early copies, and
 # the only Role that writes /data. A singleton: two would run every job twice.
-resource "kubernetes_deployment_v1" "f1_worker" {
+resource "kubernetes_deployment_v1" "tv_worker" {
   metadata {
-    name      = "f1-stream-worker"
-    namespace = local.f1_namespace
+    name      = "tv-worker"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "worker"
       tier = local.tiers.aux
     }
@@ -1091,14 +1103,14 @@ resource "kubernetes_deployment_v1" "f1_worker" {
     }
     selector {
       match_labels = {
-        app  = "f1-stream"
+        app  = "tv"
         role = "worker"
       }
     }
     template {
       metadata {
         labels = {
-          app  = "f1-stream"
+          app  = "tv"
           role = "worker"
           # The Android emulator's gate puts the emulator to sleep when a pod
           # with this label waits Pending for gpumem (infra
@@ -1120,9 +1132,9 @@ resource "kubernetes_deployment_v1" "f1_worker" {
           effect   = "NoSchedule"
         }
         container {
-          # deploy.yml in the f1-stream repo sets the image by this name.
-          name  = "f1-stream"
-          image = local.f1_image
+          # deploy.yml in the tv repo sets the image by this name.
+          name  = "tv"
+          image = local.tv_image
           port {
             container_port = 8000
           }
@@ -1271,7 +1283,7 @@ resource "kubernetes_deployment_v1" "f1_worker" {
           #
           # The pod IP rather than the ClusterIP service, changed 2026-09-18
           # from the live streaming audit. Routing through
-          # f1.f1-stream.svc.cluster.local closes a loop on every cold start:
+          # tv.tv.svc.cluster.local closes a loop on every cold start:
           # the Service only carries endpoints for a READY pod, readiness is
           # /health/ready, and reaching ready involves the verification that
           # has to call back through this address. So the first verification
@@ -1302,14 +1314,14 @@ resource "kubernetes_deployment_v1" "f1_worker" {
             }
           }
           dynamic "env" {
-            for_each = local.f1_env_values
+            for_each = local.tv_env_values
             content {
               name  = env.value.name
               value = env.value.value
             }
           }
           dynamic "env" {
-            for_each = local.f1_env_secrets
+            for_each = local.tv_env_secrets
             content {
               name = env.value.name
               value_from {
@@ -1332,7 +1344,7 @@ resource "kubernetes_deployment_v1" "f1_worker" {
           }
           # Writable on the Worker only: qBittorrent owns the torrents here, and
           # the Worker writes direct releases (file-host downloads) under
-          # direct/ beside them (f1-stream ADR-0052). Every other Role streams
+          # direct/ beside them (tv ADR-0052). Every other Role streams
           # from this volume read-only.
           volume_mount {
             name       = "replay-cache"
@@ -1350,7 +1362,7 @@ resource "kubernetes_deployment_v1" "f1_worker" {
         volume {
           name = "viewing-db"
           secret {
-            secret_name = "f1-stream-viewing-db"
+            secret_name = "tv-viewing-db"
             optional    = true
           }
         }
@@ -1385,20 +1397,20 @@ resource "kubernetes_deployment_v1" "f1_worker" {
 }
 
 # The public Service: Anubis, the /admin/login and /pair carve-out ingresses
-# and the source-guard all address `f1`, and every one of them wants an Edge.
+# and the source-guard all address `tv`, and every one of them wants an Edge.
 # The name stays; since ADR-0029 the selector picks Edges only.
-resource "kubernetes_service" "f1-stream" {
+resource "kubernetes_service" "tv" {
   metadata {
-    name      = "f1"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "tv"
+    namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
-      "app" = "f1-stream"
+      "app" = "tv"
     }
   }
 
   spec {
     selector = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "edge"
     }
     port {
@@ -1408,21 +1420,21 @@ resource "kubernetes_service" "f1-stream" {
   }
 }
 
-# The Ready Edges, for the Edges themselves (ADR-0045 in the f1-stream repo).
+# The Ready Edges, for the Edges themselves (ADR-0045 in the tv repo).
 # Each Edge lists this Service's EndpointSlices through the Kubernetes API
-# (the f1-stream-edge account and Role below), hashes an upstream URL over the
+# (the tv-edge account and Role below), hashes an upstream URL over the
 # Ready endpoints to find the one Edge that fetches it, and reads the URL
 # itself if that Edge does not answer. A draining Edge leaves the slices as
 # soon as its readiness turns 503. The DNS answer of this headless Service is
 # only the Edges' fallback: cluster DNS served exited Edges for up to an hour
 # on 2026-10-16, so an Edge also sets aside for 30 s any peer that does not
 # answer or cannot prove it is an Edge.
-resource "kubernetes_service_v1" "f1_edge_peers" {
+resource "kubernetes_service_v1" "tv_edge_peers" {
   metadata {
-    name      = "f1-edge-peers"
-    namespace = kubernetes_namespace.f1-stream.metadata[0].name
+    name      = "tv-edge-peers"
+    namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "edge"
     }
   }
@@ -1430,7 +1442,7 @@ resource "kubernetes_service_v1" "f1_edge_peers" {
   spec {
     cluster_ip = "None"
     selector = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "edge"
     }
     port {
@@ -1442,19 +1454,19 @@ resource "kubernetes_service_v1" "f1_edge_peers" {
 }
 
 # The Edges' account: read-only on the EndpointSlices of this namespace, and
-# nothing else, so an Edge can see which Edges are Ready (f1_edge_peers above).
-resource "kubernetes_service_account_v1" "f1_edge" {
+# nothing else, so an Edge can see which Edges are Ready (tv_edge_peers above).
+resource "kubernetes_service_account_v1" "tv_edge" {
   metadata {
-    name      = "f1-stream-edge"
-    namespace = local.f1_namespace
+    name      = "tv-edge"
+    namespace = local.tv_namespace
   }
   automount_service_account_token = true
 }
 
-resource "kubernetes_role_v1" "f1_edge_peers_reader" {
+resource "kubernetes_role_v1" "tv_edge_peers_reader" {
   metadata {
-    name      = "f1-edge-peers-reader"
-    namespace = local.f1_namespace
+    name      = "tv-edge-peers-reader"
+    namespace = local.tv_namespace
   }
   rule {
     api_groups = ["discovery.k8s.io"]
@@ -1463,37 +1475,37 @@ resource "kubernetes_role_v1" "f1_edge_peers_reader" {
   }
 }
 
-resource "kubernetes_role_binding_v1" "f1_edge_peers_reader" {
+resource "kubernetes_role_binding_v1" "tv_edge_peers_reader" {
   metadata {
-    name      = "f1-edge-peers-reader"
-    namespace = local.f1_namespace
+    name      = "tv-edge-peers-reader"
+    namespace = local.tv_namespace
   }
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "Role"
-    name      = kubernetes_role_v1.f1_edge_peers_reader.metadata[0].name
+    name      = kubernetes_role_v1.tv_edge_peers_reader.metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.f1_edge.metadata[0].name
-    namespace = local.f1_namespace
+    name      = kubernetes_service_account_v1.tv_edge.metadata[0].name
+    namespace = local.tv_namespace
   }
 }
 
 # Where Edges start a live quality ladder. Reads of a running session bypass
 # this and go to the owning pod's IP.
-resource "kubernetes_service_v1" "f1_transcoder" {
+resource "kubernetes_service_v1" "tv_transcoder" {
   metadata {
-    name      = "f1-transcoder"
-    namespace = local.f1_namespace
+    name      = "tv-transcoder"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "transcoder"
     }
   }
   spec {
     selector = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "transcoder"
     }
     port {
@@ -1505,18 +1517,18 @@ resource "kubernetes_service_v1" "f1_transcoder" {
 
 # Where Edges forward replay mutations and other Worker routes, and where the
 # source-guard reads the extraction metrics.
-resource "kubernetes_service_v1" "f1_worker" {
+resource "kubernetes_service_v1" "tv_worker" {
   metadata {
-    name      = "f1-stream-worker"
-    namespace = local.f1_namespace
+    name      = "tv-worker"
+    namespace = local.tv_namespace
     labels = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "worker"
     }
   }
   spec {
     selector = {
-      app  = "f1-stream"
+      app  = "tv"
       role = "worker"
     }
     port {
@@ -1530,16 +1542,16 @@ resource "kubernetes_service_v1" "f1_worker" {
 # drain. None for the Transcoder or the Worker: each is a single replica on
 # k8s-node1, and a min_available 1 budget there would block every drain of
 # node1 (stacks/claude-memory records that failure).
-resource "kubernetes_pod_disruption_budget_v1" "f1_edge" {
+resource "kubernetes_pod_disruption_budget_v1" "tv_edge" {
   metadata {
-    name      = "f1-stream-edge"
-    namespace = local.f1_namespace
+    name      = "tv-edge"
+    namespace = local.tv_namespace
   }
   spec {
     min_available = "1"
     selector {
       match_labels = {
-        app  = "f1-stream"
+        app  = "tv"
         role = "edge"
       }
     }
@@ -1548,7 +1560,7 @@ resource "kubernetes_pod_disruption_budget_v1" "f1_edge" {
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.f1-stream.metadata[0].name
+  namespace       = kubernetes_namespace.tv.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -1557,7 +1569,7 @@ module "tls_secret" {
 # stacks/turnstile-gate on 2026-10-16; see docs/plans/2026-10-16-turnstile-sitewide-design.md.
 
 # The hosts that serve the app. tv is the product's only host since 2026-10-30
-# (f1-stream ADR-0053: the TV app comes first and F1 is one section of it).
+# (tv ADR-0053: the TV app comes first and F1 is one section of it).
 # f1.viktorbarzin.me serves nothing itself any more: f1-redirect.tf sends every
 # request on it to the same path on tv. The ingresses below stay keyed by host
 # so the main ingress and its three carve-outs (/admin/login here, /pair in
@@ -1585,8 +1597,8 @@ module "ingress_admin_login" {
   host         = each.key
   name         = "${each.key}-admin-login"
   ingress_path = ["/admin/login"]
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  service_name = kubernetes_service.f1-stream.metadata[0].name
+  namespace    = kubernetes_namespace.tv.metadata[0].name
+  service_name = kubernetes_service.tv.metadata[0].name
   port         = 80
   # The public ingress owns the DNS record and the uptime monitor for this
   # host; this is a path carve-out on the same name.
@@ -1602,7 +1614,7 @@ module "ingress_admin_login" {
   # Same proof header /pair carries, for the same reason: forward-auth says who
   # a visitor is, not that they came through the front door. See
   # ingress-proof.tf.
-  extra_middlewares = ["f1-stream-ingress-proof@kubernetescrd"]
+  extra_middlewares = ["tv-ingress-proof@kubernetescrd"]
 }
 
 module "ingress" {
@@ -1633,11 +1645,11 @@ module "ingress" {
   # redirect (f1-redirect.tf), which is what lets the Cloudflare redirect rule
   # see its requests.
   dns_type  = "proxied"
-  namespace = kubernetes_namespace.f1-stream.metadata[0].name
+  namespace = kubernetes_namespace.tv.metadata[0].name
   name      = each.key
   # Straight to the backend since the 2026-10-16 fold: the strict Turnstile gate
   # and the shared Anubis (stacks/turnstile-gate) do the bot check.
-  service_name     = kubernetes_service.f1-stream.metadata[0].name
+  service_name     = kubernetes_service.tv.metadata[0].name
   port             = 80
   turnstile_strict = true
   # real-ip (sets X-Real-Ip, which the Turnstile gate and the rate limiter

@@ -102,10 +102,10 @@ class YieldOnceTest(unittest.TestCase):
         return gate.yield_once(fake, self.logs.append)
 
     def test_awake_emulator_sleeps_for_a_seat_waiter(self):
-        fake = FakeKube(pods=[pod("f1-stream-transcoder-abc")], replicas=1)
-        self.assertEqual(self.run_once(fake), ["f1-stream-transcoder-abc"])
+        fake = FakeKube(pods=[pod("tv-transcoder-abc")], replicas=1)
+        self.assertEqual(self.run_once(fake), ["tv-transcoder-abc"])
         self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
-        self.assertTrue(any("f1-stream-transcoder-abc" in line for line in self.logs))
+        self.assertTrue(any("tv-transcoder-abc" in line for line in self.logs))
 
     def test_reads_every_configured_namespace_and_selector(self):
         fake = FakeKube()
@@ -116,16 +116,14 @@ class YieldOnceTest(unittest.TestCase):
             self.assertIn("labelSelector=", path)
             self.assertIn("fieldSelector=status.phase%3DPending", path)
 
-    def test_default_namespaces_are_the_old_and_new_app_names(self):
-        # f1-stream is being renamed to tv; the gate watches both until the
-        # old namespace is gone (f1-stream plan 2026-11-01-tv-rebrand).
-        self.assertEqual(gate.parse_namespaces(None), ["f1-stream", "tv"])
+    def test_default_namespace_is_the_tv_app(self):
+        self.assertEqual(gate.parse_namespaces(None), ["tv"])
         self.assertEqual(gate.parse_namespaces("tv"), ["tv"])
         self.assertEqual(gate.parse_namespaces(" f1-stream , tv ,"), ["f1-stream", "tv"])
 
     def test_an_unreadable_namespace_does_not_hide_the_others(self):
-        # Before the cutover tv does not exist yet, after it f1-stream is gone;
-        # either way the namespace that is there still counts.
+        # A namespace that is gone, or has no Role for the gate, must not stop
+        # the gate from seeing the one that is there.
         first, second = gate.YIELD_NAMESPACES[0], "second-ns"
         saved = gate.YIELD_NAMESPACES
         gate.YIELD_NAMESPACES = [first, second]

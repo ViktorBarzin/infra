@@ -2138,7 +2138,7 @@ resource "null_resource" "pg_payslip_ingest_db" {
 # hyphenated MySQL name, to match every other role on this cluster.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-paperless-ngx`, 7d rotation).
 #
-# This resource and pg_f1_stream_db kept planning as "to add" after their
+# This resource and pg_f1_stream_db (now pg_tv_db) kept planning as "to add" after their
 # pushes (09-08 and 09-26), which nightly drift detection flagged. CI did
 # apply the stack (runs on 09-26 and 09-27 both log "[dbaas] OK"), but this
 # stack keeps its state in git (state/stacks/dbaas) and CI's state commit
@@ -2416,18 +2416,25 @@ resource "null_resource" "pg_instagram_poster_db" {
   }
 }
 
-# Create f1_stream database for the f1-stream site's visitor and viewing record:
+# Create the tv database for the tv site's visitor and viewing record:
 # which browser or TV watched which stream, how well it played, and the media
-# bytes each client was sent (f1-stream ADR-0014). The app applies its own
+# bytes each client was sent (tv ADR-0014). The app applies its own
 # idempotent schema at startup.
 # Role password is managed by Vault Database Secrets Engine (static role
-# `pg-f1-stream`, rotated Tuesdays 10:00 UTC, away from race weekends).
-resource "null_resource" "pg_f1_stream_db" {
+# `pg-tv`, rotated Tuesdays 10:00 UTC, away from race weekends).
+#
+# Database and role were f1_stream until the tv rename (f1-stream plan
+# 2026-11-01-tv-rebrand). They were renamed by hand during the cutover
+# (ALTER DATABASE f1_stream RENAME TO tv; ALTER ROLE f1_stream RENAME TO tv)
+# BEFORE this change was applied, so the existence checks below find both and
+# re-running this only records it in state. Applied before that rename, it
+# would create an empty tv database and role and the rename would then fail.
+resource "null_resource" "pg_tv_db" {
   depends_on = [null_resource.pg_cluster]
 
   triggers = {
-    db_name  = "f1_stream"
-    username = "f1_stream"
+    db_name  = "tv"
+    username = "tv"
   }
 
   provisioner "local-exec" {
@@ -2435,11 +2442,11 @@ resource "null_resource" "pg_f1_stream_db" {
       PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'f1_stream'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE ROLE f1_stream WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'f1_stream'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE DATABASE f1_stream OWNER f1_stream"
-          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE f1_stream TO f1_stream"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tv'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE tv WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'tv'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE tv OWNER tv"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE tv TO tv"
         '
     EOT
   }
