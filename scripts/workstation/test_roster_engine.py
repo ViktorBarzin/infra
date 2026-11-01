@@ -874,7 +874,8 @@ def test_derive_ttyd_sudoers_is_only_the_root_grant_for_a_lone_service_user():
     ds = eng.derive_desired_state(roster, {"wizard": 3773})
     assert _sudoers_body(ds) == [
         "wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user, "
-        "/usr/local/bin/tmux-user-setfacl, /usr/local/bin/tmux-persist-forget"
+        "/usr/local/bin/tmux-user-setfacl, /usr/local/bin/tmux-persist-forget, "
+        "/usr/local/bin/t3-mint"
     ]
 
 
@@ -901,3 +902,127 @@ def test_derive_carries_the_authentik_username_per_account():
 
     d = eng._desired_state_to_dict(ds)
     assert d["accounts"]["emo"]["authentik_user"] == "emil.barzin"
+
+
+# --------------------------------------------------------------------------
+# Pinned T3 ports and per-user T3 hosts (2026-11-01, T3 hosts Claude)
+# --------------------------------------------------------------------------
+# Terraform builds each user's t3 host and points its native routes at the
+# user's port, so the port has to be written in the roster rather than chosen
+# on the box. t3_host is the first DNS label of the user's host.
+
+PINNED = """
+    users:
+      wizard: {authentik_user: vbarzin,     k8s_user: wizard, tier: admin,      t3_port: 3773, t3_host: t3}
+      emo:    {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, t3_port: 3774, t3_host: t3-emo}
+      anca:   {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book]}
+"""
+
+
+def test_parses_t3_port_and_host():
+    u = _roster(PINNED).users["emo"]
+    assert u.t3_port == 3774
+    assert u.t3_host == "t3-emo"
+    assert _roster(PINNED).users["anca"].t3_port is None
+    assert _roster(PINNED).users["anca"].t3_host is None
+
+
+def test_pinned_port_wins_over_the_sticky_one():
+    ds = eng.derive_desired_state(_roster(PINNED), {"wizard": 3776, "emo": 3774})
+    assert ds.ports["wizard"] == 3773
+
+
+def test_unpinned_user_skips_pinned_ports():
+    ds = eng.derive_desired_state(_roster(PINNED), {})
+    assert ds.ports == {"wizard": 3773, "emo": 3774, "anca": 3775}
+
+
+def test_unpinned_sticky_port_that_clashes_with_a_pin_moves():
+    # anca's sticky port is now emo's pin: the pin is the reviewed decision, so
+    # anca is reallocated rather than the two sharing a port.
+    ds = eng.derive_desired_state(_roster(PINNED), {"anca": 3774})
+    assert ds.ports["emo"] == 3774
+    assert ds.ports["anca"] == 3775
+
+
+def test_two_rows_pinning_one_port_are_refused():
+    with pytest.raises(eng.RosterError, match="t3_port"):
+        _roster(
+            """
+            users:
+              wizard: {authentik_user: vbarzin,     k8s_user: wizard, tier: admin,      t3_port: 3773}
+              emo:    {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, t3_port: 3773}
+            """
+        )
+
+
+def test_two_rows_with_one_host_are_refused():
+    with pytest.raises(eng.RosterError, match="t3_host"):
+        _roster(
+            """
+            users:
+              wizard: {authentik_user: vbarzin,     k8s_user: wizard, tier: admin,      t3_port: 3773, t3_host: t3}
+              emo:    {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, t3_port: 3774, t3_host: t3}
+            """
+        )
+
+
+def test_host_without_a_pinned_port_is_refused():
+    # Terraform needs the port to route the host's native requests.
+    with pytest.raises(eng.RosterError, match="t3_port"):
+        _roster(
+            """
+            users:
+              emo: {authentik_user: emil.barzin, k8s_user: emo, tier: power-user, t3_host: t3-emo}
+            """
+        )
+
+
+@pytest.mark.parametrize("host", ["T3", "t3.viktorbarzin.me", "-t3", "t3-", "t3_emo", ""])
+def test_host_must_be_one_dns_label(host):
+    with pytest.raises(eng.RosterError, match="t3_host"):
+        _roster(
+            f"""
+            users:
+              emo: {{authentik_user: emil.barzin, k8s_user: emo, tier: power-user, t3_port: 3774, t3_host: "{host}"}}
+            """
+        )
+
+
+@pytest.mark.parametrize("port", [3772, 3780, 8080, "3774", True])
+def test_pinned_port_must_be_in_the_t3_range(port):
+    # 3773-3779 is the range the devvm firewall closes to everything but
+    # Traefik; 3780 is t3-dispatch itself.
+    with pytest.raises(eng.RosterError, match="t3_port"):
+        _roster(
+            f"""
+            users:
+              emo: {{authentik_user: emil.barzin, k8s_user: emo, tier: power-user, t3_port: {json.dumps(port)}}}
+            """
+        )
+
+
+def test_allocation_never_reaches_the_dispatch_port():
+    users = "\n".join(
+        f"      u{i}: {{authentik_user: a{i}, k8s_user: u{i}, tier: power-user}}"
+        for i in range(8)
+    )
+    with pytest.raises(eng.RosterError, match="free T3 port"):
+        eng.derive_desired_state(_roster("users:\n" + users), {})
+
+
+def test_dispatch_carries_the_host_when_the_row_has_one():
+    ds = eng.derive_desired_state(_roster(PINNED), {})
+    assert ds.dispatch == {
+        "vbarzin": {"os_user": "wizard", "port": 3773, "host": "t3"},
+        "emil.barzin": {"os_user": "emo", "port": 3774, "host": "t3-emo"},
+        "ancaelena98": {"os_user": "anca", "port": 3775},
+    }
+
+
+def test_ttyd_sudoers_lets_the_lobby_mint_t3_pairing_codes():
+    # terminal-lobby's services run as the service user and pair a user's T3
+    # through t3-mint, which validates its argument against the user map.
+    ds = eng.derive_desired_state(_roster(PINNED), {})
+    root = [l for l in _sudoers_body(ds) if l.startswith("wizard ALL=(root)")]
+    assert "/usr/local/bin/t3-mint" in root[0]
