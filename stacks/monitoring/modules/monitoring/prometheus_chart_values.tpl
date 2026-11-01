@@ -162,7 +162,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikDown
         target_matchers:
-          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|F1IngressStalled|IngressErrorRate5xxHigh|AnubisChallengeStoreErrors"
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|TvIngressStalled|IngressErrorRate5xxHigh|AnubisChallengeStoreErrors"
       # Traefik down makes ForwardAuth alerts redundant
       - source_matchers:
           - alertname = TraefikDown
@@ -182,7 +182,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikReplicaConfigStale
         target_matchers:
-          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|F1IngressStalled|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|TvIngressStalled|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
       # HA down → every sensor goes unavailable. One root-cause alert is enough.
       # HomeAssistantMassUnavailable is listed for a flapping scrape rather than
       # a clean outage: a fully-down HA takes haos_entity_available with it, and
@@ -5705,8 +5705,8 @@ serverFiles:
             # - Streams. terminal-session-events (SSE /events/*, 220-260s each),
             #   woodpecker (/api/stream/events, 97s) and paperless-mcp (GET /mcp,
             #   up to 1,001s) hold one response open by design.
-            # - Work that is long by nature: loki (log queries), f1-stream (6 MB
-            #   replay chunks, see IngressTTFBCritical; F1IngressStalled covers
+            # - Work that is long by nature: loki (log queries), tv (6 MB
+            #   replay chunks, see IngressTTFBCritical; TvIngressStalled covers
             #   its real stalls) and the error-pages service, whose latency is
             #   other upstreams' timeouts.
             # 14-day backtest: 46 episodes -> 16, all left on services with
@@ -5714,9 +5714,9 @@ serverFiles:
             # tripit /api/trips, homepage widgets).
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|tv-.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|tv-.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
             # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
@@ -5731,13 +5731,13 @@ serverFiles:
             # there. This one mattered more: criticals re-ping every 6h, so a
             # single 4.5s matrix request kept re-announcing itself all day.
             #
-            # f1-stream JOINED THE EXCLUSION LIST 2026-09-11, for the same
+            # tv (then f1-stream) JOINED THE EXCLUSION LIST 2026-09-11, for the same
             # reason nextcloud, immich and ha-sofia are on it, and with the
             # numbers to show it is the metric rather than the service.
             # Measured over the 30 days to 2026-09-11: this alert produced 14
             # separate firing episodes on `f1-stream-anubis-f1-8080@kubernetes`,
             # more than any other service. Replay chunks are up to 6 MB, so p95
-            # of traefik_service_request_duration_seconds for f1 is mostly
+            # of traefik_service_request_duration_seconds for tv is mostly
             # payload transfer, and an alert that cries wolf through a race is
             # worse than no alert.
             #
@@ -5747,9 +5747,9 @@ serverFiles:
             # thirteen of them — half the requests finishing in under half a
             # second while the tail shipped video, exactly what payload transfer
             # looks like. In one, 2026-08-27 08:35 UTC, the peak p50 was 8.4 s.
-            # That one was real, and F1IngressStalled below is scoped to catch
-            # it. (IngressTTFBHigh covered f1 at warning severity until
-            # 2026-09-28, when it excluded f1 too; F1IngressStalled is the f1
+            # That one was real, and TvIngressStalled below is scoped to catch
+            # it. (IngressTTFBHigh covered tv at warning severity until
+            # 2026-09-28, when it excluded tv too; TvIngressStalled is the tv
             # latency signal now.)
             #
             # NOTE the exclusion is the whole service, because
@@ -5763,9 +5763,9 @@ serverFiles:
             # source, at 11 critical episodes re-paging every 6h for an outage.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|tv-.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|tv-.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m
@@ -5807,10 +5807,10 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.service }} answers nothing but failures (5xx or clients giving up) and no request has succeeded: the upstream looks down, not slow"
-          - alert: F1IngressStalled
-            # The f1-only replacement for the exclusion above, added the same
+          - alert: TvIngressStalled
+            # The tv-only replacement for the exclusion above, added the same
             # day and deliberately built on a DIFFERENT statistic. Two things
-            # make it quiet through a race and loud when f1 is actually broken.
+            # make it quiet through a race and loud when tv is actually broken.
             #
             # THE MEDIAN, NOT THE TAIL. A 6 MB chunk being slow moves p95 and
             # leaves p50 alone; an app that cannot answer moves both. Measured
@@ -5819,13 +5819,13 @@ serverFiles:
             # above 2 s, and 7 of those 8 are the one genuine event. Evaluated
             # at 1-minute resolution that event held p50 above 2 s for 34
             # CONTINUOUS minutes (09:24-09:57 UTC) and peaked at 8.5 s, while
-            # f1 was pushing 0.081 Mbit/s through Traefik and the whole cluster
+            # tv was pushing 0.081 Mbit/s through Traefik and the whole cluster
             # was pushing 6.57 Mbit/s against a 32.0 Mbit/s uplink. Half the
             # requests taking 8 seconds while the pipe is 2% full is the app
             # being stuck, not bytes moving.
             #
             # A LOWER TRAFFIC FLOOR, and this is the half that actually silenced
-            # things. f1 is a low-traffic service: median 0.0036 req/s over 30
+            # things. tv is a low-traffic service: median 0.0036 req/s over 30
             # days, and only 6.6% of samples clear the 0.05 req/s floor the
             # sibling rules use. During the genuine event the rate fell to
             # 0.0077 req/s as clients gave up, so a 0.05 floor would have
@@ -5852,17 +5852,17 @@ serverFiles:
             # work for anybody, which is what critical is reserved for here.
             expr: |
               histogram_quantile(0.5,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service=~".*f1-stream.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service=~"tv-.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 2
-              and sum(rate(traefik_service_request_duration_seconds_count{service=~".*f1-stream.*",protocol!="websocket"}[30m])) by (service) > 0.005
+              and sum(rate(traefik_service_request_duration_seconds_count{service=~"tv-.*",protocol!="websocket"}[30m])) by (service) > 0.005
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 30m
             keep_firing_for: 15m
             labels:
               severity: critical
             annotations:
-              summary: "f1-stream is stalled: MEDIAN request {{ $value | printf \"%.2f\" }}s for 30m (threshold: 2s)"
-              description: "Half of all requests to f1 are taking over two seconds, sustained for half an hour. This is deliberately the median and not the p95: p95 for this service is dominated by 6 MB replay chunks and crosses 3s during any healthy race, which is why f1 is excluded from IngressTTFBCritical. A slow median means the app itself is not answering. The known cause of this shape is a blocking call on the asyncio event loop — an NFS tree walk over /data/replays-mp4 has done it before — so check whether a conversion or ladder build is running and whether /replays/events is slow in isolation: `kubectl -n f1-stream exec deploy/f1-stream-edge -- python -c \"import time,urllib.request; t=time.time(); urllib.request.urlopen('http://localhost:8000/replays/events').read(); print(time.time()-t)\"` (`deploy/f1-stream` before the ADR-0029 cutover; conversions and ladder builds run on `deploy/f1-stream-worker` after it). Compare f1's byte rate against the 32 Mbit/s uplink before assuming congestion; during the 2026-08-27 instance f1 was serving 0.081 Mbit/s."
+              summary: "tv is stalled: MEDIAN request {{ $value | printf \"%.2f\" }}s for 30m (threshold: 2s)"
+              description: "Half of all requests to tv are taking over two seconds, sustained for half an hour. This is deliberately the median and not the p95: p95 for this service is dominated by 6 MB replay chunks and crosses 3s during any healthy race, which is why tv is excluded from IngressTTFBCritical. A slow median means the app itself is not answering. The known cause of this shape is a blocking call on the asyncio event loop — an NFS tree walk over /data/replays-mp4 has done it before — so check whether a conversion or ladder build is running and whether /replays/events is slow in isolation: `kubectl -n tv exec deploy/tv-edge -- python -c \"import time,urllib.request; t=time.time(); urllib.request.urlopen('http://localhost:8000/replays/events').read(); print(time.time()-t)\"` (conversions and ladder builds run on `deploy/tv-worker` after it). Compare tv's byte rate against the 32 Mbit/s uplink before assuming congestion; during the 2026-08-27 instance tv was serving 0.081 Mbit/s."
           - alert: IngressErrorRate5xxHigh
             # Rolling upgrades / pod migrations cause brief 5xx spikes that
             # clear within 1-2 min. Only persistent 5xx indicates a real
@@ -5889,7 +5889,7 @@ serverFiles:
             # every 5xx, and the premise behind that (the only legitimate path
             # through Anubis is /.within.website/x/cmd/anubis or a redirect to
             # the upstream, both 200/3xx) stopped holding once Anubis was put in
-            # front of an app that itself proxies third-party origins. f1-stream
+            # front of an app that itself proxies third-party origins. tv
             # relays grey-market stream segments and returns 502 when one of them
             # fails, so its Anubis service carried 88 502s in 24h with the app
             # log showing `Upstream segment returned HTTP 403 for
@@ -5906,7 +5906,7 @@ serverFiles:
             #   kms-anubis                  500:   0    502:   0
             # So 500 keeps the store-error coverage this alert exists for and
             # drops every proxied-upstream failure. Upstream relay health is
-            # covered by F1RelayUpstreamFailing instead.
+            # covered by TvRelayUpstreamFailing instead.
             #
             # Not yet characterised: forgejo's 39 and the blog's 21 500s over
             # those 7 days. No "store" error appears in either pod's log for the
@@ -7555,10 +7555,10 @@ serverFiles:
       # nothing told anyone. Two upstreams broke independently (pitsport
       # rewrote its API to /v1/live-now and started 404ing the old paths;
       # aceztrims' embed host swapped a base64 blob for a pair of XORed hex
-      # strings). f1-stream/docs/playback-guard.md has the incident.
+      # strings). tv/docs/playback-guard.md has the incident.
       #
       # There IS already a guard, and this does not replace it. The playback
-      # guard (stacks/f1-stream/f1-source-guard.tf) plays a real stream in a
+      # guard (stacks/tv/tv-source-guard.tf) plays a real stream in a
       # browser and files a Forgejo issue that dispatches a repair agent — a
       # much stronger assertion than any of these rules make. It is
       # CALENDAR-GATED though: hourly CronJob, acting only inside T-2h and
@@ -7566,35 +7566,35 @@ serverFiles:
       # waits for the next race weekend to be noticed, which is exactly how
       # ten days passed. These rules are the always-on floor underneath it.
       #
-      # Metric contract (backend/, f1-stream): f1_streams_served is a gauge
+      # Metric contract (tv/, tv repo): tv_f1_streams_served is a gauge
       # labelled by `source` (site_key: pitsport, aceztrims, streamed) counting
       # currently-served verified streams. The two *_timestamp_seconds gauges
       # report 0 — NOT the current time — for a source that has never
       # succeeded, because a now-valued timestamp reads as healthy and is how a
       # ten-day outage stays invisible. No total is exposed; sum() it here.
       #
-      # Scrape job: `f1-stream` (extraScrapeConfigs), 1m, every app pod by pod
+      # Scrape job: `tv` (extraScrapeConfigs), 1m, every app pod by pod
       # discovery, each series labelled with the pod's `role`.
-      # `up{job="f1-stream"} == 0` is already covered by ScrapeTargetDown (30m,
+      # `up{job="tv"} == 0` is already covered by ScrapeTargetDown (30m,
       # warning) — no rule here duplicates it.
       #
-      # WHY role=~"worker|" ON THE EXTRACTION GAUGES. Since ADR-0029 (f1-stream
+      # WHY role=~"worker|" ON THE EXTRACTION GAUGES. Since ADR-0029 (tv
       # repo) the app runs as Edges, a Transcoder and a Worker, and only the
       # Worker extracts. A gauge registered in a process that never sets it
-      # exports 0, so an Edge could report f1_streams_served 0 beside the
+      # exports 0, so an Edge could report tv_f1_streams_served 0 beside the
       # Worker's real value, which would hide absent() and skew sum(). The
       # empty alternative matches the single pre-ADR-0029 pod, which carries no
       # `role` label, so the rules read the same before and after the cutover.
       # The app also registers these families only on the Worker; the filter
       # covers the case where that is missed. The playback counters
-      # (F1PlaybackFailing and below) are summed across every pod on purpose.
+      # (TvPlaybackFailing and below) are summed across every pod on purpose.
       - name: F1 Stream Sources
         rules:
           # THE rule. Sustained zero across every source is the ten-day
           # outage's own signature, and it fires on day one of a repeat.
           #
           # 2h, from the extraction logs in Loki rather than a guess. Over
-          # 2026-08-18..08-23 — midweek, no F1 on — f1-stream logged 284
+          # 2026-08-18..08-23 — midweek, no F1 on — tv logged 284
           # extraction runs and NOT ONE of them returned zero streams;
           # aceztrims published 1-2 streams around the clock, 02:00 UTC
           # included. Over 2026-08-27..08-30, inside the outage, 156 runs
@@ -7602,7 +7602,7 @@ serverFiles:
           # here, it is a fault, and there is no measured healthy stretch this
           # threshold has to clear. Extraction runs every 10800s while idle
           # and every 900s pre-session and live (CHECK_INTERVALS in
-          # backend/session_clock.py, reached from _scheduled_extraction), so
+          # tv/f1/session_clock.py, reached from _scheduled_extraction), so
           # the 12h hold below is 4 consecutive idle cycles: past any single
           # bad run or a deploy, well short of a day.
           #
@@ -7611,19 +7611,19 @@ serverFiles:
           # broken, and without this it would resolve and re-fire on that.
           #
           # Two defences against reading its own metric wrong. `or on()
-          # vector(0)` covers f1_streams_served emitting NO series for a dry
+          # vector(0)` covers tv_f1_streams_served emitting NO series for a dry
           # source rather than an explicit 0 — sum() over an empty vector
           # returns no series, not zero, so without this the rule would go
           # silent in precisely the all-sources-dry case it is named after.
           # The `and on()` guard then requires the exposition to be live, so a
           # dead pod produces F1MetricsMissing alone instead of both.
-          # f1_extraction_last_run_timestamp_seconds is the anchor because the
+          # tv_f1_extraction_last_run_timestamp_seconds is the anchor because the
           # contract makes it a single unlabelled gauge that is always present
           # while /metrics answers.
           - alert: F1AllSourcesDry
             expr: |
-              (sum(f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
-              and on() f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
+              (sum(tv_f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
+              and on() tv_f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
             # 12h is Viktor's choice, asked directly on 2026-09-06 when offered
             # 20m / 2h / 12h. It still catches the failure that prompted all of
             # this: during the 2026-08-26..09-05 outage 156 consecutive runs
@@ -7636,35 +7636,35 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream has served zero streams from every source for over 12h, so the site shows nothing"
-              description: "sum(f1_streams_served) has been 0 across all sources for twelve hours, which is the hold this rule actually carries. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"f1-stream\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
+              summary: "tv has served zero streams from every source for over 12h, so the site shows nothing"
+              description: "sum(tv_f1_streams_served) has been 0 across all sources for twelve hours, which is the hold this rule actually carries. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check tv_f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
           # Without this every other rule in the group evaluates nothing and
           # goes quiet, which is the same silence the ten-day outage had.
           # sum() over an empty vector returns NO series rather than 0, so
           # F1AllSourcesDry cannot fire when the endpoint disappears — only
           # this can. Causes worth expecting: /metrics removed or renamed, the
-          # scrape job misconfigured, or the Worker pod (the single f1-stream
+          # scrape job misconfigured, or the Worker pod (the single tv
           # pod before ADR-0029) not running. The scrape reads pods directly, so
           # Anubis is not in its path.
           #
           # 30m matches ScrapeTargetDown's hold so a dead pod produces one
           # alert rather than two at different times.
           #
-          # Anchored on the extraction timestamp, NOT on f1_streams_served.
+          # Anchored on the extraction timestamp, NOT on tv_f1_streams_served.
           # If the backend omits a source's gauge while that source is dry,
-          # then f1_streams_served vanishes entirely when everything is dry —
+          # then tv_f1_streams_served vanishes entirely when everything is dry —
           # and keying on it would report a healthy pod as a missing endpoint
           # while the real fault (nothing being served) went unnamed. The
           # extraction timestamp is a single unlabelled gauge that is always
           # exposed, so its absence means the exposition itself is gone.
           - alert: F1MetricsMissing
-            expr: absent(f1_extraction_last_run_timestamp_seconds{role=~"worker|"})
+            expr: absent(tv_f1_extraction_last_run_timestamp_seconds{role=~"worker|"})
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream /metrics has returned nothing for 30m — every F1 stream alert is now blind"
-              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale, F1SourceExtractionErroring and F1ExtractionNotResolving are all evaluating nothing. The series is read from the Worker only (role=~\"worker|\"), so either the f1-stream Worker pod is down (ScrapeTargetDown says so too) or /metrics moved. Confirm with `homelab k8s status f1-stream` and a direct `curl f1-stream-worker.f1-stream.svc.cluster.local/metrics` from in-cluster (`f1.f1-stream.svc.cluster.local/metrics` while the single pre-ADR-0029 Deployment still runs)."
+              summary: "tv /metrics has returned nothing for 30m — every F1 stream alert is now blind"
+              description: "Prometheus has no tv_f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale, F1SourceExtractionErroring and F1ExtractionNotResolving are all evaluating nothing. The series is read from the Worker only (role=~\"worker|\"), so either the tv Worker pod is down (ScrapeTargetDown says so too) or /metrics moved. Confirm with `homelab k8s status tv` and a direct `curl tv-worker.tv.svc.cluster.local/metrics` from in-cluster."
           # The extraction loop itself stopping. Distinct from every source
           # failing: the sources look frozen at their last values rather than
           # empty, so nothing above notices while the site quietly serves
@@ -7675,7 +7675,7 @@ serverFiles:
           # This said "2h = 4 missed runs at the idle 30-minute cadence", which
           # stopped being true when the cadence table grew phases. The idle
           # interval is CHECK_INTERVALS[Phase.IDLE] = 10800s
-          # (backend/session_clock.py), so 2h was BELOW one normal idle gap and
+          # (tv/f1/session_clock.py), so 2h was BELOW one normal idle gap and
           # the rule fired on healthy midweek behaviour: measured over the 30
           # days to 2026-09-18, the 7200s condition held in 730 of ~8640 5-min
           # samples, 8.4% of the time. 25200s held in 0 of them.
@@ -7690,14 +7690,14 @@ serverFiles:
             # gauge reads 0 until the first extraction completes after a pod
             # restart, so without it every deploy fires this instantly.
             expr: |
-              (time() - f1_extraction_last_run_timestamp_seconds{role=~"worker|"}) > 25200
-              and f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
+              (time() - tv_f1_extraction_last_run_timestamp_seconds{role=~"worker|"}) > 25200
+              and tv_f1_extraction_last_run_timestamp_seconds{role=~"worker|"} > 0
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>2 missed idle cycles)"
-              description: "The APScheduler stream_extraction job (3h idle, 15 min pre-session and live, per CHECK_INTERVALS in backend/session_clock.py) has not completed a run in over seven hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream Worker's logs (`kubectl -n f1-stream logs deploy/f1-stream-worker`; `deploy/f1-stream` before the ADR-0029 cutover) for an exception that killed the job, and whether the pod restarted into a bad state."
+              summary: "tv has not run an extraction in {{ $value | humanizeDuration }} (>2 missed idle cycles)"
+              description: "The APScheduler stream_extraction job (3h idle, 15 min pre-session and live, per CHECK_INTERVALS in tv/f1/session_clock.py) has not completed a run in over seven hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the tv Worker's logs (`kubectl -n tv logs deploy/tv-worker`) for an exception that killed the job, and whether the pod restarted into a bad state."
           # Per-source staleness, scoped to aceztrims ON PURPOSE.
           #
           # 6h, kept, with its arithmetic corrected on 2026-09-18.
@@ -7705,7 +7705,7 @@ serverFiles:
           # This claimed "6h = 12 consecutive dry cycles" and "two orders of
           # magnitude above" the normal gap. Both were written against a
           # 30-minute idle cadence that no longer exists: the idle interval is
-          # CHECK_INTERVALS[Phase.IDLE] = 10800s (backend/session_clock.py), so
+          # CHECK_INTERVALS[Phase.IDLE] = 10800s (tv/f1/session_clock.py), so
           # 21600s is TWO idle cycles, not twelve.
           #
           # The threshold is nonetheless the right one, which is why it did not
@@ -7747,13 +7747,13 @@ serverFiles:
             # of A, so with the operands the other way round $value renders the
             # raw unix timestamp and the Slack line reads "dry for 56.7 years".
             expr: |
-              (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"}) > 21600
-              and f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"} > 0
+              (time() - tv_f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"}) > 21600
+              and tv_f1_source_last_success_timestamp_seconds{source=~"aceztrims",role=~"worker|"} > 0
             for: 30m
             labels:
               severity: info
             annotations:
-              summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 3h idle cycle; worst measured 3.4h)"
+              summary: "tv source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 3h idle cycle; worst measured 3.4h)"
               description: "This source publishes around the clock — measured 1-2 streams on every one of 284 extraction runs over 2026-08-18..08-23, including 02:00 UTC midweek — so six hours of nothing means its extractor or its upstream has changed. This is the shape aceztrims broke in on 2026-08-26, when the embed host swapped a base64 encodedUrl blob for a pair of XORed hex strings and the resolver returned nothing while the page still looked fine."
           # The season-independent per-source check, and the one that catches
           # what actually happened to pitsport: it rewrote its API, the old
@@ -7776,13 +7776,13 @@ serverFiles:
           # weekends, so without this a source dying on a Tuesday is seen by
           # nobody until Friday.
           - alert: F1SourceExtractionErroring
-            expr: f1_source_last_extraction_ok{role=~"worker|"} == 0
+            expr: tv_f1_source_last_extraction_ok{role=~"worker|"} == 0
             for: 2h
             labels:
               severity: info
             annotations:
-              summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
-              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream Worker's logs (`kubectl -n f1-stream logs deploy/f1-stream-worker`; `deploy/f1-stream` before the ADR-0029 cutover) before assuming the upstream is down."
+              summary: "tv extractor for {{ $labels.source }} has been raising for 2h"
+              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the tv Worker's logs (`kubectl -n tv logs deploy/tv-worker`) before assuming the upstream is down."
           # The gap the three rules above leave: a source that finds F1,
           # recognises it, and still ends the run with nothing. Every rule so
           # far reads the END of the funnel — served, cached, or an exception —
@@ -7800,11 +7800,11 @@ serverFiles:
           # aceztrims alone; the extractor raised nothing. Viktor noticed by
           # looking at the page.
           #
-          # Metric contract (backend/metrics.py, f1-stream): the funnel is
-          # measured at two points per source. f1_extraction_discovered is what
+          # Metric contract (tv/metrics.py, tv repo): the funnel is
+          # measured at two points per source. tv_f1_extraction_discovered is what
           # the upstream offered before any series filtering — always non-zero
           # for streamed, whose motorsport endpoint carries NASCAR and rally
-          # year-round. f1_extraction_matched is how many of those the
+          # year-round. tv_f1_extraction_matched is how many of those the
           # extractor recognised as F1 and tried to serve. Neither is
           # zero-filled: an extractor that does not report its funnel emits no
           # series rather than a standing 0, so this rule only ever speaks for
@@ -7822,14 +7822,14 @@ serverFiles:
           # so single-cycle failures are expected and must not page.
           - alert: F1ExtractionNotResolving
             expr: |
-              f1_extraction_matched{role=~"worker|"} > 0
-              and on(source) f1_streams_cached{role=~"worker|"} == 0
+              tv_f1_extraction_matched{role=~"worker|"} > 0
+              and on(source) tv_f1_streams_cached{role=~"worker|"} == 0
             for: 2h
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream found {{ $value }} F1 stream(s) from {{ $labels.source }} and could not turn any of them into a playable one for 2h"
-              description: "Discovery and F1 detection both worked — this source recognised Formula 1 — and nothing reached the cache, so the failure is in resolution: the browser capture returned no playlist, or every candidate resolved to something unplayable. Check `homelab logs query '{namespace=\"f1-stream\"} |= \"yielded a playlist\"'` for the capture's own count, then whether chrome-fleet is leasing (`homelab k8s status chrome-service`). A dead embed host after a session ends is the benign case and clears itself; four consecutive cycles during a race weekend is not. Compare f1_extraction_discovered against f1_extraction_matched to rule out a detection problem instead."
+              summary: "tv found {{ $value }} F1 stream(s) from {{ $labels.source }} and could not turn any of them into a playable one for 2h"
+              description: "Discovery and F1 detection both worked — this source recognised Formula 1 — and nothing reached the cache, so the failure is in resolution: the browser capture returned no playlist, or every candidate resolved to something unplayable. Check `homelab logs query '{namespace=\"tv\"} |= \"yielded a playlist\"'` for the capture's own count, then whether chrome-fleet is leasing (`homelab k8s status chrome-service`). A dead embed host after a session ends is the benign case and clears itself; four consecutive cycles during a race weekend is not. Compare tv_f1_extraction_discovered against tv_f1_extraction_matched to rule out a detection problem instead."
           # The last stage of the funnel, and the one no rule watched: streams
           # cached and none of them served. Added 2026-09-18 from the live
           # streaming audit.
@@ -7859,14 +7859,14 @@ serverFiles:
           # no series rather than 0.
           - alert: F1ZeroSupply
             expr: |
-              sum(f1_streams_cached{role=~"worker|"}) > 0
-              and on() (sum(f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
+              sum(tv_f1_streams_cached{role=~"worker|"}) > 0
+              and on() (sum(tv_f1_streams_served{role=~"worker|"}) or on() vector(0)) == 0
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream has {{ $value }} stream(s) cached and is serving none of them"
-              description: "Extraction found streams and verification rejected all of them, so the site lists nothing while the pipeline reports itself healthy. This is the stage past F1ExtractionNotResolving: the cache has entries and f1_streams_served is 0 across every source. Check what the verifier is rejecting with `homelab logs query '{namespace=\"f1-stream\"} |= \"candidate(s) rejected\"' --since 1h`, which names the HTTP status per candidate. A whole-site rejection usually means the upstreams rotated a token format or an origin started refusing our egress, not that six independent streams died at once."
+              summary: "tv has {{ $value }} stream(s) cached and is serving none of them"
+              description: "Extraction found streams and verification rejected all of them, so the site lists nothing while the pipeline reports itself healthy. This is the stage past F1ExtractionNotResolving: the cache has entries and tv_f1_streams_served is 0 across every source. Check what the verifier is rejecting with `homelab logs query '{namespace=\"tv\"} |= \"candidate(s) rejected\"' --since 1h`, which names the HTTP status per candidate. A whole-site rejection usually means the upstreams rotated a token format or an origin started refusing our egress, not that six independent streams died at once."
           # Playback failing at the client, which no rule watched either.
           #
           # ADR-0003 decided against alerting on client-reported playback,
@@ -7880,25 +7880,25 @@ serverFiles:
           # noise ADR-0003 was avoiding stays out.
           #
           # Threshold measured against 30 days of real data before writing it:
-          # `sum(increase(f1_playback_fatal_errors_total[15m]))` peaked at 35.4,
+          # `sum(increase(tv_playback_fatal_errors_total[15m]))` peaked at 35.4,
           # the ungated `> 5` condition held in 17 of ~8640 5-min samples, and
           # the phase-gated one in 6. So it can fire, it has room above the
           # routine, and it is not going to talk during a quiet Tuesday.
           #
-          # max() on the guard rather than a bare selector: f1_schedule_phase
+          # max() on the guard rather than a bare selector: tv_f1_schedule_phase
           # is one series per phase, so an unaggregated `== 1` would match the
           # live series and the pre_session series separately and the `and on()`
           # would find no shared label set.
-          - alert: F1PlaybackFailing
+          - alert: TvPlaybackFailing
             expr: |
-              sum(increase(f1_playback_fatal_errors_total[15m])) > 5
-              and on() (max(f1_schedule_phase{phase=~"live|pre_session"}) == 1)
+              sum(increase(tv_playback_fatal_errors_total[15m])) > 5
+              and on() (max(tv_f1_schedule_phase{phase=~"live|pre_session"}) == 1)
             for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "f1-stream clients reported {{ $value | printf \"%.0f\" }} fatal playback errors in 15m during a session"
-              description: "Playback is dying outright on viewers' devices while a session is on. Break it down by site, device and rung with `sum by (site, device, rung) (increase(f1_playback_fatal_errors_total[15m]))` before touching anything: one site failing is a source problem and the answer is to switch feeds, every site failing on one device class is ours. This rule is calendar-gated by design (ADR-0003), so it says nothing between sessions no matter what clients report."
+              summary: "tv clients reported {{ $value | printf \"%.0f\" }} fatal playback errors in 15m during a session"
+              description: "Playback is dying outright on viewers' devices while a session is on. Break it down by site, device and rung with `sum by (site, device, rung) (increase(tv_playback_fatal_errors_total[15m]))` before touching anything: one site failing is a source problem and the answer is to switch feeds, every site failing on one device class is ours. This rule is calendar-gated by design (ADR-0003), so it says nothing between sessions no matter what clients report."
           # Added 2026-10-09. The live quality ladder did not start on the
           # strmd.st source from 2026-09-12 to 2026-10-09: the provider moved its
           # segments behind a fake WebP header, the relay only stripped a fake
@@ -7906,7 +7906,7 @@ serverFiles:
           # input". Browsers kept playing the source, so every phone quietly
           # got full quality and the only sign was a log line.
           #
-          # Not calendar-gated, unlike F1PlaybackFailing. That rule reads
+          # Not calendar-gated, unlike TvPlaybackFailing. That rule reads
           # client telemetry (ADR-0003); this counter is server-side and moves
           # only when a viewer asks for the ladder. The 30 days of failure logs
           # before this rule put the peaks in live (2026-10-04, 324 in an hour),
@@ -7918,18 +7918,18 @@ serverFiles:
           # most, counted per waiting client in the logs. The counter counts
           # once per encoder, which is fewer. More than 3 in 30m is a source
           # the ladder cannot read, not a hiccup.
-          - alert: F1LadderStartFailing
+          - alert: TvLadderStartFailing
             expr: |
-              sum(increase(f1_transcode_start_failures_total[30m])) > 3
+              sum(increase(tv_transcode_start_failures_total[30m])) > 3
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream live quality ladder failed to start {{ $value | printf \"%.0f\" }} times in 30m"
-              description: "Viewers who asked for 540p/360p are being sent back to the full-quality source. Read the reason off the encoder's stderr: `homelab logs query '{namespace=\"f1-stream\"} |~ \"transcode: .* (exited rc=|produced nothing)\"' --since 1h`. 'Invalid data found when processing input' usually means a provider changed how it disguises segments (see Disguised segment in f1-stream's CONTEXT.md); run ffprobe in the pod against the /proxy URL to see what ffmpeg thinks the segment is. reason=timeout with no exits points at the encoder or the GPU instead."
-          # Added 2026-10-10 with f1-stream's Member sign-in (ADR-0021). The
+              summary: "tv live quality ladder failed to start {{ $value | printf \"%.0f\" }} times in 30m"
+              description: "Viewers who asked for 540p/360p are being sent back to the full-quality source. Read the reason off the encoder's stderr: `homelab logs query '{namespace=\"tv\"} |~ \"transcode: .* (exited rc=|produced nothing)\"' --since 1h`. 'Invalid data found when processing input' usually means a provider changed how it disguises segments (see Disguised segment in tv's CONTEXT.md); run ffprobe in the pod against the /proxy URL to see what ffmpeg thinks the segment is. reason=timeout with no exits points at the encoder or the GPU instead."
+          # Added 2026-10-10 with tv's Member sign-in (ADR-0021). The
           # app asks Authentik whether a signed-in Member is still in
-          # "F1 Users" each time the site loads in their browser and each time
+          # "TV Users" each time the site loads in their browser and each time
           # one of their TVs launches. When Authentik does not answer, the last
           # known answer stands so nobody is locked out, which also means a
           # person removed from the group keeps access until a check gets
@@ -7938,22 +7938,22 @@ serverFiles:
           # Threshold: checks run only on a page load or a TV launch, a few
           # dozen a day in this household, so three failures in half an hour
           # is a pattern rather than one dropped request.
-          - alert: F1MembershipCheckUnreachable
+          - alert: TvMembershipCheckUnreachable
             expr: |
-              sum(increase(f1_membership_check_total{outcome="unreachable"}[30m])) >= 3
+              sum(increase(tv_membership_check_total{outcome="unreachable"}[30m])) >= 3
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream could not reach Authentik for {{ $value | printf \"%.0f\" }} membership checks in 30m"
-              description: "Signed-in Members and their TVs are being admitted on their last known F1 Users membership. Find the reason with `homelab logs query '{namespace=\"f1-stream\"} |= \"membership\"' --since 1h`. A 401 or 403 from Authentik means the svc-f1-stream API token (infra stacks/f1-stream/members.tf) was revoked or lost its role; a timeout means Authentik itself is down."
-          # Added 2026-10-16. The viewing record (f1-stream ADR-0014) drops a
+              summary: "tv could not reach Authentik for {{ $value | printf \"%.0f\" }} membership checks in 30m"
+              description: "Signed-in Members and their TVs are being admitted on their last known TV Users membership. Find the reason with `homelab logs query '{namespace=\"tv\"} |= \"membership\"' --since 1h`. A 401 or 403 from Authentik means the svc-tv API token (infra stacks/tv/members.tf) was revoked or lost its role; a timeout means Authentik itself is down."
+          # Added 2026-10-16. The viewing record (tv ADR-0014) drops a
           # beat rather than make a viewer wait, and until now counted each
           # drop only on its admin page. On 2026-10-15 the record looked dead
           # for hours and nothing outside that page could say whether beats
           # were being written or dropped. (That evening it was neither: the
           # rows were on pg-cluster-v18 and the reads went to the frozen PG16
-          # cluster.) f1_viewing_beats_written_total now answers the first
+          # cluster.) tv_viewing_beats_written_total now answers the first
           # question; this rule covers the second.
           #
           # reason="rate" is excluded: it is a client beating faster than one
@@ -7964,16 +7964,16 @@ serverFiles:
           # drops one or two beats per viewer at a 20 s beat. More than 10 in
           # 30m is several failures or a sustained outage, not one hiccup. A
           # database down for 30 minutes with two viewers is about 180.
-          - alert: F1ViewingRecordDropping
+          - alert: TvViewingRecordDropping
             expr: |
-              sum(increase(f1_viewing_beats_dropped_total{reason!="rate"}[30m])) > 10
+              sum(increase(tv_viewing_beats_dropped_total{reason!="rate"}[30m])) > 10
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream dropped {{ $value | printf \"%.0f\" }} viewing beats in 30m"
-              description: "Viewing beats are not reaching Postgres. Split by reason with `sum by (reason, pod) (increase(f1_viewing_beats_dropped_total[30m]))`. error and cooloff mean writes are failing: read `homelab logs query '{namespace=\"f1-stream\"} |= \"[viewing] could not\"' --since 1h`. in-flight means writes are slow to return. cap or playback-cap means a client is looping. To confirm rows are landing, read the database the apps use: `homelab k8s db pg-cluster --db f1_stream -- \"select max(at) from viewing_beats\"` (CLI v0.27.2 or later follows the postgresql Service)."
-          # The f1-stream Watcher's download over its budget. Added 2026-10-16.
+              summary: "tv dropped {{ $value | printf \"%.0f\" }} viewing beats in 30m"
+              description: "Viewing beats are not reaching Postgres. Split by reason with `sum by (reason, pod) (increase(tv_viewing_beats_dropped_total[30m]))`. error and cooloff mean writes are failing: read `homelab logs query '{namespace=\"tv\"} |= \"[viewing] could not\"' --since 1h`. in-flight means writes are slow to return. cap or playback-cap means a client is looping. To confirm rows are landing, read the database the apps use: `homelab k8s db pg-cluster --db tv -- \"select max(at) from viewing_beats\"` (CLI v0.27.2 or later follows the postgresql Service)."
+          # The tv Watcher's download over its budget. Added 2026-10-16.
           # The plan and ADR-0044 give the Watcher 45 Mbit/s of the house
           # downlink (which averages 214 Mbit/s) while Feeds learn; it was 30
           # until 2026-10-18. Before the
@@ -7986,20 +7986,20 @@ serverFiles:
           # keep it equal to WATCHER_DOWNLOAD_BUDGET_MBPS in watcher.tf.
           # The 30m rate and 30m hold leave out the minutes after a restart,
           # when unmeasured Feeds are costed at an estimate.
-          - alert: F1WatcherDownloadOverBudget
+          - alert: TvWatcherDownloadOverBudget
             expr: |
-              sum(rate(container_network_receive_bytes_total{namespace="f1-stream",pod=~"f1-stream-watcher-.*"}[30m])) * 8 / 1e6
-              > on() 1.2 * (max(f1_watcher_download_budget_mbps) or on() vector(45))
+              sum(rate(container_network_receive_bytes_total{namespace="tv",pod=~"tv-watcher-.*"}[30m])) * 8 / 1e6
+              > on() 1.2 * (max(tv_watcher_download_budget_mbps) or on() vector(45))
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream Watcher is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
-              description: "The Watcher's received traffic has stayed above 1.2 times its download budget (f1_watcher_download_budget_mbps, WATCHER_DOWNLOAD_BUDGET_MBPS in stacks/f1-stream/watcher.tf) for 30 minutes. Compare with its own estimate, f1_watcher_download_mbps, and the watch counts, f1_watcher_watches by mode. An estimate well under the measured rate means the per-watch costing in backend/watcher/plan.py misses some traffic; an estimate near the budget with the measured rate far above means a watch is reading more than one Feed's worth. The budget is in f1-stream ADR-0044, Build decisions, Download budget."
-          - alert: F1RelayUpstreamFailing
+              summary: "tv Watcher is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
+              description: "The Watcher's received traffic has stayed above 1.2 times its download budget (tv_watcher_download_budget_mbps, WATCHER_DOWNLOAD_BUDGET_MBPS in stacks/tv/watcher.tf) for 30 minutes. Compare with its own estimate, tv_watcher_download_mbps, and the watch counts, tv_watcher_watches by mode. An estimate well under the measured rate means the per-watch costing in tv/watcher/plan.py misses some traffic; an estimate near the budget with the measured rate far above means a watch is reading more than one Feed's worth. The budget is in tv ADR-0044, Build decisions, Download budget."
+          - alert: TvRelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
-            # from third-party origins, and f1-stream answers 502 when one of
+            # from third-party origins, and tv answers 502 when one of
             # them refuses. A few of those a day is the normal state of a
             # grey-market source, so this alerts on a SUSTAINED rate rather than
             # on any single failure.
@@ -8011,14 +8011,14 @@ serverFiles:
             # site stays up on its other sources, and F1AllSourcesDry covers
             # the case where none are left.
             expr: |
-              sum(rate(traefik_service_requests_total{service="f1-stream-anubis-f1-8080@kubernetes",code=~"50[24]"}[5m])) > 0.3
+              sum(rate(traefik_service_requests_total{service="tv-tv-80@kubernetes",code=~"50[24]"}[5m])) > 0.3
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream relay failing upstream ({{ $value | printf \"%.2f\" }} req/s of 502/504 for 15m)"
-              description: "Segment fetches through /relay or /proxy are erroring at a sustained rate, so one of the stream sources is refusing requests rather than hiccupping. Confirm which with `homelab k8s logs f1-stream --since 30m | grep 'Upstream segment returned'` — the warning names the upstream host. A single source failing is expected between sessions; all of them failing shows up as F1AllSourcesDry."
+              summary: "tv relay failing upstream ({{ $value | printf \"%.2f\" }} req/s of 502/504 for 15m)"
+              description: "Segment fetches through /relay or /proxy are erroring at a sustained rate, so one of the stream sources is refusing requests rather than hiccupping. Confirm which with `homelab k8s logs tv --since 30m | grep 'Upstream segment returned'` — the warning names the upstream host. A single source failing is expected between sessions; all of them failing shows up as F1AllSourcesDry."
           # The replay library filling up. Added 2026-09-11 because a refusal
           # was not just unalerted, it had no signal at all: neither a metric
           # nor a log rule that survived its own dedupe, so the first anyone
@@ -8026,8 +8026,8 @@ serverFiles:
           # on the site.
           #
           # DEPENDENCY, and the reason this rule may sit inert for a while:
-          # f1_library_used_bytes and f1_library_cap_bytes DO NOT EXIST YET.
-          # They are being added to f1-stream's backend/metrics.py alongside
+          # tv_f1_library_used_bytes and tv_f1_library_cap_bytes DO NOT EXIST YET.
+          # They are being added to tv's tv/metrics.py alongside
           # this change. Until that ships, both selectors match nothing, the
           # expression returns no series, and the rule is silent — verified
           # 2026-09-11 by evaluating it against live Prometheus, which parsed it
@@ -8040,7 +8040,7 @@ serverFiles:
           # percentage. Measured in-pod 2026-09-11, the library holds three
           # sessions at 56.91 GB, and each session is its mp4 plus its ladder:
           # 21.24 GB, 17.84 GB and 17.83 GB. Against the cap now set in
-          # stacks/f1-stream/main.tf (180 GiB = 193.3 GB) one largest-session is
+          # stacks/tv/main.tf (180 GiB = 193.3 GB) one largest-session is
           # 11% of the cap, so 0.85 leaves 16% — one and a half sessions, less
           # than half a weekend, and not enough warning to do anything about it.
           # 0.70 leaves 58 GB, which is two full sessions plus room to think.
@@ -8055,14 +8055,14 @@ serverFiles:
           # sawtooth a conversion writing and a ladder building produce.
           - alert: F1LibraryFilling
             expr: |
-              (f1_library_used_bytes{role=~"worker|"} / f1_library_cap_bytes{role=~"worker|"}) > 0.70
-              and f1_library_cap_bytes{role=~"worker|"} > 0
+              (tv_f1_library_used_bytes{role=~"worker|"} / tv_f1_library_cap_bytes{role=~"worker|"}) > 0.70
+              and tv_f1_library_cap_bytes{role=~"worker|"} > 0
             for: 6h
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream replay library is {{ $value | humanizePercentage }} full — new sessions will be refused soon"
-              description: "The converted-replay library is past 70% of REPLAY_LIBRARY_CAP_GB. The cap is a REFUSAL and not an eviction, so when it is reached a newly downloaded session simply does not get converted and never appears as playable — there is no cleanup that happens on its own. One session measures 17.8-21.2 GB (its mp4 plus its four-rung ladder) and a race weekend is five of them, so 70% is roughly two sessions of warning. Three things to check, cheapest first: `homelab k8s exec f1-stream-worker -n f1-stream -- du -sh /data/replays-mp4` for what is actually held (`homelab k8s exec f1-stream -- ...` before the ADR-0029 cutover); whether the shared /srv/nfs pool has room, since 41 namespaces share it and PVFillingUp covers the volume itself; and whether the duplication is worth reclaiming — the v0 rung is a stream copy of the mp4 it was built from, measured at a 1.029 byte ratio, so about 41% of the library is the same video stored twice."
+              summary: "tv replay library is {{ $value | humanizePercentage }} full — new sessions will be refused soon"
+              description: "The converted-replay library is past 70% of REPLAY_LIBRARY_CAP_GB. The cap is a REFUSAL and not an eviction, so when it is reached a newly downloaded session simply does not get converted and never appears as playable — there is no cleanup that happens on its own. One session measures 17.8-21.2 GB (its mp4 plus its four-rung ladder) and a race weekend is five of them, so 70% is roughly two sessions of warning. Three things to check, cheapest first: `homelab k8s exec tv-worker -n tv -- du -sh /data/replays-mp4` for what is actually held; whether the shared /srv/nfs pool has room, since 41 namespaces share it and PVFillingUp covers the volume itself; and whether the duplication is worth reclaiming — the v0 rung is a stream copy of the mp4 it was built from, measured at a 1.029 byte ratio, so about 41% of the library is the same video stored twice."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
@@ -9054,16 +9054,16 @@ extraScrapeConfigs: |
         regex: 'goflow2_flow_process_nf_templates_total'
         action: drop
 
-  # f1-stream: how many verified streams the site is actually serving, per
+  # tv: how many verified streams the site is actually serving, per
   # upstream source. Added 2026-09-06 after the site served ZERO streams from
   # 2026-08-26 10:36 to 2026-09-05, about ten days, with nothing to notice it —
   # the app exposed no metrics at all until now. Alerts: the "F1 Stream
   # Sources" group in alerting_rules.yml. Incident and timing analysis:
-  # f1-stream/docs/playback-guard.md.
+  # tv/docs/playback-guard.md.
   #
-  # Every f1-stream pod, found by pod discovery, NOT the `f1` Service. Changed
-  # for ADR-0029 in the f1-stream repo, which splits the app into three Roles
-  # from one image: Edges (2+, the `f1` Service), one Transcoder and one Worker.
+  # Every tv pod, found by pod discovery, NOT the `tv` Service. Changed
+  # for ADR-0029 in the tv repo, which splits the app into three Roles
+  # from one image: Edges (2+, the `tv` Service), one Transcoder and one Worker.
   # A Service target reaches one Edge per scrape, so the Worker's extraction
   # gauges would never be read and the playback counters would come from
   # whichever Edge the connection landed on. Pod discovery reads each pod's
@@ -9074,7 +9074,7 @@ extraScrapeConfigs: |
   # on the single pre-ADR-0029 Deployment), and `pod` and `instance` from the
   # pod name. The alert rules read Worker-owned gauges with role=~"worker|",
   # which matches the Worker and the unlabelled monolith, so this job and those
-  # rules work on either side of the cutover. `app=f1-stream` matches the app
+  # rules work on either side of the cutover. `app=tv` matches the app
   # pods only: the source-guard, the data-copy Job and the TV publish pod carry
   # other `app` values.
   #
@@ -9082,19 +9082,19 @@ extraScrapeConfigs: |
   # series per pod) and a fast scrape keeps `up` meaningful and the alert
   # clocks honest without adding data the extraction loop does not produce.
   #
-  # Namespace tv with label app=tv is the same app after its rename (f1-stream
-  # plan 2026-11-01-tv-rebrand). Both are listed until the f1-stream namespace
-  # is gone, so the scrape carries on across the cutover.
-  - job_name: 'f1-stream'
+  # Namespace tv with label app=tv since the f1-stream -> tv rename (plan
+  # 2026-11-01-tv-rebrand in the tv repo). The f1-stream namespace is no
+  # longer scraped.
+  - job_name: 'tv'
     scrape_interval: 1m
     metrics_path: '/metrics'
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: ['f1-stream', 'tv']
+          names: ['tv']
         selectors:
           - role: pod
-            label: 'app in (f1-stream,tv)'
+            label: 'app=tv'
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_container_port_number]
         regex: '8000'
