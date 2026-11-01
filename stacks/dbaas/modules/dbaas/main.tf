@@ -2553,7 +2553,7 @@ resource "kubernetes_deployment" "pgadmin" {
       }
       spec {
         container {
-          image = "dpage/pgadmin4:9.16"
+          image = "dpage/pgadmin4:9.19"
           name  = "pgadmin"
           env {
             name  = "PGADMIN_DEFAULT_EMAIL"
