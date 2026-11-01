@@ -83,7 +83,7 @@ resource "kubernetes_deployment" "anisette" {
           # `dadoum/anisette-v3-server@...` is denied at admission; the explicit
           # docker.io/ registry matches the allowlist and still pulls via the
           # 10.0.20.10 pull-through cache.
-          image = "docker.io/dadoum/anisette-v3-server:10-2026@sha256:8577c27cb7592900947960799bf03c79a53bf857ed951e4c48ef6e06c6e0f488"
+          image = "docker.io/dadoum/anisette-v3-server:11-2026@sha256:d551c75454bcbee68dc262d4247d5f87fa309dfc8f2125644d333c648596e3c7"
           name  = "anisette"
           port {
             name           = "http"
