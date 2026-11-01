@@ -14,8 +14,8 @@ import (
 func TestLandLockMakesLandsTakeTurns(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOMELAB_LAND_LOCK_DIR", dir)
-	key := landLockKey("git@git.viktorbarzin.me:viktor/f1-stream.git")
-	if other := landLockKey("https://forgejo.viktorbarzin.me/viktor/f1-stream.git"); other != key {
+	key := landLockKey("git@git.viktorbarzin.me:viktor/tv.git")
+	if other := landLockKey("https://forgejo.viktorbarzin.me/viktor/tv.git"); other != key {
 		t.Fatalf("ssh and https remotes of one repo must share a lock: %q vs %q", key, other)
 	}
 	if landLockKey("https://forgejo.viktorbarzin.me/viktor/infra.git") == key {

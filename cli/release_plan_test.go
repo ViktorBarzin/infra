@@ -1,13 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
 )
 
 func TestReleaseTVVersionMatchesCIVersionScript(t *testing.T) {
-	// scripts/ci-version.sh in f1-stream: code = 30000 + commit count, name =
+	// scripts/ci-version.sh in the tv repo: code = 30000 + commit count, name =
 	// <last tag without v>+<count>, a count of 0 reads as 1, no tag reads 0.0.0.
 	cases := []struct {
 		count    int
@@ -32,7 +33,7 @@ func TestReleaseTVVersionMatchesCIVersionScript(t *testing.T) {
 }
 
 func TestReleaseClassifyPathsFollowsTheWorkflowFilters(t *testing.T) {
-	spec := f1StreamRelease()
+	spec := tvRelease()
 	cases := []struct {
 		paths      []string
 		wantServer bool
@@ -246,7 +247,7 @@ func TestReleaseParseSignerAndBadging(t *testing.T) {
 	if got := parseSignerDigest("garbage"); got != "" {
 		t.Errorf("parseSignerDigest(garbage) = %q", got)
 	}
-	badging := "package: name='me.viktorbarzin.f1tv' versionCode='31520' versionName='2.44.2+1520' platformBuildVersionName='14'\n" +
+	badging := "package: name='me.viktorbarzin.tv' versionCode='31520' versionName='2.44.2+1520' platformBuildVersionName='14'\n" +
 		"application-label:'TV'\n"
 	code, debuggable := parseBadging(badging)
 	if code != 31520 || debuggable {
@@ -270,15 +271,15 @@ func TestReleaseOutputMetadataVersionCode(t *testing.T) {
 }
 
 func TestReleaseParseArgs(t *testing.T) {
-	o, err := parseReleaseArgs([]string{"f1-stream", "--tv", "--sha", "abc1234", "--check"})
-	if err != nil || o.App != "f1-stream" || !o.TV || o.Server || o.SHA != "abc1234" || !o.Check {
+	o, err := parseReleaseArgs([]string{"tv", "--tv", "--sha", "abc1234", "--check"})
+	if err != nil || o.App != "tv" || !o.TV || o.Server || o.SHA != "abc1234" || !o.Check {
 		t.Errorf("parseReleaseArgs = %+v %v", o, err)
 	}
-	o, err = parseReleaseArgs([]string{"--server", "f1-stream"})
-	if err != nil || o.App != "f1-stream" || !o.Server {
+	o, err = parseReleaseArgs([]string{"--server", "tv"})
+	if err != nil || o.App != "tv" || !o.Server {
 		t.Errorf("flag before app: %+v %v", o, err)
 	}
-	if _, err := parseReleaseArgs([]string{"f1-stream", "--bogus"}); err == nil {
+	if _, err := parseReleaseArgs([]string{"tv", "--bogus"}); err == nil {
 		t.Errorf("want an error for an unknown flag")
 	}
 	if _, err := parseReleaseArgs(nil); err == nil {
@@ -329,5 +330,49 @@ func TestReleaseHighestTVAnswerIsTheLiveCode(t *testing.T) {
 	got := highestTVAnswer([]tvAnswer{{31521, "a"}, {31529, "b"}, {31521, "a"}})
 	if got.Code != 31529 || got.SHA != "b" {
 		t.Errorf("highestTVAnswer = %+v", got)
+	}
+}
+
+// The app was renamed from f1-stream to tv on 2026-11-01 (tv repo,
+// docs/plans/2026-11-01-tv-rebrand.md); every name the release touches
+// follows the rename map.
+func TestReleaseSpecUsesTheTVNames(t *testing.T) {
+	mk, ok := releaseSpecs["tv"]
+	if !ok {
+		t.Fatalf("no release recipe for tv")
+	}
+	spec := mk()
+	want := releaseSpec{
+		App:            "tv",
+		GitURL:         "https://forgejo.viktorbarzin.me/viktor/tv.git",
+		LocalClone:     "code/tv",
+		Image:          "ghcr.io/viktorbarzin/tv",
+		TVRepo:         "ghcr.io/viktorbarzin/tv-android",
+		WoodpeckerRepo: 10,
+		Site:           "https://tv.viktorbarzin.me",
+		Namespace:      "tv",
+		EdgeDeployment: "tv-edge",
+		VaultPath:      "secret/ci/tv-release",
+	}
+	got := spec
+	got.Signer, got.VersionFloor, got.ServerIgnore, got.TVPaths = "", 0, nil, nil
+	if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+		t.Errorf("tv spec = %+v\nwant %+v", got, want)
+	}
+	if _, ok := releaseSpecs["f1-stream"]; ok {
+		t.Errorf("f1-stream is still a release recipe; it is tv now")
+	}
+	if defaultReleaseLock != "/run/lock/tv-release.lock" {
+		t.Errorf("defaultReleaseLock = %q", defaultReleaseLock)
+	}
+	if !strings.Contains(releaseUsage, "(apps: tv)") {
+		t.Errorf("usage does not list tv: %q", releaseUsage)
+	}
+}
+
+func TestReleaseOldAppNameSaysItIsTVNow(t *testing.T) {
+	_, err := parseReleaseArgs([]string{"f1-stream", "--check"})
+	if err == nil || !strings.Contains(err.Error(), "homelab deploy tv") {
+		t.Errorf("deploy f1-stream should point at deploy tv, got %v", err)
 	}
 }

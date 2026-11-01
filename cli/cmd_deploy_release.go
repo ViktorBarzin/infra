@@ -30,7 +30,7 @@ import (
 // anyone's checkout or worktree, so the commit count (the TV versionCode) is
 // master's own. What CI already built or what is already live is skipped.
 
-const defaultReleaseLock = "/run/lock/f1-stream-release.lock"
+const defaultReleaseLock = "/run/lock/tv-release.lock"
 
 func deployRelease(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -75,11 +75,11 @@ func leaveStartingDir() error {
 const deployReleaseHelp = `homelab deploy <app> [--server] [--tv] [--sha SHA] [--check]
 
 Build an app's landed master on this box and put it live, the way its GitHub
-Actions workflows would. Apps: f1-stream.
+Actions workflows would. Apps: tv.
 
   --check    work out and print what would happen; build and push nothing
   --server   only the server image (ghcr :<sha8>, then the Woodpecker deploy)
-  --tv       only the TV app (ghcr f1-stream-tv:<versionCode>, then publish-tv)
+  --tv       only the TV app (ghcr tv-android:<versionCode>, then publish-tv)
   --sha SHA  a commit on master other than its tip
 
 Without --server or --tv each half runs only when a path it is built from
@@ -88,7 +88,7 @@ already live, or already built on ghcr, is skipped. A TV versionCode that is
 not above the one televisions are offered is refused. One release runs at a
 time on the devvm (` + defaultReleaseLock + `).
 
-Credentials come from Vault secret/ci/f1-stream-release; tokens go to docker
+Credentials come from Vault secret/ci/tv-release; tokens go to docker
 and Woodpecker on stdin or in headers, never on a command line.`
 
 type releaseCreds struct {
@@ -799,12 +799,12 @@ func (r *releaseRun) confirmTV(code int, expect string) error {
 			r.say("superseded: televisions are offered %d, newer than %d", highestTVAnswer(answers).Code, code)
 			return nil
 		case tvConfirmed:
-			got, err := r.downloadSHA256("/api/app/f1tv.apk")
+			got, err := r.downloadSHA256("/api/app/tv.apk")
 			if err == nil && (expect == "" || got == expect) {
-				r.say("%s/api/app/latest offers %d on all %d reads and /api/app/f1tv.apk has sha256 %s", r.spec.Site, code, len(answers), got)
+				r.say("%s/api/app/latest offers %d on all %d reads and /api/app/tv.apk has sha256 %s", r.spec.Site, code, len(answers), got)
 				return nil
 			}
-			why = fmt.Sprintf("/api/app/f1tv.apk has sha256 %s (err %v), published %s", got, err, expect)
+			why = fmt.Sprintf("/api/app/tv.apk has sha256 %s (err %v), published %s", got, err, expect)
 		default:
 			why = reason
 			if err != nil {
