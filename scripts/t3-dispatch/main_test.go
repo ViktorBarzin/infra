@@ -134,8 +134,16 @@ func fakeInstance(authenticated bool, bootstrapCalled *bool) *httptest.Server {
 
 func setTable(port int) {
 	mu.Lock()
-	table = map[string]entry{"vbarzin": {OsUser: "wizard", Port: port}}
+	table = map[string]entry{"vbarzin": {OsUser: "wizard", Port: port, Host: "t3"}}
 	mu.Unlock()
+}
+
+// asOwner makes r a request Traefik would forward for wizard's own host: the
+// Host it was sent to, the lobby proxy secret, and Authentik's username.
+func asOwner(r *http.Request) {
+	r.Host = "t3.viktorbarzin.me"
+	r.Header.Set(secretHeader, testSecret)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
 }
 
 func TestHandlerRepairsOnInvalidCookieDocNav(t *testing.T) {
@@ -149,7 +157,7 @@ func TestHandlerRepairsOnInvalidCookieDocNav(t *testing.T) {
 	defer func() { mintToken = orig }()
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "document")
 	r.AddCookie(&http.Cookie{Name: cookieName, Value: "stale"})
 	w := httptest.NewRecorder()
@@ -174,7 +182,7 @@ func TestHandlerProxiesOnValidCookie(t *testing.T) {
 	setTable(portOf(t, ts))
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "document")
 	r.AddCookie(&http.Cookie{Name: cookieName, Value: "good"})
 	w := httptest.NewRecorder()
@@ -193,7 +201,7 @@ func TestHandlerProxiesXHREvenIfCookieInvalid(t *testing.T) {
 	setTable(portOf(t, ts))
 
 	r := httptest.NewRequest("GET", "/api/threads", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "empty") // XHR/fetch, not a document nav
 	r.AddCookie(&http.Cookie{Name: cookieName, Value: "stale"})
 	w := httptest.NewRecorder()
@@ -249,7 +257,7 @@ func TestAutoPairAcrossVersions(t *testing.T) {
 			setTable(portOf(t, ts))
 
 			r := httptest.NewRequest("GET", "/", nil)
-			r.Header.Set("X-authentik-username", "vbarzin@gmail.com") // no cookie -> autoPair
+			asOwner(r) // no cookie -> autoPair
 			w := httptest.NewRecorder()
 			handler(w, r)
 
@@ -464,7 +472,7 @@ func proxyThrough(t *testing.T, ts *httptest.Server, acceptEncoding string) *htt
 	t.Helper()
 	setTable(portOf(t, ts))
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "document")
 	if acceptEncoding != "" {
 		r.Header.Set("Accept-Encoding", acceptEncoding)
@@ -640,7 +648,7 @@ func TestHandlerProxiesOnHashedCookie(t *testing.T) {
 	defer func() { mintToken = orig }()
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "document")
 	r.AddCookie(&http.Cookie{Name: hashedCookie, Value: "good"})
 	w := httptest.NewRecorder()
@@ -666,7 +674,7 @@ func TestHandlerRepairsLegacyCookieAgainstHashedInstance(t *testing.T) {
 	defer func() { mintToken = orig }()
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	r.Header.Set("Sec-Fetch-Dest", "document")
 	r.AddCookie(&http.Cookie{Name: "t3_session", Value: "old"})
 	w := httptest.NewRecorder()
@@ -695,7 +703,7 @@ func TestAutoPairWaitsForInstance(t *testing.T) {
 	defer func() { mintToken = orig }()
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	w := httptest.NewRecorder()
 	handler(w, r)
 
@@ -735,14 +743,14 @@ func TestAutoPairOneMintPerUser(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		r := httptest.NewRequest("GET", "/", nil)
-		r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+		asOwner(r)
 		handler(first, r)
 		close(done)
 	}()
 	<-started
 
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	asOwner(r)
 	second := httptest.NewRecorder()
 	handler(second, r)
 	if second.Code != http.StatusServiceUnavailable {

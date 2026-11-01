@@ -38,6 +38,10 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if os.environ.get("FAKE_LOG"):
             open(os.environ["FAKE_LOG"], "a").write(self.path + "\n")
+        if os.environ.get("FAKE_HEADERS_LOG"):
+            open(os.environ["FAKE_HEADERS_LOG"], "a").write(
+                "host=%s secret=%s user=%s\n" % (self.headers.get("Host"),
+                self.headers.get("X-TL-Proxy-Secret"), self.headers.get("X-authentik-username")))
         self.send_response(200)
         if os.environ.get("FAKE_GET_COOKIE"):
             self.send_header("Set-Cookie", os.environ["FAKE_GET_COOKIE"] + "=x; Path=/")
@@ -175,8 +179,14 @@ FAKE_COOKIE=t3_session_3773_f8ce9cd41c1b SMOKE_READY_TIMEOUT=60 notok health_che
 ok    no_orphan
 grep -q 'live=1 pair=0' "$TMP/calls"; eq "$?" 0 "an unknown cookie name fails the pair step"
 
-# verify_pairing reads the dispatch's answer the same way
+# verify_pairing reads the dispatch's answer the same way. The dispatch serves
+# a user only on their own host and only with the lobby proxy secret, so the
+# check sends both: the host from dispatch.json, the secret from its env file.
 echo "vbarzin=u" >"$TMP/user-map"
+echo '{"vbarzin":{"os_user":"u","port":3773,"host":"t3-u"},"other":{"os_user":"nohost","port":3775}}' >"$TMP/dispatch.json"
+echo "TL_PROXY_SECRET=s3cret-for-the-test" >"$TMP/dispatch.env"
+DISPATCH_TABLE="$TMP/dispatch.json"
+DISPATCH_ENV="$TMP/dispatch.env"
 dport=$((T3_SMOKE_PORT + 1))
 FAKE_GET_COOKIE=t3_session_f8ce9cd41c1b python3 -I "$TMP/fake-server.py" "$dport" & holders="$holders $!"
 until curl -s -o /dev/null "http://127.0.0.1:$dport/"; do sleep 0.2; done
@@ -189,6 +199,17 @@ dport3=$((T3_SMOKE_PORT + 3))
 python3 -I "$TMP/fake-server.py" "$dport3" & holders="$holders $!"
 until curl -s -o /dev/null "http://127.0.0.1:$dport3/"; do sleep 0.2; done
 DISPATCH="127.0.0.1:$dport3" USER_MAP="$TMP/user-map" notok verify_pairing u   # no cookie at all
+dport5=$((T3_SMOKE_PORT + 7))
+FAKE_HEADERS_LOG="$TMP/headers" FAKE_GET_COOKIE=t3_session python3 -I "$TMP/fake-server.py" "$dport5" & holders="$holders $!"
+until curl -s -o /dev/null "http://127.0.0.1:$dport5/"; do sleep 0.2; done
+: >"$TMP/headers"
+DISPATCH="127.0.0.1:$dport5" USER_MAP="$TMP/user-map" ok verify_pairing u
+eq "$(cat "$TMP/headers")" "host=t3-u.viktorbarzin.me secret=s3cret-for-the-test user=vbarzin" "verify_pairing sends the user's host and the proxy secret"
+# a user with no T3 host has nothing to verify through the dispatch
+echo "other=nohost" >>"$TMP/user-map"
+: >"$TMP/headers"
+DISPATCH="127.0.0.1:$dport5" USER_MAP="$TMP/user-map" ok verify_pairing nohost
+eq "$(cat "$TMP/headers")" "" "no request for a user without a host"
 
 # --- safe_restart_unit waits for a slow first start instead of ~30s ---
 cat >"$TMP/bin/systemctl" <<EOF

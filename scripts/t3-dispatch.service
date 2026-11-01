@@ -1,5 +1,5 @@
 [Unit]
-Description=t3 per-user dispatch + auto-pair (X-authentik-username -> user instance)
+Description=t3 per-user dispatch + auto-pair (each user's T3 host -> that user's instance)
 After=network.target
 
 [Service]
@@ -7,6 +7,11 @@ Type=simple
 # Unprivileged dedicated user; the only privileged action is `sudo t3-mint`
 # (scoped in /etc/sudoers.d/t3-autopair). Compromise => mint tokens at most.
 User=t3-dispatch
+# TL_PROXY_SECRET, the lobby proxy secret Traefik stamps on every request it
+# forwards here. Root-only file, written by playbooks/devvm.yml; systemd reads
+# it before dropping to User=. Not optional: the dispatch refuses to start
+# without it rather than trust X-authentik-username from anyone on the LAN.
+EnvironmentFile=/etc/t3-dispatch.env
 ExecStart=/usr/local/bin/t3-dispatch
 Restart=on-failure
 RestartSec=5

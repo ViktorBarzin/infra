@@ -1600,14 +1600,17 @@
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
         - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
 
-    # t3-dispatch, the front door for t3.viktorbarzin.me: it routes each
-    # Authentik user to their own t3-serve@ instance and pairs them on first
-    # visit. Adopted 2026-10-20, when t3 0.1.0 renamed the session cookie to
+    # t3-dispatch, the web front door for each user's T3 host (t3 for wizard,
+    # t3-<user> for the rest, from roster.yaml t3_host): it serves a host only
+    # to the Authentik user who owns it, proxies to their t3-serve@ instance
+    # and pairs them on first visit. Adopted 2026-10-20, when t3 0.1.0 renamed the session cookie to
     # t3_session_<hash> and the dispatch had to accept both names. Built on the
     # controller from the repo source with flags that make the build
     # reproducible, so an unchanged source is a no-op here and in --check.
-    # setup-devvm.sh still creates the service account, the sudoers entry for
-    # t3-mint and the unit.
+    # setup-devvm.sh still creates the service account and the sudoers entry
+    # for t3-mint. The unit and its proxy-secret file are installed with the
+    # lobby's proxy secret further down ("Make t3-dispatch demand the proxy
+    # secret").
     - name: Make a build directory for t3-dispatch
       ansible.builtin.tempfile:
         state: directory
@@ -2539,10 +2542,23 @@
               tcp dport 7690 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 7690 drop
 
+              # T3: each user's t3-serve@ (3773-3779, roster.yaml t3_port) and
+              # t3-dispatch (3780). Traefik routes each user's T3 host to them
+              # (stacks/t3code): the web through t3-dispatch, which also checks
+              # the proxy secret, and T3's native apps straight to the serve,
+              # which checks its own bearer tokens. Until 2026-11-01 all three
+              # ports were open to the LAN and the tunnels, and t3-dispatch
+              # trusted X-authentik-username from anyone. Same sources as ttyd;
+              # the t3-probe pod reaches 3773 from a Traefik node, and the
+              # ClusterNetworkPolicy in stacks/terminal keeps every other
+              # namespace off these ports.
+              tcp dport 3773-3780 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 3773-3780 drop
+
               # Traefik reaches the lobby over IPv4 only. The services listen on
               # every interface, which includes this box's global IPv6 address;
               # nothing legitimate arrives that way, so close it.
-              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 7690, 8710 } drop
+              meta nfproto ipv6 tcp dport { 3773-3780, 7681, 7683-7688, 7690, 8710 } drop
             }
 
             # Ports published with `docker run -p` stay on this box. dockerd
@@ -2814,6 +2830,35 @@
 
       no_log: true
       notify: restart lobby services
+
+    # t3-dispatch is the third service Traefik reaches with an identity header
+    # (each user's T3 host, stacks/t3code). Until 2026-11-01 it checked no
+    # secret and listened on every interface, so anyone who reached
+    # 10.0.10.10:3780 with a made-up X-authentik-username got a T3 session for
+    # that user. It now refuses requests without the same proxy secret, and
+    # the nftables table above admits only Traefik to its port. The unit
+    # requires this file and the binary refuses to start without the secret.
+    - name: Make t3-dispatch demand the proxy secret
+      ansible.builtin.copy:
+        dest: /etc/t3-dispatch.env
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          # Same value as TL_PROXY_SECRET in /etc/terminal-lobby.local.conf.
+          TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
+      no_log: true
+      notify: restart t3-dispatch
+
+    - name: Install the t3-dispatch unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/t3-dispatch.service"
+        dest: /etc/systemd/system/t3-dispatch.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart t3-dispatch
 
     # One credential per line: <name> sha256:<digest> <os-user>. Root-owned and
     # group-readable by the account the services run as, which is the one
@@ -3101,10 +3146,14 @@
   handlers:
     # A restart drops open t3 WebSockets for a second; clients reconnect on
     # their own. Sessions live in each t3-serve@ instance, not here.
+    # daemon_reload here, not via the reload systemd handler: that handler is
+    # defined further down, so it would run after this restart and the unit
+    # change would not take effect until the next one.
     - name: restart t3-dispatch
       ansible.builtin.systemd_service:
         name: t3-dispatch
         state: restarted
+        daemon_reload: true
 
     # DefaultIOAccounting is a manager-level setting, so a reload is not
     # enough: systemd has to re-execute to pick it up. It is a re-exec of PID 1

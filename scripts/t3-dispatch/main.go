@@ -1,16 +1,25 @@
 // t3-dispatch: per-user dispatch + auto-pair for t3code.
 // Sits behind Traefik+Authentik (which injects X-authentik-username) and routes
-// each authenticated user to their own `t3 serve` instance. On a user's first
-// visit (no t3 session cookie) it mints a pairing token for that user's instance
-// and exchanges it for the session cookie, which it injects into the browser —
-// so an Authentik login lands straight in the user's workspace.
+// each user's own T3 host (t3.viktorbarzin.me for wizard, t3-<user> for the
+// rest) to that user's `t3 serve` instance, and only for that user. On a user's
+// first visit (no t3 session cookie) it mints a pairing token for that user's
+// instance and exchanges it for the session cookie, which it injects into the
+// browser — so an Authentik login lands straight in the user's workspace.
+//
+// Traefik reaches this box over the LAN, so the identity header alone proves
+// nothing to a caller who reaches the port directly. Every proxied request must
+// also carry the lobby proxy secret (X-TL-Proxy-Secret), which Traefik's
+// terminal-tl-proxy-secret middleware stamps and which the lobby's own services
+// check the same way.
 package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -25,13 +34,46 @@ import (
 type entry struct {
 	OsUser string `json:"os_user"`
 	Port   int    `json:"port"`
+	// Host is the first DNS label of the user's T3 host (roster.yaml t3_host).
+	// An entry without one has no web host and is never served.
+	Host string `json:"host,omitempty"`
 }
 
 const (
 	cookieName   = "t3_session" // web-mode name before 0.1.0 (apps/server/src/auth/utils.ts)
 	listenAddr   = ":3780"
 	dispatchFile = "/etc/t3-serve/dispatch.json"
+	// secretHeader is the header terminal-lobby's authuser checks too
+	// (authuser.SecretHeader).
+	secretHeader = "X-TL-Proxy-Secret"
 )
+
+// proxySecret is TL_PROXY_SECRET from the unit's EnvironmentFile. main refuses
+// to start without it, and checkSecret refuses every request while it is empty.
+var proxySecret string
+
+// checkSecret reports whether r carries the lobby proxy secret. Unlike
+// authuser, an unset secret refuses everything rather than disabling the check.
+func checkSecret(r *http.Request) bool {
+	if proxySecret == "" {
+		return false
+	}
+	got := r.Header.Get(secretHeader)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(proxySecret)) == 1
+}
+
+// hostLabel returns the lowercased first DNS label of a Host header value
+// (t3-emo.viktorbarzin.me:443 -> t3-emo), or "" when there is none.
+func hostLabel(h string) string {
+	if hp, _, err := net.SplitHostPort(h); err == nil {
+		h = hp
+	}
+	if strings.Contains(h, ":") {
+		return "" // a bare IPv6 address names no host
+	}
+	label, _, _ := strings.Cut(strings.ToLower(h), ".")
+	return label
+}
 
 // hashedCookieRe matches the name t3 0.1.0 issues in web mode on a
 // remote-reachable host: t3_session_ + the first 12 hex chars of
@@ -76,11 +118,20 @@ func loadTable() error {
 	return nil
 }
 
-func lookup(ak string) (entry, bool) {
+// lookupHost returns the Authentik user who owns the host label, and their
+// entry.
+func lookupHost(label string) (string, entry, bool) {
+	if label == "" {
+		return "", entry{}, false
+	}
 	mu.RLock()
 	defer mu.RUnlock()
-	e, ok := table[ak]
-	return e, ok
+	for ak, e := range table {
+		if e.Host == label {
+			return ak, e, true
+		}
+	}
+	return "", entry{}, false
 }
 
 // mintToken mints a one-time pairing token for osUser via the scoped sudoers
@@ -247,6 +298,12 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	if !checkSecret(r) {
+		http.Error(w, "request did not come through the proxy", http.StatusForbidden)
+		return
+	}
+	// The user's own t3 serve never needs the secret, and must not see it.
+	r.Header.Del(secretHeader)
 	ak := r.Header.Get("X-authentik-username")
 	// Authentik injects the full email (e.g. vbarzin@gmail.com); /etc/ttyd-user-map
 	// (and thus dispatch.json) keys on the local part. Strip @domain, matching the
@@ -254,9 +311,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if i := strings.IndexByte(ak, '@'); i >= 0 {
 		ak = ak[:i]
 	}
-	e, ok := lookup(ak)
+	owner, e, ok := lookupHost(hostLabel(r.Host))
 	if !ok {
-		http.Error(w, "no t3 instance provisioned for this user", http.StatusForbidden)
+		http.Error(w, "no t3 instance on this host", http.StatusForbidden)
+		return
+	}
+	// Authentik admits only the host's owner already; this is the second check
+	// the design asks for, so a binding mistake there does not hand one user's
+	// T3 to another.
+	if ak != owner {
+		log.Printf("refused user=%q on host=%s (owner %s)", ak, e.Host, owner)
+		http.Error(w, "this T3 host belongs to another user", http.StatusForbidden)
 		return
 	}
 	c, ok := sessionCookie(r)
@@ -336,6 +401,10 @@ func classifyClose(err error) string {
 }
 
 func main() {
+	proxySecret = os.Getenv("TL_PROXY_SECRET")
+	if len(proxySecret) < 32 {
+		log.Fatal("TL_PROXY_SECRET is unset or too short; refusing to start (see /etc/t3-dispatch.env)")
+	}
 	if err := loadTable(); err != nil {
 		log.Fatalf("load %s: %v", dispatchFile, err)
 	}
