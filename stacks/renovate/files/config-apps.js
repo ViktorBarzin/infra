@@ -29,6 +29,10 @@ module.exports = {
       // GitHub Actions build and deploy follow `master`.
       baseBranchPatterns: ['master'],
     },
+    {
+      repository: 'viktor/alexa-assistant',
+      baseBranchPatterns: ['master'],
+    },
   ],
   autodiscover: false,
 

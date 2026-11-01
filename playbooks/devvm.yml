@@ -276,6 +276,17 @@
       # stays the API default (bypassPermissions), as for muse.
       - name: whatsapp
         os_user: wizard
+      # alexa-assistant (stacks/alexa-assistant), the London Echo skill,
+      # 2026-11-01. Its own Caller so it can be revoked alone and its trace
+      # reads separately. T3 threads through /mcp in the Alexa project.
+      # Model and effort are pinned to the box default until the latency
+      # benchmark settles them (viktor/alexa-assistant bench/).
+      - name: alexa
+        os_user: wizard
+        pin:
+          model: inherit
+          effort: inherit
+          permission_mode: bypassPermissions
 
     # agentmd (github.com/ViktorBarzin/agentmd): one instance per user, each
     # reached through stacks/agentmd on its own hostname. Keep the users in

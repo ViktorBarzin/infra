@@ -3720,6 +3720,30 @@ serverFiles:
             annotations:
               summary: "Sablier (scale-to-zero wake layer) has no available replica — sleeping services cannot wake"
               description: "Enrolled services that are currently running are unaffected (plugin failOpen), but parked ones 503 on first request until Sablier recovers. `kubectl -n sablier describe deploy sablier`."
+      # London robot vacuum camera (stacks/ecovacs-video-proxy). It sits at 0
+      # replicas; HA London scales it to 1 while someone watches and back after
+      # 5 minutes, and the camera-cap CronJob forces 0 after 15. An uptime probe
+      # would keep the robot's camera on, so health is read from kube-state.
+      - name: Yiko camera
+        rules:
+          - alert: YikoCameraLeftOn
+            expr: kube_deployment_spec_replicas{namespace="ecovacs-video-proxy",deployment="ecovacs-video-proxy"} > 0
+            for: 25m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Yiko's camera bridge has been on for 25m+; the robot's camera and headlights stay on"
+              description: "HA London's 5-minute auto-off and the 15-minute camera-cap CronJob both failed to stop it. Stop it: `kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0`, then check `kubectl -n ecovacs-video-proxy get cronjob,jobs`. Runbook: docs/runbooks/london-yiko.md."
+          - alert: YikoCameraStartFailed
+            expr: |
+              kube_deployment_status_replicas_unavailable{namespace="ecovacs-video-proxy",deployment="ecovacs-video-proxy"} > 0
+              and on(namespace, deployment) kube_deployment_spec_replicas > 0
+            for: 3m
+            labels:
+              severity: info
+            annotations:
+              summary: "Yiko's camera was turned on but the bridge pod is not becoming ready"
+              description: "Usually an image pull problem or a crash at login. `kubectl -n ecovacs-video-proxy logs deploy/ecovacs-video-proxy`. If it says 'Device verification required', re-verify the bridge's Ecovacs device (runbook docs/runbooks/london-yiko.md)."
       # Windows apps under Wine (modules/kubernetes/wine_app, ADR-0035). They
       # sleep at 0 replicas and wake on visit through their own gate, so
       # failure shows up in kube-state, not in a probe.
@@ -7180,6 +7204,37 @@ serverFiles:
             annotations:
               summary: "London Flint unreachable over the site-to-site tunnel (>10m)"
               description: "Blackbox ICMP from the cluster to 10.3.2.6 has failed for >10m. Either London's internet is down (the Flint's probe reports the drop once it returns), the WireGuard tunnel is stuck (toggle GL -> VPN -> WireGuard Client), or the Flint is off. Design: docs/plans/2026-09-27-london-flint-main-router.md; settings: docs/architecture/london-site.md."
+      - name: Alexa assistant
+        # The London Echo skill (stacks/alexa-assistant, viktor/alexa-assistant).
+        # Counters are created at 0 on startup, so increase() sees the first event.
+        rules:
+          - alert: AlexaAssistantErrors
+            # Turns that failed: a revoked agent-api token, agent-api or T3 down.
+            expr: increase(alexa_turns_total{outcome="error"}[15m]) > 2
+            labels:
+              severity: warning
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant: voice turns are failing"
+              description: "More than two Alexa turns failed in 15 minutes. Check the app logs (homelab logs query '{namespace=\"alexa-assistant\"}'), the `alexa` Caller line in /etc/terminal-lobby-tokens, and agent-api."
+          - alert: AlexaDeliveryExhausted
+            # A Result used all 12 Delivery attempts and is now held for its Person.
+            expr: increase(alexa_deliveries_total{outcome="exhausted"}[1h]) > 0
+            labels:
+              severity: info
+              lane: event
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant: a result could not be delivered"
+              description: "A finished job's result used all Delivery attempts and is held until its Person opens the skill. Usually ha-london is down, the Routine is off, or the delivery boolean was left on by hand."
+          - alert: AlexaHaUnreachable
+            expr: increase(alexa_ha_calls_total{outcome="error"}[1h]) > 2
+            labels:
+              severity: warning
+              subsystem: alexa-assistant
+            annotations:
+              summary: "Alexa assistant cannot reach the ha-london delivery webhook"
+              description: "More than two webhook calls to ha-london failed in an hour, so results are not being spoken. ha-london has no uptime monitor of its own; check https://ha-london.viktorbarzin.me."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown

@@ -24,6 +24,9 @@ locals {
     # PRIVATE until their visibility is flipped (UI) — safety net so pulls
     # work from the first deploy; prune once the package is public.
     "tuya-bridge",
+    # alexa-assistant: PRIVATE ghcr.io/viktorbarzin/alexa-assistant (the London
+    # Echo skill, 2026-11-01); its docs name the household.
+    "alexa-assistant",
     "f1-stream",
     # tv: the f1-stream project renamed (f1-stream plan 2026-11-01-tv-rebrand).
     # Both names stay until the f1-stream namespace is gone after the cutover.

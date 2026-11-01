@@ -19,6 +19,9 @@ locals {
     # tasks PWA (TanStack Start, ~/code/tasks). Drizzle migrations run from the
     # app's `migrate` init container.
     tasks = {}
+    # alexa-assistant (TanStack Start, Forgejo viktor/alexa-assistant): the
+    # London Echo skill's state and its pg-boss queue (schema pgboss).
+    alexa_assistant = {}
   }
 }
 
