@@ -16,7 +16,8 @@ variable "tls_secret_name" {
 # viktor/alexa-assistant docs/plans/2026-11-01-alexa-assistant.md and its
 # ADRs; runbook docs/runbooks/alexa-assistant.md (written in phase 5).
 #
-# Amazon calls POST /alexa directly: there is no forward-auth on the host, and
+# Amazon calls POST /alexa directly (DNS-only host, see ingress below): there
+# is no forward-auth on the host, and
 # the app checks Amazon's request signature, the skill id and the bound Alexa
 # account on every request. The status page (/) uses the app-side Authentik
 # sign-in like every tanstack_app. The host is in the traefik stack's
@@ -58,6 +59,11 @@ module "app" {
   reader_managed_by = "infra/stacks/alexa-assistant/authentik.tf"
 
   ingress = {
+    # DNS-only, straight to Traefik like terminal-api: Cloudflare's Bot Fight
+    # Mode serves a managed challenge to Amazon's skill requests (AWS, ASN
+    # 16509, seen 2026-11-01 on /alexa), and on this plan it cannot be skipped
+    # per host or path. The app checks Amazon's signature on every request.
+    dns_type             = "non-proxied"
     homepage_description = "Alexa skill backend: voice front for the homelab agent"
     homepage_icon        = "mdi-microphone-message"
     homepage_group       = "Smart Home"
