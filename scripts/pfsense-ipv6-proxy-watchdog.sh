@@ -12,7 +12,7 @@
 # listens on wildcard [::]:80, which also covers the tunnel address, so the
 # HAProxy bridge cannot bind [TUNNEL]:80 and, because HAProxy binds every
 # frontend or none, all six frontends (web and mail) go dark. On 2026-10-23 a
-# WireGuard package re-sync did exactly this an hour after boot, and IPv6
+# WireGuard package re-sync did exactly this during boot, and IPv6
 # ingress stayed down for 10 days until 2026-11-02.
 #
 # Each run: if any bridge port is unbound, or the nginx config has a wildcard
