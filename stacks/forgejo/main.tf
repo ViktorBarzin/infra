@@ -121,8 +121,17 @@ resource "kubernetes_deployment" "forgejo" {
         # `[packages].CHUNKED_UPLOAD_PATH` default at /data/tmp is not
         # writable, crashlooping the pod when packages is enabled. Pre-23-day
         # Forgejo ran without packages on so this never surfaced.
+        #
+        # fs_group_change_policy = OnRootMismatch: without it the kubelet
+        # re-chowns every file on the volume at each mount. That is ~23,000
+        # files, and on 2026-11-02 after the k8s upgrade drain it took about
+        # an hour on the contended HDD, keeping Forgejo down the whole time.
+        # With OnRootMismatch the kubelet only walks the tree when the volume
+        # root's group/permissions are wrong, which they are not after the
+        # first mount.
         security_context {
-          fs_group = 1000
+          fs_group               = 1000
+          fs_group_change_policy = "OnRootMismatch"
         }
         container {
           name = "forgejo"
