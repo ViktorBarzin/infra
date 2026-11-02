@@ -8,6 +8,44 @@ This has happened five times: aiostreams 2026-06-27, tripit twice on
 2026-07-04, roundcubemail 2026-07-06, and node5 again on 2026-07-13. Data has
 never been lost. What costs time is that the obvious fix does not work.
 
+## Two variants, and which one cleans itself up
+
+There are two ways a slot ends up like this. Both show the same pod symptom.
+
+| | Leaked block node (2026-11-02) | Missing device (June–July 2026) |
+|---|---|---|
+| Starts with | a **detach** whose `query-pci` check timed out | an **attach** whose `device_add` never reached the running qemu |
+| PVE journal | `qmp command 'query-pci' failed - got timeout`, later `object-add failed - attempt to add duplicate property 'throttle-drive-scsiN'` | no duplicate-property error |
+| `qm config` | slot absent | slot present |
+| `qom-list /objects` | `throttle-drive-scsiN` present with no device attached | normal |
+| Fixed by | `csi-leak-reconcile` on the PVE host, within ~10 minutes | the steps below |
+
+**Leaked block node.** qemu-server 9.2.x unplugs a disk with `device_del`,
+then polls QMP `query-pci` (5s timeout) before removing the block node. When
+the shared HDD `sdc` is saturated, the poll times out, so the block node
+`drive-scsiN` and its `throttle-drive-scsiN` object stay inside QEMU. The CSI
+retries the detach; Proxmox sees the device gone and reports success, so
+nothing cleans it. Every later attach that draws that slot fails with
+`duplicate property`, and the CSI always draws the lowest free slot. On
+2026-11-02 the k8s upgrade drains overlapped `nfs-mirror` on the same RAID
+volume: 8 failed detaches left exactly 8 poisoned slots on VMs 204 and 205.
+
+`csi-leak-reconcile` (PVE host, `playbooks/pve-host.yml` tag `csi-leak`, every
+5 minutes) clears a slot once it has looked leaked on two runs in a row: a
+throttle object, no config entry, no attached device, checked under the same
+per-VM lock `qm set` takes. It runs the step qemu-server skipped. By hand:
+
+```sh
+echo 'drive_del drive-scsiN'           | qm monitor <vmid>
+echo 'object_del throttle-drive-scsiN' | qm monitor <vmid>
+```
+
+`pve_csi_leaked_slots` and `pve_csi_leak_cleaned_total` (node_exporter on the
+host) show what it found and removed; `journalctl -t csi-leak-reconcile` logs
+each removal.
+
+The rest of this runbook covers the missing-device variant.
+
 ## Recognising it
 
 - A pod sits in `ContainerCreating` or `Init:0/N` and does not progress.
@@ -89,7 +127,7 @@ reboot clears it — but it evicts everything else on that node, so it is a
 maintenance-window action rather than an incident one. node5 was cleared this
 way on 2026-07-13 via kured.
 
-## Why the automatic cleanup does not catch this
+## Why the automatic cleanup does not catch the missing-device variant
 
 `csi-ghost-reconcile` (namespace `proxmox-csi`, every 15 minutes) remediates
 **ghosts**: a VolumeAttachment that exists while the disk is absent from the VM

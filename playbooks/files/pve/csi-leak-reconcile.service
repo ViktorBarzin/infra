@@ -1,0 +1,8 @@
+[Unit]
+Description=Clear Proxmox CSI disk slots poisoned by a timed-out detach
+Documentation=file:///usr/local/bin/csi-leak-reconcile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/csi-leak-reconcile
+Nice=10

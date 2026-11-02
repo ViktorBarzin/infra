@@ -1,0 +1,9 @@
+[Unit]
+Description=Every 5 minutes, clear Proxmox CSI disk slots poisoned by a timed-out detach
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

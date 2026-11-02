@@ -343,6 +343,42 @@
       when: not (ansible_check_mode and pve_patch_status_units is changed)
       tags: patching
 
+    # Clears Proxmox CSI disk slots a timed-out detach left poisoned
+    # (qemu-server skips drive_del when its 5s query-pci poll times out, and a
+    # retried detach then reports success). See the script header and
+    # docs/runbooks/proxmox-csi-wedged-attach.md. Writes its metrics to the
+    # node_exporter textfile directory created above.
+    - name: Install csi-leak-reconcile
+      ansible.builtin.copy:
+        src: files/pve/csi-leak-reconcile
+        dest: /usr/local/bin/csi-leak-reconcile
+        mode: "0755"
+        owner: root
+        group: root
+      tags: csi-leak
+
+    - name: Install the csi-leak-reconcile unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - csi-leak-reconcile.service
+        - csi-leak-reconcile.timer
+      register: pve_csi_leak_units
+      tags: csi-leak
+
+    - name: Enable the csi-leak-reconcile timer
+      ansible.builtin.systemd:
+        name: csi-leak-reconcile.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_csi_leak_units is changed }}"
+      when: not (ansible_check_mode and pve_csi_leak_units is changed)
+      tags: csi-leak
+
     # Runs only with `--tags pve-upgrade`. Installs everything a full-upgrade
     # would, Proxmox and Debian alike, and does not reboot: running VMs keep the
     # QEMU binary they started with, and a new kernel waits for the reboot,
