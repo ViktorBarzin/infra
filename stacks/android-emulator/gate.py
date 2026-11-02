@@ -17,10 +17,19 @@ A pod that still waits after YIELD_LIMIT_SECONDS is short of more than the
 emulator's 800, so the gate stops holding the emulator asleep for it, logs
 why, and wakes it as usual. /healthz reports whether the watcher thread is
 alive and fails when it is not.
+
+Someone testing on the emulator claims it on the presence board
+(`presence claim service:android-emulator`). Before the gate puts an awake
+emulator to sleep for a waiting pod, it reads those claims from Dolt; while
+one is active it waits, for at most CLAIM_WAIT_SECONDS, and posts to #alerts
+when it starts waiting and when it gives up waiting. A claim store it cannot
+read does not hold anything up. GET /claim answers the same question for the
+tv deploy pipeline, which waits the same way before its own sleep.
 """
 import datetime
 import json
 import os
+import socket
 import ssl
 import threading
 import time
@@ -62,11 +71,43 @@ YIELD_LIMIT_SECONDS = float(os.environ.get("YIELD_LIMIT_SECONDS", "900"))
 # of; only this one is something the emulator can give back.
 GPU_SEAT_SHORTAGE = "Insufficient viktorbarzin.me/gpumem"
 
+# The presence board (/usr/local/bin/presence on the devvm, infra
+# playbooks/files/devvm/presence) keeps claims in Dolt's `beads` database. The
+# board's own user has no password and is reachable only in-cluster.
+CLAIM_DB_HOST = os.environ.get("CLAIM_DB_HOST", "dolt.beads-server.svc.cluster.local")
+CLAIM_DB_PORT = int(os.environ.get("CLAIM_DB_PORT", "3306"))
+CLAIM_DB_USER = os.environ.get("CLAIM_DB_USER", "beads")
+CLAIM_DB_NAME = os.environ.get("CLAIM_DB_NAME", "beads")
+CLAIM_DB_TIMEOUT_SECONDS = 3.0
+# service:android-emulator is the label; notes before 2026-10-31 used
+# infra:android-emulator. A claim is active until its expires_at, which the
+# holder's hooks push 15 min ahead on every tool call.
+CLAIM_QUERY = (
+    "SELECT session_id, user, host, purpose, claimed_at FROM presence_claims"
+    " WHERE resource_label IN ('service:android-emulator', 'infra:android-emulator')"
+    " AND expires_at > NOW(3) ORDER BY claimed_at"
+)
+# How long an active claim holds off the yield-sleep (Viktor, 2026-11-02:
+# a bounded wait, not a veto, since the emulator yields to deploys).
+CLAIM_WAIT_SECONDS = float(os.environ.get("CLAIM_WAIT_SECONDS", "1200"))
+# The #alerts incoming webhook; without it the gate only logs.
+SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK", "")
+
 # What the watcher saw last, whether a /wake was held back for it, when each
-# waiting pod was first seen, and which pods passed the limit. The handler
-# threads and the watcher thread share it.
+# waiting pod was first seen, and which pods passed the limit. claim_wait is
+# the current wait for a presence claim: when it started, and whether it is
+# over for this set of waiting pods; held_until is the last pass that held
+# off for a claim, from which the yield limit counts. The handler threads and
+# the watcher thread share it.
 _yield_lock = threading.Lock()
-_yield_state = {"waiters": [], "wake_held": False, "first_seen": {}, "gave_up": []}
+_yield_state = {
+    "waiters": [],
+    "wake_held": False,
+    "first_seen": {},
+    "gave_up": [],
+    "claim_wait": {"since": None, "over": False},
+    "held_until": None,
+}
 # The watcher thread and the wall-clock time its last pass finished, for /healthz.
 _watcher = {"thread": None, "last_pass": None}
 
@@ -77,6 +118,8 @@ def reset_yield_state():
         _yield_state["wake_held"] = False
         _yield_state["first_seen"] = {}
         _yield_state["gave_up"] = []
+        _yield_state["claim_wait"] = {"since": None, "over": False}
+        _yield_state["held_until"] = None
 
 
 def yielding_to():
@@ -206,8 +249,9 @@ def within_limit(waits, now, log):
     """The waiting pods the emulator still yields to.
 
     A pod that has waited YIELD_LIMIT_SECONDS or longer, counted from its
-    PodScheduled timestamp (or from when the gate first saw it), is dropped
-    and recorded in gave_up; the reason is logged once per pod.
+    PodScheduled timestamp (or from when the gate first saw it, or from the
+    last pass that held off for a presence claim, whichever is latest), is
+    dropped and recorded in gave_up; the reason is logged once per pod.
     """
     holding, expired, newly = [], [], []
     with _yield_lock:
@@ -216,9 +260,15 @@ def within_limit(waits, now, log):
         for name in list(first_seen):
             if name not in current:
                 del first_seen[name]
+        wait = _yield_state["claim_wait"]
+        if wait["since"] is not None and not wait["over"]:
+            held_until = now  # a claim is holding the emulator awake right now
+        else:
+            held_until = _yield_state["held_until"] or 0
         for name, since in waits:
             seen = first_seen.setdefault(name, now)
-            waited = now - (since if since is not None else seen)
+            # Time spent awake for a presence claim does not count.
+            waited = now - max(since if since is not None else seen, held_until)
             if waited >= YIELD_LIMIT_SECONDS:
                 expired.append(name)
                 if name not in _yield_state["gave_up"]:
@@ -237,23 +287,29 @@ def within_limit(waits, now, log):
     return holding
 
 
-def yield_once(kube_fn, log, now=None):
+def yield_once(kube_fn, log, now=None, claims_fn=None, notify=None):
     """One pass of the yield watcher. Returns the waiting pods it yields to.
+
+    claims_fn reads the active presence claims on the emulator (read_claims);
+    without it no claim holds anything off. notify posts one line to #alerts.
 
     Never raises: a failed read leaves the emulator as it is, and a failed
     patch is logged and retried on the next pass.
     """
+    now = time.time() if now is None else now
     try:
         waits = list_seat_waiters(kube_fn)
     except Exception as e:
         log(f"yield: could not list pods in {YIELD_NAMESPACE} ({describe(e)}); leaving the emulator as it is")
         return []
-    waiters = within_limit(waits, time.time() if now is None else now, log)
+    waiters = within_limit(waits, now, log)
     with _yield_lock:
         _yield_state["waiters"] = list(waiters)
         wake_held = _yield_state["wake_held"] and not waiters
         if wake_held:
             _yield_state["wake_held"] = False
+        if not waiters:
+            _yield_state["claim_wait"] = {"since": None, "over": False}
     if wake_held:
         log("yield: nothing waits for a GPU seat any more; doing the wake that was held back")
         try:
@@ -265,6 +321,8 @@ def yield_once(kube_fn, log, now=None):
     try:
         spec, _ = deployment_state(kube_fn)
         if spec:
+            if claims_fn is not None and claim_holds_off(claims_fn, waiters, now, log, notify or (lambda _: None)):
+                return waiters
             log(
                 f"yield: {', '.join(waiters)} in {YIELD_NAMESPACE} is waiting for a GPU seat; "
                 "putting the emulator to sleep (replicas -> 0). Whoever is using it is cut off; "
@@ -274,6 +332,220 @@ def yield_once(kube_fn, log, now=None):
     except Exception as e:
         log(f"yield: could not put the emulator to sleep ({describe(e)}); retrying next pass")
     return waiters
+
+
+def claim_holds_off(claims_fn, waiters, now, log, notify):
+    """True while an active presence claim keeps the awake emulator up.
+
+    The wait starts the first time a claim is seen for this set of waiting
+    pods and lasts at most CLAIM_WAIT_SECONDS. Once the claim is released or
+    the wait runs out, the emulator sleeps and this set of pods is not held
+    off again. A claim store that cannot be read holds nothing off.
+    """
+    with _yield_lock:
+        wait = _yield_state["claim_wait"]
+        if wait["over"]:
+            return False
+    try:
+        claims = claims_fn()
+    except Exception as e:
+        log(f"yield: could not read the emulator's presence claims ({describe(e)}); putting it to sleep as before")
+        claims = []
+    pods = ", ".join(waiters)
+    limit = int(CLAIM_WAIT_SECONDS // 60)
+    if not claims:
+        if wait["since"] is not None:
+            log("yield: the presence claim on the emulator was released; putting it to sleep now")
+        with _yield_lock:
+            if wait["since"] is not None:
+                _yield_state["held_until"] = now
+            wait["over"] = True
+        return False
+    holders = describe_holders(claims)
+    if wait["since"] is None:
+        with _yield_lock:
+            wait["since"] = now
+            _yield_state["held_until"] = now
+        line = (
+            f"Android emulator: {pods} in {YIELD_NAMESPACE} is waiting for the emulator's GPU seat, "
+            f"but {holders} holds a presence claim on the emulator. The gate waits up to {limit} min "
+            "for the claim to be released before it puts the emulator to sleep."
+        )
+        log("yield: " + line)
+        notify(line)
+        return True
+    if now - wait["since"] >= CLAIM_WAIT_SECONDS:
+        with _yield_lock:
+            wait["over"] = True
+            _yield_state["held_until"] = now
+        line = (
+            f"Android emulator: {holders} still holds the presence claim after {limit} min; "
+            f"the gate is putting the emulator to sleep anyway so {pods} can start."
+        )
+        log("yield: " + line)
+        notify(line)
+        return False
+    with _yield_lock:
+        _yield_state["held_until"] = now
+    return True
+
+
+class ClaimStoreError(Exception):
+    """The claim store answered, but not with rows."""
+
+
+def _recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ClaimStoreError("connection closed by the server")
+        buf += chunk
+    return buf
+
+
+def _read_packet(sock):
+    head = _recv_exact(sock, 4)
+    return head[3], _recv_exact(sock, int.from_bytes(head[:3], "little"))
+
+
+def _send_packet(sock, seq, payload):
+    sock.sendall(len(payload).to_bytes(3, "little") + bytes([seq & 0xFF]) + payload)
+
+
+def _lenenc(data, pos):
+    """A length-encoded integer at data[pos]: (value or None for NULL, next pos)."""
+    first = data[pos]
+    if first < 0xFB:
+        return first, pos + 1
+    if first == 0xFB:
+        return None, pos + 1
+    size = {0xFC: 2, 0xFD: 3, 0xFE: 8}[first]
+    return int.from_bytes(data[pos + 1 : pos + 1 + size], "little"), pos + 1 + size
+
+
+def _server_error(payload):
+    code = int.from_bytes(payload[1:3], "little")
+    message = payload[9:] if payload[3:4] == b"#" else payload[3:]
+    return ClaimStoreError(f"mysql error {code}: {message.decode('utf-8', 'replace')}")
+
+
+def mysql_query(host, port, user, database, query, timeout=CLAIM_DB_TIMEOUT_SECONDS):
+    """Rows of one text-protocol query, each a list of str or None.
+
+    Just enough of the MySQL client protocol for a passwordless login, so the
+    gate stays on a stock python image: handshake, an auth switch answered
+    with an empty password, one COM_QUERY, COM_QUIT. Raises OSError or
+    ClaimStoreError.
+    """
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        seq, hello = _read_packet(sock)
+        if hello[:1] == b"\xff":
+            raise _server_error(hello)
+        if hello[:1] != b"\x0a":
+            raise ClaimStoreError("not a MySQL v10 handshake")
+        # LONG_PASSWORD | CONNECT_WITH_DB | PROTOCOL_41 | SECURE_CONNECTION | PLUGIN_AUTH
+        caps = 0x1 | 0x8 | 0x200 | 0x8000 | 0x80000
+        login = (
+            caps.to_bytes(4, "little")
+            + (1 << 24).to_bytes(4, "little")
+            + bytes([45])  # utf8mb4_general_ci
+            + bytes(23)
+            + user.encode() + b"\x00"
+            + b"\x00"  # empty auth response
+            + database.encode() + b"\x00"
+            + b"mysql_native_password\x00"
+        )
+        _send_packet(sock, seq + 1, login)
+        seq, reply = _read_packet(sock)
+        while reply[:1] in (b"\xfe", b"\x01"):
+            if reply[:1] == b"\xfe":
+                # Auth switch: an empty password answers with nothing.
+                _send_packet(sock, seq + 1, b"")
+            seq, reply = _read_packet(sock)
+        if reply[:1] == b"\xff":
+            raise _server_error(reply)
+        if reply[:1] != b"\x00":
+            raise ClaimStoreError("unexpected reply to the login")
+        _send_packet(sock, 0, b"\x03" + query.encode())
+        _, first = _read_packet(sock)
+        if first[:1] == b"\xff":
+            raise _server_error(first)
+        if first[:1] == b"\x00":
+            return []
+        columns, _ = _lenenc(first, 0)
+        for _ in range(columns):
+            _read_packet(sock)
+        _, eof = _read_packet(sock)
+        if eof[:1] != b"\xfe":
+            raise ClaimStoreError("no end marker after the column definitions")
+        rows = []
+        while True:
+            _, row = _read_packet(sock)
+            if row[:1] == b"\xfe" and len(row) < 9:
+                break
+            if row[:1] == b"\xff":
+                raise _server_error(row)
+            values, pos = [], 0
+            for _ in range(columns):
+                n, pos = _lenenc(row, pos)
+                if n is None:
+                    values.append(None)
+                else:
+                    values.append(row[pos : pos + n].decode("utf-8", "replace"))
+                    pos += n
+            rows.append(values)
+        try:
+            _send_packet(sock, 0, b"\x01")
+        except OSError:
+            pass
+        return rows
+
+
+def _one_line(text, limit):
+    return " ".join((text or "").split())[:limit]
+
+
+def claim_from_row(row):
+    session, user, host, purpose, claimed_at = row
+    return {
+        "session": session,
+        "user": _one_line(user, 64),
+        "host": _one_line(host, 64),
+        "purpose": _one_line(purpose, 200),
+        # Dolt answers "2026-11-02 22:30:00.000"; minutes are enough.
+        "since": _one_line(claimed_at, 16),
+    }
+
+
+def read_claims():
+    """The active presence claims on the emulator, oldest first."""
+    rows = mysql_query(CLAIM_DB_HOST, CLAIM_DB_PORT, CLAIM_DB_USER, CLAIM_DB_NAME, CLAIM_QUERY)
+    return [claim_from_row(r) for r in rows]
+
+
+def describe_holder(claim):
+    return f"{claim['user']}@{claim['host']} ({claim['purpose']}, since {claim['since']} UTC)"
+
+
+def describe_holders(claims):
+    return "; ".join(describe_holder(c) for c in claims)
+
+
+def post_slack(text, webhook=None):
+    """Post one line to #alerts. Logged, never raised."""
+    webhook = SLACK_WEBHOOK if webhook is None else webhook
+    if not webhook:
+        return
+    req = urllib.request.Request(
+        webhook, data=json.dumps({"text": text}).encode(), headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception as e:
+        log_line(f"yield: could not post to Slack ({describe(e)})")
 
 
 def try_wake(kube_fn, now=None, log=log_line):
@@ -310,7 +582,7 @@ def describe(e):
 
 def yield_loop():
     while True:
-        yield_once(kube, log_line)
+        yield_once(kube, log_line, claims_fn=read_claims, notify=post_slack)
         _watcher["last_pass"] = time.time()
         time.sleep(YIELD_INTERVAL_SECONDS)
 
@@ -357,6 +629,15 @@ class Handler(BaseHTTPRequestHandler):
                 now=time.time(),
             )
             return self._respond(code, json.dumps(body).encode(), "application/json")
+        if self.path == "/claim":
+            # For the tv deploy pipeline: who holds the emulator, one line
+            # each, empty when nobody does; 503 when Dolt cannot be read.
+            try:
+                claims = read_claims()
+            except Exception as e:
+                return self._respond(503, f"claim store unreadable: {describe(e)}\n".encode(), "text/plain")
+            body = "".join(describe_holder(c) + "\n" for c in claims)
+            return self._respond(200, body.encode(), "text/plain; charset=utf-8")
         try:
             spec, ready = deployment_state()
             if self.path.startswith("/status"):

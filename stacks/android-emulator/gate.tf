@@ -59,7 +59,9 @@ resource "kubernetes_role_binding" "gate" {
 # stacks/tv/main.tf GPU seat note). It scales down the same way the idle
 # sleeper does, a replicas patch on the named Deployment, and waits for the pod
 # to leave. It does not wake the emulator again; the gate does that on the next
-# visit.
+# visit. Before that it asks the gate's GET /claim (plain HTTP to the gate's
+# Service, no RBAC) and waits up to 20 min while someone holds a presence
+# claim on the emulator.
 #
 # Woodpecker runs pipeline steps as the `default` ServiceAccount in namespace
 # woodpecker. That account is cluster-admin today (stacks/woodpecker,
@@ -116,6 +118,42 @@ resource "kubernetes_role_binding" "deploy_yield" {
 # The Role that lets the gate list those pods lives in stacks/tv
 # (emulator-yield.tf), next to the namespace it is created in.
 
+# The #alerts incoming webhook the gate posts its claim waits to (the same URL
+# Alertmanager posts with, projected the way stacks/tv/watcher.tf does for
+# tv-guard-secrets).
+resource "kubernetes_manifest" "gate_secrets" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "android-emulator-gate"
+      namespace = kubernetes_namespace.android-emulator.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "android-emulator-gate"
+      }
+      data = [
+        {
+          secretKey = "slack_webhook"
+          remoteRef = {
+            key      = "viktor"
+            property = "alertmanager_slack_api_url"
+          }
+        },
+      ]
+    }
+  }
+}
+
 resource "kubernetes_config_map" "gate" {
   metadata {
     name      = "android-emulator-gate"
@@ -133,7 +171,14 @@ resource "kubernetes_deployment" "gate" {
     labels = {
       app = "android-emulator-gate"
     }
+    # Restarts the gate when the webhook Secret changes.
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
+  # The webhook Secret is created by this ExternalSecret; the gate reads it
+  # at start.
+  depends_on = [kubernetes_manifest.gate_secrets]
   spec {
     replicas = 1
     selector {
@@ -177,6 +222,29 @@ resource "kubernetes_deployment" "gate" {
           env {
             name  = "YIELD_LIMIT_SECONDS"
             value = "900"
+          }
+          # An active presence claim on the emulator (service:android-emulator,
+          # or the older infra:android-emulator) holds off the yield-sleep for
+          # at most 20 min, and the gate posts to #alerts when it starts
+          # waiting and when it stops (Viktor, 2026-11-02). The claims live in
+          # Dolt (stacks/beads-server); the tv deploy pipeline asks the same
+          # question through GET /claim. A 20 min wait outlasts the 10 min a
+          # Terraform apply waits for a Transcoder rollout, so an apply that
+          # rolls the Transcoder while someone holds the claim reports a
+          # timeout; the rollout itself finishes once the gate yields.
+          env {
+            name  = "CLAIM_WAIT_SECONDS"
+            value = "1200"
+          }
+          env {
+            name = "SLACK_WEBHOOK"
+            value_from {
+              secret_key_ref {
+                name     = "android-emulator-gate"
+                key      = "slack_webhook"
+                optional = true
+              }
+            }
           }
           port {
             container_port = 8080
@@ -227,8 +295,9 @@ resource "kubernetes_deployment" "gate" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                                              # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
