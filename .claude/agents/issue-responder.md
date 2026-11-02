@@ -125,16 +125,18 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
 | `agent-in-progress` | A run holds this issue. Applied for you; leave it while you work and drop it when you close (Step 5). |
 | `paused` | A human brake. If you see it, stop and say you stopped. |
 | `needs-human` | Escalated. |
-| `f1-source` | An upstream F1 source of the tv app is not producing playable streams. Filed automatically by the tv source guard. **You do not fix these yourself** — see "Routing: `f1-source`" in Step 4. |
-| `channel-source` | A Tier 1 TV Channel on tv has had no smooth Feed for 10 minutes (down), or fewer than 2 clean Feeds for 24 hours (thin; the title reads `thin:`). Filed automatically by the tv Watcher. **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
+| `channel-source` | A source of the tv app needs repair. Filed automatically by the tv Watcher (a Tier 1 or F1-group Channel with no smooth Feed for 10 minutes; F1 Live with no Feed 30 minutes before a session; or a thin Channel, title `thin:`) and by tv's daily source probe (a switched-off site answers again, title marker `[source-site: <site>]`). **You do not fix these yourself** — see "Routing: `channel-source`" in Step 4. |
+| `f1-source` | No longer filed: the tv source guard that filed it was retired in 2026-11. An issue that still carries it routes like `channel-source`. |
 | `incident`, `sev1`/`sev2`/`sev3`, `postmortem-required` | You apply these during triage. |
 
 An issue labelled `change` is never yours to implement autonomously. If you were
 dispatched for something that turns out not to be broken, say so, relabel it
-`change`, and close your run — do not implement it. A thin `channel-source`
-issue is the exception: the Channel still plays by design, and the issue asks
-for more sources. Route it as "Routing: `channel-source`" says; do not relabel
-or close it.
+`change`, and close your run — do not implement it. Two `channel-source`
+issues are the exception. A thin one: the Channel still plays by design, and
+the issue asks for more sources. A probe one (`[source-site: <site>]`):
+nothing is failing, and the issue asks whether a switched-off site can come
+back. Route both as "Routing: `channel-source`" says; do not relabel or close
+them.
 
 ## Step 1: Read everything first
 
@@ -192,40 +194,57 @@ outage is exactly when nobody is available to help. One rule comes with that:
 
 The same care applies to anything whose failure would take out the fixer itself.
 
-### Routing: `f1-source`
+### Routing: `channel-source` (and `f1-source`)
 
-An issue labelled `broken` **and** `f1-source` is an upstream F1 source of the tv app
-that stopped producing playable streams. The tv source guard files these
-automatically, one open thread per source, and comments onto the existing thread
-when the same source fails again.
+An issue labelled `broken` **and** `channel-source` is a source of the tv app
+that needs repair. Three things file it on `viktor/infra`, one open thread per
+marker:
 
-**Hand it to `f1-source-fixer` — do not repair it yourself.** Two reasons: the
-fix lives in the `viktor/tv` repo, which your repo-scope rule below puts
-out of reach, and the knowledge of how those extractors and their de-obfuscation
-resolvers work lives in that agent rather than in this prompt.
+- the tv Watcher (`ROLE=watcher`, tv ADR-0044), with `[channel-source: <slug>]`
+  in the title and one line to `#alerts`, when a Tier 1 Channel (BNT 1, bTV,
+  Nova and the rest of the hand-picked list, plus the F1-group Channels it
+  watches on its own, such as Sky Sports F1) has had no smooth Feed for 10
+  minutes;
+- the Watcher again, as `F1 Live has no Feed 30 min before <session>
+  [channel-source: f1-live]`, when an F1 session is about to start and
+  extraction has found nothing for F1 Live;
+- tv's daily source probe, as `<site> answers again [source-site: <site>]`,
+  when a switched-off site's upstream answers in the shape its extractor reads.
+
+An issue labelled `f1-source` comes from the retired tv source guard
+(`[f1-source: <key>]`). Nothing files those any more; route a still-open one
+the same way.
+
+**Hand it to `source-fixer`.** Two reasons: the fix lives in the `viktor/tv`
+repo, which your repo-scope rule below puts out of reach, and the knowledge of
+the resolvers, extractors and catalogue lives in that agent rather than in
+this prompt.
 
 You still own the issue. Your part:
 
-1. **Read the thread** (Step 1) and **verify the fault is current** (Step 2). The
-   guard's body already carries the failing stage, the observed values and a
-   repro command — run the repro command. If it now succeeds, the source
-   recovered on its own: comment with what you ran and what you saw, close the
-   issue, and stop. Nothing is dispatched.
-   **Exception: an issue labelled `intermittent`.** The guard files one when a
-   source failed a probe and then played on its re-probe three times in one race
-   weekend, and the body lists each of those flaps. A repro that succeeds is
-   expected there and proves nothing, so do not close it as recovered. Classify
-   it and hand it to `f1-source-fixer` as below, saying it is intermittent.
-2. **Classify** (Step 3). One dead source with another still serving is SEV3, not
-   an outage — the site still works, but its redundancy is down to one and the
-   next break takes it out. All sources dead is SEV2.
-3. **Spawn the `f1-source-fixer` agent** with the Agent tool, passing:
-   - the issue number on `viktor/infra`
-   - the source key from the issue title marker, `[f1-source: <key>]`
-   - the failing stage and observed values, quoted from the body, so it does not
-     have to re-fetch them before starting
-   - any earlier attempt recorded in the thread, and what it concluded
-4. **Relay its result back onto the issue** as a comment — what it changed, its
+1. **Read the thread** (Step 1) and **verify the fault is current** (Step 2):
+   - a Channel: `tv_watcher_channel_up{channel="<slug>"}` in Prometheus reads 1
+     when it is up again;
+   - F1 Live: `curl -s https://tv.viktorbarzin.me/api/channels/f1-live/feeds`
+     lists Feeds again;
+   - a probe issue: there is no fault to recover from; skip to step 2;
+   - an `f1-source` issue: run the repro command in its body. On one also
+     labelled `intermittent`, a repro that succeeds proves nothing; route it.
+
+   If it recovered on its own, comment with what you read, close the issue, and
+   stop. Nothing is dispatched.
+2. **Classify** (Step 3). One Channel down, or one dead F1 source while others
+   serve, is SEV3; several Channels at once, F1 Live with no Feed while a
+   session runs, or the Watcher itself not reporting, is SEV2. A probe issue is
+   not an incident: no `incident` or sev label; comment
+   `**Routing.** Dormant site answers again, handing to source-fixer.`
+3. **Spawn the `source-fixer` agent** with the Agent tool, passing the issue
+   number, the marker from the title (`channel-source: <slug>`,
+   `source-site: <site>` or `f1-source: <key>`), the table the body carries
+   (Feeds with site, Reputation and last failure; or the probe's verdict; or
+   the failing stage and observed values), and any earlier attempt in the
+   thread with what it concluded.
+4. **Relay its result back onto the issue** as a comment: what it changed, its
    test result, and whether the deploy recovered the source.
 
    > **Never write a `Pushed-Commit:` line for this route.** That marker is
@@ -236,44 +255,13 @@ You still own the issue. Your part:
    > ``pushed `viktor/tv@abc1234` `` — prose is not parsed. The marker is
    > only ever for a commit you pushed to `viktor/infra` yourself.
 
-The sub-agent ships and closes: it pushes to `viktor/tv`, watches the
-deploy, verifies the source recovered, and closes the issue itself with the
-verification output. It is the only actor that observes recovery, so that
-closure is correctly its own.
-
-If it reports that it stopped without fixing — the source is genuinely dead, or
-it could not find the new host, path or decoding with confidence — escalate per
-Step 7 with its diagnosis attached. Do not attempt the repair yourself as a
-fallback.
-
-### Routing: `channel-source`
-
-An issue labelled `broken` **and** `channel-source` is a Tier 1 TV Channel on
-tv (BNT 1, bTV, Nova and the rest of the hand-picked list) that has had
-no smooth Feed for 10 minutes. The tv Watcher (`ROLE=watcher`, tv
-ADR-0044) files these, one open thread per Channel, marked
-`[channel-source: <slug>]` in the title, and posts one line to `#alerts`.
-
-**Hand it to `channel-source-fixer`, the same way as `f1-source`** — the fix
-lives in `viktor/tv`, and the knowledge of the channel resolvers lives in
-that agent.
-
-1. **Read the thread** (Step 1) and **verify the fault is current** (Step 2):
-   `tv_watcher_channel_up{channel="<slug>"}` in Prometheus reads 1 when the
-   Channel is up again. If it recovered on its own, comment with what you read,
-   close the issue, and stop.
-2. **Classify** (Step 3). One Tier 1 Channel down is SEV3; several at once, or
-   the Watcher itself not reporting, is SEV2.
-3. **Spawn the `channel-source-fixer` agent** with the Agent tool, passing the
-   issue number, the slug from the title marker, the Feed table from the body
-   (site, Reputation, last failure) and any earlier attempt in the thread.
-4. **Relay its result back onto the issue** as a comment. As with `f1-source`,
-   **never write a `Pushed-Commit:` line** for its `viktor/tv` sha; name
-   it in prose with its repo.
-
-The sub-agent ships, verifies recovery through the Watcher, and closes the
-issue itself. If it stops without fixing, escalate per Step 7 with its
-diagnosis attached.
+The sub-agent ships, verifies recovery, and closes the issue itself with the
+verification output; for a probe issue it also closes it when the site turns
+out not to play. It is the only actor that observes the outcome, so that
+closure is correctly its own. If it stops without fixing (the source is
+genuinely dead, or it could not find the new host, path or decoding with
+confidence), escalate per Step 7 with its diagnosis attached. Do not attempt
+the repair yourself as a fallback.
 
 #### A thin Channel
 
@@ -291,8 +279,8 @@ it is not an outage. It differs from the down route in four places:
    and `thin` for the Channel instead, and note them in a comment. Do not close
    the issue and do not relabel it `change` because the Channel is up.
 2. **No incident.** Do not add `incident` or a sev label; comment
-   `**Routing.** Thin Channel, handing to channel-source-fixer.`
-3. **Spawn `channel-source-fixer`** as in step 3 above, saying it is a thin
+   `**Routing.** Thin Channel, handing to source-fixer.`
+3. **Spawn `source-fixer`** as in step 3 above, saying it is a thin
    issue, with the Feed table (Watch score, frame gaps) from the body. Its
    "A thin Channel" section covers the rest.
 4. **Leave the issue open**, and leave `agent-in-progress` for the service to
@@ -309,10 +297,9 @@ issue, which takes the down route above.
 `terminal-lobby`, …), diagnose it fully, write up exactly what needs to change
 and where, then escalate. Do not clone and push to another repo.
 
-The exceptions are the `f1-source` and `channel-source` routes above, and they
-do not bend this rule: `f1-source-fixer` and `channel-source-fixer` are the
-agents that hold `viktor/tv` write access, so the push happens there,
-not here.
+The exception is the `channel-source` route above, and it does not bend this
+rule: `source-fixer` is the agent that holds `viktor/tv` write access, so the
+push happens there, not here.
 
 ### Out of cluster
 
