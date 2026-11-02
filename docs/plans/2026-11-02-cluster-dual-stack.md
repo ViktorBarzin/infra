@@ -63,7 +63,7 @@ flowchart LR
     V20 -->|"NDP, MetalLB L2"| T["Traefik<br/>2001:470:5a7f:20::203<br/>ETP Local, real client IP"]
     HE -->|"port forward ::203 mail ports to ::204"| V20
     V20 -->|"NDP, MetalLB L2"| M["mailserver-v6<br/>2001:470:5a7f:20::204<br/>ETP Local, stock listeners"]
-    T --> P["pods (ULA fd62:f088:7d06:10::/56)"]
+    T --> P["pods (ULA fd62:f088:7d06:100::/56)"]
     C4["IPv4 client"] -->|"unchanged"| T4["Traefik 10.0.20.203"]
 ```
 
@@ -201,7 +201,7 @@ cluster afterwards. If any check fails, stop and report.
   (a typo leaves the node NotReady). No drain needed.
 - 5b. Only after all six nodes show a dual InternalIP (kube-proxy reads node IPs
   at startup):
-- kube-proxy ConfigMap `clusterCIDR: 10.10.0.0/16,fd62:f088:7d06:10::/56`
+- kube-proxy ConfigMap `clusterCIDR: 10.10.0.0/16,fd62:f088:7d06:100::/56`
   (empty `detectLocalMode` means ClusterCIDR, so it matters; 2026-08-31
   research), roll the DaemonSet.
 - Check: `kubectl get node -o wide` shows both InternalIPs; new pods get both
