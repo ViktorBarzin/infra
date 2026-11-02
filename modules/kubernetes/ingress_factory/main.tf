@@ -181,6 +181,19 @@ variable "anti_ai_scraping" {
   default = null # null = auto (enabled when not protected, disabled when protected)
 }
 
+# Ask search engines not to index or list this site: every response carries
+# X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" (plus the anti-AI
+# "noai, noimageai" when anti_ai_scraping is on). It replaces the shared
+# traefik-anti-ai-headers middleware in the same chain position rather than
+# adding a second one, because Traefik's headers middleware Sets the header and
+# the earlier middleware in the chain overwrites a later one. Leave robots.txt
+# open alongside this: a crawler blocked by robots.txt never sees the noindex,
+# so already-indexed pages would stay listed.
+variable "search_noindex" {
+  type    = bool
+  default = false
+}
+
 # Cloudflare Turnstile gate (stacks/turnstile-gate, design:
 # docs/plans/2026-10-16-turnstile-sitewide-design.md). null (default) = ON for
 # a public site: auth "none" or "app", "/" in ingress_path (carve-out paths
@@ -455,7 +468,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
-        local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
+        local.effective_anti_ai && !var.search_noindex ? "traefik-anti-ai-headers@kubernetescrd" : null,
+        var.search_noindex ? "${var.namespace}-noindex-${var.name}@kubernetescrd" : null,
         # After the AI-bot block, before Sablier: a bot never wakes a parked app.
         local.turnstile_gate_mw,
         local.effective_turnstile && !local.anubis_backend ? "turnstile-gate-anubis@kubernetescrd" : null,
@@ -499,6 +513,27 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
               }
             }
           }
+        }
+      }
+    }
+  }
+}
+
+# Per-site X-Robots-Tag middleware - created when search_noindex is set
+resource "kubernetes_manifest" "noindex" {
+  count = var.search_noindex ? 1 : 0
+
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "noindex-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      headers = {
+        customResponseHeaders = {
+          "X-Robots-Tag" = local.effective_anti_ai ? "noindex, nofollow, noarchive, nosnippet, noai, noimageai" : "noindex, nofollow, noarchive, nosnippet"
         }
       }
     }
