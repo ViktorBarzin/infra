@@ -1474,6 +1474,32 @@ resource "kubernetes_deployment_v1" "tv_worker" {
   }
 }
 
+# A Channel press may take up to 40 s on the Edge (`CAPTURE_DEADLINE_S` in
+# the tv repo's tv/channels/service.py; the web and TV clients send
+# `budget_ms` 40000 for a `slow` Channel) and answers only when it ends.
+# Traefik's global serversTransport gives a backend 30 s to send its response
+# headers (stacks/traefik/modules/traefik/main.tf), so a press that found a
+# playlist after 30 s reached the viewer as a 504 from error-pages
+# (2026-11-02: rushsport-uk, `outcome=playlist ms=30496` in the tv log, 504 at
+# 30.014 s in the Traefik log). 60 s is the 40 s press cap plus margin for the
+# race grace and the reply. Same pattern as stacks/terminal and
+# stacks/woodpecker.
+resource "kubernetes_manifest" "tv_press_transport" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = "tv-press"
+      namespace = kubernetes_namespace.tv.metadata[0].name
+    }
+    spec = {
+      forwardingTimeouts = {
+        responseHeaderTimeout = "60s"
+      }
+    }
+  }
+}
+
 # The public Service: Anubis, the /admin/login and /pair carve-out ingresses
 # and the Watcher all address `tv`, and every one of them wants an Edge.
 # The name stays; since ADR-0029 the selector picks Edges only.
@@ -1483,6 +1509,12 @@ resource "kubernetes_service" "tv" {
     namespace = kubernetes_namespace.tv.metadata[0].name
     labels = {
       "app" = "tv"
+    }
+    # The 60 s header timeout above, for every ingress whose backend is this
+    # Service. Traefik reads service.* annotations from the Service, not the
+    # Ingress. Ref format is <namespace>-<name>@kubernetescrd.
+    annotations = {
+      "traefik.ingress.kubernetes.io/service.serverstransport" = "tv-tv-press@kubernetescrd"
     }
   }
 
@@ -1496,6 +1528,8 @@ resource "kubernetes_service" "tv" {
       target_port = "8000"
     }
   }
+
+  depends_on = [kubernetes_manifest.tv_press_transport]
 }
 
 # The Ready Edges, for the Edges themselves (ADR-0045 in the tv repo).
