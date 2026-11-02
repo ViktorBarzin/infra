@@ -10,7 +10,7 @@
  *   2. A cron item running /usr/local/etc/ipv6_proxy_watchdog.sh every 5
  *      minutes, which re-runs ipv6_proxy.sh whenever the bridge is not bound.
  *      Added 2026-11-02 after a WireGuard package re-sync regenerated the
- *      webConfigurator nginx config an hour after boot and IPv6 ingress stayed
+ *      webConfigurator nginx config during boot and IPv6 ingress stayed
  *      down for 10 days.
  *
  *   --check   report the diff, write nothing (Ansible --check)

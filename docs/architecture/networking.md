@@ -616,13 +616,13 @@ Cloudflare-proxied hosts reach the origin over IPv4, so only the ~31 `non-proxie
 and IPv6 mail were dark. The guard now matches any `listen [::]:` and the script logs
 whether `[TUNNEL]:443` actually came up.
 
-**Gotcha — pfSense regenerates the nginx config after boot too (2026-11-02).** The boot
-script only fixes the nginx config that exists at boot. pfSense rewrites
+**Gotcha — pfSense regenerates the nginx config after the boot script runs (2026-11-02).** The boot
+script only fixes the nginx config that exists when it runs. pfSense rewrites
 `/var/etc/nginx-webConfigurator.conf` whenever the webConfigurator restarts, for example
 when a package is installed or re-synced, or a certificate or GUI setting changes, and the
 rewritten file goes back to wildcard `[::]:80`. On 2026-10-23 the WireGuard package re-applied
-its defaults about an hour after boot (five config history entries between 09:18 and 09:19
-local time), the bridge could not bind, and IPv6 web and mail stayed down until
+its defaults during boot (five config history entries between 09:18:43 and 09:19:07 EEST,
+within 41 seconds of kernel start at 09:18:26), the bridge could not bind, and IPv6 web and mail stayed down until
 2026-11-02, about 10 days. The 5-minute watchdog above covers this case, and the alerts report it.
 
 **Symptoms of a down bridge**, useful for the next diagnosis: over IPv6 a non-proxied host
