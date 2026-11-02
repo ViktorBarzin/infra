@@ -22,3 +22,8 @@ output "existing_account_policy_id" {
   description = "Request mode with existing_account_state_prefix: the access-request policy. Bind it to the application next to its group bindings (policy_engine_mode \"any\"); app-access-guard.tf in the authentik stack accepts it by its name, \"<app_slug>-access-request\". Null otherwise."
   value       = one(authentik_policy_expression.existing_account_request[*].id)
 }
+
+output "approver_role_id" {
+  description = "Request mode: the approver's RBAC role. An app stack grants it more object permissions with it, as stacks/tv/members.tf does for TV Trial. Null in open mode."
+  value       = one(authentik_rbac_role.approver[*].id)
+}
