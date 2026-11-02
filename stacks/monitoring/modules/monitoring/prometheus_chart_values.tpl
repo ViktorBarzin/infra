@@ -3423,15 +3423,15 @@ serverFiles:
           # worker holds more memory requests than the rest of the eligible pool has
           # free.
           #
-          # The GPU node is excluded from BOTH halves. It was excluded from the
-          # numerator only until 2026-09-06, on the comment's belief that its taint
-          # was soft/PreferNoSchedule. It is not: `kubectl get node k8s-node1
-          # -o jsonpath='{.spec.taints}'` reads nvidia.com/gpu:NoSchedule, so a pod
-          # evicted from a dead worker cannot land there without a toleration.
-          # Counting its free space as absorbing capacity made the denominator read
-          # 22.911 GiB healthier than reality (37.02 GiB claimed vs 14.11 GiB real:
-          # node2 3.264 + node3 4.143 + node4 4.404 + node5 2.295, measured
-          # 2026-09-06), which is the direction that HIDES a genuine shortfall.
+          # The GPU node is excluded from the numerator only: its GPU tenants are
+          # pinned to it, so "losing node1" is a different question from losing a
+          # general worker. It IS counted in the denominator, because since
+          # 2026-11-02 its taint is nvidia.com/gpu:PreferNoSchedule again
+          # (stacks/nvidia/modules/nvidia/main.tf) and evicted pods can land there.
+          # Between 2026-09-06 and 2026-11-02 the taint was NoSchedule and node1
+          # was excluded from both halves; if the taint is ever made hard again,
+          # restore the `unless ... nvidia_com_gpu` line in the denominator too, or
+          # this alert will claim ~20 GiB of capacity that evictions cannot use.
           # Node selection is dynamic via metrics: GPU node by nvidia_com_gpu capacity,
           # drained/cordoned by kube_node_spec_unschedulable, down by the Ready
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
@@ -3480,7 +3480,6 @@ serverFiles:
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
                 unless on(node) (kube_node_spec_unschedulable == 1)
-                unless on(node) (kube_node_status_capacity{resource="nvidia_com_gpu"} > 0)
               )
             for: 15m
             # keep_firing_for: headroom sits close to the line, so ordinary pod
@@ -3497,7 +3496,7 @@ serverFiles:
               summary: "Cluster cannot tolerate losing any non-GPU worker — memory requests won't fit on the rest"
               description: |
                 The most-loaded non-GPU worker has more memory requests pinned to it
-                than the rest of the eligible worker pool (incl. the GPU node)
+                than the rest of the eligible worker pool (incl. the GPU node, whose taint is soft)
                 currently has free. If that node went down, some of its pods would
                 not reschedule and would stay Pending.
                 Remediation: right-size the top memory reservers with `krr` (trim

@@ -74,29 +74,41 @@ resource "null_resource" "gpu_node_config" {
     command = <<-EOT
       set -euo pipefail
       for node in $(kubectl get nodes -l feature.node.kubernetes.io/pci-10de.present=true -o jsonpath='{.items[*].metadata.name}'); do
-        # `kubectl taint --overwrite` keys on key+EFFECT, so setting NoSchedule
-        # does NOT replace an existing nvidia.com/gpu:PreferNoSchedule taint —
-        # they'd COEXIST (both effects on the node). Remove any stale
-        # PreferNoSchedule first, then set NoSchedule. Both idempotent.
-        kubectl taint nodes "$node" nvidia.com/gpu:PreferNoSchedule- 2>/dev/null || true
-        kubectl taint nodes "$node" nvidia.com/gpu=true:NoSchedule --overwrite
+        # `kubectl taint --overwrite` keys on key+EFFECT, so setting
+        # PreferNoSchedule does NOT replace an existing nvidia.com/gpu:NoSchedule
+        # taint; the two would coexist and the hard one would still win. Remove
+        # any NoSchedule first, then set PreferNoSchedule. Both idempotent.
+        kubectl taint nodes "$node" nvidia.com/gpu:NoSchedule- 2>/dev/null || true
+        kubectl taint nodes "$node" nvidia.com/gpu=true:PreferNoSchedule --overwrite
       done
     EOT
   }
 
-  # reboot-self-heal Phase 2 (code-j3tx): flipped PreferNoSchedule -> NoSchedule
-  # so non-GPU pods CANNOT pack the GPU node on a reboot reschedule and starve
-  # frigate/llama-swap (the 2026-07-18 ~3h Pending). NoSchedule does NOT evict
-  # running pods — it only shapes future scheduling — so this is safe to apply
-  # live; it takes effect on the next reschedule/reboot. PREREQUISITE (done): the
-  # 8 non-tolerating system DaemonSets gained an nvidia.com/gpu toleration first
-  # (proxmox-csi-node etc.), else NoSchedule would keep them off node1. GPU
-  # tenants + those DaemonSets tolerate; everything else (immich-postgresql,
-  # CNPG, authentik, ...) has no gpu toleration so NoSchedule alone excludes it
-  # (dedicated anti-affinity would be redundant — omitted).
+  # Soft taint, so the GPU node can take overflow during a drain (2026-11-02).
+  #
+  # History: the taint was PreferNoSchedule until 2026-07-19, then NoSchedule
+  # (code-j3tx), because after the 2026-07-18 power-outage reboot non-GPU pods
+  # filled node1's memory requests and left frigate and llama-swap Pending for
+  # ~3h. The hard taint fixed that, but it also took node1's ~25 GiB of free
+  # requests out of the pool a drain can use. The four untainted workers have
+  # less free than one of them holds, so the 2026-11-01 k8s upgrade left ~100
+  # pods Pending and 51 deployments down while each worker drained.
+  #
+  # What now protects the GPU tenants instead: every GPU pod runs at
+  # priorityClass gpu-workload (1,200,000, PreemptLowerPriority), the highest
+  # non-system class, so if overflow pods fill node1 a Pending GPU pod preempts
+  # the lowest-priority ones. PreferNoSchedule also keeps non-GPU pods off node1
+  # whenever another node fits them, so in normal operation it stays GPU-only.
+  # Overflow pods that land on node1 during a drain stay there until their next
+  # restart; nothing moves them back.
+  #
+  # DaemonSets tolerate the taint already (the 8 non-tolerating system
+  # DaemonSets gained an nvidia.com/gpu toleration in July), and a NoSchedule
+  # toleration does not match a PreferNoSchedule taint, which only affects
+  # scoring, so GPU tenants (pinned by nodeSelector) are unaffected.
   triggers = {
     namespace    = kubernetes_namespace.nvidia.metadata[0].name
-    command_hash = "dynamic-taint-v3-noschedule-remove-prefer"
+    command_hash = "dynamic-taint-v4-prefernoschedule-remove-hard"
   }
 }
 
