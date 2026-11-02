@@ -1368,6 +1368,49 @@ resource "kubernetes_deployment_v1" "tv_worker" {
               }
             }
           }
+          # After the shared env, so adding these appended to the live list
+          # rather than shifting every entry after them.
+          #
+          # The daily source probe (tv plan 2026-11-01-f1-channels-build,
+          # tv/source_probe.py, Placement worker, 06:00 UTC) asks each dormant
+          # extractor's upstream whether it answers in the shape the extractor
+          # reads, and files one `broken` + `channel-source` issue titled
+          # `<site> answers again [source-site: <site>]` when one starts to.
+          # That issue dispatches source-fixer. It files only with
+          # SOURCE_PROBE_FILE=1, so a laptop or the monolith only logs.
+          # It files with the Watcher's filing code and so reads the
+          # Watcher's names: the repo, and the `viktor` token from
+          # tv-guard-secrets (watcher.tf), which is not the fixer's bot actor,
+          # so the webhook dispatches the issue. optional, so the pod starts
+          # before the ExternalSecret syncs; the probe then logs instead.
+          env {
+            name  = "SOURCE_PROBE_FILE"
+            value = "1"
+          }
+          env {
+            name  = "WATCHER_ISSUE_REPO"
+            value = "viktor/infra"
+          }
+          env {
+            name = "WATCHER_FORGEJO_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "tv-guard-secrets"
+                key      = "forgejo_token"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "WATCHER_SLACK_WEBHOOK"
+            value_from {
+              secret_key_ref {
+                name     = "tv-guard-secrets"
+                key      = "slack_webhook"
+                optional = true
+              }
+            }
+          }
           volume_mount {
             name       = "viewing-db"
             mount_path = "/secrets/viewing-db"
