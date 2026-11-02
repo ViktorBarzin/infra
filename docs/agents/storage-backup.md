@@ -48,6 +48,7 @@ Choose storage class based on workload type:
 - **`/etc/exports` is git-managed** at `infra/scripts/pve-nfs-exports`. Deploy: `scp scripts/pve-nfs-exports root@192.168.1.127:/etc/exports && ssh root@192.168.1.127 exportfs -ra`
 - **Critical services MUST NOT use NFS storage** — circular dependency risk. Alertmanager, Prometheus, and any monitoring that should alert about NFS must use `proxmox-lvm-encrypted`. Technitium DNS primary uses `proxmox-lvm-encrypted` (migrated 2026-04-14).
 - **NFS PV template** (in `modules/kubernetes/nfs_volume/`): always include `mountOptions: ["nfsvers=4", "soft", "actimeo=5", "retrans=3", "timeo=30"]`
+- **Workloads that copy files on an NFS share mount 4.1, not 4.2** (2026-11-02). Since the Proxmox host booted kernel 7.0.14-25 on 2026-10-23, `copy_file_range` over NFS 4.2 (server-side COPY) writes every byte and then never returns: the calling thread waits in `handle_async_copy` for a completion callback that does not arrive, even though `/proc/fs/nfsd/clients/*/info` shows the callback channel UP. Node's `fs.copyFile`, coreutils `cp` and anything else using `copy_file_range` are affected. Pass `nfs_version = "4.1"` to `nfs_volume`; 4.1 has no COPY operation, so the client copies the data itself. Immich uses this ([PM-2026-11-02](../post-mortems/2026-11-02-immich-thumbnails-nfs-copy-hang.md)). Other stacks still negotiate 4.2. Diagnose a suspected hang with `cat /proc/<pid>/task/*/wchan` inside the pod and look for `handle_async_copy`.
 
 **proxmox-lvm PVC template** (Terraform):
 ```hcl

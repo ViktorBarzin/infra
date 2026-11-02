@@ -2542,6 +2542,28 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
+          # Outcome check for the upload -> thumbnail pipeline (added 2026-11-02),
+          # fed every 10 min by the immich-thumbnail-freshness CronJob. From
+          # 2026-10-23 to 2026-11-02 uploads waited 3-21 hours for a thumbnail
+          # (a hung NFS 4.2 copy jammed the storage-template queue, then the
+          # worker died) and no existing alert fired. Counts uploads from the
+          # last 6h that are older than 15 min and still have no thumbnail; a
+          # healthy upload gets one in 2-3 s. One undecodable upload can hold
+          # this for up to 6h, which is also worth a look.
+          - alert: ImmichThumbnailsLagging
+            expr: immich_thumbnail_pending_assets{job="immich-thumbnail-freshness"} > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} Immich uploads are over 15 min old with no thumbnail — check queue depths in Redis (immich_bull:<queue>:wait/active) and the immich-worker log"
+          - alert: ImmichThumbnailFreshnessStale
+            expr: time() - immich_thumbnail_freshness_last_run_timestamp{job="immich-thumbnail-freshness"} > 3600
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich thumbnail freshness check has not reported in {{ $value | printf \"%.0f\" }}s — ImmichThumbnailsLagging is blind until it does"
           # Immich HTTP error volume — ABSOLUTE RATES, not ratios (added 2026-09-01).
           #
           # Immich is already covered by HighService4xxRate (>30%),
