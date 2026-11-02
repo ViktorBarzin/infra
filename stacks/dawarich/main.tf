@@ -6,7 +6,7 @@ variable "tls_secret_name" {
 variable "image_version" {
   type = string
   # renovate: datasource=docker depName=freikin/dawarich
-  default = "1.20.0"
+  default = "1.20.1"
 }
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
