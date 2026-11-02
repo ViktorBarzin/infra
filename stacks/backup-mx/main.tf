@@ -42,6 +42,11 @@ resource "oci_core_vcn" "backup_mx" {
   cidr_blocks    = [local.vcn_cidr]
   display_name   = "backup-mx"
   dns_label      = "backupmx"
+  # IPv6 (2026-11-02): gives gatus an IPv6 path so its edge group can probe the
+  # homelab's public IPv6 ingress (HE tunnel address on pfSense) from outside.
+  # Oracle allocates a /56; it cannot be disabled again once on. Free: the
+  # account has no payment method, so nothing here can be billed.
+  is_ipv6enabled = true
 }
 
 resource "oci_core_internet_gateway" "backup_mx" {
@@ -54,6 +59,10 @@ resource "oci_core_default_route_table" "backup_mx" {
   manage_default_resource_id = oci_core_vcn.backup_mx.default_route_table_id
   route_rules {
     destination       = "0.0.0.0/0"
+    network_entity_id = oci_core_internet_gateway.backup_mx.id
+  }
+  route_rules {
+    destination       = "::/0"
     network_entity_id = oci_core_internet_gateway.backup_mx.id
   }
 }
@@ -163,6 +172,12 @@ resource "oci_core_security_list" "backup_mx" {
     protocol    = "all"
     destination = "0.0.0.0/0"
   }
+  # Outbound only: the IPv6 edge probes. No IPv6 ingress rules, so nothing on
+  # mx2 is reachable over IPv6.
+  egress_security_rules {
+    protocol    = "all"
+    destination = "::/0"
+  }
 }
 
 resource "oci_core_subnet" "backup_mx" {
@@ -174,6 +189,8 @@ resource "oci_core_subnet" "backup_mx" {
   route_table_id             = oci_core_vcn.backup_mx.default_route_table_id
   security_list_ids          = [oci_core_security_list.backup_mx.id]
   prohibit_public_ip_on_vnic = false
+  # First /64 of the VCN's Oracle-allocated /56.
+  ipv6cidr_blocks = [cidrsubnet(oci_core_vcn.backup_mx.ipv6cidr_blocks[0], 8, 0)]
 }
 
 data "oci_core_images" "ubuntu" {
@@ -254,6 +271,13 @@ resource "oci_core_public_ip" "mx2" {
   lifetime       = "RESERVED"
   display_name   = "mx2-reserved"
   private_ip_id  = data.oci_core_private_ips.mx2.private_ips[0].id
+}
+
+# IPv6 address on mx2's existing VNIC, as its own resource so adding it never
+# touches (or replaces) the instance. Used only for outbound edge probes.
+resource "oci_core_ipv6" "mx2" {
+  vnic_id      = data.oci_core_vnic_attachments.mx2.vnic_attachments[0].vnic_id
+  display_name = "mx2-ipv6"
 }
 
 output "mx2_public_ip" {

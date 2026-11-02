@@ -5949,35 +5949,6 @@ serverFiles:
               summary: "Anubis service {{ $labels.service }} returning 500 ({{ $value | printf \"%.2f\" }} req/s) — likely challenge-store error"
       - name: "Networking & Access"
         rules:
-          # Public IPv6 ingress: the HAProxy bridge on pfSense from the HE tunnel
-          # address to Traefik and the mail NodePorts. A cron watchdog on pfSense
-          # (playbooks/pfsense-ipv6-bridge.yml) re-runs the boot script whenever
-          # the bridge is not bound and pushes ipv6_bridge_* every 5 min. Added
-          # 2026-11-02: a WireGuard package re-sync regenerated the pfSense nginx
-          # config with wildcard [::]:80 on 2026-10-23, the bridge could not bind,
-          # and IPv6 web + mail stayed down for 10 days with nothing alerting.
-          - alert: IPv6IngressBridgeDown
-            expr: ipv6_bridge_up{job="pfsense-ipv6-bridge"} == 0
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "pfSense IPv6 bridge is down and the watchdog could not repair it: IPv6 to non-proxied hosts and IPv6 mail fail. Check 'service ipv6proxy onestatus' and 'sockstat -6 -l' on pfSense for a port conflict (docs/architecture/networking.md, IPv6 Ingress)."
-          - alert: IPv6IngressBridgeWatchdogStale
-            expr: |
-              (time() - ipv6_bridge_last_run_timestamp_seconds{job="pfsense-ipv6-bridge"}) > 1800
-              or absent(ipv6_bridge_last_run_timestamp_seconds{job="pfsense-ipv6-bridge"})
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "pfSense IPv6 bridge watchdog has not reported for 30 min; the cron entry or the pushgateway path is broken. Re-run playbooks/pfsense-ipv6-bridge.yml."
-          - alert: IPv6IngressBridgeSelfHealed
-            expr: (time() - ipv6_bridge_last_heal_timestamp_seconds{job="pfsense-ipv6-bridge"}) < 3600
-            labels:
-              severity: info
-            annotations:
-              summary: "pfSense IPv6 bridge was down and the watchdog restarted it (up to 5 min of IPv6 outage). Usually a webConfigurator restart regenerated the nginx config; see 'ipv6_proxy_watchdog' in pfSense syslog."
           - alert: CloudflaredDown
             expr: (kube_deployment_status_replicas_available{namespace="cloudflared", deployment="cloudflared"} or on() vector(0)) < 1
             for: 5m

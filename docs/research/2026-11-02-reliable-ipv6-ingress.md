@@ -1,7 +1,14 @@
 # Reliable public IPv6 ingress
 
 Research note, 2026-11-02. Read-only investigation: nothing was changed on
-pfSense, the cluster or DNS. It builds on
+pfSense, the cluster or DNS.
+
+**Status (2026-11-02, later the same day):** phases 1-3 of the plan below are
+done. The webConfigurator redirect is off, mx2's gatus probes the tunnel
+address over IPv6, and the six IPv6 frontends run in the pfSense HAProxy
+package (`playbooks/pfsense-haproxy.yml`); the standalone bridge, its boot
+hook, watchdog and alerts are gone. Phase 4, the cold-start reboot test, is
+waiting for a maintenance window Viktor picks. It builds on
 [2026-08-31-cluster-dual-stack-ipv6.md](2026-08-31-cluster-dual-stack-ipv6.md)
 and does not repeat its feasibility work; it updates only what changed or what
 turned out to be wrong.
