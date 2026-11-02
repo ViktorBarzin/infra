@@ -1,0 +1,119 @@
+#!/bin/bash
+# Clears Proxmox CSI disk slots that a timed-out detach left poisoned.
+# Installed by playbooks/pve-host.yml; runs every 5 minutes from
+# csi-leak-reconcile.timer. Tests: csi-leak-reconcile.test.sh next to this file.
+#
+# Why this exists (2026-11-02, docs/runbooks/proxmox-csi-wedged-attach.md):
+# qemu-server 9.2.x unplugs a disk with device_del, then polls QMP query-pci
+# with a 5s timeout before it removes the block node. When the shared HDD is
+# saturated that poll times out and the block node `drive-scsiN` and its
+# `throttle-drive-scsiN` object stay inside QEMU. The CSI driver retries the
+# detach, Proxmox sees the device already gone and reports success, so the leak
+# is never cleaned. Every later attach that draws that slot (the CSI always
+# takes the lowest free LUN) fails with
+#   object-add failed - attempt to add duplicate property 'throttle-drive-scsiN'
+# and the pod waits forever on "device /dev/disk/by-id/wwn-... is not found".
+#
+# A slot is cleaned only when, under the same per-VM lock `qm set` takes:
+#   - QEMU has a throttle-drive-scsiN object,
+#   - scsiN is not in the VM config (so no attach or detach is in progress),
+#   - no device is attached to drive-scsiN,
+# and the same was true on the previous run, five minutes earlier.
+# The cleanup is the step qemu-server skipped: drive_del, then object_del.
+set -euo pipefail
+
+TEXTFILE_DIR=${TEXTFILE_DIR:-/var/lib/node_exporter/textfile}
+STATE_FILE=${STATE_FILE:-/var/lib/node_exporter/csi-leak-reconcile.state}
+LOCK_DIR=${LOCK_DIR:-/var/lock/qemu-server}
+
+monitor() { echo "$2" | qm monitor "$1" 2>/dev/null; }
+
+# scsiN slots that have a throttle object (stdin: qom-list /objects)
+throttle_slots() { grep -oE '^throttle-drive-scsi[0-9]+ ' | sed 's/^throttle-drive-//; s/ $//' | sort -u; }
+# scsiN slots with a device attached (stdin: info block)
+attached_slots() { grep -oE '^ +Attached to: +scsi[0-9]+$' | grep -oE 'scsi[0-9]+$' | sort -u; }
+# scsiN slots in the VM config (stdin: qm config)
+config_slots() { grep -oE '^scsi[0-9]+:' | tr -d ':' | sort -u; }
+
+# leaked_slots <qom output> <config output> <info block output>
+leaked_slots() {
+  comm -23 <(throttle_slots <<<"$1") \
+    <(sort -u <(config_slots <<<"$2") <(attached_slots <<<"$3"))
+}
+
+# due_slots <vmid> <leaked slots now> <"vmid:slot" pairs seen last run>
+due_slots() {
+  local s
+  for s in $2; do
+    [[ " $3 " == *" $1:$s "* ]] && echo "$s"
+  done
+  return 0
+}
+
+# check_vm <vmid> <previous pairs>: prints "leaked <slots>" then "cleaned <slots>"
+check_vm() {
+  local vmid=$1 prev=$2 leaked due s
+  leaked=$(leaked_slots "$(monitor "$vmid" 'qom-list /objects')" "$(qm config "$vmid")" "$(monitor "$vmid" 'info block')" | xargs)
+  due=$(due_slots "$vmid" "$leaked" "$prev" | xargs)
+  for s in $due; do
+    monitor "$vmid" "drive_del drive-$s" >/dev/null
+    monitor "$vmid" "object_del throttle-drive-$s" >/dev/null
+    logger -t csi-leak-reconcile "VM $vmid: removed leaked block node drive-$s and throttle-drive-$s" 2>/dev/null || true
+  done
+  if [[ -n "$due" ]]; then
+    leaked=$(leaked_slots "$(monitor "$vmid" 'qom-list /objects')" "$(qm config "$vmid")" "$(monitor "$vmid" 'info block')" | xargs)
+  fi
+  echo "leaked $leaked"
+  echo "cleaned $due"
+}
+
+main() {
+  local prev="" cleaned_total=0 vmid out leaked cleaned pairs="" metrics="" errors=0 now s
+  # shellcheck source=/dev/null
+  [[ -r "$STATE_FILE" ]] && . "$STATE_FILE"
+  prev=${seen:-}
+  cleaned_total=${cleaned_total:-0}
+
+  for vmid in $(qm list | awk 'NR > 1 && $3 == "running" { print $1 }'); do
+    # Hold the lock `qm set` takes (PVE::QemuConfig, opened '>>' and flock'd),
+    # so no CSI attach or detach can change this VM while it is inspected.
+    if ! out=$(
+      exec 9>>"$LOCK_DIR/lock-$vmid.conf"
+      flock -w 60 9 || exit 75
+      check_vm "$vmid" "$prev"
+    ); then
+      errors=$((errors + 1)); continue
+    fi
+    leaked=$(sed -n 's/^leaked //p' <<<"$out")
+    cleaned=$(sed -n 's/^cleaned //p' <<<"$out")
+    for s in $leaked; do pairs="$pairs $vmid:$s"; done
+    cleaned_total=$((cleaned_total + $(wc -w <<<"$cleaned")))
+    metrics+="pve_csi_leaked_slots{vmid=\"$vmid\"} $(wc -w <<<"$leaked")"$'\n'
+  done
+
+  printf 'seen="%s"\ncleaned_total=%s\n' "${pairs# }" "$cleaned_total" >"$STATE_FILE"
+
+  now=$(date +%s)
+  local tmp
+  tmp=$(mktemp "$TEXTFILE_DIR/.pve_csi_leak_reconcile.XXXXXX")
+  {
+    echo '# HELP pve_csi_leaked_slots SCSI slots with a leaked block node after this run, per running VM.'
+    echo '# TYPE pve_csi_leaked_slots gauge'
+    printf '%s' "$metrics"
+    echo '# HELP pve_csi_leak_cleaned_total Leaked SCSI slots removed by csi-leak-reconcile since it was installed.'
+    echo '# TYPE pve_csi_leak_cleaned_total counter'
+    echo "pve_csi_leak_cleaned_total $cleaned_total"
+    echo '# HELP pve_csi_leak_reconcile_errors VMs this run could not inspect (lock timeout or monitor failure).'
+    echo '# TYPE pve_csi_leak_reconcile_errors gauge'
+    echo "pve_csi_leak_reconcile_errors $errors"
+    echo '# HELP pve_csi_leak_reconcile_last_run_timestamp_seconds When csi-leak-reconcile last finished.'
+    echo '# TYPE pve_csi_leak_reconcile_last_run_timestamp_seconds gauge'
+    echo "pve_csi_leak_reconcile_last_run_timestamp_seconds $now"
+  } >"$tmp"
+  chmod 0644 "$tmp"
+  mv "$tmp" "$TEXTFILE_DIR/pve_csi_leak_reconcile.prom"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

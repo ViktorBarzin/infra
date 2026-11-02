@@ -81,7 +81,7 @@ echo 'drive_del drive-scsiN'           | qm monitor <vmid>
 echo 'object_del throttle-drive-scsiN' | qm monitor <vmid>
 ```
 
-A *clean* detach does not leak, so this is a one-off orphan rather than a per-detach bug. Detection is now automated: **check #47** compares `qom-list /objects` throttle objects against the VM config (`leaked=N` → FAIL), and **check #50** reports failed CSI `qmconfig` tasks straight from the PVE task log.
+This was first read as a one-off orphan. On 2026-11-02 it turned out to be a repeatable qemu-server 9.2.x detach bug: unplug polls QMP `query-pci` with a 5s timeout before it removes the block node, and when the shared HDD is saturated the poll times out and the node leaks. The CSI's retry then succeeds without cleaning up. Eight failed detaches during that night's upgrade drains left exactly eight poisoned slots (0 failures in 226 detaches the week before). `csi-leak-reconcile` on the PVE host now clears these every 5 minutes; see `docs/runbooks/proxmox-csi-wedged-attach.md`. Detection is now automated: **check #47** compares `qom-list /objects` throttle objects against the VM config (`leaked=N` → FAIL), and **check #50** reports failed CSI `qmconfig` tasks straight from the PVE task log.
 
 ## Architecture Diagram
 
