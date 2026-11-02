@@ -51,7 +51,8 @@ quic-go v0.62.0, whose `InitialPacketSize = 1280` is both the starting and the
 minimum UDP payload (`internal/protocol/params.go:6`), so a QUIC packet over IPv6
 is 1328 bytes and cannot cross a 1280-byte tunnel. pfSense's IPv4 path to the HE
 server carries 1500 (`ping -D -s 1472 216.66.86.122` passes). The TCP MSS clamp on
-`gif0` moves from 1220 to 1420 to match.
+`gif0` moves from 1220 to 1420 to match (pfSense clamps IPv6 to its MSS field
+minus 60, `filter.inc:727`, so the field is set to 1480).
 
 ## Target data path
 
@@ -105,7 +106,9 @@ cluster afterwards. If any check fails, stop and report.
   /48) and `gif0` MTU 1480 on pfSense; MSS clamp on gif0 1220 -> 1420. Check:
   from mx2, `ping -6 -s 1400 -M do 2001:470:6e:43d::2` passes.
 - VLAN 20 interface (`vtnet2`) gets `2001:470:5a7f:20::1/64`; no RA (nodes are
-  static). The connected /64 needs no static route; pfSense already forwards
+  static). `dhcpdv6.opt1` still carries `ramode: stateless_dhcp` and an old ISP
+  prefix, so the same config write sets `ramode: disabled`; otherwise radvd would
+  start advertising on VLAN 20 once the interface has an address. The connected /64 needs no static route; pfSense already forwards
   IPv6 (`net.inet6.ip6.forwarding: 1`). Check that HE routes the /48 down the
   tunnel: from mx2, `ping -6 2001:470:5a7f:20::1`.
 - `vtnet2` inet6 rules (today only `pass in quick on vtnet2 inet all` exists,
@@ -113,12 +116,16 @@ cluster afterwards. If any check fails, stop and report.
   every other new outbound IPv6 connection from VLAN 20, so node Go binaries and
   pods fall back to IPv4 at once instead of timing out. Replies to inbound
   connections pass by state.
-- `HE_IPv6` (gif0) inbound: pass TCP 80/443 and UDP 443 to `::203`; port forward
+- `HE_IPv6` (gif0) inbound, inserted before the existing "Block all other traffic
+  on HE_IPv6 tunnel" rule (rules are first-match): pass TCP 80/443 and UDP 443 to `::203`; port forward
   TCP 25/465/587/993 on `::203` to `::204` (phase 6 enables it); everything else
   to the /48 stays blocked by the default deny.
 - Block any packet with a ULA (`fc00::/7`) source leaving on gif0.
-- Declared in a PHP configurator run by a new `playbooks/pfsense-k8s-ipv6.yml`
-  with `--check`, same pattern as `pfsense-haproxy.yml`.
+- Declared in `playbooks/files/pfsense-k8s-ipv6-config.php`, run by
+  `playbooks/pfsense-k8s-ipv6.yml` with `--check`, same pattern as
+  `pfsense-haproxy.yml`. The apply path uses targeted `ifconfig` commands and
+  `filter_configure()`, not `interface_configure()`, which would strip and re-add
+  VLAN 20's IPv4 gateway and the tunnel address.
 - Check: from a node, `ping -6 2001:470:5a7f:20::1`; from a node, `curl -6
   https://example.com` is refused at once (reject works); from mx2, the VIPs are
   unreachable until phase 6.
@@ -126,8 +133,14 @@ cluster afterwards. If any check fails, stop and report.
 
 ### 2. Nodes
 
-- Netplan: static `2001:470:5a7f:20::1NN/64` on `ens18`, IPv6 default route via
-  `::1`. `net.ipv6.conf.all.forwarding=1` (Calico needs it; it also turns off
+- Netplan: static `2001:470:5a7f:20::1NN/64` on the VLAN 20 interface (`ens18` on
+  master and node1-3, `eth0` on node4/5; found from the node's IPv4 address), IPv6
+  default route via `::1`. `netplan apply` also re-runs DHCPv4 on master and
+  node1-3, so it runs one node at a time with a gate on both addresses.
+- k8s-master has IPv6 switched off (`/etc/sysctl.d/k8s-ipv6.conf`, 2023); the
+  playbook removes that file and sets `disable_ipv6 = 0`. Its loopback listeners
+  are all on `127.0.0.1`, so a client trying `::1` first is refused at once and
+  falls back, as on the workers today. `net.ipv6.conf.all.forwarding=1` (Calico needs it; it also turns off
   RA processing, which is why addressing is static).
 - `/etc/gai.conf`: `precedence ::ffff:0:0/96 100`, so glibc programs prefer IPv4.
   Go binaries (kubelet, containerd, calico-node) ignore it; for them the phase 1
