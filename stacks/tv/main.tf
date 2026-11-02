@@ -324,6 +324,10 @@ locals {
     { name = "MEMBER_GROUP", value = data.authentik_group.home_users.name },
     { name = "MEMBER_GROUPS", value = "${data.authentik_group.home_users.name},${module.tv_users.group_name}" },
     { name = "TV_USERS_GROUP_ID", value = module.tv_users.group_id },
+    # TV Trial (members.tf): the app adds households on a trial to it and
+    # removes them on approval, denial or expiry. Unset means no trials.
+    { name = "TV_TRIAL_GROUP", value = authentik_group.tv_trial.name },
+    { name = "TV_TRIAL_GROUP_ID", value = authentik_group.tv_trial.id },
     { name = "DISCORD_CHANNELS", value = var.discord_f1_channel_ids },
     # Verifier connects to in-cluster headed Chromium pool — see
     # stacks/chrome-service/. Falls back to in-process headless if unset.
@@ -486,7 +490,8 @@ locals {
     { name = "PLAYBACK_REPORT_KEY", secret = "tv-secrets", key = "playback_report_key", optional = false },
     { name = "OIDC_CLIENT_SECRET", secret = kubernetes_secret.tv_members.metadata[0].name, key = "oidc_client_secret", optional = false },
     { name = "AUTHENTIK_API_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_api_token", optional = false },
-    # Can add users to TV Users and nothing else (members.tf, ADR-0042).
+    # Can add users to TV Users, and add and remove them on TV Trial, and
+    # nothing else (members.tf, ADR-0042, tv ADR 2026-11-02-new-households-start-on-a-trial).
     { name = "AUTHENTIK_APPROVER_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_approver_token", optional = true },
     { name = "DISCORD_TOKEN", secret = "tv-secrets", key = "discord_user_token", optional = false },
     # Announces a television taking a different build, to the same
