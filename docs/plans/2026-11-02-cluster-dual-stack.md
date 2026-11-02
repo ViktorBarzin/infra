@@ -1,6 +1,6 @@
 # Cluster dual-stack: IPv6 and HTTP/3 over IPv6, natively
 
-Status: draft v2, 2026-11-02 (revised after two blind challenger reviews). Decisions by Viktor in a grilling session the same
+Status: approved v3, 2026-11-02 (revised after two blind challenger reviews and the phase 0 rehearsal, which passed). Decisions by Viktor in a grilling session the same
 day. Builds on `docs/research/2026-08-31-cluster-dual-stack-ipv6.md` (feasibility,
 flags, rollback) and `docs/research/2026-11-02-reliable-ipv6-ingress.md` (today's
 IPv6 path); facts from those are cited, not repeated.
@@ -96,7 +96,10 @@ below, then check: existing IPv4 pods and Services keep working through every
 step; new pods get both families; a `PreferDualStack` LoadBalancer gets an IPv6
 VIP and answers on it with ETP Local; existing nodes without an IPv6 podCIDR do
 not break the controller-manager's node IPAM; the full-list `ipPools` patch keeps
-the IPv4 pool. kind cannot exercise FreeBSD NDP takeover when MetalLB moves a VIP,
+the IPv4 pool. Result (22:23-22:49 UTC): every step passed; a ClusterIP loop saw
+0 failures in 1,800 requests, an ETP Local VIP loop saw 1 failure in 1,679 (during
+a pod roll, not the Service change), and the IPv4 VIP stayed in the Service status
+throughout the dual-stack switch. Evidence in `/home/wizard/dualstack-rehearsal/`. kind cannot exercise FreeBSD NDP takeover when MetalLB moves a VIP,
 so phase 6 drains the announcing node once on the live cluster. Delete the
 cluster afterwards. If any check fails, stop and report.
 
@@ -168,9 +171,15 @@ cluster afterwards. If any check fails, stop and report.
   `installation.enabled = false`, bead code-3ad). The change is recorded as a
   manifest in `stacks/calico/` and applied once, with the reason in the commit;
   adopting the Installation into Terraform stays a separate decision.
-- From this phase pods already get IPv6 addresses (the operator turns on CNI
-  `assign_ipv6` and `FELIX_IPV6SUPPORT` as soon as an IPv6 pool exists), which is
-  why the phase 1 reject comes first.
+- Pre-check: `tigerastatus apiserver` Available. With pools already present,
+  operator v1.44 creates a new pool only through the Calico API server
+  (`pool_controller.go:314-339`); otherwise `ippools` goes Degraded and nothing is
+  created. Live: Available.
+- The IPv4 entry is copied from the live object, defaulted fields included
+  (`allowedUses`, `assignmentMode`, `disableBGPExport`, `disableNewAllocations`).
+- Expect two calico-node rolls: `FELIX_IPV6SUPPORT` and IPv6 autodetection follow
+  the Installation at once, CNI `assign_ipv6` once the pool exists. From then on
+  pods get IPv6 addresses, which is why the phase 1 reject comes first.
 - Disruption: rolling `calico-node` restart, `maxUnavailable: 1`.
 - Check: both IPPools exist; tigerastatus Available; calico-node 6/6; a new test
   pod has both families.
@@ -190,7 +199,9 @@ cluster afterwards. If any check fails, stop and report.
   tigera-operator to 0 (it crash-loops into an I/O storm while the apiserver is
   down, `upgrade-step.sh:728-751`); regenerate the apiserver and
   controller-manager only, with `advertiseAddress: 10.0.20.100` set explicitly;
-  scale the operator back.
+  scale the operator back. Gate on the running kube-apiserver process (or its
+  mirror pod args) carrying the new range, not on `/readyz`, which answered from
+  the old apiserver in the rehearsal before kubelet swapped the static pod.
 - Existing nodes keep their single IPv4 podCIDR and never get an IPv6 one;
   Calico IPAM does not use node podCIDRs, so nothing breaks
   (`range_allocator.go:116-123`).
@@ -211,7 +222,8 @@ cluster afterwards. If any check fails, stop and report.
   `/etc/default/kubelet` `KUBELET_EXTRA_ARGS` (not `kubeadm-flags.env`, which
   kubeadm and `scripts/renew_worker_certs.sh` rewrite), via the phase-2 playbook.
   Restart kubelet one node at a time; gate each on Ready plus a dual InternalIP
-  (a typo leaves the node NotReady). No drain needed.
+  (a typo leaves the node NotReady). No drain needed. Live `kubeadm-flags.env` is
+  `KUBELET_KUBEADM_ARGS=""` on the nodes checked, so only one `--node-ip` is passed.
 - 5b. Only after all six nodes show a dual InternalIP (kube-proxy reads node IPs
   at startup):
 - kube-proxy ConfigMap `clusterCIDR: 10.10.0.0/16,fd62:f088:7d06:100::/56`
