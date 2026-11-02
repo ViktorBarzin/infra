@@ -7610,16 +7610,16 @@ serverFiles:
       # nothing told anyone. Two upstreams broke independently (pitsport
       # rewrote its API to /v1/live-now and started 404ing the old paths;
       # aceztrims' embed host swapped a base64 blob for a pair of XORed hex
-      # strings). tv/docs/playback-guard.md has the incident.
+      # strings). tv/docs/archive/playback-guard.md has the incident.
       #
-      # There IS already a guard, and this does not replace it. The playback
-      # guard (stacks/tv/tv-source-guard.tf) plays a real stream in a
-      # browser and files a Forgejo issue that dispatches a repair agent — a
-      # much stronger assertion than any of these rules make. It is
-      # CALENDAR-GATED though: hourly CronJob, acting only inside T-2h and
-      # T-30m of a session per /api/schedule. So a break that happens midweek
-      # waits for the next race weekend to be noticed, which is exactly how
-      # ten days passed. These rules are the always-on floor underneath it.
+      # These rules are the always-on floor under the tv Watcher (stacks/tv
+      # /watcher.tf). Since tv plan 2026-11-01-f1-channels-build F1 live
+      # streams are Feeds of Channels: the Watcher watches the 24/7 F1
+      # Channels all the time and F1 Live from 60 minutes before a session,
+      # and files a `channel-source` issue that dispatches source-fixer when
+      # one has no smooth Feed. That replaced the hourly playback guard
+      # CronJob. The Watcher alerts per Channel, so a single source going dry
+      # while the Channel plays on its other Feeds is still these rules' job.
       #
       # Metric contract (tv/, tv repo): tv_f1_streams_served is a gauge
       # labelled by `source` (site_key: pitsport, aceztrims, streamed) counting
@@ -7685,14 +7685,16 @@ serverFiles:
             # came back empty, so this fires on day one rather than day nine.
             # What it gives up is a Friday-evening break surfacing before
             # Saturday morning, which he accepted because the repair agent is
-            # autonomous and race weekends are the playback guard's job.
+            # autonomous and race weekends were the playback guard's job. Since
+            # 2026-11 they are the Watcher's (F1 Live from 60 minutes before a
+            # session) and TvF1LiveWithoutFeeds's.
             for: 12h
             keep_firing_for: 6h
             labels:
               severity: warning
             annotations:
               summary: "tv has served zero streams from every source for over 12h, so the site shows nothing"
-              description: "sum(tv_f1_streams_served) has been 0 across all sources for twelve hours, which is the hold this rule actually carries. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check tv_f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
+              description: "sum(tv_f1_streams_served) has been 0 across all sources for twelve hours, which is the hold this rule actually carries. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check tv_f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"'`. The tv Watcher reports only Channels with no smooth Feed (its health card is https://tv.viktorbarzin.me/admin/channels), and watches F1 Live only from 60 minutes before a session, so between race weekends nothing else reports this."
           # Without this every other rule in the group evaluates nothing and
           # goes quiet, which is the same silence the ten-day outage had.
           # sum() over an empty vector returns NO series rather than 0, so
@@ -7779,7 +7781,8 @@ serverFiles:
           # tell "extractor broken" from "no F1 on" without a threshold wider
           # than the summer break, which is too slow to be worth having. Their
           # season-independent signal is F1SourceExtractionErroring below, and
-          # their in-session coverage is the playback guard's job. Add a source
+          # their in-session coverage is the Watcher's F1 Live gate and
+          # TvF1LiveWithoutFeeds. Add a source
           # to this regex only once it has a measured around-the-clock
           # baseline of its own.
           #
@@ -7790,13 +7793,14 @@ serverFiles:
           # chose "repair silently, tell me only if the fix fails" for a
           # single dead source while the site still plays. info routes to
           # #alerts with repeat_interval 8760h, so this posts one line and
-          # never nags while the repair agent works, and the guard's own
+          # never nags while the repair agent works, and source-fixer's own
           # Slack message covers the case where that repair fails.
           #
-          # Not removed altogether, because Prometheus is the only thing
-          # watching midweek: the playback guard is calendar-gated to race
-          # weekends, so without this a source dying on a Tuesday is seen by
-          # nobody until Friday.
+          # Not removed altogether, because nothing else watches one source:
+          # the Watcher alerts on a Channel with no smooth Feed, and Sky
+          # Sports F1 stays up on its other sites' Feeds while one source is
+          # dead, so without this a source dying on a Tuesday is seen by
+          # nobody.
           - alert: F1SourceStale
             # The age must be the LEFT operand: `A and B` returns the samples
             # of A, so with the operands the other way round $value renders the
@@ -7823,13 +7827,14 @@ serverFiles:
           # chose "repair silently, tell me only if the fix fails" for a
           # single dead source while the site still plays. info routes to
           # #alerts with repeat_interval 8760h, so this posts one line and
-          # never nags while the repair agent works, and the guard's own
+          # never nags while the repair agent works, and source-fixer's own
           # Slack message covers the case where that repair fails.
           #
-          # Not removed altogether, because Prometheus is the only thing
-          # watching midweek: the playback guard is calendar-gated to race
-          # weekends, so without this a source dying on a Tuesday is seen by
-          # nobody until Friday.
+          # Not removed altogether, because nothing else watches one source:
+          # the Watcher alerts on a Channel with no smooth Feed, and Sky
+          # Sports F1 stays up on its other sites' Feeds while one source is
+          # dead, so without this a source dying on a Tuesday is seen by
+          # nobody.
           - alert: F1SourceExtractionErroring
             expr: tv_f1_source_last_extraction_ok{role=~"worker|"} == 0
             for: 2h
@@ -7922,6 +7927,64 @@ serverFiles:
             annotations:
               summary: "tv has {{ $value }} stream(s) cached and is serving none of them"
               description: "Extraction found streams and verification rejected all of them, so the site lists nothing while the pipeline reports itself healthy. This is the stage past F1ExtractionNotResolving: the cache has entries and tv_f1_streams_served is 0 across every source. Check what the verifier is rejecting with `homelab logs query '{namespace=\"tv\"} |= \"candidate(s) rejected\"' --since 1h`, which names the HTTP status per candidate. A whole-site rejection usually means the upstreams rotated a token format or an origin started refusing our egress, not that six independent streams died at once."
+          # The daily source probe stopping. Added 2026-11 with the probe (tv
+          # plan 2026-11-01-f1-channels-build, decision 9). Once a day at
+          # 06:00 UTC the Worker asks each dormant extractor's upstream whether
+          # it answers in the shape the extractor reads, and files a
+          # `channel-source` issue for source-fixer when one starts to. A probe
+          # that has stopped running looks exactly like every dormant site
+          # staying dead, so this is the only thing that tells them apart.
+          #
+          # 129600s is 36 hours: one missed daily run plus 12 hours, past a
+          # Worker restart across 06:00 and short of a second missed run.
+          #
+          # The `> 0` guard is not in the design's expression and was added
+          # for the same reason F1SourceStale carries one: a gauge the Worker
+          # has not set since it started exports 0, and time() - 0 is 56
+          # years, so without it every Worker restart outside 06:00 would fire
+          # this an hour later. The cost is that a Worker restarted before its
+          # first run says nothing until that run. Seeding the gauge at start
+          # from the last run the Worker stored (tv:v1:source-probe) would
+          # close that window.
+          - alert: TvSourceProbeStale
+            expr: |
+              (time() - tv_source_probe_last_run_timestamp_seconds{role=~"worker|"}) > 129600
+              and tv_source_probe_last_run_timestamp_seconds{role=~"worker|"} > 0
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv daily source probe has not run for {{ $value | humanizeDuration }}"
+              description: "The Worker's source_probe job (daily at 06:00 UTC, tv/source_probe.py) has not completed a run in over 36 hours, so a dormant F1 site that starts answering again would not be noticed and nothing dispatches source-fixer for it. Check the Worker's log for the job with `homelab logs query '{namespace=\"tv\"} |= \"source_probe\"' --since 48h`, and the last run the admin route recorded: GET https://tv.viktorbarzin.me/api/admin/sources/probe as an admin. POST /api/admin/sources/probe?dry=1 runs it now without filing."
+          # F1 Live on air with no Feed at all. Added 2026-11 with F1 Live
+          # (tv plan 2026-11-01-f1-channels-build). F1 Live is the Channel
+          # whose Feeds are the per-session streams (streamed, ppv); it is
+          # listed from 30 minutes before a session to 30 minutes after it.
+          # The Watcher already files an issue at T-30 minutes when F1 Live
+          # has no Feed; this is the floor under it, in case the Watcher is
+          # down or its issue could not be filed.
+          #
+          # rehearsal="0" keeps an admin rehearsal out of it: a rehearsal runs
+          # with whatever streamed and ppv list at the time, and its alerts are
+          # drills. max() because more than one pod may report the on-air
+          # gauge; the `or on() vector(0)` covers tv_f1_live_feeds emitting no
+          # series when F1 Live has no Feed, since sum() over an empty vector
+          # returns no series rather than 0.
+          #
+          # 20m: F1 Live goes on air 30 minutes before the session, so this
+          # fires about 10 minutes before lights out at the earliest, after
+          # the extraction cadence (900s pre-session) has had two runs to find
+          # a stream.
+          - alert: TvF1LiveWithoutFeeds
+            expr: |
+              max(tv_f1_live_on_air{rehearsal="0"}) == 1
+              and on() (sum(tv_f1_live_feeds) or on() vector(0)) == 0
+            for: 20m
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv F1 Live is on air with no Feed for 20m"
+              description: "A session is on (tv_f1_live_on_air) and F1 Live has no Feed from any site, so the F1 group shows only the 24/7 F1 Channels. Check what extraction found with `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"' --since 1h`, and whether F1 detection or English-only rejected the session's streams. The Watcher files a `channel-source` issue for f1-live at T-30 minutes when it has no Feed; look for it on viktor/infra before filing another."
           # Playback failing at the client, which no rule watched either.
           #
           # ADR-0003 decided against alerting on client-reported playback,
@@ -9114,7 +9177,7 @@ extraScrapeConfigs: |
   # 2026-08-26 10:36 to 2026-09-05, about ten days, with nothing to notice it —
   # the app exposed no metrics at all until now. Alerts: the "F1 Stream
   # Sources" group in alerting_rules.yml. Incident and timing analysis:
-  # tv/docs/playback-guard.md.
+  # tv/docs/archive/playback-guard.md.
   #
   # Every tv pod, found by pod discovery, NOT the `tv` Service. Changed
   # for ADR-0029 in the tv repo, which splits the app into three Roles
@@ -9130,8 +9193,8 @@ extraScrapeConfigs: |
   # pod name. The alert rules read Worker-owned gauges with role=~"worker|",
   # which matches the Worker and the unlabelled monolith, so this job and those
   # rules work on either side of the cutover. `app=tv` matches the app
-  # pods only: the source-guard, the data-copy Job and the TV publish pod carry
-  # other `app` values.
+  # pods only: the data-copy Job and the TV publish pod carry other `app`
+  # values.
   #
   # 1m rather than the extraction cadence: the gauges are cheap (a handful of
   # series per pod) and a fast scrape keeps `up` meaningful and the alert
