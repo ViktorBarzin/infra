@@ -1,0 +1,164 @@
+---
+# playbooks/pfsense-haproxy.yml
+#
+# The pfSense HAProxy package and the ports it owns:
+#   - scripts/pfsense-haproxy-bootstrap.php declares the package config: IPv4
+#     mail frontends, the SNI-routed internal :443, and the six public IPv6
+#     frontends on the HE tunnel address (443/80 -> Traefik, 25/465/587/993 ->
+#     mail), all send-proxy-v2.
+#   - playbooks/files/pfsense-ipv6-ingress-config.php keeps the webConfigurator
+#     HTTP redirect off, so pfSense's nginx never listens on port 80 and can
+#     never take the tunnel address's :80 from HAProxy, and removes the hooks
+#     of the retired standalone IPv6 bridge.
+#
+# History (2026-11-02): public IPv6 used to go through a standalone HAProxy
+# started by a boot <shellcmd> (ipv6_proxy.sh, ipv6-haproxy.cfg,
+# rc.d/ipv6proxy). It went down for 29 days (Jul-Aug 2026) and 10 days
+# (Oct-Nov 2026), both times because pfSense's nginx took [::]:80 on a config
+# regeneration; the package's own stop (`killall haproxy`) could also kill it.
+# The first apply of this playbook stops that bridge, has the package take the
+# six IPv6 ports, checks they are held, and deletes the old files. If the
+# package does not take them, the rescue starts the old bridge again.
+# See docs/research/2026-11-02-reliable-ipv6-ingress.md.
+#
+# External check: gatus on mx2, edge group "wan direct ipv6: *"
+# (stacks/backup-mx/cloud-init.yaml.tftpl), pages Slack after ~3 min.
+#
+# RUN (from repo root; claim presence first:
+#      presence claim host:pfsense --purpose "pfsense haproxy"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml
+#
+# Both configurators leave pfSense config history entries
+# ("ansible (pfsense-haproxy)"), restorable from
+# Diagnostics > Backup & Restore > Config History.
+
+- name: pfSense HAProxy package and IPv6 ingress
+  hosts: pfsense
+  gather_facts: false
+  vars:
+    bootstrap_remote: /tmp/pfsense-haproxy-bootstrap.php
+    ingress_cfg_remote: /tmp/pfsense-ipv6-ingress-config.php
+    tunnel_ipv6: "2001:470:6e:43d::2"
+    ipv6_ports: [443, 80, 25, 465, 587, 993]
+    legacy_rc: /usr/local/etc/rc.d/ipv6proxy
+
+  tasks:
+    - name: Ship the HAProxy package configurator
+      ansible.builtin.copy:
+        src: ../scripts/pfsense-haproxy-bootstrap.php
+        dest: "{{ bootstrap_remote }}"
+        mode: "0700"
+        owner: root
+      # The scripts are the idempotency boundary; see pfsense-tailscale.yml.
+      changed_when: false
+      check_mode: false
+
+    - name: Ship the IPv6 ingress configurator
+      ansible.builtin.copy:
+        src: files/pfsense-ipv6-ingress-config.php
+        dest: "{{ ingress_cfg_remote }}"
+        mode: "0700"
+        owner: root
+      changed_when: false
+      check_mode: false
+
+    # ── check mode ─────────────────────────────────────────────────────────
+    - name: HAProxy package changes (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f {{ bootstrap_remote }} -- --check
+      changed_when: false
+      check_mode: false
+      register: hap_check
+      when: ansible_check_mode
+
+    - name: IPv6 ingress config.xml changes (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f {{ ingress_cfg_remote }} -- --check
+      changed_when: false
+      check_mode: false
+      register: ing_check
+      when: ansible_check_mode
+
+    - name: Report what check mode would change
+      ansible.builtin.debug:
+        msg:
+          haproxy: "{{ (hap_check.stdout | from_json).changes }}"
+          config_xml: "{{ (ing_check.stdout | from_json).changes }}"
+      when: ansible_check_mode
+
+    # ── apply ──────────────────────────────────────────────────────────────
+    - name: Hand the IPv6 ports to the HAProxy package
+      when: not ansible_check_mode
+      block:
+        - name: Stop the retired standalone IPv6 bridge if it is still installed
+          ansible.builtin.shell: |
+            if [ -x {{ legacy_rc }} ]; then {{ legacy_rc }} onestop; echo stopped; fi
+          register: legacy_stop
+          changed_when: "'stopped' in legacy_stop.stdout"
+
+        - name: Apply the HAProxy package configuration
+          ansible.builtin.command: /usr/local/bin/php -f {{ bootstrap_remote }} --
+          register: hap_apply
+          changed_when: (hap_apply.stdout_lines[-1] | from_json).changed | bool
+
+        - name: Report HAProxy package changes
+          ansible.builtin.debug:
+            var: (hap_apply.stdout_lines[-1] | from_json)
+
+        - name: Check the package process holds every IPv6 port
+          # The listener's owner must be the package haproxy (its config file is
+          # /var/etc/haproxy/haproxy.cfg), not a leftover standalone process.
+          ansible.builtin.shell: |
+            missing=""
+            for p in {{ ipv6_ports | join(' ') }}; do
+              pid=$(sockstat -6 -l | awk -v a="{{ tunnel_ipv6 }}:$p" '$6 == a && $2 == "haproxy" {print $3; exit}')
+              if [ -z "$pid" ] || ! ps -o args= -p "$pid" | grep -q /var/etc/haproxy/haproxy.cfg; then
+                missing="$missing $p"
+              fi
+            done
+            [ -z "$missing" ] || { echo "not held by the package:$missing"; exit 1; }
+            echo "all {{ ipv6_ports | length }} IPv6 ports held by the package"
+          retries: 5
+          delay: 3
+          register: binds
+          until: binds.rc == 0
+          changed_when: false
+      rescue:
+        - name: Restart the standalone bridge so IPv6 keeps working
+          ansible.builtin.shell: |
+            if [ -x {{ legacy_rc }} ]; then {{ legacy_rc }} onestart; fi
+          changed_when: true
+        - name: Stop here
+          ansible.builtin.fail:
+            msg: >-
+              The HAProxy package did not take the IPv6 ports; the standalone
+              bridge was restarted. Check /var/etc/haproxy/haproxy.cfg and the
+              package status (Status > HAProxy) before retrying.
+
+    - name: Apply the IPv6 ingress config.xml settings
+      ansible.builtin.command: /usr/local/bin/php -f {{ ingress_cfg_remote }} --
+      register: ing_apply
+      changed_when: (ing_apply.stdout | from_json).changed | bool
+      when: not ansible_check_mode
+
+    - name: Report IPv6 ingress config.xml changes
+      ansible.builtin.debug:
+        var: (ing_apply.stdout | from_json).changes
+      when: not ansible_check_mode
+
+    - name: Find files of the retired standalone bridge
+      ansible.builtin.find:
+        paths: [/usr/local/etc, /usr/local/etc/rc.d]
+        patterns:
+          - "ipv6_proxy.sh*"
+          - "ipv6_proxy_watchdog.sh"
+          - "ipv6-haproxy.cfg*"
+          - "ipv6proxy*"
+      register: legacy_files
+
+    - name: Remove files of the retired standalone bridge
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ legacy_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"

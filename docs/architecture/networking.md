@@ -565,78 +565,56 @@ Critical services are scaled to **3 replicas**:
 
 PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance or disruptions.
 
-### IPv6 Ingress (HE Tunnel + HAProxy Bridge)
+### IPv6 Ingress (HE Tunnel + pfSense HAProxy package)
 
-Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). Non-proxied hostnames (for example `ha-sofia`, `immich`) carry an AAAA record → `2001:470:6e:43d::2`. The apex is Cloudflare-proxied, so its AAAA records are Cloudflare's addresses and Cloudflare reaches the origin over IPv4.
+Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). Non-proxied hostnames (for example `ha-sofia`, `immich`; 28 names in total) carry an AAAA record → `2001:470:6e:43d::2`. The apex is Cloudflare-proxied, so its AAAA records are Cloudflare's addresses and Cloudflare reaches the origin over IPv4.
 
-pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy** on pfSense (a separate config/service — *not* the pfSense HAProxy package) that listens on the tunnel IPv6 and forwards to the IPv4 cluster LBs with **PROXY protocol v2 (`send-proxy-v2`)**, so real client IPv6 addresses propagate to CrowdSec instead of being masked as `10.0.20.1`:
+pfSense cannot NAT IPv6→IPv4, so the **pfSense HAProxy package** (the same process that serves the IPv4 mail frontends and the SNI-routed internal `:443`) listens on the tunnel address and forwards to the IPv4 cluster with **PROXY protocol v2 (`send-proxy-v2`)**, so real client IPv6 addresses reach Traefik and CrowdSec instead of `10.0.20.1`:
 
-| Listen `[2001:470:6e:43d::2]:` | → Backend (`send-proxy-v2`) | Purpose |
+| Frontend (`[2001:470:6e:43d::2]:`) | → Pool (`send-proxy-v2`) | Purpose |
 |---|---|---|
-| 443, 80 | Traefik `10.0.20.203:443` / `:80` | Web apps |
-| 25, 465, 587, 993 | mail NodePorts `30125` / `30126` / `30127` / `30128` on .101-103 | SMTP / SMTPS / Submission / IMAPS |
+| `ipv6_https_443` (443) | `webgui_traefik_443` → Traefik `10.0.20.203:443` | Web apps |
+| `ipv6_http_80` (80) | `traefik_80` → Traefik `10.0.20.203:80` | HTTP → HTTPS redirect at Traefik |
+| `ipv6_smtp_25`, `ipv6_smtps_465`, `ipv6_submission_587`, `ipv6_imaps_993` | the IPv4 mail pools (NodePorts `30125`-`30128` on .101-.104, with their health checks) | SMTP / SMTPS / Submission / IMAPS |
 
-The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`entryPoints.web/websecure.proxyProtocol.trustedIPs` in `stacks/traefik/.../main.tf`) — real IPv4 clients arrive via ETP=Local with their own source IP (never `10.0.20.1`), so they are unaffected. Mail backends hit the mailserver's PROXY-aware alt-listeners (same pattern as the IPv4 mail HAProxy — see `mailserver.md`).
+All of it is declared in `scripts/pfsense-haproxy-bootstrap.php` and applied by `playbooks/pfsense-haproxy.yml` (`--check --diff` first; claim `host:pfsense`). The package starts, reloads and restarts the process itself, so nothing on this path depends on a boot hook or a hand-written service.
 
-**No QUIC over IPv6** — the bridge is TCP/h2 only; IPv4 carries QUIC/HTTP3.
+- The IPv6 binds carry `transparent` (`IPV6_BINDANY`, compiled into pfSense's HAProxy), so they succeed even if `gif0` has not got its address yet at boot. A slow tunnel therefore cannot stop the shared process, and with it IPv4 mail, from starting.
+- The IPv6 frontends and the backend pools use 1 h idle timeouts (HAProxy's default is 30 s). The IPv4 mail and internal-443 frontends keep 30 s client idle.
+- The Traefik pools have no health `check`: a bare TCP probe on a PROXY-expecting listener fails and would mark it DOWN. The mail pools probe the non-PROXY health NodePorts instead (see `mailserver-pfsense-haproxy.md`).
+- `playbooks/pfsense-haproxy.yml` also keeps **`system/webgui/disablehttpredirect`** set. pfSense's nginx writes its only port-80 listeners (`listen 80; listen [::]:80;`) inside the HTTP-to-HTTPS redirect block and skips that block when the key is set (`src/etc/inc/system.inc:2012` on 2.7.2). Without it, every regeneration of the webConfigurator config puts a wildcard `[::]:80` back, which covers the tunnel address too. Side effect: `http://<pfsense>/` no longer redirects to the `:8443` GUI.
+
+The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`entryPoints.web/websecure.proxyProtocol.trustedIPs` in `stacks/traefik/.../main.tf`). Real IPv4 clients arrive via ETP=Local with their own source IP (never `10.0.20.1`), so they are unaffected.
+
+**External check:** gatus on mx2 (`stacks/backup-mx`, IPv6 enabled on its OCI VCN on 2026-11-02) probes `tcp://[2001:470:6e:43d::2]:443` and `:993` every 60 s in its `edge` group and pages Slack after about 3 minutes of failures. The probes use the literal address because, given a hostname, Go falls back to IPv4 and the check would stay green with IPv6 down. `ping6` is not a useful check: pfSense answers ICMPv6 whatever HAProxy is doing.
+
+**No QUIC over IPv6** — HAProxy here is TCP only; IPv4 carries QUIC/HTTP3.
 
 The origin nonetheless returns `alt-svc: h3=":443"; ma=2592000` on this path, because
-the header comes from the `websecure` entrypoint and the bridge is a transparent TCP
-proxy that cannot rewrite it (`mode tcp`; TLS terminates at Traefik). So an IPv6
+the header comes from the `websecure` entrypoint and HAProxy is a TCP proxy that
+cannot rewrite it (`mode tcp`; TLS terminates at Traefik). So an IPv6
 client is told to use QUIC that has no listener, spends one failed attempt, and falls
 back to h2 — which is why external HTTP/3 checkers report no HTTP/3 for
 origin-direct hosts even while IPv4 QUIC is healthy. Browsers mark the alternative
 service broken and stop probing, so the cost is a slower first connection rather than
-a failure. Measured 2026-08-31: genuine (non-crawler) IPv6 traffic is ~0.34% of
-requests and no HTTP/3 request has ever arrived over IPv6. Closing the gap needs
-either a second entrypoint without `http3` for the bridge to target, or a
-hostNetwork QUIC listener on a node with a global IPv6; the trade-offs and a full
-dual-stack assessment are in `docs/research/2026-08-31-cluster-dual-stack-ipv6.md`.
+a failure. Closing the gap needs either a second entrypoint without `http3` for these
+frontends to target, or a hostNetwork QUIC listener on a node with a global IPv6; the
+trade-offs and a full dual-stack assessment are in
+`docs/research/2026-08-31-cluster-dual-stack-ipv6.md`.
 
-The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are **inactivity** timeouts (reset on every byte), *not* total-transfer caps — so steady large downloads/uploads over IPv6 are not limited by the bridge. The download-duration cap was solely Traefik's `writeTimeout` (see Entrypoint Transport Timeouts above), now `0`.
+**History.** Until 2026-11-02 this path was a standalone HAProxy (`/usr/local/etc/ipv6-haproxy.cfg`, `rc.d/ipv6proxy`, started by a config.xml `<shellcmd>` running `ipv6_proxy.sh`, which also patched nginx off the tunnel address); before 2026-05-30 it was `socat`, which masked every IPv6 client as `10.0.20.1`. The standalone bridge was down twice: 2026-07-18 to 08-16 (29 days; the nginx patch's guard stopped matching once the GUI moved to 8443) and 2026-10-23 to 11-02 (10 days; a WireGuard package re-sync during boot regenerated the nginx config with wildcard `[::]:80` after the patch had run). HAProxy binds every frontend or none, so each time web and mail went down together, and nothing outside pfSense noticed. Stopping the package's HAProxy (`killall haproxy` in its rc script) could also kill the standalone process. The research and the option comparison are in `docs/research/2026-11-02-reliable-ipv6-ingress.md`.
 
-pfSense files (out-of-band, **not Terraform**):
-- `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
-- `/usr/local/etc/rc.d/ipv6proxy` — service wrapper (`service ipv6proxy {start,stop,status}`); `start` does a graceful `-sf` reload.
-- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): rebinds every wildcard `listen [::]:<port>` in the pfSense nginx config onto the LAN IPv6 to free the tunnel IPv6, then `service ipv6proxy onestart`. Tracked at `scripts/pfsense-ipv6-proxy.sh`.
-- `/usr/local/etc/ipv6_proxy_watchdog.sh` — runs from a config.xml cron entry every 5 minutes. If any of the six frontends is unbound, or the nginx config has a wildcard IPv6 listener again, it re-runs `ipv6_proxy.sh`. Each run pushes `ipv6_bridge_up`, `ipv6_bridge_last_run_timestamp_seconds` and (after a repair) `ipv6_bridge_last_heal_timestamp_seconds` to the pushgateway as job `pfsense-ipv6-bridge`, read by the `IPv6IngressBridgeDown`, `IPv6IngressBridgeWatchdogStale` and `IPv6IngressBridgeSelfHealed` alerts. Tracked at `scripts/pfsense-ipv6-proxy-watchdog.sh`.
-
-Both scripts and the cron entry are deployed by `playbooks/pfsense-ipv6-bridge.yml` (run `--check --diff` first; claim `host:pfsense`). The playbook also checks that the boot `<shellcmd>` exists.
-
-**Gotcha:** the backends use **no health `check`** — a plain TCP check hits the PROXY-expecting listeners without a PROXY header and would false-mark them DOWN. This path previously used `socat` (functional, but masked every IPv6 client as `10.0.20.1`); replaced by HAProxy on 2026-05-30 for real client IPs.
-
-**Gotcha — the nginx rebind must stay port-agnostic (2026-08-16).** HAProxy binds every
-frontend or none, so a single unavailable port takes the whole bridge down — all six
-frontends, web *and* mail. `ipv6_proxy.sh` used to guard its rebind on the literal string
-`[::]:443`; once the webConfigurator moved to **8443** that guard stopped matching, the
-rebind was skipped, and nginx kept wildcard `*:80` — which is the tunnel address too, so
-HAProxy's `bind [2001:470:6e:43d::2]:80` could not start. The mismatch was latent until the
-pfSense reboot on 2026-07-18 and then went unnoticed for 29 days: IPv4 was unaffected, and
-Cloudflare-proxied hosts reach the origin over IPv4, so only the ~31 `non-proxied` ingresses
-and IPv6 mail were dark. The guard now matches any `listen [::]:` and the script logs
-whether `[TUNNEL]:443` actually came up.
-
-**Gotcha — pfSense regenerates the nginx config after the boot script runs (2026-11-02).** The boot
-script only fixes the nginx config that exists when it runs. pfSense rewrites
-`/var/etc/nginx-webConfigurator.conf` whenever the webConfigurator restarts, for example
-when a package is installed or re-synced, or a certificate or GUI setting changes, and the
-rewritten file goes back to wildcard `[::]:80`. On 2026-10-23 the WireGuard package re-applied
-its defaults during boot (five config history entries between 09:18:43 and 09:19:07 EEST,
-within 41 seconds of kernel start at 09:18:26), the bridge could not bind, and IPv6 web and mail stayed down until
-2026-11-02, about 10 days. The 5-minute watchdog above covers this case, and the alerts report it.
-
-**Symptoms of a down bridge**, useful for the next diagnosis: over IPv6 a non-proxied host
-gives `connection refused` on 443, while port 80 returns the pfSense nginx `301` to
-`https://<host>:8443/` — i.e. the pfSense login page behind its self-signed certificate. A
-browser following that redirect never falls back to IPv4, because the 301 is a perfectly
-valid response. `ping6` to the tunnel address still succeeds throughout (pfSense answers
-ICMP), so reachability checks look healthy. Verify a repair with
-`service ipv6proxy status` and a forced request:
-`curl --resolve <host>:443:2001:470:6e:43d::2 https://<host>/`.
+**Symptoms of a broken IPv6 path**, useful for the next diagnosis: over IPv6 a non-proxied host
+gives `connection refused` on 443. If port 80 instead returns a `301` to
+`https://<host>:8443/`, pfSense's nginx holds `[::]:80` again (check that
+`disablehttpredirect` is still set). A browser following that redirect never falls back
+to IPv4, because the 301 is a valid response. Verify with `sockstat -6 -l | grep
+2001:470:6e:43d::2` on pfSense (six `haproxy` lines) and a forced request:
+`curl --resolve <host>:443:[2001:470:6e:43d::2] https://<host>/`.
 
 ### SSH on 443 (Bastion)
 
-`ssh.viktorbarzin.me` (non-proxied A/AAAA) is a jump-only sshd reachable on port 443 with SSH carried inside TLS, for networks that only allow outbound HTTPS. An `IngressRouteTCP` on the `websecure` entrypoint matches ``HostSNI(`ssh.viktorbarzin.me`)``, terminates TLS with the default wildcard certificate and forwards plain TCP to the `bastion` pod. Traefik tries TCP routers before HTTP routers on a shared entrypoint, and a specific `HostSNI` claims only that hostname, so every other request on 443 continues to the HTTP routers. No pfSense change was needed: the existing 443 `rdr` (IPv4) and HAProxy bridge (IPv6) already deliver to Traefik.
+`ssh.viktorbarzin.me` (non-proxied A/AAAA) is a jump-only sshd reachable on port 443 with SSH carried inside TLS, for networks that only allow outbound HTTPS. An `IngressRouteTCP` on the `websecure` entrypoint matches ``HostSNI(`ssh.viktorbarzin.me`)``, terminates TLS with the default wildcard certificate and forwards plain TCP to the `bastion` pod. Traefik tries TCP routers before HTTP routers on a shared entrypoint, and a specific `HostSNI` claims only that hostname, so every other request on 443 continues to the HTTP routers. No pfSense change was needed: the existing 443 `rdr` (IPv4) and the HAProxy package's IPv6 frontends already deliver to Traefik.
 
 From the bastion, clients `ProxyJump` to devvm (10.0.10.10), pfSense (10.0.20.1) or the Proxmox host (192.168.1.127) on 22 only, enforced by sshd `PermitOpen` and a Calico egress policy with an explicit Deny (a Kubernetes egress NetworkPolicy has no effect in tier 3-edge/4-aux namespaces while `wave1-egress-observe-tier34` allows all egress at order 2000). Keys only, no shell, one account per client from Vault `secret/bastion`, a Traefik `inFlightConn` cap of 4 per client IP, and a Slack post per login. sshd sees Traefik's pod IP rather than the client's. The entrypoint's `readTimeout` does not cut long sessions: Traefik clears that read deadline once a connection is routed, and `writeTimeout` is 0. Runbook: [bastion-ssh.md](../runbooks/bastion-ssh.md); design: [2026-09-28-ssh-bastion-443-design.md](../plans/2026-09-28-ssh-bastion-443-design.md).
 

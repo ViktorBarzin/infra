@@ -20,13 +20,25 @@
 //   4 frontends on pfSense 10.0.20.1:{25,465,587,993} TCP mode.
 //   + 1 legacy test frontend on :2525 (kept for validation; safe to remove later).
 //
-// USAGE (on pfSense host, via SSH as admin)
-//   scp infra/scripts/pfsense-haproxy-bootstrap.php admin@10.0.20.1:/tmp/
-//   ssh admin@10.0.20.1 'php /tmp/pfsense-haproxy-bootstrap.php'
+//   + 6 public IPv6 frontends on the HE tunnel address 2001:470:6e:43d::2
+//     (2026-11-02): 443/80 -> Traefik 10.0.20.203 and 25/465/587/993 -> the
+//     mail pools above, all send-proxy-v2. They replace the standalone
+//     HAProxy bridge (ipv6_proxy.sh, ipv6-haproxy.cfg, rc.d/ipv6proxy and its
+//     watchdog), which broke twice: pfSense's nginx took [::]:80 on a config
+//     regeneration, and the package's own stop runs `killall haproxy`. Here the
+//     package starts, reloads and restarts the one process itself. See
+//     docs/research/2026-11-02-reliable-ipv6-ingress.md.
+//
+// USAGE
+//   ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml --check --diff
+//   ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml
+//   (by hand: php -f pfsense-haproxy-bootstrap.php -- [--check])
 //
 // IDEMPOTENCY
-//   Removes any existing entries named mailserver_* before re-adding, so
-//   repeat runs are safe and behave as reset-to-declared.
+//   Removes the entries it declares (by name) before re-adding them, so
+//   repeat runs are safe and behave as reset-to-declared. --check reports
+//   which declared entries would change and writes nothing.
+//   Output: JSON {"changed": bool, "changes": [...]} (plus haproxy messages).
 
 require_once('/etc/inc/config.inc');
 require_once('/usr/local/pkg/haproxy/haproxy.inc');
@@ -35,13 +47,29 @@ require_once('/usr/local/pkg/haproxy/haproxy_utils.inc');
 global $config;
 parse_config(true);
 
+$opts  = getopt('', ['check']);
+$check = array_key_exists('check', $opts);
+// Snapshot of the declared entries before this run, for --check and "changed".
+function declared_snapshot(array $h, array $pools, array $fes): array {
+    $snap = [];
+    foreach (($h['ha_pools']['item'] ?? []) as $p) {
+        if (in_array($p['name'] ?? '', $pools, true)) $snap['pool:' . $p['name']] = json_encode($p);
+    }
+    foreach (($h['ha_backends']['item'] ?? []) as $f) {
+        if (in_array($f['name'] ?? '', $fes, true)) $snap['frontend:' . $f['name']] = json_encode($f);
+    }
+    $snap['enable']  = $h['enable']  ?? '';
+    $snap['maxconn'] = $h['maxconn'] ?? '';
+    return $snap;
+}
+
 if (!is_array($config['installedpackages']['haproxy'])) {
     $config['installedpackages']['haproxy'] = [];
 }
 $h = &$config['installedpackages']['haproxy'];
 
-$h['enable']  = 'yes';
-$h['maxconn'] = '1000';
+$want_enable  = 'yes';
+$want_maxconn = '1000';
 
 // Our declared object names (anything starting with mailserver_ is ours)
 $POOL_NAMES = [
@@ -52,6 +80,7 @@ $POOL_NAMES = [
     'mailserver_nodes_smtps',
     'mailserver_nodes_sub',
     'mailserver_nodes_imaps',
+    'traefik_80',                // public IPv6 :80 -> Traefik web (2026-11-02)
 ];
 $FRONTEND_NAMES = [
     'internal_https_443',        // SNI-routed internal 443 (2026-06-10)
@@ -60,7 +89,15 @@ $FRONTEND_NAMES = [
     'mailserver_proxy_465',
     'mailserver_proxy_587',
     'mailserver_proxy_993',
+    'ipv6_https_443',            // public IPv6 frontends (2026-11-02)
+    'ipv6_http_80',
+    'ipv6_smtp_25',
+    'ipv6_smtps_465',
+    'ipv6_submission_587',
+    'ipv6_imaps_993',
 ];
+
+$before = declared_snapshot($h, $POOL_NAMES, $FRONTEND_NAMES);
 
 // k8s workers. Not in the cluster: master (control-plane) and node5
 // (doesn't exist in this topology).
@@ -122,6 +159,11 @@ function build_pool(
         'monitor_domain'         => $monitor_domain,
         'checkinter'             => '5000',
         'retries'                => '3',
+        // 1h idle limit on the server side (HAProxy default 30s). The IPv6
+        // frontends allow 1h client idle, as the retired standalone bridge
+        // did; the IPv4 mail frontends keep 30s client idle, so their
+        // behaviour does not change.
+        'server_timeout'         => '3600000',
         'ha_servers'             => ['item' => $servers],
         'advanced_bind'          => '',
         'persist_cookie_enabled' => '',
@@ -204,6 +246,10 @@ $h['ha_pools']['item'][] = [
     'monitor_domain'         => '',
     'checkinter'             => '',
     'retries'                => '',
+    // 1h idle limit on the server side, as the retired IPv6 bridge had
+    // (HAProxy default 30s): a request Traefik answers slowly (a large upload
+    // still processing) or a quiet websocket is not cut at 30s.
+    'server_timeout'         => '3600000',
     'ha_servers'             => ['item' => [[
         'name'     => 'traefik',
         'address'  => '10.0.20.203',
@@ -232,6 +278,36 @@ $h['ha_pools']['item'][] = [
         'weight'   => '10',
         'ssl'      => '',
         'advanced' => '',
+        'status'   => 'active',
+    ]]],
+    'advanced_bind'          => '',
+    'persist_cookie_enabled' => '',
+    'transparent_clientip'   => '',
+    'advanced'               => '',
+];
+
+// ── Public IPv6 :80 pool (2026-11-02) ───────────────────────────────────
+// Same shape as webgui_traefik_443: Traefik trusts PROXY v2 from 10.0.20.1,
+// and there is no health check because a bare probe on a PROXY-expecting
+// listener fails (runbook gotcha).
+$h['ha_pools']['item'][] = [
+    'name'                   => 'traefik_80',
+    'balance'                => '',
+    'check_type'             => 'none',
+    'monitor_domain'         => '',
+    'checkinter'             => '',
+    'retries'                => '',
+    // 1h idle limit on the server side, as the retired IPv6 bridge had
+    // (HAProxy default 30s): a request Traefik answers slowly (a large upload
+    // still processing) or a quiet websocket is not cut at 30s.
+    'server_timeout'         => '3600000',
+    'ha_servers'             => ['item' => [[
+        'name'     => 'traefik',
+        'address'  => '10.0.20.203',
+        'port'     => '80',
+        'weight'   => '10',
+        'ssl'      => '',
+        'advanced' => 'send-proxy-v2',
         'status'   => 'active',
     ]]],
     'advanced_bind'          => '',
@@ -312,9 +388,70 @@ $h['ha_backends']['item'][] = [
     'advanced'   => base64_encode("tcp-request inspect-delay 5s\n\ttcp-request content accept if { req.ssl_hello_type 1 } || !{ req.ssl_hello_type 1 }"),
 ];
 
-write_config('mailserver HAProxy + SNI-routed internal 443 (hostname->Traefik, no-SNI->webgui:8443)');
+// ── Public IPv6 frontends on the HE tunnel address (2026-11-02) ─────────
+// One frontend per port so each reads clearly in the GUI and stats. All bind
+// with `transparent` (IPV6_BINDANY, compiled into this HAProxy): the bind
+// succeeds even if gif0 has not got its address yet at boot, so a slow tunnel
+// can never stop the package process, and with it IPv4 mail, from starting.
+// The mail frontends share the IPv4 pools and their health checks. The IPv4
+// mail frontends bind ':<port>' (all IPv4 addresses), so these never collide.
+$TUNNEL_IPV6 = '2001:470:6e:43d::2';
+$ipv6_frontends = [
+    ['ipv6_https_443',      '443', 'webgui_traefik_443',     'public IPv6 HTTPS -> Traefik :443 (proxy-v2)'],
+    ['ipv6_http_80',        '80',  'traefik_80',             'public IPv6 HTTP -> Traefik :80 (proxy-v2)'],
+    ['ipv6_smtp_25',        '25',  'mailserver_nodes_smtp',  'public IPv6 SMTP -> mail NodePort 30125 (proxy-v2)'],
+    ['ipv6_smtps_465',      '465', 'mailserver_nodes_smtps', 'public IPv6 SMTPS -> mail NodePort 30126 (proxy-v2)'],
+    ['ipv6_submission_587', '587', 'mailserver_nodes_sub',   'public IPv6 submission -> mail NodePort 30127 (proxy-v2)'],
+    ['ipv6_imaps_993',      '993', 'mailserver_nodes_imaps', 'public IPv6 IMAPS -> mail NodePort 30128 (proxy-v2)'],
+];
+foreach ($ipv6_frontends as [$name, $port, $pool, $descr]) {
+    $h['ha_backends']['item'][] = [
+        'name'      => $name,
+        'descr'     => $descr,
+        'status'    => 'active',
+        'secondary' => '',
+        'type'      => 'tcp',
+        'a_extaddr' => ['item' => [[
+            'extaddr'          => 'custom',
+            'extaddr_custom'   => $TUNNEL_IPV6,
+            'extaddr_port'     => $port,
+            'extaddr_ssl'      => '',
+            'extaddr_advanced' => 'transparent',
+        ]]],
+        'backend_serverpool' => $pool,
+        // 1h client idle, as the retired standalone bridge had (default 30s).
+        'client_timeout'     => '3600000',
+        'ha_acls'    => '',
+        'dontlognull'=> '',
+        'httpclose'  => '',
+        'forwardfor' => '',
+        'advanced'   => '',
+    ];
+}
 
+$h['enable']  = $want_enable;
+$h['maxconn'] = $want_maxconn;
+
+$after   = declared_snapshot($h, $POOL_NAMES, $FRONTEND_NAMES);
+$changes = [];
+foreach (array_unique(array_merge(array_keys($before), array_keys($after))) as $k) {
+    $b = $before[$k] ?? null;
+    $a = $after[$k]  ?? null;
+    if ($b === $a) continue;
+    $changes[] = ($b === null ? 'ADD ' : ($a === null ? 'DELETE ' : 'UPDATE ')) . $k;
+}
+$changed = count($changes) > 0;
+
+if ($check) {
+    echo json_encode(['changed' => $changed, 'changes' => $changes]), "\n";
+    exit(0);
+}
+
+$rc = true;
 $messages = '';
-$rc = haproxy_check_and_run($messages, true);
-echo 'haproxy_check_and_run rc=' . ($rc ? 'OK' : 'FAIL') . "\n";
-echo "messages: $messages\n";
+if ($changed) {
+    write_config('ansible (pfsense-haproxy): mail + internal 443 + public IPv6 frontends');
+    $rc = haproxy_check_and_run($messages, true);
+}
+echo json_encode(['changed' => $changed, 'changes' => $changes, 'rc' => $rc ? 'OK' : 'FAIL', 'messages' => trim((string) $messages)]), "\n";
+exit($rc ? 0 : 1);

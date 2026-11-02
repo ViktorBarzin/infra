@@ -130,8 +130,7 @@ The **pfSense webGUI was moved to `:8443`** (config.xml
 `system.webgui.port`, 2026-06-10) to free the 443 socket; admin access by
 IP keeps working through the no-SNI route, and `:8443` remains a direct
 fallback if HAProxy is down. The `pfsense.viktorbarzin.me` Traefik ingress
-(stacks/reverse-proxy) targets `:8443` directly. Traefik leg mirrors the
-IPv6 bridge: send-proxy-v2 (Traefik trusts 10.0.20.1), **no health check**
+(stacks/reverse-proxy) targets `:8443` directly. Traefik leg: send-proxy-v2 (Traefik trusts 10.0.20.1), **no health check**
 (PROXY-expecting receivers reject bare probes — gotcha above). All of this
 is declared in `pfsense-haproxy-bootstrap.php` — re-run to reset.
 
@@ -143,24 +142,26 @@ pfSense HAProxy config lives in `/cf/conf/config.xml` under
 synced to Synology. To rebuild from source of truth (git):
 
 ```sh
-scp infra/scripts/pfsense-haproxy-bootstrap.php admin@10.0.20.1:/tmp/
-ssh admin@10.0.20.1 'php /tmp/pfsense-haproxy-bootstrap.php'
+presence claim host:pfsense --purpose "pfsense haproxy"
+ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml
 ```
 
-The script is idempotent — re-runs reset the mailserver frontends + backends
-to the declared state.
+The script is idempotent — re-runs reset the declared pools and frontends
+(mail, internal 443, and since 2026-11-02 the six public IPv6 frontends on the
+HE tunnel address) to the declared state. `--check` lists the entries that
+would change. The same playbook keeps the webConfigurator HTTP redirect off so
+pfSense's nginx never takes port 80 from the IPv6 frontend; see
+`docs/architecture/networking.md` → "IPv6 Ingress".
 
-Expected output:
-```
-haproxy_check_and_run rc=OK
-```
+Expected output of the apply step: JSON with `"rc": "OK"`.
 
 ## Operations
 
 ### Change backend k8s node IPs / NodePorts
 
 Edit `infra/scripts/pfsense-haproxy-bootstrap.php` — `$NODES` array + the
-`build_pool()` port arguments. Re-run the bootstrap command above. Don't
+`build_pool()` port arguments. Re-run the playbook above. Don't
 hand-edit `/var/etc/haproxy/haproxy.cfg` — it is regenerated from XML on
 every apply.
 
