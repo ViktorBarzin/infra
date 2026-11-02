@@ -54,8 +54,8 @@ resource "kubernetes_namespace" "tv" {
 # pod, and a Worker that is recreated. Memory requests at the peak of a rollout
 # come to about 3.7Gi (three Edges at 384Mi, two Transcoders at 512Mi, the
 # Worker at 1Gi, Anubis and wt-tracker at 320Mi, the source-guard Job at
-# 256Mi; since 2026-10-16 also the Watcher at 256Mi, watcher.tf), over the
-# generated quota's 3Gi. A surge pod over quota is refused by
+# 256Mi until it was retired in 2026-11; since 2026-10-16 also the Watcher at
+# 256Mi, watcher.tf), over the generated quota's 3Gi. A surge pod over quota is refused by
 # the ReplicaSet controller and the rollout stalls, which is the stall ADR-0029
 # exists to remove. Only requests.memory moves; the other three values are the
 # tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,
@@ -333,9 +333,10 @@ locals {
     # above stays in place because the snapshot endpoint (dev-box only,
     # not used by tv) reuses the same Vault key.
     #
-    # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
-    # proposes as build step 2. Two things measured 2026-09-05 say that swap
-    # would be a regression rather than a fix:
+    # Deliberately NOT repointed at chrome-fleet, which the playback guard's
+    # design (tv docs/archive/playback-guard.md) proposed as build step 2.
+    # Two things measured 2026-09-05 say that swap would be a regression
+    # rather than a fix:
     #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
     #     /json/version returns the FleetView HTML page, so
     #     connect_over_cdp() against it fails. Leasing is a code change
@@ -345,8 +346,6 @@ locals {
     #     The connection-refused the design recorded was the neko container
     #     in that pod being taskless after a restart; the pod has since
     #     restarted again and reads 3/3 Running.
-    # The guard CronJob does not set this var at all — it leases a worker
-    # per run and injects that worker's URL directly. See tv-source-guard.tf.
     { name = "CHROME_CDP_URL", value = "http://chrome-service.chrome-service.svc.cluster.local:9222" },
     # The streamed extractor resolves embed pages by loading them in a
     # browser, and leases a worker from the fleet broker to do it rather
@@ -491,9 +490,9 @@ locals {
     { name = "AUTHENTIK_APPROVER_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_approver_token", optional = true },
     { name = "DISCORD_TOKEN", secret = "tv-secrets", key = "discord_user_token", optional = false },
     # Announces a television taking a different build, to the same
-    # #alerts webhook the source-guard already carries in this namespace.
-    # optional=true so the pod starts before the guard's ExternalSecret
-    # has synced; the app logs the line instead of posting it when unset.
+    # #alerts webhook tv-guard-secrets carries in this namespace (watcher.tf).
+    # optional=true so the pod starts before that ExternalSecret has
+    # synced; the app logs the line instead of posting it when unset.
     { name = "TV_SLACK_WEBHOOK", secret = "tv-guard-secrets", key = "slack_webhook", optional = true },
     # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
     # incoming webhook. It comes from the Vault "tv" key through the
@@ -1433,7 +1432,7 @@ resource "kubernetes_deployment_v1" "tv_worker" {
 }
 
 # The public Service: Anubis, the /admin/login and /pair carve-out ingresses
-# and the source-guard all address `tv`, and every one of them wants an Edge.
+# and the Watcher all address `tv`, and every one of them wants an Edge.
 # The name stays; since ADR-0029 the selector picks Edges only.
 resource "kubernetes_service" "tv" {
   metadata {
@@ -1551,8 +1550,7 @@ resource "kubernetes_service_v1" "tv_transcoder" {
   }
 }
 
-# Where Edges forward replay mutations and other Worker routes, and where the
-# source-guard reads the extraction metrics.
+# Where Edges forward replay mutations and other Worker routes.
 resource "kubernetes_service_v1" "tv_worker" {
   metadata {
     name      = "tv-worker"
