@@ -1,0 +1,85 @@
+---
+# playbooks/pfsense-ipv6-bridge.yml
+#
+# pfSense side of public IPv6 ingress: the HAProxy bridge from the HE tunnel
+# address to Traefik and the mail NodePorts (docs/architecture/networking.md ->
+# "IPv6 Ingress"). Deploys the boot script and its watchdog, checks that the
+# boot <shellcmd> is in config.xml, and declares a cron entry there that runs
+# the watchdog every 5 minutes. The watchdog re-runs the boot script whenever the bridge is not
+# bound and pushes ipv6_bridge_* metrics to the pushgateway, which the
+# IPv6IngressBridge* alerts in stacks/monitoring read.
+#
+# Why a watchdog: pfSense regenerates its webConfigurator nginx config on any
+# webConfigurator restart, not only at boot, and the regenerated config takes
+# wildcard [::]:80, which stops the bridge from binding. That happened on
+# 2026-10-23 (WireGuard package re-sync) and IPv6 ingress stayed down 10 days.
+#
+# RUN (from repo root; claim presence first:
+#      presence claim host:pfsense --purpose "ipv6 bridge watchdog"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-ipv6-bridge.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-ipv6-bridge.yml
+#
+# The configurator leaves pfSense's own config history entry
+# ("ansible (pfsense-ipv6-bridge)"), restorable from
+# Diagnostics > Backup & Restore > Config History.
+
+- name: pfSense IPv6 ingress bridge
+  hosts: pfsense
+  gather_facts: false
+  vars:
+    php_script_remote: /tmp/pfsense-ipv6-bridge-config.php
+
+  tasks:
+    - name: Deploy the bridge boot script
+      ansible.builtin.copy:
+        src: ../scripts/pfsense-ipv6-proxy.sh
+        dest: /usr/local/etc/ipv6_proxy.sh
+        mode: "0755"
+        owner: root
+        group: wheel
+
+    - name: Deploy the bridge watchdog
+      ansible.builtin.copy:
+        src: ../scripts/pfsense-ipv6-proxy-watchdog.sh
+        dest: /usr/local/etc/ipv6_proxy_watchdog.sh
+        mode: "0755"
+        owner: root
+        group: wheel
+
+    - name: Ship the idempotent configurator
+      ansible.builtin.copy:
+        src: files/pfsense-ipv6-bridge-config.php
+        dest: "{{ php_script_remote }}"
+        mode: "0700"
+        owner: root
+      # The script is the idempotency boundary; see pfsense-tailscale.yml.
+      changed_when: false
+      check_mode: false
+
+    - name: Apply desired configuration (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} -- --check
+      changed_when: false
+      check_mode: false
+      register: cfg_check
+      when: ansible_check_mode
+
+    - name: Report what check mode would change
+      ansible.builtin.debug:
+        var: (cfg_check.stdout | from_json).changes
+      when: ansible_check_mode
+
+    - name: Apply desired configuration
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} --
+      register: cfg_apply
+      changed_when: (cfg_apply.stdout | from_json).changed | bool
+      when: not ansible_check_mode
+
+    - name: Report configuration changes
+      ansible.builtin.debug:
+        var: (cfg_apply.stdout | from_json).changes
+      when: not ansible_check_mode
+
+    - name: Run the watchdog once so the metrics exist before the alerts look
+      ansible.builtin.command: /bin/sh /usr/local/etc/ipv6_proxy_watchdog.sh
+      changed_when: false
+      when: not ansible_check_mode

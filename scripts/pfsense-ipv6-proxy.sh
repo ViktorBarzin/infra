@@ -4,7 +4,8 @@
 # off the tunnel IPv6 first, then starts the HAProxy bridge (rc.d ipv6proxy).
 #
 # Runs on pfSense (10.0.20.1) as the config.xml <shellcmd> boot entrypoint.
-# Deploy:  scp scripts/pfsense-ipv6-proxy.sh root@10.0.20.1:/usr/local/etc/ipv6_proxy.sh
+# Deploy:  ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-ipv6-bridge.yml
+#          (also deploys the 5-minute watchdog, scripts/pfsense-ipv6-proxy-watchdog.sh)
 # Tracked here so the guard below stays reviewable — see
 # docs/architecture/networking.md -> "IPv6 Ingress" for the as-built and for
 # the symptoms of a bridge that failed to start.
