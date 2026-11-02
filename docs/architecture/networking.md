@@ -598,7 +598,10 @@ The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are *
 pfSense files (out-of-band, **not Terraform**):
 - `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
 - `/usr/local/etc/rc.d/ipv6proxy` — service wrapper (`service ipv6proxy {start,stop,status}`); `start` does a graceful `-sf` reload.
-- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): rebinds every wildcard `listen [::]:<port>` in the pfSense nginx config onto the LAN IPv6 to free the tunnel IPv6, then `service ipv6proxy onestart`. Tracked at `scripts/pfsense-ipv6-proxy.sh`; deploy with `scp scripts/pfsense-ipv6-proxy.sh root@10.0.20.1:/usr/local/etc/ipv6_proxy.sh`.
+- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): rebinds every wildcard `listen [::]:<port>` in the pfSense nginx config onto the LAN IPv6 to free the tunnel IPv6, then `service ipv6proxy onestart`. Tracked at `scripts/pfsense-ipv6-proxy.sh`.
+- `/usr/local/etc/ipv6_proxy_watchdog.sh` — runs from a config.xml cron entry every 5 minutes. If any of the six frontends is unbound, or the nginx config has a wildcard IPv6 listener again, it re-runs `ipv6_proxy.sh`. Each run pushes `ipv6_bridge_up`, `ipv6_bridge_last_run_timestamp_seconds` and (after a repair) `ipv6_bridge_last_heal_timestamp_seconds` to the pushgateway as job `pfsense-ipv6-bridge`, read by the `IPv6IngressBridgeDown`, `IPv6IngressBridgeWatchdogStale` and `IPv6IngressBridgeSelfHealed` alerts. Tracked at `scripts/pfsense-ipv6-proxy-watchdog.sh`.
+
+Both scripts and the cron entry are deployed by `playbooks/pfsense-ipv6-bridge.yml` (run `--check --diff` first; claim `host:pfsense`). The playbook also checks that the boot `<shellcmd>` exists.
 
 **Gotcha:** the backends use **no health `check`** — a plain TCP check hits the PROXY-expecting listeners without a PROXY header and would false-mark them DOWN. This path previously used `socat` (functional, but masked every IPv6 client as `10.0.20.1`); replaced by HAProxy on 2026-05-30 for real client IPs.
 
@@ -612,6 +615,15 @@ pfSense reboot on 2026-07-18 and then went unnoticed for 29 days: IPv4 was unaff
 Cloudflare-proxied hosts reach the origin over IPv4, so only the ~31 `non-proxied` ingresses
 and IPv6 mail were dark. The guard now matches any `listen [::]:` and the script logs
 whether `[TUNNEL]:443` actually came up.
+
+**Gotcha — pfSense regenerates the nginx config after boot too (2026-11-02).** The boot
+script only fixes the nginx config that exists at boot. pfSense rewrites
+`/var/etc/nginx-webConfigurator.conf` whenever the webConfigurator restarts, for example
+when a package is installed or re-synced, or a certificate or GUI setting changes, and the
+rewritten file goes back to wildcard `[::]:80`. On 2026-10-23 the WireGuard package re-applied
+its defaults about an hour after boot (five config history entries between 09:18 and 09:19
+local time), the bridge could not bind, and IPv6 web and mail stayed down until
+2026-11-02, about 10 days. The 5-minute watchdog above covers this case, and the alerts report it.
 
 **Symptoms of a down bridge**, useful for the next diagnosis: over IPv6 a non-proxied host
 gives `connection refused` on 443, while port 80 returns the pfSense nginx `301` to
