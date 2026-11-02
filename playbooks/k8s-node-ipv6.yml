@@ -1,0 +1,309 @@
+---
+# playbooks/k8s-node-ipv6.yml
+#
+# Node side of cluster dual-stack, docs/plans/2026-11-02-cluster-dual-stack.md:
+#   Phase 2 (play 1), always:
+#     - /etc/netplan/60-ipv6.yaml: static 2001:470:5a7f:20::<last IPv4 octet>/64
+#       on the node's VLAN 20 interface, default route via pfSense ::1, no RA.
+#       netplan merges it into the existing definition of the same interface
+#       (01-netcfg.yaml DHCPv4 on master and node1-3, 50-cloud-init.yaml static
+#       IPv4 on node4/5); a scratch `netplan generate` checks the merge before
+#       anything is written, in check mode too.
+#     - /etc/sysctl.d/99-k8s-node-ipv6.conf: IPv6 forwarding on (Calico needs
+#       it; it also turns off RA processing, which is why addressing is static)
+#       and IPv6 enabled.
+#     - /etc/gai.conf `precedence ::ffff:0:0/96  100`, so glibc programs
+#       prefer IPv4. Go binaries ignore it; the pfSense reject from
+#       pfsense-k8s-ipv6.yml is what keeps their outbound on IPv4.
+#   Phase 5a (play 2), only with -e kubelet_dual_node_ip=true:
+#     - /etc/default/kubelet KUBELET_EXTRA_ARGS gets
+#       --node-ip=10.0.20.1NN,2001:470:5a7f:20::1NN (any other args kept), then
+#       kubelet restarts one node at a time and the play waits until the node
+#       is Ready with both InternalIPs before moving on.
+#
+# What the live nodes look like (read 2026-11-02), which the plan did not say:
+#   - The VLAN 20 interface is ens18 on master and node1-3 but eth0 on node4
+#     and node5 (cloud-init set-name), so the interface is looked up from the
+#     node's IPv4 address rather than assumed.
+#   - k8s-master has IPv6 switched off: /etc/sysctl.d/k8s-ipv6.conf (2023-09-17)
+#     sets net.ipv6.conf.{all,default}.disable_ipv6 = 1, so lo has no ::1 and
+#     every interface created since (cali*, vxlan.calico) has IPv6 disabled.
+#     That file sorts after ours and would win at boot, so this playbook
+#     deletes it and sets disable_ipv6 = 0 explicitly. Re-enabling IPv6 on
+#     master's lo means "localhost" can resolve to ::1 there for the first time.
+#
+# ORDER. Run pfsense-k8s-ipv6.yml first: the post-apply check pings pfSense's
+# 2001:470:5a7f:20::1, and the pfSense reject must be in place before nodes
+# hold a global IPv6 address.
+#
+# HAZARD. `netplan apply` runs `networkctl reconfigure` on every
+# networkd-managed link, which re-runs the node's IPv4 configuration as well
+# (DHCPv4 on master and node1-3). It runs only when the file changed, one node
+# at a time (serial: 1, any_errors_fatal), and each node must answer on both
+# addresses before the next one starts. On k8s-master this briefly touches
+# the apiserver's address.
+#
+# RUN (from repo root; claim presence first, one label per node:
+#      presence claim node:k8s-node1 --purpose "node IPv6 (dual-stack phase 2)"):
+#   dry-run  : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-ipv6.yml --check --diff
+#   apply    : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-ipv6.yml
+#   one node : ... -e k8s_nodes_target=10.0.20.101
+#   phase 5a : ... -e kubelet_dual_node_ip=true      (after phase 4)
+#
+# Undo (phase 2): delete /etc/netplan/60-ipv6.yaml and
+# /etc/sysctl.d/99-k8s-node-ipv6.conf, `netplan apply`. Undo (5a): restore
+# /etc/default/kubelet from the backup lineinfile leaves next to it and restart
+# kubelet. kubelet_dual_node_ip: false means "not managed"; it does not remove
+# the flag.
+
+- name: Kubernetes node IPv6 addressing (phase 2)
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tags: ipv6
+
+  vars:
+    node_ipv6_prefix: "2001:470:5a7f:20::"
+    node_ipv6_gateway: "2001:470:5a7f:20::1"
+    node_ipv6: "{{ node_ipv6_prefix }}{{ inventory_hostname.split('.')[-1] }}"
+    netplan_file: /etc/netplan/60-ipv6.yaml
+    sysctl_conf_file: /etc/sysctl.d/99-k8s-node-ipv6.conf
+    netplan_content: |
+      # Managed by playbooks/k8s-node-ipv6.yml (cluster dual-stack, phase 2).
+      # Merged by netplan into the existing {{ node_iface }} definition.
+      network:
+        version: 2
+        ethernets:
+          {{ node_iface }}:
+            accept-ra: false
+            addresses:
+              - "{{ node_ipv6 }}/64"
+            routes:
+              - to: "::/0"
+                via: "{{ node_ipv6_gateway }}"
+
+  handlers:
+    - name: Generate netplan
+      ansible.builtin.command: netplan generate
+      changed_when: false
+      when: not ansible_check_mode
+      listen: netplan changed
+
+    - name: Apply netplan
+      ansible.builtin.command: netplan apply
+      when: not ansible_check_mode
+      listen: netplan changed
+
+  tasks:
+    - name: Find the interface that holds the node's VLAN 20 IPv4 address
+      ansible.builtin.command: ip -o -4 addr show to {{ inventory_hostname }}/32
+      register: v4_iface
+      changed_when: false
+      check_mode: false
+
+    - name: Exactly one interface holds it
+      ansible.builtin.assert:
+        that:
+          - v4_iface.stdout_lines | length == 1
+        fail_msg: "expected one interface with {{ inventory_hostname }}, got: {{ v4_iface.stdout_lines }}"
+
+    - name: Remember the interface
+      ansible.builtin.set_fact:
+        node_iface: "{{ v4_iface.stdout.split()[1] }}"
+
+    # Every file already in /etc/netplan plus the candidate, rendered into a
+    # scratch root. Nothing under /etc or /run is touched, so it runs in check
+    # mode as well and is the dry run for the merge.
+    - name: Check the merged netplan configuration in a scratch root
+      ansible.builtin.shell: |
+        set -eu
+        root=$(mktemp -d)
+        trap 'rm -rf "$root"' EXIT
+        mkdir -p "$root/etc/netplan"
+        cp -p /etc/netplan/*.yaml "$root/etc/netplan/"
+        printf '%s' {{ netplan_content | quote }} > "$root/etc/netplan/{{ netplan_file | basename }}"
+        chmod 600 "$root/etc/netplan/"*.yaml
+        netplan generate --root-dir "$root"
+        f=$(grep -l '^Name={{ node_iface }}$' "$root"/run/systemd/network/*.network)
+        cat "$f"
+        grep -qx 'Address={{ node_ipv6 }}/64' "$f"
+        grep -qx 'Gateway={{ node_ipv6_gateway }}' "$f"
+        grep -qx 'IPv6AcceptRA=no' "$f"
+        # The IPv4 side must survive the merge unchanged.
+        grep -qE '^(DHCP=ipv4|DHCP=yes|Address={{ inventory_hostname }}/[0-9]+)$' "$f"
+      register: netplan_scratch
+      changed_when: false
+      check_mode: false
+
+    - name: Retire the 2023 sysctl file that switches IPv6 off (k8s-master)
+      ansible.builtin.file:
+        path: /etc/sysctl.d/k8s-ipv6.conf
+        state: absent
+
+    - name: IPv6 enabled and forwarding on
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_file: "{{ sysctl_conf_file }}"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - { name: net.ipv6.conf.all.disable_ipv6, value: "0" }
+        - { name: net.ipv6.conf.default.disable_ipv6, value: "0" }
+        - { name: net.ipv6.conf.all.forwarding, value: "1" }
+        - { name: net.ipv6.conf.default.forwarding, value: "1" }
+      loop_control:
+        label: "{{ item.name }}={{ item.value }}"
+
+    - name: glibc prefers IPv4 (gai.conf)
+      ansible.builtin.lineinfile:
+        path: /etc/gai.conf
+        regexp: '^#?\s*precedence\s+::ffff:0:0/96\s+100\s*$'
+        line: "precedence ::ffff:0:0/96  100"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Static IPv6 on the VLAN 20 interface
+      ansible.builtin.copy:
+        dest: "{{ netplan_file }}"
+        content: "{{ netplan_content }}"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: netplan changed
+
+    - name: Apply netplan now if the file changed
+      ansible.builtin.meta: flush_handlers
+
+    # ── gate: the node holds its address and reaches pfSense ───────────────
+    - name: The node holds its IPv6 address and still holds its IPv4 one
+      ansible.builtin.shell: |
+        ip -o -6 addr show dev {{ node_iface }} scope global | grep -q ' {{ node_ipv6 }}/64 ' &&
+        ! ip -o -6 addr show dev {{ node_iface }} scope global | grep -q tentative &&
+        ip -o -4 addr show dev {{ node_iface }} | grep -q ' {{ inventory_hostname }}/'
+      register: addr_gate
+      retries: 10
+      delay: 3
+      until: addr_gate.rc == 0
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: The node reaches pfSense over IPv6
+      ansible.builtin.command: ping -6 -c 2 -W 2 {{ node_ipv6_gateway }}
+      register: ping_gate
+      retries: 5
+      delay: 3
+      until: ping_gate.rc == 0
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Live sysctl values
+      ansible.builtin.command: >-
+        sysctl -n net.ipv6.conf.all.disable_ipv6 net.ipv6.conf.all.forwarding
+        net.ipv6.conf.default.forwarding
+      register: v6_sysctl
+      changed_when: false
+      check_mode: false
+
+    - name: IPv6 is on and forwarding
+      ansible.builtin.assert:
+        that:
+          - v6_sysctl.stdout_lines == ['0', '1', '1']
+        fail_msg: "disable_ipv6/forwarding/default.forwarding = {{ v6_sysctl.stdout_lines }}"
+      when: not ansible_check_mode
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a: kubelet reports both node IPs. Off by default; run after phase 4.
+# /etc/default/kubelet, not kubeadm-flags.env: kubeadm and
+# scripts/renew_worker_certs.sh rewrite the latter. kubeadm's drop-in reads
+# both and passes $KUBELET_EXTRA_ARGS last.
+# ---------------------------------------------------------------------------
+- name: kubelet dual-stack node IP (phase 5a)
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tags: kubelet
+
+  vars:
+    kubelet_dual_node_ip: false
+    kubelet_default_file: /etc/default/kubelet
+    node_ipv6: "2001:470:5a7f:20::{{ inventory_hostname.split('.')[-1] }}"
+    node_ip_flag: "--node-ip={{ inventory_hostname }},{{ node_ipv6 }}"
+
+  handlers:
+    - name: Restart kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      listen: kubelet changed
+
+    - name: Wait for the node to be Ready with both InternalIPs
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - node
+          - "{{ k8s_node_name }}"
+          - -o
+          - >-
+            jsonpath={range .status.conditions[?(@.type=="Ready")]}{.status}{end}
+            {.status.addresses[?(@.type=="InternalIP")].address}
+      delegate_to: localhost
+      become: false
+      register: node_state
+      retries: 30
+      delay: 10
+      until: >-
+        node_state.rc == 0
+        and node_state.stdout.split() | first == 'True'
+        and inventory_hostname in node_state.stdout.split()
+        and node_ipv6 in node_state.stdout.split()
+      changed_when: false
+      when: not ansible_check_mode
+      listen: kubelet changed
+
+  tasks:
+    - name: Stop here unless kubelet_dual_node_ip is true
+      ansible.builtin.meta: end_play
+      when: not (kubelet_dual_node_ip | bool)
+
+    # kubelet with a --node-ip it cannot find on the host stays NotReady.
+    - name: The node holds its IPv6 address (phase 2 applied)
+      ansible.builtin.shell: ip -o -6 addr show scope global | grep -q ' {{ node_ipv6 }}/64 '
+      changed_when: false
+      check_mode: false
+
+    - name: Read {{ kubelet_default_file }}
+      ansible.builtin.slurp:
+        src: "{{ kubelet_default_file }}"
+      register: kubelet_default
+
+    - name: Keep every other kubelet arg, replace any --node-ip
+      ansible.builtin.set_fact:
+        kubelet_extra_args: >-
+          {{ ((kubelet_default.content | b64decode
+               | regex_findall('(?m)^KUBELET_EXTRA_ARGS=(.*)$') | last | default(''))
+              | regex_replace('^\s*"(.*)"\s*$', '\1')
+              | regex_replace('--node-ip[= ]\S+', '')
+              | regex_replace('\s+', ' ') | trim).split(' ')
+             | select | list + [node_ip_flag] }}
+
+    - name: kubelet reports both node IPs
+      ansible.builtin.lineinfile:
+        path: "{{ kubelet_default_file }}"
+        regexp: '^KUBELET_EXTRA_ARGS='
+        line: "KUBELET_EXTRA_ARGS={{ kubelet_extra_args | join(' ') }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      notify: kubelet changed
+
+    - name: Restart kubelet and wait for this node before the next one
+      ansible.builtin.meta: flush_handlers
