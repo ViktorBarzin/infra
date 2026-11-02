@@ -500,10 +500,12 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           # request (rentlisting is ~108k rows; the endpoint caps at 5k features
           # but still builds them all in memory). Idle RSS measured 173Mi on
           # 2026-08-09, leaving ~83Mi for any request. Bumped to 512Mi.
+          # The LIMIT is what that OOM needed and it stays 512Mi. The request
+          # went 512Mi -> 384Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 309Mi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "512Mi"
+              memory = "384Mi"
             }
             limits = {
               memory = "512Mi"

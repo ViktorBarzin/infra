@@ -151,9 +151,11 @@ resource "kubernetes_deployment" "aiostreams" {
             mount_path = "/app/data"
           }
           resources {
+            # Request 768Mi -> 512Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 409Mi,
+            # p95 324Mi. Limit unchanged.
             requests = {
               cpu    = "25m"
-              memory = "768Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "768Mi"

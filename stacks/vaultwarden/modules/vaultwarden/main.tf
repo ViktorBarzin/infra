@@ -86,9 +86,11 @@ resource "kubernetes_deployment" "vaultwarden" {
           name  = "vaultwarden"
 
           resources {
+            # Request 512Mi -> 256Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 196Mi.
+            # Limit unchanged.
             requests = {
               cpu    = "10m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "512Mi"

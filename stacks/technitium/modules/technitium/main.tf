@@ -292,9 +292,11 @@ resource "kubernetes_deployment" "technitium" {
           image = "technitium/dns-server:15.6.2"
           name  = "technitium"
           resources {
+            # Request 1Gi -> 640Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 549Mi,
+            # p95 513Mi. Limit stays 1Gi.
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "640Mi"
             }
             limits = {
               memory = "1Gi"

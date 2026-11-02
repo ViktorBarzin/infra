@@ -444,7 +444,9 @@ resource "kubernetes_deployment" "forgejo" {
               cpu = "15m"
               # 7-day peak ~0.97Gi; was 4Gi (heavily over-reserved). Right-sized
               # 2026-07-06 to relieve ClusterCannotTolerateNonGpuNodeLoss.
-              memory = "1.5Gi"
+              # 1.5Gi -> 1088Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 914Mi,
+              # p95 861Mi. Limit stays 2Gi.
+              memory = "1088Mi"
             }
             limits = {
               memory = "2Gi"

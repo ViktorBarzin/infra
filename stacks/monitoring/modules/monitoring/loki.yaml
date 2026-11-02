@@ -114,6 +114,14 @@ minio:
 # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule. (Chart
 # default lokiCanary.tolerations is [] — this is the only toleration added.)
 lokiCanary:
+  # Explicit memory request (2026-11-02, after the k8s upgrade drain could not place evicted pods). Without a resources block the
+  # monitoring tier-defaults LimitRange gave each canary 256Mi; the 30-day peak
+  # working set is 51Mi. Limit kept at the LimitRange's 256Mi.
+  resources:
+    requests:
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists
