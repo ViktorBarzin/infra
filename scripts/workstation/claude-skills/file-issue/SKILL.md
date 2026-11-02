@@ -38,9 +38,9 @@ replays or channels) belongs on
 - **The route.** Same API and token as below, with
   `$FJ/repos/viktor/tv/...` in place of `viktor/infra`.
 
-One exception stays here: a dead or rotated upstream source (the `f1-source`
-guard's issues) is filed on `viktor/infra`, where the source guard and its
-fixer already work.
+One exception stays here: a dead or rotated upstream source of tv (the
+`channel-source` issues the tv Watcher and its daily source probe file) is
+filed on `viktor/infra`, where those filers and `source-fixer` already work.
 
 ## The two labels, and what each one does
 

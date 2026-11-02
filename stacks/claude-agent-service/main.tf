@@ -72,8 +72,8 @@ resource "kubernetes_manifest" "external_secret" {
           # read/write:repository), so git clone/push + the PR API silently 403'd.
           # secret/ci/global/forgejo_repo_token is viktor's git PAT (2026-07-25).
           # SECURITY: the shared claude-agent pod (all agents) can now clone/push
-          # + open PRs on any Forgejo repo this PAT reaches — f1-source-fixer needs
-          # it to land tv link fixes on the canonical Forgejo master.
+          # + open PRs on any Forgejo repo this PAT reaches — source-fixer needs
+          # it to land tv source fixes on the canonical Forgejo master.
           secretKey = "FORGEJO_TOKEN"
           remoteRef = {
             key      = "ci/global"
