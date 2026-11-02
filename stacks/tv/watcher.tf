@@ -8,8 +8,13 @@
 # Tier 1 Channel opens Feeds in (Redis), keeps the first of them resolved, and
 # when a Tier 1 Channel has had no smooth Feed for 10 minutes posts one line to
 # #alerts and files a `broken` + `channel-source` issue on viktor/infra, which
-# dispatches `.claude/agents/channel-source-fixer.md`. The health card is at
+# dispatches `.claude/agents/source-fixer.md`. The health card is at
 # https://tv.viktorbarzin.me/admin/channels.
+#
+# Since tv plan 2026-11-01-f1-channels-build, Tier 1 also takes the F1 group
+# on its own: the curated F1 Channels with a Feed all the time, and F1 Live
+# from 60 minutes before a session to 30 minutes after it, read from the F1
+# calendar. That gate replaced the hourly source-guard CronJob.
 #
 # One replica, Recreate: two Watchers would double every watch and every
 # alert. No GPU and no Service: nothing routes to it. Prometheus scrapes it like
@@ -20,10 +25,12 @@
 # plus up to ~10 full watches and ~40 light ones, each streaming segments
 # without holding them. 768Mi limit. The namespace quota still has room for a
 # deploy with the Transcoder back on a surge (2026-10-17): limits used 10176Mi
-# of 16Gi at rest, Watcher included; a Transcoder surge pod +2048Mi, the old
-# Transcoder still terminating while the Edge surge pod starts +1536Mi, and the
-# hourly source-guard job +768Mi come to 14528Mi. Requests peak at 3776Mi of
-# 6Gi memory and 910m of 2 CPU. The quota is unchanged.
+# of 16Gi at rest, Watcher included; a Transcoder surge pod +2048Mi and the old
+# Transcoder still terminating while the Edge surge pod starts +1536Mi come to
+# 13760Mi. That was 14528Mi with the hourly source-guard Job's 768Mi, retired
+# in 2026-11 (tv plan 2026-11-01-f1-channels-build). Requests peaked at
+# 3776Mi of 6Gi memory and 910m of 2 CPU with the guard Job, whose requests
+# were 256Mi and 50m. The quota is unchanged.
 resource "kubernetes_deployment_v1" "tv_watcher" {
   metadata {
     name      = "tv-watcher"
@@ -133,8 +140,8 @@ resource "kubernetes_deployment_v1" "tv_watcher" {
             name  = "WATCHER_ISSUE_REPO"
             value = "viktor/infra"
           }
-          # The #alerts webhook and the Forgejo token the source guard already
-          # carries in this namespace (tv-source-guard.tf). The token is
+          # The #alerts webhook and the Forgejo token in tv-guard-secrets
+          # (defined at the end of this file). The token is
           # `viktor`'s, which is NOT the fixer's bot actor, so a filed issue
           # survives the webhook's loop guard and dispatches. optional, so the
           # pod starts before the ExternalSecret syncs; the app then logs the
@@ -257,4 +264,88 @@ resource "kubernetes_deployment_v1" "tv_watcher" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
+}
+
+# Credentials the tv issue filers need in this namespace: the Watcher (below)
+# and the Worker's daily source probe (main.tf), which file `broken` +
+# `channel-source` issues on viktor/infra, and every Role's #alerts lines
+# (TV_SLACK_WEBHOOK in main.tf). The Secret keeps the name `tv-guard-secrets`
+# and this resource keeps its address: it was created for the hourly
+# source-guard CronJob (tv-source-guard.tf), which tv plan
+# 2026-11-01-f1-channels-build retired in favour of the Watcher's calendar gate
+# and the daily probe. Renaming either would recreate a Secret three
+# Deployments mount, for no change in what it holds.
+#
+# forgejo_token stays on ci/global, and that is a deliberate choice rather than
+# the old default left in place. The obvious move was to hand the filers the
+# claude-agent-service agent token, since that account already writes issues.
+# It would break the dispatch the issue exists to start: that account IS the
+# fixer's bot identity (FIXER_BOT_ACTOR=infra-agent, stacks/claude-agent-service
+# /main.tf), and the webhook refuses the bot's own actions before every other
+# gate (claude-agent-service/app/fixer/gates.py, `if delivery.actor ==
+# bot_actor: return Verdict.OWN_ACTION`). An issue filed with it would be
+# delivered, recognised as the bot's own, and never dispatched.
+#
+# ci/global's token is `viktor`, the repo owner, so it clears both gates the
+# webhook applies to the filer: it is not the bot actor, and
+# ForgejoClient.trusted_actors() is the collaborator set plus the owner. Scope
+# was measured on 2026-09-05: POST to a non-existent issue's comments
+# distinguishes the two tokens without writing anything:
+#
+#   forgejo_repo_token  -> 404 IsErrIssueNotExist   (write:issue present)
+#   forgejo_push_token  -> 403 "token does not have at least one of required
+#                               scope(s): [write:issue]"
+#
+# The cost of this choice is that the issues read as filed by Viktor. The
+# filers say so in the title marker and the body, and #alerts carries the same
+# event, so the audit trail is kept; a dedicated Forgejo account for them would
+# be cleaner if one is ever created.
+#
+# slack_webhook is the shared #alerts incoming webhook, projected here the way
+# goldmane-edge-aggregator projects it rather than minted fresh.
+resource "kubernetes_manifest" "tv_guard_secrets" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "tv-guard-secrets"
+      namespace = "tv"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "tv-guard-secrets"
+      }
+      data = [
+        {
+          # `viktor`: carries write:issue, and is NOT the fixer's bot actor, so
+          # an issue the Watcher or the daily probe files survives the
+          # webhook's loop guard. See the block comment above before
+          # repointing this at the agent account.
+          secretKey = "forgejo_token"
+          remoteRef = {
+            key      = "ci/global"
+            property = "forgejo_repo_token"
+          }
+        },
+        {
+          # The #alerts incoming webhook (same URL Alertmanager and the
+          # goldmane digest post with; no new webhook, no new Slack app).
+          secretKey = "slack_webhook"
+          remoteRef = {
+            key      = "viktor"
+            property = "alertmanager_slack_api_url"
+          }
+        },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.tv]
 }
