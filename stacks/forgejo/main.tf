@@ -654,6 +654,10 @@ module "ingress" {
   # Turnstile in front of Anubis (stacks/turnstile-gate). An Anubis backend
   # gets the strict gate variant: only a solved Turnstile skips Anubis.
   turnstile = true
+  # Keep repos, commits and files out of search results (Viktor, 2026-11-02).
+  # Verified search engines pass the gate and Anubis, and Forgejo's default
+  # robots.txt allows commit pages, so Google was able to index them.
+  search_noindex = true
   extra_annotations = {
     "gethomepage.dev/enabled"                      = "true"
     "gethomepage.dev/name"                         = "Forgejo"
