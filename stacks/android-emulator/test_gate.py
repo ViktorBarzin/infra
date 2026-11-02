@@ -2,6 +2,7 @@
 
 import datetime
 import http.client
+import socket
 import threading
 import unittest
 import urllib.error
@@ -346,6 +347,318 @@ class ProbeEndpointTest(unittest.TestCase):
 
     def test_healthz_still_fails_while_the_watcher_is_dead(self):
         self.assertEqual(self.get("/healthz"), 503)
+
+
+class FakeMysql:
+    """A one-connection MySQL server speaking just enough of the protocol for
+    gate.mysql_query: handshake, an optional auth switch, one COM_QUERY."""
+
+    def __init__(self, rows=(), columns=5, query_error=None, auth_switch=False, auth_error=None):
+        self.rows = list(rows)
+        self.columns = columns
+        self.query_error = query_error
+        self.auth_switch = auth_switch
+        self.auth_error = auth_error
+        self.login = None
+        self.query = None
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(1)
+        self.port = self.listener.getsockname()[1]
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    @staticmethod
+    def send(conn, seq, payload):
+        conn.sendall(len(payload).to_bytes(3, "little") + bytes([seq]) + payload)
+
+    @staticmethod
+    def recv(conn):
+        head = b""
+        while len(head) < 4:
+            head += conn.recv(4 - len(head))
+        n = int.from_bytes(head[:3], "little")
+        body = b""
+        while len(body) < n:
+            body += conn.recv(n - len(body))
+        return head[3], body
+
+    @staticmethod
+    def lenenc_str(value):
+        if value is None:
+            return b"\xfb"
+        data = value.encode()
+        assert len(data) < 0xFB
+        return bytes([len(data)]) + data
+
+    @staticmethod
+    def error(code, message):
+        return b"\xff" + code.to_bytes(2, "little") + b"#HY000" + message.encode()
+
+    def serve(self):
+        conn, _ = self.listener.accept()
+        with conn:
+            hello = (
+                b"\x0a" + b"8.0.33\x00" + (1).to_bytes(4, "little") + b"abcdefgh" + b"\x00"
+                + (0xFFFF).to_bytes(2, "little") + b"\x21" + b"\x02\x00" + (0x81FF).to_bytes(2, "little")
+                + b"\x15" + bytes(10) + b"ijklmnopqrst\x00" + b"mysql_native_password\x00"
+            )
+            self.send(conn, 0, hello)
+            seq, login = self.recv(conn)
+            self.login = login
+            if self.auth_switch:
+                self.send(conn, seq + 1, b"\xfe" + b"mysql_native_password\x00" + b"abcdefghijklmnopqrst\x00")
+                seq, _ = self.recv(conn)
+            if self.auth_error:
+                self.send(conn, seq + 1, self.error(1045, self.auth_error))
+                return
+            self.send(conn, seq + 1, b"\x00\x00\x00\x02\x00\x00\x00")
+            _, query = self.recv(conn)
+            self.query = query
+            if self.query_error:
+                self.send(conn, 1, self.error(1146, self.query_error))
+                return
+            seq = 1
+            self.send(conn, seq, bytes([self.columns]))
+            for i in range(self.columns):
+                seq += 1
+                self.send(conn, seq, b"\x03def" + self.lenenc_str(f"c{i}"))
+            seq += 1
+            self.send(conn, seq, b"\xfe\x00\x00\x02\x00")
+            for row in self.rows:
+                seq += 1
+                self.send(conn, seq, b"".join(self.lenenc_str(v) for v in row))
+            seq += 1
+            self.send(conn, seq, b"\xfe\x00\x00\x02\x00")
+            try:
+                self.recv(conn)  # COM_QUIT
+            except OSError:
+                pass
+
+    def close(self):
+        self.listener.close()
+
+
+ALICE = ["wizard@devvm@1234", "wizard", "devvm", "testing the TV pairing screen", "2026-11-02 22:30:00.000"]
+
+
+class MysqlQueryTest(unittest.TestCase):
+    """gate.mysql_query reads the presence board from Dolt with the stdlib only."""
+
+    def run_query(self, server, query="SELECT 1"):
+        try:
+            return gate.mysql_query("127.0.0.1", server.port, "beads", "beads", query)
+        finally:
+            server.thread.join(5)
+            server.close()
+
+    def test_returns_each_row_as_strings_and_none(self):
+        server = FakeMysql(rows=[ALICE, ["s2", "emo", "devvm", None, "2026-11-02 22:31:00.000"]])
+        rows = self.run_query(server, "SELECT x FROM presence_claims")
+        self.assertEqual(rows, [ALICE, ["s2", "emo", "devvm", None, "2026-11-02 22:31:00.000"]])
+        self.assertEqual(server.query, b"\x03SELECT x FROM presence_claims")
+
+    def test_logs_in_as_the_user_without_a_password_on_the_database(self):
+        server = FakeMysql()
+        self.assertEqual(self.run_query(server), [])
+        self.assertIn(b"beads\x00\x00beads\x00", server.login)
+
+    def test_follows_an_auth_switch(self):
+        server = FakeMysql(rows=[ALICE], auth_switch=True)
+        self.assertEqual(self.run_query(server), [ALICE])
+
+    def test_a_refused_login_raises(self):
+        with self.assertRaises(gate.ClaimStoreError):
+            self.run_query(FakeMysql(auth_error="Access denied"))
+
+    def test_a_failed_query_raises(self):
+        with self.assertRaises(gate.ClaimStoreError):
+            self.run_query(FakeMysql(query_error="table not found: presence_claims"))
+
+    def test_nothing_listening_raises(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        listener.close()
+        with self.assertRaises(OSError):
+            gate.mysql_query("127.0.0.1", port, "beads", "beads", "SELECT 1")
+
+    def test_the_claim_query_covers_both_labels_and_only_live_claims(self):
+        self.assertIn("'service:android-emulator'", gate.CLAIM_QUERY)
+        self.assertIn("'infra:android-emulator'", gate.CLAIM_QUERY)
+        self.assertIn("expires_at > NOW(3)", gate.CLAIM_QUERY)
+
+    def test_holders_name_the_user_host_purpose_and_start(self):
+        self.assertEqual(
+            gate.describe_holders([gate.claim_from_row(ALICE)]),
+            "wizard@devvm (testing the TV pairing screen, since 2026-11-02 22:30 UTC)",
+        )
+
+    def test_a_purpose_is_one_short_line(self):
+        row = ALICE[:3] + ["line one\nline two\t" + "x" * 300, ALICE[4]]
+        purpose = gate.claim_from_row(row)["purpose"]
+        self.assertNotIn("\n", purpose)
+        self.assertLessEqual(len(purpose), 200)
+
+
+class Claims:
+    """Stands in for read_claims: a list of claims, or an exception to raise."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        answer = self.answers[0] if len(self.answers) == 1 else self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+HELD = [gate.claim_from_row(ALICE)]
+
+
+class ClaimHoldsOffTest(unittest.TestCase):
+    """An active presence claim on the emulator holds off the yield-sleep for
+    at most CLAIM_WAIT_SECONDS, so whoever is testing is not cut off without
+    warning, and nothing keeps the waiting pod off its seat for long."""
+
+    def setUp(self):
+        gate.reset_yield_state()
+        self.logs = []
+        self.posts = []
+
+    def run_once(self, fake, claims, now):
+        return gate.yield_once(fake, self.logs.append, now=now, claims_fn=claims, notify=self.posts.append)
+
+    def test_the_wait_defaults_to_twenty_minutes(self):
+        self.assertEqual(gate.CLAIM_WAIT_SECONDS, 20 * MINUTE)
+
+    def test_a_claimed_emulator_stays_awake_and_says_so_once(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        claims = Claims(HELD)
+        self.assertEqual(self.run_once(fake, claims, NOW), ["t-new"])
+        self.assertEqual(self.run_once(fake, claims, NOW + 5 * MINUTE), ["t-new"])
+        self.assertEqual(fake.patches, [])
+        self.assertEqual(len(self.posts), 1)
+        self.assertIn("wizard@devvm", self.posts[0])
+        self.assertIn("testing the TV pairing screen", self.posts[0])
+        self.assertIn("t-new", self.posts[0])
+        self.assertIn("20 min", self.posts[0])
+
+    def test_a_claim_released_mid_wait_lets_the_emulator_sleep(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        claims = Claims(HELD, HELD, [])
+        self.run_once(fake, claims, NOW)
+        self.run_once(fake, claims, NOW + 1 * MINUTE)
+        self.assertEqual(fake.patches, [])
+        self.run_once(fake, claims, NOW + 2 * MINUTE)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        self.assertTrue(any("released" in line for line in self.logs))
+
+    def test_a_claim_still_held_at_the_bound_does_not_keep_the_emulator_awake(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        claims = Claims(HELD)
+        self.run_once(fake, claims, NOW)
+        self.run_once(fake, claims, NOW + 19 * MINUTE)
+        self.assertEqual(fake.patches, [])
+        self.run_once(fake, claims, NOW + 20 * MINUTE)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        self.assertEqual(len(self.posts), 2)
+        self.assertIn("anyway", self.posts[1])
+        self.assertIn("wizard@devvm", self.posts[1])
+
+    def test_an_unreadable_claim_store_sleeps_the_emulator_as_before(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        self.run_once(fake, Claims(ConnectionRefusedError("refused")), NOW)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        self.assertTrue(any("could not read" in line for line in self.logs))
+        self.assertEqual(self.posts, [])
+
+    def test_no_claim_sleeps_the_emulator_at_once_and_quietly(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        self.run_once(fake, Claims([]), NOW)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        self.assertEqual(self.posts, [])
+
+    def test_an_asleep_emulator_does_not_read_the_claims(self):
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=0)
+        claims = Claims(HELD)
+        self.run_once(fake, claims, NOW)
+        self.assertEqual(claims.calls, 0)
+        self.assertEqual(self.posts, [])
+
+    def test_nothing_waiting_does_not_read_the_claims(self):
+        claims = Claims(HELD)
+        self.run_once(FakeKube(replicas=1), claims, NOW)
+        self.assertEqual(claims.calls, 0)
+
+    def test_the_yield_limit_counts_from_the_end_of_the_wait(self):
+        # The pod waited 20 min for the claim; its 15 min with the emulator
+        # asleep start once the gate puts it to sleep.
+        fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
+        claims = Claims(HELD)
+        for minute in range(0, 21):
+            self.run_once(fake, claims, NOW + minute * MINUTE)
+        self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
+        self.assertEqual(self.run_once(fake, claims, NOW + 30 * MINUTE), ["t-new"])
+        self.assertEqual(gate.gave_up_on(), [])
+        self.assertEqual(self.run_once(fake, claims, NOW + 36 * MINUTE), [])
+        self.assertEqual(gate.gave_up_on(), ["t-new"])
+
+    def test_the_next_rollout_waits_for_a_claim_again(self):
+        fake = FakeKube(pods=[pod("t-one", since=NOW)], replicas=1)
+        claims = Claims(HELD)
+        self.run_once(fake, claims, NOW)
+        self.run_once(fake, claims, NOW + 20 * MINUTE)
+        self.assertEqual(len(fake.patches), 1)
+        fake.pods = []
+        self.run_once(fake, claims, NOW + 21 * MINUTE)
+        fake.pods = [pod("t-two", since=NOW + 60 * MINUTE)]
+        fake.replicas = 1
+        self.run_once(fake, claims, NOW + 60 * MINUTE)
+        self.assertEqual(len(fake.patches), 1)
+        self.assertEqual(len(self.posts), 3)
+
+
+class ClaimEndpointTest(unittest.TestCase):
+    """GET /claim tells the tv deploy pipeline who holds the emulator: one line
+    per claim, an empty body when nobody does, 503 when Dolt cannot be read."""
+
+    def setUp(self):
+        self.saved = gate.read_claims
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), gate.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        gate.read_claims = self.saved
+        self.server.shutdown()
+        self.server.server_close()
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read().decode()
+        conn.close()
+        return resp.status, body
+
+    def test_names_each_holder(self):
+        gate.read_claims = Claims(HELD)
+        status, body = self.get("/claim")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, "wizard@devvm (testing the TV pairing screen, since 2026-11-02 22:30 UTC)\n")
+
+    def test_empty_when_nobody_holds_it(self):
+        gate.read_claims = Claims([])
+        self.assertEqual(self.get("/claim"), (200, ""))
+
+    def test_unreadable_store_is_a_503(self):
+        gate.read_claims = Claims(ConnectionRefusedError("refused"))
+        status, body = self.get("/claim")
+        self.assertEqual(status, 503)
+        self.assertIn("refused", body)
 
 
 if __name__ == "__main__":
