@@ -65,6 +65,23 @@ variable "storage" {
   default     = "10Gi"
 }
 
+variable "nfs_version" {
+  description = <<-EOT
+    Value for the nfsvers= mount option. The default "4" lets client and server
+    negotiate, which against the Proxmox host lands on 4.2.
+
+    Pass "4.1" for a workload that copies files on the share. NFS 4.2 adds
+    server-side COPY, and since the Proxmox host booted kernel 7.0.14-25 on
+    2026-10-23 every copy_file_range over 4.2 writes all the bytes and then
+    never returns: the client waits in handle_async_copy for a completion
+    callback that does not arrive. 4.1 has no COPY operation, so the client
+    reads and writes the data itself (3 MB in 67 ms, measured 2026-11-02).
+    Immich's storage-template moves hit this; see stacks/immich/main.tf.
+  EOT
+  type        = string
+  default     = "4"
+}
+
 variable "access_modes" {
   description = "PV/PVC access modes"
   type        = list(string)
@@ -85,7 +102,7 @@ resource "kubernetes_persistent_volume" "this" {
     volume_mode                      = "Filesystem"
 
     mount_options = [
-      "nfsvers=4",
+      "nfsvers=${var.nfs_version}",
       "soft",
       "timeo=30",
       "retrans=3",
