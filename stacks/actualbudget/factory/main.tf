@@ -225,9 +225,11 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
           image = "jhonderson/actual-http-api:${var.http_api_tag}"
           name  = "actualbudget"
           resources {
+            # Request 768Mi -> 448Mi on 2026-11-02, after the k8s upgrade drain could not place evicted pods: 30-day peak working set 394Mi,
+            # p95 287Mi, across all three instances. Limit unchanged.
             requests = {
               cpu    = "50m"
-              memory = "768Mi"
+              memory = "448Mi"
             }
             limits = {
               memory = "768Mi"
