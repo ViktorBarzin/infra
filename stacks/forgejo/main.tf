@@ -658,7 +658,8 @@ module "ingress" {
   turnstile = true
   # Keep repos, commits and files out of search results (Viktor, 2026-11-02).
   # Verified search engines pass the gate and Anubis, and Forgejo's default
-  # robots.txt allows commit pages, so Google was able to index them.
+  # robots.txt allows commit pages, so Google was able to index them. Leave
+  # robots.txt open: Google has to fetch a page to see its noindex.
   search_noindex = true
   extra_annotations = {
     "gethomepage.dev/enabled"                      = "true"
