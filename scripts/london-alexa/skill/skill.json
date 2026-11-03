@@ -23,6 +23,7 @@
         },
         "protocolVersion": "3"
       }
-    }
+    },
+    "permissions": [{ "name": "alexa::async_event:write" }]
   }
 }
