@@ -352,6 +352,10 @@ alertmanager:
           - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
         target_matchers:
           - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
+        # The symptom alerts also cover sdd since 2026-11-03; a busy sdd must
+        # not hide sdc's volume alerts, so only inhibit on the same device.
+        equal:
+          - device
       # devvm down: the generic scrape alert says the same thing 27 minutes
       # later and more quietly. equal: [job] keeps this surgical — every OTHER
       # target's ScrapeTargetDown still notifies while devvm is unreachable.
@@ -1653,29 +1657,32 @@ serverFiles:
           # is the closest thing to a user-visible latency SLI on this host.
           # Guarded on a real read rate (>20 IOPS) so a single slow read on an
           # otherwise idle device cannot trip it.
+          # Also covers sdd, the 600GB 10K SAS RAID1 (VG sas) added 2026-11-03,
+          # which takes hot volumes off sdc. Same 50 ms bar: a 10K pair should
+          # sit well under it, so firing there means the pair is overloaded.
           - alert: HDDReadLatencyHigh
             expr: |
-              (1000 * rate(node_disk_read_time_seconds_total{job="proxmox-host", device="sdc"}[5m])
-                / clamp_min(rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]), 1) > 50)
-              and (rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]) > 20)
+              (1000 * rate(node_disk_read_time_seconds_total{job="proxmox-host", device=~"sdc|sdd"}[5m])
+                / clamp_min(rate(node_disk_reads_completed_total{job="proxmox-host", device=~"sdc|sdd"}[5m]), 1) > 50)
+              and (rate(node_disk_reads_completed_total{job="proxmox-host", device=~"sdc|sdd"}[5m]) > 20)
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "sdc read latency {{ $value | printf \"%.0f\" }} ms (threshold 50 ms; normal p95 is 23 ms) — everything sharing this spindle is waiting, incl. etcd"
+              summary: "{{ $labels.device }} read latency {{ $value | printf \"%.0f\" }} ms (threshold 50 ms; sdc's normal p95 is 23 ms) — everything on this array is waiting"
 
           # Device pinned. Above p99 (81%), so this is genuine saturation
           # rather than the nightly housekeeping window.
           - alert: HDDSaturated
-            expr: rate(node_disk_io_time_seconds_total{job="proxmox-host", device="sdc"}[5m]) * 100 > 85 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            expr: rate(node_disk_io_time_seconds_total{job="proxmox-host", device=~"sdc|sdd"}[5m]) * 100 > 85 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "sdc {{ $value | printf \"%.0f\" }}% busy (threshold 85%; p99 is 81%) — no headroom left on the shared spindle"
+              summary: "{{ $labels.device }} {{ $value | printf \"%.0f\" }}% busy (threshold 85%; sdc's p99 is 81%) — no headroom left on this array"
 
           # IOPS is the binding constraint on a 7200 rpm pair, more than
           # bandwidth is: 1600 random IOPS is far past what the spindles can
@@ -4343,13 +4350,23 @@ serverFiles:
               severity: critical
             annotations:
               summary: "LVM PVC snapshot job failed (status={{ $value }})"
+          # The SAS pool is 537 GiB, small enough that one wrongly placed bulk
+          # volume fills it. Warn at 80% used, well before LVMThinPoolLow.
+          # Fed by lvm-pvc-snapshot, so it updates once a day (03:02).
+          - alert: SASThinPoolFilling
+            expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot", vg="sas"} < 20
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "SAS thin pool sas/data is {{ 100 - $value | printf \"%.0f\" }}% used (warn at 80%) — it is for small hot volumes; check what landed there"
           - alert: LVMThinPoolLow
             expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot"} < 15
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "LVM thin pool has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
+              summary: "LVM thin pool {{ $labels.vg }}/data has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
           # --- 3-2-1 Backup Pipeline Alerts ---
           - alert: WeeklyBackupStale
             expr: (time() - daily_backup_last_run_timestamp{job="daily-backup"}) > 777600
