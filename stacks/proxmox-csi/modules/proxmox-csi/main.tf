@@ -86,6 +86,24 @@ resource "helm_release" "proxmox_csi" {
       # off sdc. Created empty: which workloads move here is decided
       # separately (docs/architecture/storage.md). 558 GB usable, so this
       # pair is for small, hot volumes, never bulk data.
+      # The Samsung 850 EVO SSD (sdb, VG ssd, Proxmox storage `ssd`, thick
+      # LVM), added 2026-11-03. One consumer drive, no mirror, no power-loss
+      # protection, and outside lvm-pvc-snapshot/daily-backup (those walk thin
+      # pools only), so it is for READ-heavy, REGENERABLE caches only: never a
+      # database, never user data. Thick LVM allocates the full size up front.
+      {
+        name                 = "proxmox-lvm-ssd"
+        storage              = "ssd"
+        reclaimPolicy        = "Retain"
+        fstype               = "ext4"
+        ssd                  = true
+        cache                = "none"
+        volumeBindingMode    = "WaitForFirstConsumer"
+        allowVolumeExpansion = true
+        annotations = {
+          "resize.topolvm.io/enabled" = "true"
+        }
+      },
       {
         name                 = "proxmox-lvm-sas"
         storage              = "sas-lvm"
