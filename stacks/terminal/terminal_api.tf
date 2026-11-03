@@ -119,7 +119,10 @@ resource "kubernetes_manifest" "terminal_api_rate_limit" {
         average = 5
         burst   = 20
         sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
+          # X-Client-Prefix (real-ip plugin, which runs earlier in the chain): the
+          # client's IPv4 address, or its IPv6 /64, so one IPv6 client gets one
+          # bucket rather than one per address (2026-11-03).
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }
@@ -140,7 +143,10 @@ resource "kubernetes_manifest" "terminal_api_inflight" {
       inFlightReq = {
         amount = 10
         sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
+          # X-Client-Prefix (real-ip plugin, which runs earlier in the chain): the
+          # client's IPv4 address, or its IPv6 /64, so one IPv6 client gets one
+          # bucket rather than one per address (2026-11-03).
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }
