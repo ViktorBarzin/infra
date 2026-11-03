@@ -43,6 +43,11 @@
 # durable; the manifest edit below is what makes it take effect now without
 # waiting for the next upgrade.
 #
+# Apply it through CI. The remote-exec SSH key is the Vault-held one CI uses;
+# a local `homelab tf apply rbac` from the devvm fails with "SSH authentication
+# failed (wizard@10.0.20.100)" (seen 2026-11-03), leaving this resource
+# destroyed-not-recreated in state until CI applies.
+#
 # Applying this RESTARTS the etcd static pod on a single-node control plane, so
 # the apiserver briefly loses its datastore. Rollback is a file copy: the
 # pre-change manifest is kept at /root/etcd.yaml.bak-code-at4f-2026-09-03.
