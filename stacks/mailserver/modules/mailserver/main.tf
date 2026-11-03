@@ -837,6 +837,7 @@ resource "kubernetes_deployment" "mailserver" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"],        # set by `kubectl rollout restart`
     ]
   }
 }
@@ -903,6 +904,9 @@ resource "kubernetes_service" "mailserver" {
 # Stock :25 runs the same postscreen as the :2525 PROXY listener. IPv4 mail is
 # unchanged (pfSense HAProxy -> mailserver_proxy NodePorts).
 resource "kubernetes_service" "mailserver_v6" {
+  lifecycle {
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   metadata {
     name      = "mailserver-v6"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
