@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Install the bootstrap config.xml on the OPNsense VM over its serial console.
+
+Runs ON the Proxmox host (the VM's console is the unix socket
+/var/run/qemu-server/<vmid>.serial0). Reads a base64 config.xml on stdin,
+logs in on the console, writes it to /conf/config.xml, checks its sha256 and
+reboots. docs/plans/2026-11-03-opnsense-migration.md, phase 2; the console
+path replaces the boot-time importer, which only offers its prompt for a
+few seconds.
+
+Used once per fresh VM, with every NIC still disconnected (runbook:
+docs/runbooks/opnsense.md):
+
+    scripts/opnsense-bootstrap-config.py --out /tmp/x/config.xml
+    base64 -w0 /tmp/x/config.xml > /tmp/x/config.b64
+    scp /tmp/x/config.b64 scripts/opnsense-bootstrap-serial root@192.168.1.127:/root/
+    ssh root@192.168.1.127 python3 /root/opnsense-bootstrap-serial 100 \
+        "$(sha256sum /tmp/x/config.xml | cut -d' ' -f1)" --b64-file /root/config.b64
+
+The default root password of a fresh image is 'opnsense'. Pass --password
+to log in with another one.
+"""
+
+import argparse
+import re
+import socket
+import sys
+import time
+
+
+class Console:
+    def __init__(self, vmid: int):
+        self.s = socket.socket(socket.AF_UNIX)
+        self.s.connect(f"/var/run/qemu-server/{vmid}.serial0")
+        self.s.settimeout(0.5)
+        self.buf = ""
+
+    def read(self, secs: float) -> str:
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                d = self.s.recv(65536)
+            except socket.timeout:
+                continue
+            if d:
+                txt = d.decode("utf-8", "replace")
+                self.buf += txt
+                sys.stderr.write(txt)
+        return self.buf
+
+    def expect(self, pattern: str, secs: float) -> re.Match:
+        end = time.time() + secs
+        rx = re.compile(pattern, re.S)
+        while time.time() < end:
+            self.read(0.5)
+            m = rx.search(self.buf)
+            if m:
+                self.buf = self.buf[m.end():]
+                return m
+        raise TimeoutError(f"timed out waiting for {pattern!r}; tail: {self.buf[-400:]!r}")
+
+    def send(self, text: str) -> None:
+        self.s.sendall(text.encode())
+
+    def wait_login(self, secs: float) -> None:
+        """Press Enter every 5 s until the console shows a login prompt; it
+        prints one only after a keypress once boot has finished."""
+        end = time.time() + secs
+        while time.time() < end:
+            self.send("\r")
+            try:
+                self.expect(r"login:\s*$", 5)
+                return
+            except TimeoutError:
+                continue
+        raise TimeoutError("no login prompt on the console")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("vmid", type=int)
+    ap.add_argument("sha256", help="sha256 of the decoded config.xml")
+    ap.add_argument("--b64-file", required=True, help="file on this host holding base64 of config.xml")
+    ap.add_argument("--password", default="opnsense")
+    ap.add_argument("--boot-timeout", type=float, default=600)
+    args = ap.parse_args()
+    b64 = open(args.b64_file).read().strip()
+
+    c = Console(args.vmid)
+    c.wait_login(args.boot_timeout)
+    c.send("root\r")
+    c.expect(r"Password:", 30)
+    c.send(args.password + "\r")
+    # Either the console menu ("Enter an option:") or a shell prompt.
+    m = c.expect(r"(Enter an option:|# $|root@\S*:\S* # $)", 60)
+    if "option" in m.group(1):
+        c.send("8\r")
+        c.expect(r"# $", 30)
+    c.send("/bin/sh\r")
+    c.expect(r"[#$] $", 15)
+    c.send("stty -echo; PS1='OPNB> '\r")
+    c.expect(r"OPNB> $", 15)
+    c.send("rm -f /tmp/opnb.b64\r")
+    c.expect(r"OPNB> $", 15)
+    # FreeBSD's tty accepts at most MAX_CANON (255) bytes per line in
+    # canonical mode, so the base64 goes over in 160-byte printf pieces.
+    for i in range(0, len(b64), 160):
+        c.send(f"printf %s '{b64[i:i + 160]}' >> /tmp/opnb.b64\r")
+        c.expect(r"OPNB> $", 15)
+    c.send("b64decode -r < /tmp/opnb.b64 > /tmp/opnb.xml && sha256 -q /tmp/opnb.xml\r")
+    m = c.expect(r"([0-9a-f]{64})\s+OPNB> $", 30)
+    if m.group(1) != args.sha256:
+        print(f"\nsha256 mismatch on the box: {m.group(1)} != {args.sha256}", file=sys.stderr)
+        return 1
+    c.send("cp /conf/config.xml /conf/config.xml.factory && cp /tmp/opnb.xml /conf/config.xml && "
+           "rm -f /tmp/opnb.b64 /tmp/opnb.xml && sha256 -q /conf/config.xml\r")
+    m = c.expect(r"([0-9a-f]{64})\s+OPNB> $", 30)
+    if m.group(1) != args.sha256:
+        print("\n/conf/config.xml does not match after copy", file=sys.stderr)
+        return 1
+    c.send("reboot\r")
+    c.read(5)
+    print(f"\ninstalled config.xml (sha256 {args.sha256}) and rebooted", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
