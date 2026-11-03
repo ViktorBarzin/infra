@@ -440,6 +440,25 @@
         - k8s_node5_bootstrap.yaml
       tags: snippets
 
+    # ---- storage content types --------------------------------------------
+    # `local` also holds `import` content (raw/qcow2 disk images) since
+    # 2026-11-03, so stacks/opnsense can upload the OPNsense nano image over
+    # the API and attach it with import_from. The alternative, a compressed
+    # image through file_id, needs the bpg provider to SSH in as a
+    # root-equivalent user, which the stack's scoped token avoids (ADR-0038).
+    - name: Read the content types of the local storage
+      ansible.builtin.shell: >-
+        awk '/^dir: local$/{f=1;next} f&&/^[[:space:]]+content /{print $2;exit} /^[^[:space:]]/{f=0}' /etc/pve/storage.cfg
+      register: local_content
+      changed_when: false
+      check_mode: false
+      tags: storage-content
+
+    - name: local storage accepts vztmpl, backup, iso and import content
+      ansible.builtin.command: pvesm set local --content vztmpl,backup,iso,import
+      when: (local_content.stdout.split(',') | sort) != (['vztmpl', 'backup', 'iso', 'import'] | sort)
+      tags: storage-content
+
   handlers:
     - name: restart journald
       ansible.builtin.systemd_service:
@@ -459,3 +478,4 @@
       ansible.builtin.systemd_service:
         name: promtail
         state: restarted
+

@@ -1,6 +1,6 @@
 # Replace pfSense with OPNsense: build alongside, then swap
 
-Status: approved 2026-11-03 (grilling session with Viktor, same day; revised after two blind challenger reviews). Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is summarised under "What moves".
+Status: approved 2026-11-03 (grilling session with Viktor, same day; revised after two blind challenger reviews). Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table.
 
 ## Goal
 

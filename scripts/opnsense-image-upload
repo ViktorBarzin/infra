@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Put the OPNsense nano disk image into the Proxmox `local` storage as
+# `import` content, so stacks/opnsense can create the VM with import_from.
+# Run by the stack's terraform_data on first create (ADR-0038).
+#
+# Why a script: OPNsense publishes the nano image only bz2-compressed, and the
+# bpg provider can import a compressed image only through an SSH login as a
+# root-equivalent user. This keeps the stack on its scoped API token:
+# download, verify against the release's signed checksum list, decompress,
+# upload over the API.
+#
+# Idempotent: exits 0 at once if the volume already exists.
+#   scripts/opnsense-image-upload 26.7 <sha256-of-the-.bz2>
+set -euo pipefail
+
+VERSION="${1:?usage: opnsense-image-upload <version> <sha256 of the .img.bz2>}"
+BZ2_SHA256="${2:?usage: opnsense-image-upload <version> <sha256 of the .img.bz2>}"
+PVE_API="${PVE_API:-https://192.168.1.127:8006/api2/json}"
+NODE="${PVE_NODE:-pve}"
+STORAGE="${PVE_STORAGE:-local}"
+NAME="opnsense-${VERSION}-nano-amd64.raw"
+VOLID="${STORAGE}:import/${NAME}"
+CACHE="${OPNSENSE_IMAGE_CACHE:-$HOME/.cache/opnsense}"
+URL="https://pkg.opnsense.org/releases/${VERSION}/OPNsense-${VERSION}-nano-amd64.img.bz2"
+
+TOKEN="${PVE_API_TOKEN:-$(vault kv get -field=pve_api_token secret/opnsense)}"
+auth=(-H "Authorization: PVEAPIToken=${TOKEN}")
+
+if curl -sfk "${auth[@]}" "${PVE_API}/nodes/${NODE}/storage/${STORAGE}/content?content=import" \
+  | grep -qF "\"volid\":\"${VOLID}\""; then
+  echo "${VOLID} already present"
+  exit 0
+fi
+
+mkdir -p "$CACHE"
+cd "$CACHE"
+bz2="OPNsense-${VERSION}-nano-amd64.img.bz2"
+if ! echo "${BZ2_SHA256}  ${bz2}" | sha256sum -c --status - 2>/dev/null; then
+  curl -sfL -o "$bz2" "$URL"
+  echo "${BZ2_SHA256}  ${bz2}" | sha256sum -c -
+fi
+if [ ! -f "$NAME" ]; then
+  bunzip2 -kc "$bz2" > "${NAME}.part"
+  mv "${NAME}.part" "$NAME"
+fi
+raw_sha=$(sha256sum "$NAME" | cut -d' ' -f1)
+
+curl -sfk "${auth[@]}" -X POST "${PVE_API}/nodes/${NODE}/storage/${STORAGE}/upload" \
+  -F content=import -F checksum-algorithm=sha256 -F "checksum=${raw_sha}" \
+  -F "filename=@${NAME}" >/dev/null
+
+for _ in $(seq 1 60); do
+  if curl -sfk "${auth[@]}" "${PVE_API}/nodes/${NODE}/storage/${STORAGE}/content?content=import" \
+    | grep -qF "\"volid\":\"${VOLID}\""; then
+    echo "uploaded ${VOLID} (sha256 ${raw_sha})"
+    exit 0
+  fi
+  sleep 5
+done
+echo "upload finished but ${VOLID} is not listed" >&2
+exit 1
