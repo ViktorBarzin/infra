@@ -2541,8 +2541,8 @@ check_backup_per_db() {
         fi
     }
 
-    _check_cronjob_fresh dbaas mysql-backup-per-db mysql
-    _check_cronjob_fresh dbaas postgresql-backup-per-db pg
+    _check_cronjob_fresh dbaas mysql-backup mysql
+    _check_cronjob_fresh dbaas postgresql-backup pg
 
     [[ "$had_issue" == false ]] && pass "Per-DB dumps fresh — $detail"
     json_add "backup_per_db" "$status" "$detail"

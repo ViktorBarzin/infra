@@ -314,4 +314,4 @@ asyncio.run(m())"
 
 - Skill: `~/.claude/skills/job-hunter/SKILL.md` (agent invocation patterns)
 - Beads epic: `code-snp`
-- Storage / backup context: this DB is on the shared CNPG cluster (`dbaas`), backed up by the per-db `postgresql-backup-per-db` CronJob.
+- Storage / backup context: this DB is on the shared CNPG cluster (`dbaas`), backed up by the `postgresql-backup` CronJob, which writes one `pg_dump -Fc` per database (it absorbed the old `postgresql-backup-per-db` job on 2026-11-03).

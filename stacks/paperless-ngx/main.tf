@@ -198,7 +198,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # MySQL copy of the document set any more, so this is the only one.
           #
           # A final dump was taken first and is deliberately named so the
-          # 14-day rotation in the mysql-backup-per-db CronJob cannot sweep it:
+          # 14-day rotation in the mysql-backup CronJob cannot sweep it:
           # /backup/per-db/paperless-ngx/FINAL-before-drop_20260919T103948Z.sql.gz
           # on the dbaas-mysql-backup-host PVC, 147,829,942 bytes, gzip verified,
           # 74 CREATE TABLE and 939 INSERT statements.

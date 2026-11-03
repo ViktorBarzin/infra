@@ -22,8 +22,9 @@ the gotchas in `mysql-major-upgrade.md`), so a restore rounds them.
 
 | Location | Purpose | Retention |
 |---|---|---|
-| `/srv/nfs/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz` | Full daily dump (CronJob `mysql-backup`, daily 00:30 UTC) | 14 days |
-| `/srv/nfs/mysql-backup/per-db/<dbname>/dump_*.sql.gz` | Per-DB dumps (CronJob `mysql-backup-per-db`, daily 00:45 UTC) | 14 days |
+| `/srv/nfs/mysql-backup/grants_YYYY_MM_DD_HH_MM.sql.gz` | Users and grants (`SHOW CREATE USER` + `SHOW GRANTS`), CronJob `mysql-backup`, daily 00:30 UTC | 14 days |
+| `/srv/nfs/mysql-backup/per-db/<dbname>/dump_*.sql.gz` | Per-DB dumps with routines and events, same job and run | 14 days |
+| `/srv/nfs/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz` | Old full `--all-databases` dumps, written until 2026-11-02 (then a separate `mysql-backup-per-db` job made the per-DB files) | ages out by 2026-11-17 |
 | Synology `Backup/Viki/nfs/mysql-backup/` | Offsite mirror via inotify-tracked rsync | unlimited |
 
 Latest full dump is ~230MB compressed (~3GB uncompressed). Restore
@@ -128,8 +129,17 @@ spec:
         args:
         - |
           set -euo pipefail
-          gunzip -c /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | \
-            mysql -h mysql.dbaas.svc.cluster.local -uroot -p"$MYSQL_ROOT_PASSWORD"
+          # Since 2026-11-03: users and grants first, then every per-DB dump of
+          # the same run. (For a dump from before then, pipe the single
+          # /backup/dump_<ts>.sql.gz instead.)
+          TS=YYYY_MM_DD_HH_MM
+          gunzip -c /backup/grants_$TS.sql.gz | \
+            mysql -h mysql.dbaas.svc.cluster.local -uroot -p"$MYSQL_ROOT_PASSWORD" --force
+          for f in /backup/per-db/*/dump_$TS.sql.gz; do
+            db=$(basename "$(dirname "$f")")
+            mysql -h mysql.dbaas.svc.cluster.local -uroot -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$db\`"
+            gunzip -c "$f" | mysql -h mysql.dbaas.svc.cluster.local -uroot -p"$MYSQL_ROOT_PASSWORD" "$db"
+          done
           mysql -h mysql.dbaas.svc.cluster.local -uroot -p"$MYSQL_ROOT_PASSWORD" -e 'SHOW DATABASES;'
         env:
         - name: MYSQL_ROOT_PASSWORD

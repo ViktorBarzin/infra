@@ -20,19 +20,7 @@
     [
       "CronJob",
       "dbaas",
-      "mysql-backup-per-db",
-      "dbaas"
-    ],
-    [
-      "CronJob",
-      "dbaas",
       "postgresql-backup",
-      "dbaas"
-    ],
-    [
-      "CronJob",
-      "dbaas",
-      "postgresql-backup-per-db",
       "dbaas"
     ],
     [
