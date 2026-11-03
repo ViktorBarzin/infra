@@ -251,6 +251,61 @@ resource "kubectl_manifest" "whisker" {
   })
 }
 
+# Dual-stack pod addressing (docs/plans/2026-11-02-cluster-dual-stack.md, phase 3).
+# The Installation CR stays operator-owned (Helm installation.enabled=false,
+# bead code-3ad); this applies over the existing object and carries only the
+# pool list and the IPv6 autodetection, the same way the APIServer CR below is
+# adopted for one field. The ipPools list is atomic and the operator deletes
+# owned pools missing from it, so the IPv4 entry is the live one copied in full,
+# defaulted fields included, and the IPv6 entry spells out the same defaults so
+# the drift check stays quiet. ULA prefix: private, never routed outside the
+# cluster, so pod outbound stays IPv4 (RFC 6724). IPv6 autodetection takes the
+# node's public VLAN 20 address (playbooks/k8s-node-ipv6.yml).
+resource "kubectl_manifest" "installation_dual_stack" {
+  depends_on = [helm_release.tigera_operator]
+  # Destroying this resource deletes the Installation, which removes Calico
+  # from every node. To stop managing it, use `terraform state rm`.
+  lifecycle {
+    prevent_destroy = true
+  }
+  yaml_body = yamlencode({
+    apiVersion = "operator.tigera.io/v1"
+    kind       = "Installation"
+    metadata   = { name = "default" }
+    spec = {
+      calicoNetwork = {
+        ipPools = [
+          {
+            name                  = "default-ipv4-ippool"
+            cidr                  = "10.10.0.0/16"
+            blockSize             = 26
+            encapsulation         = "VXLANCrossSubnet"
+            natOutgoing           = "Enabled"
+            nodeSelector          = "all()"
+            allowedUses           = ["Workload", "Tunnel"]
+            assignmentMode        = "Automatic"
+            disableBGPExport      = false
+            disableNewAllocations = false
+          },
+          {
+            name                  = "default-ipv6-ippool"
+            cidr                  = "fd62:f088:7d06:100::/56"
+            blockSize             = 122
+            encapsulation         = "VXLANCrossSubnet"
+            natOutgoing           = "Disabled"
+            nodeSelector          = "all()"
+            allowedUses           = ["Workload", "Tunnel"]
+            assignmentMode        = "Automatic"
+            disableBGPExport      = false
+            disableNewAllocations = false
+          },
+        ]
+        nodeAddressAutodetectionV6 = { cidrs = ["2001:470:5a7f:20::/64"] }
+      }
+    }
+  })
+}
+
 # The APIServer CR "default" was created by hand with an empty spec in 2024
 # and was not in Terraform until 2026-10-20, when it was adopted here only to
 # carry the priority class above (kubectl_manifest applies over the existing

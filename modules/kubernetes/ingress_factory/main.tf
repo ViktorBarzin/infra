@@ -282,9 +282,12 @@ variable "public_ip" {
   default = "176.12.22.76"
 }
 
+# Traefik's IPv6 VIP since the cluster went dual-stack (2026-11-03,
+# docs/plans/2026-11-02-cluster-dual-stack.md phase 7). It was the HE tunnel
+# address 2001:470:6e:43d::2 (pfSense HAProxy, TCP only) before.
 variable "public_ipv6" {
   type    = string
-  default = "2001:470:6e:43d::2"
+  default = "2001:470:5a7f:20::203"
 }
 
 # Internal Traefik LB IP used by dns_type = "internal" records. Tracks the

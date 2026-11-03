@@ -1,0 +1,124 @@
+---
+# playbooks/pfsense-k8s-ipv6.yml
+#
+# pfSense side of cluster dual-stack, phase 1 of
+# docs/plans/2026-11-02-cluster-dual-stack.md. One configurator,
+# files/pfsense-k8s-ipv6-config.php, declares:
+#   - HE_IPv6 (gif0) MTU and MSS = he_mtu (default 1480). pfSense clamps IPv6
+#     TCP to MSS - 60, so 1480 gives max-mss 1420 (today 1280 -> 1220).
+#   - dKubernetes (vtnet2, VLAN 20): 2001:470:5a7f:20::1/64, router
+#     advertisements off, no DHCPv6 server.
+#   - VLAN 20 inet6 rules: pass ICMPv6, pass the /64 to the /64, reject every
+#     other IPv6 packet entering from VLAN 20 (replies to inbound connections
+#     pass by state). The existing IPv4 rule on VLAN 20 is untouched.
+#   - HE_IPv6 inbound: TCP 80/443 + UDP 443 to ::203 (Traefik), TCP
+#     25/465/587/993 to ::204 (mailserver-v6), ahead of the tunnel's
+#     "Block all other traffic" rule.
+#   - Four IPv6 port forwards on HE_IPv6, mail ports on ::203 -> ::204
+#     (enabled since phase 6, 2026-11-03; -e mail_forward_enabled=false
+#     disables them).
+#   - A floating block for any fc00::/7 source leaving on HE_IPv6.
+#
+# ORDERING. Raise the tunnel MTU on HE's side to 1480 FIRST
+# (tunnelbroker.net, the tunnel's Advanced tab), then run this. With pfSense at
+# 1480 and HE still at 1280, pfSense sends HE inner packets larger than HE's end
+# of the tunnel accepts and large IPv6 packets are lost both ways (the current
+# HAProxy IPv6 frontends included). To apply the rest without touching the MTU,
+# pass -e he_mtu=1280.
+#
+# RUN (from repo root; claim presence first:
+#      presence claim host:pfsense --purpose "k8s VLAN IPv6 (dual-stack phase 1)"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-k8s-ipv6.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-k8s-ipv6.yml
+#   pf lines the managed rules would produce (read-only):
+#             ssh admin@10.0.20.1 /usr/local/bin/php -f /tmp/pfsense-k8s-ipv6-config.php -- --render
+#
+# Checks after apply (plan, phase 1): from mx2 `ping -6 -s 1400 -M do
+# 2001:470:6e:43d::2` and `ping -6 2001:470:5a7f:20::1`; from a node, after
+# k8s-node-ipv6.yml, `ping -6 2001:470:5a7f:20::1` answers and
+# `curl -6 https://example.com` is refused at once.
+#
+# The configurator leaves a pfSense config history entry
+# ("ansible (pfsense-k8s-ipv6): ..."), restorable from
+# Diagnostics > Backup & Restore > Config History. That is the undo.
+
+- name: pfSense IPv6 for the Kubernetes VLAN
+  hosts: pfsense
+  gather_facts: false
+  vars:
+    php_script_remote: /tmp/pfsense-k8s-ipv6-config.php
+    he_mtu: 1480
+    mail_forward_enabled: true
+    k8s_gw6: "2001:470:5a7f:20::1"
+    script_args: >-
+      --he-mtu={{ he_mtu | int }}
+      --mail-forward={{ mail_forward_enabled | bool | ternary(1, 0) }}
+
+  tasks:
+    - name: Ship the idempotent configurator
+      ansible.builtin.copy:
+        src: files/pfsense-k8s-ipv6-config.php
+        dest: "{{ php_script_remote }}"
+        mode: "0700"
+        owner: root
+      # The script is the idempotency boundary; see pfsense-tailscale.yml.
+      changed_when: false
+      check_mode: false
+
+    # ── check mode ─────────────────────────────────────────────────────────
+    - name: Desired configuration (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} -- --check {{ script_args }}
+      changed_when: false
+      check_mode: false
+      register: cfg_check
+      when: ansible_check_mode
+
+    - name: Report what check mode would change
+      ansible.builtin.debug:
+        var: (cfg_check.stdout_lines[-1] | from_json).changes
+      when: ansible_check_mode
+
+    # ── apply ──────────────────────────────────────────────────────────────
+    - name: Apply desired configuration
+      ansible.builtin.command: /usr/local/bin/php -f {{ php_script_remote }} -- {{ script_args }}
+      register: cfg_apply
+      changed_when: (cfg_apply.stdout_lines[-1] | from_json).changed | bool
+      when: not ansible_check_mode
+
+    - name: Report configuration changes
+      ansible.builtin.debug:
+        var: (cfg_apply.stdout_lines[-1] | from_json).changes
+      when: not ansible_check_mode
+
+    # ── verify the live state ──────────────────────────────────────────────
+    - name: Read gif0 and vtnet2
+      ansible.builtin.command: ifconfig {{ item }}
+      loop: [gif0, vtnet2]
+      register: ifc
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: gif0 runs at he_mtu and vtnet2 holds the VLAN 20 gateway address
+      ansible.builtin.assert:
+        that:
+          - "(' mtu ' ~ (he_mtu | int)) in ifc.results[0].stdout"
+          - "('inet6 ' ~ k8s_gw6 ~ ' prefixlen 64') in ifc.results[1].stdout"
+        fail_msg: "{{ ifc.results | map(attribute='stdout') | list }}"
+      when: not ansible_check_mode
+
+    # filter_configure() reloads in the background, so poll the loaded ruleset.
+    - name: The loaded ruleset carries every managed rule and the MSS clamp
+      ansible.builtin.shell: |
+        rules=$(pfctl -sr 2>/dev/null | grep -c 'USER_RULE: k8s-ipv6: ')
+        rdr=$(pfctl -sn 2>/dev/null | grep -c '^rdr on gif0 inet6 .* 2001:470:5a7f:20::203 ')
+        mss=$(pfctl -sr 2>/dev/null | grep -c 'scrub on gif0 inet6 .*max-mss {{ (he_mtu | int) - 60 }}')
+        echo "rules=$rules rdr=$rdr mss=$mss"
+        [ "$rules" -eq 11 ] && [ "$rdr" -eq {{ mail_forward_enabled | bool | ternary(4, 0) }} ] && [ "$mss" -ge 1 ]
+      register: pf_live
+      retries: 10
+      delay: 3
+      until: pf_live.rc == 0
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode

@@ -65,6 +65,11 @@ resource "helm_release" "metallb" {
 }
 
 resource "kubernetes_manifest" "ip_address_pool" {
+  # The pool was created with `kubectl apply` in 2026-03, so that field manager
+  # still owned spec.addresses and the first change from Terraform conflicted.
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "metallb.io/v1beta1"
     kind       = "IPAddressPool"
@@ -73,7 +78,15 @@ resource "kubernetes_manifest" "ip_address_pool" {
       namespace = "metallb-system"
     }
     spec = {
-      addresses = ["10.0.20.200-10.0.20.220"]
+      # IPv6 range added for cluster dual-stack (docs/plans/2026-11-02-cluster-dual-stack.md,
+      # phase 6). It is in this same pool because a dual-stack Service needs
+      # both of its IPs from one pool. On-link with the nodes' VLAN 20 /64, so
+      # L2 (NDP) announcement works. Only Traefik (::203) and mailserver-v6
+      # (::204) ask for IPv6, both pinned with metallb.io/loadBalancerIPs.
+      addresses = [
+        "10.0.20.200-10.0.20.220",
+        "2001:470:5a7f:20::200-2001:470:5a7f:20::220",
+      ]
     }
   }
   depends_on = [helm_release.metallb]
