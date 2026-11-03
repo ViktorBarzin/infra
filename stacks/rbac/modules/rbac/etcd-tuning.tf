@@ -46,7 +46,8 @@
 # Apply it through CI. The remote-exec SSH key is the Vault-held one CI uses;
 # a local `homelab tf apply rbac` from the devvm fails with "SSH authentication
 # failed (wizard@10.0.20.100)" (seen 2026-11-03), leaving this resource
-# destroyed-not-recreated in state until CI applies.
+# destroyed-not-recreated in state until CI applies. A commit message that
+# quotes the CI skip marker anywhere also suppresses the pipeline.
 #
 # Applying this RESTARTS the etcd static pod on a single-node control plane, so
 # the apiserver briefly loses its datastore. Rollback is a file copy: the
