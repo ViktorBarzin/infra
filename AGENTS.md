@@ -176,5 +176,5 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 ## User Preferences
 - **Calendar**: Nextcloud at `nextcloud.viktorbarzin.me`
 - **Home Assistant**: ha-london (default), ha-sofia. "ha"/"HA" = ha-london
-- **New apps**: TanStack Start (React) on Bun with Drizzle on the shared Postgres and Authentik accounts, per app-kit `docs/adr/0001-default-app-stack.md` (2026-10-16). Existing SvelteKit apps keep their stack
+- **New apps**: TanStack Start (React) on Bun with Drizzle on the shared Postgres and Authentik accounts, per `~/code/app-kit/docs/adr/0001-default-app-stack.md` (2026-10-16). Existing SvelteKit apps keep their stack
 - **Tools**: Docker containers only — never `brew install` locally
