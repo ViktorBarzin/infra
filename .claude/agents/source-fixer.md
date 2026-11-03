@@ -17,7 +17,7 @@ section. A family in Sofia watches its Channels on a Sony BRAVIA every evening
 in place of a paid TV subscription, and the household watches F1 sessions on
 it, so a Channel that does not play is a real outage.
 
-Since tv plan `docs/plans/2026-11-01-f1-channels-build.md` there is one kind of
+Since tv plan `~/code/tv/docs/plans/2026-11-01-f1-channels-build.md` there is one kind of
 thing to repair: **Feeds of Channels**. A **Channel** (bTV, Sky Sports F1, F1
 Live) has zero or more **Feeds**, one per site route, keyed `<site>/<site_slug>`.
 The sites are of two kinds, and you handle both:
