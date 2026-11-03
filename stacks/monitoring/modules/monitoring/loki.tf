@@ -48,7 +48,7 @@ resource "helm_release" "alloy" {
   chart      = "alloy"
   # Pinned 2026-10-10 (was unpinned, so any apply floated to the newest chart).
   # Keep in step with helm_release.alloy_syslog below.
-  version = "1.13.1"
+  version = "1.15.0"
 
   values          = [file("${path.module}/alloy.yaml")]
   atomic          = true
@@ -68,7 +68,7 @@ resource "helm_release" "alloy_syslog" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
-  version    = "1.13.1"
+  version    = "1.15.0"
 
   values          = [file("${path.module}/alloy-syslog.yaml")]
   atomic          = true
