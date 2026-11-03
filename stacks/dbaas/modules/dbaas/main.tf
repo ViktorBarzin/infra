@@ -1786,9 +1786,15 @@ variable "pg_active_cluster" {
 }
 
 # 1 while data was copied in, 3 (one primary, two replicas) from the cutover on.
+# 2 since 2026-11-03 (was 3). On one physical host and one disk array a third
+# copy adds a full set of WAL and checkpoint writes but no protection against a
+# host or array failure; the nightly dumps cover that. Two keeps second-scale
+# switchovers during node reboots and drains. The third instance had also been
+# silently broken since ~2026-11-02 (stuck on an old timeline, see the
+# CNPGReplicaWalReceiverDown alert), so the cluster was effectively two already.
 variable "pg_cluster_v18_instances" {
   type    = number
-  default = 3
+  default = 2
 }
 
 # Custom exporter queries for the CNPG built-in postgres exporter (port 9187),
@@ -1833,10 +1839,10 @@ resource "null_resource" "pg_cluster_v18" {
     instances      = tostring(var.pg_cluster_v18_instances)
     image          = var.pg_cluster_v18_image
     storage_size   = "40Gi"
-    storage_class  = "proxmox-lvm-encrypted"
+    storage_class  = "proxmox-lvm-encrypted-sas"
     memory_limit   = "4Gi"
     memory_request = "2816Mi"
-    pg_params      = "v1-same-as-pg-cluster-v7"
+    pg_params      = "v2-checkpoint-30min-wal-keep-2gb"
     affinity       = "required-hostname-v1"
     monitoring     = "custom-queries-v1"
     probes         = "isolation-check-relaxed-v1"
@@ -1930,9 +1936,17 @@ resource "null_resource" "pg_cluster_v18" {
             wal_compression: "zstd"
             random_page_cost: "4"
             checkpoint_completion_target: "0.9"
-            checkpoint_timeout: "15min"
+            # 30min since 2026-11-03 (was 15): checkpoint page writes are most of
+            # the primary's write IOPS (~33 pages/s); a hot page is now rewritten
+            # half as often. Crash recovery replays up to ~30 min of WAL (~30 MB
+            # at the measured ~17 KB/s), i.e. seconds.
+            checkpoint_timeout: "30min"
             max_wal_size: "4GB"
             min_wal_size: "1GB"
+            # 2GB (was the 512MB default): more WAL kept for a replica that falls
+            # behind during an outage, so it can catch up instead of needing a
+            # re-clone. Costs disk space in pg_wal only.
+            wal_keep_size: "2GB"
             archive_timeout: "0"
             commit_delay: "2500"
           enableAlterSystem: true
@@ -1949,7 +1963,10 @@ resource "null_resource" "pg_cluster_v18" {
               key: queries
         storage:
           size: 40Gi
-          storageClass: proxmox-lvm-encrypted
+          # The SAS RAID1 (VG sas) since 2026-11-03: database engines live
+          # there. Applies to instances created from now on; existing ones move
+          # by being rebuilt one at a time (docs/architecture/storage.md).
+          storageClass: proxmox-lvm-encrypted-sas
         resources:
           requests:
             cpu: "50m"

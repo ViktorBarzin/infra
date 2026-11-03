@@ -4766,6 +4766,18 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CNPG operator down — PostgreSQL failover/management degraded"
+          # A CNPG replica whose WAL receiver is down stops receiving changes, but
+          # CNPG still counts it ready ("healthy, 3/3"). pg-cluster-v18-1 sat like
+          # that from ~2026-11-02 to 11-03, stuck on an old timeline asking for a
+          # WAL segment the primary had already removed, and nothing fired. Fix:
+          # rebuild the instance (delete its PVC and pod; CNPG re-clones it).
+          - alert: CNPGReplicaWalReceiverDown
+            expr: cnpg_pg_replication_is_wal_receiver_up{cnpg_role="replica"} == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CNPG replica {{ $labels.pod }} is not receiving WAL from the primary: its data is going stale while CNPG still reports it ready. Rebuild it (delete its PVC and pod)."
           - alert: PGConnectionsHigh
             # Per-cluster connection utilisation. Sums per-database backend
             # counts on each pod, then takes max across pods (primary holds

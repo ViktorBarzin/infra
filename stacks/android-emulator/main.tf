@@ -46,8 +46,11 @@ resource "kubernetes_persistent_volume_claim" "sdk" {
     }
   }
   spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    access_modes = ["ReadWriteOnce"]
+    # The 850 EVO SSD (VG ssd) since 2026-11-03: this cache is read-heavy
+    # (13.5 r/s, 1.3 w/s) and regenerable, so it suits a single unmirrored SSD
+    # and leaves the shared HDD sdc. Changing the class recreated it empty.
+    storage_class_name = "proxmox-lvm-ssd"
     resources {
       requests = {
         storage = "30Gi"
