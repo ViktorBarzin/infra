@@ -23,8 +23,8 @@ flowchart TD
   B --> G["10.0.10.10:22, 10.0.20.1:22, 192.168.1.127:22"]
 ```
 
-Other hostnames on 443 go to the HTTP routers as before. Public DNS answers the WAN address; internal DNS (Technitium) answers Traefik's LB `10.0.20.203` from `static_records.tf` in the technitium stack, because the ingress-to-DNS sync only sees Ingress objects. IPv6 arrives through the pfSense
-HAProxy bridge (`2001:470:6e:43d::2:443`) and joins the same Traefik entrypoint.
+Other hostnames on 443 go to the HTTP routers as before. Public DNS answers the WAN address; internal DNS (Technitium) answers Traefik's LB `10.0.20.203` from `static_records.tf` in the technitium stack, because the ingress-to-DNS sync only sees Ingress objects. IPv6 arrives at Traefik's own
+IPv6 VIP (`2001:470:5a7f:20::203:443`, cluster dual-stack since 2026-11-03) and joins the same Traefik entrypoint.
 
 ## Client setup
 
@@ -129,7 +129,7 @@ Three places, which must agree:
 
 | Symptom | Check |
 |---|---|
-| `openssl` prints a certificate error | `ssh.viktorbarzin.me` must resolve to 176.12.22.76 / `2001:470:6e:43d::2`, not Cloudflare. Check `dig +short ssh.viktorbarzin.me` |
+| `openssl` prints a certificate error | `ssh.viktorbarzin.me` must resolve to 176.12.22.76 / `2001:470:5a7f:20::203`, not Cloudflare. Check `dig +short ssh.viktorbarzin.me` |
 | TLS works, SSH hangs with no banner | `kubectl -n traefik logs deploy/traefik \| grep -i bastion`, and `kubectl get ingressroutetcp -n bastion` |
 | `Permission denied (publickey)` | The client's key is not in Vault, or the pod has not restarted since. Check the pod log for the `ready` line |
 | `administratively prohibited: open failed` | The target is not in `PermitOpen` |

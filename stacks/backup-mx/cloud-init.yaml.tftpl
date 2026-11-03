@@ -439,31 +439,11 @@ write_files:
         # HAProxy package's IPv6 frontends listen. Literal address on purpose:
         # with a hostname Go falls back to IPv4 and stays green while IPv6 is
         # down. Added 2026-11-02 after a 10-day IPv6 outage nothing detected.
-        - name: "wan direct ipv6: https 443"
-          group: edge
-          url: "tcp://[2001:470:6e:43d::2]:443"
-          interval: 60s
-          conditions:
-            - "[CONNECTED] == true"
-          %{ if alertmanager_slack_api_url != "" }
-          alerts:
-            - type: slack
-          %{ endif }
-        - name: "wan direct ipv6: mail 993"
-          group: edge
-          url: "tcp://[2001:470:6e:43d::2]:993"
-          interval: 60s
-          conditions:
-            - "[CONNECTED] == true"
-          %{ if alertmanager_slack_api_url != "" }
-          alerts:
-            - type: slack
-          %{ endif }
         # Native IPv6 since cluster dual-stack (2026-11-03): Traefik's VIP ::203,
         # which every AAAA record now points at. Mail 993 on ::203 is the
-        # pfSense port forward to mailserver-v6 (::204). The two tunnel-address
-        # probes above stay until the pfSense IPv6 frontends are removed
-        # (docs/plans/2026-11-02-cluster-dual-stack.md phase 8).
+        # pfSense port forward to mailserver-v6 (::204). The probes on the HE
+        # tunnel address (2001:470:6e:43d::2) went with the pfSense HAProxy
+        # IPv6 frontends on 2026-11-03 (plan phase 8).
         - name: "ipv6 vip: https 443"
           group: edge
           url: "tcp://[2001:470:5a7f:20::203]:443"
