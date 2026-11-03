@@ -2548,10 +2548,16 @@ serverFiles:
           # (a hung NFS 4.2 copy jammed the storage-template queue, then the
           # worker died) and no existing alert fired. Counts uploads from the
           # last 6h that are older than 15 min and still have no thumbnail; a
-          # healthy upload gets one in 2-3 s. One undecodable upload can hold
-          # this for up to 6h, which is also worth a look.
+          # healthy upload gets one in 2-3 s. Gated on jobs still queued in the
+          # upload pipeline (2026-11-03): an undecodable file leaves an upload
+          # without a thumbnail but every queue empty, and held this alert 47
+          # min after the backlog cleared. Every real delay so far left jobs
+          # queued (dead worker, hung move, backlog).
           - alert: ImmichThumbnailsLagging
-            expr: immich_thumbnail_pending_assets{job="immich-thumbnail-freshness"} > 0
+            expr: |
+              immich_thumbnail_pending_assets{job="immich-thumbnail-freshness"} > 0
+              and on()
+              sum(immich_job_queue_jobs{job="immich-thumbnail-freshness"}) > 0
             for: 10m
             labels:
               severity: warning

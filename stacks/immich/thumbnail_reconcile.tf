@@ -389,9 +389,19 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
 # question a person asks: did recent uploads get a thumbnail?
 #
 # Window: created more than 15 minutes ago (a healthy upload takes ~2-3 s) and
-# less than 6 hours ago, so one undecodable upload ages out of the count instead
-# of holding the alert forever. Alert rules: ImmichThumbnailsLagging and
+# less than 6 hours ago. Alert rules: ImmichThumbnailsLagging and
 # ImmichThumbnailFreshnessStale in monitoring's prometheus_chart_values.tpl.
+#
+# The job also reads the depth of the three queues an upload passes through.
+# The alert needs both: uploads without a thumbnail AND jobs still queued. A
+# file Immich cannot decode (2026-11-03: a Lightroom -Rendered.dng) leaves an
+# upload without a thumbnail while every queue is empty; that held the alert
+# for 47 minutes after the real backlog had cleared, and could hold it for the
+# full 6 hours. Immich records such a failure only in its log, not in Redis
+# (the handler catches the error, so BullMQ marks the job complete). Every
+# delay seen so far left jobs queued: a dead worker leaves metadataExtraction
+# waiting, a hung move leaves storageTemplateMigration active, a backlog leaves
+# thumbnailGeneration waiting.
 resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
   metadata {
     name      = "immich-thumbnail-freshness"
@@ -444,8 +454,8 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
                   echo "# HELP immich_thumbnail_freshness_last_run_timestamp Unix time of the last successful freshness scan."
                   echo "# TYPE immich_thumbnail_freshness_last_run_timestamp gauge"
                   echo "immich_thumbnail_freshness_last_run_timestamp $(date +%s)"
-                } > /shared/metrics.prom
-                cat /shared/metrics.prom
+                } > /shared/metrics.10-scan.prom
+                cat /shared/metrics.10-scan.prom
               EOT
               ]
               env {
@@ -482,14 +492,57 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
                 limits   = { memory = "64Mi" }
               }
             }
-            # A failed scan pushes nothing, so the last-run gauge goes stale and
+            # Queue depths. Each step writes its own file (the steps run as
+            # different uids, see the reconciler's push step for why one shared
+            # file fails). An unreachable Redis exits non-zero, so nothing is
+            # pushed and ImmichThumbnailFreshnessStale fires.
+            init_container {
+              name  = "queues"
+              image = "docker.io/library/redis:8.10.3-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                out=/shared/metrics.20-queues.prom
+                {
+                  echo "# HELP immich_job_queue_jobs Jobs waiting or running in an Immich BullMQ queue."
+                  echo "# TYPE immich_job_queue_jobs gauge"
+                  for q in metadataExtraction storageTemplateMigration thumbnailGeneration; do
+                    for s in wait active prioritized; do
+                      if [ "$s" = prioritized ]; then cmd=ZCARD; else cmd=LLEN; fi
+                      n=$(redis-cli -h "$REDIS_HOST" --no-raw "$cmd" "immich_bull:$q:$s" | tr -dc '0-9')
+                      [ -n "$n" ] || { echo "no answer for $q:$s" >&2; exit 1; }
+                      echo "immich_job_queue_jobs{queue=\"$q\",state=\"$s\"} $n"
+                    done
+                  done
+                } > "$out"
+                cat "$out"
+              EOT
+              ]
+              env {
+                name  = "REDIS_HOST"
+                value = var.redis_host
+              }
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "16Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+            # A failed step pushes nothing, so the last-run gauge goes stale and
             # ImmichThumbnailFreshnessStale fires instead of a false all-clear.
             container {
               name  = "push"
               image = "docker.io/curlimages/curl:8.23.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
-                curl -sf -m 20 --data-binary @/shared/metrics.prom \
+                cat /shared/metrics.*.prom > /tmp/all.prom
+                for m in immich_thumbnail_pending_assets immich_job_queue_jobs \
+                         immich_thumbnail_freshness_last_run_timestamp; do
+                  grep -q "^$m" /tmp/all.prom || { echo "missing metric: $m" >&2; exit 1; }
+                done
+                curl -sf -m 20 --data-binary @/tmp/all.prom \
                   http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-thumbnail-freshness
               EOT
               ]
