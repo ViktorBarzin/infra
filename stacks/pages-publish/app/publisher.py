@@ -4,8 +4,12 @@ Every function that can touch the filesystem or shell out is small and behind
 the single ``_run`` subprocess seam so tests can stub git/render without a
 network or a real repo. The security-critical invariant lives in
 ``sanitize_slug`` + ``target_subdir`` + the realpath assertion in ``publish``:
-the service is structurally incapable of writing outside ``<repo>/pages/<user>/``
-or ``<repo>/pages/shared/``.
+the service is structurally incapable of writing outside ``<repo>/<user>/`` or
+``<repo>/shared/``.
+
+The clone is viktor/pages, whose root is the site itself: one dir per user,
+``shared/``, ``assets/`` and the renderer in ``tools/``. Until 2026-11-03 the
+same tree sat under ``pages/`` in the monorepo.
 """
 
 from __future__ import annotations
@@ -24,7 +28,6 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 STATUSES = ("draft", "approved", "executing", "done")
-PAGES_PREFIX = "pages"
 
 # How many times publish() will re-sync + re-render + re-push when another
 # publish lands on master first.
@@ -35,7 +38,7 @@ DEFAULT_ATTEMPTS = 5
 _SLUG_RE = re.compile(r"[0-9A-Za-z._-]+")
 
 # Every asset a rendered page can reference, as it appears in the HTML. The
-# charset has no '/' so a match is always a bare filename inside pages/assets/,
+# charset has no '/' so a match is always a bare filename inside assets/,
 # which is what keeps the preview from serving an arbitrary repo file.
 _ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
 
@@ -51,9 +54,23 @@ MAX_BUNDLE_BYTES = 20 * 1024 * 1024
 MAX_BUNDLE_DEPTH = 3  # path segments, so "a/b/file" at most
 BUNDLE_ENCODINGS = ("utf-8", "base64")
 
-# Second-level dirs under pages/ that belong to the site itself, not to a
-# bundle owner.
+# Top-level dirs of the repo that belong to the site itself, not to a user or a
+# bundle owner. Kept in sync with config.RESERVED_USERS.
 _RESERVED_SEGMENTS = ("shared", "assets", "tools")
+
+
+def _unsafe_segment(segment: str) -> bool:
+    """Charset, ``..`` and leading-dot check for a path segment.
+
+    Segments become dirs at (or one level under) the repo root, where ``.git``
+    lives, so a leading ``.`` is refused along with traversal.
+    """
+    return (
+        not segment
+        or segment.startswith(".")
+        or ".." in segment
+        or not _SLUG_RE.fullmatch(segment)
+    )
 
 
 class PublishError(Exception):
@@ -98,16 +115,17 @@ def validate_status(status: str) -> str:
 
 
 def target_subdir(user: str, shared: bool) -> str:
-    """Repo-relative target dir with a HARDCODED ``pages/`` prefix.
+    """Repo-relative target dir: exactly one FIXED segment, never request input.
 
-    The second segment is the literal ``shared`` or the RESOLVED user (from the
-    token, never request input). The user was already charset-validated at
-    config load; re-checked here as defense in depth.
+    The segment is the literal ``shared`` or the RESOLVED user (from the token).
+    The user was already validated at config load; re-checked here as defense
+    in depth, including the site's own dirs, which sit at the same level.
     """
-    segment = "shared" if shared else user
-    if segment != "shared" and (".." in segment or not _SLUG_RE.fullmatch(segment)):
-        raise PublishError(f"unsafe target segment {segment!r}")
-    return f"{PAGES_PREFIX}/{segment}"
+    if shared:
+        return "shared"
+    if _unsafe_segment(user) or user in _RESERVED_SEGMENTS:
+        raise PublishError(f"unsafe target segment {user!r}")
+    return user
 
 
 def _run(cmd: list[str], *, cwd: str | None = None, env: dict | None = None):
@@ -132,7 +150,7 @@ def _git_env(cfg: Config, author: str | None = None) -> dict[str, str]:
 
 
 def ensure_repo(cfg: Config) -> None:
-    """Clone the monorepo on first run and set the committer identity.
+    """Clone viktor/pages on first run and set the committer identity.
 
     Idempotent: a no-op when ``<repo>/.git`` already exists. The full clone (no
     --depth) keeps rebase-on-conflict reliable during concurrent publishes.
@@ -148,7 +166,7 @@ def ensure_repo(cfg: Config) -> None:
 
 
 def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> str:
-    """Invoke the monorepo renderer; return the absolute path it emitted.
+    """Invoke the repo's renderer (tools/render.py); return the path it emitted.
 
     render.py prints the written page path on stdout (``<date>-<slug>.html``,
     or a reused page) and regenerates that dir's index.html — the emitted path
@@ -182,7 +200,7 @@ def sync_to_master(cfg: Config) -> None:
     **This deliberately never rebases.** The previous implementation answered a
     non-fast-forward push with ``git pull --rebase``; when that rebase hit a
     conflict — and it reliably did, because every publish regenerates
-    ``pages/<user>/index.html`` — it stopped mid-rebase, leaving
+    ``<user>/index.html`` — it stopped mid-rebase, leaving
     ``.git/rebase-merge`` behind and HEAD detached. Every later publish then
     failed on "there is already a rebase-merge directory", so ONE conflicting
     race returned HTTP 500 for **every** user until the pod was replaced
@@ -306,11 +324,12 @@ def publish(
     subdir = target_subdir(user, shared)
     abs_target = os.path.join(cfg.repo_dir, subdir)
 
-    # Structural guarantee: the resolved write dir stays inside <repo>/pages/.
-    pages_root = os.path.realpath(os.path.join(cfg.repo_dir, PAGES_PREFIX))
-    resolved = os.path.realpath(abs_target)
-    if resolved != pages_root and not resolved.startswith(pages_root + os.sep):
-        raise PublishError("computed target escapes the pages/ root")
+    # Structural guarantee: the resolved write dir is exactly <repo>/<segment>.
+    # Comparing against the expected path, not just a prefix, also refuses a
+    # symlink committed at <segment>/ that points elsewhere inside the repo.
+    expected = os.path.join(os.path.realpath(cfg.repo_dir), subdir)
+    if os.path.realpath(abs_target) != expected:
+        raise PublishError("computed target escapes its dir in the repo")
 
     ensure_repo(cfg)
 
@@ -360,7 +379,7 @@ def collect_assets(cfg: Config, html: str) -> dict[str, str]:
     is a worse reason to fail than an unstyled page is to return.
     """
     assets: dict[str, str] = {}
-    root = os.path.realpath(os.path.join(cfg.repo_dir, PAGES_PREFIX, "assets"))
+    root = os.path.realpath(os.path.join(cfg.repo_dir, "assets"))
     for name in sorted(set(_ASSET_REF_RE.findall(html))):
         path = os.path.realpath(os.path.join(root, name))
         if path != root and not path.startswith(root + os.sep):
@@ -393,8 +412,8 @@ def render_preview(
     where a page LANDS, not how it renders, so it is validated and then unused.
 
     Rendering goes to a throwaway directory rather than into the clone. An
-    untracked page left behind in ``pages/<user>/`` would be swept up by the
-    next publish's ``git add -- pages/<user>/`` and pushed as part of somebody
+    untracked page left behind in ``<user>/`` would be swept up by the
+    next publish's ``git add -- <user>/`` and pushed as part of somebody
     else's page, which is a far worse failure than a preview whose generated
     index.html lists only the one page nobody is looking at.
     """
@@ -425,7 +444,7 @@ def render_preview(
     }
 
 
-# ---- bundles: raw multi-file publish into pages/<user>/<slug>/ -------------
+# ---- bundles: raw multi-file publish into <user>/<slug>/ -------------------
 
 
 def _check_bundle_path(path: str) -> list[str]:
@@ -498,17 +517,17 @@ def validate_bundle_files(files: list[dict]) -> list[tuple[str, bytes]]:
 
 
 def bundle_subdir(user: str, slug: str) -> str:
-    """Repo-relative bundle dir, ``pages/<user>/<slug>``, from token-bound values.
+    """Repo-relative bundle dir, ``<user>/<slug>``, from token-bound values.
 
     Both segments come from PAGES_BUNDLE_KEYS and were validated at config
     load; re-checked here as defense in depth, plus the site's own dirs.
     """
     for seg in (user, slug):
-        if not seg or ".." in seg or not _SLUG_RE.fullmatch(seg):
+        if _unsafe_segment(seg):
             raise PublishError(f"unsafe bundle segment {seg!r}")
     if user in _RESERVED_SEGMENTS:
-        raise PublishError(f"bundle user {user!r} is a reserved pages/ dir")
-    return f"{PAGES_PREFIX}/{user}/{slug}"
+        raise PublishError(f"bundle user {user!r} is a reserved site dir")
+    return f"{user}/{slug}"
 
 
 def stage_and_commit_bundle(cfg: Config, subdir: str, user: str, slug: str) -> bool:
@@ -548,7 +567,7 @@ def _write_bundle(cfg: Config, subdir: str, files: list[tuple[str, bytes]]) -> N
     abs_target = os.path.join(cfg.repo_dir, subdir)
     expected = os.path.join(os.path.realpath(cfg.repo_dir), subdir)
     if os.path.realpath(abs_target) != expected:
-        raise PublishError("bundle target resolves outside its pages/ dir")
+        raise PublishError("bundle target resolves outside its dir in the repo")
 
     if os.path.isdir(abs_target):
         shutil.rmtree(abs_target)

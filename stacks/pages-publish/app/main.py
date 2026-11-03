@@ -4,10 +4,10 @@
 - POST /publish -> bearer-authenticated; renders + commits + pushes one page.
 - POST /preview -> bearer-authenticated; renders one page and returns the bytes
   plus the assets it links. Nothing is committed or pushed. It exists so a
-  caller with no monorepo checkout can look at a page before publishing it;
+  caller with no pages checkout can look at a page before publishing it;
   the site itself is owner-gated and 403s every automated client.
 - POST /publish-bundle -> bearer-authenticated with a BUNDLE token (a separate
-  map from /publish's); replaces pages/<user>/<slug>/ with the files sent and
+  map from /publish's); replaces <user>/<slug>/ with the files sent and
   commits + pushes. No rendering.
 
 Concurrent publishes serialize on an asyncio lock; the blocking render + git

@@ -52,7 +52,7 @@
   vars:
     workstation_dir: "{{ playbook_dir }}/../scripts/workstation"
     node_major: 22
-    # Bun for TypeScript apps (code ADR-0001, docs/adr/0001-default-app-stack.md).
+    # Bun for TypeScript apps (ADR-0001, app-kit docs/adr/0001-default-app-stack.md).
     # Pinned to the version every app names in "packageManager": a Bun older
     # than the one that wrote bun.lock cannot read it (1.3.11 fails on a 1.4.3
     # lockfile). Bump it together with the apps: change both lines, then run

@@ -1,4 +1,4 @@
-# Device-code login for CLIs (ADR-0001 in ~/code/docs/adr, "API tokens").
+# Device-code login for CLIs (ADR-0001 in app-kit docs/adr, "API tokens").
 #
 # A CLI asks POST /application/o/device/ for a code and shows the person a URL
 # and the code. The person opens https://authentik.viktorbarzin.me/device

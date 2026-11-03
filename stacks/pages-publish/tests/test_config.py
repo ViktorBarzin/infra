@@ -55,3 +55,30 @@ def test_bundle_token_may_not_reuse_an_api_token():
             api={"wizard": "same"},
             bundle={"same": {"user": "showcase", "slug": "homelab"}},
         )
+
+
+# viktor/pages keeps the user dirs at its root, beside .git, assets/ and tools/,
+# so a user key naming one of those would turn a publish into a write there.
+@pytest.mark.parametrize("user", [".git", ".hidden", "assets", "tools", "shared"])
+def test_api_keys_reject_site_dirs_and_dotfiles(user):
+    with pytest.raises(config.ConfigError):
+        _load(api={user: "tok"})
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"user": ".git", "slug": "x"},
+        {"user": "assets", "slug": "x"},
+        {"user": "showcase", "slug": ".git"},
+    ],
+)
+def test_bundle_keys_reject_site_dirs_and_dotfiles(target):
+    with pytest.raises(config.ConfigError):
+        _load(api={"wizard": "tok-w"}, bundle={"tok-b": target})
+
+
+def test_defaults_point_at_the_pages_repo():
+    cfg = config.load_config({"REPO_DIR": "/repo"})
+    assert cfg.repo_url == "git@forgejo-ssh.forgejo.svc.cluster.local:viktor/pages.git"
+    assert cfg.render_script == "/repo/tools/render.py"

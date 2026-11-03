@@ -1,18 +1,23 @@
-# === learn Viewer — learn.viktorbarzin.me + plans.viktorbarzin.me ===
+# === learn pod — pages.viktorbarzin.me (+ the plans.viktorbarzin.me redirect) ===
 #
-# Authentik-gated web surface for the /teach skill's learning workspaces
-# (monorepo learn/ — lessons are interactive HTML with quizzes, so they need
-# a real browser, not a PNG render). v2 (2026-07-09): runs IN the cluster —
-# a Caddy container serving the `learn/` tree of the GitHub monorepo, kept
-# fresh by a git-sync sidecar (30s poll, SSH deploy key). Viktor explicitly
-# preferred everything codified in Terraform over the v1 devvm-Caddy live
-# serving ("devvm is not supposed to host prod services"); the trade-off —
-# lessons appear on PUSH (~30-60s), not on file-write — is accepted, and the
-# teach skill commits+pushes each lesson when it writes it. Decision +
-# history: monorepo learn/docs/adr/0002 (supersedes 0001, the devvm design).
-# Since 2026-07-10 the same pod also serves plans.viktorbarzin.me — the
-# monorepo's plans/ tree of published HTML plan snapshots (infra#72); the
-# Caddyfile splits the two sites by Host header, module "ingress_plans" below.
+# Started 2026-07-09 as the Authentik-gated viewer for the /teach skill's
+# learning workspaces: a Caddy container serving a git tree, kept fresh by a
+# git-sync sidecar (30s poll, SSH deploy key). Viktor explicitly preferred
+# everything codified in Terraform over the v1 devvm-Caddy live serving
+# ("devvm is not supposed to host prod services"); the trade-off — content
+# appears on PUSH (~30-60s), not on file-write — is accepted. Decision +
+# history: viktor/learn docs/adr/0002 (supersedes 0001, the devvm design).
+# Since 2026-07-10 the same pod also serves the published HTML pages
+# (infra#72), and since 2026-07-27 that is ALL it serves: learn.viktorbarzin.me
+# moved to the separate 'learning' app stack, so the learn/ tree has no route
+# here. The pod name is historical.
+#
+# Content source (2026-11-03): the PRIVATE Forgejo repo viktor/pages, whose
+# root is the site (one dir per user, shared/, assets/, tools/). Until then it
+# was the pages/ subdir of the GitHub monorepo ViktorBarzin/monorepo, which was
+# dissolved that day; viktor/pages carries its history. Forgejo only, with no
+# GitHub push-mirror, by Viktor's decision. The /teach lessons went to
+# viktor/learn, which nothing here syncs.
 #
 # Access is GROUP-GATED at the edge, then per-identity in the Caddyfile:
 # Authentik admits "Home Server Admins" (vbarzin, emil.barzin) plus "Pages
@@ -29,10 +34,11 @@
 # In-cluster callers could spoof the header by curling the Service directly —
 # same trust class as ttyd/t3-dispatch, recorded in the ADR.
 #
-# Deploy key: read-only on ViktorBarzin/monorepo ("learn-viewer git-sync"),
-# private key + github known_hosts in Vault secret/learn (ssh, known_hosts)
-# → ExternalSecret → Secret learn-git-creds (git-sync's default paths under
-# /etc/git-secret).
+# Deploy key: read-only on Forgejo viktor/pages ("learn-viewer git-sync
+# (read-only)"), private key + Forgejo's SSH host key in Vault secret/learn
+# (forgejo_ssh, forgejo_known_hosts) → ExternalSecret → Secret learn-git-creds,
+# keys ssh + known_hosts (git-sync's default paths under /etc/git-secret). The
+# old ssh / known_hosts properties held the GitHub monorepo key.
 
 variable "tls_secret_name" {
   type      = string
@@ -85,14 +91,14 @@ resource "kubernetes_manifest" "git_creds_external_secret" {
           secretKey = "ssh"
           remoteRef = {
             key      = "learn"
-            property = "ssh"
+            property = "forgejo_ssh"
           }
         },
         {
           secretKey = "known_hosts"
           remoteRef = {
             key      = "learn"
-            property = "known_hosts"
+            property = "forgejo_known_hosts"
           }
         },
       ]
@@ -133,7 +139,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		path /prep /prep/*
       	}
       	handle @pages_prep {
-      		root * /repo/src/current/pages/anca
+      		root * /repo/src/current/anca
       		uri strip_prefix /prep
       		try_files {path} {path}index.html /index.html
       		file_server
@@ -152,7 +158,7 @@ resource "kubernetes_config_map" "caddyfile" {
       	}
       	handle @pages_pe_summit_trip {
       		redir /pe-summit-trip /pe-summit-trip/ 308
-      		root * /repo/src/current/pages/wizard/pe-summit-trip
+      		root * /repo/src/current/wizard/pe-summit-trip
       		uri strip_prefix /pe-summit-trip
       		try_files {path} {path}index.html /index.html
       		file_server
@@ -168,7 +174,7 @@ resource "kubernetes_config_map" "caddyfile" {
       	}
       	handle @pages_homelab {
       		redir /homelab /homelab/ 308
-      		root * /repo/src/current/pages/showcase/homelab
+      		root * /repo/src/current/showcase/homelab
       		uri strip_prefix /homelab
       		try_files {path} {path}index.html /index.html
       		file_server
@@ -182,13 +188,14 @@ resource "kubernetes_config_map" "caddyfile" {
       	}
       	handle @pages_vietnam {
       		redir /vietnam /vietnam/ 308
-      		root * /repo/src/current/pages/wizard/vietnam
+      		root * /repo/src/current/wizard/vietnam
       		uri strip_prefix /vietnam
       		try_files {path} {path}index.html /index.html
       		file_server
       	}
-      	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
-      	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
+      	# pages.viktorbarzin.me: per-user page spaces (<user>/) + a shared area
+      	# (shared/), served from the git-synced viktor/pages tree, whose root is
+      	# the site. The comments below say pages/<user>/ for the same dirs.
       	# Every page is readable by every identity that clears the Authentik gate
       	# (allowed-groups "Home Server Admins" — see the ingress below); the
       	# per-user split is a NAMESPACE for authoring, not an access boundary
@@ -208,7 +215,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		path /assets/*
       	}
       	handle @pages_assets {
-      		root * /repo/src/current/pages
+      		root * /repo/src/current
       		file_server
       	}
       	@plans_redirect host plans.viktorbarzin.me
@@ -221,14 +228,16 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin|valentinakolevabarzina)(@.*)?$
       	}
       	handle @pages_shared {
-      		root * /repo/src/current/pages
+      		root * /repo/src/current
       		file_server
       	}
-      	# pages/tools/ is the renderer's source, not published content — the
+      	# tools/ is the renderer's source, not published content — the
       	# try_files fallthrough below would otherwise expose it at /tools/*.
+      	# Top-level dotfiles too: the document root is now the git-sync worktree
+      	# itself, whose .git file names the clone's path.
       	@pages_tools {
       		host pages.viktorbarzin.me
-      		path /tools/*
+      		path /tools/* /.*
       	}
       	handle @pages_tools {
       		respond "Not Found" 404
@@ -238,7 +247,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
       	}
       	handle @pages_wizard {
-      		root * /repo/src/current/pages
+      		root * /repo/src/current
       		try_files /wizard{path} /wizard{path}index.html /emo{path} /emo{path}index.html /shared{path} /shared{path}index.html
       		file_server
       	}
@@ -264,7 +273,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		# root means a path outside her space cannot resolve at all. The two
       		# admin handles above keep the prefixed form because they are supposed
       		# to read every space, so the same fallback is harmless there.
-      		root * /repo/src/current/pages/anca
+      		root * /repo/src/current/anca
       		try_files {path} {path}index.html
       		file_server
       	}
@@ -285,16 +294,16 @@ resource "kubernetes_config_map" "caddyfile" {
       	}
       	handle @pages_valia {
       		@pages_valia_own file {
-      			root /repo/src/current/pages/valia
+      			root /repo/src/current/valia
       			try_files {path} {path}index.html
       		}
       		handle @pages_valia_own {
-      			root * /repo/src/current/pages/valia
+      			root * /repo/src/current/valia
       			rewrite {file_match.relative}
       			file_server
       		}
       		handle {
-      			root * /repo/src/current/pages/shared
+      			root * /repo/src/current/shared
       			try_files {path} {path}index.html =404
       			file_server
       		}
@@ -304,7 +313,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^emil\.barzin(@.*)?$
       	}
       	handle @pages_emo {
-      		root * /repo/src/current/pages
+      		root * /repo/src/current
       		try_files /emo{path} /emo{path}index.html /wizard{path} /wizard{path}index.html /shared{path} /shared{path}index.html
       		file_server
       	}
@@ -357,7 +366,10 @@ resource "kubernetes_deployment" "learn" {
           name  = "git-sync"
           image = "registry.k8s.io/git-sync/git-sync:v4.8.0"
           args = [
-            "--repo=git@github.com:ViktorBarzin/monorepo.git",
+            # In-cluster Service name, so a sync depends on neither the
+            # git.viktorbarzin.me record nor the MetalLB address behind it.
+            # forgejo_known_hosts pins Forgejo's host key under this name.
+            "--repo=git@forgejo-ssh.forgejo.svc.cluster.local:viktor/pages.git",
             "--ref=master",
             "--period=30s",
             "--depth=1",
@@ -482,9 +494,10 @@ resource "kubernetes_service" "learn" {
 
 
 # pages.viktorbarzin.me — per-user private page spaces + a shared area (the
-# monorepo's pages/ tree, renamed from plans/ 2026-07-26; rendered + pushed by
-# publish-page). Served by the SAME learn pod; the Caddyfile above routes by
-# Host and per-user by X-Authentik-Username. The homepage tile lives here.
+# viktor/pages repo; the tree was plans/ until 2026-07-26 and lived in the
+# monorepo until 2026-11-03; rendered + pushed by publish-page / pages-publish).
+# Served by the SAME learn pod; the Caddyfile above routes by Host and per-user
+# by X-Authentik-Username. The homepage tile lives here.
 module "ingress_pages" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
