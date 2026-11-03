@@ -79,6 +79,10 @@ locals {
     LLM_MODE = "claude_agent"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
+    # Names a coordinate: the Route map's pin-add (ADR-0039) and the place a
+    # Local sound pick starts from (ADR-0072). Was unset, so prod ran the fake
+    # and named every point "Pinpoint <lat>,<lon>, Fakeland".
+    REVERSE_GEOCODE_PROVIDER = "nominatim"
     # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
     # internal-API path is an optional optimisation gated on IG_GRAPHQL_DOC_ID;
     # unset = yt-dlp only, which works). Was UNSET -> FakeReelExtractor returned a
