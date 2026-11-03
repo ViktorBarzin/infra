@@ -1,5 +1,5 @@
-# Inputs for one first-party TanStack Start app (ADR-0001 in ~/code/docs/adr,
-# 0001-default-app-stack.md). Defaults follow the ADR; README.md explains each
+# Inputs for one first-party TanStack Start app (ADR-0001 in app-kit
+# docs/adr/0001-default-app-stack.md). Defaults follow the ADR; README.md explains each
 # choice and the env contract the app reads.
 
 # --- Identity of the app -------------------------------------------------------

@@ -1,7 +1,7 @@
 # tanstack_app
 
 One first-party app on the default stack from ADR-0001
-(`~/code/docs/adr/0001-default-app-stack.md`): TanStack Start on Bun, Drizzle
+(app-kit `docs/adr/0001-default-app-stack.md`): TanStack Start on Bun, Drizzle
 on the shared CNPG Postgres, sign-in through an Authentik OAuth2 application.
 `stacks/tasks` is the first caller. The checklist for a new app is in
 `docs/agents/new-app.md`.

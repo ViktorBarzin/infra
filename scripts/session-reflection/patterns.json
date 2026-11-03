@@ -1,0 +1,207 @@
+{
+ "_comment": [
+  "Detector patterns for the session-reflection study. Data, not code, so",
+  "adding a pattern is a one-line edit \u2014 the 2026-08-31 study found D2",
+  "under-counts BY CONSTRUCTION (159 kubectl-exec-psql calls were found by",
+  "hand, outside every detector), and that should never have needed a code change.",
+  "",
+  "d1_strong / d1_weak: regexes over what Viktor TYPED. A strong hit alone",
+  "flags a turn; two weak hits do the same.",
+  "d2_rules: (regex over the Bash command, the homelab verb that does it,",
+  "severity). A turn matches only when the verb is NOT also used in it."
+ ],
+ "d1_strong": [
+  {
+   "re": "you should (have|know|be|use|'?ve)",
+   "kind": "explicit-should"
+  },
+  {
+   "re": "why (did|are|aren'?t|didn'?t|do) you",
+   "kind": "challenge"
+  },
+  {
+   "re": "i (told|said|asked) you",
+   "kind": "repeat-instruction"
+  },
+  {
+   "re": "(that'?s|this is) (wrong|not right|not what)",
+   "kind": "wrong"
+  },
+  {
+   "re": "\\b(stop|don'?t) (using|use|doing|do) ",
+   "kind": "prohibition"
+  },
+  {
+   "re": "instead of",
+   "kind": "substitution"
+  },
+  {
+   "re": "we (already )?(have|use|self-?host|run)\\b",
+   "kind": "capability-pointer"
+  },
+  {
+   "re": "there'?s already|already (exists|have it|built|running)",
+   "kind": "already-exists"
+  },
+  {
+   "re": "use (the )?homelab|homelab \\w+ (cli|command)",
+   "kind": "named-our-tool"
+  },
+  {
+   "re": "(read|check) (the )?(rules|claude\\.md|docs|services)",
+   "kind": "rtfm"
+  },
+  {
+   "re": "you (know|knew) (this|that)",
+   "kind": "you-knew"
+  },
+  {
+   "re": "no,? (use|we|that|don'?t|it'?s|i)",
+   "kind": "no-plus-redirect"
+  },
+  {
+   "re": "wrong (tool|approach|way|path|place)",
+   "kind": "wrong-tool"
+  },
+  {
+   "re": "don'?t (reinvent|rebuild|rewrite|write your own)",
+   "kind": "no-reinvent"
+  }
+ ],
+ "d1_weak": [
+  {
+   "re": "\\bactually\\b",
+   "kind": "actually"
+  },
+  {
+   "re": "^(no|nope)\\b",
+   "kind": "bare-no"
+  },
+  {
+   "re": "try again",
+   "kind": "retry"
+  },
+  {
+   "re": "i (don'?t|do not) want",
+   "kind": "unwanted"
+  },
+  {
+   "re": "can we (use|just)",
+   "kind": "suggest-alt"
+  },
+  {
+   "re": "do we have",
+   "kind": "capability-question"
+  },
+  {
+   "re": "too (much|many|slow)",
+   "kind": "cost-complaint"
+  },
+  {
+   "re": "\\b(again|still)\\b.*(not|broken|fail)",
+   "kind": "still-broken"
+  }
+ ],
+ "d2_rules": [
+  {
+   "re": "\\bkubectl\\s+logs\\b",
+   "verb": "logs query",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bjournalctl\\b",
+   "verb": "logs query",
+   "severity": "preference"
+  },
+  {
+   "re": "loki.*(api/v1|query_range)|query_range.*loki",
+   "verb": "logs query",
+   "severity": "preference"
+  },
+  {
+   "re": "(prometheus|thanos).*(api/v1/query)|api/v1/query.*prometheus",
+   "verb": "metrics query",
+   "severity": "preference"
+  },
+  {
+   "re": "(grep|rg|jq|find).*\\.claude/projects",
+   "verb": "claude-usage",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bgit\\s+worktree\\s+add\\b",
+   "verb": "work start",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bgit\\s+push\\s+\\S+\\s+HEAD:master\\b",
+   "verb": "work land",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bkubectl\\s+(apply|edit|patch|delete)\\b",
+   "verb": "tf apply / policy",
+   "severity": "RED-LINE: infra via terraform only"
+  },
+  {
+   "re": "\\b(terragrunt|terraform)\\s+(apply|plan)\\b",
+   "verb": "tf apply/plan",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bvault\\s+(kv\\s+)?get\\b(?!.*homelab)",
+   "verb": "vault kv get",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bkubectl\\s+get\\s+secret\\b",
+   "verb": "vault kv get",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bhttpie|curl\\b.*(vault|openbao)",
+   "verb": "vault kv get",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bnslookup\\b|\\bdig\\b",
+   "verb": "dns lookup",
+   "severity": "preference"
+  },
+  {
+   "re": "\\badb\\b(?!.*android-emulator)",
+   "verb": "android-emulator",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bcurl\\b.*(viktorbarzin\\.(me|lan))",
+   "verb": "net check",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bkubectl\\s+describe\\b.*pod|kubectl get events",
+   "verb": "k8s debug",
+   "severity": "preference"
+  },
+  {
+   "re": "kubectl\\s+exec.*(psql|mysql|mariadb)",
+   "verb": "k8s db",
+   "severity": "preference"
+  },
+  {
+   "re": "\\buntil .{0,80}do\\s+sleep|\\bwhile .{0,60}sleep \\d|\\bsleep \\d+\\s*;\\s*(kubectl|curl|homelab)",
+   "verb": "deploy wait / ci watch / Monitor",
+   "severity": "preference"
+  },
+  {
+   "re": "\\bcurl\\b.{0,80}(woodpecker|ci\\.viktorbarzin\\.me)/api/repos",
+   "verb": "ci status --repo",
+   "severity": "preference"
+  },
+  {
+   "re": "(grep|rg)\\b.{0,60}(\\.claude/(rules|skills)|managed-settings)",
+   "verb": "how",
+   "severity": "preference"
+  }
+ ]
+}
