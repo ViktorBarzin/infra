@@ -187,8 +187,8 @@ func capabilities() []capability {
 			Detail: []string{
 				"work start reads the real remote and carries the git-crypt filter flags.",
 				"work land merges master in, verifies, pushes HEAD:master and watches CI.",
-				"Pass --verify-cmd unless the repo root has a go.mod: auto-detection only",
-				"        covers Go, so it errors first try in most repos here.",
+				"Verification comes from .land-verify, or is auto-detected (go.mod, Cargo.toml,",
+				"        pytest, a Makefile test target, a package.json test script); otherwise pass --verify-cmd.",
 			},
 		},
 		{
