@@ -151,7 +151,7 @@ resource "kubernetes_cron_job_v1" "dns_anomaly_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/30 * * * *"
     job_template {
       metadata {}
       spec {
@@ -309,7 +309,7 @@ resource "kubernetes_cron_job_v1" "forgejo_integrity_probe" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/30 * * * *"
     job_template {
       metadata {}
       spec {

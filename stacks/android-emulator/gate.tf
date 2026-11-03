@@ -337,7 +337,7 @@ resource "kubernetes_cron_job_v1" "idle_sleeper" {
     namespace = kubernetes_namespace.android-emulator.metadata[0].name
   }
   spec {
-    schedule                      = "*/15 * * * *"
+    schedule                      = "27 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 2

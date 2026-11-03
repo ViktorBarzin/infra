@@ -31,7 +31,7 @@ resource "kubernetes_cron_job_v1" "egress_country_probe" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/30 * * * *"
     job_template {
       metadata {}
       spec {

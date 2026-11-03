@@ -47,7 +47,7 @@ source workload, destination workload, destination service, port and action.
 - **DNS fix + self-heal:** whisker's egress to the kube-dns ClusterIP is allowed
   by `whisker-allow-dns-clusterip` (`stacks/calico`) — without it the UI goes
   empty after any gRPC-stream break (see Troubleshooting → "Whisker UI empty").
-  The `whisker-watchdog` CronJob (every 10 min) is a backstop that restarts
+  The `whisker-watchdog` CronJob (hourly at :23 since 2026-11-03, was every 10 min) is a backstop that restarts
   whisker if its backend ever wedges for another reason.
 
 ### CNPG `goldmane_edges` — durable

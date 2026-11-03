@@ -777,7 +777,7 @@ locals {
       extra_env = {}
     }
     run-reminders = {
-      schedule  = "*/15 * * * *"
+      schedule  = "*/30 * * * *"
       command   = ["python", "-m", "tripit_api", "run-reminders"]
       suspend   = false
       extra_env = {}
@@ -799,7 +799,7 @@ locals {
     # tripit-secrets ES, exactly as the API's own send path uses them, so a
     # correction leaves by the route the first invitation did.
     watcher-sync = {
-      schedule  = "*/15 * * * *"
+      schedule  = "5 * * * *"
       command   = ["python", "-m", "tripit_api", "watcher-sync"]
       suspend   = false
       extra_env = {}
@@ -826,7 +826,7 @@ locals {
     # mailbox_links table (decrypted with DOCUMENT_ENCRYPTION_KEY from
     # tripit-secrets). That scan has a 300 s budget inside the 600 s deadline.
     ingest-plans = {
-      schedule           = "*/15 * * * *"
+      schedule           = "20 * * * *"
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"

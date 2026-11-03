@@ -1104,7 +1104,7 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
     # and needs Viktor's call on scope; this is the reversible hold until then.
     # Plan: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
     suspend                       = false
-    schedule                      = "*/2 * * * *"
+    schedule                      = "*/10 * * * *" # was */2 until 2026-11-03: 723 pods/day on the IOPS-bound sdc. Queued-issue draining and CI follow-up now wait up to 10 min; webhook dispatch is unaffected.
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3

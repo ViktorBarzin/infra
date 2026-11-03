@@ -411,7 +411,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
-    schedule                      = "*/10 * * * *"
+    schedule                      = "*/20 * * * *"
     starting_deadline_seconds     = 300
     job_template {
       metadata {}

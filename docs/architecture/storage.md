@@ -61,7 +61,7 @@ Bay 5 is free. Three 1 TB Seagate ST1000DM003 desktop SATA drives were also avai
 
 **The "harden" half is now SHIPPED (2026-06-05):**
 - **Orphan cleanup** — removed 67 `Released` proxmox PVs + 475 orphan LVs/snapshots (VG `pve` 997 → ~410 LVs; thin pool freed). 1 LV left (`f127a41c`, stuck-open stale qemu fd — harmless, clears on node reboot; do not force `dmsetup remove`).
-- **Ghost-loop prevention** — `csi-ghost-reconcile` CronJob (`stacks/proxmox-csi/ghost-reconcile.tf`, every 15 min) compares each worker VM's real scsi disks (Proxmox API, scoped CSI token) against k8s VolumeAttachments and safely detaches ghosts (`PUT .../config delete=scsiN`); detection mirrors check #47, with a 60 s re-confirm + per-run cap-5. Verified live (66 VAs, 0 ghosts). This closes the doom loop by construction — **beads `code-dfjn` can be retired.**
+- **Ghost-loop prevention** — `csi-ghost-reconcile` CronJob (`stacks/proxmox-csi/ghost-reconcile.tf`, every 30 min since 2026-11-03, was 15) compares each worker VM's real scsi disks (Proxmox API, scoped CSI token) against k8s VolumeAttachments and safely detaches ghosts (`PUT .../config delete=scsiN`); detection mirrors check #47, with a 60 s re-confirm + per-run cap-5. Verified live (66 VAs, 0 ghosts). This closes the doom loop by construction — **beads `code-dfjn` can be retired.**
 - **Cap deliberately kept at 28** (NOT lowered to 24): the labeler value (`stacks/proxmox-csi/.../main.tf` `node_labels`) was raised 24→28 per the 2026-05-25 eviction-cascade post-mortem; lowering it would reverse that fix. With auto-reconcile keeping drift at 0, the 28 cap is safe.
 
 ### Poisoned LUN slots — leaked QEMU throttle objects (2026-08-04)

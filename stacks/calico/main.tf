@@ -541,7 +541,7 @@ resource "kubernetes_cron_job_v1" "whisker_watchdog" {
     namespace = kubernetes_namespace.calico_system.metadata[0].name
   }
   spec {
-    schedule                      = "*/10 * * * *"
+    schedule                      = "23 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"

@@ -1181,7 +1181,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
-    schedule                      = "*/5 * * * *"
+    schedule                      = "*/9 * * * *" # was */5 until 2026-11-03 (sdc write load). */9 keeps the longest gap at 9 min, under the 600 s CLIP model TTL the warmup ping must beat.
     starting_deadline_seconds     = 60
     job_template {
       metadata {}
