@@ -837,6 +837,7 @@ resource "kubernetes_deployment" "mailserver" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"],        # set by `kubectl rollout restart`
     ]
   }
 }
@@ -860,6 +861,68 @@ resource "kubernetes_service" "mailserver" {
 
   spec {
     type = "ClusterIP"
+    selector = {
+      app = "mailserver"
+    }
+
+    port {
+      name        = "smtp"
+      protocol    = "TCP"
+      port        = 25
+      target_port = "smtp"
+    }
+
+    port {
+      name        = "smtp-secure"
+      protocol    = "TCP"
+      port        = 465
+      target_port = "smtp-secure"
+    }
+
+    port {
+      name        = "smtp-auth"
+      protocol    = "TCP"
+      port        = 587
+      target_port = "smtp-auth"
+    }
+
+    port {
+      name        = "imap-secure"
+      protocol    = "TCP"
+      port        = 993
+      target_port = "imap-secure"
+    }
+  }
+}
+
+# IPv6 mail entry (cluster dual-stack, 2026-11-03,
+# docs/plans/2026-11-02-cluster-dual-stack.md phase 6). IPv6 clients reach
+# mail.viktorbarzin.me, whose single AAAA is the Traefik VIP ::203 (it is also
+# the Roundcube host); pfSense forwards ::203 ports 25/465/587/993 to this VIP,
+# ::204. ETP Local keeps the client address, so these target the stock
+# listeners (no PROXY protocol) and Postfix/Dovecot see the real client IPv6.
+# Stock :25 runs the same postscreen as the :2525 PROXY listener. IPv4 mail is
+# unchanged (pfSense HAProxy -> mailserver_proxy NodePorts).
+resource "kubernetes_service" "mailserver_v6" {
+  lifecycle {
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
+  metadata {
+    name      = "mailserver-v6"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    labels = {
+      app = "mailserver"
+    }
+    annotations = {
+      "metallb.io/loadBalancerIPs" = "2001:470:5a7f:20::204"
+    }
+  }
+
+  spec {
+    type                    = "LoadBalancer"
+    ip_families             = ["IPv6"]
+    ip_family_policy        = "SingleStack"
+    external_traffic_policy = "Local"
     selector = {
       app = "mailserver"
     }

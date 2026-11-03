@@ -330,7 +330,10 @@ resource "helm_release" "traefik" {
         # IP (CrowdSec) and QUIC handshakes pin to one pod. Proxied apps are
         # unaffected — cloudflared targets the in-cluster Traefik Service
         # (traefik.traefik.svc), not this LB IP, so the LB IP can move freely.
-        "metallb.io/loadBalancerIPs" = "10.0.20.203"
+        # IPv6 ::203 added for cluster dual-stack (2026-11-03,
+        # docs/plans/2026-11-02-cluster-dual-stack.md phase 6): IPv6 clients
+        # reach Traefik natively through the HE tunnel, HTTP/3 included.
+        "metallb.io/loadBalancerIPs" = "10.0.20.203,2001:470:5a7f:20::203"
         # Both Services share 10.0.20.203. MetalLB allows this when the sharing
         # key matches and the services either use ETP=Cluster or select the same
         # pods. We keep ETP=Local and qualify on the second clause: the chart
@@ -341,8 +344,12 @@ resource "helm_release" "traefik" {
         # announcement of a shared IP.
         "metallb.io/allow-shared-ip" = "traefik-443"
       }
+      # The chart has no ipFamilyPolicy key, so it goes through the spec
+      # passthrough, which both Services (TCP and UDP) receive. Changing the
+      # policy in place keeps the ports and ClusterIP.
       spec = {
         externalTrafficPolicy = "Local"
+        ipFamilyPolicy        = "RequireDualStack"
       }
     }
 
