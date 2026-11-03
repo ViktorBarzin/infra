@@ -216,6 +216,13 @@ locals {
     # the public-address guard.
     DAWARICH_URL          = "https://dawarich.viktorbarzin.me"
     DAWARICH_INTERNAL_URL = "http://dawarich.dawarich.svc.cluster.local"
+    # Local sound (tripit ADR-0072..0074): the real Spotify Web API through
+    # tripit's own Spotify app (SPOTIFY_CLIENT_ID/SECRET from secret/tripit
+    # below), and Claude curation through claude-agent-service with WebSearch
+    # (the CLAUDE_AGENT_TOKEN the narration writer already uses). Spotify's
+    # redirect URI on that app is https://tripit.viktorbarzin.me/api/spotify-link/callback.
+    SPOTIFY_PROVIDER = "spotify"
+    SOUND_CURATOR    = "claude_agent"
   }
 }
 
@@ -317,6 +324,9 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "TREK_USER", remoteRef = { key = "tripit", property = "TREK_USER" } },
         { secretKey = "TREK_PASSWORD", remoteRef = { key = "tripit", property = "TREK_PASSWORD" } },
         { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "tripit", property = "CLAUDE_AGENT_TOKEN" } },
+        # tripit's Spotify app for Local sound (ADR-0074), registered 2026-11-03.
+        { secretKey = "SPOTIFY_CLIENT_ID", remoteRef = { key = "tripit", property = "SPOTIFY_CLIENT_ID" } },
+        { secretKey = "SPOTIFY_CLIENT_SECRET", remoteRef = { key = "tripit", property = "SPOTIFY_CLIENT_SECRET" } },
         # Read-only Nextcloud app-password for the calendar-conflict column
         # (tripit issue #19) — CalDAV PROPFIND/REPORT only. Single-account: this
         # is the owner's (admin's) calendar, so every tripit user's conflict
