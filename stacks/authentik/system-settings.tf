@@ -1,5 +1,5 @@
 # System settings (Admin > System > Settings), adopted 2026-10-16 to turn off
-# `core_default_app_access` (ADR-0001, ~/code/docs/adr). With the flag off, an
+# `core_default_app_access` (ADR-0001, app-kit docs/adr). With the flag off, an
 # application with no policy bindings admits nobody, so a new application stays
 # closed until it is bound to a group. app-access-guard.tf still fails the plan
 # for an unbound application; this makes the server agree with it.

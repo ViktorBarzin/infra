@@ -11,7 +11,7 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-# tasks on the shared first-party app module (ADR-0001 in ~/code/docs/adr,
+# tasks on the shared first-party app module (ADR-0001 in app-kit docs/adr,
 # modules/kubernetes/tanstack_app/README.md). The module owns the namespace,
 # ExternalSecrets, Deployment with the `migrate` init container, Service,
 # ingress, NetworkPolicy and the Authentik application, groups and tokens.

@@ -1,5 +1,5 @@
-# One first-party TanStack Start app on the ADR-0001 stack (~/code/docs/adr/
-# 0001-default-app-stack.md): namespace, Deployment with a `migrate` init
+# One first-party TanStack Start app on the ADR-0001 stack (app-kit
+# docs/adr/0001-default-app-stack.md): namespace, Deployment with a `migrate` init
 # container, Service, ingress (auth = "app"), NetworkPolicy. The secrets are in
 # secrets.tf and the Authentik application in authentik.tf. README.md has the
 # env contract and the per-app checklist.

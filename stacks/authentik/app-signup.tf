@@ -1,4 +1,4 @@
-# Per-app sign-up paths (ADR-0001 in ~/code/docs/adr, "Sign-up"), generalised
+# Per-app sign-up paths (ADR-0001 in app-kit docs/adr, "Sign-up"), generalised
 # from f1-stream ADR-0042.
 #
 # Everyone who signs up with Google, GitHub or Facebook runs one shared flow,

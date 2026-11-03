@@ -17,9 +17,10 @@ import (
 // through `homelab how` and reachable by any agent, or the periodic part
 // quietly stops happening. That is the same failure the study itself measured.
 //
-// The tooling is Python and lives in the MONOREPO (it reads ~/.claude
-// transcripts and its history is committed next to the findings), so this verb
-// is a thin driver rather than a reimplementation. One place to change.
+// The tooling is Python and lives in this repo at scripts/session-reflection
+// (it reads ~/.claude transcripts and its history is committed next to it), so
+// this verb is a thin driver rather than a reimplementation. One place to
+// change.
 func reflectCommands() []Command {
 	return []Command{
 		{Path: []string{"reflect"}, Tier: TierWrite,
@@ -28,25 +29,9 @@ func reflectCommands() []Command {
 	}
 }
 
-// reflectToolCandidates are where the monorepo may sit. ~/code is the usual
-// layout; the second covers a workspace whose monorepo root is elsewhere.
-func reflectToolCandidates() []string {
-	home, _ := os.UserHomeDir()
-	return []string{
-		filepath.Join(home, "code", "docs", "agents", "session-reflection", "reflect.py"),
-		filepath.Join(home, "docs", "agents", "session-reflection", "reflect.py"),
-	}
-}
-
 func reflectToolPath() (string, error) {
-	for _, p := range reflectToolCandidates() {
-		if isFile(p) {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("session-reflection tooling not found (looked in %s) — "+
-		"it lives in the monorepo at docs/agents/session-reflection",
-		strings.Join(reflectToolCandidates(), ", "))
+	home, _ := os.UserHomeDir()
+	return findInfraTool(home, filepath.Join("session-reflection", "reflect.py"))
 }
 
 // validateReflectSub rejects a typo rather than letting it fall through to the

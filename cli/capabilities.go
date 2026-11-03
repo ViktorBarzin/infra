@@ -10,7 +10,7 @@ import (
 // what to reach for, and which built-in it has to beat.
 //
 // Why this exists. The 2026-08-31 session study
-// (docs/agents/2026-08-31-session-reflection.md) measured 175 sessions and found
+// (pages.viktorbarzin.me/2026-08-31-session-reflection.html) measured 175 sessions and found
 // that `homelab services` already listed every capability that got missed — the
 // shared Android emulator among them — and was consulted 85 times in 30 days,
 // while `logs query` ran 3,037 times. The difference between those two numbers
@@ -387,7 +387,7 @@ func capabilities() []capability {
 				"Found a miss by hand that no detector caught? Add it to patterns.json in",
 				"        the same session — D2 under-counts by construction.",
 				"The 36-agent judging pass is separate and on demand: workflow.js in",
-				"        ~/code/docs/agents/session-reflection (6.8M tokens, ~105 min).",
+				"        infra scripts/session-reflection (6.8M tokens, ~105 min).",
 			},
 		},
 		{

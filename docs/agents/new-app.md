@@ -1,6 +1,6 @@
 # New first-party app
 
-New apps use the default stack from ADR-0001 (`~/code/docs/adr/0001-default-app-stack.md`):
+New apps use the default stack from ADR-0001 (app-kit `docs/adr/0001-default-app-stack.md`):
 TanStack Start on Bun, Drizzle on the shared CNPG Postgres, sign-in through
 an Authentik OAuth2 application. On the infra side one module call deploys
 it: `modules/kubernetes/tanstack_app` (README there). `stacks/tasks` is the
