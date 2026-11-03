@@ -1,6 +1,7 @@
 # pages-publish — renders markdown to pages.viktorbarzin.me and commits it to
-# the monorepo. Needs git + an ssh client for the deploy-key clone/commit/push;
-# needs the `markdown` lib because it shells out to the monorepo's render.py.
+# Forgejo viktor/pages. Needs git + an ssh client for the deploy-key
+# clone/commit/push; needs the `markdown` lib because it shells out to that
+# repo's tools/render.py.
 FROM python:3.12-slim
 
 # apt-get upgrade pulls trixie-security fixes (libexpat1 and others) that the
@@ -17,7 +18,7 @@ RUN pip install --no-cache-dir fastapi "uvicorn[standard]" "markdown>=3.5"
 # and the 0400 deploy-key secret group-readable by this uid. The key file stays
 # owned by root, so OpenSSH's "permissions too open" check is skipped (it only
 # fires when the key is owned by the running uid). A writable ~/.ssh lets
-# StrictHostKeyChecking=accept-new record github's host key on first contact.
+# StrictHostKeyChecking=accept-new record Forgejo's host key on first contact.
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin pages \
  && mkdir -p /repo /home/pages/.ssh \
  && chown -R 10001:10001 /repo /home/pages/.ssh \

@@ -67,7 +67,7 @@ func pagesPublish(args []string) error {
 
 // pagesPreview renders a doc through the same service and writes the result to
 // disk instead of publishing it. The point is verification: pages.viktorbarzin.me
-// is owner-gated and 403s every automated client, and a user without a monorepo
+// is owner-gated and 403s every automated client, and a user without a viktor/pages
 // checkout has no renderer of their own, so this is the only way for them to
 // SEE a page before it is on the site.
 //

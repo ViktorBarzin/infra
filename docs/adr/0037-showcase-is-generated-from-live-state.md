@@ -33,7 +33,7 @@ What it publishes:
 
 - A new service appears on the Showcase the day after its ingress lands, unless the ingress or namespace opts out with `showcase.viktorbarzin.me/hidden`.
 - Adding or renaming a mapped architecture doc requires a summary comment, or the daily build fails and posts to #alerts.
-- The private monorepo receives about one generated commit a day under `pages/showcase/homelab/`.
+- The private pages repo receives about one generated commit a day under `showcase/homelab/` (the monorepo `pages/` subdir until 2026-11-03, Forgejo `viktor/pages` since).
 - Flow data now leaves the cluster in filtered form. Changing the filter is a change to what the public sees, so it goes through review like any other change to this ADR.
 
 ## Alternatives considered

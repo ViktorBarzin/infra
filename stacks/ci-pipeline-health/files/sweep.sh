@@ -106,7 +106,7 @@ fi
 # GitHub-first repos need no entry here: they are archived on the Forgejo side,
 # and the loop skips archived repos.
 FORGEJO_API="https://forgejo.viktorbarzin.me/api/v1"
-FORGEJO_ONLY="hmrc-sync portal-assistant travel-agent"  # ADR-0003, infra#39: deliberately not mirrored
+FORGEJO_ONLY="hmrc-sync portal-assistant travel-agent pages learn"  # ADR-0003 (infra#39; pages + learn 2026-11-03): deliberately not mirrored
 
 if [ -n "${FORGEJO_TOKEN:-}" ]; then
   mirror_checked=0
