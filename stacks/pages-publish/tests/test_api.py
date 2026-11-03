@@ -47,7 +47,7 @@ def test_bad_status_400(client):
     assert r.status_code == 400
 
 
-# (c) shared=true targets pages/shared
+# (c) shared=true targets shared
 def test_shared_targets_pages_shared(client):
     r = client.post(
         "/publish",
@@ -56,10 +56,10 @@ def test_shared_targets_pages_shared(client):
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["path"].startswith("pages/shared/")
+    assert body["path"].startswith("shared/")
     assert body["url"].startswith("https://pages.viktorbarzin.me/shared/")
-    assert client.calls["commit"]["subdir"] == "pages/shared"
-    assert client.calls["render"]["abs_target"].endswith("/pages/shared")
+    assert client.calls["commit"]["subdir"] == "shared"
+    assert client.calls["render"]["abs_target"].endswith("/shared")
 
 
 # (d) resolved user comes from the token, not the body
@@ -77,8 +77,8 @@ def test_resolved_user_from_token_not_body(client):
     )
     assert r.status_code == 200
     assert client.calls["commit"]["user"] == "wizard"
-    assert client.calls["commit"]["subdir"] == "pages/wizard"
-    assert client.calls["render"]["abs_target"].endswith("/pages/wizard")
+    assert client.calls["commit"]["subdir"] == "wizard"
+    assert client.calls["render"]["abs_target"].endswith("/wizard")
 
 
 def test_non_shared_url_path_and_content(client):
@@ -90,7 +90,7 @@ def test_non_shared_url_path_and_content(client):
     assert r.status_code == 200
     body = r.json()
     assert body["url"] == "https://pages.viktorbarzin.me/2026-07-27-foo.html"
-    assert body["path"] == "pages/emo/2026-07-27-foo.html"
+    assert body["path"] == "emo/2026-07-27-foo.html"
     # the raw markdown reached the renderer's temp file unchanged
     assert client.calls["render"]["content"] == "# Hello world"
     assert client.calls["render"]["status"] == "draft"
@@ -262,17 +262,17 @@ def test_publish_bundle_writes_files_and_returns_url(client, cfg):
     assert r.status_code == 200
     assert r.json() == {
         "url": "https://pages.viktorbarzin.me/homelab/",
-        "path": "pages/showcase/homelab",
+        "path": "showcase/homelab",
         "committed": True,
         "files": 3,
     }
-    root = os.path.join(cfg.repo_dir, "pages", "showcase", "homelab")
+    root = os.path.join(cfg.repo_dir, "showcase", "homelab")
     with open(os.path.join(root, "og.png"), "rb") as f:
         assert f.read() == png
     with open(os.path.join(root, "assets", "app.js"), encoding="utf-8") as f:
         assert f.read() == "console.log(1)"
     assert client.calls["commit_bundle"] == {
-        "subdir": "pages/showcase/homelab",
+        "subdir": "showcase/homelab",
         "user": "showcase",
         "slug": "homelab",
     }
@@ -284,8 +284,8 @@ def test_publish_bundle_identity_ignores_the_body(client, cfg):
     body.update(user="wizard", slug="evil")
     r = client.post("/publish-bundle", headers=AUTH_B, json=body)
     assert r.status_code == 200
-    assert r.json()["path"] == "pages/showcase/homelab"
-    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "wizard"))
+    assert r.json()["path"] == "showcase/homelab"
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "wizard"))
 
 
 @pytest.mark.parametrize(
@@ -313,7 +313,7 @@ def test_publish_bundle_rejects_bad_paths_400(client, cfg, bad):
     )
     assert r.status_code == 400
     assert "commit_bundle" not in client.calls
-    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "showcase"))
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "showcase"))
 
 
 def test_publish_bundle_rejects_empty_file_set_400(client):

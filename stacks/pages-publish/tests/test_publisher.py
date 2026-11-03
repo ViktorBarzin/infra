@@ -56,11 +56,33 @@ def test_sanitize_slug_accepts(filename, expected):
 
 
 def test_target_subdir_user_vs_shared():
-    assert publisher.target_subdir("wizard", False) == "pages/wizard"
-    assert publisher.target_subdir("emo", False) == "pages/emo"
+    assert publisher.target_subdir("wizard", False) == "wizard"
+    assert publisher.target_subdir("emo", False) == "emo"
     # shared wins regardless of user
-    assert publisher.target_subdir("wizard", True) == "pages/shared"
-    assert publisher.target_subdir("emo", True) == "pages/shared"
+    assert publisher.target_subdir("wizard", True) == "shared"
+    assert publisher.target_subdir("emo", True) == "shared"
+
+
+# The user dirs sit at the root of viktor/pages, next to the site's own dirs and
+# .git, so a user segment that names one of those must never be a write target.
+@pytest.mark.parametrize("user", ["shared", "assets", "tools", ".git", ".hidden", "..", "a/b", ""])
+def test_target_subdir_rejects_site_dirs_and_dotfiles(user):
+    with pytest.raises(publisher.PublishError):
+        publisher.target_subdir(user, False)
+
+
+def test_publish_refuses_a_symlinked_user_dir(tmp_path, monkeypatch):
+    """A symlink committed at <user>/ must not point the render outside the repo."""
+    cfg = make_cfg(str(tmp_path / "repo"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.makedirs(cfg.repo_dir)
+    os.symlink(outside, os.path.join(cfg.repo_dir, "emo"))
+    monkeypatch.setattr(publisher, "ensure_repo", lambda _c: None)
+    monkeypatch.setattr(publisher, "sync_to_master", lambda _c: None)
+    with pytest.raises(publisher.PublishError):
+        publisher.publish(cfg, user="emo", content="# x", filename="x.md")
+    assert list(outside.iterdir()) == []
 
 
 # ---- status ---------------------------------------------------------------
@@ -79,11 +101,11 @@ def test_validate_status():
 def test_derive_url(tmp_path):
     cfg = make_cfg(str(tmp_path))
     assert (
-        publisher.derive_url(cfg, "/repo/pages/wizard/2026-07-27-foo.html", False)
+        publisher.derive_url(cfg, "/repo/wizard/2026-07-27-foo.html", False)
         == "https://pages.viktorbarzin.me/2026-07-27-foo.html"
     )
     assert (
-        publisher.derive_url(cfg, "/repo/pages/shared/2026-07-27-foo.html", True)
+        publisher.derive_url(cfg, "/repo/shared/2026-07-27-foo.html", True)
         == "https://pages.viktorbarzin.me/shared/2026-07-27-foo.html"
     )
 
@@ -104,17 +126,17 @@ def test_render_page_uses_last_stdout_line_and_builds_cmd(tmp_path, monkeypatch)
 
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        return _Proc(out="noise\n/repo/pages/wizard/2026-07-27-foo.html\n")
+        return _Proc(out="noise\n/repo/wizard/2026-07-27-foo.html\n")
 
     monkeypatch.setattr(publisher, "_run", fake_run)
-    out = publisher.render_page(cfg, "/tmp/x/foo.md", "/repo/pages/wizard", "draft")
-    assert out == "/repo/pages/wizard/2026-07-27-foo.html"
+    out = publisher.render_page(cfg, "/tmp/x/foo.md", "/repo/wizard", "draft")
+    assert out == "/repo/wizard/2026-07-27-foo.html"
     assert captured["cmd"] == [
         "/usr/bin/python3",
-        "/repo/pages/tools/render.py",
+        "/repo/tools/render.py",
         "/tmp/x/foo.md",
         "--pages-dir",
-        "/repo/pages/wizard",
+        "/repo/wizard",
         "--status",
         "draft",
     ]
@@ -124,7 +146,7 @@ def test_render_page_raises_on_nonzero(tmp_path, monkeypatch):
     cfg = make_cfg(str(tmp_path))
     monkeypatch.setattr(publisher, "_run", lambda cmd, **kw: _Proc(rc=1, err="boom"))
     with pytest.raises(publisher.RenderError):
-        publisher.render_page(cfg, "/tmp/x/foo.md", "/repo/pages/wizard", "draft")
+        publisher.render_page(cfg, "/tmp/x/foo.md", "/repo/wizard", "draft")
 
 
 # ---- git seams ------------------------------------------------------------
@@ -226,9 +248,9 @@ def test_sync_to_master_passes_deploy_key_to_fetch(tmp_path, monkeypatch):
 
 def test_stage_and_commit_commits_and_reports_true(tmp_path, monkeypatch):
     cfg = make_cfg(str(tmp_path))
-    fake = _dispatch({"status": _Proc(out=" M pages/wizard/x.html")})
+    fake = _dispatch({"status": _Proc(out=" M wizard/x.html")})
     monkeypatch.setattr(publisher, "_run", fake)
-    assert publisher.stage_and_commit(cfg, "pages/wizard", "foo", "wizard", "draft")
+    assert publisher.stage_and_commit(cfg, "wizard", "foo", "wizard", "draft")
     cmds = _subcmds(fake)
     assert any("add" in c for c in cmds)
     assert any("commit" in c for c in cmds)
@@ -238,18 +260,18 @@ def test_stage_and_commit_reports_false_when_nothing_changed(tmp_path, monkeypat
     cfg = make_cfg(str(tmp_path))
     fake = _dispatch({"status": _Proc(out="")})
     monkeypatch.setattr(publisher, "_run", fake)
-    assert not publisher.stage_and_commit(cfg, "pages/wizard", "foo", "wizard", "draft")
+    assert not publisher.stage_and_commit(cfg, "wizard", "foo", "wizard", "draft")
     assert not any("commit" in c for c in _subcmds(fake))
 
 
 def test_stage_and_commit_status_is_scoped_to_the_target_dir(tmp_path, monkeypatch):
     """An unrelated change elsewhere in the clone is not this page's change."""
     cfg = make_cfg(str(tmp_path))
-    fake = _dispatch({"status": _Proc(out=" M pages/emo/x.html")})
+    fake = _dispatch({"status": _Proc(out=" M emo/x.html")})
     monkeypatch.setattr(publisher, "_run", fake)
-    publisher.stage_and_commit(cfg, "pages/emo", "foo", "emo", "draft")
+    publisher.stage_and_commit(cfg, "emo", "foo", "emo", "draft")
     status_cmd = next(cmd for cmd in _subcmds(fake) if "status" in cmd)
-    assert "pages/emo/" in status_cmd
+    assert "emo/" in status_cmd
 
 
 def test_stage_and_commit_raises_on_commit_failure(tmp_path, monkeypatch):
@@ -257,7 +279,7 @@ def test_stage_and_commit_raises_on_commit_failure(tmp_path, monkeypatch):
     fake = _dispatch({"status": _Proc(out=" M x"), "commit": _Proc(rc=1, err="nope")})
     monkeypatch.setattr(publisher, "_run", fake)
     with pytest.raises(publisher.RenderError):
-        publisher.stage_and_commit(cfg, "pages/wizard", "foo", "wizard", "draft")
+        publisher.stage_and_commit(cfg, "wizard", "foo", "wizard", "draft")
 
 
 def test_push_to_master_reports_failure_with_stderr(tmp_path, monkeypatch):
@@ -273,7 +295,7 @@ def test_commit_author_is_user_committer_is_service(tmp_path, monkeypatch):
     cfg = make_cfg(str(tmp_path))
     fake = _dispatch({"status": _Proc(out=" M x")})
     monkeypatch.setattr(publisher, "_run", fake)
-    publisher.stage_and_commit(cfg, "pages/emo", "foo", "emo", "approved")
+    publisher.stage_and_commit(cfg, "emo", "foo", "emo", "approved")
     envs = [c[1] for c in fake.calls]
     assert any(e.get("GIT_AUTHOR_NAME") == "emo" for e in envs)
     assert any(e.get("GIT_AUTHOR_EMAIL") == "emo@viktorbarzin.me" for e in envs)
@@ -349,7 +371,7 @@ def test_publish_returns_url_when_content_already_published(tmp_path, monkeypatc
     )
     out = publisher.publish(cfg, user="emo", content="# hi", filename="foo.md")
     assert seen["push"] == 0
-    assert out["path"] == "pages/emo/2026-08-17-foo.html"
+    assert out["path"] == "emo/2026-08-17-foo.html"
 
 
 def test_publish_syncs_before_rendering(tmp_path, monkeypatch):
@@ -375,9 +397,9 @@ def test_publish_syncs_before_rendering(tmp_path, monkeypatch):
 
 
 def _preview_cfg(tmp_path, monkeypatch, html, assets=None):
-    """A cfg whose repo has a pages/assets/ tree, with git + render stubbed."""
+    """A cfg whose repo has a assets/ tree, with git + render stubbed."""
     cfg = make_cfg(str(tmp_path))
-    assets_dir = tmp_path / "pages" / "assets"
+    assets_dir = tmp_path / "assets"
     assets_dir.mkdir(parents=True)
     for name, body in (assets or {}).items():
         (assets_dir / name).write_text(body, encoding="utf-8")
@@ -441,10 +463,10 @@ def test_preview_carries_mermaid_when_the_page_asks_for_it(tmp_path, monkeypatch
 
 
 def test_preview_renders_outside_the_clone(tmp_path, monkeypatch):
-    """The render must not land in <repo>/pages/<user>/.
+    """The render must not land in <repo>/<user>/.
 
     An untracked page left there is staged by the NEXT publish's
-    `git add -- pages/<user>/` and pushed as part of someone else's page.
+    `git add -- <user>/` and pushed as part of someone else's page.
     """
     cfg, calls = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
 
@@ -452,7 +474,7 @@ def test_preview_renders_outside_the_clone(tmp_path, monkeypatch):
 
     target = calls["render"]["abs_target"]
     assert not target.startswith(cfg.repo_dir)
-    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "emo"))
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "emo"))
 
 
 def test_preview_syncs_before_rendering(tmp_path, monkeypatch):
@@ -592,24 +614,27 @@ def test_validate_bundle_files_caps_total_bytes(monkeypatch):
 
 
 def test_bundle_subdir_rejects_unsafe_segments():
-    assert publisher.bundle_subdir("showcase", "homelab") == "pages/showcase/homelab"
-    for user, slug in [("..", "x"), ("a/b", "x"), ("x", ".."), ("x", ""), ("shared", "x")]:
+    assert publisher.bundle_subdir("showcase", "homelab") == "showcase/homelab"
+    for user, slug in [
+        ("..", "x"), ("a/b", "x"), ("x", ".."), ("x", ""), ("shared", "x"),
+        ("assets", "x"), ("tools", "x"), (".git", "x"), ("x", ".git"),
+    ]:
         with pytest.raises(publisher.PublishError):
             publisher.bundle_subdir(user, slug)
 
 
 def test_stage_and_commit_bundle_stages_deletions_scoped(tmp_path, monkeypatch):
     cfg = make_cfg(str(tmp_path))
-    fake = _dispatch({"status": _Proc(out=" D pages/showcase/homelab/old.js")})
+    fake = _dispatch({"status": _Proc(out=" D showcase/homelab/old.js")})
     monkeypatch.setattr(publisher, "_run", fake)
     assert publisher.stage_and_commit_bundle(
-        cfg, "pages/showcase/homelab", "showcase", "homelab"
+        cfg, "showcase/homelab", "showcase", "homelab"
     )
     cmds = _subcmds(fake)
     add = next(c for c in cmds if "add" in c)
-    assert "-A" in add and add[-1] == "pages/showcase/homelab/"
+    assert "-A" in add and add[-1] == "showcase/homelab/"
     status = next(c for c in cmds if "status" in c)
-    assert status[-1] == "pages/showcase/homelab/"
+    assert status[-1] == "showcase/homelab/"
     commit = next(c for c in cmds if "commit" in c)
     assert "pages: publish bundle showcase/homelab" in commit
     envs = [e for c, e in fake.calls if "commit" in c]
@@ -621,14 +646,14 @@ def test_stage_and_commit_bundle_false_when_unchanged(tmp_path, monkeypatch):
     fake = _dispatch({"status": _Proc(out="")})
     monkeypatch.setattr(publisher, "_run", fake)
     assert not publisher.stage_and_commit_bundle(
-        cfg, "pages/showcase/homelab", "showcase", "homelab"
+        cfg, "showcase/homelab", "showcase", "homelab"
     )
     assert not any("commit" in c for c in _subcmds(fake))
 
 
 def _stub_bundle_pipeline(tmp_path, monkeypatch, push_results, commit=True):
     """Stub git; each sync puts master's copy of the bundle back on disk."""
-    target = tmp_path / "pages" / "showcase" / "homelab"
+    target = tmp_path / "showcase" / "homelab"
     seen = {"sync": 0, "commit": 0, "push": 0, "on_disk_at_commit": []}
 
     monkeypatch.setattr(publisher, "ensure_repo", lambda _c: None)
@@ -667,7 +692,7 @@ def test_publish_bundle_replaces_the_dir_dropping_stale_files(tmp_path, monkeypa
     )
     assert out == {
         "url": "https://pages.viktorbarzin.me/homelab/",
-        "path": "pages/showcase/homelab",
+        "path": "showcase/homelab",
         "committed": True,
         "files": 2,
     }
@@ -723,13 +748,12 @@ def test_publish_bundle_validates_before_touching_the_repo(tmp_path, monkeypatch
 
 
 def test_publish_bundle_refuses_a_symlinked_target(tmp_path, monkeypatch):
-    """A symlink committed at pages/<user>/ must not redirect the rmtree."""
+    """A symlink committed at <user>/ must not redirect the rmtree."""
     cfg = make_cfg(str(tmp_path))
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.txt").write_text("keep")
-    (tmp_path / "pages").mkdir()
-    (tmp_path / "pages" / "showcase").symlink_to(outside)
+    (tmp_path / "showcase").symlink_to(outside)
     monkeypatch.setattr(publisher, "ensure_repo", lambda _c: None)
     monkeypatch.setattr(publisher, "sync_to_master", lambda _c: None)
     with pytest.raises(publisher.PublishError):

@@ -457,7 +457,7 @@ reads ingresses, namespaces, PVCs and nodes with kubectl, the flow trail from
 `goldmane_edges`, Prometheus through the internal LB, and commit, CI and issue
 counts from the Forgejo and Woodpecker APIs, and Home Assistant counts from ha-sofia (`HA_SOFIA_TOKEN`, else `ha token`). Any source failing fails the build, except Home Assistant: then the last published Home section is reused and marked stale.
 `showcase publish` sends a built directory to pages-publish `/publish-bundle`
-with a bundle token, which decides where it lands (`pages/showcase/homelab/`).
+with a bundle token, which decides where it lands (`showcase/homelab/` in Forgejo `viktor/pages`).
 The daily `.woodpecker/showcase.yml` run does both.
 
 | Command | Tier | What it does |
