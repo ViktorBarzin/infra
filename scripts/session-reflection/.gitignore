@@ -1,0 +1,15 @@
+# Derived from transcript content — never committed.
+inventory.json
+manifest.json
+digests/
+d1_corrections.json
+d2_anomalies.json
+d3_recall.json
+d4_wins.json
+wf_args.json
+wf_result.json
+d1_batches.json
+probe_*.py
+metrics.json
+# history/ is deliberately NOT ignored: the committed snapshots are what make
+# `reflect diff` work and what puts the before/after in a git diff.

@@ -1,6 +1,6 @@
 // Renovate self-hosted (global) config for the stacks/renovate "renovate-apps"
 // CronJob: dependency updates for first-party app repos on the default app
-// stack (docs/adr/0001-default-app-stack.md in the monorepo, "Delivery" row).
+// stack (docs/adr/0001-default-app-stack.md in app-kit, "Delivery" row).
 // Written 2026-10-16 against Renovate 44.115.9 source. The infra job's config
 // is config.js next to this file; the two jobs share the renovate-bot account
 // and the wrapper, and nothing else.

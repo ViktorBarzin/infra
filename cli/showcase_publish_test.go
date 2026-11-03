@@ -64,7 +64,7 @@ func TestShowcasePublishPostsBundleWithBundleToken(t *testing.T) {
 	newPagesTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_, _ = w.Write([]byte(`{"url":"https://pages.example/homelab/","path":"pages/showcase/homelab","committed":true,"files":1}`))
+		_, _ = w.Write([]byte(`{"url":"https://pages.example/homelab/","path":"showcase/homelab","committed":true,"files":1}`))
 	}))
 	t.Setenv("PAGES_BUNDLE_TOKEN", "bundle-tok")
 	dir := writeBundleDir(t, map[string][]byte{"index.html": []byte("hi")})

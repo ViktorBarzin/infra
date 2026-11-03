@@ -557,7 +557,7 @@ func bundleFiles(dir string) ([]bundleFile, error) {
 }
 
 // showcasePublish sends a built Showcase to pages-publish. The bundle token
-// decides where it lands (pages/showcase/homelab), so nothing here names a path.
+// decides where it lands (showcase/homelab in viktor/pages), so nothing here names a path.
 func showcasePublish(args []string) error {
 	dir := flagValue(args, "--dir")
 	if dir == "" {

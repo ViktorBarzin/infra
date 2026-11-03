@@ -16,8 +16,28 @@ import sys
 from dataclasses import dataclass, field
 
 # Users (PAGES_API_KEYS keys) and slugs share this safe charset. Kept in sync
-# with publisher._SLUG_RE — both feed the same ``pages/<segment>/`` path.
+# with publisher._SLUG_RE — both feed the same ``<segment>/`` path.
 _SAFE_RE = re.compile(r"[0-9A-Za-z._-]+")
+
+# Top-level dirs of viktor/pages that belong to the site, not to a user. The
+# user dirs sit at the repo root beside these and .git, so a user named after
+# one would publish into it. Kept in sync with publisher._RESERVED_SEGMENTS.
+RESERVED_USERS = ("shared", "assets", "tools")
+
+
+def _unsafe_segment(segment: object) -> bool:
+    """True unless ``segment`` is a non-empty, charset-clean, non-dot name.
+
+    A leading ``.`` is refused because the segment becomes a directory at (or
+    one level under) the repo root, where ``.git`` lives.
+    """
+    return (
+        not isinstance(segment, str)
+        or not segment
+        or segment.startswith(".")
+        or ".." in segment
+        or not _SAFE_RE.fullmatch(segment)
+    )
 
 
 class ConfigError(RuntimeError):
@@ -43,7 +63,7 @@ def _invert_api_keys(raw: str) -> dict[str, str]:
     for user, token in user_to_token.items():
         if not isinstance(user, str) or not isinstance(token, str):
             raise ConfigError("PAGES_API_KEYS keys and values must be strings")
-        if not user or ".." in user or not _SAFE_RE.fullmatch(user):
+        if _unsafe_segment(user) or user in RESERVED_USERS:
             raise ConfigError(f"unsafe user segment in PAGES_API_KEYS: {user!r}")
         if not token:
             raise ConfigError(f"empty token for user {user!r} in PAGES_API_KEYS")
@@ -56,7 +76,7 @@ def _invert_api_keys(raw: str) -> dict[str, str]:
 def _parse_bundle_keys(raw: str, api_tokens: dict[str, str]) -> dict[str, tuple[str, str]]:
     """Parse ``{token: {"user": ..., "slug": ...}}`` JSON into a token lookup.
 
-    A bundle token publishes exactly one directory, ``pages/<user>/<slug>/``,
+    A bundle token publishes exactly one directory, ``<user>/<slug>/``,
     so both segments get the same charset check as an API-key user. Bundle
     tokens live in their own map and may not repeat an API token: each token
     opens exactly one endpoint.
@@ -81,12 +101,7 @@ def _parse_bundle_keys(raw: str, api_tokens: dict[str, str]) -> dict[str, tuple[
             raise ConfigError('PAGES_BUNDLE_KEYS values must be {"user", "slug"} objects')
         user, slug = target.get("user"), target.get("slug")
         for name, segment in (("user", user), ("slug", slug)):
-            if (
-                not isinstance(segment, str)
-                or not segment
-                or ".." in segment
-                or not _SAFE_RE.fullmatch(segment)
-            ):
+            if _unsafe_segment(segment) or (name == "user" and segment in RESERVED_USERS):
                 raise ConfigError(f"unsafe {name} segment in PAGES_BUNDLE_KEYS: {segment!r}")
         bundle_map[token] = (user, slug)
     return bundle_map
@@ -111,7 +126,7 @@ class Config:
     @property
     def git_ssh_command(self) -> str:
         # -i pins the deploy key; IdentitiesOnly stops ssh from trying an agent
-        # or other keys; accept-new trusts github's host key on first contact
+        # or other keys; accept-new trusts Forgejo's host key on first contact
         # (the key is written to the runtime user's writable known_hosts).
         return (
             f"ssh -i {self.deploy_key_path} "
@@ -128,14 +143,18 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         bundle_map=_parse_bundle_keys(env.get("PAGES_BUNDLE_KEYS", ""), key_map),
         repo_dir=repo_dir,
         deploy_key_path=env.get("DEPLOY_KEY_PATH", "/etc/pages-deploy/id_ed25519"),
-        # Defaults follow the team spec (post plans/->pages/ migration). If the
-        # renderer still lives at plans/tools/render.py with --plans-dir at
-        # deploy time, override RENDER_SCRIPT + RENDER_DIR_FLAG in the stack.
+        # The clone is viktor/pages, whose root IS the site: user dirs, shared/,
+        # assets/ and the renderer in tools/. Until 2026-11-03 it was the
+        # monorepo with all of that under pages/.
         render_script=env.get(
-            "RENDER_SCRIPT", os.path.join(repo_dir, "pages", "tools", "render.py")
+            "RENDER_SCRIPT", os.path.join(repo_dir, "tools", "render.py")
         ),
         render_dir_flag=env.get("RENDER_DIR_FLAG", "--pages-dir"),
-        repo_url=env.get("REPO_URL", "git@github.com:ViktorBarzin/monorepo.git"),
+        # In-cluster Service name, so a publish depends on neither the
+        # git.viktorbarzin.me record nor the MetalLB address behind it.
+        repo_url=env.get(
+            "REPO_URL", "git@forgejo-ssh.forgejo.svc.cluster.local:viktor/pages.git"
+        ),
         base_url=env.get("PAGES_BASE_URL", "https://pages.viktorbarzin.me").rstrip("/"),
         committer_name=env.get("GIT_COMMITTER_NAME", "pages-publish"),
         committer_email=env.get("GIT_COMMITTER_EMAIL", "pages-publish@viktorbarzin.me"),

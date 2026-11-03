@@ -1,4 +1,4 @@
-# Per-app sign-up for one Authentik application (ADR-0001 in ~/code/docs/adr,
+# Per-app sign-up for one Authentik application (ADR-0001 in app-kit docs/adr,
 # "Sign-up"). The shared mechanism lives in stacks/authentik/app-signup.tf;
 # this module is the per-app half an app stack instantiates.
 #

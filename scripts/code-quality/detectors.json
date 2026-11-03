@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "note": "Detector definitions are DATA, not code. A snapshot records a fingerprint of this file, and `quality diff` refuses to compare across a fingerprint change, so adding a detector never reads as a regression. Same contract as session-reflection/patterns.json.",
+
+  "windows": {
+    "churn_days": 90,
+    "defect_days": 180
+  },
+
+  "control": {
+    "note": "sloc is THE CONTROL SERIES, not a quality metric. Borg, Ezzouhri and Tornhill 2024 measured a naive LOC threshold at AUC 0.95, above every composite tested, so LOC is the bar a metric has to beat. `diff` prints its move beside every other move and flags any metric that merely tracked it.",
+    "series": "sloc"
+  },
+
+  "banned": {
+    "note": "These are refused by construction, not merely unused. Each was rejected on evidence measured on this codebase; re-adding one needs a new measurement, not an opinion.",
+    "metrics": {
+      "sum_ccn": "r=0.910, R2=0.828 against per-file LOC here. Reported a false +6,198 regression on a refactor that improved the code.",
+      "maintainability_index": "r(MI, ln SLOC) = -0.876 on Python here, -0.787 across 369 files in ~/code. Its -16.2*ln(sloc) term pays you to split files.",
+      "sqale_debt_ratio": "Borg et al. 2024: AUC 0.60 against a 0.50 coin flip, SonarQube's shipped default below the ROC diagonal. Its denominator means deleting lines raises the ratio.",
+      "halstead": "Hamer and Frewin 1982 found the underpinning relationships are neither natural laws nor useful engineering approximations.",
+      "test_to_prod_ratio": "LOC divided by LOC. Moved 9% here on a file-selection decision before any code changed."
+    }
+  },
+
+  "detectors": [
+    {
+      "id": "invisible_coupling",
+      "kind": "gate",
+      "summary": "files that change together but reference each other in no way a tool can follow",
+      "why": "The strongest result in the 2026-09-06 research. Found byte-identical sw.js copies, and a TypeScript-to-Go telemetry contract whose only link is a comment, which is why five events silently drifted. No type checker, linter or dependency graph can see either.",
+      "min_cochanges": 5,
+      "min_degree": 0.5,
+      "cross_language_bonus": true,
+      "regression": "a new pair above min_degree, or any pair reaching 1.0 (that is a duplicated file)"
+    },
+    {
+      "id": "change_concentration",
+      "kind": "trend",
+      "summary": "share of the window's file-touches landing in the top 10 files",
+      "why": "Rahman and Devanbu 2013 under effort-aware evaluation. Rising concentration means work piling into the same places.",
+      "top_n": 10,
+      "regression": "a rise of more than 5 points over two consecutive runs while sloc holds steady"
+    },
+    {
+      "id": "bug_magnets",
+      "kind": "trend",
+      "summary": "files with 5 or more fix commits in the defect window",
+      "why": "Defect history is the least gameable signal available, and it needs no tool beyond git.",
+      "min_fixes": 5,
+      "fix_subject_pattern": "^(fix|revert|hotfix)",
+      "regression": "any increase"
+    },
+    {
+      "id": "rework_rate",
+      "kind": "trend",
+      "summary": "percent of commits that revert or immediately re-fix a commit less than 24h old",
+      "why": "An outcome, not a proxy. Cannot be improved by rewriting a function.",
+      "window_hours": 24,
+      "regression": "a rise of more than 5 points over two consecutive runs while the commit count holds steady"
+    },
+    {
+      "id": "suite_status",
+      "kind": "gate",
+      "summary": "does the test suite pass, and does it terminate",
+      "why": "A red or hanging suite makes every other number in the snapshot unreadable, so it gates first.",
+      "optional": true,
+      "regression": "1 to 0, or a timeout appearing"
+    },
+    {
+      "id": "layer_violations",
+      "kind": "gate",
+      "summary": "imports crossing a declared architectural boundary",
+      "why": "Found the known store-to-components inversion plus two the audit missed, in under ten seconds. Deterministic and fixed by one import.",
+      "optional": true,
+      "requires": "dependency-cruiser",
+      "regression": "any increase at an unchanged config fingerprint"
+    },
+    {
+      "id": "duplication",
+      "kind": "context",
+      "summary": "percent of lines inside a detected clone",
+      "why": "Recorded, NEVER gated. Rahman, Bird and Devanbu found cloned code less defect-prone than non-cloned code, and the number falls when you add unduplicated code. It moved 0.13 to 0.13 across a refactor that removed real duplication.",
+      "optional": true,
+      "requires": "jscpd",
+      "regression": "none, this series is context for reading the others"
+    }
+  ]
+}

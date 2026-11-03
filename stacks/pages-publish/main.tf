@@ -3,9 +3,11 @@
 # Lets any devvm user publish markdown to pages.viktorbarzin.me from a locked
 # account. The client POSTs raw markdown + a bearer token; the service resolves
 # the publishing user FROM THE TOKEN ONLY (never the request body), renders it
-# via the monorepo's render.py into pages/<user>/ (or pages/shared/), and
-# commits + pushes to the monorepo. The learn pod git-syncs and serves the page
-# ~30s later. Bearer-token API → auth = "none" (Authentik would break clients).
+# via the repo's tools/render.py into <user>/ (or shared/), and commits +
+# pushes to the PRIVATE Forgejo repo viktor/pages, whose root is the site. The
+# learn pod git-syncs that repo and serves the page ~30s later. Bearer-token
+# API → auth = "none" (Authentik would break clients). Until 2026-11-03 the
+# target was the pages/ subdir of the GitHub monorepo, dissolved that day.
 #
 # App source + image: pages-publish/ → ghcr.io/viktorbarzin/pages-publish:<sha>
 # (GHA, ADR-0002); the build triggers .woodpecker/first-party-deploy.yml, which
@@ -14,13 +16,15 @@
 # Vault secret/pages-publish carries:
 #   - api_keys   : JSON {user: token} map → env PAGES_API_KEYS. The user KEYS
 #                  MUST match the learn Caddyfile's per-user dir names
-#                  (pages/wizard, pages/emo) — i.e. {"wizard": "...", "emo": "..."}
+#                  (wizard/, emo/) — i.e. {"wizard": "...", "emo": "..."}
 #                  — NOT the Authentik usernames, or served pages 404.
 #   - bundle_keys: JSON {token: {"user": ..., "slug": ...}} → env
 #                  PAGES_BUNDLE_KEYS. Each token may only POST /publish-bundle,
-#                  into pages/<user>/<slug>/ (the showcase site: showcase/homelab).
-#   - deploy_key : SSH private key with READ+WRITE on ViktorBarzin/monorepo,
-#                  mounted 0400 at /etc/pages-deploy/id_ed25519 (never env).
+#                  into <user>/<slug>/ (the showcase site: showcase/homelab).
+#   - forgejo_deploy_key : SSH private key, a READ+WRITE deploy key on Forgejo
+#                  viktor/pages ("pages-publish (read-write)"), mounted 0400
+#                  at /etc/pages-deploy/id_ed25519 (never env). The older
+#                  deploy_key property held the GitHub monorepo key.
 #
 # NOTE (team lead): this stack dir also needs the standard sibling scaffolding
 # copied in — tiers.tf, providers.tf, backend.tf, cloudflare_provider.tf — and a
@@ -94,14 +98,14 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
-          # SSH deploy key (read+write ViktorBarzin/monorepo). Projected as a
+          # SSH deploy key (read+write Forgejo viktor/pages). Projected as a
           # FILE at /etc/pages-deploy/id_ed25519 (mode 0400) below — deliberately
           # NOT surfaced via env_from, so the private key never lands in the
           # process environment (/proc/<pid>/environ).
           secretKey = "deploy_key"
           remoteRef = {
             key      = "pages-publish"
-            property = "deploy_key"
+            property = "forgejo_deploy_key"
           }
         },
       ]

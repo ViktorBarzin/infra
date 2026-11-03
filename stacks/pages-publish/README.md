@@ -2,9 +2,15 @@
 
 FastAPI service that lets any devvm user publish markdown to
 `pages.viktorbarzin.me` from a locked account. The client sends raw markdown; the
-service renders it (via the monorepo's `render.py`) into that user's private
-`pages/<user>/` dir (or `pages/shared/`) and commits + pushes to the monorepo.
-The learn pod git-syncs and serves the page ~30s later.
+service renders it (via the repo's `tools/render.py`) into that user's private
+`<user>/` dir (or `shared/`) and commits + pushes to the private Forgejo repo
+`viktor/pages`, whose root is the site. The learn pod git-syncs that repo and
+serves the page ~30s later.
+
+Until 2026-11-03 the same tree was the `pages/` subdir of the GitHub monorepo
+(`ViktorBarzin/monorepo`), which was dissolved that day. `viktor/pages` carries
+its history, including the `plans/` era, and is Forgejo-only with no GitHub
+push-mirror, by Viktor's decision.
 
 ## Security model (the load-bearing part)
 
@@ -12,14 +18,19 @@ The learn pod git-syncs and serves the page ~30s later.
   request body. `PAGES_API_KEYS` is a JSON `{user: token}` map, inverted to
   `token -> user` (mirrors `claude_memory/api/auth.py`). Unknown/missing token
   → 401. The request model has no `user` field.
-- The write path is a **hardcoded `pages/` prefix + a fixed second segment**
-  that is either the literal `shared` or the token-resolved user — never request
-  input. Users are charset-validated at config load.
+- The write path is **one fixed top-level segment** that is either the literal
+  `shared` or the token-resolved user — never request input. Users are
+  charset-validated at config load. Because the user dirs sit at the repo root
+  beside `.git`, `assets/` and `tools/`, a user (or bundle slug) starting with
+  `.`, or a user named `shared`, `assets` or `tools`, is refused at load and
+  again at write time.
 - The **slug** (from `filename`) is the only request value that reaches a path:
   strip a trailing `.md`, then require `^[0-9A-Za-z._-]+$` with no `..`. A
   path-bearing name (`../x`, `a/b`, `/etc/passwd`) is **rejected (400)**, not
   basenamed to its leaf. The service is structurally incapable of writing
-  outside `pages/<user>/` or `pages/shared/` (asserted with a realpath check).
+  outside `<user>/` or `shared/` (asserted with a realpath check: the resolved
+  target must equal `<realpath(repo)>/<segment>`, so a committed symlink is
+  refused).
 
 ## How a publish reaches master (no rebase, by design)
 
@@ -29,7 +40,7 @@ means publishes are serialized. Each attempt inside `publish()` runs:
 1. `sync_to_master` — abandon any interrupted rebase/merge, `fetch origin
    master`, `reset --hard FETCH_HEAD`, `checkout -B master`.
 2. `render_page` — regenerate the page **and** that dir's `index.html`.
-3. `stage_and_commit` — `git add`/`status` scoped to `pages/<user>/`; an
+3. `stage_and_commit` — `git add`/`status` scoped to `<user>/`; an
    unchanged dir returns the URL without committing.
 4. `push_to_master` — one attempt. A rejection is a lost race, not an error:
    loop back to step 1, up to `DEFAULT_ATTEMPTS` (5).
@@ -41,7 +52,7 @@ nothing to merge. Step 2 must stay *after* step 1: the renderer rebuilds
 publish an index missing whatever landed meanwhile.
 
 **Why not `pull --rebase`** (what this replaced, 2026-08-17): every publish
-regenerates `pages/<user>/index.html`, so two concurrent publishes conflict
+regenerates `<user>/index.html`, so two concurrent publishes conflict
 there reliably. A conflicted rebase stops with `.git/rebase-merge` on disk and a
 detached HEAD, and every later publish then fails on *"there is already a
 rebase-merge directory"* — one lost race returned **HTTP 500 for every user**
@@ -62,21 +73,21 @@ homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
 
 - `GET /health` → `200 {"status":"ok"}`, no auth.
 - `POST /publish` (Bearer): body `{content, filename, status?, shared?}` →
-  `{"url": "...", "path": "pages/<user>/<file>.html"}`. `status` ∈
+  `{"url": "...", "path": "<user>/<file>.html"}`. `status` ∈
   {draft,approved,executing,done} (default draft); `shared` default false.
 - `POST /preview` (Bearer): same body → `{"filename", "html", "assets"}`.
   Renders one page and hands back the bytes plus the `/assets/*` files that page
   links, keyed by the path it links them at. Nothing is committed or pushed.
 - `POST /publish-bundle` (Bearer, bundle token): body
   `{"files": [{"path", "content", "encoding"?}]}` →
-  `{"url": "<base>/<slug>/", "path": "pages/<user>/<slug>", "committed", "files"}`.
+  `{"url": "<base>/<slug>/", "path": "<user>/<slug>", "committed", "files"}`.
   See below.
 
 ### Why /preview exists
 
 A page is not verified by having been rendered, and `pages.viktorbarzin.me` is
 owner-gated: it returns 403 to every automated client, in-cluster included. A
-user with a monorepo checkout can serve the tree locally and look at the page
+user with a `viktor/pages` checkout can serve the tree locally and look at the page
 before publishing. A user without one had no way to see a page at all, so the
 first look happened after it was live, on someone else's screen. That is how a
 page with an inline SVG chart shipped on 2026-09-12 with a 555px hole in it.
@@ -90,9 +101,9 @@ first gets EACCES from.
 
 Two design notes worth keeping:
 
-- It renders into a throwaway directory, never into `<repo>/pages/<user>/`. An
+- It renders into a throwaway directory, never into `<repo>/<user>/`. An
   untracked page left in the clone is staged by the next publish's
-  `git add -- pages/<user>/` and pushed as part of somebody else's page.
+  `git add -- <user>/` and pushed as part of somebody else's page.
 - It takes the same lock as `/publish`, because it re-syncs the one shared clone
   and would otherwise reset a publish's working tree mid-flight.
 - Only assets the page actually links are read, so a doc with no diagram does not
@@ -101,12 +112,12 @@ Two design notes worth keeping:
 ## Publishing a multi-file bundle
 
 `/publish-bundle` is for a static site that CI generates as a set of files, such
-as the homelab showcase page (`pages/showcase/homelab/`, see
+as the homelab showcase page (`showcase/homelab/`, see
 `docs/plans/2026-10-20-homelab-showcase-design.md`). `/publish` renders one
 markdown doc, so it does not cover this case.
 
 - Tokens come from `PAGES_BUNDLE_KEYS`, a JSON `{token: {"user", "slug"}}` map.
-  Each token is bound to one directory, `pages/<user>/<slug>/`, and the request
+  Each token is bound to one directory, `<user>/<slug>/`, and the request
   body has no way to name another. Bundle tokens and `PAGES_API_KEYS` tokens are
   separate: each one is accepted only by its own endpoints, and a token listed in
   both maps stops the service at startup.
@@ -116,14 +127,14 @@ markdown doc, so it does not cover this case.
   and no segment starting with `.`. A bundle holds 1 to 200 files and at most
   20 MB decoded. Anything else is a 400, returned before the clone is touched.
 - Each attempt of the publish loop syncs to master, deletes
-  `pages/<user>/<slug>/`, writes the files, and runs `git add -A` scoped to
+  `<user>/<slug>/`, writes the files, and runs `git add -A` scoped to
   that directory, so files the new bundle no longer contains are removed in the
   same commit. The commit is authored by `<user>` with the message
   `pages: publish bundle <user>/<slug>`. Identical content returns
   `"committed": false` without a commit. A lost push race retries the same way
   `/publish` does.
 - Nothing is rendered. The files are committed as sent, and `render.py` skips
-  subdirectories when it rebuilds `pages/<user>/index.html`.
+  subdirectories when it rebuilds `<user>/index.html`.
 
 ## Config (env)
 
@@ -131,18 +142,18 @@ markdown doc, so it does not cover this case.
 |-----|---------|-------|
 | `PAGES_API_KEYS` | — | JSON `{user: token}`; keys must equal the Caddyfile per-user dir names (`wizard`, `emo`) |
 | `PAGES_BUNDLE_KEYS` | empty | JSON `{token: {"user": ..., "slug": ...}}`; tokens for `/publish-bundle` only |
-| `REPO_DIR` | `/repo` | monorepo checkout (cloned on first run if absent) |
-| `DEPLOY_KEY_PATH` | `/etc/pages-deploy/id_ed25519` | ssh key, read+write on the monorepo |
-| `RENDER_SCRIPT` | `$REPO_DIR/pages/tools/render.py` | set to `.../plans/tools/render.py` pre-migration |
-| `RENDER_DIR_FLAG` | `--pages-dir` | set to `--plans-dir` pre-migration |
-| `REPO_URL` | `git@github.com:ViktorBarzin/monorepo.git` | |
+| `REPO_DIR` | `/repo` | `viktor/pages` checkout (cloned on first run if absent) |
+| `DEPLOY_KEY_PATH` | `/etc/pages-deploy/id_ed25519` | ssh key, read+write deploy key on `viktor/pages` (Vault `secret/pages-publish` `forgejo_deploy_key`) |
+| `RENDER_SCRIPT` | `$REPO_DIR/tools/render.py` | |
+| `RENDER_DIR_FLAG` | `--pages-dir` | |
+| `REPO_URL` | `git@forgejo-ssh.forgejo.svc.cluster.local:viktor/pages.git` | in-cluster Service name, so a publish does not depend on the `git.viktorbarzin.me` record |
 | `PAGES_BASE_URL` | `https://pages.viktorbarzin.me` | |
 
 ## Develop / test
 
 ```bash
 pip install -r requirements.txt   # + pytest httpx for tests
-python3 -m pytest                  # 158 tests; git + render subprocess are stubbed
+python3 -m pytest                  # 176 tests; git + render subprocess are stubbed
 ```
 
 Build: `docker build -t pages-publish .` (context = this dir). Runs uvicorn on

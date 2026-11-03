@@ -28,6 +28,10 @@ Do **not** swap to GitHub. Reaffirm and *complete* the model already in `CONTEXT
   not leave the house even into a private GitHub repo. The cost is explicit and
   accepted: these three have **no off-site backup**, so a cluster loss loses
   them. Anything mirrored elsewhere survives; these do not.
+  **Added 2026-11-03**: `pages` (the HTML behind pages.viktorbarzin.me) and
+  `learn` (the /teach lessons), split out of the GitHub monorepo when it was
+  dissolved. Viktor declined a GitHub push-mirror for both, so the same cost
+  applies: until another backup covers Forgejo, a cluster loss loses them.
 
 ## The one-remote rule, precisely
 

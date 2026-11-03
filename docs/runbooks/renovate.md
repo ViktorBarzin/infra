@@ -136,7 +136,7 @@ Terraform providers are exact pins in root `terragrunt.hcl`, one `# renovate:` a
 
 ## App repos (renovate-apps)
 
-A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the default app stack (monorepo `docs/adr/0001-default-app-stack.md`, "Delivery"). It shares the `renovate-bot` account, the `renovate-env` Secret, the image pin and `run-renovate.sh` with the infra job. Everything else is its own, and the infra job's config, schedule and behaviour are unchanged.
+A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the default app stack (app-kit `docs/adr/0001-default-app-stack.md`, "Delivery"). It shares the `renovate-bot` account, the `renovate-env` Secret, the image pin and `run-renovate.sh` with the infra job. Everything else is its own, and the infra job's config, schedule and behaviour are unchanged.
 
 | What | Where |
 |---|---|

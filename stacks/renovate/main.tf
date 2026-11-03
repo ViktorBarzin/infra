@@ -2,7 +2,7 @@
 # every 2 hours (skipped while an infra pipeline runs).
 #
 # A second CronJob, renovate-apps (bottom of this file), updates first-party app
-# repos on the default app stack (monorepo docs/adr/0001-default-app-stack.md,
+# repos on the default app stack (app-kit docs/adr/0001-default-app-stack.md,
 # "Delivery"): its own config (files/config-apps.js), repo list, run limit and
 # cache. It shares the renovate-bot account, the renovate-env Secret and the
 # wrapper script with the infra job, and changes nothing about that job.

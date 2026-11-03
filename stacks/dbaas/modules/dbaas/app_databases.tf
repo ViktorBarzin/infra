@@ -1,4 +1,4 @@
-# App databases on the shared CNPG cluster (ADR-0001 in ~/code/docs/adr,
+# App databases on the shared CNPG cluster (ADR-0001 in app-kit docs/adr,
 # "Provisioning"). One entry per app; the key is the database name and the
 # owner role (underscores). The role starts with a placeholder password that
 # the Vault static role pg-<app> (stacks/vault app_db_roles.tf, pg_app_roles)
