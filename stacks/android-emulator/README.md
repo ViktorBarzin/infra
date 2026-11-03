@@ -37,7 +37,8 @@ and when one waits Pending with `Insufficient viktorbarzin.me/gpumem` it scales
 the emulator to 0 and logs which pod it yields to. If the emulator is awake and
 someone holds a presence claim on it, the gate first waits for the claim to be
 released, for at most 8 min (`CLAIM_WAIT_SECONDS`, since 2026-11-02; 8 rather
-than the deploy's 20 so a Terraform apply's 10 min rollout wait stays green), and
+than the deploy's 20 so a Terraform apply's 10 min rollout wait stays green; the
+value is the `CLAIM_WAIT_SECONDS` env in `gate.tf`, and `test_gate.py` follows it), and
 posts to #alerts when it starts waiting and if it gives up. It reads the
 claims straight from Dolt (`dolt.beads-server`, database `beads`, table
 `presence_claims`) with a small stdlib client, and a claim store it cannot read
