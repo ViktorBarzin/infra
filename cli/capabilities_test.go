@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The 2026-08-31 session study (docs/agents/2026-08-31-session-reflection.md)
+// The 2026-08-31 session study (pages.viktorbarzin.me/2026-08-31-session-reflection.html)
 // measured the failure these tests guard against: `homelab services` listed the
 // shared Android emulator the whole time, and it was consulted 85 times in 30
 // days while `logs query` — whose rule names both the moment and the built-in it

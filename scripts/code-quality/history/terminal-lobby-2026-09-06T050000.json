@@ -1,0 +1,160 @@
+{
+  "bug_magnets": {
+    "count": 13,
+    "files": [
+      {
+        "file": "frontend-v2/src/app.css",
+        "fixes": 25
+      },
+      {
+        "file": "frontend-v2/src/components/App.tsx",
+        "fixes": 9
+      },
+      {
+        "file": "frontend-v2/src/components/SessionView.tsx",
+        "fixes": 9
+      },
+      {
+        "file": "frontend-v2/src/components/TextView.tsx",
+        "fixes": 8
+      },
+      {
+        "file": "sessionio/normalize.go",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/components/Composer.tsx",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/mobile/viewport.ts",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/notify/notifications.ts",
+        "fixes": 6
+      },
+      {
+        "file": "frontend-v2/src/sidebar.css",
+        "fixes": 6
+      },
+      {
+        "file": "frontend-v2/src/components/rows.tsx",
+        "fixes": 6
+      },
+      {
+        "file": "frontend-v2/src/components/MessagesTimeline.tsx",
+        "fixes": 6
+      },
+      {
+        "file": "frontend-v2/src/components/timeline.logic.ts",
+        "fixes": 5
+      },
+      {
+        "file": "frontend/sw.js",
+        "fixes": 5
+      }
+    ]
+  },
+  "change_concentration": {
+    "files_touched": 733,
+    "ratio_pct": 14.9,
+    "top": [
+      {
+        "file": "frontend-v2/src/app.css",
+        "touches": 86
+      },
+      {
+        "file": "frontend-v2/src/components/SessionView.tsx",
+        "touches": 58
+      },
+      {
+        "file": "frontend-v2/src/components/App.tsx",
+        "touches": 51
+      },
+      {
+        "file": "tmux-api/main.go",
+        "touches": 42
+      },
+      {
+        "file": "frontend-v2/src/sidebar.css",
+        "touches": 33
+      },
+      {
+        "file": "frontend-v2/src/components/TextView.tsx",
+        "touches": 31
+      },
+      {
+        "file": "scripts/deploy.sh",
+        "touches": 28
+      },
+      {
+        "file": "frontend-v2/src/components/TerminalView.tsx",
+        "touches": 25
+      },
+      {
+        "file": "frontend-v2/src/components/Composer.tsx",
+        "touches": 25
+      },
+      {
+        "file": "frontend-v2/src/lib/config.ts",
+        "touches": 24
+      }
+    ]
+  },
+  "detectors_fingerprint": "b46d4d88d7d8",
+  "duplication": {
+    "available": false,
+    "note": "jscpd not installed; detector skipped"
+  },
+  "head": "62d1ae621117",
+  "invisible_coupling": {
+    "commits_considered": 389,
+    "identical_pairs": 1,
+    "max_degree": 0.727,
+    "pair_count": 3,
+    "pairs": [
+      {
+        "a": "frontend-v2/public/sw.js",
+        "b": "frontend/sw.js",
+        "cochanges": 8,
+        "cross_language": false,
+        "degree": 0.727,
+        "identical": true
+      },
+      {
+        "a": "frontend-v2/src/telemetry/track.ts",
+        "b": "telemetry/events.go",
+        "cochanges": 8,
+        "cross_language": true,
+        "degree": 0.533,
+        "identical": false
+      },
+      {
+        "a": "scripts/qa-harness.py",
+        "b": "scripts/test_qa_harness.py",
+        "cochanges": 6,
+        "cross_language": false,
+        "degree": 0.5,
+        "identical": false
+      }
+    ],
+    "wide_commits_skipped": 21
+  },
+  "layer_violations": {
+    "available": false,
+    "note": "depcruise not installed; detector skipped"
+  },
+  "recorded_at": "2026-09-06T050000",
+  "repo": "terminal-lobby",
+  "rework": {
+    "commits": 705,
+    "pct": 13.5,
+    "quick_fixes": 92,
+    "reverts": 3
+  },
+  "sloc": {
+    "prod": 94201,
+    "test": 97941
+  }
+}
