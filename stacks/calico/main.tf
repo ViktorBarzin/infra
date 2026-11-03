@@ -110,11 +110,17 @@ resource "kubectl_manifest" "wave1_egress_observe_tier34" {
       namespaceSelector = "tier in {\"3-edge\", \"4-aux\"}"
       types             = ["Egress"]
       egress = [
-        # Rule 1: log every egress packet (LOG target writes to kernel/journal,
-        # alloy ships to Loki with job=node-journal,transport=kernel).
-        # LogQL: {job="node-journal"} |~ "calico-packet"
-        { action = "Log" },
-        # Rule 2: allow everything (observation must NOT break workloads).
+        # The Log rule that used to come first was removed on 2026-11-03. The
+        # observation it served finished with the 2026-09-04 snapshot
+        # (docs/architecture/wave1-egress-observation-2026-09-04.md), and it
+        # was still logging ~125k lines/h: rsyslog wrote each one twice
+        # (syslog + kern.log) on every node root disk, all on the Proxmox
+        # host's IOPS-bound sdc, and Loki took ~26 MB/h of it.
+        #
+        # The Allow stays, unchanged. Kubernetes egress NetworkPolicies in
+        # tier 3-edge/4-aux namespaces rely on falling through to it (see
+        # docs/agents/known-issues.md); deleting this policy would start
+        # enforcing policies that have never been enforced.
         { action = "Allow" },
       ]
     }
