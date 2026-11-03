@@ -2,7 +2,7 @@
 
 Off-infra static sites authored by Valia (ADR-0018, CONTEXT.md "Valia site").
 Serving: Cloudflare Pages. Freshness: the `valia-sites-sync` CronJob
-(`valia-sites` ns) mirrors each Content folder every 10 minutes and deploys
+(`valia-sites` ns) mirrors each Content folder every 30 minutes (every 10 until 2026-11-03) and deploys
 only when the folder's manifest hash changed. Registry: `local.sites` in
 `stacks/valia-sites/main.tf` — one entry per site drives everything (Pages
 project, custom domain, public CNAME, internal split-horizon CNAME, sync).
@@ -27,7 +27,7 @@ board).
    }
    ```
 
-5. Commit + push; CI applies. Within ~10 min the sync deploys content and the
+5. Commit + push; CI applies. Within ~30 min the sync deploys content and the
    site serves at `https://<name>.viktorbarzin.me` (custom-domain TLS takes
    ~5–10 min extra on first attach — CF returns 522 for the hostname until
    then). Internal LAN/VLAN/pod resolution appears when the hourly
@@ -47,7 +47,7 @@ board).
 
 ## Update a site
 
-Nothing to do: Valia edits the folder, the site follows within ~10 minutes.
+Nothing to do: Valia edits the folder, the site follows within ~30 minutes.
 Force it early: `kubectl create job --from=cronjob/valia-sites-sync sync-now -n valia-sites`
 
 ## Rename / retire a site

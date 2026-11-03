@@ -185,7 +185,11 @@ print('kubeadm-config rewritten with ' + ', '.join(k for k, _ in missing))
         else
           echo "WARN: kubeadm-config reconcile failed; re-apply this stack after the next kubeadm upgrade"
         fi
-        rm -f /tmp/kubeadm-cc.yaml /tmp/kubeadm-cc-new.yaml
+        # sudo: the reconcile above writes kubeadm-cc-new.yaml as root, and a
+        # plain rm cannot remove a root-owned file in sticky /tmp. That failing
+        # rm was the script's last command, so it exited 1 and failed the
+        # apply even though both steps had worked (2026-11-03, pipeline 3242).
+        sudo rm -f /tmp/kubeadm-cc.yaml /tmp/kubeadm-cc-new.yaml
       fi
       SCRIPT
     ]

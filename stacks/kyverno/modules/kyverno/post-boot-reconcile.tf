@@ -597,7 +597,7 @@ resource "kubernetes_cron_job_v1" "post_boot_reconcile" {
     labels    = { app = "post-boot-reconcile" }
   }
   spec {
-    schedule                      = "*/10 * * * *"
+    schedule                      = "*/20 * * * *"
     concurrency_policy            = "Forbid"
     starting_deadline_seconds     = 300
     successful_jobs_history_limit = 3

@@ -6485,7 +6485,7 @@ serverFiles:
           # which was computed from a per-pod /tmp file and always equalled the
           # current value (fresh /tmp each run), so the alert could never fire.
           - alert: DNSQuerySpike
-            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and dns_anomaly_total_queries > 1000
+            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and dns_anomaly_total_queries > 1000
             # for: 5m (was 0m) — a single 15-min scrape spike self-clears; a real
             # spike persists across scrapes (alert-noise 2026-06-12)
             for: 5m
@@ -6494,7 +6494,7 @@ serverFiles:
             annotations:
               summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x 1h avg)"
           - alert: DNSQueryRateDropped
-            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and avg_over_time(dns_anomaly_total_queries[1h] offset 15m) > 1000
+            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and avg_over_time(dns_anomaly_total_queries[1h] offset 30m) > 1000
             for: 10m
             labels:
               severity: warning
@@ -6703,7 +6703,7 @@ serverFiles:
           # page; for: 30m needs two consecutive non-GB reads.
           - alert: ProxyEgressWrongCountry
             expr: proxy_egress_probe_up == 1 and proxy_egress_exit_is_expected_country == 0
-            for: 30m
+            for: 45m  # two consecutive reads at the */30 cadence (was */15 + 30m until 2026-11-03)
             labels:
               severity: warning
             annotations:

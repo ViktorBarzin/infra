@@ -389,7 +389,7 @@ resource "kubernetes_cron_job_v1" "external_monitor_sync" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/10 * * * *"
+    schedule                      = "11 * * * *"
     job_template {
       metadata {}
       spec {
@@ -1041,7 +1041,7 @@ resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/10 * * * *"
+    schedule                      = "41 * * * *"
     job_template {
       metadata {}
       spec {
