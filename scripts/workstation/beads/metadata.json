@@ -1,0 +1,10 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_server_host": "10.0.20.200",
+  "dolt_server_port": 3306,
+  "dolt_server_user": "beads",
+  "dolt_database": "code",
+  "project_id": "a8f8bae7-ce65-4145-a5db-a13d11d297da"
+}

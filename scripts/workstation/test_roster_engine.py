@@ -129,7 +129,9 @@ def test_repos_require_workspace_layout():
         )
 
 
-@pytest.mark.parametrize("bad", ["../evil", "a/b", "", ".hidden", "-flag"])
+@pytest.mark.parametrize(
+    "bad", ["../evil", "a/b/c", "a/", "/b", "a/../b", "", ".hidden", "-flag", "o/-flag"]
+)
 def test_rejects_path_unsafe_repo_name(bad):
     # Repo names become root-executed clone/mv paths — reject anything that
     # isn't a plain leading-alphanumeric name.
@@ -146,6 +148,68 @@ def test_rejects_infra_in_repos():
         _roster(
             "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
             "code_layout: workspace, repos: [infra]}}"
+        )
+
+
+def test_repos_accept_owner_slash_name():
+    # A repo outside viktor/ (a user's own, like ebarzin/agents) is named
+    # owner/name and clones to ~/code/<name>.
+    r = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user, "
+        "code_layout: workspace, repos: [tv, ebarzin/agents]}}"
+    )
+    assert r.users["emo"].repos == ("tv", "ebarzin/agents")
+    assert eng.repo_dir("ebarzin/agents") == "agents"
+    assert eng.repo_dir("tv") == "tv"
+
+
+def test_rejects_two_repos_with_the_same_clone_dir():
+    # Both would clone to ~/code/tv; the second would silently never arrive.
+    with pytest.raises(eng.RosterError, match="same directory"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            "code_layout: workspace, repos: [tv, someone/tv]}}"
+        )
+
+
+def test_rejects_owned_infra_in_repos():
+    with pytest.raises(eng.RosterError, match="implicit"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            "code_layout: workspace, repos: [someone/infra]}}"
+        )
+
+
+# --------------------------------------------------------------------------
+# agents_repo: the Forgejo repo whose master holds the user's AGENTS.md
+# --------------------------------------------------------------------------
+
+
+def test_agents_repo_defaults_to_none():
+    r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
+    assert r.users["emo"].agents_repo is None
+
+
+def test_agents_repo_is_carried_into_the_desired_state_json():
+    r = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user, "
+        "agents_repo: ebarzin/agents}, "
+        "wizard: {authentik_user: v, k8s_user: wizard, tier: admin}}"
+    )
+    assert r.users["emo"].agents_repo == "ebarzin/agents"
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["emo"]["agents_repo"] == "ebarzin/agents"
+    assert d["accounts"]["wizard"]["agents_repo"] is None
+
+
+@pytest.mark.parametrize("bad", ["agents", "../x/agents", "a/b/c", "o/.git", "-o/a", 7])
+def test_rejects_unsafe_agents_repo(bad):
+    # The value becomes a fetch URL and a file under root's state directory,
+    # so it has to be exactly owner/name with plain names on both sides.
+    with pytest.raises(eng.RosterError, match="agents_repo"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            f"agents_repo: {json.dumps(bad)}" "}}"
         )
 
 
