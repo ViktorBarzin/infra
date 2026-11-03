@@ -36,7 +36,8 @@ pods labelled `android-emulator-yields-to=gpu-seat` in namespace `tv`
 and when one waits Pending with `Insufficient viktorbarzin.me/gpumem` it scales
 the emulator to 0 and logs which pod it yields to. If the emulator is awake and
 someone holds a presence claim on it, the gate first waits for the claim to be
-released, for at most 20 min (`CLAIM_WAIT_SECONDS`, since 2026-11-02), and
+released, for at most 8 min (`CLAIM_WAIT_SECONDS`, since 2026-11-02; 8 rather
+than the deploy's 20 so a Terraform apply's 10 min rollout wait stays green), and
 posts to #alerts when it starts waiting and if it gives up. It reads the
 claims straight from Dolt (`dolt.beads-server`, database `beads`, table
 `presence_claims`) with a small stdlib client, and a claim store it cannot read
@@ -106,7 +107,7 @@ conflict, and some notes before 2026-10-31 used `infra:android-emulator`, so
 until those have aged out, `presence peek` both before driving it.
 `homelab deploy tv` already checks both before it puts the emulator to
 sleep, and since 2026-11-02 so do the automatic tv deploy and the gate's yield
-watcher, which wait up to 20 min for such a claim (see above).
+watcher, which wait up to 20 min and 8 min for such a claim (see above).
 
 ## How it works
 
