@@ -225,16 +225,16 @@ resource "kubernetes_deployment" "gate" {
           }
           # An active presence claim on the emulator (service:android-emulator,
           # or the older infra:android-emulator) holds off the yield-sleep for
-          # at most 20 min, and the gate posts to #alerts when it starts
+          # at most 8 min, and the gate posts to #alerts when it starts
           # waiting and when it stops (Viktor, 2026-11-02). The claims live in
           # Dolt (stacks/beads-server); the tv deploy pipeline asks the same
-          # question through GET /claim. A 20 min wait outlasts the 10 min a
-          # Terraform apply waits for a Transcoder rollout, so an apply that
-          # rolls the Transcoder while someone holds the claim reports a
-          # timeout; the rollout itself finishes once the gate yields.
+          # question through GET /claim and waits 20 min itself. 8 min, not
+          # 20, keeps the wait inside the 10 min a Terraform apply waits for a
+          # Transcoder rollout, so an apply that lands while someone holds the
+          # claim still finishes green (Viktor, 2026-11-03).
           env {
             name  = "CLAIM_WAIT_SECONDS"
-            value = "1200"
+            value = "480"
           }
           env {
             name = "SLACK_WEBHOOK"
