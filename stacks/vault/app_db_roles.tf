@@ -1,4 +1,4 @@
-# Vault static roles for app databases (ADR-0001 in ~/code/docs/adr,
+# Vault static roles for app databases (ADR-0001 in app-kit docs/adr,
 # "Provisioning"). The databases and roles come from the dbaas app_databases
 # map. Each role pg-<key> is also appended to the postgresql connection's
 # allowed_roles in main.tf.
