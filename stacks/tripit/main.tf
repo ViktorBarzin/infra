@@ -919,6 +919,19 @@ locals {
       suspend   = false
       extra_env = {}
     }
+    # Local sound auto-fill (tripit ADR-0075). Hourly: for each user's Auto-fill
+    # playlist, add songs when they are on a trip, 50 km or more from home, and
+    # have reached a place 25 km from the trip's earlier picks. Most runs read one
+    # Dawarich point and stop. A pick that runs is one Claude curation through
+    # claude-agent-service (about a minute) plus Spotify search, so the deadline
+    # leaves room for a slow curation (the curator's own timeout is 14 minutes).
+    sound-autofill = {
+      schedule                = "7 * * * *"
+      command                 = ["python", "-m", "tripit_api", "sound-autofill"]
+      suspend                 = false
+      active_deadline_seconds = 1800
+      extra_env               = {}
+    }
   }
 }
 
