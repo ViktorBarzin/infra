@@ -4359,7 +4359,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "SAS thin pool sas/data is {{ 100 - $value | printf \"%.0f\" }}% used (warn at 80%) — it is for small hot volumes; check what landed there"
+              summary: "SAS thin pool sas/data has only {{ $value | printf \"%.0f\" }}% free (warns below 20% free, i.e. 80% used) — it is for small hot volumes; check what landed there"
           - alert: LVMThinPoolLow
             expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot"} < 15
             for: 0m
