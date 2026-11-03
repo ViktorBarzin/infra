@@ -105,6 +105,10 @@ afternoon.
   thread waiting in `handle_async_copy`. Running pods keep their current mount
   version until they restart. 4.1 does not support user extended attributes;
   no workload is known to rely on them over NFS.
+- 2026-11-03: one dynamically provisioned volume, `learn/prep-sync-data`
+  (`pvc-92defc43-...`), is not in Terraform, so CI could not update it. Its
+  `mountOptions` were patched to `nfsvers=4.1` by hand to match the `nfs-pve`
+  StorageClass it was provisioned from.
 
 ## Why no alert fired
 
