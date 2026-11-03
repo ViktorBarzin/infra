@@ -67,19 +67,23 @@ variable "storage" {
 
 variable "nfs_version" {
   description = <<-EOT
-    Value for the nfsvers= mount option. The default "4" lets client and server
-    negotiate, which against the Proxmox host lands on 4.2.
+    Value for the nfsvers= mount option. Default 4.1 (since 2026-11-03).
 
-    Pass "4.1" for a workload that copies files on the share. NFS 4.2 adds
-    server-side COPY, and since the Proxmox host booted kernel 7.0.14-25 on
-    2026-10-23 every copy_file_range over 4.2 writes all the bytes and then
-    never returns: the client waits in handle_async_copy for a completion
-    callback that does not arrive. 4.1 has no COPY operation, so the client
-    reads and writes the data itself (3 MB in 67 ms, measured 2026-11-02).
-    Immich's storage-template moves hit this; see stacks/immich/main.tf.
+    NFS 4.2 adds server-side COPY, and since the Proxmox host booted kernel
+    7.0.14-25 on 2026-10-23 every copy_file_range over 4.2 writes all the bytes
+    and then never returns: the client waits in handle_async_copy for a
+    completion callback that does not arrive. Node's fs.copyFile and coreutils
+    cp both use copy_file_range. 4.1 has no COPY operation, so the client reads
+    and writes the data itself (3 MB in 67 ms, measured 2026-11-02).
+
+    What 4.1 gives up: user extended attributes (setxattr returns EOPNOTSUPP;
+    4.2 supports them) and native fallocate (glibc's posix_fallocate falls back
+    to writing zeros, verified). Pass "4" to negotiate 4.2 again, e.g. for a
+    server without this bug or once the host kernel is fixed.
+    Post-mortem: docs/post-mortems/2026-11-02-immich-thumbnails-nfs-copy-hang.md.
   EOT
   type        = string
-  default     = "4"
+  default     = "4.1"
 }
 
 variable "access_modes" {

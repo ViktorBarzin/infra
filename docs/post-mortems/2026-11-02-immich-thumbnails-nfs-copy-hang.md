@@ -99,6 +99,12 @@ afternoon.
   pushing the count and age of uploads from the last 6 hours that are over 15
   minutes old without a thumbnail.
 - Alerts `ImmichThumbnailsLagging` and `ImmichThumbnailFreshnessStale`.
+- 2026-11-03: `nfs_volume` defaults to `nfsvers=4.1` for every stack, and the
+  `nfs-pve`, `nfs-truenas` and `verify-nfs` StorageClasses match. The Synology
+  volume keeps 4.2. Before the change, a scan of every node found no other
+  thread waiting in `handle_async_copy`. Running pods keep their current mount
+  version until they restart. 4.1 does not support user extended attributes;
+  no workload is known to rely on them over NFS.
 
 ## Why no alert fired
 
@@ -118,10 +124,9 @@ component fails.
   how the callback travels through the NAT at 192.168.1.2. The previous kernel,
   7.0.14-19, is still installed; booting it would confirm, but that means
   rebooting the whole host.
-- Other stacks still mount with `nfsvers=4`, which negotiates 4.2. Any workload
-  that copies with `copy_file_range` (Node `fs.copyFile`, coreutils `cp` 9+) on
-  a Proxmox-host share will hang the same way. None has been reported yet; none
-  has been audited either.
+- Pods started before 2026-11-03 still hold 4.2 mounts until they restart, so a
+  `copy_file_range` in one of them can still hang until then. A node scan on
+  2026-11-03 found none waiting.
 - Why the worker's job thread died on a dropped Postgres connection instead of
   reconnecting is an upstream Immich question. The liveness probe limits the
   outage to about 7 minutes either way.
