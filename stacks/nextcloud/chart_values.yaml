@@ -184,9 +184,36 @@ resources:
 
 cronjob:
   enabled: true
-  resources:
-    limits:
-      memory: 384Mi
-    requests:
-      cpu: 25m
-      memory: 384Mi
+  # Chart 9.x reads the sidecar settings from cronjob.sidecar.*; a top-level
+  # cronjob.resources is ignored (the 384Mi limits were live only through an
+  # April 2026 kubectl patch until this block moved under sidecar).
+  sidecar:
+    resources:
+      limits:
+        memory: 384Mi
+      requests:
+        cpu: 25m
+        memory: 384Mi
+    # Hold the first cron.php run until Nextcloud answers on its public URL.
+    # A fresh pod (Recreate rollout, or Reloader after the Tuesday DB password
+    # rotation) starts crond ~30s before the pod is Ready. If the eurooffice
+    # EditorsCheck job runs in that window, the document server cannot fetch
+    # its test file back from nextcloud.viktorbarzin.me and the connector
+    # emails every admin "Nextcloud Office server is not available"
+    # (2026-11-03 10:15). The probe uses the same URL the document server
+    # uses (StorageUrl). After 5 minutes crond starts anyway, so an unrelated
+    # ingress problem cannot stop background jobs.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        i=0
+        until curl -fsS -m 5 -o /dev/null https://nextcloud.viktorbarzin.me/status.php; do
+          i=$((i+1))
+          if [ "$i" -ge 60 ]; then
+            echo "nextcloud not reachable after 5m, starting cron anyway"
+            break
+          fi
+          sleep 5
+        done
+        exec /cron.sh
