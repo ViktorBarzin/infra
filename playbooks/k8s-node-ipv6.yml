@@ -15,7 +15,7 @@
 #     - /etc/gai.conf `precedence ::ffff:0:0/96  100`, so glibc programs
 #       prefer IPv4. Go binaries ignore it; the pfSense reject from
 #       pfsense-k8s-ipv6.yml is what keeps their outbound on IPv4.
-#   Phase 5a (play 2), only with -e kubelet_dual_node_ip=true:
+#   Phase 5a (play 2), applied 2026-11-03 (kubelet_dual_node_ip: true):
 #     - /etc/default/kubelet KUBELET_EXTRA_ARGS gets
 #       --node-ip=10.0.20.1NN,2001:470:5a7f:20::1NN (any other args kept), then
 #       kubelet restarts one node at a time and the play waits until the node
@@ -48,7 +48,7 @@
 #   dry-run  : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-ipv6.yml --check --diff
 #   apply    : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-ipv6.yml
 #   one node : ... -e k8s_nodes_target=10.0.20.101
-#   phase 5a : ... -e kubelet_dual_node_ip=true      (after phase 4)
+#   phase 5a : ... --tags kubelet                    (restarts kubelet only if the flag changes)
 #
 # Undo (phase 2): delete /etc/netplan/60-ipv6.yaml and
 # /etc/sysctl.d/99-k8s-node-ipv6.conf, `netplan apply`. Undo (5a): restore
@@ -231,7 +231,7 @@
   tags: kubelet
 
   vars:
-    kubelet_dual_node_ip: false
+    kubelet_dual_node_ip: true
     kubelet_default_file: /etc/default/kubelet
     node_ipv6: "2001:470:5a7f:20::{{ inventory_hostname.split('.')[-1] }}"
     node_ip_flag: "--node-ip={{ inventory_hostname }},{{ node_ipv6 }}"
