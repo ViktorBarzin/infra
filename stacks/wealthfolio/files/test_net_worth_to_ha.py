@@ -20,11 +20,13 @@ D = dt.date
 class FormatTotalTests(unittest.TestCase):
     def test_cases(self):
         for value, want in [
-            (Decimal("1482310.55"), "£1.48M"),
-            (Decimal("1995000"), "£2.00M"),
-            (Decimal("1000000"), "£1.00M"),
+            (Decimal("1482310.55"), "£1.482M"),
+            (Decimal("1482500"), "£1.483M"),  # half rounds up
+            (Decimal("1999600"), "£2.000M"),
+            (Decimal("1000000"), "£1.000M"),
             (Decimal("987654"), "£988k"),
-            (Decimal("999600"), "£1.00M"),  # rounds up past the million boundary
+            (Decimal("999400"), "£999k"),
+            (Decimal("999600"), "£1.000M"),  # rounds up past the million boundary
         ]:
             with self.subTest(value=value):
                 self.assertEqual(nw.format_total(value), want)

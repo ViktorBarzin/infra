@@ -25,7 +25,7 @@ sequenceDiagram
     HA->>B: poll /snapshot.jpg until 200 = video is live
     HA-->>U: conditional live card appears
     Note over HA,K: off, 5 min auto-off, or HA start -> replicas=0
-    Note over K: camera-cap CronJob forces 0 after 15 min
+    Note over K: camera-cap CronJob (every 15 min) forces 0 once a pod has run 15 min
 ```
 
 - The bridge is the unmodified third-party image

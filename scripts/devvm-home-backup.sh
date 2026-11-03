@@ -127,6 +127,15 @@ EXCLUDES=(
     --exclude='**/dist/'
     --exclude='**/build/'
     --exclude='**/*.pyc'
+    # Added 2026-11-03: package stores and interpreter installs, rebuilt by
+    # pnpm / uv / pip / pyenv, plus Codex's scratch dir (plugin-backup copies).
+    # Together ~214k of the 553k files the nightly scan stat-walked, which is
+    # read load on the shared sdc disk during its worst latency hours.
+    --exclude='/*/.local/share/pnpm/'
+    --exclude='/*/.local/share/uv/'
+    --exclude='/*/.local/lib/python3*/'
+    --exclude='/*/.pyenv/'
+    --exclude='/*/.codex/.tmp/'
 )
 
 # --- Logging ---

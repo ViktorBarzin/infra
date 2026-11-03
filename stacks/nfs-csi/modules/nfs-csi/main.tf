@@ -157,7 +157,7 @@ resource "kubernetes_storage_class" "nfs_truenas" {
   volume_binding_mode = "Immediate"
 
   mount_options = [
-    "nfsvers=4",
+    "nfsvers=4.1", # 4.2 server-side COPY hangs on the Proxmox host kernel, see modules/kubernetes/nfs_volume var.nfs_version
     "soft",
     "timeo=30",
     "retrans=3",
@@ -183,7 +183,7 @@ resource "kubernetes_storage_class" "nfs_pve" {
   volume_binding_mode = "Immediate"
 
   mount_options = [
-    "nfsvers=4",
+    "nfsvers=4.1", # 4.2 server-side COPY hangs on the Proxmox host kernel, see modules/kubernetes/nfs_volume var.nfs_version
     "soft",
     "timeo=30",
     "retrans=3",

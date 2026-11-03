@@ -339,7 +339,14 @@ def parse_variants(html: str) -> list[Variant]:
 
 
 SALE_EVENT_ANCHOR = re.compile(r'\{\s*"@type"\s*:\s*"SaleEvent"')
-CODE_RE = re.compile(r"\bcode\s+([A-Z0-9]{3,})\b", re.I)
+# "code EXTRA", "CODE: EXTRA", "CODE 'EXTRA'" — all three appeared on the page in 2025-26.
+CODE_RE = re.compile(r"\bcode\b\s*:?\s*['\"‘’“”]?([A-Z0-9]{3,})\b", re.I)
+# "NO CODE REQUIRED" (2 Nov 2026) is a sale that is already in the shelf price.
+NEGATED_CODE_RE = re.compile(r"\b(?:no|without)\b(?:\s+\w+){0,2}\s*$", re.I)
+PROSE_AFTER_CODE = frozenset({
+    "REQUIRED", "NEEDED", "NECESSARY", "NOT", "APPLIES", "APPLIED", "AT", "FOR",
+    "AND", "ONLY", "IS", "WILL", "NONE",
+})
 PCT_RE = re.compile(r"(\d{1,2})\s*%")
 TAG_RE = re.compile(r"<[^>]+>")
 
@@ -350,8 +357,12 @@ def _code_in(text: str) -> Code | None:
     Closest rather than first: "save 25% on almost everything. Plus when you use
     code EXTRA at basket, save an extra 15%" names the shelf sale before the code.
     """
-    # Codes are printed in capitals; "code at basket" is prose, not a code.
-    m = next((c for c in CODE_RE.finditer(text) if c.group(1).isupper()), None)
+    # Codes are printed in capitals; "code at basket" is prose, not a code, and
+    # so is a capitalised "NO CODE REQUIRED".
+    m = next((c for c in CODE_RE.finditer(text)
+              if c.group(1).isupper()
+              and c.group(1) not in PROSE_AFTER_CODE
+              and not NEGATED_CODE_RE.search(text[:c.start()])), None)
     if not m:
         return None
     pcts = [(abs(p.start() - m.start()), int(p.group(1))) for p in PCT_RE.finditer(text)]

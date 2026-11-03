@@ -1020,6 +1020,40 @@ def test_a_sale_banner_without_a_code_is_not_a_code():
     assert check.parse_codes(html) == []
 
 
+def test_no_code_required_is_not_a_code_called_required():
+    """The 2 Nov 2026 Cyber Sale banner, verbatim. Reading REQUIRED as a code took
+    40% off shelf prices that already had the 40% in them, and posted 88 alerts."""
+    html = page_with([VANILLA_90], sale_event(
+        "CYBER SALE. <b>40% OFF ALMOST EVERYTHING.</b> NO CODE REQUIRED.",
+        "<p>Cyber Sale is LIVE! Save 40% off almost everything. No code required "
+        "the price you see has already had the discount applied.</p>",
+    ))
+    assert check.parse_codes(html) == []
+
+
+@pytest.mark.parametrize("banner", [
+    "40% OFF EVERYTHING. NO CODE NEEDED.",
+    "40% OFF EVERYTHING. NO DISCOUNT CODE REQUIRED.",
+    "40% OFF EVERYTHING, WITHOUT A CODE.",
+    "40% OFF EVERYTHING. CODE NOT REQUIRED.",
+    "40% OFF EVERYTHING. CODE REQUIRED AT CHECKOUT: NONE.",
+    "40% OFF EVERYTHING. NO PROMO CODE NECESSARY.",
+])
+def test_prose_after_the_word_code_is_not_a_code(banner):
+    assert check.parse_codes(page_with([VANILLA_90], sale_event(banner))) == []
+
+
+@pytest.mark.parametrize("banner,code", [
+    ("UP TO 80% OFF EVERYTHING | + EXTRA 25% OFF ALMOST EVERYTHING | USE CODE: EXTRA", "EXTRA"),
+    ("UP TO 50% OFF | + EXTRA 10% OFF £50 SPEND | USE CODE 'EXTRA'", "EXTRA"),
+    ("NO MINIMUM SPEND. EXTRA 15% OFF WITH CODE BOOST.", "BOOST"),
+])
+def test_real_banners_from_last_year_still_read_their_code(banner, code):
+    """Black Friday 2025 and 24 Jan 2026 banners from archived copies of the page."""
+    found = check.parse_codes(page_with([VANILLA_90], sale_event(banner)))
+    assert [c.code for c in found] == [code]
+
+
 def test_a_code_named_only_in_the_description_takes_the_percentage_next_to_it():
     """The description names 25% first (the shelf sale) and 15% next to the code."""
     html = page_with([VANILLA_90], sale_event(

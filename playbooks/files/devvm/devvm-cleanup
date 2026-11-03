@@ -67,6 +67,106 @@ for home in /home/*; do
   echo "    ${u}: ${sz_before:-0} GB -> ${sz_after:-0} GB"
 done
 
+# ------------------------------------------------- per-user tool caches ----
+# Added 2026-11-03. A one-off cleanup that day freed 51 GB, almost all of it
+# tool caches nothing here aged out: wizard's ~/.npm 9.8 GB, ~/go/pkg/mod
+# 6.9 GB, ten superseded Codex app-server daemons at 425 MB each (three weeks'
+# worth), four old VS Code servers ~4 GB, and superseded Playwright browsers
+# ~2 GB. Each rule keeps what is in use and what was used recently.
+#
+# Deliberately NOT here: ~/.terraform.d/plugin-cache. terraform init symlinks
+# providers from it into every stack's .terraform/providers, so removing an
+# entry breaks every initialized stack (learned the hard way on 2026-11-03).
+NPM_MAX_AGE_DAYS="${NPM_MAX_AGE_DAYS:-30}"
+GO_MODCACHE_MAX_GB="${GO_MODCACHE_MAX_GB:-5}"
+VSCODE_KEEP="${VSCODE_KEEP:-2}"
+
+# Paths any running process has open, as cwd, executable, mapped file or
+# argument. A cache entry listed here is never removed.
+in_use=$( (ps -eo args; ls -l /proc/[0-9]*/cwd /proc/[0-9]*/exe 2>/dev/null; cat /proc/[0-9]*/maps 2>/dev/null) 2>/dev/null )
+is_in_use() { printf '%s' "$in_use" | grep -qF -- "$1"; }
+
+step "per-user tool caches"
+for home in /home/*; do
+  u=$(basename "$home")
+  id "$u" >/dev/null 2>&1 || continue
+  freed_before=$(avail_kb)
+
+  # npm: content not read for NPM_MAX_AGE_DAYS; npm treats a missing entry as
+  # a cache miss. `npm cache verify` then drops the dangling index entries.
+  if [ -d "$home/.npm/_cacache" ]; then
+    find "$home/.npm/_cacache/content-v2" -type f -atime +"$NPM_MAX_AGE_DAYS" -delete 2>/dev/null
+    su -s /bin/bash -c 'command -v npm >/dev/null 2>&1 && npm cache verify' "$u" >/dev/null 2>&1
+  fi
+  # npx: one dir per package set. MCP servers run out of these, so skip any
+  # that a process uses, and any touched within the window.
+  if [ -d "$home/.npm/_npx" ]; then
+    find "$home/.npm/_npx" -mindepth 1 -maxdepth 1 -type d -mtime +"$NPM_MAX_AGE_DAYS" 2>/dev/null \
+      | while read -r d; do is_in_use "$d" || rm -rf "${d:?}"; done
+  fi
+
+  # Go: the build cache trims itself; the module cache never does, and its
+  # files are read-only, so partial deletion is unsafe. Clear it whole once it
+  # passes GO_MODCACHE_MAX_GB; modules re-download on the next build.
+  if [ -d "$home/go/pkg/mod" ]; then
+    mod_gb=$(du -sx "$home/go/pkg/mod" 2>/dev/null | awk '{printf "%d", $1/1048576}')
+    if [ "${mod_gb:-0}" -ge "$GO_MODCACHE_MAX_GB" ] && ! pgrep -u "$u" -x go >/dev/null; then
+      su -s /bin/bash -c 'command -v go >/dev/null 2>&1 && go clean -modcache' "$u" >/dev/null 2>&1
+    fi
+  fi
+
+  # Codex app-server daemon: keep the release `current` points at and the
+  # newest other one (one-step rollback).
+  rel="$home/.codex/packages/app-server-daemon/releases"
+  if [ -d "$rel" ]; then
+    cur=$(readlink -f "$home/.codex/packages/app-server-daemon/current" 2>/dev/null)
+    ls -1dt "$rel"/*/ 2>/dev/null | while read -r d; do
+      d="${d%/}"; [ "$d" = "$cur" ] && continue; echo "$d"
+    done | tail -n +2 | while read -r d; do is_in_use "$d" || rm -rf "${d:?}"; done
+  fi
+
+  # VS Code server: keep the VSCODE_KEEP newest, never one that is running.
+  srv="$home/.vscode-server/cli/servers"
+  if [ -d "$srv" ]; then
+    ls -1dt "$srv"/Stable-* 2>/dev/null | tail -n +"$((VSCODE_KEEP + 1))" \
+      | while read -r d; do is_in_use "$d" || rm -rf "${d:?}"; done
+  fi
+
+  # Playwright: per browser (chromium, chromium_headless_shell, webkit,
+  # firefox, ffmpeg) keep the most recently installed revision. Not the
+  # highest number: old releases used another scheme, so chromium-815036 is
+  # older than chromium-1248.
+  pw="$home/.cache/ms-playwright"
+  if [ -d "$pw" ]; then
+    for kind in $(ls -1 "$pw" 2>/dev/null | sed -n 's/^\(.*\)-[0-9]\+$/\1/p' | sort -u); do
+      find "$pw" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex ".*/${kind}-[0-9]+" -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | cut -d' ' -f2- | tail -n +2 \
+        | while read -r d; do is_in_use "$d" || rm -rf "${d:?}"; done
+    done
+  fi
+
+  echo "    ${u}: freed $(gib $(( $(avail_kb) - freed_before ))) GiB"
+done
+
+# Docker named volumes: ONLY build caches, picked by name. `docker volume
+# prune` above removes anonymous volumes only, so named caches (gradle,
+# android-sdk, npm) never age out. Named volumes also hold real data: on
+# 2026-11-03 the first version of this rule matched every unreferenced named
+# volume idle for 30 days and deleted the MySQL, Postgres and Redis volumes
+# of three compose projects (crawler, realestate-crawler, trading-bot). So
+# the match is an allowlist of cache-looking names, never "anything idle".
+CACHE_VOLUME_RE="${CACHE_VOLUME_RE:-(^|[-_])(cache|gradle|gradle-cache|android-sdk|npm-cache|pip-cache|go-cache|build-cache)([-_]|$)}"
+step "docker named cache volumes"
+if command -v docker >/dev/null 2>&1; then
+  docker volume ls -q --filter dangling=true 2>/dev/null | grep -E -- "$CACHE_VOLUME_RE" | while read -r v; do
+    mp=$(docker volume inspect -f '{{ .Mountpoint }}' "$v" 2>/dev/null) || continue
+    [ -n "$mp" ] && [ -d "$mp" ] || continue
+    if [ -z "$(find "$mp" -newermt "${NPM_MAX_AGE_DAYS} days ago" -print -quit 2>/dev/null)" ]; then
+      docker volume rm "$v" >/dev/null 2>&1 && echo "    removed idle volume $v"
+    fi
+  done
+fi
+
 # ------------------------------------------------- t3 state backups --------
 # t3-backup-state already keeps only KEEP=6 generations per user, so this is
 # not a retention problem. It is a size one: each state.sqlite is ~2.4 GB, so

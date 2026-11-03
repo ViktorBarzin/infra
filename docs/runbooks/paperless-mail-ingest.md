@@ -176,7 +176,7 @@ The map lives in **two places by design** — keep them in sync:
 - **Why not the catch-all?** Mail to unknown `@viktorbarzin.me` addresses
   lands in `spam@`. TripIt's `tripit-mail-listener` watches that mailbox with
   IMAP IDLE and reconciles mail addressed to `plans@` immediately; the
-  `ingest-plans` CronJob repeats the read-only sweep every 15 minutes as a
+  `ingest-plans` CronJob repeats the read-only sweep hourly at :20 (every 15 minutes until 2026-11-03) as a
   repair path. Mail from linked senders is LLM-parsed and gets an ack/failure
   reply. `docs@` being a real mailbox bypasses that path entirely; TripIt, the
   `smoke-test@` roundtrip probe, and `dmarc@` are untouched.

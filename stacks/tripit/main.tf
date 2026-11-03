@@ -79,6 +79,10 @@ locals {
     LLM_MODE = "claude_agent"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
+    # Names a coordinate: the Route map's pin-add (ADR-0039) and the place a
+    # Local sound pick starts from (ADR-0072). Was unset, so prod ran the fake
+    # and named every point "Pinpoint <lat>,<lon>, Fakeland".
+    REVERSE_GEOCODE_PROVIDER = "nominatim"
     # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
     # internal-API path is an optional optimisation gated on IG_GRAPHQL_DOC_ID;
     # unset = yt-dlp only, which works). Was UNSET -> FakeReelExtractor returned a
@@ -216,6 +220,13 @@ locals {
     # the public-address guard.
     DAWARICH_URL          = "https://dawarich.viktorbarzin.me"
     DAWARICH_INTERNAL_URL = "http://dawarich.dawarich.svc.cluster.local"
+    # Local sound (tripit ADR-0072..0074): the real Spotify Web API through
+    # tripit's own Spotify app (SPOTIFY_CLIENT_ID/SECRET from secret/tripit
+    # below), and Claude curation through claude-agent-service with WebSearch
+    # (the CLAUDE_AGENT_TOKEN the narration writer already uses). Spotify's
+    # redirect URI on that app is https://tripit.viktorbarzin.me/api/spotify-link/callback.
+    SPOTIFY_PROVIDER = "spotify"
+    SOUND_CURATOR    = "claude_agent"
   }
 }
 
@@ -317,6 +328,9 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "TREK_USER", remoteRef = { key = "tripit", property = "TREK_USER" } },
         { secretKey = "TREK_PASSWORD", remoteRef = { key = "tripit", property = "TREK_PASSWORD" } },
         { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "tripit", property = "CLAUDE_AGENT_TOKEN" } },
+        # tripit's Spotify app for Local sound (ADR-0074), registered 2026-11-03.
+        { secretKey = "SPOTIFY_CLIENT_ID", remoteRef = { key = "tripit", property = "SPOTIFY_CLIENT_ID" } },
+        { secretKey = "SPOTIFY_CLIENT_SECRET", remoteRef = { key = "tripit", property = "SPOTIFY_CLIENT_SECRET" } },
         # Read-only Nextcloud app-password for the calendar-conflict column
         # (tripit issue #19) — CalDAV PROPFIND/REPORT only. Single-account: this
         # is the owner's (admin's) calendar, so every tripit user's conflict
@@ -763,7 +777,7 @@ locals {
       extra_env = {}
     }
     run-reminders = {
-      schedule  = "*/15 * * * *"
+      schedule  = "*/30 * * * *"
       command   = ["python", "-m", "tripit_api", "run-reminders"]
       suspend   = false
       extra_env = {}
@@ -785,7 +799,7 @@ locals {
     # tripit-secrets ES, exactly as the API's own send path uses them, so a
     # correction leaves by the route the first invitation did.
     watcher-sync = {
-      schedule  = "*/15 * * * *"
+      schedule  = "5 * * * *"
       command   = ["python", "-m", "tripit_api", "watcher-sync"]
       suspend   = false
       extra_env = {}
@@ -812,7 +826,7 @@ locals {
     # mailbox_links table (decrypted with DOCUMENT_ENCRYPTION_KEY from
     # tripit-secrets). That scan has a 300 s budget inside the 600 s deadline.
     ingest-plans = {
-      schedule           = "*/15 * * * *"
+      schedule           = "20 * * * *"
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"

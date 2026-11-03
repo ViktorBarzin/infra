@@ -376,3 +376,188 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
     }
   }
 }
+
+# Thumbnail freshness — notices within ~25 minutes when uploads stop getting
+# thumbnails, whatever the cause (2026-11-02).
+#
+# The reconciler above repairs what was dropped, once a night, with a 24h grace
+# window. It cannot tell "the pipeline is down" from "one bad file". From
+# 2026-10-23 to 2026-11-02 every upload waited until the midnight "missing
+# thumbnails" task (3-21 hours), and for the last 22 hours of that the worker
+# was dead outright. None of it alerted, because each existing signal watches
+# one component (worker process, api log line, HTTP errors). This asks the
+# question a person asks: did recent uploads get a thumbnail?
+#
+# Window: created more than 15 minutes ago (a healthy upload takes ~2-3 s) and
+# less than 6 hours ago. Alert rules: ImmichThumbnailsLagging and
+# ImmichThumbnailFreshnessStale in monitoring's prometheus_chart_values.tpl.
+#
+# The job also reads the depth of the three queues an upload passes through.
+# The alert needs both: uploads without a thumbnail AND jobs still queued. A
+# file Immich cannot decode (2026-11-03: a Lightroom -Rendered.dng) leaves an
+# upload without a thumbnail while every queue is empty; that held the alert
+# for 47 minutes after the real backlog had cleared, and could hold it for the
+# full 6 hours. Immich records such a failure only in its log, not in Redis
+# (the handler catches the error, so BullMQ marks the job complete). Every
+# delay seen so far left jobs queued: a dead worker leaves metadataExtraction
+# waiting, a hung move leaves storageTemplateMigration active, a backlog leaves
+# thumbnailGeneration waiting.
+resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
+  metadata {
+    name      = "immich-thumbnail-freshness"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "*/20 * * * *"
+    starting_deadline_seconds     = 300
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0
+        active_deadline_seconds    = 120
+        ttl_seconds_after_finished = 900
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            volume {
+              name = "shared"
+              empty_dir {}
+            }
+            init_container {
+              name  = "scan"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
+                row=$(psql -v ON_ERROR_STOP=1 -tA -F' ' -c "
+                  SELECT count(*),
+                         coalesce(extract(epoch FROM now() - min(a.\"createdAt\"))::bigint, 0)
+                  FROM asset a
+                  WHERE a.\"deletedAt\" IS NULL
+                    AND a.visibility <> 'hidden'
+                    AND a.\"createdAt\" < now() - interval '15 minutes'
+                    AND a.\"createdAt\" > now() - interval '6 hours'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM asset_file f
+                      WHERE f.\"assetId\" = a.id AND f.type = 'thumbnail')")
+                set -- $row
+                {
+                  echo "# HELP immich_thumbnail_pending_assets Uploads from the last 6h, older than 15 min, with no thumbnail."
+                  echo "# TYPE immich_thumbnail_pending_assets gauge"
+                  echo "immich_thumbnail_pending_assets $1"
+                  echo "# HELP immich_thumbnail_pending_oldest_seconds Age of the oldest such upload, 0 if none."
+                  echo "# TYPE immich_thumbnail_pending_oldest_seconds gauge"
+                  echo "immich_thumbnail_pending_oldest_seconds $2"
+                  echo "# HELP immich_thumbnail_freshness_last_run_timestamp Unix time of the last successful freshness scan."
+                  echo "# TYPE immich_thumbnail_freshness_last_run_timestamp gauge"
+                  echo "immich_thumbnail_freshness_last_run_timestamp $(date +%s)"
+                } > /shared/metrics.10-scan.prom
+                cat /shared/metrics.10-scan.prom
+              EOT
+              ]
+              env {
+                name  = "PGHOST"
+                value = "immich-postgresql.immich.svc.cluster.local"
+              }
+              env {
+                name  = "PGUSER"
+                value = "immich"
+              }
+              env {
+                name  = "PGDATABASE"
+                value = "immich"
+              }
+              env {
+                name  = "PGCONNECT_TIMEOUT"
+                value = "10"
+              }
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "immich-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+            # Queue depths. Each step writes its own file (the steps run as
+            # different uids, see the reconciler's push step for why one shared
+            # file fails). An unreachable Redis exits non-zero, so nothing is
+            # pushed and ImmichThumbnailFreshnessStale fires.
+            init_container {
+              name  = "queues"
+              image = "docker.io/library/redis:8.10.3-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                out=/shared/metrics.20-queues.prom
+                {
+                  echo "# HELP immich_job_queue_jobs Jobs waiting or running in an Immich BullMQ queue."
+                  echo "# TYPE immich_job_queue_jobs gauge"
+                  for q in metadataExtraction storageTemplateMigration thumbnailGeneration; do
+                    for s in wait active prioritized; do
+                      if [ "$s" = prioritized ]; then cmd=ZCARD; else cmd=LLEN; fi
+                      n=$(redis-cli -h "$REDIS_HOST" --no-raw "$cmd" "immich_bull:$q:$s" | tr -dc '0-9')
+                      [ -n "$n" ] || { echo "no answer for $q:$s" >&2; exit 1; }
+                      echo "immich_job_queue_jobs{queue=\"$q\",state=\"$s\"} $n"
+                    done
+                  done
+                } > "$out"
+                cat "$out"
+              EOT
+              ]
+              env {
+                name  = "REDIS_HOST"
+                value = var.redis_host
+              }
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "16Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+            # A failed step pushes nothing, so the last-run gauge goes stale and
+            # ImmichThumbnailFreshnessStale fires instead of a false all-clear.
+            container {
+              name  = "push"
+              image = "docker.io/curlimages/curl:8.23.0"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                cat /shared/metrics.*.prom > /tmp/all.prom
+                for m in immich_thumbnail_pending_assets immich_job_queue_jobs \
+                         immich_thumbnail_freshness_last_run_timestamp; do
+                  grep -q "^$m" /tmp/all.prom || { echo "missing metric: $m" >&2; exit 1; }
+                done
+                curl -sf -m 20 --data-binary @/tmp/all.prom \
+                  http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-thumbnail-freshness
+              EOT
+              ]
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "16Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

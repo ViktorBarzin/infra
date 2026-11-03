@@ -20,19 +20,37 @@ emulator to 0 before that roll and leaves it asleep. A session on the emulator
 at that moment is cut off; wake it again through the gate. The deploy's
 grant is the `tv-deploy-yield` Role in `gate.tf`.
 
+Since 2026-11-02 a presence claim on the emulator (`service:android-emulator`
+or `infra:android-emulator`) holds that sleep off for up to 20 min. The deploy
+asks the gate's `GET /claim` (one line per active claim, empty when there is
+none, 503 when Dolt cannot be read), posts one line to Slack #alerts naming the
+holder and their purpose, and polls until the claim is released. At 20 min it
+puts the emulator to sleep anyway and posts that it did. If the claims cannot
+be read, it goes ahead as before.
+
 The Transcoder also rolls when Reloader sees its Secret change and when a
 Terraform apply changes its pod template, and neither passes through that
 pipeline. So the gate watches too (since 2026-10-17): every 10 s it lists the
 pods labelled `android-emulator-yields-to=gpu-seat` in namespace `tv`
 (the Transcoder, and since 2026-10-18 the Worker, which also requests gpumem),
 and when one waits Pending with `Insufficient viktorbarzin.me/gpumem` it scales
-the emulator to 0 and logs which pod it yields to. While such a pod waits,
+the emulator to 0 and logs which pod it yields to. If the emulator is awake and
+someone holds a presence claim on it, the gate first waits for the claim to be
+released, for at most 8 min (`CLAIM_WAIT_SECONDS`, since 2026-11-02; 8 rather
+than the deploy's 20 so a Terraform apply's 10 min rollout wait stays green; the
+value is the `CLAIM_WAIT_SECONDS` env in `gate.tf`, and `test_gate.py` follows it), and
+posts to #alerts when it starts waiting and if it gives up. It reads the
+claims straight from Dolt (`dolt.beads-server`, database `beads`, table
+`presence_claims`) with a small stdlib client, and a claim store it cannot read
+holds nothing off. A Terraform apply waits 10 min for a Transcoder rollout, so
+one that rolls the Transcoder while the emulator is claimed reports a timeout;
+the rollout finishes once the gate yields. While such a pod waits,
 `/wake` does not scale the emulator up: it answers `"woke": false` with
 `"yielding_to": [...]`, `/status` carries the same field, and the gate does
 the held-back wake by itself once nothing waits, so polling `/status` for
 `"ready": 1` still works. One pod holds the emulator asleep for at most 15 min
 (`YIELD_LIMIT_SECONDS`, since 2026-10-18), counted from its `PodScheduled`
-timestamp. A pod still waiting after that is short of more than the
+timestamp, or from the end of a claim wait when there was one. A pod still waiting after that is short of more than the
 emulator's 800 gpumem (another GPU tenant took the seat), so the gate logs
 why, lists it under `"gave_up_on"` in `/status`, does any held-back wake, and
 wakes the emulator on visits as usual; the `PodUnschedulable` alert reports
@@ -89,7 +107,8 @@ uninstall your test app when done, and presence-claim
 conflict, and some notes before 2026-10-31 used `infra:android-emulator`, so
 until those have aged out, `presence peek` both before driving it.
 `homelab deploy tv` already checks both before it puts the emulator to
-sleep.
+sleep, and since 2026-11-02 so do the automatic tv deploy and the gate's yield
+watcher, which wait up to 20 min and 8 min for such a claim (see above).
 
 ## How it works
 

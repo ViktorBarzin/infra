@@ -100,11 +100,14 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 # 5.76 TB Synology share got reported by the health check as a 10Gi PVC "91.1%
 # full". Its free space is watched by OffsiteDestinationFillingUp/AlmostFull,
 # not by PVC thresholds.
+# nfs_version = "4": the Synology is not affected by the Proxmox kernel NFS 4.2
+# COPY hang that moved the nfs_volume default to 4.1, so it keeps negotiating 4.2.
 module "nfs_music" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "navidrome-music"
   namespace          = kubernetes_namespace.navidrome.metadata[0].name
   nfs_server         = "192.168.1.13"
+  nfs_version        = "4"
   nfs_path           = "/volume1/music"
   storage_class_name = "nfs-synology"
 }

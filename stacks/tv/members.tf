@@ -1,7 +1,7 @@
 # Signed-in Members of tv.viktorbarzin.me, formerly f1.viktorbarzin.me
 # (tv ADR-0025, ADR-0021, ADR-0042, ADR-0053).
 #
-# Anyone in "Home Users" or "TV Users" may sign in to the site, keep their own
+# Anyone in "Home Users" or "TV Users", or in "TV Trial" during a trial, may sign in to the site, keep their own
 # channel order (My channels) and pair a TV that shows it. Home Server Admins
 # pass as well. Home Users is the household (stacks/authentik/home-users.tf,
 # infra ADR-0031). TV Users (F1 Users before the tv rename) is for other households, who ask from an unpaired
@@ -196,6 +196,49 @@ module "tv_users" {
 
   # /join/<ref> starts the authorize request with state j.<ref>.<random>.
   existing_account_state_prefix = "j."
+}
+
+# --- Trials: TV Trial --------------------------------------------------------
+#
+# tv ADR 2026-11-02-new-households-start-on-a-trial. A household that signs up
+# or signs in from a TV's QR is added to TV Trial by the app and its TV pairs
+# at once, so it watches while an admin decides. The app treats a TV Trial
+# account as a Member only for 3 days from the start and only while no admin
+# has denied it; approval moves the account to TV Users. Terraform declares
+# the group but not its members: the app adds and removes them with the
+# approver token, which gets add and remove on this one group below.
+
+resource "authentik_group" "tv_trial" {
+  name = "TV Trial"
+
+  attributes = jsonencode({
+    managed_by = "infra/stacks/tv/members.tf"
+    purpose    = "tv households on a 3-day trial while their Access request waits"
+  })
+
+  lifecycle {
+    ignore_changes = [users]
+  }
+}
+
+resource "authentik_policy_binding" "tv_tv_trial" {
+  target = authentik_application.tv.uuid
+  group  = authentik_group.tv_trial.id
+  order  = 4
+}
+
+resource "authentik_rbac_permission_role" "tv_trial_add" {
+  role       = module.tv_users.approver_role_id
+  permission = "authentik_core.add_user_to_group"
+  model      = "authentik_core.group"
+  object_id  = authentik_group.tv_trial.id
+}
+
+resource "authentik_rbac_permission_role" "tv_trial_remove" {
+  role       = module.tv_users.approver_role_id
+  permission = "authentik_core.remove_user_from_group"
+  model      = "authentik_core.group"
+  object_id  = authentik_group.tv_trial.id
 }
 
 # --- Membership check: a read-only service account ---------------------------

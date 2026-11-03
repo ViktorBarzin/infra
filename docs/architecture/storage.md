@@ -43,6 +43,14 @@ The workload has to be scaled to 0 for any of this: `pvc-protection` holds the d
 
 (A short-lived parallel `nfs-proxmox` StorageClass was removed on 2026-04-25, commit 484b4c71, during the vault NFS-hostile migration.)
 
+**Second block pool (sdd, added 2026-11-03)**: 2x 600 GB 10K SAS (Dell ST600MM0069, 2017, about 65,400 power-on hours each) in bays 6 and 7, as PERC virtual disk `sas` (RAID1, write-back, adaptive read-ahead, 64K stripe, same policies as sdc). On the host it is `sdd`, `wwn-0x6d0946603b92b600327cad9c5059bc29`, holding VG `sas` with thin pool `sas/data` (537.6 GiB, 64K chunks, 2 GiB metadata) and Proxmox storage `sas-lvm`. Two StorageClasses point at it: `proxmox-lvm-sas` and `proxmox-lvm-encrypted-sas`, configured like their sdc counterparts.
+
+It exists to take random-I/O load off sdc: over the week to 2026-11-02 sdc averaged 207 reads/s and 351 writes/s on a pair rated for roughly 150-200 random IOPS, with read latency p50 5.7 ms and p99 58 ms. The goal is hourly p99 read latency under 20 ms on both sdc and sdd. The pool was created empty. Which workloads move here is still open; the candidates measured so far are database engines (about 32% of sdc reads in 181 GB), databases plus devvm, and databases plus regenerable caches. The pool suits small, hot volumes and is too small for bulk data such as `nfs-data` or the k8s node root disks.
+
+The 3-2-1 chain is the same as for sdc. `lvm-pvc-snapshot` (`LVM_SNAP_VGS`) and `daily-backup` (`PVC_VGS`) both walk `pve` and `sas`, so a PVC on either pool gets the 3-day snapshots and the nightly file copy to sda, then the Synology. A new pool needs adding to both lists. The dbaas and monitoring namespaces are excluded from snapshots on either pool, since their backups are the dump CronJobs writing to `/srv/nfs`. Alerts: `HDDReadLatencyHigh` and `HDDSaturated` cover `sdc|sdd`, and `SASThinPoolFilling` warns at 80% used.
+
+Bay 5 is free. Three 1 TB Seagate ST1000DM003 desktop SATA drives were also available and were left out: desktop drives lack a bounded error-recovery time, so the PERC can drop them from an array during a long retry, and the controller cannot mix SATA and SAS in one virtual disk.
+
 **Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, auto SQLite backups, pfSense backups, and PVE config. NFS data syncs directly to Synology via inotify change tracking (not stored on sda). Independent of live storage (sdc).
 
 **History (2026-04-02)**: iSCSI block volumes migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver removed.
@@ -53,7 +61,7 @@ The workload has to be scaled to 0 for any of this: `pvc-protection` holds the d
 
 **The "harden" half is now SHIPPED (2026-06-05):**
 - **Orphan cleanup** — removed 67 `Released` proxmox PVs + 475 orphan LVs/snapshots (VG `pve` 997 → ~410 LVs; thin pool freed). 1 LV left (`f127a41c`, stuck-open stale qemu fd — harmless, clears on node reboot; do not force `dmsetup remove`).
-- **Ghost-loop prevention** — `csi-ghost-reconcile` CronJob (`stacks/proxmox-csi/ghost-reconcile.tf`, every 15 min) compares each worker VM's real scsi disks (Proxmox API, scoped CSI token) against k8s VolumeAttachments and safely detaches ghosts (`PUT .../config delete=scsiN`); detection mirrors check #47, with a 60 s re-confirm + per-run cap-5. Verified live (66 VAs, 0 ghosts). This closes the doom loop by construction — **beads `code-dfjn` can be retired.**
+- **Ghost-loop prevention** — `csi-ghost-reconcile` CronJob (`stacks/proxmox-csi/ghost-reconcile.tf`, every 30 min since 2026-11-03, was 15) compares each worker VM's real scsi disks (Proxmox API, scoped CSI token) against k8s VolumeAttachments and safely detaches ghosts (`PUT .../config delete=scsiN`); detection mirrors check #47, with a 60 s re-confirm + per-run cap-5. Verified live (66 VAs, 0 ghosts). This closes the doom loop by construction — **beads `code-dfjn` can be retired.**
 - **Cap deliberately kept at 28** (NOT lowered to 24): the labeler value (`stacks/proxmox-csi/.../main.tf` `node_labels`) was raised 24→28 per the 2026-05-25 eviction-cascade post-mortem; lowering it would reverse that fix. With auto-reconcile keeping drift at 0, the 28 cap is safe.
 
 ### Poisoned LUN slots — leaked QEMU throttle objects (2026-08-04)
@@ -327,7 +335,7 @@ Options researched on 2026-10-19:
 | A. Dedicated 16G thick disk for etcd on the `ssd` VG (`qm set 200 --scsi1 ssd:16`, copy `/var/lib/etcd`, mount by UUID) | control plane 1-3 min | moves etcd from RAID1 to one Samsung 850 EVO with no power-loss protection |
 | B. Online `qm move-disk 200 scsi0 ssd` | none | same single-SSD exposure for the whole root disk; reverted once on 2026-09-15 |
 | C. `promote-to-rt` IO priority for VM 200's cgroup on `sdc` | none | small expected effect: `sdc` queue depth is 256, so the host scheduler has little backlog to reorder |
-| D. Two new SSDs as a RAID1 virtual disk in the free bays, then A | control plane 1-3 min | needs a purchase; 3 of 8 LFF bays are free and the PERC creates virtual disks online |
+| D. Two new SSDs as a RAID1 virtual disk in the free bays, then A | control plane 1-3 min | needs a purchase; 3 of 8 LFF bays were free and the PERC creates virtual disks online (bays 6 and 7 hold the SAS pair since 2026-11-03, so 1 is free now) |
 | E. Thick LV for etcd on `sdc` | 1-3 min | no gain: `sdc` itself is slow in the bad windows |
 
 Viktor chose to keep etcd on `sdc` and to make the clients more tolerant instead: kube-controller-manager, kube-scheduler, the CNPG operator, proxmox-csi, kyverno and the gpu-operator run 45 s leader-election renew deadlines (see `docs/agents/known-issues.md`), and the `pg-cluster-v18` liveness probe and isolation check were loosened (see `databases.md`). The weekly fstrim on k8s-master, which stalled etcd for 5-12 minutes every Sunday, is off (`docs/agents/nodes.md`). Reducing load on `sdc` remains the lever: large image pulls, Trivy scans of large images, bulk restores and containers thrashing their page cache at a memory limit all show up as etcd latency.

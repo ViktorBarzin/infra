@@ -319,7 +319,7 @@ resource "kubernetes_cron_job_v1" "camera_cap" {
     namespace = kubernetes_namespace.this.metadata[0].name
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    schedule                      = "*/15 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 2
