@@ -41,7 +41,22 @@ VALID_TIERS = ("admin", "power-user", "namespace-owner")
 VALID_CODE_LAYOUTS = ("single", "workspace")
 # Repo names become root-executed clone/mv paths under ~/code — plain
 # leading-alphanumeric names only (no separators, dotfiles, or option-like names).
+# A `repos` entry is either `name` (Forgejo viktor/<name>) or `owner/name`, with
+# both parts held to the same rule; either way it clones to ~/code/<name>.
 _REPO_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _is_owned_repo(value: object) -> bool:
+    """True for exactly `owner/name`, each part a plain repo name."""
+    if not isinstance(value, str) or value.count("/") != 1:
+        return False
+    owner, name = value.split("/")
+    return bool(_REPO_NAME_RE.match(owner) and _REPO_NAME_RE.match(name))
+
+
+def repo_dir(repo: str) -> str:
+    """The directory under ~/code a `repos` entry clones to: its name part."""
+    return repo.rsplit("/", 1)[-1]
 # Tier -> supplementary groups the reconcile ENSURES (additive-only; never stripped).
 TIER_GROUPS: dict[str, tuple[str, ...]] = {
     "admin": ("code-shared", "docker", "sudo"),
@@ -103,6 +118,10 @@ class User:
     # the box. A row without t3_port keeps the sticky allocation.
     t3_port: int | None = None
     t3_host: str | None = None
+    # Forgejo `owner/name` whose master holds this user's AGENTS.md, which the
+    # provisioner installs as ~/.agents/AGENTS.md. Each user's file is in a
+    # private repo of their own, so one user cannot read another's.
+    agents_repo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +146,7 @@ class Account:
     # everything before it keyed on os_user alone. Defaulted so an older
     # caller constructing Account positionally keeps working.
     authentik_user: str = ""
+    agents_repo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,11 +201,24 @@ def _parse_user(os_user: str, spec: dict) -> User:
     if repos and code_layout != "workspace":
         raise RosterError(f"user {os_user!r}: repos require code_layout: workspace")
     for repo in repos:
-        if not _REPO_NAME_RE.match(repo):
+        if not (
+            isinstance(repo, str) and (_REPO_NAME_RE.match(repo) or _is_owned_repo(repo))
+        ):
             raise RosterError(f"user {os_user!r}: unsafe repo name {repo!r}")
-    if "infra" in repos:
+    dirs = [repo_dir(r) for r in repos]
+    if "infra" in dirs:
         raise RosterError(
             f"user {os_user!r}: infra is implicit at ~/code/infra — drop it from repos"
+        )
+    if len(set(dirs)) != len(dirs):
+        raise RosterError(
+            f"user {os_user!r}: two repos clone to the same directory under ~/code"
+        )
+    agents_repo = spec.get("agents_repo")
+    if agents_repo is not None and not _is_owned_repo(agents_repo):
+        raise RosterError(
+            f"user {os_user!r}: agents_repo must be a Forgejo owner/name, "
+            f"got {agents_repo!r}"
         )
     claude_auth = spec.get("claude_auth", True)
     if not isinstance(claude_auth, bool):
@@ -229,6 +262,7 @@ def _parse_user(os_user: str, spec: dict) -> User:
         parked,
         t3_port,
         t3_host,
+        agents_repo,
     )
 
 
@@ -465,6 +499,7 @@ def derive_desired_state(
             claude_auth=u.claude_auth and not u.parked,
             parked=u.parked,
             authentik_user=u.authentik_user,
+            agents_repo=u.agents_repo,
         )
         for u in roster.users.values()
     }
@@ -715,6 +750,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "claude_auth": a.claude_auth,
                 "parked": a.parked,
                 "authentik_user": a.authentik_user,
+                "agents_repo": a.agents_repo,
             }
             for name, a in ds.accounts.items()
         },

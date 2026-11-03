@@ -5,8 +5,8 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# devvm (VM 102) holds ~116 GiB of /home — per-user home dirs, local-only git
-# repos (the monorepo root has no remote), and agent state. Until 2026-08-16 the
+# devvm (VM 102) holds ~116 GiB of /home — per-user home dirs, git repos with
+# work that was never pushed (local branches, worktrees), and agent state. Until 2026-08-16 the
 # ONLY thing protecting it was `vzdump-vms`, which takes a FULL image backup
 # every night: vzdump's .vma format has no incremental mode, so it re-read the
 # entire 228 GiB disk daily. Measured against the host's own totals that was
@@ -68,7 +68,7 @@ REMOTE_PATH="/"
 # doubt, back it up — a backup that is 20% larger costs disk, a backup missing
 # real work costs work. Notably NOT excluded: ~/.ssh, ~/.config, ~/.claude
 # (agent session history), ~/.gnupg, and ~/code (git repos whose worktrees carry
-# uncommitted work and whose monorepo root has no remote at all).
+# uncommitted or unpushed work).
 #
 # The rule needs the patterns to actually match, and until 2026-09-03 several
 # did not, so ~8 GB of regenerable content was being copied every night.

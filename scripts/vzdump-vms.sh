@@ -6,7 +6,8 @@
 # WHY: the hand-managed Linux VMs (devvm, …) have NO image backup. nfs-mirror /
 # daily-backup / offsite-sync cover cluster PVCs, NFS, pfSense and PVE config —
 # but never the VM disks themselves. A lost devvm disk = unrecoverable home dirs
-# + local-only git repos (the monorepo root has no remote). This takes a live
+# + work in git repos that was never pushed (local branches, worktrees,
+# uncommitted edits). This takes a live
 # `vzdump --mode snapshot` of each configured VMID to /mnt/backup/vzdump (sda =
 # Copy 2). The monthly offsite-sync full pass (days 1-7) mirrors /mnt/backup —
 # including this dir — to Synology with --delete (Copy 3), bounded to local

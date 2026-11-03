@@ -29,7 +29,7 @@ All Claude Code sessions share a centralized task database powered by [Beads](ht
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Dolt server | `beads-server` namespace, `10.0.20.200:3306` | Centralized MySQL-compatible database |
-| Root `.beads/` | `/home/wizard/code/.beads/` | Client config (server mode, prefix `code`) |
+| Root `.beads/` | `/home/wizard/code/.beads/` | Client config (server mode, prefix `code`), written by the provisioner from `scripts/workstation/beads/` |
 | Task context hook | `/home/wizard/.claude/hooks/beads-task-context.sh` | Injects in-progress tasks into every prompt |
 | Task blocker hook | `/home/wizard/.claude/hooks/beads-block-builtin-tasks.py` | Blocks TaskCreate/TodoWrite, redirects to `bd` |
 | Project settings | `/home/wizard/code/.claude/settings.json` | Shared hooks (inherited by all users) |
@@ -100,6 +100,8 @@ Two layers prevent agents from using built-in task tools:
 - **Terraform**: `stacks/beads-server/main.tf`
 
 ### Client Configuration
+
+The source is `scripts/workstation/beads/` in this repo (`metadata.json`, `config.yaml`, and the `.gitignore` and `README.md` that `bd init` wrote, the first kept as `gitignore`). The hourly provisioner reads them from origin/master and writes them into wizard's `~/code/.beads/` when they differ (`install_admin_beads`), and points each non-admin's `~/code/.beads/metadata.json` at the same server and project identity (`install_beads`). Until 2026-11-03 wizard's copy was tracked by the ~/code monorepo, which was dissolved. None of the files holds a secret; `.beads-credential-key` stays local to `~/code/.beads/` and is not in git.
 
 The root `.beads/metadata.json`:
 ```json

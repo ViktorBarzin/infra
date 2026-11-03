@@ -34,24 +34,27 @@ ADMINS=/etc/ttyd-admins
 # everybody, so it goes through visudo on a temp path first.
 TTYD_SUDOERS=/etc/sudoers.d/ttyd-users
 DRY_RUN="${DRY_RUN:-0}"
-# Public infra repo for the locked clone (no auth; the monorepo has no remote).
+# Public infra repo for the locked clone. It is public, so the clone needs no
+# credentials.
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
 # Canonical push target for non-admin infra clones (AGENTS.md "Non-admin
-# workstation users"), and the base URL for workspace-layout `repos` entries —
+# workstation users"), and the base URLs for workspace-layout `repos` entries —
 # those clone AS the user so their ~/.git-credentials PAT authenticates
-# against private Forgejo repos.
-FORGEJO_INFRA_REMOTE="${FORGEJO_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
-REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
+# against private Forgejo repos. A plain `name` entry is viktor/<name>; an
+# `owner/name` entry is that repo under FORGEJO_BASE.
+FORGEJO_BASE="${FORGEJO_BASE:-https://forgejo.viktorbarzin.me}"
+FORGEJO_INFRA_REMOTE="${FORGEJO_INFRA_REMOTE:-$FORGEJO_BASE/viktor/infra.git}"
+REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-$FORGEJO_BASE/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
-# Per-user agent instructions (docs/agents/users/<user>/AGENTS.md), one file per
-# person since 2026-09-22. They live in wizard's PRIVATE monorepo, not in this
-# repo: a user's file may carry internal detail and this repo's GitHub mirror is
-# public. Same reason ADMIN_KUBECONFIG points outside the repo. Step 0a reads
-# them from the monorepo's origin/master, never from a working tree.
-AGENTS_REPO="${AGENTS_REPO:-/home/wizard/code}"
-AGENTS_USERS_PATH="docs/agents/users"
+# Per-user agent instructions, one file per person since 2026-09-22. Since
+# 2026-11-03 each file is AGENTS.md at the root of that person's own PRIVATE
+# Forgejo repo, named by their roster row's `agents_repo` (emo: ebarzin/agents),
+# so one user cannot read another's. Until then they sat together under
+# docs/agents/users/ in wizard's monorepo, which was dissolved. Not in this repo:
+# a user's file carries personal detail and this repo is public. Step 5d-bis
+# reads each file from its repo's master, never from a working tree.
 # terminal-lobby's extension for pi, which the terminal-lobby package installs.
 # Step 5d-quinquies links it into every roster user's ~/.pi/agent/extensions.
 PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
@@ -193,17 +196,22 @@ hoist_nested_repo() {
 
 # Extra per-project repos for workspace-layout users, cloned from Forgejo AS
 # the user (their ~/.git-credentials PAT authenticates against private repos).
+# A roster entry is `name` (viktor/<name>) or `owner/name`, such as the user's
+# own ebarzin/agents; either clones to ~/code/<name>.
 # A failed clone (no access yet, offline) is a WARN — the reconcile must never
 # abort over a single repo; the next hourly run retries.
+repo_url() {  # repo_url <name|owner/name>
+  if [[ "$1" == */* ]]; then echo "$FORGEJO_BASE/$1.git"; else echo "$REPO_REMOTE_BASE/$1.git"; fi
+}
 install_user_repo() {
-  local user="$1" repo="$2" home dst
+  local user="$1" repo="$2" home dst url
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -z "$home" ]] && return 0
-  dst="$home/code/$repo"
+  dst="$home/code/${repo##*/}"; url="$(repo_url "$repo")"
   [[ -e "$dst" || -L "$dst" ]] && return 0
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] clone $REPO_REMOTE_BASE/$repo.git -> $user:$dst"; return 0; fi
-  log "clone $repo -> $user:~/code/$repo"
-  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$REPO_REMOTE_BASE/$repo.git" "$dst" 2>/dev/null \
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] clone $url -> $user:$dst"; return 0; fi
+  log "clone $repo -> $user:~/code/${repo##*/}"
+  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$url" "$dst" 2>/dev/null \
     || log "WARN: clone of $repo failed for $user (access/offline?) — skipped"
 }
 
@@ -707,28 +715,43 @@ retire_legacy_playwright_units() {
 # belonging to another project. Both have to match, which is why this writes
 # the identity too and not just the address.
 #
-# The shared facts are read from the ADMIN's metadata rather than hardcoded, so
-# a future server move or re-init needs no edit here. If the admin's file is
-# missing this is skipped with a warning rather than guessing.
+# The shared facts come from scripts/workstation/beads/metadata.json in this
+# repo, read from origin/master by step 0a ($BEADS_SRC). Until 2026-11-03 they
+# were read from wizard's ~/code/.beads/metadata.json, which the ~/code monorepo
+# tracked; the monorepo was dissolved, so the copy here is now the source and
+# wizard's own ~/code/.beads is written from it too (install_admin_beads). If
+# the source is missing this is skipped with a warning rather than guessing.
+#
+# A non-admin's metadata sits in their infra clone's .beads/, which infra tracks
+# with a local-project default: ~/code/.beads on the single layout, and
+# ~/code/infra/.beads on the workspace layout, where the migration moved it.
+# Both are pointed when present; neither is created.
 install_beads() {
-  local user="$1" home admin_meta user_meta
+  local user="$1" home admin_meta dir
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home/code" ]] || return 0
-  admin_meta="/home/wizard/code/.beads/metadata.json"
-  user_meta="$home/code/.beads/metadata.json"
-  [[ -r "$admin_meta" ]] || { log "WARN: no admin beads metadata -> skip beads for $user"; return 0; }
-  [[ "$user" == "wizard" ]] && return 0
-  [[ -f "$user_meta" ]] || return 0   # no .beads in their workspace: nothing to point
+  admin_meta="$BEADS_SRC/metadata.json"
+  [[ -r "$admin_meta" ]] || { log "WARN: no beads metadata at $BEADS_SRC -> skip beads for $user"; return 0; }
+  if [[ "$user" == "wizard" ]]; then install_admin_beads "$home"; return 0; fi
+  for dir in "$home/code" "$home/code/infra"; do
+    [[ -f "$dir/.beads/metadata.json" && ! -L "$dir/.beads" ]] || continue
+    point_user_beads "$user" "$dir" "$admin_meta"
+  done
+  return 0
+}
 
+# point_user_beads <user> <dir> <source metadata>: <dir>/.beads/metadata.json.
+point_user_beads() {
+  local user="$1" dir="$2" admin_meta="$3" user_meta="$2/.beads/metadata.json"
   if [[ "$DRY_RUN" == 1 ]]; then
-    echo "[dry-run] point $user's beads at the shared Dolt server + project identity"
+    echo "[dry-run] point $user's beads ($dir) at the shared Dolt server + project identity"
     return 0
   fi
 
   # Rewrite only the server + identity keys; everything else in their metadata
   # is theirs to keep. Idempotent: a correct file is left byte-identical.
-  # Root reads the admin's copy (under a home the user cannot enter) and hands its
-  # JSON over in the environment; the rewrite itself runs AS the user.
+  # Root reads the committed copy and hands its JSON over in the environment;
+  # the rewrite itself runs AS the user.
   local admin_json
   admin_json="$(cat "$admin_meta")" || { log "WARN: cannot read $admin_meta"; return 0; }
   runuser -u "$user" -- env ADMIN_META="$admin_json" python3 - "$user_meta" <<'PYEOF' || { log "WARN: beads metadata rewrite failed for $user"; return 0; }
@@ -746,11 +769,34 @@ if {k: t.get(k) for k in keys} != before:
     json.dump(t, open(target, "w"), indent=2)
     print("changed")
 PYEOF
-  runuser -u "$user" -- chmod 700 "$home/code/.beads" 2>/dev/null || true
+  runuser -u "$user" -- chmod 700 "$dir/.beads" 2>/dev/null || true
   # bd refuses to write without a role. contributor, not maintainer: a
   # non-admin should not be closing other people's issues by default.
-  runuser -u "$user" -- bash -lc 'cd ~/code 2>/dev/null && git config beads.role >/dev/null 2>&1 || git config beads.role contributor' 2>/dev/null || true
-  log "beads pointed at the shared Dolt server -> $user"
+  runuser -u "$user" -- sh -c 'git -C "$1" config beads.role >/dev/null 2>&1 || git -C "$1" config beads.role contributor' _ "$dir" 2>/dev/null || true
+  log "beads pointed at the shared Dolt server -> $user:$dir"
+}
+
+# wizard's ~/code/.beads holds the four files bd reads in the admin workspace:
+# metadata.json (the shared Dolt server and project identity), config.yaml,
+# and the .gitignore and README.md bd init wrote (kept here as `gitignore`, so
+# it does not act as a .gitignore inside this repo). Each is written as wizard
+# from $BEADS_SRC when it differs, so a rebuilt box gets them back and an
+# unchanged one is left byte-identical. Runtime files (dolt/, backup/, the
+# credential key, logs) are bd's own and never touched. Best-effort: returns 0.
+install_admin_beads() {
+  local home="$1" dir f dst
+  dir="$home/code/.beads"
+  [[ -L "$dir" ]] && { log "WARN: $dir is a symlink -> wizard's beads files skipped"; return 0; }
+  for f in metadata.json config.yaml gitignore README.md; do
+    dst="$f"; [[ "$f" == gitignore ]] && dst=.gitignore
+    [[ -s "$BEADS_SRC/$f" ]] || continue
+    cmp -s "$BEADS_SRC/$f" "$dir/$dst" 2>/dev/null && continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] beads $dst -> wizard:$dir"; continue; fi
+    [[ -d "$dir" ]] || mkdir_as wizard 0700 "$dir" || { log "WARN: could not create $dir"; return 0; }
+    if write_as wizard 0640 "$dir/$dst" < "$BEADS_SRC/$f"; then log "beads $dst -> wizard (source changed)"
+    else log "WARN: could not write $dir/$dst"; fi
+  done
+  return 0
 }
 
 # Per-user browser-bridge CLI token -> ~/.config/browser-bridge/token, 0600.
@@ -876,12 +922,68 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
+# fetch_user_agents <os_user> <owner/name>: refresh $AGENTS_SRC_DIR/<os_user>.md
+# from AGENTS.md on master of that Forgejo repo, the user's own private one.
+#
+# The fetch lands in one bare repository per user under $AGENTS_FETCH_DIR, a
+# directory owned by the admin infra checkout's owner ($clone_owner, wizard) and
+# closed to everyone else. Every git command runs as that owner, like step 0a's
+# fetch, so it authenticates with that owner's Forgejo credential (viktor, a
+# collaborator on each user's repo) and root never runs git in a repository it
+# does not own. Root only writes what `git show` prints, into a 0700 directory.
+# Only committed master is read; no working tree is involved.
+#
+# Fail safe: a failed fetch, or a master with no AGENTS.md, keeps the last good
+# copy, so the user keeps the instructions they already have, and says so in
+# the journal. Best-effort tail: must return 0.
+fetch_user_agents() {
+  local user="$1" repo="$2" mirror dest sha
+  mirror="$AGENTS_FETCH_DIR/$user.git"; dest="$AGENTS_SRC_DIR/$user.md"
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fetch agent instructions for $user from $repo master"; return 0; fi
+  install -d -m 0700 "$AGENTS_SRC_DIR"   # root only: one user's file is not another's to read
+  install -d -m 0700 -o "$clone_owner" "$AGENTS_FETCH_DIR" || { log "WARN: cannot create $AGENTS_FETCH_DIR -> agent instructions for $user unchanged"; return 0; }
+  if [[ ! -d "$mirror" ]] && ! runuser -u "$clone_owner" -- git init --quiet --bare "$mirror" >/dev/null 2>&1; then
+    log "WARN: cannot create $mirror -> agent instructions for $user unchanged"; return 0
+  fi
+  if ! runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git --git-dir="$mirror" \
+       fetch --quiet --no-tags "$FORGEJO_BASE/$repo.git" +refs/heads/master:refs/heads/master 2>/dev/null; then
+    log "WARN: fetch of $repo failed -> agent instructions for $user unchanged"; return 0
+  fi
+  sha="$(runuser -u "$clone_owner" -- git --git-dir="$mirror" rev-parse --short master 2>/dev/null)"
+  if runuser -u "$clone_owner" -- git --git-dir="$mirror" show master:AGENTS.md > "$dest.tmp" 2>/dev/null \
+     && [[ -s "$dest.tmp" ]]; then
+    mv -f "$dest.tmp" "$dest"
+    log "agent instructions for $user: $repo master ($sha)"
+  else
+    rm -f "$dest.tmp"
+    log "WARN: no AGENTS.md on $repo master -> agent instructions for $user unchanged"
+  fi
+  return 0
+}
+
+# prune_user_agents <managed os_users, one per line>: a user whose roster row
+# no longer names an agents_repo stops being managed. Their home keeps the last
+# file it received and nothing overwrites it afterwards; the cached copy and the
+# fetch are dropped here.
+prune_user_agents() {
+  local f u
+  for f in "$AGENTS_SRC_DIR"/*.md "$AGENTS_FETCH_DIR"/*.git; do
+    [[ -e "$f" ]] || continue
+    u="$(basename "$f")"; u="${u%.md}"; u="${u%.git}"
+    grep -qxF -- "$u" <<<"$1" && continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] drop $f ($u has no agents_repo)"; continue; fi
+    rm -rf "$f" && log "agent instructions no longer managed for $u -> dropped $f"
+  done
+  return 0
+}
+
 # Each user's own agent instructions -> ~/.agents/AGENTS.md, linked from both
 # harnesses: ~/.claude/CLAUDE.md (Claude Code) and ~/.codex/AGENTS.md (Codex).
 # Replaced install_shared_rules on 2026-09-22, when one shared set copied into
-# every home gave way to one file per person (docs/agents/users/README.md in the
-# monorepo). Only users with a file there are touched; wizard's comes from his
-# dotfiles and is left alone.
+# every home gave way to one file per person. Only users whose roster row names
+# an agents_repo are touched (fetch_user_agents below); wizard's comes from his
+# dotfiles and is left alone. The file is installed byte for byte as it is on
+# that repo's master.
 #
 # Every write into the home runs AS THE USER (runuser), never as root, so a
 # symlink the user planted cannot turn this into a root write elsewhere: the
@@ -913,8 +1015,8 @@ install_user_agents() {
     # root opens the source (its directory is 0700), the user writes the file,
     # and the rename makes a session starting mid-copy see the old or new text.
     # Read-only for the user, so an agent editing it fails loudly instead of
-    # having its edit reverted within the hour; the first line points at
-    # 99-personal.md.
+    # having its edit reverted within the hour. The place to change it is the
+    # user's own clone of their agents_repo (~/code/agents for emo).
     if runuser -u "$user" -- sh -c 'cat > "$1.tmp" && chmod 0444 "$1.tmp" && mv -f "$1.tmp" "$1"' _ "$hub" < "$src"; then
       log "agent instructions -> $user (source changed)"
     else
@@ -955,7 +1057,7 @@ PERSONAL
 # the home (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md); pi's ~/.pi/agent/AGENTS.md
 # sits one deeper and passes ../../.agents/AGENTS.md. A regular file there is
 # the old hand-edited CLAUDE.md or the old Codex mirror, whose content now lives
-# in the monorepo, or one the user wrote for pi before the link existed. Either
+# in the user's agents_repo, or one the user wrote for pi before the link existed. Either
 # way it is kept beside the link as <path>.pre-agents-md.
 link_agents_file() {
   local user="$1" path="$2" want="${3:-../.agents/AGENTS.md}"
@@ -1198,6 +1300,10 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
+    [[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
+    for f in metadata.json config.yaml gitignore README.md; do
+      committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
+    done
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
        python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
          "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
@@ -1229,48 +1335,15 @@ fi
 MANAGED_SRC="$WORKSTATION_DIR/managed-settings.json"
 [[ -s "$STATEDIR/managed-settings.committed.json" ]] && MANAGED_SRC="$STATEDIR/managed-settings.committed.json"
 
-# Each user's agent instructions are an input too, read from the private
-# monorepo's origin/master (docs/agents/users/<user>/AGENTS.md) as that clone's
-# owner. The shared rules this replaced were copied from a working tree, so a
-# landed change sat undeployed until someone pulled. On any failure the last
-# good copies in $STATEDIR/agents stay in use, so a network blip leaves everyone
-# on the instructions they already have rather than none.
+# Each user's agent instructions are an input too (fetch_user_agents, step
+# 5d-bis): the last good copy of each is $AGENTS_SRC_DIR/<user>.md, and the
+# bare fetches they come from are under $AGENTS_FETCH_DIR.
 AGENTS_SRC_DIR="$STATEDIR/agents"
-materialise_user_agents() {
-  local owner names dest u f
-  [[ -d "$AGENTS_REPO/.git" ]] || { log "WARN: $AGENTS_REPO is not a git clone -> per-user agent files unchanged"; return 0; }
-  owner="$(stat -c %U "$AGENTS_REPO")"
-  if ! runuser -u "$owner" -- env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
-       git -C "$AGENTS_REPO" fetch --quiet origin master 2>/dev/null; then
-    log "WARN: fetch of $AGENTS_REPO failed -> per-user agent files unchanged"; return 0
-  fi
-  names="$(runuser -u "$owner" -- git -C "$AGENTS_REPO" ls-tree -d --name-only "origin/master:$AGENTS_USERS_PATH" 2>/dev/null)" \
-    || { log "WARN: no $AGENTS_USERS_PATH on $AGENTS_REPO origin/master -> per-user agent files unchanged"; return 0; }
-  dest="$AGENTS_SRC_DIR"
-  if [[ "$DRY_RUN" == 1 ]]; then dest="$(mktemp -d)"; AGENTS_SRC_DIR="$dest"; fi
-  install -d -m 0700 "$dest"   # root only: one user's file is not another's to read
-  for u in $names; do
-    # The first line tells that user's agent this file is managed, so it puts
-    # the user's own notes in 99-personal.md instead of editing the hub.
-    if { printf '<!-- Installed by the devvm provisioner from %s/%s/AGENTS.md in Viktor'"'"'s monorepo and overwritten within the hour. Keep your own notes in ~/.claude/rules/99-personal.md. -->\n\n' "$AGENTS_USERS_PATH" "$u"
-         runuser -u "$owner" -- git -C "$AGENTS_REPO" show "origin/master:$AGENTS_USERS_PATH/$u/AGENTS.md" 2>/dev/null
-       } > "$dest/$u.md.tmp" && [[ "$(wc -l < "$dest/$u.md.tmp")" -gt 2 ]]; then
-      mv "$dest/$u.md.tmp" "$dest/$u.md"
-    else
-      rm -f "$dest/$u.md.tmp"
-    fi
-  done
-  # A user whose directory was removed stops being managed: their home keeps
-  # the last file it received, and nothing overwrites it afterwards.
-  for f in "$dest"/*.md; do
-    [[ -e "$f" ]] || continue
-    grep -qxF "$(basename "$f" .md)" <<<"$names" || rm -f "$f"
-  done
-  return 0
-}
-# Not behind the self-deploy guard: the run that self-deploys re-execs with it
-# set, so a guarded call would skip the monorepo on the first run after a landing.
-materialise_user_agents
+AGENTS_FETCH_DIR="$STATEDIR/agent-repos"
+# The shared beads facts (install_beads) are an input like the roster. Each of
+# the four files falls back to the working tree independently of the others.
+BEADS_SRC="$WORKSTATION_DIR/beads"
+[[ -s "$STATEDIR/beads.committed/metadata.json" ]] && BEADS_SRC="$STATEDIR/beads.committed"
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
@@ -1463,9 +1536,9 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
       IFS=',' read -ra extra_repos <<< "$repos_csv"
       for repo in "${extra_repos[@]}"; do
         [[ -n "$repo" ]] || continue
-        hoist_nested_repo  "$os_user" "$repo"
+        hoist_nested_repo  "$os_user" "${repo##*/}"
         install_user_repo  "$os_user" "$repo"
-        refresh_user_clone "$os_user" "code/$repo"
+        refresh_user_clone "$os_user" "code/${repo##*/}"
       done
     else
       install_locked_clone "$os_user" code
@@ -1531,12 +1604,17 @@ while IFS=$'\t' read -r os_user authentik_user; do
 done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$desired_file")
 
 # 5d-bis) each user's own agent instructions -> ~/.agents/AGENTS.md + the two
-#     harness links, for users with a file in the monorepo. Retires the old shared
-#     rules in every home that has its own file. Personal slot created once, never rewritten.
-while IFS=$'\t' read -r os_user; do
+#     harness links, for users whose roster row names an agents_repo: fetched from
+#     that repo's master first, keeping the last good copy when the fetch fails.
+#     Retires the old shared rules in every home that has its own file. Personal
+#     slot created once, never rewritten. Pruned first, so a user whose
+#     agents_repo was removed is not installed again this run.
+prune_user_agents "$(jq -r '.accounts[] | select(.agents_repo != null) | .os_user' "$desired_file")"
+while IFS=$'\t' read -r os_user agents_repo; do
   id "$os_user" >/dev/null 2>&1 || continue
+  [[ "$agents_repo" == "-" ]] || fetch_user_agents "$os_user" "$agents_repo"
   install_user_agents "$os_user"
-done < <(jq -r '.accounts[].os_user' "$desired_file")
+done < <(jq -r '.accounts[] | [.os_user, (.agents_repo // "-")] | @tsv' "$desired_file")
 
 # 5d-quinquies) pi's per-user links (ALL users): terminal-lobby's extension in
 #     ~/.pi/agent/extensions, and ~/.pi/agent/AGENTS.md for the users 5d-bis

@@ -189,8 +189,8 @@ log "managed-settings.json -> /etc/claude-code/ (enforced org claudeMd)"
 #    every new user loaded the admin's personal rules, and the provisioner's
 #    `install -d -o <user>` followed the link and would have handed the admin's
 #    directory to the new user. Each user's instructions now come from the
-#    provisioner (docs/agents/users/README.md in the monorepo); skills from the
-#    lobby's Skills settings.
+#    provisioner, which installs AGENTS.md from the user's own private Forgejo
+#    repo (roster.yaml agents_repo); skills from the lobby's Skills settings.
 install -d -m 0755 /etc/skel
 install -m 0755 "$HERE/skel/start-claude.sh" /etc/skel/start-claude.sh
 install -m 0644 "$HERE/skel/tmux.conf" /etc/skel/.tmux.conf
