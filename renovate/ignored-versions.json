@@ -56,6 +56,17 @@
       ],
       "matchNewValue": "9.19",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-03 pipeline #3235: stack monitoring failed after this bump: its terragrunt apply failed (commit 25e54850)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "prometheus"
+      ],
+      "matchNewValue": "29.40.3",
+      "enabled": false
     }
   ]
 }
