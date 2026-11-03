@@ -59,7 +59,7 @@ resource "kubernetes_deployment" "snmp-exporter" {
       }
       spec {
         container {
-          image = "prom/snmp-exporter:v0.30.1"
+          image = "prom/snmp-exporter:v0.31.0"
           name  = "snmp-exporter"
           # command = ["/usr/local/bin/redfish_exporter", "--config.file", "/app/config.yml"]
 
