@@ -70,7 +70,7 @@ flowchart TD
 5. **Watch face.** A circular complication built in the Companion app's
    complication builder (Settings → Companion app → Complications, app
    2026.9.3), source Template, server ha-sofia. Two lines, no gauge and no
-   icon: the total in the Value slot, rounded (`£1.48M`), and the change in
+   icon: the total in the Value slot, rounded to the nearest £1k (`£1.482M`), and the change in
    the Title slot under it (`▼£4.2k`, `▲£640` under £1k, `±£0` when flat).
    The text colour comes from
    `change_color` through the builder's Text color template, and it applies
@@ -94,7 +94,7 @@ The example values are illustrative.
 
 | Attribute | Example | Meaning |
 |---|---|---|
-| `total_short` | `£1.48M` | Top line of the complication |
+| `total_short` | `£1.482M` | Top line of the complication |
 | `change` | `-4210.55` | Daily change in GBP, `null` with fewer than two weekdays of data |
 | `change_short` | `▼£4.2k` | Bottom line of the complication, shown without `£` |
 | `change_color` | `#FF3B30` | Green up, red down, grey flat or stale |
