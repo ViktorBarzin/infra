@@ -171,7 +171,7 @@ mode. `cool`/`quiet` stay reachable via the entity but are off the dashboard. Th
 actuates.
 Monitoring + control live on the dashboard-it "Server" view (REST sensors: fan
 RPM from the redfish exporter; mode/target-% from the Pushgateway). The same
-logic already exists in the Python controller (`r730-fan-control/`) for the
+logic already exists in the Python controller (`scripts/r730-fan-control/`) for the
 eventual in-cluster CronJob; when that deploys it supersedes the host daemon.
 
 ## Rollback

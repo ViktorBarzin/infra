@@ -1,0 +1,160 @@
+{
+  "bug_magnets": {
+    "count": 19,
+    "files": [
+      {
+        "file": "frontend-v2/src/app.css",
+        "fixes": 27
+      },
+      {
+        "file": "frontend-v2/src/components/SessionView.tsx",
+        "fixes": 11
+      },
+      {
+        "file": "frontend-v2/src/components/App.tsx",
+        "fixes": 9
+      },
+      {
+        "file": "frontend-v2/src/components/TextView.tsx",
+        "fixes": 8
+      },
+      {
+        "file": "frontend-v2/src/notify/notifications.ts",
+        "fixes": 7
+      },
+      {
+        "file": "release/manifest.go",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/components/MessagesTimeline.tsx",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/components/rows.tsx",
+        "fixes": 7
+      },
+      {
+        "file": "sessionio/normalize.go",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/components/Composer.tsx",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/mobile/viewport.ts",
+        "fixes": 7
+      },
+      {
+        "file": "frontend-v2/src/sidebar.css",
+        "fixes": 6
+      },
+      {
+        "file": "tmux-api/main.go",
+        "fixes": 5
+      },
+      {
+        "file": "devvm/tmux-attach.sh",
+        "fixes": 5
+      },
+      {
+        "file": "clipboard-upload/main.go",
+        "fixes": 5
+      }
+    ]
+  },
+  "change_concentration": {
+    "files_touched": 773,
+    "ratio_pct": 14.0,
+    "top": [
+      {
+        "file": "frontend-v2/src/app.css",
+        "touches": 91
+      },
+      {
+        "file": "frontend-v2/src/components/SessionView.tsx",
+        "touches": 61
+      },
+      {
+        "file": "frontend-v2/src/components/App.tsx",
+        "touches": 53
+      },
+      {
+        "file": "tmux-api/main.go",
+        "touches": 46
+      },
+      {
+        "file": "frontend-v2/src/sidebar.css",
+        "touches": 34
+      },
+      {
+        "file": "frontend-v2/src/components/TextView.tsx",
+        "touches": 32
+      },
+      {
+        "file": "scripts/deploy.sh",
+        "touches": 28
+      },
+      {
+        "file": "clipboard-upload/main.go",
+        "touches": 26
+      },
+      {
+        "file": "frontend-v2/src/lib/config.ts",
+        "touches": 26
+      },
+      {
+        "file": "frontend-v2/src/components/Composer.tsx",
+        "touches": 26
+      }
+    ]
+  },
+  "detectors_fingerprint": "b46d4d88d7d8",
+  "duplication": {
+    "available": false,
+    "note": "jscpd not installed; detector skipped"
+  },
+  "head": "fa94502d0aa3",
+  "invisible_coupling": {
+    "commits_considered": 436,
+    "identical_pairs": 1,
+    "max_degree": 0.727,
+    "pair_count": 2,
+    "pairs": [
+      {
+        "a": "frontend-v2/public/sw.js",
+        "b": "frontend/sw.js",
+        "cochanges": 8,
+        "cross_language": false,
+        "degree": 0.727,
+        "identical": true
+      },
+      {
+        "a": "frontend-v2/src/telemetry/track.ts",
+        "b": "telemetry/events.go",
+        "cochanges": 8,
+        "cross_language": true,
+        "degree": 0.5,
+        "identical": false
+      }
+    ],
+    "wide_commits_skipped": 22
+  },
+  "layer_violations": {
+    "available": false,
+    "note": "depcruise not installed; detector skipped"
+  },
+  "recorded_at": "2026-09-06T060000",
+  "repo": "terminal-lobby",
+  "rework": {
+    "commits": 756,
+    "pct": 16.1,
+    "quick_fixes": 119,
+    "reverts": 3
+  },
+  "sloc": {
+    "prod": 96603,
+    "test": 103527
+  }
+}

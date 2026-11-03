@@ -13,19 +13,20 @@ import (
 // Why a verb rather than a script. The same reason `homelab reflect` is one: a
 // single measurement says a repo has two invisible coupling pairs, two say
 // whether last month's work removed them, and the second run only happens if
-// running it is one discoverable command. A script in docs/agents that nobody
+// running it is one discoverable command. A script that nobody
 // remembers is a study, not an instrument.
 //
-// What it measures and what it refuses to measure is in the monorepo README.
+// What it measures and what it refuses to measure is in
+// scripts/code-quality/README.md.
 // The short version: summed cyclomatic complexity, the maintainability index
 // and the SQALE debt ratio were each measured against line count on this
 // monorepo on 2026-09-06 and each turned out to be line count wearing a hat, so
 // they are refused by construction rather than merely unused. What survives
 // reads git history and test execution instead of source text.
 //
-// The tooling is Python and lives in the MONOREPO, next to its committed
-// history and beside session-reflection, which it mirrors. This verb is a thin
-// driver so there is one place to change.
+// The tooling is Python and lives in this repo at scripts/code-quality, next
+// to its committed history and beside session-reflection, which it mirrors.
+// This verb is a thin driver so there is one place to change.
 func qualityCommands() []Command {
 	return []Command{
 		{Path: []string{"quality"}, Tier: TierWrite,
@@ -34,25 +35,9 @@ func qualityCommands() []Command {
 	}
 }
 
-// qualityToolCandidates are where the monorepo may sit. ~/code is the usual
-// layout; the second covers a workspace whose monorepo root is elsewhere.
-func qualityToolCandidates() []string {
-	home, _ := os.UserHomeDir()
-	return []string{
-		filepath.Join(home, "code", "docs", "agents", "code-quality", "quality.py"),
-		filepath.Join(home, "docs", "agents", "code-quality", "quality.py"),
-	}
-}
-
 func qualityToolPath() (string, error) {
-	for _, p := range qualityToolCandidates() {
-		if isFile(p) {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("code-quality tooling not found (looked in %s) — "+
-		"it lives in the monorepo at docs/agents/code-quality",
-		strings.Join(qualityToolCandidates(), ", "))
+	home, _ := os.UserHomeDir()
+	return findInfraTool(home, filepath.Join("code-quality", "quality.py"))
 }
 
 func isQualitySub(s string) bool {
