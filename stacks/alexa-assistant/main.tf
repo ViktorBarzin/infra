@@ -46,6 +46,9 @@ module "app" {
   app_secret_env = {
     AGENT_API_TOKEN = "agent_api_token"
     ALEXA_SKILL_ID  = "alexa_skill_id"
+    # ha-london's Delivery webhook; the id in the URL is the only HA
+    # credential the app holds.
+    HA_WEBHOOK_URL = "ha_webhook_url"
   }
   extra_env = [
     # Pods resolve *.viktorbarzin.me to the Traefik LB, so this reaches
