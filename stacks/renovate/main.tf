@@ -174,8 +174,9 @@ resource "kubernetes_persistent_volume_claim" "cache" {
     }
   }
   spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    access_modes = ["ReadWriteOnce"]
+    # SSD since 2026-11-03: read-heavy, regenerable cache (android-emulator has the details).
+    storage_class_name = "proxmox-lvm-ssd"
     resources {
       requests = { storage = "5Gi" }
     }
@@ -329,8 +330,9 @@ resource "kubernetes_persistent_volume_claim" "apps_cache" {
     }
   }
   spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    access_modes = ["ReadWriteOnce"]
+    # SSD since 2026-11-03: read-heavy, regenerable cache (android-emulator has the details).
+    storage_class_name = "proxmox-lvm-ssd"
     resources {
       requests = { storage = "5Gi" }
     }
