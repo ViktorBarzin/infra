@@ -1792,6 +1792,114 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
   }
 }
 
+# IPv6 ban widener (2026-11-03). CrowdSec decides per address, and an IPv6
+# client normally holds a whole /64, so a ban on one address is sidestepped by
+# moving to the next. CrowdSec profiles cannot turn an Ip decision into a
+# range (a profile's decision `value` is a fixed string), so this copies every
+# local IPv6 ban (origin crowdsec, i.e. our own scenarios; not CAPI or the
+# lists) to a ban on its /64 for the time the original has left. Both
+# enforcement points act on range decisions: the nftables bouncer on the
+# nodes and the Traefik crowdsec plugin. It never widens into our own space
+# (the routed /48, the VLAN 10 and tunnel /64s, ULA). Viktor asked for IPv6 to
+# get the same protection as IPv4 (where one ban covers one NAT'd household).
+# Same mechanism as the blocklist import below: cscli in an agent pod via
+# kubectl exec, so it needs no machine credentials of its own.
+resource "kubernetes_config_map" "crowdsec_ipv6_ban_widen" {
+  metadata {
+    name      = "crowdsec-ipv6-ban-widen"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+  data = {
+    "ipv6-ban-widen.sh" = file("${path.module}/ipv6-ban-widen.sh")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "crowdsec_ipv6_ban_widen" {
+  metadata {
+    name      = "crowdsec-ipv6-ban-widen"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app  = "crowdsec-ipv6-ban-widen"
+      tier = var.tier
+    }
+  }
+
+  spec {
+    # Every 2 minutes: a ban takes effect at the /64 within ~2 minutes of the
+    # address ban, and the Traefik plugin polls LAPI every 30 s on top.
+    schedule                      = "*/2 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "crowdsec-ipv6-ban-widen"
+        }
+      }
+
+      spec {
+        backoff_limit           = 1
+        active_deadline_seconds = 100
+        template {
+          metadata {
+            labels = {
+              app = "crowdsec-ipv6-ban-widen"
+            }
+          }
+
+          spec {
+            service_account_name = kubernetes_service_account.blocklist_import.metadata[0].name
+            restart_policy       = "Never"
+
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map.crowdsec_ipv6_ban_widen.metadata[0].name
+              }
+            }
+
+            container {
+              name    = "widen"
+              image   = "bitnami/kubectl:latest@sha256:bedd34c910e2a5ce9836813d16444af449d7fe07a29136d59f34e861e8e660c5"
+              command = ["/bin/bash", "-c"]
+              args = [
+                <<-EOF
+                set -euo pipefail
+                AGENT_POD=$(kubectl get pods -n crowdsec -l k8s-app=crowdsec,type=agent                   --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+                [ -n "$AGENT_POD" ] || { echo "no running CrowdSec agent pod"; exit 1; }
+                kubectl exec -i -n crowdsec "$AGENT_POD" -c crowdsec-agent -- sh -s < /script/ipv6-ban-widen.sh
+                EOF
+              ]
+
+              volume_mount {
+                name       = "script"
+                mount_path = "/script"
+                read_only  = true
+              }
+
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # Service account for the blocklist import job (needs kubectl exec permissions)
 resource "kubernetes_service_account" "blocklist_import" {
   metadata {

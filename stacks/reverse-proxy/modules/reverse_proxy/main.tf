@@ -264,6 +264,10 @@ resource "kubernetes_manifest" "ha_sofia_rate_limit" {
         # new, empty-cache client bursts dozens of JS/icon chunks and 429'd.
         average = 200
         burst   = 500
+        # Bucket per IPv6 /64 (IPv4 unchanged); the key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -382,6 +386,10 @@ resource "kubernetes_manifest" "ha_london_rate_limit" {
       rateLimit = {
         average = 200
         burst   = 500
+        # Bucket per IPv6 /64 (IPv4 unchanged); the key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }

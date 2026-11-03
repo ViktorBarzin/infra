@@ -148,11 +148,12 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-haproxy.yml
 ```
 
 The script is idempotent — re-runs reset the declared pools and frontends
-(mail, internal 443, and since 2026-11-02 the six public IPv6 frontends on the
-HE tunnel address) to the declared state. `--check` lists the entries that
-would change. The same playbook keeps the webConfigurator HTTP redirect off so
-pfSense's nginx never takes port 80 from the IPv6 frontend; see
-`docs/architecture/networking.md` → "IPv6 Ingress".
+(mail and internal 443) to the declared state, and delete the six public IPv6
+frontends that ran on the HE tunnel address from 2026-11-02 to 2026-11-03 if
+they reappear. `--check` lists the entries that would change. IPv6 mail no
+longer passes through HAProxy: pfSense forwards it to `mailserver-v6`
+(`2001:470:5a7f:20::204`) in the cluster, see `docs/architecture/networking.md`
+→ "IPv6 Ingress (native, cluster dual-stack)".
 
 Expected output of the apply step: JSON with `"rc": "OK"`.
 

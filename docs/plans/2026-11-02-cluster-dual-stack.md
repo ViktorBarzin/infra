@@ -1,6 +1,6 @@
 # Cluster dual-stack: IPv6 and HTTP/3 over IPv6, natively
 
-Status: executing. Phases 1-7 done on 2026-11-03 (see "Execution, 2026-11-03"); phase 8 is due about 2026-11-10. Approved v3 on 2026-11-02 after two blind challenger reviews and the phase 0 rehearsal, which passed. Decisions by Viktor in a grilling session the same
+Status: done. Phases 1-7 ran on 2026-11-03 (see "Execution, 2026-11-03"), and phase 8 the same evening at Viktor's request rather than a week later, together with an audit that IPv6 passes the same defence layers as IPv4. Approved v3 on 2026-11-02 after two blind challenger reviews and the phase 0 rehearsal, which passed.
 day. Builds on `docs/research/2026-08-31-cluster-dual-stack-ipv6.md` (feasibility,
 flags, rollback) and `docs/research/2026-11-02-reliable-ipv6-ingress.md` (today's
 IPv6 path); facts from those are cited, not repeated.
@@ -305,6 +305,19 @@ Run 19:05-20:00 UTC, after Immich uploads had been idle for over 30 minutes. Evi
 | 7 DNS | All 28 AAAA records moved to `::203`, each stack's plan checked to change only the AAAA content | `ingress_factory` and the reverse-proxy factory take `public_ipv6` from their own variable defaults, not from `config.tfvars`; both defaults changed, and `config.tfvars` still feeds bastion, terminal and cloudflared |
 
 Open questions 2 and 4 are settled: gatus gets HTTP/3 results from `edge-h3-probe.timer` on mx2 (a pinned static curl with HTTP/3, pushing to a gatus external endpoint), and the IPv6 mail path logs under the stock Postfix program names (`postfix/postscreen`, `postfix/submission/smtpd`), which the `crowdsecurity/postfix` collection parses.
+
+## Phase 8 and IPv6 defence parity, 2026-11-03
+
+Viktor asked to remove the pfSense IPv6 frontends that evening, without rebooting pfSense, and to make sure IPv6 traffic goes through the same firewall and defence layers as IPv4. Done:
+
+- HAProxy: the six `ipv6_*` frontends and the `traefik_80` pool deleted (`scripts/pfsense-haproxy-bootstrap.php`); the HE_IPv6 pass rules to the tunnel address deleted and anti-spoof rules added first on HE_IPv6 (`playbooks/files/pfsense-k8s-ipv6-config.php`); the gatus probes on the tunnel address removed from mx2.
+- Snort: the WAN instance already decoded IPv6 inside the 6in4 packets, but had run since 2026-10-29 with a `HOME_NET` that predated the VLAN 20 /64, so a Log4j probe over IPv6 raised no alert. It is reloaded when its config changes (`playbooks/files/pfsense-snort-he-ipv6-config.php`). A second instance on `gif0` was tried and removed: Snort 2 decodes gif frames as IPv4 only.
+- Traefik: the real-ip plugin stamps `X-Client-Prefix` (the IPv4 address or the IPv6 /64); the header-keyed limiters use it, and the peer-keyed ones use `ipStrategy.ipv6Subnet = 64`. The pod ULA is trusted as a proxy in the real-ip and CrowdSec plugins and in the forwarded-headers list.
+- CrowdSec: `crowdsec-ipv6-ban-widen` copies each local IPv6 ban to its /64 every 2 minutes.
+
+Checked live from mx2 and from a pod: all 28 names over IPv6 and HTTP/3, mail on 465/587/993 over both families, the tunnel address closed on 80/443/25/993, an address ban dropping mx2 over IPv6 only, a /64 ban answered with 403 by the Traefik plugin, 600 requests from one /64 answered 332 × 200 and 268 × 429 while 600 from different /64s got no 429, and a Log4j probe over IPv6 raising a Snort alert.
+
+Open: the nftables bouncer stores a range decision as its first address (sets have no `interval` flag), for IPv4 and IPv6 alike, so range bans reach web traffic through the Traefik plugin but not mail.
 
 ## What could break, and how we would see it
 

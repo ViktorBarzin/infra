@@ -18,6 +18,10 @@
 #     (enabled since phase 6, 2026-11-03; -e mail_forward_enabled=false
 #     disables them).
 #   - A floating block for any fc00::/7 source leaving on HE_IPv6.
+#   - Anti-spoof blocks first on HE_IPv6 inbound (ULA, our /48, the VLAN 10
+#     /64, multicast as a source), and removal of the hand-made pass rules to
+#     the tunnel address 2001:470:6e:43d::2 that fed the retired HAProxy IPv6
+#     frontends (phase 8, 2026-11-03).
 #
 # ORDERING. Raise the tunnel MTU on HE's side to 1480 FIRST
 # (tunnelbroker.net, the tunnel's Advanced tab), then run this. With pfSense at
@@ -113,8 +117,10 @@
         rules=$(pfctl -sr 2>/dev/null | grep -c 'USER_RULE: k8s-ipv6: ')
         rdr=$(pfctl -sn 2>/dev/null | grep -c '^rdr on gif0 inet6 .* 2001:470:5a7f:20::203 ')
         mss=$(pfctl -sr 2>/dev/null | grep -c 'scrub on gif0 inet6 .*max-mss {{ (he_mtu | int) - 60 }}')
-        echo "rules=$rules rdr=$rdr mss=$mss"
-        [ "$rules" -eq 11 ] && [ "$rdr" -eq {{ mail_forward_enabled | bool | ternary(4, 0) }} ] && [ "$mss" -ge 1 ]
+        # Nothing may still pass to the retired tunnel-address frontends.
+        legacy=$(pfctl -sr 2>/dev/null | grep -c '^pass in .* on gif0 .* to 2001:470:6e:43d::2 .*port = \(http\|https\|smtp\|submissions\|submission\|imaps\|80\|443\|25\|465\|587\|993\)\b')
+        echo "rules=$rules rdr=$rdr mss=$mss legacy=$legacy"
+        [ "$rules" -eq 15 ] && [ "$rdr" -eq {{ mail_forward_enabled | bool | ternary(4, 0) }} ] && [ "$mss" -ge 1 ] && [ "$legacy" -eq 0 ]
       register: pf_live
       retries: 10
       delay: 3
@@ -122,3 +128,52 @@
       changed_when: false
       check_mode: false
       when: not ansible_check_mode
+
+    # ── Snort inspects public IPv6 (2026-11-03) ────────────────────────────
+    # The WAN instance decodes the 6in4 traffic, so it inspects public IPv6 as
+    # well as IPv4 once its HOME_NET holds the VLAN 20 /64; Snort on gif0 cannot
+    # decode IPv6. Details: playbooks/files/pfsense-snort-he-ipv6-config.php.
+    - name: Ship the Snort IPv6 configurator
+      ansible.builtin.copy:
+        src: files/pfsense-snort-he-ipv6-config.php
+        dest: /tmp/pfsense-snort-he-ipv6-config.php
+        mode: "0700"
+        owner: root
+      changed_when: false
+      check_mode: false
+      tags: snort
+
+    - name: Snort IPv6 inspection (check mode)
+      ansible.builtin.command: /usr/local/bin/php -f /tmp/pfsense-snort-he-ipv6-config.php -- --check
+      changed_when: false
+      check_mode: false
+      register: snort_check
+      when: ansible_check_mode
+      tags: snort
+
+    - name: Report what check mode would change for Snort
+      ansible.builtin.debug:
+        var: (snort_check.stdout_lines[-1] | from_json).changes
+      when: ansible_check_mode
+      tags: snort
+
+    - name: WAN Snort runs with a current HOME_NET, no instance on gif0
+      ansible.builtin.command: /usr/local/bin/php -f /tmp/pfsense-snort-he-ipv6-config.php --
+      register: snort_apply
+      changed_when: (snort_apply.stdout_lines[-1] | from_json).changed | bool
+      when: not ansible_check_mode
+      tags: snort
+
+    - name: One WAN Snort runs and none on gif0
+      ansible.builtin.shell: |
+        wan=$(ps ax -o args | grep -cE '[s]nort .* -i vtnet0( |$)')
+        gif=$(ps ax -o args | grep -cE '[s]nort .* -i gif0( |$)')
+        echo "vtnet0=$wan gif0=$gif"
+        [ "$wan" -eq 1 ] && [ "$gif" -eq 0 ]
+      register: snort_proc
+      retries: 10
+      delay: 6
+      until: snort_proc.rc == 0
+      changed_when: false
+      when: not ansible_check_mode
+      tags: snort
