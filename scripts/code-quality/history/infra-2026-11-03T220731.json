@@ -1,0 +1,116 @@
+{
+  "bug_magnets": {
+    "count": 6,
+    "files": [
+      {
+        "file": "stacks/claude-agent-service/main.tf",
+        "fixes": 9
+      },
+      {
+        "file": "stacks/nextcloud/main.tf",
+        "fixes": 7
+      },
+      {
+        "file": "stacks/dbaas/modules/dbaas/main.tf",
+        "fixes": 5
+      },
+      {
+        "file": "stacks/monitoring/modules/monitoring/prometheus.tf",
+        "fixes": 5
+      },
+      {
+        "file": "stacks/ebooks/main.tf",
+        "fixes": 5
+      },
+      {
+        "file": "stacks/tripit/main.tf",
+        "fixes": 5
+      }
+    ]
+  },
+  "change_concentration": {
+    "files_touched": 862,
+    "ratio_pct": 10.8,
+    "top": [
+      {
+        "file": "stacks/f1-stream/main.tf",
+        "touches": 56
+      },
+      {
+        "file": "stacks/monitoring/modules/monitoring/loki.tf",
+        "touches": 50
+      },
+      {
+        "file": "stacks/dbaas/modules/dbaas/main.tf",
+        "touches": 43
+      },
+      {
+        "file": "stacks/traefik/modules/traefik/main.tf",
+        "touches": 41
+      },
+      {
+        "file": "stacks/openclaw/main.tf",
+        "touches": 40
+      },
+      {
+        "file": "stacks/immich/main.tf",
+        "touches": 32
+      },
+      {
+        "file": "stacks/claude-agent-service/main.tf",
+        "touches": 29
+      },
+      {
+        "file": "stacks/vault/main.tf",
+        "touches": 28
+      },
+      {
+        "file": "stacks/forgejo/main.tf",
+        "touches": 27
+      },
+      {
+        "file": "stacks/crowdsec/modules/crowdsec/main.tf",
+        "touches": 25
+      }
+    ]
+  },
+  "detectors_fingerprint": "b46d4d88d7d8",
+  "duplication": {
+    "available": false,
+    "note": "jscpd not installed; detector skipped"
+  },
+  "head": "8a61ebdab66f",
+  "invisible_coupling": {
+    "commits_considered": 1174,
+    "identical_pairs": 0,
+    "max_degree": 0.875,
+    "pair_count": 1,
+    "pairs": [
+      {
+        "a": "stacks/terminal/devvm_lobby_anp.tf",
+        "b": "tests/devvm-lobby-anp.test.sh",
+        "cochanges": 7,
+        "cross_language": true,
+        "degree": 0.875,
+        "identical": false
+      }
+    ],
+    "wide_commits_skipped": 16
+  },
+  "layer_violations": {
+    "available": false,
+    "note": "depcruise not installed; detector skipped"
+  },
+  "recorded_at": "2026-11-03T220731",
+  "repo": "infra",
+  "rework": {
+    "commits": 1896,
+    "pct": 2.0,
+    "quick_fixes": 11,
+    "reverts": 26
+  },
+  "sloc": {
+    "prod": 214298,
+    "test": 29247
+  }
+}
