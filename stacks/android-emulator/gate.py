@@ -89,7 +89,7 @@ CLAIM_QUERY = (
 )
 # How long an active claim holds off the yield-sleep (Viktor, 2026-11-02:
 # a bounded wait, not a veto, since the emulator yields to deploys).
-CLAIM_WAIT_SECONDS = float(os.environ.get("CLAIM_WAIT_SECONDS", "1200"))
+CLAIM_WAIT_SECONDS = float(os.environ.get("CLAIM_WAIT_SECONDS", "480"))
 # The #alerts incoming webhook; without it the gate only logs.
 SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK", "")
 
