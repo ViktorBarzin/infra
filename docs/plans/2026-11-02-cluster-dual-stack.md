@@ -1,6 +1,6 @@
 # Cluster dual-stack: IPv6 and HTTP/3 over IPv6, natively
 
-Status: approved v3, 2026-11-02 (revised after two blind challenger reviews and the phase 0 rehearsal, which passed). Decisions by Viktor in a grilling session the same
+Status: executing. Phases 1-7 done on 2026-11-03 (see "Execution, 2026-11-03"); phase 8 is due about 2026-11-10. Approved v3 on 2026-11-02 after two blind challenger reviews and the phase 0 rehearsal, which passed. Decisions by Viktor in a grilling session the same
 day. Builds on `docs/research/2026-08-31-cluster-dual-stack-ipv6.md` (feasibility,
 flags, rollback) and `docs/research/2026-11-02-reliable-ipv6-ingress.md` (today's
 IPv6 path); facts from those are cited, not repeated.
@@ -289,6 +289,22 @@ Remove the six IPv6 frontends from `scripts/pfsense-haproxy-bootstrap.php`, the
 old gatus probes, and update `docs/architecture/networking.md` (IPv6 Ingress) and
 the mail runbook. The `transparent` binds and 1 h timeouts go with them, and the
 `IPv6IngressBridge`-era gatus probes are replaced by the new ones.
+
+## Execution, 2026-11-03
+
+Run 19:05-20:00 UTC, after Immich uploads had been idle for over 30 minutes. Evidence in `/home/wizard/dualstack-live/` on the devvm.
+
+| Phase | Result | Differences from the plan |
+|---|---|---|
+| 1 pfSense | From mx2, 1400-byte IPv6 pings cross the tunnel and `::1` on VLAN 20 answers, so HE routes the /48 | HE's side of the tunnel was already 1480 (the default); only `gif0` was 1280 |
+| 2 nodes | All six hold `::1NN`; `curl -6` from a node is refused in 0.07 s; default outbound stays IPv4 | none |
+| 3 Calico | Installation diff is the IPv6 pool and autodetection only; calico-node rolled 6/6; a new pod gets both families | Declared as `kubectl_manifest.installation_dual_stack` in `stacks/calico` (applies over the operator-owned object, like the APIServer CR, with `prevent_destroy`) instead of a one-off manifest |
+| 4 control plane | `kubeadm upgrade diff` showed only the three range flags; apiserver back in about 1 min; `servicecidr kubernetes` lists both ranges; no CIDR errors | none |
+| 5 kubelet, kube-proxy | All nodes Ready with dual InternalIPs; kube-proxy logs "running in dual-stack mode" | none |
+| 6 MetalLB, Traefik, mail | Canary dual-stack Service answered on both VIPs; pfSense followed the NDP move to a new node within about 1 s; Traefik Services kept `10.0.20.203` and their ports through the switch (1 s watcher, HTTPS 200 throughout); from mx2 `curl --http3-only` over IPv6 returns 200 over `http3`; 465/587/993 answer over IPv6 and Postfix logs the real client IPv6 | The MetalLB pool needed `force_conflicts` (first created with `kubectl apply`). The NDP check moved the canary pod between nodes instead of draining a Traefik node. Traefik pods were rolled before the Service change so the IPv6 endpoints existed |
+| 7 DNS | All 28 AAAA records moved to `::203`, each stack's plan checked to change only the AAAA content | `ingress_factory` and the reverse-proxy factory take `public_ipv6` from their own variable defaults, not from `config.tfvars`; both defaults changed, and `config.tfvars` still feeds bastion, terminal and cloudflared |
+
+Open questions 2 and 4 are settled: gatus gets HTTP/3 results from `edge-h3-probe.timer` on mx2 (a pinned static curl with HTTP/3, pushing to a gatus external endpoint), and the IPv6 mail path logs under the stock Postfix program names (`postfix/postscreen`, `postfix/submission/smtpd`), which the `crowdsecurity/postfix` collection parses.
 
 ## What could break, and how we would see it
 

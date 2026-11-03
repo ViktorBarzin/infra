@@ -236,6 +236,66 @@ write_files:
       done
       install -m 0755 "$TMP/rootfs/gatus" /usr/local/bin/gatus
       printf '%s\n' "$DIGEST" > "$STAMP"
+  # HTTP/3 probe client: Ubuntu's curl has no HTTP/3, so a static build from
+  # stunnel/static-curl, pinned by the tarball's sha256. Version bump = new
+  # URL and new sha256 together. Also writes the push token gatus and the
+  # probe share (root:gatus 0640).
+  - path: /usr/local/bin/edge-h3-install.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      URL="https://github.com/stunnel/static-curl/releases/download/8.23.0-1/curl-linux-x86_64-glibc-8.23.0-1.tar.xz"
+      SHA="a9f5d72eb245623f82a649bf64acae0c935af3510700d2167857964c47fe9e5b"
+      STAMP=/usr/local/bin/curl-h3.sha256
+      if ! { [ -x /usr/local/bin/curl-h3 ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$SHA" ]; }; then
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        curl -fsSL -o "$TMP/c.tar.xz" "$URL"
+        echo "$SHA  $TMP/c.tar.xz" | sha256sum -c - >/dev/null
+        tar -xJf "$TMP/c.tar.xz" -C "$TMP" curl
+        install -m 0755 "$TMP/curl" /usr/local/bin/curl-h3
+        printf '%s\n' "$SHA" > "$STAMP"
+      fi
+      if [ ! -s /etc/gatus/edge-h3.env ]; then
+        install -m 0640 -g gatus /dev/null /etc/gatus/edge-h3.env
+        printf 'EDGE_H3_TOKEN=%s\n' "$(openssl rand -hex 24)" > /etc/gatus/edge-h3.env
+      fi
+  # One HTTP/3-only request to Traefik's IPv6 VIP; the result goes to the
+  # gatus external endpoint "ipv6 vip: http3 443" (key edge_ipv6-vip:-http3-443).
+  # Any HTTP status under 500 over QUIC counts as up.
+  - path: /usr/local/bin/edge-h3-probe.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      . /etc/gatus/edge-h3.env
+      out=$(/usr/local/bin/curl-h3 --http3-only -6 -s -m 10 -o /dev/null \
+        -w '%%{http_code} %%{http_version}' \
+        --resolve 'viktorbarzin.me:443:[2001:470:5a7f:20::203]' https://viktorbarzin.me/ 2>/dev/null)
+      code=$${out%% *}; ver=$${out##* }
+      ok=false
+      [ "$ver" = 3 ] && [ "$code" -gt 0 ] 2>/dev/null && [ "$code" -lt 500 ] && ok=true
+      curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $EDGE_H3_TOKEN" \
+        "http://127.0.0.1:8080/api/v1/endpoints/edge_ipv6-vip:-http3-443/external?success=$ok&error=$(printf 'http_%s_h%s' "$code" "$ver")"
+  - path: /etc/systemd/system/edge-h3-probe.service
+    content: |
+      [Unit]
+      Description=HTTP/3 over IPv6 probe of the Traefik VIP, pushed to gatus
+      After=gatus.service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/edge-h3-probe.sh
+      User=gatus
+      Group=gatus
+  - path: /etc/systemd/system/edge-h3-probe.timer
+    content: |
+      [Unit]
+      Description=HTTP/3 over IPv6 probe every minute
+      [Timer]
+      OnBootSec=2m
+      OnUnitActiveSec=60s
+      [Install]
+      WantedBy=timers.target
   # Gatus config. Two groups with OPPOSITE alerting postures, by design:
   #   * "services" is DISPLAY-ONLY — in-cluster Alertmanager owns per-service
   #     alerting; a second pager here would double-page every app blip.
@@ -399,6 +459,43 @@ write_files:
           alerts:
             - type: slack
           %{ endif }
+        # Native IPv6 since cluster dual-stack (2026-11-03): Traefik's VIP ::203,
+        # which every AAAA record now points at. Mail 993 on ::203 is the
+        # pfSense port forward to mailserver-v6 (::204). The two tunnel-address
+        # probes above stay until the pfSense IPv6 frontends are removed
+        # (docs/plans/2026-11-02-cluster-dual-stack.md phase 8).
+        - name: "ipv6 vip: https 443"
+          group: edge
+          url: "tcp://[2001:470:5a7f:20::203]:443"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        - name: "ipv6 vip: mail 993"
+          group: edge
+          url: "tcp://[2001:470:5a7f:20::203]:993"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+      # Gatus has no QUIC client, so HTTP/3 over IPv6 is checked by
+      # edge-h3-probe.timer (curl --http3-only) and pushed here.
+      external-endpoints:
+        - name: "ipv6 vip: http3 443"
+          group: edge
+          token: "$${EDGE_H3_TOKEN}"
+          heartbeat:
+            interval: 5m
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
   # RAM contract on the 954 MB box (mail is the priority tenant): postfix
   # ~100-150 MB + gatus <= 128 MB (MemoryMax; ~50-70 typical) + nginx ~15 MB
   # + node-exporter ~20 MB + tailscaled ~40 MB leaves > 400 MB headroom.
@@ -415,6 +512,8 @@ write_files:
       User=gatus
       Group=gatus
       Environment=GATUS_CONFIG_PATH=/etc/gatus/config.yaml
+      # EDGE_H3_TOKEN for the external endpoint, written by edge-h3-install.sh.
+      EnvironmentFile=-/etc/gatus/edge-h3.env
       WorkingDirectory=/var/lib/gatus
       ExecStart=/usr/local/bin/gatus
       MemoryHigh=100M
@@ -731,7 +830,8 @@ runcmd:
   - rm -f /etc/nginx/sites-enabled/default
   - ln -sf /etc/nginx/sites-available/status /etc/nginx/sites-enabled/status
   - nginx -t && systemctl enable --now nginx && systemctl restart nginx
-  - systemctl enable --now gatus.service wg-reresolve.timer
+  - for i in $(seq 1 5); do bash /usr/local/bin/edge-h3-install.sh && break || sleep 20; done
+  - systemctl enable --now gatus.service wg-reresolve.timer edge-h3-probe.timer
   # (7) VPN OCI PoP-2 (ADR/portal 2026-07-13) — LAST, after egress + the main
   # apt install: it fetches xray + builds dnstt (installs golang-go), heavy on
   # the 1 GB box, so run it once everything else is up. Idempotent + retried.

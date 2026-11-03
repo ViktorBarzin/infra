@@ -6,7 +6,7 @@ Last updated: 2026-10-26 (R730 uplink on bond0 with eno2 as backup via the garag
 
 ## Overview
 
-The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:6e:43d::2`) directly, via the TP-Link and pfSense port forwards on 80/443 to Traefik (IPv6 through the pfSense HAProxy bridge). The same direct path carries SSH on 443 to the bastion (see below).
+The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:5a7f:20::203`) directly: IPv4 via the TP-Link and pfSense port forwards on 80/443 to Traefik, IPv6 natively through the HE tunnel to Traefik's dual-stack VIP (see IPv6 Ingress). The same direct path carries SSH on 443 to the bastion (see below).
 
 ## Architecture Diagram
 
@@ -361,7 +361,7 @@ the `ingress_factory` module then follows this Traefik chain:
 4. **Retry**: 2 attempts with 100ms delay on transient failures (5xx errors, connection errors).
 
 Additional middleware:
-- **HTTP/3 (QUIC)**: Enabled on Traefik, on the IPv4 path only (see IPv6 Ingress below).
+- **HTTP/3 (QUIC)**: Enabled on Traefik, over IPv4 and, since 2026-11-03, IPv6 (see IPv6 Ingress below).
 
 > **Setting `http3.enabled = false` takes the whole site down.** `websecure/TCP:443`
 > and `websecure-http3/UDP:443` share a port *number*, and Kubernetes uses `port` as
@@ -565,7 +565,29 @@ Critical services are scaled to **3 replicas**:
 
 PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance or disruptions.
 
-### IPv6 Ingress (HE Tunnel + pfSense HAProxy package)
+### IPv6 Ingress (native, cluster dual-stack)
+
+Since 2026-11-03 the cluster is dual-stack (`docs/plans/2026-11-02-cluster-dual-stack.md`). IPv6 still enters over the Hurricane Electric 6in4 tunnel on pfSense (`gif0`, MTU 1480, MSS clamp 1420), and pfSense now routes the HE /48 `2001:470:5a7f::/48` to VLAN 20 instead of proxying:
+
+| Piece | Address | Notes |
+|---|---|---|
+| VLAN 20 | `2001:470:5a7f:20::/64` | pfSense `::1`, nodes static `::100`-`::105` (`playbooks/k8s-node-ipv6.yml`), no RA |
+| Traefik VIP | `2001:470:5a7f:20::203` | `svc/traefik` and `svc/traefik-udp`, `RequireDualStack`, ETP Local; TCP 80/443 and UDP 443 (HTTP/3) |
+| Mail VIP | `2001:470:5a7f:20::204` | `mailserver-v6`, IPv6-only, ETP Local, stock listeners 25/465/587/993; reached through a pfSense IPv6 port forward from `::203`, because `mail.viktorbarzin.me` is one name for MX and webmail |
+| Pods | `fd62:f088:7d06:100::/56` (ULA) | Calico pool `default-ipv6-ippool`, declared in `stacks/calico` |
+| Services | `fd62:f088:7d06:96::/112` (ULA) | kube-apiserver `--service-cluster-ip-range` |
+| MetalLB | `2001:470:5a7f:20::200`-`::220` | in the `default` pool with the IPv4 range |
+
+The 28 non-proxied AAAA records point at `::203` (`public_ipv6` in `config.tfvars` and the `ingress_factory` and reverse-proxy factory defaults). pfSense (`playbooks/pfsense-k8s-ipv6.yml`) passes only TCP 80/443 and UDP 443 to `::203` and the four mail ports to `::204` on the tunnel, rejects new outbound IPv6 from VLAN 20 (so node and pod traffic to the internet stays IPv4; Go binaries ignore `gai.conf`), and blocks ULA sources leaving on `gif0`. Traefik and Postfix/Dovecot see the real client IPv6 without PROXY protocol. Outbound mail stays IPv4.
+
+The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP payloads at minimum, which do not fit a 1280-byte tunnel. HE's side of the tunnel was already 1480; pfSense's `gif0` was 1280 until 2026-11-03.
+
+**External checks** on mx2 (gatus `edge` group, Slack): `tcp://[2001:470:5a7f:20::203]:443`, `tcp://[2001:470:5a7f:20::203]:993`, and `ipv6 vip: http3 443`, an external endpoint fed every minute by `edge-h3-probe.timer` (`curl --http3-only` to `::203`), since gatus has no QUIC client.
+
+The pfSense HAProxy IPv6 frontends below stay in place as a fallback until about 2026-11-10 (plan phase 8); setting `public_ipv6` back moves the AAAA records to them.
+
+### IPv6 Ingress fallback (HE Tunnel + pfSense HAProxy package), until phase 8
+
 
 Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). Non-proxied hostnames (for example `ha-sofia`, `immich`; 28 names in total) carry an AAAA record → `2001:470:6e:43d::2`. The apex is Cloudflare-proxied, so its AAAA records are Cloudflare's addresses and Cloudflare reaches the origin over IPv4.
 
@@ -588,7 +610,7 @@ The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`e
 
 **External check:** gatus on mx2 (`stacks/backup-mx`, IPv6 enabled on its OCI VCN on 2026-11-02) probes `tcp://[2001:470:6e:43d::2]:443` and `:993` every 60 s in its `edge` group and pages Slack after about 3 minutes of failures. The probes use the literal address because, given a hostname, Go falls back to IPv4 and the check would stay green with IPv6 down. `ping6` is not a useful check: pfSense answers ICMPv6 whatever HAProxy is doing.
 
-**No QUIC over IPv6** — HAProxy here is TCP only; IPv4 carries QUIC/HTTP3.
+**No QUIC over IPv6 on this fallback path** — HAProxy here is TCP only. The native path above carries QUIC over IPv6.
 
 The origin nonetheless returns `alt-svc: h3=":443"; ma=2592000` on this path, because
 the header comes from the `websecure` entrypoint and HAProxy is a TCP proxy that
