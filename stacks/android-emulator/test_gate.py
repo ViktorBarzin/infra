@@ -519,6 +519,10 @@ class Claims:
 HELD = [gate.claim_from_row(ALICE)]
 
 
+#: The gate's claim wait in whole minutes, so the tests follow the setting.
+WAIT = int(gate.CLAIM_WAIT_SECONDS // 60)
+
+
 class ClaimHoldsOffTest(unittest.TestCase):
     """An active presence claim on the emulator holds off the yield-sleep for
     at most CLAIM_WAIT_SECONDS, so whoever is testing is not cut off without
@@ -533,7 +537,7 @@ class ClaimHoldsOffTest(unittest.TestCase):
         return gate.yield_once(fake, self.logs.append, now=now, claims_fn=claims, notify=self.posts.append)
 
     def test_the_wait_defaults_to_twenty_minutes(self):
-        self.assertEqual(gate.CLAIM_WAIT_SECONDS, 20 * MINUTE)
+        self.assertEqual(gate.CLAIM_WAIT_SECONDS, 8 * MINUTE)
 
     def test_a_claimed_emulator_stays_awake_and_says_so_once(self):
         fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
@@ -545,7 +549,7 @@ class ClaimHoldsOffTest(unittest.TestCase):
         self.assertIn("wizard@devvm", self.posts[0])
         self.assertIn("testing the TV pairing screen", self.posts[0])
         self.assertIn("t-new", self.posts[0])
-        self.assertIn("20 min", self.posts[0])
+        self.assertIn(f"{WAIT} min", self.posts[0])
 
     def test_a_claim_released_mid_wait_lets_the_emulator_sleep(self):
         fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
@@ -561,9 +565,9 @@ class ClaimHoldsOffTest(unittest.TestCase):
         fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
         claims = Claims(HELD)
         self.run_once(fake, claims, NOW)
-        self.run_once(fake, claims, NOW + 19 * MINUTE)
+        self.run_once(fake, claims, NOW + (WAIT - 1) * MINUTE)
         self.assertEqual(fake.patches, [])
-        self.run_once(fake, claims, NOW + 20 * MINUTE)
+        self.run_once(fake, claims, NOW + WAIT * MINUTE)
         self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
         self.assertEqual(len(self.posts), 2)
         self.assertIn("anyway", self.posts[1])
@@ -595,26 +599,26 @@ class ClaimHoldsOffTest(unittest.TestCase):
         self.assertEqual(claims.calls, 0)
 
     def test_the_yield_limit_counts_from_the_end_of_the_wait(self):
-        # The pod waited 20 min for the claim; its 15 min with the emulator
+        # The pod waited the whole claim wait; its 15 min with the emulator
         # asleep start once the gate puts it to sleep.
         fake = FakeKube(pods=[pod("t-new", since=NOW)], replicas=1)
         claims = Claims(HELD)
-        for minute in range(0, 21):
+        for minute in range(0, WAIT + 1):
             self.run_once(fake, claims, NOW + minute * MINUTE)
         self.assertEqual(fake.patches, [{"spec": {"replicas": 0}}])
-        self.assertEqual(self.run_once(fake, claims, NOW + 30 * MINUTE), ["t-new"])
+        self.assertEqual(self.run_once(fake, claims, NOW + (WAIT + 10) * MINUTE), ["t-new"])
         self.assertEqual(gate.gave_up_on(), [])
-        self.assertEqual(self.run_once(fake, claims, NOW + 36 * MINUTE), [])
+        self.assertEqual(self.run_once(fake, claims, NOW + (WAIT + 16) * MINUTE), [])
         self.assertEqual(gate.gave_up_on(), ["t-new"])
 
     def test_the_next_rollout_waits_for_a_claim_again(self):
         fake = FakeKube(pods=[pod("t-one", since=NOW)], replicas=1)
         claims = Claims(HELD)
         self.run_once(fake, claims, NOW)
-        self.run_once(fake, claims, NOW + 20 * MINUTE)
+        self.run_once(fake, claims, NOW + WAIT * MINUTE)
         self.assertEqual(len(fake.patches), 1)
         fake.pods = []
-        self.run_once(fake, claims, NOW + 21 * MINUTE)
+        self.run_once(fake, claims, NOW + (WAIT + 1) * MINUTE)
         fake.pods = [pod("t-two", since=NOW + 60 * MINUTE)]
         fake.replicas = 1
         self.run_once(fake, claims, NOW + 60 * MINUTE)
