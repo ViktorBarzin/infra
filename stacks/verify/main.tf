@@ -214,7 +214,7 @@ resource "kubernetes_storage_class" "verify_nfs" {
   storage_provisioner = "nfs.csi.k8s.io"
   reclaim_policy      = "Delete"
   volume_binding_mode = "Immediate"
-  mount_options       = ["nfsvers=4", "soft", "timeo=30", "retrans=3", "actimeo=5"]
+  mount_options       = ["nfsvers=4.1", "soft", "timeo=30", "retrans=3", "actimeo=5"]
   parameters = {
     server = var.nfs_server
     share  = "/srv/nfs"

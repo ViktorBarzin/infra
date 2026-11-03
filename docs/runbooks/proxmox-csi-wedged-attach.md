@@ -129,7 +129,7 @@ way on 2026-07-13 via kured.
 
 ## Why the automatic cleanup does not catch the missing-device variant
 
-`csi-ghost-reconcile` (namespace `proxmox-csi`, every 15 minutes) remediates
+`csi-ghost-reconcile` (namespace `proxmox-csi`, every 30 minutes) remediates
 **ghosts**: a VolumeAttachment that exists while the disk is absent from the VM
 config. A half-attach has both the VolumeAttachment *and* the config entry, so
 it looks reconciled and the job reports `ghosts=0`.

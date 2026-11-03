@@ -97,7 +97,7 @@ resource "kubernetes_cron_job_v1" "helm_unstick" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/30 * * * *"
     starting_deadline_seconds     = 300
     job_template {
       metadata {}

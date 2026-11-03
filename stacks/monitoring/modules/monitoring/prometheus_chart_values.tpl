@@ -352,6 +352,10 @@ alertmanager:
           - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
         target_matchers:
           - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
+        # The symptom alerts also cover sdd since 2026-11-03; a busy sdd must
+        # not hide sdc's volume alerts, so only inhibit on the same device.
+        equal:
+          - device
       # devvm down: the generic scrape alert says the same thing 27 minutes
       # later and more quietly. equal: [job] keeps this surgical — every OTHER
       # target's ScrapeTargetDown still notifies while devvm is unreachable.
@@ -1653,29 +1657,32 @@ serverFiles:
           # is the closest thing to a user-visible latency SLI on this host.
           # Guarded on a real read rate (>20 IOPS) so a single slow read on an
           # otherwise idle device cannot trip it.
+          # Also covers sdd, the 600GB 10K SAS RAID1 (VG sas) added 2026-11-03,
+          # which takes hot volumes off sdc. Same 50 ms bar: a 10K pair should
+          # sit well under it, so firing there means the pair is overloaded.
           - alert: HDDReadLatencyHigh
             expr: |
-              (1000 * rate(node_disk_read_time_seconds_total{job="proxmox-host", device="sdc"}[5m])
-                / clamp_min(rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]), 1) > 50)
-              and (rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]) > 20)
+              (1000 * rate(node_disk_read_time_seconds_total{job="proxmox-host", device=~"sdc|sdd"}[5m])
+                / clamp_min(rate(node_disk_reads_completed_total{job="proxmox-host", device=~"sdc|sdd"}[5m]), 1) > 50)
+              and (rate(node_disk_reads_completed_total{job="proxmox-host", device=~"sdc|sdd"}[5m]) > 20)
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "sdc read latency {{ $value | printf \"%.0f\" }} ms (threshold 50 ms; normal p95 is 23 ms) — everything sharing this spindle is waiting, incl. etcd"
+              summary: "{{ $labels.device }} read latency {{ $value | printf \"%.0f\" }} ms (threshold 50 ms; sdc's normal p95 is 23 ms) — everything on this array is waiting"
 
           # Device pinned. Above p99 (81%), so this is genuine saturation
           # rather than the nightly housekeeping window.
           - alert: HDDSaturated
-            expr: rate(node_disk_io_time_seconds_total{job="proxmox-host", device="sdc"}[5m]) * 100 > 85 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            expr: rate(node_disk_io_time_seconds_total{job="proxmox-host", device=~"sdc|sdd"}[5m]) * 100 > 85 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "sdc {{ $value | printf \"%.0f\" }}% busy (threshold 85%; p99 is 81%) — no headroom left on the shared spindle"
+              summary: "{{ $labels.device }} {{ $value | printf \"%.0f\" }}% busy (threshold 85%; sdc's p99 is 81%) — no headroom left on this array"
 
           # IOPS is the binding constraint on a 7200 rpm pair, more than
           # bandwidth is: 1600 random IOPS is far past what the spindles can
@@ -2542,6 +2549,34 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
+          # Outcome check for the upload -> thumbnail pipeline (added 2026-11-02),
+          # fed every 10 min by the immich-thumbnail-freshness CronJob. From
+          # 2026-10-23 to 2026-11-02 uploads waited 3-21 hours for a thumbnail
+          # (a hung NFS 4.2 copy jammed the storage-template queue, then the
+          # worker died) and no existing alert fired. Counts uploads from the
+          # last 6h that are older than 15 min and still have no thumbnail; a
+          # healthy upload gets one in 2-3 s. Gated on jobs still queued in the
+          # upload pipeline (2026-11-03): an undecodable file leaves an upload
+          # without a thumbnail but every queue empty, and held this alert 47
+          # min after the backlog cleared. Every real delay so far left jobs
+          # queued (dead worker, hung move, backlog).
+          - alert: ImmichThumbnailsLagging
+            expr: |
+              immich_thumbnail_pending_assets{job="immich-thumbnail-freshness"} > 0
+              and on()
+              sum(immich_job_queue_jobs{job="immich-thumbnail-freshness"}) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} Immich uploads are over 15 min old with no thumbnail — check queue depths in Redis (immich_bull:<queue>:wait/active) and the immich-worker log"
+          - alert: ImmichThumbnailFreshnessStale
+            expr: time() - immich_thumbnail_freshness_last_run_timestamp{job="immich-thumbnail-freshness"} > 3600
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich thumbnail freshness check has not reported in {{ $value | printf \"%.0f\" }}s — ImmichThumbnailsLagging is blind until it does"
           # Immich HTTP error volume — ABSOLUTE RATES, not ratios (added 2026-09-01).
           #
           # Immich is already covered by HighService4xxRate (>30%),
@@ -4232,15 +4267,15 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Dolt (beads-server) history backup has never reported a successful run to Pushgateway"
-          # PostgreSQL dumps, grouped: dbaas full dump, dbaas per-database
-          # dumps, and the Immich dump. Each job pushes
-          # backup_last_success_timestamp after the dump is written. The
-          # kube_cronjob-based PostgreSQLBackupStale above covers only the dbaas
-          # full dump and fires on a Job exiting 0, so this adds per-db and
-          # Immich and reads the job's own success signal. Same 36h threshold
+          # PostgreSQL dumps, grouped: the dbaas dump (globals plus one dump per
+          # database since 2026-11-03, when the separate per-db job was merged
+          # into it) and the Immich dump. Each job pushes
+          # backup_last_success_timestamp only after every database dumped. The
+          # kube_cronjob-based PostgreSQLBackupStale above fires on a Job exiting
+          # 0, so this adds Immich and reads the job's own success signal. Same 36h threshold
           # as ClickHouse/Dolt; all three run daily around 00:00.
           - alert: PostgresBackupPushStale
-            expr: (time() - backup_last_success_timestamp{job=~"postgresql-backup|postgresql-backup-per-db|immich-postgresql-backup"}) > 129600
+            expr: (time() - backup_last_success_timestamp{job=~"postgresql-backup|immich-postgresql-backup"}) > 129600
             for: 30m
             labels:
               severity: warning
@@ -4250,7 +4285,6 @@ serverFiles:
           - alert: PostgresBackupNeverPushed
             expr: |
               absent(backup_last_success_timestamp{job="postgresql-backup"})
-              or absent(backup_last_success_timestamp{job="postgresql-backup-per-db"})
               or absent(backup_last_success_timestamp{job="immich-postgresql-backup"})
             for: 48h
             labels:
@@ -4315,13 +4349,23 @@ serverFiles:
               severity: critical
             annotations:
               summary: "LVM PVC snapshot job failed (status={{ $value }})"
+          # The SAS pool is 537 GiB, small enough that one wrongly placed bulk
+          # volume fills it. Warn at 80% used, well before LVMThinPoolLow.
+          # Fed by lvm-pvc-snapshot, so it updates once a day (03:02).
+          - alert: SASThinPoolFilling
+            expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot", vg="sas"} < 20
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "SAS thin pool sas/data has only {{ $value | printf \"%.0f\" }}% free (warns below 20% free, i.e. 80% used) — it is for small hot volumes; check what landed there"
           - alert: LVMThinPoolLow
             expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot"} < 15
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "LVM thin pool has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
+              summary: "LVM thin pool {{ $labels.vg }}/data has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
           # --- 3-2-1 Backup Pipeline Alerts ---
           - alert: WeeklyBackupStale
             expr: (time() - daily_backup_last_run_timestamp{job="daily-backup"}) > 777600
@@ -6440,7 +6484,7 @@ serverFiles:
           # which was computed from a per-pod /tmp file and always equalled the
           # current value (fresh /tmp each run), so the alert could never fire.
           - alert: DNSQuerySpike
-            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and dns_anomaly_total_queries > 1000
+            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and dns_anomaly_total_queries > 1000
             # for: 5m (was 0m) — a single 15-min scrape spike self-clears; a real
             # spike persists across scrapes (alert-noise 2026-06-12)
             for: 5m
@@ -6449,7 +6493,7 @@ serverFiles:
             annotations:
               summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x 1h avg)"
           - alert: DNSQueryRateDropped
-            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and avg_over_time(dns_anomaly_total_queries[1h] offset 15m) > 1000
+            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and avg_over_time(dns_anomaly_total_queries[1h] offset 30m) > 1000
             for: 10m
             labels:
               severity: warning
@@ -6658,7 +6702,7 @@ serverFiles:
           # page; for: 30m needs two consecutive non-GB reads.
           - alert: ProxyEgressWrongCountry
             expr: proxy_egress_probe_up == 1 and proxy_egress_exit_is_expected_country == 0
-            for: 30m
+            for: 45m  # two consecutive reads at the */30 cadence (was */15 + 30m until 2026-11-03)
             labels:
               severity: warning
             annotations:

@@ -320,6 +320,36 @@
              | list }}
       tags: [packages]
 
+    # A local mysql-server was installed by hand (apt-mark manual, never in this
+    # playbook) and has been stopped since 2026-09-01. Its datadir held two dev
+    # databases, finance (1.5M) and wrongmove (645M, the realestate-crawler dev
+    # copy; production runs in the cluster). Removed 2026-11-03 to free 2.5G of
+    # root disk, after the stopped datadir was archived to the Synology at
+    # Backup/Viki/devvm-archive/devvm-mysql-datadir-2026-11-03.tar.gz (gzip
+    # tested). The client side stays: libmysqlclient-dev, python3-pymysql and
+    # mysql-client are used to reach the cluster databases.
+    - name: Remove the hand-installed, stopped mysql-server
+      tags: [packages]
+      block:
+        - name: Stop and disable mysql
+          ansible.builtin.systemd_service:
+            name: mysql
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove the mysql-server packages
+          ansible.builtin.apt:
+            name: [mysql-server, mysql-server-8.0, mysql-server-core-8.0]
+            state: absent
+            purge: true
+            update_cache: false
+
+        - name: Remove the old mysql datadir (archived to the Synology first)
+          ansible.builtin.file:
+            path: /var/lib/mysql
+            state: absent
+
     # Caddy was installed by hand at some point and left running: the stock
     # welcome page on :80, zero handled requests in 30 days, nothing depending
     # on it (apt-cache rdepends is empty). Its apt repo was undeclared machine

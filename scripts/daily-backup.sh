@@ -202,10 +202,24 @@ else
     PVC_COUNT=0
     PVC_FAIL=0
 
-    # Iterate origin LVs (not snapshots), find latest snapshot for each
-    for origin_lv in $(lvs --noheadings -o lv_name pve 2>/dev/null | grep 'vm-9999-pvc-' | grep -v '_snap_' | tr -d ' '); do
+    # Iterate origin LVs (not snapshots) across every VG that holds Proxmox-CSI
+    # PVCs, and find the latest snapshot for each. Since 2026-11-03 there can be
+    # more than one such VG (pve on sdc, sas on the 600GB SAS pair); a VG that
+    # does not exist is skipped, so the list can name a pool before it is built.
+    # The VG must also be in lvm-pvc-snapshot's LVM_SNAP_VGS, or its PVCs have
+    # no snapshot to copy from.
+    PVC_VGS="${PVC_VGS:-pve sas}"
+    PVC_ORIGINS=$(for vg in ${PVC_VGS}; do
+        vgs "${vg}" >/dev/null 2>&1 || continue
+        # `|| true`: a VG with no PVCs yet makes grep exit 1, and under
+        # pipefail + errexit that status would abort the whole backup here.
+        lvs --noheadings -o lv_name "${vg}" 2>/dev/null | grep 'vm-9999-pvc-' | grep -v '_snap_' | tr -d ' ' | sed "s|^|${vg}/|" || true
+    done)
+    for origin in ${PVC_ORIGINS}; do
+        vg="${origin%%/*}"
+        origin_lv="${origin#*/}"
         # Find latest snapshot for this origin
-        snap=$(lvs --noheadings -o lv_name pve 2>/dev/null | tr -d ' ' | grep "^${origin_lv}_snap_" | sort | tail -1 || true)
+        snap=$(lvs --noheadings -o lv_name "${vg}" 2>/dev/null | tr -d ' ' | grep "^${origin_lv}_snap_" | sort | tail -1 || true)
         [ -z "${snap}" ] && continue
 
         # Resolve human-readable name
@@ -237,9 +251,9 @@ else
 
         # Detect LUKS-encrypted volumes and set up mount device
         LUKS_NAME=""
-        MOUNT_DEV="/dev/pve/${snap}"
+        MOUNT_DEV="/dev/${vg}/${snap}"
         MOUNT_OPTS="ro"
-        if blkid -o value -s TYPE "/dev/pve/${snap}" 2>/dev/null | grep -q 'crypto_LUKS'; then
+        if blkid -o value -s TYPE "/dev/${vg}/${snap}" 2>/dev/null | grep -q 'crypto_LUKS'; then
             # Clean up any stale LUKS mapping for this snapshot from a previous crashed run
             STALE_LUKS="pvc-snap-$(echo "${snap}" | md5sum | cut -c1-12)"
             if [ -e "/dev/mapper/${STALE_LUKS}" ]; then
@@ -248,7 +262,7 @@ else
             fi
             LUKS_KEY="/root/.luks-backup-key"
             LUKS_NAME="pvc-snap-$(echo "${snap}" | md5sum | cut -c1-12)"
-            if [ -f "${LUKS_KEY}" ] && cryptsetup open --type luks --key-file "${LUKS_KEY}" --readonly "/dev/pve/${snap}" "${LUKS_NAME}" 2>&1; then
+            if [ -f "${LUKS_KEY}" ] && cryptsetup open --type luks --key-file "${LUKS_KEY}" --readonly "/dev/${vg}/${snap}" "${LUKS_NAME}" 2>&1; then
                 MOUNT_DEV="/dev/mapper/${LUKS_NAME}"
                 MOUNT_OPTS="ro,noload"  # noload skips ext4 journal replay on read-only LUKS
                 log "  LUKS: decrypted ${snap} → ${LUKS_NAME}"

@@ -220,7 +220,7 @@ resource "kubernetes_cron_job_v1" "sync" {
     labels    = { app = "valia-sites", component = "sync" }
   }
   spec {
-    schedule                      = "*/10 * * * *"
+    schedule                      = "*/30 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 2
     failed_jobs_history_limit     = 3

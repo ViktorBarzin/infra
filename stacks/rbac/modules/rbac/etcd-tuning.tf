@@ -19,6 +19,14 @@
 #    deliberately NOT widened here. The port is reachable only from the
 #    10.0.20.0/24 management network.
 #
+# 3. backend-batch-interval 100ms (default) -> 1s (2026-11-03). etcd fsyncs
+#    every write to its WAL before acknowledging it; the bbolt backend then
+#    commits batches of applied writes on this interval, and each commit is a
+#    page write plus its own fsync. Durability is unchanged: after a crash etcd
+#    replays the WAL into the backend. Measured before: 2.66 backend commits/s,
+#    6.8 WAL fsyncs/s, 38.8 w/s on vm-200-disk-1 (1h), on the IOPS-bound sdc.
+#    The batch limit (10000 txns) still forces an earlier commit under load.
+
 # This patches the kubeadm-managed static pod manifest AND records the same
 # value in the kubeadm-config ClusterConfiguration, because the manifest alone
 # does not survive an upgrade.
@@ -34,6 +42,12 @@
 # refused. Putting it in extraArgs alongside snapshot-count is what makes it
 # durable; the manifest edit below is what makes it take effect now without
 # waiting for the next upgrade.
+#
+# Apply it through CI. The remote-exec SSH key is the Vault-held one CI uses;
+# a local `homelab tf apply rbac` from the devvm fails with "SSH authentication
+# failed (wizard@10.0.20.100)" (seen 2026-11-03), leaving this resource
+# destroyed-not-recreated in state until CI applies. A commit message that
+# quotes the CI skip marker anywhere also suppresses the pipeline.
 #
 # Applying this RESTARTS the etcd static pod on a single-node control plane, so
 # the apiserver briefly loses its datastore. Rollback is a file copy: the
@@ -72,6 +86,10 @@ new_args.append('--snapshot-count=50000')
 new_args = [a for a in new_args if not a.startswith('--listen-metrics-urls=')]
 new_args.append('--listen-metrics-urls=' + METRICS_URLS)
 
+# Update or add --backend-batch-interval (see item 3 in the header).
+new_args = [a for a in new_args if not a.startswith('--backend-batch-interval=')]
+new_args.append('--backend-batch-interval=1s')
+
 # Update or add --quota-backend-bytes (256MB, default is 2GB which is fine)
 # Keep default for now
 
@@ -89,7 +107,7 @@ if before == after:
 else:
     with open(path, 'w') as f:
         f.write(after)
-    print('etcd manifest updated: --snapshot-count=50000, --listen-metrics-urls=' + METRICS_URLS)
+    print('etcd manifest updated: --snapshot-count=50000, --backend-batch-interval=1s, --listen-metrics-urls=' + METRICS_URLS)
 "
       SCRIPT
       ,
@@ -125,17 +143,21 @@ else:
         # at the NEXT upgrade, months from now.
         echo "WARN: RECONCILE DID NOT RUN. Could not read kubeadm-config after waiting 120s for the apiserver."
         echo "WARN: etcd metrics will NOT survive the next kubeadm upgrade. Re-apply the rbac stack once the control plane is healthy."
-      elif printf '%s' "$CC" | grep -q 'name: listen-metrics-urls'; then
-        echo "kubeadm-config already carries listen-metrics-urls (no drift)"
+      elif printf '%s' "$CC" | grep -q 'name: listen-metrics-urls' && printf '%s' "$CC" | grep -q 'name: backend-batch-interval'; then
+        echo "kubeadm-config already carries listen-metrics-urls and backend-batch-interval (no drift)"
       else
         printf '%s' "$CC" > /tmp/kubeadm-cc.yaml
         if sudo python3 -c "
 import sys
 
-WANT_NAME = 'listen-metrics-urls'
-WANT_VAL  = 'http://127.0.0.1:2381,http://${var.k8s_master_host}:2381'
+WANT = [
+    ('listen-metrics-urls', 'http://127.0.0.1:2381,http://${var.k8s_master_host}:2381'),
+    ('backend-batch-interval', '1s'),
+]
 
-lines = open('/tmp/kubeadm-cc.yaml').read().split('\n')
+text = open('/tmp/kubeadm-cc.yaml').read()
+lines = text.split('\n')
+missing = [(k, v) for k, v in WANT if ('- name: ' + k) not in text]
 out, i, n, done = [], 0, len(lines), False
 while i < n:
     ln = lines[i]
@@ -148,21 +170,26 @@ while i < n:
         indent = ln[:len(ln) - len(ln.lstrip())]
         if i + 1 < n and lines[i + 1].strip().startswith('value:'):
             out.append(lines[i + 1]); i += 1
-        out.append(indent + '- name: ' + WANT_NAME)
-        out.append(indent + '  value: ' + WANT_VAL)
+        for k, v in missing:
+            out.append(indent + '- name: ' + k)
+            out.append(indent + '  value: ' + v)
         done = True
     i += 1
 if not done:
     sys.stderr.write('ANCHOR-NOT-FOUND: no etcd.local.extraArgs snapshot-count entry\n')
     sys.exit(3)
 open('/tmp/kubeadm-cc-new.yaml', 'w').write('\n'.join(out))
-print('kubeadm-config rewritten with ' + WANT_NAME)
+print('kubeadm-config rewritten with ' + ', '.join(k for k, _ in missing))
 " && sudo kubeadm init phase upload-config kubeadm --config /tmp/kubeadm-cc-new.yaml; then
           echo "kubeadm-config reconciled: etcd metrics survive the next control-plane upgrade"
         else
           echo "WARN: kubeadm-config reconcile failed; re-apply this stack after the next kubeadm upgrade"
         fi
-        rm -f /tmp/kubeadm-cc.yaml /tmp/kubeadm-cc-new.yaml
+        # sudo: the reconcile above writes kubeadm-cc-new.yaml as root, and a
+        # plain rm cannot remove a root-owned file in sticky /tmp. That failing
+        # rm was the script's last command, so it exited 1 and failed the
+        # apply even though both steps had worked (2026-11-03, pipeline 3242).
+        sudo rm -f /tmp/kubeadm-cc.yaml /tmp/kubeadm-cc-new.yaml
       fi
       SCRIPT
     ]
@@ -170,8 +197,9 @@ print('kubeadm-config rewritten with ' + WANT_NAME)
 
   # Re-run if the configuration changes
   triggers = {
-    snapshot_count     = "50000"
-    listen_metrics_url = "http://127.0.0.1:2381,http://${var.k8s_master_host}:2381"
+    snapshot_count         = "50000"
+    backend_batch_interval = "1s"
+    listen_metrics_url     = "http://127.0.0.1:2381,http://${var.k8s_master_host}:2381"
     # Bumped when the kubeadm-config reconcile step was added (2026-09-19) so
     # the new step actually runs against a master that already has the right
     # manifest — the other two triggers were unchanged by that work.

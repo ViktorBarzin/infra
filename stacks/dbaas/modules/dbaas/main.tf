@@ -950,129 +950,58 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local | gzip -9 > /backup/dump_$now.sql.gz
+                # One pass since 2026-11-03: users and grants, then one dump per
+                # database. This job used to run mysqldump --all-databases here and
+                # a separate mysql-backup-per-db job dumped every database again at
+                # 00:45, so each database was read twice a night on the IOPS-bound
+                # sdc. Per-database files keep their old paths
+                # (/backup/per-db/<db>/dump_<ts>.sql.gz). --routines --events are
+                # new: neither old dump captured stored routines or events.
+                # xtrace off from here: SHOW CREATE USER output carries hashes.
+                set +x
+                H=mysql.dbaas.svc.cluster.local
+                mysql -u root --host $H -N -e "SELECT CONCAT(QUOTE(user),'@',QUOTE(host)) FROM mysql.user WHERE user NOT IN ('mysql.sys','mysql.session','mysql.infoschema') ORDER BY user, host;" \
+                  | while read -r u; do
+                      mysql -u root --host $H -N -e "SHOW CREATE USER $u" | sed 's/$/;/'
+                      mysql -u root --host $H -N -e "SHOW GRANTS FOR $u" | sed 's/$/;/'
+                    done | gzip -9 > /backup/grants_$now.sql.gz
+                dbs=$(mysql -u root --host $H -N -e \
+                  "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys','mysql_innodb_cluster_metadata');")
+                total=0; ok=0; failed=0
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p "/backup/per-db/$db"
+                  if mysqldump -u root --host $H --single-transaction --set-gtid-purged=OFF --routines --events "$db" | gzip -9 > "/backup/per-db/$db/dump_$now.sql.gz"; then
+                    ok=$((ok + 1)); echo "  $db OK $(( $(stat -c%s "/backup/per-db/$db/dump_$now.sql.gz") / 1024 )) KiB"
+                  else
+                    failed=$((failed + 1)); echo "  $db FAILED"; rm -f "/backup/per-db/$db/dump_$now.sql.gz"
+                  fi
+                done
 
-                # Rotate — 14 day retention
+                # Rotate — 14 day retention. Top-level dump_*.sql.gz are the old
+                # full dumps, which stop being written on 2026-11-03 and age out.
                 cd /backup
-                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
-                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
+                find . -maxdepth 1 -name "grants_*.sql.gz" -type f -mtime +14 -delete
+                find . -maxdepth 1 -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -maxdepth 1 -name "dump_*.sql" -type f -mtime +14 -delete
+                find /backup/per-db -name "dump_*.sql.gz" -type f -mtime +14 -delete
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-                echo "=== Backup IO Stats ==="
+                echo "=== Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
                 echo "duration: $${_dur}s"
-                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
-                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
-                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
+                _out_bytes=$(du -cb /backup/grants_$now.sql.gz /backup/per-db/*/dump_$now.sql.gz 2>/dev/null | tail -1 | cut -f1)
+                if [ "$failed" -gt 0 ] || [ "$total" -eq 0 ]; then
+                  echo "per-database dump failures: $failed of $total"; exit 1
+                fi
 
-                _out_bytes=$(stat -c%s /backup/dump_$now.sql.gz)
                 curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup" <<PGEOF || true
                 backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
                 backup_written_bytes $(( _wb1 - _wb0 ))
                 backup_output_bytes $${_out_bytes}
-                backup_last_success_timestamp $(date +%s)
-                PGEOF
-              EOT
-              ]
-              # To restore (from outside of the cluster):
-              # run kubectl port-forward to pod e.g.:
-              # > kb port-forward mysql-647cfd4969-46rmw --address 0.0.0.0 3307:3306
-              # run mysql import (and specify non-localhost address to avoid using unix socket): (password is in tfvars)
-              # > mysql -u root -p --host 10.0.10.10 --port 3307 < /mnt/nfs/2024_01_06_13_54.sql
-              volume_mount {
-                name       = "mysql-backup"
-                mount_path = "/backup"
-              }
-            }
-            volume {
-              name = "mysql-backup"
-              persistent_volume_claim {
-                claim_name = module.nfs_mysql_backup_host.claim_name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
-  }
-}
-
-# Per-database MySQL backups (enables single-database restore without affecting others)
-resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
-  metadata {
-    name      = "mysql-backup-per-db"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-  }
-  spec {
-    concurrency_policy            = "Replace"
-    failed_jobs_history_limit     = 3
-    schedule                      = "45 0 * * *"
-    starting_deadline_seconds     = 600
-    successful_jobs_history_limit = 3
-    job_template {
-      metadata {}
-      spec {
-        backoff_limit              = 3
-        ttl_seconds_after_finished = 10
-        template {
-          metadata {}
-          spec {
-            container {
-              name  = "mysql-backup-per-db"
-              image = "docker.io/library/mysql:26.10.0"
-              env {
-                name = "MYSQL_PWD"
-                value_from {
-                  secret_key_ref {
-                    name = "cluster-secret"
-                    key  = "ROOT_PASSWORD"
-                  }
-                }
-              }
-              command = ["/bin/bash", "-c", <<-EOT
-                set -euo pipefail
-                _t0=$(date +%s)
-                now=$(date +"%Y_%m_%d_%H_%M")
-                MYSQL_HOST=mysql.dbaas.svc.cluster.local
-                failed=0
-                total=0
-                ok=0
-
-                # Discover all user databases
-                dbs=$(mysql -u root --host $MYSQL_HOST -N -e \
-                  "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys','mysql_innodb_cluster_metadata');")
-
-                for db in $dbs; do
-                  total=$((total + 1))
-                  mkdir -p /backup/per-db/$db
-                  echo "=== Backing up $db ==="
-                  if mysqldump -u root --host $MYSQL_HOST --single-transaction --set-gtid-purged=OFF "$db" | gzip -9 > "/backup/per-db/$db/dump_$now.sql.gz"; then
-                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.sql.gz")
-                    echo "  OK — $(( _size / 1024 )) KiB"
-                    ok=$((ok + 1))
-                  else
-                    echo "  FAILED"
-                    rm -f "/backup/per-db/$db/dump_$now.sql.gz"
-                    failed=$((failed + 1))
-                  fi
-                done
-
-                # Rotate — 14 day retention per database
-                find /backup/per-db -name "dump_*.sql.gz" -type f -mtime +14 -delete
-
-                _dur=$(($(date +%s) - _t0))
-                echo "=== Per-DB Backup Summary ==="
-                echo "databases: $total (ok: $ok, failed: $failed)"
-                echo "duration: $${_dur}s"
-
-                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup-per-db" <<PGEOF || true
-                backup_duration_seconds $${_dur}
                 backup_databases_total $total
                 backup_databases_ok $ok
                 backup_databases_failed $failed
@@ -1080,6 +1009,8 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
                 PGEOF
               EOT
               ]
+              # To restore: grants_<ts>.sql.gz first, then each per-database dump
+              # (docs/agents/storage-backup.md, docs/agents/databases.md).
               volume_mount {
                 name       = "mysql-backup"
                 mount_path = "/backup"
@@ -2701,131 +2632,54 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                pg_dumpall -h postgresql.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
-
-                # Rotate — 14 day retention
+                # One pass over the cluster since 2026-11-03: roles and other globals,
+                # then one custom-format dump per database. This job used to run a
+                # full pg_dumpall here and a separate postgresql-backup-per-db job
+                # dumped every database again at 00:15, so each database was read
+                # twice a night on the IOPS-bound sdc. The per-database files keep
+                # their old paths (/backup/per-db/<db>/dump_<ts>.dump), so a single-
+                # database restore is unchanged; a full restore is globals first,
+                # then pg_restore --create of each database (restore-postgresql.md).
+                # A manual or pre-upgrade run (scripts/renovate-rails) of this
+                # CronJob is therefore still a complete backup of the cluster.
+                pg_dumpall --globals-only -h postgresql.dbaas -U postgres | gzip -9 > /backup/globals_$now.sql.gz
+                dbs=$(psql -h postgresql.dbaas -U postgres -t -A -c \
+                  "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
+                total=0; ok=0; failed=0
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p "/backup/per-db/$db"
+                  if pg_dump -Fc -h postgresql.dbaas -U postgres "$db" > "/backup/per-db/$db/dump_$now.dump"; then
+                    ok=$((ok + 1)); echo "  $db OK $(( $(stat -c%s "/backup/per-db/$db/dump_$now.dump") / 1024 )) KiB"
+                  else
+                    failed=$((failed + 1)); echo "  $db FAILED"; rm -f "/backup/per-db/$db/dump_$now.dump"
+                  fi
+                done
+                # Rotate — 14 day retention. Top-level dump_*.sql.gz are the old
+                # full dumps, which stop being written on 2026-11-03 and age out.
                 cd /backup
-                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
-                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
-
+                find . -maxdepth 1 -name "globals_*.sql.gz" -type f -mtime +14 -delete
+                find . -maxdepth 1 -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -maxdepth 1 -name "dump_*.sql" -type f -mtime +14 -delete
+                find /backup/per-db -name "dump_*.dump" -type f -mtime +14 -delete
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-                echo "=== Backup IO Stats ==="
+                echo "=== Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
                 echo "duration: $${_dur}s"
                 echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
-                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
-                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
-
-                _out_bytes=$(stat -c%s /backup/dump_$now.sql.gz)
+                _out_bytes=$(du -cb /backup/globals_$now.sql.gz /backup/per-db/*/dump_$now.dump 2>/dev/null | tail -1 | cut -f1)
+                # A failed database fails the job, and the success timestamp below
+                # is pushed only when every database dumped.
+                if [ "$failed" -gt 0 ] || [ "$total" -eq 0 ]; then
+                  echo "per-database dump failures: $failed of $total"; exit 1
+                fi
                 push_metrics "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup" <<PGEOF || true
                 backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
                 backup_written_bytes $(( _wb1 - _wb0 ))
                 backup_output_bytes $${_out_bytes}
-                backup_last_success_timestamp $(date +%s)
-                PGEOF
-              EOT
-              ]
-              volume_mount {
-                name       = "postgresql-backup"
-                mount_path = "/backup"
-              }
-            }
-            volume {
-              name = "postgresql-backup"
-              persistent_volume_claim {
-                claim_name = module.nfs_postgresql_backup_host.claim_name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
-  }
-}
-
-# Per-database PostgreSQL backups (enables single-database restore without affecting others)
-resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
-  metadata {
-    name      = "postgresql-backup-per-db"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-  }
-  spec {
-    concurrency_policy            = "Replace"
-    failed_jobs_history_limit     = 3
-    schedule                      = "15 0 * * *"
-    starting_deadline_seconds     = 600
-    successful_jobs_history_limit = 3
-    job_template {
-      metadata {}
-      spec {
-        backoff_limit              = 3
-        ttl_seconds_after_finished = 10
-        template {
-          metadata {}
-          spec {
-            container {
-              name  = "postgresql-backup-per-db"
-              image = "docker.io/library/postgres:18.6-trixie"
-              env {
-                name = "PGPASSWORD"
-                value_from {
-                  secret_key_ref {
-                    name = "pg-cluster-superuser"
-                    key  = "password"
-                  }
-                }
-              }
-              command = ["/bin/bash", "-c", <<-EOT
-                set -euo pipefail
-                # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl
-                # or wget, and installing one at run time broke when bullseye-pgdg left apt.
-                push_metrics() {
-                  perl -MHTTP::Tiny -e 'local $/; my $b = <STDIN>; my $r = HTTP::Tiny->new(timeout => 30)->post($ARGV[0], {content => $b, headers => {"Content-Type" => "text/plain"}}); print STDERR "pushgateway: $r->{status} $r->{reason}\n"; exit($r->{success} ? 0 : 1)' "$1"
-                }
-
-                _t0=$(date +%s)
-                now=$(date +"%Y_%m_%d_%H_%M")
-                PGHOST=postgresql.dbaas
-                PGUSER=postgres
-                failed=0
-                total=0
-                ok=0
-
-                # Discover all user databases
-                dbs=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -U $PGUSER -t -A -c \
-                  "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
-
-                for db in $dbs; do
-                  total=$((total + 1))
-                  mkdir -p /backup/per-db/$db
-                  echo "=== Backing up $db ==="
-                  if PGPASSWORD=$PGPASSWORD pg_dump -Fc -h $PGHOST -U $PGUSER "$db" > "/backup/per-db/$db/dump_$now.dump"; then
-                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.dump")
-                    echo "  OK — $(( _size / 1024 )) KiB"
-                    ok=$((ok + 1))
-                  else
-                    echo "  FAILED"
-                    rm -f "/backup/per-db/$db/dump_$now.dump"
-                    failed=$((failed + 1))
-                  fi
-                done
-
-                # Rotate — 14 day retention per database
-                find /backup/per-db -name "dump_*.dump" -type f -mtime +14 -delete
-
-                _dur=$(($(date +%s) - _t0))
-                echo "=== Per-DB Backup Summary ==="
-                echo "databases: $total (ok: $ok, failed: $failed)"
-                echo "duration: $${_dur}s"
-
-                push_metrics "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup-per-db" <<PGEOF || true
-                backup_duration_seconds $${_dur}
                 backup_databases_total $total
                 backup_databases_ok $ok
                 backup_databases_failed $failed
@@ -2837,15 +2691,6 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
                 name       = "postgresql-backup"
                 mount_path = "/backup"
               }
-              resources {
-                requests = {
-                  memory = "256Mi"
-                  cpu    = "50m"
-                }
-                limits = {
-                  memory = "512Mi"
-                }
-              }
             }
             volume {
               name = "postgresql-backup"
@@ -2863,3 +2708,4 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+

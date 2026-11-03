@@ -38,7 +38,24 @@ consecutive days is schema-only — that database is empty, and has been since
 before the oldest retained dump. Bisect the two snapshots above to bracket when
 the data disappeared.
 
-## Restore from pg_dumpall
+## Restore the whole cluster (globals + per-database dumps)
+
+Since 2026-11-03 the nightly `postgresql-backup` job no longer writes a single
+`pg_dumpall` file. It writes `globals_<ts>.sql.gz` (roles, tablespaces) and one
+`pg_dump -Fc` per database under `per-db/<db>/dump_<ts>.dump`. To restore
+everything into an empty cluster, load the globals, then each database:
+
+```bash
+PGPASSWORD=... zcat /backup/globals_<ts>.sql.gz | psql -h 127.0.0.1 -p 5433 -U postgres
+for f in /backup/per-db/*/dump_<ts>.dump; do
+  PGPASSWORD=... pg_restore --create -h 127.0.0.1 -p 5433 -U postgres -d postgres "$f"
+done
+```
+
+The full-dump procedure below still applies to the older `dump_*.sql.gz` files,
+which age out of the 14-day retention by 2026-11-17.
+
+## Restore from pg_dumpall (dumps before 2026-11-03)
 
 ### 1. Identify the backup to restore
 ```bash

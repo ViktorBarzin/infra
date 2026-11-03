@@ -38,6 +38,15 @@ module "tls_secret" {
 }
 
 # NFS volumes on Proxmox host (migrated from TrueNAS 2026-04-13)
+#
+# The photo volumes mount as NFS 4.1, not 4.2 (2026-11-02). Immich moves each
+# upload from upload/ to library/ (storage template), and across two mounts that
+# is a copy. Over 4.2 the kernel turns the copy into a server-side COPY, and
+# since the Proxmox host's 7.0.14-25 kernel (booted 2026-10-23) that call never
+# returns. One hung move held the storage-template queue, which runs one job at
+# a time, so new uploads got no thumbnail until the midnight "missing
+# thumbnails" task, for 10 days. Details: modules/kubernetes/nfs_volume
+# var.nfs_version and docs/post-mortems/2026-11-02-immich-thumbnails-nfs-copy-hang.md.
 
 module "nfs_backups_host" {
   source             = "../../modules/kubernetes/nfs_volume"
@@ -46,6 +55,7 @@ module "nfs_backups_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs/immich/backups"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_encoded_video_host" {
@@ -55,6 +65,7 @@ module "nfs_encoded_video_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs/immich/encoded-video"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_library_host" {
@@ -64,6 +75,7 @@ module "nfs_library_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs/immich/library"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_profile_host" {
@@ -73,6 +85,7 @@ module "nfs_profile_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs/immich/profile"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_thumbs_host" {
@@ -82,6 +95,7 @@ module "nfs_thumbs_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs-ssd/immich/thumbs"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_upload_host" {
@@ -91,6 +105,7 @@ module "nfs_upload_host" {
   nfs_server         = var.proxmox_host
   nfs_path           = "/srv/nfs/immich/upload"
   storage_class_name = "nfs-pve"
+  nfs_version        = "4.1"
 }
 
 module "nfs_postgresql_host" {
@@ -325,6 +340,25 @@ resource "kubernetes_deployment" "immich_server" {
           # checkWorkers() warning ("No microservices worker is connected").
           # The 2026-05-24 startup-probe lesson (1h vector reindex after a PG
           # restart) moved to immich-api, which kept the HTTP probes.
+          #
+          # "Process alive" turned out not to be enough (2026-11-02). At 00:01
+          # UTC the worker lost its Postgres connection, logged "microservices
+          # worker error", and its job thread died while the main process kept
+          # running. The pod stayed Running with zero Redis connections for 22
+          # hours, and the api pods' warning (ImmichNoJobWorker) stopped after
+          # about 2.5 hours, so nothing noticed. A live worker holds ~60 BullMQ
+          # connections to Redis on 6379 (hex 18EB); this probe restarts the
+          # pod when it holds none. tcp6 is read too so the check survives the
+          # cluster moving to IPv6. Five failed minutes tolerate a Redis restart.
+          liveness_probe {
+            exec {
+              command = ["/bin/sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 | grep -q ':18EB 01 '"]
+            }
+            initial_delay_seconds = 120
+            period_seconds        = 60
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
 
           # volume_mount {
           #   name       = "library-old"
@@ -1147,7 +1181,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
-    schedule                      = "*/5 * * * *"
+    schedule                      = "*/9 * * * *" # was */5 until 2026-11-03 (sdc write load). */9 keeps the longest gap at 9 min, under the 600 s CLIP model TTL the warmup ping must beat.
     starting_deadline_seconds     = 60
     job_template {
       metadata {}

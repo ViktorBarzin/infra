@@ -262,7 +262,7 @@ resource "kubernetes_cron_job_v1" "janitor" {
     namespace = var.namespace
   }
   spec {
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/30 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
