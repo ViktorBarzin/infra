@@ -14,8 +14,9 @@
 #   - HE_IPv6 inbound: TCP 80/443 + UDP 443 to ::203 (Traefik), TCP
 #     25/465/587/993 to ::204 (mailserver-v6), ahead of the tunnel's
 #     "Block all other traffic" rule.
-#   - Four IPv6 port forwards on HE_IPv6, mail ports on ::203 -> ::204,
-#     disabled until phase 6 sets mail_forward_enabled: true.
+#   - Four IPv6 port forwards on HE_IPv6, mail ports on ::203 -> ::204
+#     (enabled since phase 6, 2026-11-03; -e mail_forward_enabled=false
+#     disables them).
 #   - A floating block for any fc00::/7 source leaving on HE_IPv6.
 #
 # ORDERING. Raise the tunnel MTU on HE's side to 1480 FIRST
@@ -29,7 +30,6 @@
 #      presence claim host:pfsense --purpose "k8s VLAN IPv6 (dual-stack phase 1)"):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-k8s-ipv6.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-k8s-ipv6.yml
-#   phase 6 : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-k8s-ipv6.yml -e mail_forward_enabled=true
 #   pf lines the managed rules would produce (read-only):
 #             ssh admin@10.0.20.1 /usr/local/bin/php -f /tmp/pfsense-k8s-ipv6-config.php -- --render
 #
@@ -48,7 +48,7 @@
   vars:
     php_script_remote: /tmp/pfsense-k8s-ipv6-config.php
     he_mtu: 1480
-    mail_forward_enabled: false
+    mail_forward_enabled: true
     k8s_gw6: "2001:470:5a7f:20::1"
     script_args: >-
       --he-mtu={{ he_mtu | int }}
