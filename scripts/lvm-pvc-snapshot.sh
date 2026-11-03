@@ -4,6 +4,13 @@
 set -euo pipefail
 
 # --- Configuration ---
+# Every VG whose thin pool "data" holds Proxmox-CSI PVCs. pve is sdc; sas is
+# the 600GB SAS RAID1 added 2026-11-03. A VG that does not exist (or has no
+# "data" pool) is skipped, so the list can name a pool before it is built.
+# daily-backup's PVC_VGS must list the same VGs, or snapshots made here are
+# never copied to sda. Functions below act on ${VG}; the commands loop over
+# active_vgs and set it.
+VGS="${LVM_SNAP_VGS:-pve sas}"
 VG="pve"
 THINPOOL="data"
 SNAP_SUFFIX_FORMAT="%Y%m%d_%H%M"
@@ -25,6 +32,23 @@ warn() { log "WARN: $*" >&2; }
 die()  { log "FATAL: $*" >&2; exit 1; }
 
 # --- Helpers ---
+
+# Proxmox storage id (the third segment of a Proxmox-CSI volumeHandle) per VG.
+storage_for_vg() {
+    case "$1" in
+        pve) echo "local-lvm" ;;
+        sas) echo "sas-lvm" ;;
+        *)   return 1 ;;
+    esac
+}
+
+active_vgs() {
+    local vg
+    for vg in ${VGS}; do
+        lvs "${vg}/${THINPOOL}" >/dev/null 2>&1 && echo "${vg}"
+    done
+    return 0
+}
 
 get_thinpool_free_pct() {
     local data_pct
@@ -95,8 +119,11 @@ get_original_lv_from_snap() {
 
 push_metrics() {
     local status="$1" created="$2" failed="$3" pruned="$4"
-    local free_pct
-    free_pct=$(get_thinpool_free_pct)
+    local free_lines="" vg
+    for vg in $(active_vgs); do
+        free_lines+="lvm_snapshot_thinpool_free_pct{vg=\"${vg}\"} $(VG="${vg}" get_thinpool_free_pct)"$'\n'
+    done
+    free_lines="${free_lines%$'\n'}"
 
     cat <<METRICS | curl -sf --connect-timeout 5 --max-time 10 --data-binary @- \
         "${PUSHGATEWAY}/metrics/job/${PUSHGATEWAY_JOB}" 2>/dev/null || warn "Failed to push metrics to Pushgateway"
@@ -117,7 +144,7 @@ lvm_snapshot_failed_total ${failed}
 lvm_snapshot_pruned_total ${pruned}
 # HELP lvm_snapshot_thinpool_free_pct Thin pool free percentage
 # TYPE lvm_snapshot_thinpool_free_pct gauge
-lvm_snapshot_thinpool_free_pct ${free_pct}
+${free_lines}
 METRICS
 }
 
@@ -126,44 +153,53 @@ METRICS
 cmd_snapshot() {
     log "Starting PVC LVM thin snapshot run"
 
-    # Check thin pool free space
-    local free_pct
-    free_pct=$(get_thinpool_free_pct)
-    log "Thin pool free space: ${free_pct}%"
-    if (( $(echo "${free_pct} < ${MIN_FREE_PCT}" | bc -l) )); then
-        warn "Thin pool has only ${free_pct}% free (minimum: ${MIN_FREE_PCT}%). Aborting."
-        push_metrics 2 0 0 0
-        exit 1
-    fi
-
-    # Discover PVC LVs
-    local lvs_list
-    lvs_list=$(discover_pvc_lvs)
-    if [[ -z "${lvs_list}" ]]; then
-        warn "No PVC LVs found matching pattern"
-        push_metrics 2 0 0 0
-        exit 1
-    fi
-
-    local count=0 failed=0 total
-    total=$(echo "${lvs_list}" | wc -l | tr -d ' ')
-    local snap_ts
+    local count=0 failed=0 total=0 skipped_vgs=0
+    local snap_ts vg
     snap_ts=$(date +"${SNAP_SUFFIX_FORMAT}")
 
-    log "Found ${total} PVC LVs to snapshot"
+    for vg in $(active_vgs); do
+        VG="${vg}"
 
-    while IFS= read -r lv; do
-        local snap_name="${lv}_snap_${snap_ts}"
-        if lvcreate -s -kn -n "${snap_name}" "${VG}/${lv}" >/dev/null 2>&1; then
-            log "  Created: ${snap_name}"
-            count=$((count + 1))
-        else
-            warn "  Failed to create snapshot for ${lv}"
-            failed=$((failed + 1))
+        # Check thin pool free space. A full pool skips only its own VG.
+        local free_pct
+        free_pct=$(get_thinpool_free_pct)
+        log "[${VG}] Thin pool free space: ${free_pct}%"
+        if (( $(echo "${free_pct} < ${MIN_FREE_PCT}" | bc -l) )); then
+            warn "[${VG}] Thin pool has only ${free_pct}% free (minimum: ${MIN_FREE_PCT}%). Skipping this VG."
+            skipped_vgs=$((skipped_vgs + 1))
+            continue
         fi
-    done <<< "${lvs_list}"
 
-    log "Snapshot run complete: ${count} created, ${failed} failed out of ${total}"
+        # Discover PVC LVs
+        local lvs_list vg_total
+        lvs_list=$(discover_pvc_lvs)
+        if [[ -z "${lvs_list}" ]]; then
+            log "[${VG}] No PVC LVs to snapshot"
+            continue
+        fi
+        vg_total=$(echo "${lvs_list}" | wc -l | tr -d ' ')
+        total=$((total + vg_total))
+        log "[${VG}] Found ${vg_total} PVC LVs to snapshot"
+
+        while IFS= read -r lv; do
+            local snap_name="${lv}_snap_${snap_ts}"
+            if lvcreate -s -kn -n "${snap_name}" "${VG}/${lv}" >/dev/null 2>&1; then
+                log "  Created: ${VG}/${snap_name}"
+                count=$((count + 1))
+            else
+                warn "  Failed to create snapshot for ${VG}/${lv}"
+                failed=$((failed + 1))
+            fi
+        done <<< "${lvs_list}"
+    done
+
+    if (( total == 0 && skipped_vgs == 0 )); then
+        warn "No PVC LVs found matching pattern in any of: ${VGS}"
+        push_metrics 2 0 0 0
+        exit 1
+    fi
+
+    log "Snapshot run complete: ${count} created, ${failed} failed out of ${total}, ${skipped_vgs} VG(s) skipped for space"
 
     # Auto-prune
     log "Running auto-prune..."
@@ -172,14 +208,20 @@ cmd_snapshot() {
 
     # Determine status
     local status=0
-    if (( failed > 0 && count > 0 )); then
+    if (( count == 0 )); then
+        status=2  # nothing created (all failed, or every VG out of space)
+    elif (( failed > 0 || skipped_vgs > 0 )); then
         status=1  # partial
-    elif (( failed > 0 && count == 0 )); then
-        status=2  # all failed
     fi
 
     push_metrics "${status}" "${count}" "${failed}" "${pruned}"
     log "Done"
+    # Same exit contract as before multi-VG: fail the unit whenever a pool was
+    # too full to snapshot, so its PVCs going unprotected is never a green run.
+    # Individual lvcreate failures stay visible through the status metric.
+    if (( skipped_vgs > 0 )); then
+        exit 1
+    fi
 }
 
 cmd_list() {
@@ -189,9 +231,11 @@ cmd_list() {
     local now
     now=$(date +%s)
 
-    local snap_lines
-    snap_lines=$(lvs --noheadings --nosuffix -o lv_name,lv_size,data_percent "${VG}" 2>/dev/null \
-        | grep -E '_snap_|_pre_restore_' || true)
+    local snap_lines vg
+    snap_lines=$(for vg in $(active_vgs); do
+        lvs --noheadings --nosuffix -o lv_name,lv_size,data_percent "${vg}" 2>/dev/null \
+            | grep -E '_snap_|_pre_restore_' | sed "s|^ *|${vg}/|" || true
+    done)
 
     if [[ -z "${snap_lines}" ]]; then
         echo "(no snapshots found)"
@@ -216,7 +260,7 @@ cmd_list() {
             else
                 age_str="unknown"
             fi
-            printf "%-45s %-50s %8s %7s%%\n" "${original}" "${name}" "${age_str}" "${data_pct}"
+            printf "%-45s %-50s %8s %7s%%\n" "${name%%/*}/${original#*/}" "${name#*/}" "${age_str}" "${data_pct}"
         done
 }
 
@@ -229,32 +273,30 @@ cmd_prune() {
 cmd_prune_count() {
     # NOTE: stdout of this function is captured by callers (`pruned=$(cmd_prune_count)`),
     # so all log/warn output must go to stderr — the only thing on stdout is the count.
-    local now cutoff pruned=0
+    local now cutoff pruned=0 vg
     now=$(date +%s)
     cutoff=$(( now - RETENTION_DAYS * 86400 ))
 
-    local snaps
-    snaps=$(lvs --noheadings -o lv_name,pool_lv "${VG}" 2>/dev/null \
-        | awk -v pool="${THINPOOL}" '$2 == pool { print $1 }' \
-        | grep -E '_snap_|_pre_restore_' || true)
+    for vg in $(active_vgs); do
+        local snaps
+        snaps=$(lvs --noheadings -o lv_name,pool_lv "${vg}" 2>/dev/null \
+            | awk -v pool="${THINPOOL}" '$2 == pool { print $1 }' \
+            | grep -E '_snap_|_pre_restore_' || true)
+        [[ -z "${snaps}" ]] && continue
 
-    if [[ -z "${snaps}" ]]; then
-        echo "0"
-        return
-    fi
-
-    while IFS= read -r snap; do
-        local epoch
-        epoch=$(parse_snap_timestamp "${snap}")
-        if (( epoch > 0 && epoch < cutoff )); then
-            if lvremove -f "${VG}/${snap}" >/dev/null 2>&1; then
-                log "  Pruned: ${snap}" >&2
-                pruned=$((pruned + 1))
-            else
-                warn "  Failed to prune: ${snap}"
+        while IFS= read -r snap; do
+            local epoch
+            epoch=$(parse_snap_timestamp "${snap}")
+            if (( epoch > 0 && epoch < cutoff )); then
+                if lvremove -f "${vg}/${snap}" >/dev/null 2>&1; then
+                    log "  Pruned: ${vg}/${snap}" >&2
+                    pruned=$((pruned + 1))
+                else
+                    warn "  Failed to prune: ${vg}/${snap}"
+                fi
             fi
-        fi
-    done <<< "${snaps}"
+        done <<< "${snaps}"
+    done
 
     echo "${pruned}"
 }
@@ -266,10 +308,16 @@ cmd_restore() {
         die "Usage: $0 restore <pvc-lv-name> <snapshot-lv-name>"
     fi
 
-    # Validate LVs exist
-    if ! lvs "${VG}/${pvc_lv}" >/dev/null 2>&1; then
-        die "PVC LV '${pvc_lv}' not found in VG '${VG}'"
-    fi
+    # Find the VG that holds this PVC LV
+    local vg found_vg=""
+    for vg in $(active_vgs); do
+        if lvs "${vg}/${pvc_lv}" >/dev/null 2>&1; then
+            [[ -z "${found_vg}" ]] || die "PVC LV '${pvc_lv}' exists in both ${found_vg} and ${vg}; restore it by hand"
+            found_vg="${vg}"
+        fi
+    done
+    [[ -n "${found_vg}" ]] || die "PVC LV '${pvc_lv}' not found in any of: ${VGS}"
+    VG="${found_vg}"
     if ! lvs "${VG}/${snapshot_lv}" >/dev/null 2>&1; then
         die "Snapshot LV '${snapshot_lv}' not found in VG '${VG}'"
     fi
@@ -277,15 +325,24 @@ cmd_restore() {
     # Discover K8s context
     log "Discovering Kubernetes context for LV '${pvc_lv}'..."
 
-    local volume_handle="local-lvm:${pvc_lv}"
+    # volumeHandle is <region>/<zone>/<storage>/<lv>, e.g.
+    # pve/pve/local-lvm/vm-9999-pvc-..., so match the storage AND the LV: the
+    # same LV name can exist in two VGs mid-migration.
+    local storage_id
+    storage_id=$(storage_for_vg "${VG}") || die "No Proxmox storage id known for VG '${VG}'"
     local pv_info
     pv_info=$(kubectl get pv -o json 2>/dev/null | jq -r \
-        --arg vh "${volume_handle}" \
-        '.items[] | select(.spec.csi.volumeHandle == $vh) | "\(.metadata.name) \(.spec.claimRef.namespace) \(.spec.claimRef.name)"' \
+        --arg vh_suffix "/${storage_id}/${pvc_lv}" \
+        '.items[] | select(.spec.csi.driver == "csi.proxmox.sinextra.dev")
+            | select(.spec.csi.volumeHandle // "" | endswith($vh_suffix))
+            | "\(.metadata.name) \(.spec.claimRef.namespace) \(.spec.claimRef.name)"' \
     ) || die "Failed to query PVs (is kubectl configured?)"
 
     if [[ -z "${pv_info}" ]]; then
-        die "No PV found with volumeHandle '${volume_handle}'"
+        die "No PV found whose volumeHandle ends in '/${storage_id}/${pvc_lv}'"
+    fi
+    if (( $(echo "${pv_info}" | wc -l) > 1 )); then
+        die "More than one PV matches '/${storage_id}/${pvc_lv}', refusing to guess: ${pv_info//$'\n'/; }"
     fi
 
     local pv_name pvc_ns pvc_name
@@ -433,12 +490,13 @@ usage() {
 Usage: $(basename "$0") <command> [args]
 
 Commands:
-  snapshot              Create thin snapshots of all PVC LVs
+  snapshot              Create thin snapshots of all PVC LVs in every VG of LVM_SNAP_VGS
   list                  List existing snapshots with age and data%
   prune                 Remove snapshots older than ${RETENTION_DAYS} days
   restore <lv> <snap>   Restore a PVC from a snapshot (interactive)
 
 Environment:
+  LVM_SNAP_VGS          VGs to cover, space-separated (default: pve sas)
   LVM_SNAP_PUSHGATEWAY  Pushgateway URL (default: ${PUSHGATEWAY})
   KUBECONFIG            Kubeconfig path (default: /root/.kube/config)
 EOF
