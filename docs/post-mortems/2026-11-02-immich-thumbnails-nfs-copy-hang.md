@@ -109,6 +109,12 @@ afternoon.
   (`pvc-92defc43-...`), is not in Terraform, so CI could not update it. Its
   `mountOptions` were patched to `nfsvers=4.1` by hand to match the `nfs-pve`
   StorageClass it was provisioned from.
+- 2026-11-03: `ImmichThumbnailsLagging` also requires jobs to be queued in the
+  upload pipeline (`immich_job_queue_jobs`, read from Redis by the same
+  CronJob). On its first night it fired at 23:44 and resolved at about 01:54,
+  but the backlog had cleared at about 01:07; the last 47 minutes were one
+  Lightroom `-Rendered.dng` that Immich cannot decode. Such a file leaves every
+  queue empty, so the gated alert ignores it.
 
 ## Why no alert fired
 
