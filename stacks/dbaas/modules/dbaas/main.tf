@@ -586,8 +586,10 @@ resource "kubernetes_stateful_set_v1" "mysql_v26" {
         }
       }
       spec {
-        access_modes       = ["ReadWriteOnce"]
-        storage_class_name = "proxmox-lvm-encrypted"
+        access_modes = ["ReadWriteOnce"]
+        # SAS pool since 2026-11-03 (database engines live there); the live PVC
+        # was moved by copy + rebind. The VCT is in ignore_changes below.
+        storage_class_name = "proxmox-lvm-encrypted-sas"
         resources {
           requests = {
             storage = "30Gi"

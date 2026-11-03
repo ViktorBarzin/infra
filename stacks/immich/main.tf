@@ -132,8 +132,10 @@ resource "kubernetes_persistent_volume_claim" "immich_postgresql_encrypted" {
     }
   }
   spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
+    access_modes = ["ReadWriteOnce"]
+    # SAS pool since 2026-11-03 (database engines live there), moved by copy +
+    # rebind under the same PVC name, so Terraform adopts it without a diff.
+    storage_class_name = "proxmox-lvm-encrypted-sas"
     resources {
       requests = { storage = "10Gi" }
     }

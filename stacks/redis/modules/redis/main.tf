@@ -348,8 +348,11 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         }
       }
       spec {
-        access_modes       = ["ReadWriteOnce"]
-        storage_class_name = "proxmox-lvm-encrypted"
+        access_modes = ["ReadWriteOnce"]
+        # SAS pool since 2026-11-03 (database engines live there). The live PVC
+        # was moved by copy + rebind; this VCT is ignored below, so the value
+        # here is the record of where the data is.
+        storage_class_name = "proxmox-lvm-encrypted-sas"
         resources {
           requests = {
             storage = "5Gi"
@@ -363,6 +366,9 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
+      # The VCT is immutable on a live StatefulSet (see the annotations note
+      # above); ignoring it lets the record above change without a failed apply.
+      spec[0].volume_claim_template,
     ]
   }
 }
