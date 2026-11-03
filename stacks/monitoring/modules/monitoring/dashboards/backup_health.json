@@ -397,7 +397,7 @@
       "targets": [
         {
           "expr": "lvm_snapshot_thinpool_free_pct{job=\"lvm-pvc-snapshot\"}",
-          "legendFormat": "Free %",
+          "legendFormat": "{{vg}} free %",
           "refId": "A"
         }
       ]

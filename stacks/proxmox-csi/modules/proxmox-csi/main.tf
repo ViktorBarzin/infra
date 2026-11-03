@@ -81,6 +81,43 @@ resource "helm_release" "proxmox_csi" {
           "csi.storage.k8s.io/node-expand-secret-namespace" = "kube-system"
         }
       },
+      # The same two classes on the 600GB 10K SAS RAID1 (PERC VD, VG `sas`,
+      # Proxmox storage `sas-lvm`), added 2026-11-03 to take random-I/O load
+      # off sdc. Created empty: which workloads move here is decided
+      # separately (docs/architecture/storage.md). 558 GB usable, so this
+      # pair is for small, hot volumes, never bulk data.
+      {
+        name                 = "proxmox-lvm-sas"
+        storage              = "sas-lvm"
+        reclaimPolicy        = "Retain"
+        fstype               = "ext4"
+        ssd                  = false
+        cache                = "none"
+        volumeBindingMode    = "WaitForFirstConsumer"
+        allowVolumeExpansion = true
+        annotations = {
+          "resize.topolvm.io/enabled" = "true"
+        }
+      },
+      {
+        name                 = "proxmox-lvm-encrypted-sas"
+        storage              = "sas-lvm"
+        reclaimPolicy        = "Retain"
+        fstype               = "ext4"
+        ssd                  = false
+        cache                = "none"
+        volumeBindingMode    = "WaitForFirstConsumer"
+        allowVolumeExpansion = true
+        annotations = {
+          "resize.topolvm.io/enabled" = "true"
+        }
+        extraParameters = {
+          "csi.storage.k8s.io/node-stage-secret-name"       = "proxmox-csi-encryption"
+          "csi.storage.k8s.io/node-stage-secret-namespace"  = "kube-system"
+          "csi.storage.k8s.io/node-expand-secret-name"      = "proxmox-csi-encryption"
+          "csi.storage.k8s.io/node-expand-secret-namespace" = "kube-system"
+        }
+      },
     ]
 
     # Sidecar leader election: lease 60s, renew deadline 45s, retry 15s.
