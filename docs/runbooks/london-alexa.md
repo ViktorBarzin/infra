@@ -24,6 +24,8 @@ flowchart TD
 | Lambda | `ha-london-alexa`, eu-west-1, account 924337254671 | HA's reference code from gist `matt2005/744b5ef548cc13d88d0569eea65f5e5b`, fetched on every deploy; the gist revision is in the function description. Only the skill may invoke it |
 | AWS credentials | IAM user `alexa-ha-london`, policy `scripts/london-alexa/iam-policy.json` | Reaches only this function, its role and its log group, plus two read-only lookups |
 | HA side | `alexa:` block at the end of `/config/configuration.yaml` on ha-london | Exposes only the entities listed in its filter |
+| Alexa events | `endpoint`, `client_id`, `client_secret` in the `alexa:` block (2026-11-03) | The skill has the `alexa::async_event:write` permission, so HA reports sensor state to Alexa and a sensor can trigger a Routine. Credentials are the skill's messaging credentials (`ask.sh smapi get-skill-credentials`), in `secrets.yaml` and Vault |
+| Assistant delivery | `packages/alexa_assistant.yaml` on ha-london | The contact sensor that the alexa-assistant app opens through a webhook when an answer is ready; a Routine on Anca's account then says "open my assistant". See the alexa-assistant repo's plan, section "Delivery" |
 | HA login | non-admin HA user `alexa` | Alexa holds this user's refresh token. Changes made by voice show this user in the logbook |
 | Cost | $0 | Lambda and CloudWatch stay inside the always-free allowance; the Alexa developer account is free |
 
@@ -33,6 +35,8 @@ Secrets, all in Vault `secret/viktor`:
 |---|---|
 | `aws_alexa_access_key_id`, `aws_alexa_secret_access_key` | the `alexa-ha-london` IAM user |
 | `ask_cli_refresh_token` | Login with Amazon token for Anca's developer account, used by `ask.sh` |
+| `ha_london_alexa_events_client_id`, `ha_london_alexa_events_client_secret` | the skill's messaging credentials for Alexa events |
+| `ha_london_alexa_assistant_webhook_id` | the Assistant delivery webhook id (`secret/alexa-assistant` `ha_webhook_url` holds the full URL) |
 | `home_assistant_london_alexa_password` | the HA `alexa` user; also in Viktor's Vaultwarden as "ha-london alexa (Alexa skill login)" |
 
 ## Add another device
