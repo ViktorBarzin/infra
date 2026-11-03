@@ -4267,15 +4267,15 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Dolt (beads-server) history backup has never reported a successful run to Pushgateway"
-          # PostgreSQL dumps, grouped: dbaas full dump, dbaas per-database
-          # dumps, and the Immich dump. Each job pushes
-          # backup_last_success_timestamp after the dump is written. The
-          # kube_cronjob-based PostgreSQLBackupStale above covers only the dbaas
-          # full dump and fires on a Job exiting 0, so this adds per-db and
-          # Immich and reads the job's own success signal. Same 36h threshold
+          # PostgreSQL dumps, grouped: the dbaas dump (globals plus one dump per
+          # database since 2026-11-03, when the separate per-db job was merged
+          # into it) and the Immich dump. Each job pushes
+          # backup_last_success_timestamp only after every database dumped. The
+          # kube_cronjob-based PostgreSQLBackupStale above fires on a Job exiting
+          # 0, so this adds Immich and reads the job's own success signal. Same 36h threshold
           # as ClickHouse/Dolt; all three run daily around 00:00.
           - alert: PostgresBackupPushStale
-            expr: (time() - backup_last_success_timestamp{job=~"postgresql-backup|postgresql-backup-per-db|immich-postgresql-backup"}) > 129600
+            expr: (time() - backup_last_success_timestamp{job=~"postgresql-backup|immich-postgresql-backup"}) > 129600
             for: 30m
             labels:
               severity: warning
@@ -4285,7 +4285,6 @@ serverFiles:
           - alert: PostgresBackupNeverPushed
             expr: |
               absent(backup_last_success_timestamp{job="postgresql-backup"})
-              or absent(backup_last_success_timestamp{job="postgresql-backup-per-db"})
               or absent(backup_last_success_timestamp{job="immich-postgresql-backup"})
             for: 48h
             labels:

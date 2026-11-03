@@ -39,7 +39,7 @@ Release notes that mattered for this move:
 | What follows the switch | the `mysql` Service, so every app, Vault's database secrets engine, `mysqld-exporter`, phpMyAdmin and both backup CronJobs (host `mysql.dbaas`); the `mysql_static_user`, `mysql_exporter_user` and `mysql_verify_probe_user` provisioners (they exec into `<active>-0`) |
 | Direct addresses | `mysql-v26.dbaas.svc.cluster.local` (new). `mysql-standalone` and `mysql-standalone-headless` are Services left over from the Bitnami chart and select the old pod. On 2026-10-16 only `mysql-standalone-headless` had an endpoint (the `mysql-standalone` EndpointSlice was empty and connections were refused), so reach the old server through `mysql-standalone-headless.dbaas.svc.cluster.local` |
 | Config | config map `mysql-v26-cnf`, derived from `mysql-standalone-cnf` with `replace()`, so a tuning change to the old file reaches both |
-| Backup clients | `mysql-backup` and `mysql-backup-per-db` run `docker.io/library/mysql:26.7.0` (were `mysql:8.0`) |
+| Backup clients | `mysql-backup` (which absorbed `mysql-backup-per-db` on 2026-11-03) runs `docker.io/library/mysql:26.7.0` (were `mysql:8.0`) |
 
 ```mermaid
 flowchart LR
@@ -235,7 +235,7 @@ Prometheus and Alertmanager and is not affected.
 
 Innovation releases upgrade in place within their series and to the next LTS,
 and cannot be downgraded in place. For each bump take a fresh per-database
-dump first (the `mysql-backup-per-db` CronJob, or step 1 above), then change
+dump first (a Job from the `mysql-backup` CronJob, which writes grants plus one dump per database, or step 1 above), then change
 the image pin on `mysql-v26`. For a jump Oracle does not list as in place,
 repeat this blue-green procedure with a new StatefulSet and flip
 `local.mysql_active`. Renovate holds MySQL majors (`renovate.json5`).
