@@ -64,6 +64,24 @@ func isPublic(ip string) bool {
 	return true
 }
 
+// clientPrefixHeader carries the rate-limit key: the client's IPv4 address,
+// or the /64 holding its IPv6 address. An IPv6 client normally holds a whole
+// /64, so a limiter keyed on the full address would give one client 2^64
+// buckets; keyed on the /64 it gets one, as a NAT'd IPv4 household does.
+const clientPrefixHeader = "X-Client-Prefix"
+
+// clientPrefix returns the rate-limit key for ip, or "" if ip does not parse.
+func clientPrefix(ip string) string {
+	p := net.ParseIP(strings.TrimSpace(ip))
+	if p == nil {
+		return ""
+	}
+	if p4 := p.To4(); p4 != nil {
+		return p4.String()
+	}
+	return (&net.IPNet{IP: p.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
+}
+
 func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// The real TCP peer is unspoofable; trust is decided by it, not by headers.
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
@@ -111,6 +129,7 @@ func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// don't let a client-supplied Cf-Connecting-Ip stand — a backend
 		// keyed on it must never read an unverified value.
 		req.Header.Del("Cf-Connecting-Ip")
+		req.Header.Del(clientPrefixHeader)
 		r.next.ServeHTTP(rw, req)
 		return
 	}
@@ -124,5 +143,11 @@ func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// instead of the backend erroring on a header that isn't there.
 	req.Header.Set("X-Real-Ip", clientIP)
 	req.Header.Set("Cf-Connecting-Ip", clientIP)
+	// Always overwritten (or removed), so a client cannot pick its own bucket.
+	if key := clientPrefix(clientIP); key != "" {
+		req.Header.Set(clientPrefixHeader, key)
+	} else {
+		req.Header.Del(clientPrefixHeader)
+	}
 	r.next.ServeHTTP(rw, req)
 }

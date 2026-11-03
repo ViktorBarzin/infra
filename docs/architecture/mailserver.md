@@ -209,7 +209,7 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | MX | `viktorbarzin.me` | `mx2.viktorbarzin.me` (pri 20) | Backup MX (ADR-0019, since 2026-07-08) — senders fall to it when the primary is unreachable |
 | A | `mx2.viktorbarzin.me` | `92.5.132.215` (non-proxied) | Backup MX — OCI reserved public IP (stable across VM stop/start) |
 | A | `mail.viktorbarzin.me` | `176.12.22.76` (non-proxied) | Mail server IP |
-| AAAA | `mail.viktorbarzin.me` | `2001:470:6e:43d::2` | IPv6 (HE tunnel) |
+| AAAA | `mail.viktorbarzin.me` | `2001:470:5a7f:20::203` | IPv6: Traefik's VIP (webmail); pfSense forwards the mail ports on it to `mailserver-v6` `::204` (cluster dual-stack, 2026-11-03) |
 | TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:spf.brevo.com ~all` | Authorize Brevo for outbound (soft-fail during cutover; was `include:mailgun.org -all` until 2026-04-18 Brevo migration) |
 | TXT (DKIM) | `s1._domainkey` | RSA 1024-bit key | Mailgun DKIM (roundtrip probe only — inbound testing still uses Mailgun API) |
 | TXT (DKIM) | `mail._domainkey` | RSA 2048-bit key | Rspamd self-hosted DKIM signing |

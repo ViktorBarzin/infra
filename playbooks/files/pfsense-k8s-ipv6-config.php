@@ -31,6 +31,16 @@
  *      (phase 6). No associated filter rule: the ::204 pass rules in (4) are
  *      what the translated packets match.
  *   6. A floating rule: block quick out on HE_IPv6, inet6, source fc00::/7.
+ *   7. Anti-spoof on HE_IPv6 inbound, as the first rules on the interface
+ *      (ahead of the hand-made ICMPv6 and WireGuard passes): block any source
+ *      that can never arrive from the internet, i.e. ULA (fc00::/7), our own
+ *      routed /48 and the VLAN 10 /64, and multicast. Same effect as the IPv4
+ *      side, where nothing outside the home LAN can arrive with an RFC 1918
+ *      source. Added 2026-11-03.
+ *   8. Deletes the hand-made HE_IPv6 pass rules to the tunnel address
+ *      (2001:470:6e:43d::2, ports 80/443/25/465/587/993) that fed the retired
+ *      pfSense HAProxy IPv6 frontends (phase 8, 2026-11-03). Matched on type,
+ *      interface, address, port and description, so nothing else is touched.
  *
  * Every managed rule is found by its description, so the descriptions are
  * stable identifiers: do not edit them in the GUI.
@@ -84,6 +94,23 @@ $TRAEFIK6  = '2001:470:5a7f:20::203';
 $MAIL6     = '2001:470:5a7f:20::204';
 $ULA       = 'fc00::/7';
 $MAIL_PORTS = ['25', '465', '587', '993'];
+// Sources that cannot legitimately arrive on the tunnel from the internet.
+$SPOOF_SRC = [
+    ['fc00::/7', 'ULA'],
+    ['2001:470:5a7f::/48', 'our routed /48'],
+    ['2001:470:6f:43d::/64', 'VLAN 10 /64'],
+    ['ff00::/8', 'multicast'],
+];
+// Retired with the pfSense HAProxy IPv6 frontends (phase 8).
+$LEGACY_TUNNEL6 = '2001:470:6e:43d::2';
+$LEGACY_HE_PASS = [
+    '80'  => 'IPv6 HTTP to Traefik',
+    '443' => 'IPv6 HTTPS to Traefik',
+    '25'  => 'IPv6 SMTP inbound',
+    '465' => 'IPv6 SMTPS',
+    '587' => 'IPv6 SMTP Submission',
+    '993' => 'IPv6 IMAPS',
+];
 // Hand-made 2026-03 rule closing the HE_IPv6 rule list; ours go before it.
 $HE_BLOCK_ALL_DESCR = 'Block all other traffic on HE_IPv6 tunnel';
 
@@ -268,6 +295,24 @@ foreach ($he_pass as [$proto, $addr, $port, $descr]) {
     $want_he[$descr] = k6_rule($IF_HE, 'pass', $proto, ['any' => ''], ['address' => $addr, 'port' => $port], $descr);
 }
 
+$want_spoof = [];
+foreach ($SPOOF_SRC as [$net, $what]) {
+    $d = "k8s-ipv6: antispoof $what in on HE_IPv6";
+    $want_spoof[$d] = k6_rule($IF_HE, 'block', null, ['address' => $net], ['any' => ''], $d);
+}
+
+// 8. Legacy tunnel-address pass rules (exact match only).
+$filter = array_values(array_filter($filter, function ($r) use ($IF_HE, $LEGACY_TUNNEL6, $LEGACY_HE_PASS, &$changes) {
+    $port = $r['destination']['port'] ?? '';
+    $hit = ($r['type'] ?? '') === 'pass' && ($r['interface'] ?? '') === $IF_HE && !isset($r['floating'])
+        && ($r['destination']['address'] ?? '') === $LEGACY_TUNNEL6
+        && array_key_exists($port, $LEGACY_HE_PASS) && ($r['descr'] ?? '') === $LEGACY_HE_PASS[$port];
+    if ($hit) {
+        $changes[] = "filter($IF_HE): DELETE legacy '" . $r['descr'] . "' ($LEGACY_TUNNEL6 port $port)";
+    }
+    return !$hit;
+}));
+
 $ula_descr  = 'k8s-ipv6: no ULA source out of HE_IPv6';
 $want_float = [
     $ula_descr => k6_rule($IF_HE, 'block', null, ['address' => $ULA], ['any' => ''], $ula_descr,
@@ -305,6 +350,19 @@ $filter = k6_reconcile($filter, $want_he, function ($rest, $was_at) use ($last_i
     $i = $last_index($rest, $is_if($IF_HE));
     return $i < 0 ? count($rest) : $i + 1;
 }, $FILTER_KEEP, "filter($IF_HE)", $changes, $filter_meta);
+
+// HE_IPv6 anti-spoof: first on the interface, ahead of every pass.
+$filter = k6_reconcile($filter, $want_spoof, function ($rest, $was_at) use ($is_if, $IF_HE) {
+    if ($was_at !== null) {
+        return $was_at;
+    }
+    foreach ($rest as $i => $r) {
+        if ($is_if($IF_HE)($r)) {
+            return $i;
+        }
+    }
+    return count($rest);
+}, $FILTER_KEEP, "filter($IF_HE antispoof)", $changes, $filter_meta);
 
 $filter = k6_reconcile($filter, $want_float, function ($rest, $was_at) use ($last_index) {
     if ($was_at !== null) {

@@ -104,7 +104,10 @@ resource "kubernetes_manifest" "middleware_rate_limit_per_client" {
         average = 10
         burst   = 50
         sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
+          # X-Client-Prefix (real-ip plugin, which runs earlier in the chain): the
+          # client's IPv4 address, or its IPv6 /64, so one IPv6 client gets one
+          # bucket rather than one per address (2026-11-03).
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }
@@ -459,6 +462,11 @@ resource "kubernetes_manifest" "middleware_immich_rate_limit" {
       rateLimit = {
         average = 1000
         burst   = 20000
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -484,6 +492,11 @@ resource "kubernetes_manifest" "middleware_actualbudget_rate_limit" {
       rateLimit = {
         average = 50
         burst   = 300
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -509,6 +522,11 @@ resource "kubernetes_manifest" "middleware_tripit_rate_limit" {
       rateLimit = {
         average = 100
         burst   = 1000
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -534,6 +552,11 @@ resource "kubernetes_manifest" "middleware_health_rate_limit" {
       rateLimit = {
         average = 100
         burst   = 1000
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -561,6 +584,11 @@ resource "kubernetes_manifest" "middleware_authentik_rate_limit" {
       rateLimit = {
         average = 100
         burst   = 1000
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -588,6 +616,11 @@ resource "kubernetes_manifest" "middleware_dawarich_rate_limit" {
       rateLimit = {
         average = 100
         burst   = 1000
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -639,7 +672,10 @@ resource "kubernetes_manifest" "middleware_nextcloud_rate_limit_per_client" {
         average = 100
         burst   = 1000
         sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
+          # X-Client-Prefix (real-ip plugin, which runs earlier in the chain): the
+          # client's IPv4 address, or its IPv6 /64, so one IPv6 client gets one
+          # bucket rather than one per address (2026-11-03).
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }
@@ -765,7 +801,9 @@ resource "kubectl_manifest" "middleware_real_ip" {
     spec = {
       plugin = {
         realip = {
-          trustedProxyCIDRs = ["10.10.0.0/16"]
+          # Pod CIDRs, both families: cloudflared reaches Traefik from a pod
+          # address, IPv4 or (since dual-stack, 2026-11-03) the ULA pod pool.
+          trustedProxyCIDRs = ["10.10.0.0/16", "fd62:f088:7d06:100::/56"]
         }
       }
     }
@@ -828,7 +866,7 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           # Trust Cf-Connecting-Ip / X-Forwarded-For ONLY from the cloudflared pod
           # peer; any other peer is judged on its own unspoofable TCP address.
           # Same model and same CIDR as real-ip.
-          trustedProxyCIDRs = ["10.10.0.0/16"]
+          trustedProxyCIDRs = ["10.10.0.0/16", "fd62:f088:7d06:100::/56"]
           # Never gate the auth hosts: a false-positive ban must not be able to
           # wall someone out of the login / WebAuthn flow they would need to fix
           # it. Carried over from the Cloudflare WAF rule this replaces.
@@ -957,6 +995,11 @@ resource "kubernetes_manifest" "middleware_android_emulator_rate_limit" {
       rateLimit = {
         average = 50
         burst   = 300
+        # Bucket per IPv6 /64 (IPv4 unchanged): one IPv6 client holds a whole
+        # /64, so per-address buckets do not limit it. The key stays the TCP peer.
+        sourceCriterion = {
+          ipStrategy = { ipv6Subnet = 64 }
+        }
       }
     }
   }
@@ -1034,7 +1077,10 @@ resource "kubernetes_manifest" "middleware_f1_rate_limit" {
         average = 200
         burst   = 2000
         sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
+          # X-Client-Prefix (real-ip plugin, which runs earlier in the chain): the
+          # client's IPv4 address, or its IPv6 /64, so one IPv6 client gets one
+          # bucket rather than one per address (2026-11-03).
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }

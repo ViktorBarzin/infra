@@ -2,26 +2,21 @@
 # playbooks/pfsense-haproxy.yml
 #
 # The pfSense HAProxy package and the ports it owns:
-#   - scripts/pfsense-haproxy-bootstrap.php declares the package config: IPv4
-#     mail frontends, the SNI-routed internal :443, and the six public IPv6
-#     frontends on the HE tunnel address (443/80 -> Traefik, 25/465/587/993 ->
-#     mail), all send-proxy-v2.
+#   - scripts/pfsense-haproxy-bootstrap.php declares the package config: the
+#     IPv4 mail frontends and the SNI-routed internal :443, all send-proxy-v2.
+#     It also deletes the six public IPv6 frontends on the HE tunnel address
+#     (2001:470:6e:43d::2) that ran from 2026-11-02 to 2026-11-03.
 #   - playbooks/files/pfsense-ipv6-ingress-config.php keeps the webConfigurator
-#     HTTP redirect off, so pfSense's nginx never listens on port 80 and can
-#     never take the tunnel address's :80 from HAProxy, and removes the hooks
-#     of the retired standalone IPv6 bridge.
+#     HTTP redirect off, so pfSense's nginx never listens on port 80, and
+#     removes the hooks of the standalone IPv6 bridge retired on 2026-11-02.
 #
-# History (2026-11-02): public IPv6 used to go through a standalone HAProxy
-# started by a boot <shellcmd> (ipv6_proxy.sh, ipv6-haproxy.cfg,
-# rc.d/ipv6proxy). It went down for 29 days (Jul-Aug 2026) and 10 days
-# (Oct-Nov 2026), both times because pfSense's nginx took [::]:80 on a config
-# regeneration; the package's own stop (`killall haproxy`) could also kill it.
-# The first apply of this playbook stops that bridge, has the package take the
-# six IPv6 ports, checks they are held, and deletes the old files. If the
-# package does not take them, the rescue starts the old bridge again.
-# See docs/research/2026-11-02-reliable-ipv6-ingress.md.
+# Public IPv6 no longer touches HAProxy: since 2026-11-03 the cluster is
+# dual-stack and pfSense routes IPv6 to Traefik's VIP 2001:470:5a7f:20::203 and
+# to mailserver-v6 (playbooks/pfsense-k8s-ipv6.yml,
+# docs/plans/2026-11-02-cluster-dual-stack.md). History of the bridge:
+# docs/research/2026-11-02-reliable-ipv6-ingress.md.
 #
-# External check: gatus on mx2, edge group "wan direct ipv6: *"
+# External check: gatus on mx2, edge group "ipv6 vip: *"
 # (stacks/backup-mx/cloud-init.yaml.tftpl), pages Slack after ~3 min.
 #
 # RUN (from repo root; claim presence first:
@@ -40,7 +35,6 @@
     bootstrap_remote: /tmp/pfsense-haproxy-bootstrap.php
     ingress_cfg_remote: /tmp/pfsense-ipv6-ingress-config.php
     tunnel_ipv6: "2001:470:6e:43d::2"
-    ipv6_ports: [443, 80, 25, 465, 587, 993]
     legacy_rc: /usr/local/etc/rc.d/ipv6proxy
 
   tasks:
@@ -86,53 +80,37 @@
       when: ansible_check_mode
 
     # ── apply ──────────────────────────────────────────────────────────────
-    - name: Hand the IPv6 ports to the HAProxy package
+    - name: Stop the retired standalone IPv6 bridge if it is still installed
+      ansible.builtin.shell: |
+        if [ -x {{ legacy_rc }} ]; then {{ legacy_rc }} onestop; echo stopped; fi
+      register: legacy_stop
+      changed_when: "'stopped' in legacy_stop.stdout"
       when: not ansible_check_mode
-      block:
-        - name: Stop the retired standalone IPv6 bridge if it is still installed
-          ansible.builtin.shell: |
-            if [ -x {{ legacy_rc }} ]; then {{ legacy_rc }} onestop; echo stopped; fi
-          register: legacy_stop
-          changed_when: "'stopped' in legacy_stop.stdout"
 
-        - name: Apply the HAProxy package configuration
-          ansible.builtin.command: /usr/local/bin/php -f {{ bootstrap_remote }} --
-          register: hap_apply
-          changed_when: (hap_apply.stdout_lines[-1] | from_json).changed | bool
+    - name: Apply the HAProxy package configuration
+      ansible.builtin.command: /usr/local/bin/php -f {{ bootstrap_remote }} --
+      register: hap_apply
+      changed_when: (hap_apply.stdout_lines[-1] | from_json).changed | bool
+      when: not ansible_check_mode
 
-        - name: Report HAProxy package changes
-          ansible.builtin.debug:
-            var: (hap_apply.stdout_lines[-1] | from_json)
+    - name: Report HAProxy package changes
+      ansible.builtin.debug:
+        var: (hap_apply.stdout_lines[-1] | from_json)
+      when: not ansible_check_mode
 
-        - name: Check the package process holds every IPv6 port
-          # The listener's owner must be the package haproxy (its config file is
-          # /var/etc/haproxy/haproxy.cfg), not a leftover standalone process.
-          ansible.builtin.shell: |
-            missing=""
-            for p in {{ ipv6_ports | join(' ') }}; do
-              pid=$(sockstat -6 -l | awk -v a="{{ tunnel_ipv6 }}:$p" '$6 == a && $2 == "haproxy" {print $3; exit}')
-              if [ -z "$pid" ] || ! ps -o args= -p "$pid" | grep -q /var/etc/haproxy/haproxy.cfg; then
-                missing="$missing $p"
-              fi
-            done
-            [ -z "$missing" ] || { echo "not held by the package:$missing"; exit 1; }
-            echo "all {{ ipv6_ports | length }} IPv6 ports held by the package"
-          retries: 5
-          delay: 3
-          register: binds
-          until: binds.rc == 0
-          changed_when: false
-      rescue:
-        - name: Restart the standalone bridge so IPv6 keeps working
-          ansible.builtin.shell: |
-            if [ -x {{ legacy_rc }} ]; then {{ legacy_rc }} onestart; fi
-          changed_when: true
-        - name: Stop here
-          ansible.builtin.fail:
-            msg: >-
-              The HAProxy package did not take the IPv6 ports; the standalone
-              bridge was restarted. Check /var/etc/haproxy/haproxy.cfg and the
-              package status (Status > HAProxy) before retrying.
+    # HAProxy only: ntpd listens on every address, the tunnel's included (UDP
+    # 123, blocked inbound by the HE_IPv6 rules).
+    - name: HAProxy no longer listens on the HE tunnel address
+      ansible.builtin.shell: |
+        held=$(sockstat -6 -l | awk -v a="{{ tunnel_ipv6 }}:" '$2 == "haproxy" && index($6, a) == 1 {print $6}')
+        [ -z "$held" ] || { echo "haproxy still listening: $held"; exit 1; }
+        echo "haproxy holds nothing on {{ tunnel_ipv6 }}"
+      retries: 5
+      delay: 3
+      register: tunnel_free
+      until: tunnel_free.rc == 0
+      changed_when: false
+      when: not ansible_check_mode
 
     - name: Apply the IPv6 ingress config.xml settings
       ansible.builtin.command: /usr/local/bin/php -f {{ ingress_cfg_remote }} --

@@ -303,3 +303,73 @@ func TestBothHeadersAgree(t *testing.T) {
 		t.Fatalf("X-Real-Ip (%q) and Cf-Connecting-Ip (%q) must agree", realIP, cf)
 	}
 }
+
+// --- Rate-limit key (X-Client-Prefix): the IPv4 address, or the IPv6 /64.
+// An IPv6 client normally holds a whole /64, so keying a limiter on the full
+// address would give it 2^64 buckets. ---
+
+// serveKey returns the X-Client-Prefix the next handler observes.
+func serveKey(t *testing.T, cfg *Config, remoteAddr string, h http.Header) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = remoteAddr
+	if h != nil {
+		req.Header = h
+	}
+	var got string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Client-Prefix")
+	})
+	rp, err := New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New returned an unexpected error: %v", err)
+	}
+	rp.ServeHTTP(httptest.NewRecorder(), req)
+	return got
+}
+
+func TestClientPrefix(t *testing.T) {
+	ula := &Config{TrustedProxyCIDRs: []string{"10.10.0.0/16", "fd62:f088:7d06:100::/56"}}
+	cases := []struct {
+		name   string
+		cfg    *Config
+		peer   string
+		header http.Header
+		want   string
+	}{
+		{"direct IPv4 client keys on its address", CreateConfig(), "203.0.113.7:4000", nil, "203.0.113.7"},
+		{"direct IPv6 client keys on its /64", CreateConfig(), "[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:4000", nil, "2001:db8:1:2::/64"},
+		{"two addresses in one /64 share a key", CreateConfig(), "[2001:db8:1:2::1]:4000", nil, "2001:db8:1:2::/64"},
+		{"IPv4-mapped IPv6 peer keys as IPv4", CreateConfig(), "[::ffff:198.51.100.4]:4000", nil, "198.51.100.4"},
+		{"tunnelled IPv6 client via trusted IPv4 proxy", CreateConfig(), "10.10.1.2:5000",
+			http.Header{"Cf-Connecting-Ip": {"2001:db8:9:8:7:6:5:4"}}, "2001:db8:9:8::/64"},
+		{"tunnelled IPv4 client via trusted ULA proxy", ula, "[fd62:f088:7d06:131::7]:5000",
+			http.Header{"Cf-Connecting-Ip": {"203.0.113.9"}}, "203.0.113.9"},
+		{"client-supplied key is overwritten", CreateConfig(), "203.0.113.7:4000",
+			http.Header{"X-Client-Prefix": {"forged"}}, "203.0.113.7"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := serveKey(t, c.cfg, c.peer, c.header); got != c.want {
+				t.Fatalf("want %q, got %q", c.want, got)
+			}
+		})
+	}
+}
+
+// A trusted ULA proxy (cloudflared over IPv6) is trusted like the IPv4 pod
+// CIDR when configured, so the tunnelled client's real address survives.
+func TestTrustedULAPeerCFWins(t *testing.T) {
+	cfg := &Config{TrustedProxyCIDRs: []string{"10.10.0.0/16", "fd62:f088:7d06:100::/56"}}
+	got := serveCfg(t, cfg, "[fd62:f088:7d06:131::7]:5000", http.Header{"Cf-Connecting-Ip": {"203.0.113.5"}})
+	if got != "203.0.113.5" {
+		t.Fatalf("want 203.0.113.5, got %q", got)
+	}
+}
+
+// With an unparseable peer, a forged key must not reach the backend.
+func TestUnparseablePeerDropsForgedKey(t *testing.T) {
+	if got := serveKey(t, CreateConfig(), "not-an-ip", http.Header{"X-Client-Prefix": {"forged"}}); got != "" {
+		t.Fatalf("want empty key, got %q", got)
+	}
+}
