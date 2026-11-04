@@ -179,7 +179,7 @@ def main() -> int:
         done
         echo "pgrep:$(pgrep -l 'dnsmasq|kea|radvd' | tr '\\n' ' ')"
         echo "ifs:$(ifconfig -l)"
-        echo "inet6:$(ifconfig | awk '/inet6/ && $2 !~ /^fe80/ && $2 != "::1" {print $2}' | tr '\\n' ' ')"
+        echo "inet6:$(for i in vtnet0 vtnet1 vtnet2 vtnet3; do ifconfig $i 2>/dev/null; done | awk '/inet6/ && $2 !~ /^fe80/ {print $2}' | tr '\\n' ' ')"
         echo "gui:$(sockstat -4l -p 8443 | awk 'NR>1 {print $2}' | sort -u | tr '\\n' ' ')"
         echo "suricata:$(grep -c 'rule reload complete' /var/log/suricata/latest.log /var/log/suricata/suricata_*.log 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
         echo "eve:$(grep -c 'eve-log' /usr/local/etc/suricata/suricata.yaml) syslog:$(grep -A3 'eve-log' /usr/local/etc/suricata/suricata.yaml | grep -c syslog)"
@@ -196,7 +196,7 @@ def main() -> int:
     bad_if = [i for i in lines.get("ifs", "").split() if re.match(r"^(gif|wg)\d+", i)]
     check(not bad_if, "no gif or wg device", " ".join(bad_if))
     v6 = lines.get("inet6", "").split()
-    check(profile == "production" or not v6, "no global IPv6 address", " ".join(v6))
+    check(profile == "production" or not v6, "no global IPv6 address on the LAN NICs", " ".join(v6))
     check("lighttpd" in lines.get("gui", ""), "GUI listening on 8443", lines.get("gui", "").strip())
 
     installed = api.get("ids/settings/search_installed_rules", {"current": 1, "rowCount": 1}).get("total", 0)
@@ -213,6 +213,34 @@ def main() -> int:
         check("node_" in body, "node_exporter answers on %s:9100 from this host" % fw["opt1"])
     except Exception as e:  # noqa: BLE001
         check(False, "node_exporter answers on %s:9100 from this host" % fw["opt1"], str(e))
+
+    # CrowdSec: bouncer of the cluster LAPI only (plan review change), with
+    # decisions loaded into pf tables.
+    cs = ssh(host, "pgrep -lf 'crowdsec' ; grep -E '^api_url' /usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml;"
+                   " pfctl -t crowdsec_blocklists -T show 2>/dev/null | wc -l").stdout
+    procs = [l for l in cs.splitlines() if "/usr/local/bin/crowdsec" in l]
+    check(len(procs) == 1 and "crowdsec-firewall-bouncer" in procs[0], "CrowdSec: only the bouncer runs (no local agent or LAPI)")
+    check("api_url: http://10.0.20.210:8080/" in cs, "CrowdSec bouncer uses the cluster LAPI (10.0.20.210)")
+    n = int((cs.strip().splitlines() or ["0"])[-1].strip() or 0)
+    check(n > 1000, "CrowdSec decisions loaded into pf", "%d IPv4 entries" % n)
+
+    # Tailscale: joined, no routes, no exit node, accept-DNS off (plan decision 12).
+    ts = ssh(host, "tailscale status --self --peers=false 2>&1 | head -1; tailscale debug prefs 2>/dev/null").stdout
+    try:
+        prefs = json.loads(ts[ts.index("{"):])
+    except ValueError:
+        prefs = {}
+    check(bool(prefs) and "Logged out" not in ts, "Tailscale logged in to Headscale")
+    if profile == "staging":
+        check(not prefs.get("AdvertiseRoutes") and not prefs.get("ExitNodeID") and not prefs.get("AdvertiseTags"),
+              "Tailscale staging node advertises no routes, no exit node, no tags")
+        check(prefs.get("CorpDNS") is False, "Tailscale does not take tailnet DNS")
+
+    # Root SSH keys: the Proxmox host's backup login works.
+    pve = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "root@192.168.1.127",
+                          "ssh -o BatchMode=yes -o ConnectTimeout=6 root@%s true" % fw["opt1"]],
+                         capture_output=True, text=True)
+    check(pve.returncode == 0, "Proxmox host can log in for the daily config backup")
 
     print("\nNot testable in staging (checked at cutover):")
     for item in NOT_TESTABLE:
