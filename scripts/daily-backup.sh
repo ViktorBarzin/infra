@@ -444,6 +444,27 @@ fi
     "${PUSHGATEWAY}/metrics/job/pfsense-backup" 2>/dev/null || true
 
 # ============================================================
+# STEP 3b: OPNsense backup (config.xml) — ADR-0038
+# ============================================================
+# The edge firewall replacing pfSense. Staging address until cutover; at
+# cutover OPNSENSE_HOST becomes 10.0.20.1 and step 3 goes (docs/runbooks/opnsense.md).
+# Root on this host logs in with /root/.ssh/id_rsa (authorized by
+# playbooks/opnsense.yml --tags users). A failure is logged but does not fail
+# the run while the box is in staging.
+log "--- Step 3b: OPNsense backup ---"
+OPNSENSE_HOST="${OPNSENSE_HOST:-10.0.20.2}"
+OPNSENSE_DEST="${BACKUP_ROOT}/opnsense"
+mkdir -p "${OPNSENSE_DEST}"
+if scp -o BatchMode=yes -o ConnectTimeout=10 "root@${OPNSENSE_HOST}:/conf/config.xml" \
+    "${OPNSENSE_DEST}/config-${DATE}.xml" 2>/dev/null; then
+    log "  OK: opnsense config.xml"
+    echo "opnsense/config-${DATE}.xml" | manifest_append
+    ls -t "${OPNSENSE_DEST}"/config-*.xml 2>/dev/null | tail -n +15 | xargs rm -f 2>/dev/null || true
+else
+    warn "Failed to copy OPNsense config.xml from ${OPNSENSE_HOST}"
+fi
+
+# ============================================================
 # STEP 4: PVE host config backup
 # ============================================================
 log "--- Step 4: PVE host config ---"

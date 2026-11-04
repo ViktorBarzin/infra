@@ -1,0 +1,37 @@
+# Root's SSH keys: the Ansible key from Vault plus the public keys in
+# authorized_keys.yml (the Proxmox host's backup key). OPNsense stores the
+# field base64-encoded; the API takes it as text.
+- name: Root SSH authorized keys
+  opnsense_mvc:
+    # The user controller's actions carry no item suffix (search, get, set...).
+    search: auth/user/search
+    get: auth/user/get
+    add: auth/user/add
+    set: auth/user/set
+    delete: auth/user/del
+    item_root: user
+    match_key: name
+    items:
+      - name: root
+        authorizedkeys: >-
+          {{ ([lookup('pipe', 'vault kv get -field=ssh_public_key secret/opnsense')]
+              + (lookup('file', opn_dir + '/authorized_keys.yml') | from_yaml).root) | join(opn_newline) }}
+    prune: false
+  vars:
+    # A real newline: '\n' inside the folded block above reaches Jinja as a
+    # backslash and an n, and the box then sees one long key line.
+    opn_newline: "\n"
+  register: opn_root_keys
+
+# The user API stores the keys but does not rewrite /root/.ssh/authorized_keys;
+# local_user_set() is what the GUI calls on save.
+- name: Write root's authorized_keys from the config
+  ansible.builtin.shell: |
+    cat > /tmp/opn-rootkeys.php <<'PHP'
+    <?php
+    require_once("config.inc"); require_once("auth.inc"); global $config;
+    $us = $config['system']['user']; if (isset($us['name'])) $us = [$us];
+    foreach ($us as $u) { if ($u['name'] === 'root') { local_user_set($u); } }
+    PHP
+    php /tmp/opn-rootkeys.php; rm -f /tmp/opn-rootkeys.php
+  when: opn_root_keys is changed and not ansible_check_mode

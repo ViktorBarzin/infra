@@ -184,6 +184,13 @@
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [haproxy]
 
+    - name: Users (root SSH keys)
+      ansible.builtin.import_tasks: tasks/opnsense/users.yml
+      tags: [users]
+    - name: Safety checks after users
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [users]
+
     - name: CrowdSec bouncer
       ansible.builtin.import_tasks: tasks/opnsense/crowdsec.yml
       tags: [crowdsec]
