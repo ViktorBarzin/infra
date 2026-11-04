@@ -22,7 +22,7 @@ resource "helm_release" "proxmox_csi" {
 
   repository = "oci://ghcr.io/sergelogvinov/charts"
   chart      = "proxmox-csi-plugin"
-  version    = "0.5.13"
+  version    = "0.5.14"
 
   values = [yamlencode({
     # Two controller pods, so a node going down does not stop volume attaches.
