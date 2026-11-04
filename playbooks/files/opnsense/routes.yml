@@ -1,0 +1,35 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Static routes. Routes via a production-only gateway are production-only too.
+
+routes:
+- network: 192.168.0.0/24
+  gateway: valchedrym
+  description: null
+  disabled: false
+  profile: production
+- network: 192.168.8.0/24
+  gateway: london_flint_2
+  description: null
+  disabled: false
+  profile: production
+- network: 192.168.10.0/24
+  gateway: london_flint_2
+  description: null
+  disabled: false
+  profile: production
+- network: 192.168.9.0/24
+  gateway: london_flint_2
+  description: null
+  disabled: false
+  profile: production
+- network: 192.168.3.0/24
+  gateway: mladost3
+  description: mladost3 lan
+  disabled: false
+  profile: production
+- network: 10.77.1.0/24
+  gateway: rpi_sofia
+  description: Vermont complex alias via rpi-sofia (ADR-0035)
+  disabled: false
+  managed_by: pfsense-vermont-alias.yml

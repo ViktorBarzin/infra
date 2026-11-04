@@ -1,0 +1,97 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Kea DHCPv4 per interface. enabled_in: production, so staging keeps DHCP off.
+# pfSense defaults (gateway, DNS, domain) are written out explicitly.
+
+enabled_in: production
+backend: kea
+interfaces:
+- interface: lan
+  subnet: 10.0.10.0/24
+  pool_start: 10.0.10.100
+  pool_end: 10.0.10.254
+  gateway: '{{ fw.lan }}'
+  dns_servers:
+  - '{{ fw.lan }}'
+  - 94.140.14.14
+  domain: viktorbarzin.lan
+  next_server: null
+  boot_file: null
+  default_lease_time: null
+  max_lease_time: null
+  reservations:
+  - mac: 00:0c:29:c0:89:ec
+    ip: 10.0.10.10
+    hostname: devvm
+    description: null
+  - mac: 00:0c:29:e0:82:b0
+    ip: 10.0.10.15
+    hostname: truenas
+    description: null
+  - mac: 00:50:56:87:4a:2d
+    ip: 10.0.10.20
+    hostname: ubuntu-server
+    description: null
+  - mac: 00:0c:29:c6:43:64
+    ip: 10.0.10.30
+    hostname: homeassistant
+    description: null
+- interface: opt1
+  subnet: 10.0.20.0/24
+  pool_start: 10.0.20.221
+  pool_end: 10.0.20.254
+  gateway: '{{ fw.opt1 }}'
+  dns_servers:
+  - '{{ fw.opt1 }}'
+  - 94.140.14.14
+  domain: viktorbarzin.lan
+  next_server: 10.0.10.20
+  boot_file: pxelinux.0
+  default_lease_time: null
+  max_lease_time: null
+  reservations:
+  - mac: de:ad:be:ef:22:22
+    ip: 10.0.20.10
+    hostname: docker-registry
+    description: Docker registry VM
+  - mac: 00:50:56:b0:a1:39
+    ip: 10.0.20.100
+    hostname: k8s-master
+    description: null
+  - mac: 00:50:56:b0:e0:c9
+    ip: 10.0.20.101
+    hostname: k8s-node1
+    description: null
+  - mac: 00:50:56:b0:a1:36
+    ip: 10.0.20.102
+    hostname: k8s-node2
+    description: null
+  - mac: 00:50:56:b0:a1:37
+    ip: 10.0.20.103
+    hostname: k8s-node3
+    description: null
+  - mac: 00:50:56:b0:a1:38
+    ip: 10.0.20.104
+    hostname: k8s-node4
+    description: null
+  - mac: 00:50:56:b0:a1:40
+    ip: 10.0.20.105
+    hostname: k8s-node5
+    description: null
+- interface: opt4
+  subnet: 10.0.30.0/24
+  pool_start: 10.0.30.100
+  pool_end: 10.0.30.199
+  gateway: '{{ fw.opt4 }}'
+  dns_servers:
+  - '{{ fw.opt4 }}'
+  domain: viktorbarzin.lan
+  next_server: null
+  boot_file: null
+  default_lease_time: null
+  max_lease_time: null
+  reservations:
+  - mac: 50:e5:38:81:7a:c1
+    ip: 10.0.30.70
+    hostname: garage-cam
+    description: vermont-garage camera (ADR-0017)

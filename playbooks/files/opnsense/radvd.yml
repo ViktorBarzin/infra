@@ -1,0 +1,39 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Router advertisements. enabled_in: production, so staging sends none.
+# mode is OPNsense's name; pfsense_mode the original. null values mean the daemon default.
+# pfSense adds a 'route ::/0' option to every RA on its own; OPNsense's radvd does not
+# unless asked.
+
+enabled_in: production
+interfaces:
+- interface: lan
+  mode: stateless
+  pfsense_mode: stateless_dhcp
+  prefixes:
+  - 2001:470:6f:43d::/64
+  rdnss:
+  - '{{ fw.lan_v6.split(''/'')[0] }}'
+  dnssl:
+  - viktorbarzin.lan
+  router_lifetime: null
+  priority: medium
+  min_interval: null
+  max_interval: null
+  valid_lifetime: null
+  preferred_lifetime: null
+# Sofia home LAN ULA for the Matter lock (infra #102, scripts/pfsense-sofia-lan-ula-ra.php).
+# Router lifetime 0 keeps the firewall off every host's default-router list; no RDNSS/DNSSL.
+- interface: wan
+  mode: unmanaged
+  pfsense_mode: unmanaged
+  prefixes:
+  - fdfe:e989:d3ce:1::/64
+  rdnss: []
+  dnssl: []
+  router_lifetime: 0
+  priority: low
+  min_interval: 10
+  max_interval: 30
+  valid_lifetime: null
+  preferred_lifetime: null

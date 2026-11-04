@@ -1,0 +1,36 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Firewall-owned addresses per profile, chosen by the inventory variable opnsense_profile.
+# Templates refer to them as {{ fw.<key> }}. IPv6 values carry their prefix length;
+# objects that need the bare address use {{ fw.<key>.split('/')[0] }}.
+# literal_map lists every pfSense literal the converter replaced with a placeholder.
+
+profiles:
+  staging:
+    wan: 192.168.1.250
+    lan: 10.0.10.2
+    opt1: 10.0.20.2
+    opt4: 10.0.30.2
+  production:
+    wan: 192.168.1.2
+    lan: 10.0.10.1
+    opt1: 10.0.20.1
+    opt4: 10.0.30.1
+    wan_v6: fdfe:e989:d3ce:1::1/64
+    lan_v6: 2001:470:6f:43d::1/64
+    opt1_v6: 2001:470:5a7f:20::1/64
+literal_map:
+- literal: 192.168.1.2
+  key: wan
+- literal: 10.0.10.1
+  key: lan
+- literal: 10.0.20.1
+  key: opt1
+- literal: 10.0.30.1
+  key: opt4
+- literal: fdfe:e989:d3ce:1::1
+  key: wan_v6
+- literal: 2001:470:6f:43d::1
+  key: lan_v6
+- literal: 2001:470:5a7f:20::1
+  key: opt1_v6

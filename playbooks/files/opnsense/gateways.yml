@@ -1,0 +1,92 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Gateways, in pfSense order. monitor: false means monitoring is off; null means the
+# gateway address itself is monitored. profile: production means staging leaves it out.
+
+gateways:
+- name: WANGW
+  interface: wan
+  address: 192.168.1.1
+  ipprotocol: inet
+  default: true
+  monitor: 9.9.9.9
+  description: Interface wan Gateway
+  disabled: false
+  weight: 1
+  interval_ms: 5000
+  alert_interval_ms: 5000
+  kill_states_on_down: true
+# Stale: an old ISP IPv6 address on WAN. No route or rule uses it and it is
+# not the default; IPv6 leaves through HE_GWv6. Not ported (port: false).
+- name: default
+  interface: wan
+  address: 2A00:4802:365:FC00:2AEE:52FF:FE56:8344
+  ipprotocol: inet6
+  default: false
+  monitor: false
+  description: null
+  disabled: false
+  weight: 1
+  port: false
+- name: k8s_master_gw
+  interface: opt1
+  address: 10.0.20.100
+  ipprotocol: inet
+  default: false
+  monitor: false
+  description: null
+  disabled: false
+  weight: 1
+- name: valchedrym
+  interface: opt2
+  address: 10.3.2.5
+  ipprotocol: inet
+  default: false
+  monitor: false
+  description: valchedrym
+  disabled: false
+  weight: 1
+  kill_states_on_down: true
+  profile: production
+- name: london_flint_2
+  interface: opt2
+  address: 10.3.2.6
+  ipprotocol: inet
+  default: false
+  monitor: false
+  description: london flint 2
+  disabled: false
+  weight: 1
+  kill_states_on_down: true
+  profile: production
+- name: HE_GWv6
+  interface: opt3
+  address: 2001:470:6e:43d::1
+  ipprotocol: inet6
+  default: true
+  monitor: 2001:470:6e:43d::1
+  description: HE IPv6 Tunnel Gateway
+  disabled: false
+  weight: 1
+  profile: production
+- name: mladost3
+  interface: opt2
+  address: 10.3.2.7
+  ipprotocol: inet
+  default: false
+  monitor: false
+  description: mladost3
+  disabled: false
+  weight: 1
+  kill_states_on_down: true
+  profile: production
+- name: rpi_sofia
+  interface: wan
+  address: 192.168.1.10
+  ipprotocol: inet
+  default: false
+  monitor: false
+  description: rpi-sofia, path to the Vermont complex alias (ADR-0035)
+  disabled: false
+  weight: 1
+  managed_by: pfsense-vermont-alias.yml

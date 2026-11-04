@@ -1,0 +1,60 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# WireGuard hub. Production only. No private or pre-shared key is stored here;
+# private_key_vault_field names the field in Vault secret/opnsense the playbook reads. preshared_key: false means none is in use.
+
+profile: production
+tunnels:
+- name: tun_wg0
+  enabled: true
+  interface: opt2
+  interface_address: 10.3.2.1/24
+  listen_port: 51821
+  addresses:
+  - 10.3.0.1/32
+  mtu: 1200
+  public_key: 3OeDa6Z3Z6vPVxn/WKJujYL7DoDYPPpI5W+2glUYLHU=
+  private_key_vault_field: wireguard_tun_wg0_private_key
+  description: null
+peers:
+- name: valchedrym
+  tunnel: tun_wg0
+  enabled: true
+  public_key: YWljpSA6XITyDQZtxkjOyyd/att+lIrZgx4+VCXfbVg=
+  allowed_ips:
+  - 192.168.0.0/24
+  - 10.3.2.5/32
+  endpoint: null
+  keepalive: 25
+  preshared_key: false
+- name: london flint 2
+  tunnel: tun_wg0
+  enabled: true
+  public_key: bDmcUteYQkne8Jo+Vqe4PnoCGcQ0B+SBnlZz2wtxRC8=
+  allowed_ips:
+  - 10.3.2.6/32
+  - 192.168.8.0/24
+  - 192.168.9.0/24
+  - 192.168.10.0/24
+  endpoint: null
+  keepalive: 25
+  preshared_key: false
+- name: backup-mx (Oracle mx2, ADR-0019)
+  tunnel: tun_wg0
+  enabled: true
+  public_key: jxwL9ZmOEpQYH0eJrIE4RKA9l8xPPdmdgk+6NxO3u0M=
+  allowed_ips:
+  - 10.3.2.10/32
+  endpoint: null
+  keepalive: 25
+  preshared_key: false
+- name: mladost3 (OpenWrt WDR4300)
+  tunnel: tun_wg0
+  enabled: true
+  public_key: GONv96IzbE2PRxnXsz6cmnjhH2pRq7FRhiuxKB+JRi0=
+  allowed_ips:
+  - 10.3.2.7/32
+  - 192.168.3.0/24
+  endpoint: null
+  keepalive: 25
+  preshared_key: false

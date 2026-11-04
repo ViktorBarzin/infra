@@ -1,0 +1,211 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Outbound (source) NAT. target null means no translation; {interface: wan} means the
+# interface address. OPNsense 26.7 calls this Source NAT.
+
+mode: hybrid
+rules:
+- description: no NAT to Vermont complex alias (ADR-0035)
+  interface: wan
+  ipprotocol: inet
+  protocol: any
+  source:
+    alias: vermont_complex_clients
+  destination:
+    alias: vermont_complex_alias
+  target: null
+  staticnatport: false
+  nonat: true
+  disabled: false
+  managed_by: pfsense-vermont-alias.yml
+- description: null
+  interface: opt1
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 192.168.1.0/24
+  destination:
+    address: 10.0.20.0/24
+  target: null
+  staticnatport: false
+  nonat: true
+  disabled: false
+- description: null
+  interface: WireGuard
+  ipprotocol: inet
+  protocol: any
+  source:
+    net: WireGuard
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: true
+  profile: production
+- description: null
+  interface: opt1
+  ipprotocol: inet46
+  protocol: udp
+  source:
+    self: true
+  destination:
+    address: 10.0.20.200/32
+    port: '53'
+  target:
+    address: 10.0.20.200/32
+    port: '30054'
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: Auto created rule for ISAKMP - localhost to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 127.0.0.0/8
+  destination:
+    any: true
+    port: '500'
+  target:
+    interface: wan
+  staticnatport: true
+  nonat: false
+  disabled: false
+- description: Auto created rule - localhost to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 127.0.0.0/8
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: Auto created rule for ISAKMP - localhost to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: ::1/128
+  destination:
+    any: true
+    port: '500'
+  target:
+    interface: wan
+  staticnatport: true
+  nonat: false
+  disabled: false
+- description: Auto created rule - localhost to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: ::1/128
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: Auto created rule for ISAKMP - DMANAGEMENTSVMS to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 10.0.10.0/24
+  destination:
+    any: true
+    port: '500'
+  target:
+    interface: wan
+  staticnatport: true
+  nonat: false
+  disabled: false
+- description: Auto created rule - DMANAGEMENTSVMS to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 10.0.10.0/24
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: Auto created rule for ISAKMP - DKUBERNETES to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 10.0.20.0/24
+  destination:
+    any: true
+    port: '500'
+  target:
+    interface: wan
+  staticnatport: true
+  nonat: false
+  disabled: false
+- description: Auto created rule - DKUBERNETES to WAN
+  interface: wan
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 10.0.20.0/24
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: null
+  interface: opt3
+  ipprotocol: inet
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  target:
+    interface: opt3
+  staticnatport: false
+  nonat: false
+  disabled: false
+  profile: production
+- description: Tailscale exit node NAT to WAN
+  interface: wan
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 100.64.0.0/10
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+- description: 'tailnet -> WG sites: SNAT to tunnel address (see design 2026-08-03)'
+  interface: opt2
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 100.64.0.0/10
+  destination:
+    any: true
+  target:
+    interface: opt2
+  staticnatport: false
+  nonat: false
+  disabled: false
+  profile: production
+  managed_by: pfsense-tailscale.yml

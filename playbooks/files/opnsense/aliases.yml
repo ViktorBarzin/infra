@@ -1,0 +1,77 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Firewall aliases, in pfSense order.
+
+aliases:
+- name: nginx
+  type: host
+  content:
+  - 10.0.20.200
+  description: null
+  content_descriptions:
+  - Traefik LB (consolidated)
+- name: technitium_dns
+  type: host
+  content:
+  - 10.0.20.201
+  description: Technitium DNS LoadBalancer
+  content_descriptions:
+  - Technitium DNS K8s service
+- name: k8s_shared_lb
+  type: host
+  content:
+  - 10.0.20.200
+  description: Shared K8s LoadBalancer (traefik, coturn, etc.)
+  content_descriptions:
+  - Shared MetalLB IP for multiple K8s services
+- name: k8s_kms_lb
+  type: host
+  content:
+  - 10.0.20.202
+  description: KMS dedicated MetalLB IP (vlmcsd, ETP=Local)
+  content_descriptions:
+  - Dedicated IP for windows-kms service so ETP=Local can preserve real client IPs (vlmcsd doesn't speak PROXY-v2). Replaces k8s_shared_lb for port 1688 only.
+- name: traefik_lb
+  type: host
+  content:
+  - 10.0.20.203
+  description: Traefik ingress LB dedicated ETP Local
+  content_descriptions:
+  - Dedicated MetalLB IP
+- name: coturn_lb
+  type: host
+  content:
+  - 10.0.20.205
+  description: coturn dedicated MetalLB IP (ETP=Local, real client IPs for STUN/TURN)
+  content_descriptions:
+  - coturn
+- name: k8s_wireguard_lb
+  type: host
+  content:
+  - 10.0.20.207
+  description: WireGuard dedicated MetalLB IP (ETP=Local, preserves client source IP)
+  content_descriptions:
+  - wireguard
+- name: rustdesk_lb
+  type: host
+  content:
+  - 10.0.20.209
+  description: RustDesk dedicated MetalLB IP (ETP=Local) - stacks/rustdesk
+  content_descriptions:
+  - rustdesk
+- name: vermont_complex_clients
+  type: network
+  content:
+  - 10.0.10.10/32
+  description: May reach the Vermont complex alias (ADR-0035)
+  content_descriptions:
+  - devvm
+  managed_by: pfsense-vermont-alias.yml
+- name: vermont_complex_alias
+  type: network
+  content:
+  - 10.77.1.0/24
+  description: Vermont complex alias, NETMAP on rpi-sofia (ADR-0035)
+  content_descriptions:
+  - 10.77.1.x = complex 192.168.1.x
+  managed_by: pfsense-vermont-alias.yml

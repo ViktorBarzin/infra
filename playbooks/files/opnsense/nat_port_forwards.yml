@@ -1,0 +1,431 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Port forwards (rdr) in pfSense order. associated_rule: linked | pass | none
+# (pfSense's linked rule, pass-through filtering, or no rule).
+# natreflection null means the system default (misc.yml nat_reflection).
+
+port_forwards:
+- description: null
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '51820'
+  target:
+    alias: k8s_wireguard_lb
+  local_port: '51820'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1743809095'
+- description: HeadScale
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '41641'
+  target:
+    alias: k8s_shared_lb
+  local_port: '41641'
+  natreflection: null
+  associated_rule: none
+  disabled: true
+- description: https
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '443'
+  target:
+    alias: traefik_lb
+  local_port: '443'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621023633'
+- description: http
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '80'
+  target:
+    alias: traefik_lb
+  local_port: '80'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621023661'
+# pfSense's linked filter rule (1621167654) still points at the undefined
+# 'mailserver' alias, so pf never loaded it; today the WAN pass-all rule
+# admits this traffic. A linked rule on OPNsense follows the target above.
+- description: smtps submission
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '587'
+  target:
+    address: '{{ fw.opt1 }}'
+  local_port: '587'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621167654'
+# pfSense's linked filter rule (1621028916) still points at the undefined
+# 'mailserver' alias, so pf never loaded it; today the WAN pass-all rule
+# admits this traffic. A linked rule on OPNsense follows the target above.
+- description: imaps
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '993'
+  target:
+    address: '{{ fw.opt1 }}'
+  local_port: '993'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621028916'
+# pfSense's linked filter rule (1621028981) still points at the undefined
+# 'mailserver' alias, so pf never loaded it; today the WAN pass-all rule
+# admits this traffic. A linked rule on OPNsense follows the target above.
+- description: smtps
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '465'
+  target:
+    address: '{{ fw.opt1 }}'
+  local_port: '465'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621028981'
+- description: KMS public - kms.viktorbarzin.me
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '1688'
+  target:
+    alias: k8s_kms_lb
+  local_port: '1688'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1621029035'
+- description: shadowsocks
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '8388'
+  target:
+    alias: k8s_shared_lb
+  local_port: '8388'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1668879390'
+# pfSense's linked filter rule (1673734240) still points at the undefined
+# 'mailserver' alias, so pf never loaded it; today the WAN pass-all rule
+# admits this traffic. A linked rule on OPNsense follows the target above.
+- description: null
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '25'
+  target:
+    address: '{{ fw.opt1 }}'
+  local_port: '25'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1673734240'
+- description: qbittorrent incoming port
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '6881'
+  target:
+    alias: k8s_shared_lb
+  local_port: '6881'
+  natreflection: null
+  associated_rule: linked
+  disabled: true
+  linked_filter_tracker: '1708873708'
+- description: alarm system
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '10000'
+  target:
+    address: 192.168.1.11
+  local_port: '10000'
+  natreflection: purenat
+  associated_rule: linked
+  disabled: true
+  linked_filter_tracker: '1743803154'
+- description: xray + reality + vless -> loadbalancer ip
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '8080'
+  target:
+    alias: k8s_shared_lb
+  local_port: '7443'
+  natreflection: purenat
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1755892284'
+- description: TURN signaling (coturn)
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '3478'
+  target:
+    alias: coturn_lb
+  local_port: '3478'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: TURN relay ports (coturn)
+  interface: wan
+  ipprotocol: inet
+  protocol: udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: 49152-49252
+  target:
+    alias: coturn_lb
+  local_port: '49152'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: Headscale STUN (embedded DERP)
+  interface: wan
+  ipprotocol: inet
+  protocol: udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '3479'
+  target:
+    alias: k8s_shared_lb
+  local_port: '3479'
+  natreflection: enable
+  associated_rule: pass
+  disabled: false
+- description: qBittorrent torrenting (TCP)
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '50000'
+  target:
+    alias: k8s_shared_lb
+  local_port: '50000'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: qBittorrent torrenting (UDP)
+  interface: wan
+  ipprotocol: inet
+  protocol: udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '50000'
+  target:
+    alias: k8s_shared_lb
+  local_port: '50000'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: DNS forward to Technitium (preserve client IP)
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '53'
+  target:
+    address: 10.0.20.201
+  local_port: '53'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1778092957'
+- description: Forgejo git SSH - git.viktorbarzin.me
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '22'
+  target:
+    alias: k8s_shared_lb
+  local_port: '22'
+  natreflection: null
+  associated_rule: linked
+  disabled: false
+  linked_filter_tracker: '1788723309'
+- description: RustDesk (Milka remote help) - stacks/rustdesk
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: 21115-21117
+  target:
+    alias: rustdesk_lb
+  local_port: '21115'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: RustDesk (Milka remote help) - stacks/rustdesk
+  interface: wan
+  ipprotocol: inet
+  protocol: udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '21116'
+  target:
+    alias: rustdesk_lb
+  local_port: '21116'
+  natreflection: null
+  associated_rule: pass
+  disabled: false
+- description: 'k8s-ipv6: mail 25 on ::203 to ::204'
+  interface: opt3
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '25'
+  target:
+    address: 2001:470:5a7f:20::204
+  local_port: '25'
+  natreflection: null
+  associated_rule: none
+  disabled: false
+  profile: production
+  managed_by: pfsense-k8s-ipv6.yml
+- description: 'k8s-ipv6: mail 465 on ::203 to ::204'
+  interface: opt3
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '465'
+  target:
+    address: 2001:470:5a7f:20::204
+  local_port: '465'
+  natreflection: null
+  associated_rule: none
+  disabled: false
+  profile: production
+  managed_by: pfsense-k8s-ipv6.yml
+- description: 'k8s-ipv6: mail 587 on ::203 to ::204'
+  interface: opt3
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '587'
+  target:
+    address: 2001:470:5a7f:20::204
+  local_port: '587'
+  natreflection: null
+  associated_rule: none
+  disabled: false
+  profile: production
+  managed_by: pfsense-k8s-ipv6.yml
+- description: 'k8s-ipv6: mail 993 on ::203 to ::204'
+  interface: opt3
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '993'
+  target:
+    address: 2001:470:5a7f:20::204
+  local_port: '993'
+  natreflection: null
+  associated_rule: none
+  disabled: false
+  profile: production
+  managed_by: pfsense-k8s-ipv6.yml
