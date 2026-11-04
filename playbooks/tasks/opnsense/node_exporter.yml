@@ -1,0 +1,22 @@
+# node_exporter on the opt1 (VLAN 20) address, scraped by Prometheus.
+- name: node_exporter settings
+  opnsense_mvc:
+    mode: settings
+    controller: nodeexporter/general
+    item_root: general
+    settings:
+      enabled: true
+      listenaddress: "{{ fw.opt1 }}"
+      listenport: 9100
+      cpu: true
+      exec: true
+      filesystem: true
+      loadavg: true
+      meminfo: true
+      netdev: true
+      time: true
+      devstat: true
+      interrupts: true
+      ntp: true
+      zfs: false
+    reconfigure: nodeexporter/service/reconfigure

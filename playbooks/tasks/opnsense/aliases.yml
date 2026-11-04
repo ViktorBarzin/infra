@@ -1,0 +1,12 @@
+# Firewall aliases (aliases.yml). Prune is limited to the alias types this file uses,
+# so the built-in external/internal tables (bogons, sshlockout, CrowdSec) are left alone.
+- name: Aliases
+  opnsense_mvc:
+    controller: firewall/alias
+    item: item
+    item_root: alias
+    match_key: name
+    items: "{{ (lookup('file', opn_dir + '/aliases.yml') | from_yaml).aliases | opn_active(opnsense_profile) | opn_render(fw) | opn_aliases }}"
+    prune: true
+    prune_match: {type: '^(host|network|port|networkgroup)$'}
+    reconfigure: firewall/alias/reconfigure

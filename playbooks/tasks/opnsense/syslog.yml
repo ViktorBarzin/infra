@@ -1,0 +1,28 @@
+# Remote syslog. Two destinations: everything to the Grafana Alloy syslog receiver
+# (plan decision 10; BSD/RFC3164 format), and the firewall log to the CrowdSec
+# NodePort as pfSense does today (syslog.yml).
+- name: Read syslog.yml
+  ansible.builtin.set_fact:
+    opn_syslog: "{{ lookup('file', opn_dir + '/syslog.yml') | from_yaml }}"
+
+- name: Syslog destinations
+  opnsense_mvc:
+    controller: syslog/settings
+    item: destination
+    search: syslog/settings/search_destinations
+    item_root: destination
+    match_key: description
+    items: >-
+      {%- set out = [{'enabled': true, 'transport': 'udp4', 'hostname': '10.0.20.208', 'port': '514',
+                     'facility': '', 'level': '', 'program': '', 'rfc5424': false,
+                     'description': 'Grafana Alloy syslog receiver (Loki), all logs'}] -%}
+      {%- set prog = {'filter': 'filterlog'} -%}
+      {%- for t in opn_syslog.targets if opn_syslog.enabled -%}
+      {%-   set _ = out.append({'enabled': true, 'transport': t.transport, 'hostname': t.address, 'port': t.port,
+                               'facility': '', 'level': '', 'rfc5424': false,
+                               'program': t.log_types | map('extract', prog) | join(','),
+                               'description': 'From pfSense: ' ~ t.log_types | join(',') ~ ' log to ' ~ t.address ~ ':' ~ t.port}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+    reconfigure: syslog/service/reconfigure

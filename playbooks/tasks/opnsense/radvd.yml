@@ -1,0 +1,41 @@
+# Router advertisements (radvd.yml). Entries are written in both profiles and enabled
+# only in production (radvd.yml enabled_in). Staging never calls radvd reconfigure.
+# OPNsense's radvd takes the prefix from the interface's own IPv6 address, so the
+# YAML prefixes are documentation here. RDNSS servers the profile cannot fill
+# (the production IPv6 addresses, in staging) are left out.
+- name: Read radvd.yml
+  ansible.builtin.set_fact:
+    opn_radvd: "{{ lookup('file', opn_dir + '/radvd.yml') | from_yaml | opn_render(fw) }}"
+
+- name: Router advertisement entries
+  opnsense_mvc:
+    controller: radvd/settings
+    item: entry
+    item_root: entries
+    match_key: interface
+    items: >-
+      {%- set out = [] -%}
+      {%- for e in opn_radvd.interfaces -%}
+      {%-   set _ = out.append({
+             'enabled': opnsense_profile == opn_radvd.enabled_in,
+             'interface': e.interface,
+             'mode': e.mode,
+             'RDNSS': e.rdnss | reject('search', '__unrendered_placeholder__') | select | join(','),
+             'DNSSL': e.dnssl | join(','),
+             'dns': (e.rdnss | reject('search', '__unrendered_placeholder__') | select | list | length > 0),
+             'MinRtrAdvInterval': e.min_interval or 200,
+             'MaxRtrAdvInterval': e.max_interval or 600,
+             'AdvDefaultLifetime': '' if e.router_lifetime is none else e.router_lifetime,
+             'AdvDefaultPreference': e.priority or 'medium'}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_radvd_entries
+
+- name: Reconfigure radvd (production only)
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/radvd/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: opnsense_profile == opn_radvd.enabled_in and opn_radvd_entries is changed and not ansible_check_mode

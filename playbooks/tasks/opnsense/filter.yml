@@ -1,0 +1,22 @@
+# Filter rules (filter.yml) in YAML order; sequence = 100 + 10 * position.
+# Rules a port forward creates (linked_nat_rule) come from the forward (nat.yml,
+# pass=rule). Rules on an interface the box does not have yet are listed and skipped.
+# Prune covers MVC rules only; the automatic, anti-lockout and plugin rules
+# (CrowdSec) are not MVC items and are not touched.
+- name: Work out the filter rules for this profile
+  ansible.builtin.set_fact:
+    opn_filter_active: "{{ (lookup('file', opn_dir + '/filter.yml') | from_yaml).rules | opn_active(opnsense_profile) | opn_render(fw) }}"
+
+- name: Rules skipped because their interface is not on the box
+  ansible.builtin.debug:
+    msg: "{{ opn_filter_active | opn_filter_skipped(opn_ifmap, opn_present_ifs) }}"
+
+- name: Filter rules
+  opnsense_mvc:
+    controller: firewall/filter
+    item: rule
+    item_root: rule
+    match_key: description
+    items: "{{ opn_filter_active | opn_filter_rules(opn_ifmap, opn_present_ifs) }}"
+    prune: true
+    reconfigure: firewall/filter/apply

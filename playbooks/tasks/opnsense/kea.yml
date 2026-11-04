@@ -1,0 +1,75 @@
+# Kea DHCPv4 (dhcp.yml). Subnets and reservations are written in both profiles; the
+# service is enabled only in production (dhcp.yml enabled_in). Staging never calls
+# kea reconfigure, so nothing is started there.
+- name: Read dhcp.yml
+  ansible.builtin.set_fact:
+    opn_dhcp: "{{ lookup('file', opn_dir + '/dhcp.yml') | from_yaml | opn_render(fw) }}"
+    opn_dhcp_on: "{{ opnsense_profile in [(lookup('file', opn_dir + '/dhcp.yml') | from_yaml).enabled_in] }}"
+
+- name: Kea general settings
+  opnsense_mvc:
+    mode: settings
+    controller: kea/dhcpv4
+    item_root: dhcpv4
+    settings:
+      general:
+        enabled: "{{ opn_dhcp_on }}"
+        interfaces: "{{ opn_dhcp.interfaces | map(attribute='interface') | join(',') }}"
+  register: opn_kea_general
+
+- name: Kea subnets
+  opnsense_mvc:
+    controller: kea/dhcpv4
+    item: subnet
+    item_root: subnet4
+    match_key: subnet
+    items: >-
+      {%- set out = [] -%}
+      {%- for i in opn_dhcp.interfaces -%}
+      {%-   set _ = out.append({
+             'subnet': i.subnet,
+             'pools': i.pool_start ~ '-' ~ i.pool_end,
+             'next_server': i.next_server or '',
+             'option_data_autocollect': false,
+             'option_data': {
+               'routers': i.gateway,
+               'domain_name_servers': i.dns_servers | join(','),
+               'domain_name': i.domain or '',
+               'boot_file_name': i.boot_file or ''},
+             'description': 'DHCP on ' ~ i.interface}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_kea_subnets
+
+- name: Kea reservations
+  opnsense_mvc:
+    controller: kea/dhcpv4
+    item: reservation
+    item_root: reservation
+    match_key: hw_address
+    items: >-
+      {%- set out = [] -%}
+      {%- for i in opn_dhcp.interfaces -%}
+      {%-   for r in i.reservations -%}
+      {%-     set _ = out.append({
+               'subnet': opn_kea_subnets.uuids[i.subnet],
+               'hw_address': r.mac,
+               'ip_address': r.ip,
+               'hostname': r.hostname,
+               'description': r.description or r.hostname}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_kea_reservations
+
+- name: Reconfigure Kea (production only)
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/kea/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: >-
+    opn_dhcp_on and not ansible_check_mode and
+    (opn_kea_general is changed or opn_kea_subnets is changed or opn_kea_reservations is changed)

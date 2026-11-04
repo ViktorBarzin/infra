@@ -1,0 +1,169 @@
+# HAProxy (haproxy.yml). Objects are separate API items linked by uuid, so they are
+# written in dependency order: health check, servers, backends, ACLs, actions,
+# frontends. Server names are <backend>_<server> because OPNsense server names are
+# global. Backends that send PROXY v2 check their servers without it
+# (healthCheckProxyProto disable), on the non-PROXY check ports where given.
+- name: Read haproxy.yml
+  ansible.builtin.set_fact:
+    opn_hap: "{{ lookup('file', opn_dir + '/haproxy.yml') | from_yaml | opn_render(fw) }}"
+
+- name: HAProxy general settings
+  opnsense_mvc:
+    mode: settings
+    controller: haproxy/settings
+    item_root: haproxy
+    settings:
+      general:
+        enabled: "{{ opn_hap.enabled }}"
+        tuning:
+          maxConnections: "{{ opn_hap.max_connections }}"
+  register: opn_hap_general
+
+- name: HAProxy health check
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: healthcheck
+    search: haproxy/settings/search_healthchecks
+    item_root: healthcheck
+    match_key: name
+    items:
+      - name: tcp_connect
+        type: tcp
+        interval: 5s
+        description: TCP connect check (playbooks/opnsense.yml)
+    prune: true
+  register: opn_hap_checks
+
+- name: HAProxy servers
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: server
+    search: haproxy/settings/search_servers
+    item_root: server
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for b in opn_hap.backends -%}
+      {%-   for s in b.servers -%}
+      {%-     set _ = out.append({'name': b.name ~ '_' ~ s.name, 'enabled': s.enabled, 'type': 'static',
+                                 'address': s.address, 'port': s.port, 'checkport': s.check_port or '',
+                                 'weight': s.weight or '', 'mode': 'active',
+                                 'description': s.name ~ ' in ' ~ b.name}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_hap_servers
+
+- name: HAProxy backends
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: backend
+    search: haproxy/settings/search_backends
+    item_root: backend
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for b in opn_hap.backends -%}
+      {%-   set pp = 'v2' if (b.servers | selectattr('send_proxy_v2') | list) else '' -%}
+      {%-   set hc = b.check_type not in [none, 'none'] -%}
+      {%-   set _ = out.append({'name': b.name, 'enabled': true, 'mode': 'tcp',
+               'algorithm': b.balance or 'roundrobin',
+               'linkedServers': b.servers | map(attribute='name') | map('regex_replace', '^', b.name ~ '_')
+                                | map('extract', opn_hap_servers.uuids) | join(','),
+               'proxyProtocol': pp,
+               'healthCheckEnabled': hc,
+               'healthCheck': opn_hap_checks.uuids['tcp_connect'] if hc else '',
+               'healthCheckProxyProto': 'disable',
+               'checkInterval': (b.check_interval_ms ~ 'ms') if b.check_interval_ms else '',
+               'tuning_retries': b.retries or '',
+               'tuning_timeoutConnect': (b.connect_timeout_ms ~ 'ms') if b.connect_timeout_ms else '',
+               'tuning_timeoutServer': (b.server_timeout_ms ~ 'ms') if b.server_timeout_ms else '',
+               'description': b.name}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_hap_backends
+
+- name: HAProxy ACLs
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: acl
+    search: haproxy/settings/search_acls
+    item_root: acl
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for f in opn_hap.frontends -%}
+      {%-   for a in f.acls -%}
+      {%-     set _ = out.append({'name': f.name ~ '_' ~ a.name, 'expression': 'custom_acl',
+                                 'custom_acl': a.value, 'negate': false, 'description': a.name}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_hap_acls
+
+- name: HAProxy actions
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: action
+    search: haproxy/settings/search_actions
+    item_root: action
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for f in opn_hap.frontends -%}
+      {%-   for a in f.actions -%}
+      {%-     set _ = out.append({'name': f.name ~ '_' ~ loop.index ~ '_' ~ a.action ~ '_' ~ a.backend,
+                                 'enabled': true, 'testType': 'if', 'type': a.action,
+                                 'linkedAcls': opn_hap_acls.uuids[f.name ~ '_' ~ a.acl],
+                                 'use_backend': opn_hap_backends.uuids[a.backend],
+                                 'description': a.action ~ ' ' ~ a.backend ~ ' if ' ~ a.acl}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_hap_actions
+
+- name: HAProxy frontends
+  opnsense_mvc:
+    controller: haproxy/settings
+    item: frontend
+    search: haproxy/settings/search_frontends
+    item_root: frontend
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for f in opn_hap.frontends -%}
+      {%-   set acts = [] -%}
+      {%-   for a in f.actions -%}
+      {%-     set _ = acts.append(opn_hap_actions.uuids[f.name ~ '_' ~ loop.index ~ '_' ~ a.action ~ '_' ~ a.backend]) -%}
+      {%-   endfor -%}
+      {%-   set _ = out.append({'name': f.name, 'enabled': f.enabled, 'mode': f.mode,
+               'bind': f.binds | map(attribute='address') | zip(f.binds | map(attribute='port'))
+                       | map('join', ':') | join(','),
+               'defaultBackend': opn_hap_backends.uuids[f.default_backend],
+               'linkedActions': acts | join(','),
+               'customOptions': f.advanced or '',
+               'description': f.description}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_hap_frontends
+
+- name: Test the HAProxy configuration
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/haproxy/service/configtest"
+  register: opn_hap_test
+  failed_when: opn_hap_test.json.result is search('ALERT')
+  when: not ansible_check_mode and (opn_hap_general is changed or opn_hap_checks is changed or opn_hap_servers is changed
+        or opn_hap_backends is changed or opn_hap_acls is changed or opn_hap_actions is changed or opn_hap_frontends is changed)
+
+- name: Reconfigure HAProxy
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/haproxy/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_hap_test is not skipped

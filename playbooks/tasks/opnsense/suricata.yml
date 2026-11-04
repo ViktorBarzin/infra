@@ -1,0 +1,71 @@
+# Suricata in IDS mode (pcap: alerts, no drops; plan decision 8) on WAN, VLAN 10 and
+# VLAN 20, with ET Open and the abuse.ch SSL blacklist, Feodo and URLhaus lists.
+# EVE alerts go to syslog, and from there to Alloy (syslog.yml).
+- name: Suricata settings
+  opnsense_mvc:
+    mode: settings
+    controller: ids/settings
+    item_root: ids
+    settings:
+      general:
+        enabled: true
+        mode: pcap
+        promisc: false
+        interfaces: wan,lan,opt1
+        homenet: 10.0.0.0/8,192.168.0.0/16,2001:470:5a7f::/48,2001:470:6f:43d::/64,fdfe:e989:d3ce:1::/64
+        syslog_eve: true
+  register: opn_ids_settings
+
+- name: List the rulesets
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/list_rulesets"
+  check_mode: false
+  register: opn_ids_rulesets
+
+- name: Work out which rulesets to enable
+  ansible.builtin.set_fact:
+    opn_ids_missing: >-
+      {{ opn_ids_rulesets.json.rows
+         | selectattr('description', 'match', '^(ET open/|abuse\.ch/(SSL Fingerprint Blacklist|Feodo Tracker|URLhaus)$)')
+         | rejectattr('enabled', 'in', ['1', 1, true])
+         | map(attribute='filename') | list }}
+
+- name: Enable the rulesets
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/toggle_ruleset/{{ opn_ids_missing | join(',') }}/1"
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_ids_missing | length > 0 and not ansible_check_mode
+  changed_when: true
+
+- name: Count the installed rules
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/search_installed_rules"
+    method: POST
+    body_format: json
+    body: {current: 1, rowCount: 1}
+  check_mode: false
+  register: opn_ids_installed
+
+- name: Apply settings, download the rules and (re)start Suricata
+  when: >-
+    not ansible_check_mode and (opn_ids_settings is changed or opn_ids_missing | length > 0
+    or (opn_ids_installed.json.total | default(0) | int) == 0)
+  block:
+    - name: Reconfigure the IDS
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/ids/service/reconfigure"
+        method: POST
+        body_format: json
+        body: {}
+      changed_when: true
+
+    - name: Download and load the rules
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/ids/service/update_rules"
+        timeout: 900
+        method: POST
+        body_format: json
+        body: {}
+      changed_when: true

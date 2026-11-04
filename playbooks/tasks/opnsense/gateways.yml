@@ -1,0 +1,10 @@
+# Gateways (gateways.yml). Entries with port: false and production-only gateways
+# (WireGuard sites on opt2, HE on opt3) are left out of staging.
+- name: Gateways
+  opnsense_mvc:
+    controller: routing/settings
+    item: gateway
+    match_key: name
+    items: "{{ (lookup('file', opn_dir + '/gateways.yml') | from_yaml).gateways | opn_active(opnsense_profile) | opn_render(fw) | opn_gateways(opn_ifmap) }}"
+    prune: true
+    reconfigure: routing/settings/reconfigure

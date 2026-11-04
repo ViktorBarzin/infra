@@ -1,0 +1,19 @@
+# NetFlow export (netflow.yml): OPNsense's built-in exporter replaces softflowd and
+# sends to goflow2 on k8s-master. maxlife maps to the active timeout.
+- name: Read netflow.yml
+  ansible.builtin.set_fact:
+    opn_netflow: "{{ lookup('file', opn_dir + '/netflow.yml') | from_yaml }}"
+
+- name: NetFlow settings
+  opnsense_mvc:
+    mode: settings
+    get: diagnostics/netflow/getconfig
+    set: diagnostics/netflow/setconfig
+    item_root: netflow
+    settings:
+      capture:
+        interfaces: "{{ opn_netflow.interfaces | join(',') }}"
+        version: "v{{ opn_netflow.version }}"
+        targets: "{{ opn_netflow.collectors | join(',') }}"
+      activeTimeout: "{{ opn_netflow.timeouts.maxlife }}"
+    reconfigure: diagnostics/netflow/reconfigure

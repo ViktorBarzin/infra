@@ -1,0 +1,185 @@
+# OPNsense configuration from declarative YAML (ADR-0038, docs/plans/2026-11-03-opnsense-migration.md).
+#
+# Reads playbooks/files/opnsense/*.yml and applies it over the OPNsense REST API with
+# the opnsense_mvc module (playbooks/library). One task file per area under
+# playbooks/tasks/opnsense/, each tagged with its area name. After every area the
+# safety checks in tasks/opnsense/safety.yml run: SSH and API still answer, no
+# dnsmasq/Kea/radvd process, no gif/wg device (the last two in staging only).
+#
+#   ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml --check --diff
+#   ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml [--tags filter,nat]
+#
+# The profile comes from the inventory (opnsense_profile). Everything marked
+# profile: production or enabled_in: production is left out of staging. The
+# production profile also needs -e opnsense_allow_production=true, because at
+# cutover the box gets its production config.xml first and this playbook then only
+# checks idempotence (plan, review changes).
+#
+# API credentials come from Vault secret/opnsense at run time; nothing secret is
+# written to disk. API tasks run on the box itself (SSH as root, /usr/local/bin/python3)
+# against its own LAN address; safety.yml also checks the API from the controller.
+
+- name: Configure OPNsense
+  hosts: opnsense
+  gather_facts: false
+  vars:
+    opn_dir: "{{ playbook_dir }}/files/opnsense"
+    opn_api_url: "https://{{ inventory_hostname }}:8443/api"
+    opn_api_key: "{{ lookup('pipe', 'vault kv get -field=api_key secret/opnsense') }}"
+    opn_api_secret: "{{ lookup('pipe', 'vault kv get -field=api_secret secret/opnsense') }}"
+    opn_production: "{{ opnsense_profile == 'production' }}"
+    fw: "{{ (lookup('file', opn_dir + '/addresses.yml') | from_yaml).profiles[opnsense_profile] }}"
+    # pfSense interface or group names -> OPNsense interface keys. pfSense's WireGuard
+    # group is OPNsense's 'wireguard' group. Tailscale has no assigned interface on the
+    # box yet; set opnsense_tailscale_interface once one is assigned and the two
+    # tailnet rules get rendered.
+    opn_ifmap:
+      WireGuard: wireguard
+      Tailscale: "{{ opnsense_tailscale_interface | default('tailscale') }}"
+  module_defaults:
+    opnsense_mvc:
+      base_url: "{{ opn_api_url }}"
+      api_key: "{{ opn_api_key }}"
+      api_secret: "{{ opn_api_secret }}"
+      validate_certs: false
+    ansible.builtin.uri:
+      url_username: "{{ opn_api_key }}"
+      url_password: "{{ opn_api_secret }}"
+      force_basic_auth: true
+      validate_certs: false
+      return_content: true
+  pre_tasks:
+    - name: Refuse the production profile unless asked for explicitly
+      ansible.builtin.assert:
+        that: opnsense_profile == 'staging' or (opnsense_allow_production | default(false) | bool)
+        fail_msg: production profile needs -e opnsense_allow_production=true (cutover only)
+      tags: [always]
+
+    - name: Read the interfaces the box has
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/firewall/filter/list_network_select_options"
+      register: opn_netopts
+      check_mode: false
+      tags: [always]
+
+    - name: Read the interface groups the box has
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/firewall/group/search_item"
+      register: opn_groups
+      check_mode: false
+      tags: [always]
+
+    - name: Note the interface keys
+      ansible.builtin.set_fact:
+        opn_present_ifs: >-
+          {{ (opn_netopts.json.networks['items'].keys() | list
+              | reject('match', '^(any|\(self\)|lo0)$') | reject('match', '.*ip$') | list)
+             + (opn_groups.json.rows | map(attribute='ifname') | list) }}
+      tags: [always]
+
+    - name: Version is the one the playbook was written for
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/core/firmware/info"
+      register: opn_fw
+      check_mode: false
+      failed_when: not (opn_fw.json.product.product_version is match('26\.7\.'))
+      tags: [always]
+
+  tasks:
+    - name: Aliases
+      ansible.builtin.import_tasks: tasks/opnsense/aliases.yml
+      tags: [aliases]
+    - name: Safety checks after aliases
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [aliases]
+
+    - name: Gateways
+      ansible.builtin.import_tasks: tasks/opnsense/gateways.yml
+      tags: [gateways]
+    - name: Safety checks after gateways
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [gateways]
+
+    - name: Static routes
+      ansible.builtin.import_tasks: tasks/opnsense/routes.yml
+      tags: [routes]
+    - name: Safety checks after routes
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [routes]
+
+    - name: Filter rules
+      ansible.builtin.import_tasks: tasks/opnsense/filter.yml
+      tags: [filter]
+    - name: Safety checks after filter
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [filter]
+
+    - name: NAT
+      ansible.builtin.import_tasks: tasks/opnsense/nat.yml
+      tags: [nat]
+    - name: Safety checks after NAT
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [nat]
+
+    - name: Unbound
+      ansible.builtin.import_tasks: tasks/opnsense/unbound.yml
+      tags: [unbound]
+    - name: Safety checks after Unbound
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [unbound]
+
+    - name: NTP
+      ansible.builtin.import_tasks: tasks/opnsense/ntp.yml
+      tags: [ntp]
+    - name: Safety checks after NTP
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [ntp]
+
+    - name: Kea DHCP
+      ansible.builtin.import_tasks: tasks/opnsense/kea.yml
+      tags: [kea]
+    - name: Safety checks after Kea
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [kea]
+
+    - name: Router advertisements
+      ansible.builtin.import_tasks: tasks/opnsense/radvd.yml
+      tags: [radvd]
+    - name: Safety checks after radvd
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [radvd]
+
+    - name: NetFlow
+      ansible.builtin.import_tasks: tasks/opnsense/netflow.yml
+      tags: [netflow]
+    - name: Safety checks after NetFlow
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [netflow]
+
+    - name: Syslog
+      ansible.builtin.import_tasks: tasks/opnsense/syslog.yml
+      tags: [syslog]
+    - name: Safety checks after syslog
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [syslog]
+
+    - name: node_exporter
+      ansible.builtin.import_tasks: tasks/opnsense/node_exporter.yml
+      tags: [node_exporter]
+    - name: Safety checks after node_exporter
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [node_exporter]
+
+    - name: Suricata IDS
+      ansible.builtin.import_tasks: tasks/opnsense/suricata.yml
+      tags: [suricata]
+    - name: Safety checks after Suricata
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [suricata]
+
+    - name: HAProxy
+      ansible.builtin.import_tasks: tasks/opnsense/haproxy.yml
+      tags: [haproxy]
+    - name: Safety checks after HAProxy
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [haproxy]
