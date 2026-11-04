@@ -155,6 +155,7 @@ resource "kubernetes_config_map" "renovate" {
   data = {
     "config.js"       = file("${path.module}/files/config.js")
     "run-renovate.sh" = file("${path.module}/files/run-renovate.sh")
+    "cve-priority.js" = file("${path.module}/files/cve-priority.js")
   }
 }
 
@@ -251,6 +252,12 @@ resource "kubernetes_cron_job_v1" "renovate" {
               env {
                 name  = "RENOVATE_INSTANCE"
                 value = "infra"
+              }
+              env {
+                # Order pending updates by fixable Critical/High CVE count
+                # from Trivy (files/cve-priority.js, 2026-11-04).
+                name  = "CVE_PRIORITY"
+                value = "1"
               }
               volume_mount {
                 name       = "config"
