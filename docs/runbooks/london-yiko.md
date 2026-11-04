@@ -22,7 +22,7 @@ sequenceDiagram
     E-->>R: open camera
     R-->>B: H.264 over WebRTC (direct UDP, or Kinesis TURN)
     B-->>HA: RTSP 10.0.20.200:8554/live
-    HA->>B: poll /snapshot.jpg until 200 = video is live
+    HA->>B: poll /snapshot.jpg every 5 s (only while the toggle is on) until 200 = video is live
     HA-->>U: conditional live card appears
     Note over HA,K: off, 5 min auto-off, or HA start -> replicas=0
     Note over K: camera-cap CronJob (every 15 min) forces 0 once a pod has run 15 min
@@ -46,8 +46,8 @@ sequenceDiagram
 | Bridge Deployment, LB Service (10.0.20.200:8554 RTSP, :8080 HTTP), RBAC, camera-cap CronJob | `stacks/ecovacs-video-proxy/main.tf` |
 | Bridge secrets (env vars, one key per variable) | Vault `secret/ecovacs-video-proxy` |
 | Alerts `YikoCameraLeftOn`, `YikoCameraStartFailed` | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`, group "Yiko camera" |
-| HA side, YAML (needs an HA restart to change) | `/config/configuration.yaml`: `rest_command.yiko_camera_scale` (PATCH replicas), `command_line` `binary_sensor.yiko_camera_ready` (curl /snapshot.jpg every 5 s, on when 200). Secrets in `/config/secrets.yaml`: `k8s_yiko_camera_bearer`, `yiko_rtsp_password`, `yiko_camera_ready_cmd` |
-| HA side, UI-managed | `input_boolean.yiko_camera`; automation `automation.yiko_camera` (id `yiko_camera`: on → replicas 1; off, 5 min on, or HA start → replicas 0); generic camera `camera.yiko` "Yiko camera" (stream `rtsp://10.0.20.200:8554/live` over TCP, still image `/snapshot.jpg`, user `yiko`); Camera card + conditional live `picture-entity` in the first section of the `vacuum-yiko` dashboard |
+| HA side, YAML (needs an HA restart to change) | `/config/configuration.yaml`: `rest_command.yiko_camera_scale` (PATCH replicas), `command_line` `binary_sensor.yiko_camera_ready` (curl /snapshot.jpg, on when 200; its own `scan_interval` is 3600 s, and the automation below refreshes it every 5 s while the camera is on). Secrets in `/config/secrets.yaml`: `k8s_yiko_camera_bearer`, `yiko_rtsp_password`, `yiko_camera_ready_cmd` |
+| HA side, UI-managed | `input_boolean.yiko_camera`; automation `automation.yiko_camera` (id `yiko_camera`: on → replicas 1; off, 5 min on, or HA start → replicas 0); automation `automation.yiko_camera_ready_poll` (id `yiko_camera_ready_poll`: `homeassistant.update_entity` on the ready sensor every 5 s while `input_boolean.yiko_camera` is on, and once 30 s after it turns off; added 2026-11-04 so the Pi 3 no longer runs a failing curl and logs an error every 5 s while the bridge is at 0 replicas); generic camera `camera.yiko` "Yiko camera" (stream `rtsp://10.0.20.200:8554/live` over TCP, still image `/snapshot.jpg`, user `yiko`); Camera card + conditional live `picture-entity` in the first section of the `vacuum-yiko` dashboard |
 
 ## Common tasks
 
