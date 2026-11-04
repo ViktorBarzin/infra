@@ -13,7 +13,11 @@
     item_root: destination
     match_key: description
     items: >-
-      {%- set out = [{'enabled': true, 'transport': 'udp4', 'hostname': '10.0.20.208', 'port': '514',
+      {#- TCP, as the London router uses: over UDP, syslog-ng's long-lived flow from
+          10.0.20.2 never reached the Alloy pod (2026-11-04) while one-off UDP
+          packets from the same box did, which points at a stale conntrack entry
+          that constant traffic keeps alive. TCP also does not lose lines. -#}
+      {%- set out = [{'enabled': true, 'transport': 'tcp4', 'hostname': '10.0.20.208', 'port': '514',
                      'facility': '', 'level': '', 'program': '', 'rfc5424': false,
                      'description': 'Grafana Alloy syslog receiver (Loki), all logs'}] -%}
       {%- set prog = {'filter': 'filterlog'} -%}

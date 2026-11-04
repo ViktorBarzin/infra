@@ -8417,6 +8417,19 @@ extraScrapeConfigs: |
   # doesn't emit the old_stats protocol the exporter expected, so the
   # scrape only ever returned `dovecot_up{scope="user"} 0`. Re-add here
   # if a working exporter is introduced.
+  # OPNsense edge firewall (ADR-0038), node_exporter plugin. Staging address
+  # until cutover; the target moves to 10.0.20.1 then (plan, "Review changes").
+  # ScrapeTargetDown covers it.
+  - job_name: 'opnsense-node'
+    static_configs:
+      - targets: ["10.0.20.2:9100"]
+        labels:
+          node: 'opnsense'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'opnsense'
   - job_name: 'proxmox-host'
     static_configs:
       - targets:
