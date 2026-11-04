@@ -115,7 +115,7 @@ resource "kubernetes_deployment" "tandoor" {
       spec {
         container {
           name              = "recipes"
-          image             = "vabene1111/recipes:2.6.15"
+          image             = "vabene1111/recipes:2.7.2"
           image_pull_policy = "IfNotPresent"
           env {
             # One user; 2 workers (default 3) keep 2.x well under its limit.
