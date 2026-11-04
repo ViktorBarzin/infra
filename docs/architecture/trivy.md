@@ -86,9 +86,11 @@ Following the design, two kinds of finding post to Slack `#alerts` as they appea
 
 | Alert | Fires when | Granularity |
 |---|---|---|
-| `TrivyFixableCVEInternetReachable` | an internet-reachable namespace has at least one fixable Critical or High CVE, for 1h | one alert per namespace |
+| `TrivyFixableCVEInternetReachable` | an internet-reachable namespace has at least one fixable Critical or High CVE in an image it runs, for 1h | one alert per namespace |
 | `TrivyExposedSecretInImage` | an image holds at least one secret, for 1h | one alert per namespace and image repository |
 | `TrivyMetricsAbsent` | no `trivy_image_vulnerabilities` series for 2h | single alert |
+
+`TrivyFixableCVEInternetReachable` leaves out a Deployment's old ReplicaSets (since 2026-11-04). The operator keeps a report for the previous ReplicaSet after a rollout until the 72h TTL, so a bumped app kept alerting on the image it no longer runs: on 2026-11-04 tripit counted 1631 findings across 8 builds and 572 on the running one. A ReplicaSet finding counts when that ReplicaSet has a pod (`kube_pod_info` `created_by_name`), or when no ReplicaSet of its Deployment has a pod, so a Deployment scaled to 0 (an app Sablier has parked, for example) keeps alerting on all of its ReplicaSets. Findings on StatefulSets, DaemonSets, CronJobs, Jobs and bare pods count as before. The weekly digest still counts every report.
 
 Both finding alerts use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 72h TTL and rescanned. They go through their own Alertmanager child route: grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
 
