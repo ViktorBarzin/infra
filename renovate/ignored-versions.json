@@ -56,17 +56,6 @@
       ],
       "matchNewValue": "29.40.3",
       "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-04 pipeline #3287: stack authentik failed after this bump: its terragrunt apply failed (commit 9a646483)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "authentik"
-      ],
-      "matchNewValue": "2026.8.5",
-      "enabled": false
     }
   ]
 }
