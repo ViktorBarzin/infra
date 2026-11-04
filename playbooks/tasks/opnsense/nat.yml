@@ -1,0 +1,41 @@
+# NAT: port forwards (nat_port_forwards.yml) and outbound NAT (nat_outbound.yml).
+# Forwards with associated_rule linked get pass=rule, so OPNsense registers the pass
+# rule to the forward's target (REPORT.md: the pfSense linked rules had drifted).
+- name: Outbound NAT mode
+  opnsense_mvc:
+    mode: settings
+    get: firewall/source_nat/get
+    set: firewall/source_nat/set
+    item_root: filter
+    settings:
+      general:
+        snat_mode: "{{ (lookup('file', opn_dir + '/nat_outbound.yml') | from_yaml).mode }}"
+  register: opn_snat_mode
+
+- name: Outbound NAT rules
+  opnsense_mvc:
+    controller: firewall/source_nat
+    item: rule
+    item_root: rule
+    match_key: [description, ipprotocol]
+    items: "{{ (lookup('file', opn_dir + '/nat_outbound.yml') | from_yaml).rules | opn_active(opnsense_profile) | opn_render(fw) | opn_snat_rules(opn_ifmap) }}"
+    prune: true
+  register: opn_snat_rules
+
+- name: Port forwards
+  opnsense_mvc:
+    controller: firewall/d_nat
+    item: rule
+    item_root: rule
+    match_key: [descr, protocol]
+    items: "{{ (lookup('file', opn_dir + '/nat_port_forwards.yml') | from_yaml).port_forwards | opn_active(opnsense_profile) | opn_render(fw) | opn_dnat_rules(opn_ifmap) }}"
+    prune: true
+  register: opn_dnat_rules
+
+- name: Apply the NAT ruleset
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/firewall/filter/apply"
+    method: POST
+    body_format: json
+    body: {}
+  when: (opn_snat_mode is changed or opn_snat_rules is changed or opn_dnat_rules is changed) and not ansible_check_mode

@@ -1,0 +1,25 @@
+# NTP (ntp.yml). OPNsense 26.7 has no API for the NTP server settings, so ntp.php
+# edits config.xml (system/timeservers, ntpd/ispool, ntpd/prefer, ntpd/interface)
+# through OPNsense's own Config class and restarts ntpd when something changed.
+- name: Read ntp.yml
+  ansible.builtin.set_fact:
+    opn_ntp: "{{ lookup('file', opn_dir + '/ntp.yml') | from_yaml }}"
+
+- name: NTP servers and interfaces
+  ansible.builtin.script:
+    cmd: >-
+      ntp.php
+      '{{ opn_ntp.servers | map(attribute='host') | join(' ') }}'
+      '{{ opn_ntp.servers | selectattr('pool') | map(attribute='host') | join(' ') }}'
+      '{{ opn_ntp.interfaces | reject('equalto', 'all') | join(',') }}'
+      {{ 'check' if ansible_check_mode else 'apply' }}
+    executable: /usr/local/bin/php
+  check_mode: false
+  register: opn_ntp_result
+  changed_when: opn_ntp_result.stdout is search('^changed', multiline=true)
+  failed_when: opn_ntp_result.rc != 0 or opn_ntp_result.stdout is search('^error', multiline=true)
+
+- name: NTP changes
+  ansible.builtin.debug:
+    var: opn_ntp_result.stdout_lines
+  when: opn_ntp_result is changed

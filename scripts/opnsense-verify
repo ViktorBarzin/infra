@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Check the OPNsense box against playbooks/files/opnsense/*.yml (plan decision 16).
+
+Prints one PASS/FAIL line per check and exits non-zero when any check fails.
+Reads the API key from Vault secret/opnsense and logs in over SSH as root with
+~/.ssh/opnsense/id_ed25519. Read-only: it changes nothing on the box.
+
+    scripts/opnsense-verify [--host 10.0.10.2] [--profile staging]
+
+The expected objects are worked out with the same filters the playbook uses
+(playbooks/filter_plugins/opnsense.py), so counts compare like for like.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import ssl
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parent.parent
+OPN_DIR = REPO / "playbooks" / "files" / "opnsense"
+sys.path.insert(0, str(REPO / "playbooks" / "filter_plugins"))
+import opnsense as opn  # noqa: E402  (playbooks/filter_plugins/opnsense.py)
+
+NOT_TESTABLE = [
+    "WAN port forwards (the TP-Link forwards to pfSense's 192.168.1.2, not to .250)",
+    "Kea DHCP (configured, disabled in staging)",
+    "router advertisements (configured, disabled in staging)",
+    "HE tunnel and IPv6 (no gif, no IPv6 address in staging)",
+    "WireGuard hub and site routes (another agent; production only)",
+    "Tailscale routes and exit node (staging node has none)",
+    "HAProxy PROXY v2 path end to end (Traefik trusts PROXY headers from 10.0.20.1 only)",
+    "viktorbarzin.lan auth-zone transfer (Technitium allows AXFR from pfSense's address only)",
+]
+
+results: list[tuple[bool, str]] = []
+
+
+def check(ok: bool, what: str, detail: str = "") -> None:
+    results.append((ok, what))
+    print("%s  %s%s" % ("PASS" if ok else "FAIL", what, " (%s)" % detail if detail else ""))
+
+
+def vault(field: str) -> str:
+    return subprocess.run(["vault", "kv", "get", "-field=" + field, "secret/opnsense"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+class Api:
+    def __init__(self, host: str):
+        self.base = "https://%s:8443/api/" % host
+        tok = base64.b64encode(("%s:%s" % (vault("api_key"), vault("api_secret"))).encode()).decode()
+        self.headers = {"Authorization": "Basic " + tok, "Accept": "application/json"}
+        self.ctx = ssl.create_default_context()
+        self.ctx.check_hostname = False
+        self.ctx.verify_mode = ssl.CERT_NONE
+
+    def get(self, path: str, post: dict | None = None):
+        data = None
+        headers = dict(self.headers)
+        if post is not None:
+            data = json.dumps(post).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(self.base + path, data=data, headers=headers)
+        with urllib.request.urlopen(req, context=self.ctx, timeout=30) as r:
+            return json.loads(r.read() or b"{}")
+
+    def rows(self, path: str) -> list[dict]:
+        res = self.get(path, {"current": 1, "rowCount": -1, "searchPhrase": ""})
+        return [r for r in res.get("rows", []) if re.match(r"^[0-9a-f]{8}-", str(r.get("uuid", "")))]
+
+
+def ssh(host: str, cmd: str) -> subprocess.CompletedProcess:
+    key = os.path.expanduser("~/.ssh/opnsense/id_ed25519")
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", key,
+                           "root@" + host, "/bin/sh", "-s"], input=cmd, capture_output=True, text=True)
+
+
+def load(name: str):
+    return yaml.safe_load((OPN_DIR / name).read_text())
+
+
+def compare(what: str, expected: list[str], present: list[str]) -> None:
+    missing = sorted(set(expected) - set(present))
+    extra = sorted(set(present) - set(expected))
+    ok = not missing and len([p for p in present if p in expected]) >= len(expected)
+    detail = "%d expected, %d present" % (len(expected), len(present))
+    if missing:
+        detail += "; missing: " + ", ".join(missing[:5])
+    if extra:
+        detail += "; not in YAML: " + ", ".join(extra[:5])
+    check(ok, what, detail)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="10.0.10.2")
+    ap.add_argument("--profile", default="staging", choices=["staging", "production"])
+    args = ap.parse_args()
+    host, profile = args.host, args.profile
+    fw = load("addresses.yml")["profiles"][profile]
+
+    try:
+        api = Api(host)
+        info = api.get("core/firmware/info")
+        check(True, "API reachable on %s:8443" % host)
+    except Exception as e:  # noqa: BLE001
+        check(False, "API reachable on %s:8443" % host, str(e))
+        return 1
+    version = info.get("product", {}).get("product_version", "")
+    check(version.startswith("26.7.8"), "version 26.7.8", version)
+
+    netopts = api.get("firewall/filter/list_network_select_options")["networks"]["items"]
+    groups = [g["ifname"] for g in api.get("firewall/group/search_item").get("rows", [])]
+    present_ifs = [k for k in netopts if not k.endswith("ip") and k not in ("any", "(self)", "lo0")] + groups
+    ifmap = {"WireGuard": "wireguard", "Tailscale": "tailscale"}
+
+    # objects declared in the YAML for this profile
+    aliases = opn.opn_aliases(opn.opn_active(load("aliases.yml")["aliases"], profile))
+    compare("aliases", [a["name"] for a in aliases], [r["name"] for r in api.rows("firewall/alias/search_item")
+                                                      if r.get("type") in ("host", "network", "port", "networkgroup")])
+    gws = opn.opn_gateways(opn.opn_active(load("gateways.yml")["gateways"], profile), ifmap)
+    compare("gateways", [g["name"] for g in gws], [r["name"] for r in api.get("routing/settings/search_gateway")["rows"]])
+    routes = opn.opn_routes(opn.opn_active(load("routes.yml")["routes"], profile))
+    compare("static routes", [r["network"] for r in routes], [r["network"] for r in api.rows("routes/routes/search_route")])
+
+    rules = opn.opn_render(opn.opn_active(load("filter.yml")["rules"], profile), fw)
+    want_rules = opn.opn_filter_rules(rules, ifmap, present_ifs)
+    have_rules = api.rows("firewall/filter/search_rule")
+    compare("filter rules (by description)", [r["description"] for r in want_rules], [r["description"] for r in have_rules])
+    seq = [int(r["sequence"]) for r in sorted(have_rules, key=lambda r: int(r["sequence"]))]
+    order_ok = [r["description"] for r in sorted(have_rules, key=lambda r: int(r["sequence"]))] == \
+               [r["description"] for r in want_rules]
+    check(order_ok, "filter rules in YAML order", "sequence %s..%s" % (seq[0], seq[-1]) if seq else "none")
+    for s in opn.opn_filter_skipped(rules, ifmap, present_ifs):
+        print("INFO  filter rule not rendered, interface missing on the box: %s" % s)
+
+    fwd = opn.opn_dnat_rules(opn.opn_render(opn.opn_active(load("nat_port_forwards.yml")["port_forwards"], profile), fw), ifmap)
+    compare("port forwards (by description)", [f["descr"] for f in fwd], [r["descr"] for r in api.rows("firewall/d_nat/search_rule")])
+    linked = [f for f in fwd if f["pass"] == "rule" and not f["disabled"]]
+    pf_rules = ssh(host, "pfctl -sr").stdout
+    # pfctl prints well-known ports by the names in the box's own /etc/services
+    services: dict[str, list[str]] = {}
+    for line in ssh(host, "cat /etc/services").stdout.splitlines():
+        m = re.match(r"^([A-Za-z0-9_.-]+)\s+(\d+)/(tcp|udp)", line)
+        if m:
+            services.setdefault(m.group(2), []).append(m.group(1))
+    def pass_rule_loaded(f: dict) -> bool:
+        port = f["local-port"].split("-")[0]
+        names = [port] + services.get(port, [])
+        tgt = f["target"]
+        tgt_rx = re.escape(tgt) if re.match(r"^[0-9a-f.:]+$", tgt) else "<%s>" % re.escape(tgt)
+        return any(re.search(r"pass in .* to %s port = %s\b" % (tgt_rx, re.escape(n)), pf_rules) for n in names)
+
+    missing_pass = [f["descr"] for f in linked if not pass_rule_loaded(f)]
+    check(not missing_pass, "port forwards with a registered pass rule loaded in pf",
+          "%d forwards%s" % (len(linked), "; missing: " + ", ".join(missing_pass) if missing_pass else ""))
+
+    snat = opn.opn_snat_rules(opn.opn_active(load("nat_outbound.yml")["rules"], profile), ifmap)
+    compare("outbound NAT rules (by description)", [r["description"] for r in snat],
+            [r["description"] for r in api.rows("firewall/source_nat/search_rule")])
+    mode = api.get("firewall/source_nat/get")["filter"]["general"]["snat_mode"]
+    sel = [k for k, v in mode.items() if v.get("selected") in (1, "1")]
+    check(sel == [load("nat_outbound.yml")["mode"]], "outbound NAT mode %s" % load("nat_outbound.yml")["mode"], ",".join(sel))
+
+    # services and safety on the box
+    out = ssh(host, """
+        for s in unbound ntpd suricata haproxy node_exporter; do
+          if pgrep -x $s >/dev/null || pgrep -f "/usr/local/bin/$s" >/dev/null; then echo "svc $s up"; else echo "svc $s down"; fi
+        done
+        echo "pgrep:$(pgrep -l 'dnsmasq|kea|radvd' | tr '\\n' ' ')"
+        echo "ifs:$(ifconfig -l)"
+        echo "inet6:$(ifconfig | awk '/inet6/ && $2 !~ /^fe80/ && $2 != "::1" {print $2}' | tr '\\n' ' ')"
+        echo "gui:$(sockstat -4l -p 8443 | awk 'NR>1 {print $2}' | sort -u | tr '\\n' ' ')"
+        echo "suricata:$(grep -c 'rule reload complete' /var/log/suricata/latest.log /var/log/suricata/suricata_*.log 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+        echo "eve:$(grep -c 'eve-log' /usr/local/etc/suricata/suricata.yaml) syslog:$(grep -A3 'eve-log' /usr/local/etc/suricata/suricata.yaml | grep -c syslog)"
+        echo "syslogdest:$(grep -h -o '"10\\.0\\.20\\.208"' /usr/local/etc/syslog-ng.conf.d/*.conf | head -1)"
+        echo "ssh:ok"
+    """)
+    lines = dict(line.split(":", 1) for line in out.stdout.splitlines() if ":" in line and not line.startswith("svc"))
+    check(lines.get("ssh") == "ok", "SSH as root reachable", out.stderr.strip()[:80])
+    for line in out.stdout.splitlines():
+        if line.startswith("svc "):
+            _, name, state = line.split()
+            check(state == "up", "%s running" % name)
+    check(lines.get("pgrep", "").strip() == "", "kea, radvd and dnsmasq not running", lines.get("pgrep", "").strip())
+    bad_if = [i for i in lines.get("ifs", "").split() if re.match(r"^(gif|wg)\d+", i)]
+    check(not bad_if, "no gif or wg device", " ".join(bad_if))
+    v6 = lines.get("inet6", "").split()
+    check(profile == "production" or not v6, "no global IPv6 address", " ".join(v6))
+    check("lighttpd" in lines.get("gui", ""), "GUI listening on 8443", lines.get("gui", "").strip())
+
+    installed = api.get("ids/settings/search_installed_rules", {"current": 1, "rowCount": 1}).get("total", 0)
+    check(int(installed) > 0 and int(lines.get("suricata", "0") or 0) > 0, "Suricata has loaded rules",
+          "%s rules installed, reloads logged: %s" % (installed, lines.get("suricata")))
+    ids = api.get("ids/settings/get")["ids"]["general"]
+    ids_mode = [k for k, v in ids["mode"].items() if v.get("selected") in (1, "1")]
+    check(ids_mode == ["pcap"], "Suricata in IDS mode (pcap, no drops)", ",".join(ids_mode))
+    check(lines.get("syslogdest") == '"10.0.20.208"', "syslog destination 10.0.20.208 configured")
+
+    try:
+        with urllib.request.urlopen("http://%s:9100/metrics" % fw["opt1"], timeout=10) as r:
+            body = r.read().decode()
+        check("node_" in body, "node_exporter answers on %s:9100 from this host" % fw["opt1"])
+    except Exception as e:  # noqa: BLE001
+        check(False, "node_exporter answers on %s:9100 from this host" % fw["opt1"], str(e))
+
+    print("\nNot testable in staging (checked at cutover):")
+    for item in NOT_TESTABLE:
+        print("  - " + item)
+    failed = [w for ok, w in results if not ok]
+    print("\n%d checks, %d failed" % (len(results), len(failed)))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

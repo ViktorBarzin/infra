@@ -1,0 +1,135 @@
+# Unbound (unbound.yml). Settings over the API; the viktorbarzin.lan auth-zone has no
+# API, so it is a file in /usr/local/etc/unbound.opnsense.d/, which OPNsense copies
+# into the chroot and includes on every reconfigure.
+# Deviations, all to keep today's behaviour:
+# - register_dhcp_leases stays off: on pfSense it had no effect with Kea (REPORT.md).
+# - lo0 is not offered as a listen interface; OPNsense adds the loopback addresses
+#   itself when interfaces are selected.
+# - viktorbarzin.lan is added to private domains: pfSense had DNS rebind protection
+#   off, OPNsense always strips private answers outside the private domains.
+- name: Read unbound.yml
+  ansible.builtin.set_fact:
+    opn_unbound: "{{ lookup('file', opn_dir + '/unbound.yml') | from_yaml | opn_render(fw) }}"
+
+- name: Unbound settings
+  opnsense_mvc:
+    mode: settings
+    controller: unbound/settings
+    item_root: unbound
+    settings:
+      general:
+        enabled: "{{ opn_unbound.enabled }}"
+        port: "{{ opn_unbound.port }}"
+        active_interface: "{{ opn_unbound.listen_interfaces | reject('equalto', 'lo0') | join(',') }}"
+        outgoing_interface: "{{ opn_unbound.outgoing_interfaces | reject('equalto', 'all') | join(',') }}"
+        dnssec: "{{ opn_unbound.dnssec }}"
+        regdhcp: false
+        regdhcpstatic: "{{ opn_unbound.register_dhcp_static }}"
+        local_zone_type: "{{ opn_unbound.system_domain_local_zone_type }}"
+      advanced:
+        hideidentity: "{{ opn_unbound.hide_identity }}"
+        hideversion: "{{ opn_unbound.hide_version }}"
+        prefetch: "{{ opn_unbound.prefetch }}"
+        prefetchkey: "{{ opn_unbound.prefetch_key }}"
+        dnssecstripped: "{{ opn_unbound.harden_dnssec_stripped }}"
+        serveexpired: "{{ opn_unbound.serve_expired }}"
+        serveexpiredttl: "{{ opn_unbound.serve_expired_ttl }}"
+        privatedomain: "{{ (opn_unbound.private_domains + [opn_unbound.auth_zone.name]) | join(',') }}"
+        insecuredomain: "{{ opn_unbound.insecure_domains | join(',') }}"
+        msgcachesize: "{{ opn_unbound.advanced.msgcachesize_mb }}m"
+        outgoingnumtcp: "{{ opn_unbound.advanced.outgoing_num_tcp }}"
+        incomingnumtcp: "{{ opn_unbound.advanced.incoming_num_tcp }}"
+        numqueriesperthread: "{{ opn_unbound.advanced.num_queries_per_thread }}"
+        jostletimeout: "{{ opn_unbound.advanced.jostle_timeout }}"
+        cachemaxttl: "{{ opn_unbound.advanced.cache_max_ttl }}"
+        cacheminttl: "{{ opn_unbound.advanced.cache_min_ttl }}"
+        infrahostttl: "{{ opn_unbound.advanced.infra_host_ttl }}"
+        infracachenumhosts: "{{ opn_unbound.advanced.infra_cache_numhosts }}"
+        infrakeepprobing: "{{ opn_unbound.advanced.infra_keep_probing }}"
+        logverbosity: "{{ opn_unbound.advanced.log_verbosity }}"
+      forwarding:
+        # "use system nameservers"; forwarding goes through the DoT entries below
+        enabled: false
+  register: opn_unbound_settings
+
+# The controller keeps DoT servers and plain forwarders apart by endpoint name:
+# *_dot sets type dot (forward-tls-upstream), *_forward sets type forward.
+- name: Unbound DNS-over-TLS forwarders
+  opnsense_mvc:
+    controller: unbound/settings
+    item: dot
+    item_root: dot
+    match_key: [domain, server]
+    items: >-
+      {%- set out = [] -%}
+      {%- for s in opn_unbound.forwarding.servers if opn_unbound.forwarding.enabled and opn_unbound.forwarding.use_tls -%}
+      {%-   set _ = out.append({'enabled': true, 'domain': '', 'server': s.address, 'port': '853', 'verify': s.tls_hostname}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_unbound_dots
+
+- name: Unbound domain overrides
+  opnsense_mvc:
+    controller: unbound/settings
+    item: forward
+    item_root: dot
+    match_key: [domain, server]
+    items: >-
+      {%- set out = [] -%}
+      {%- for s in opn_unbound.forwarding.servers if opn_unbound.forwarding.enabled and not opn_unbound.forwarding.use_tls -%}
+      {%-   set _ = out.append({'enabled': true, 'domain': '', 'server': s.address, 'port': '', 'verify': ''}) -%}
+      {%- endfor -%}
+      {%- for d in opn_unbound.domain_overrides -%}
+      {%-   set _ = out.append({'enabled': true, 'domain': d.domain, 'server': d.server,
+                               'port': '', 'verify': '', 'forward_tcp_upstream': d.forward_tls_upstream,
+                               'description': d.description[:255]}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_unbound_forwards
+
+- name: Unbound host overrides
+  opnsense_mvc:
+    controller: unbound/settings
+    item: host_override
+    item_root: host
+    match_key: [hostname, domain]
+    items: "{{ opn_unbound.host_overrides }}"
+    prune: true
+  register: opn_unbound_hosts
+
+- name: Unbound access lists
+  opnsense_mvc:
+    controller: unbound/settings
+    item: acl
+    item_root: acl
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for a in opn_unbound.access_lists | opn_active(opnsense_profile) -%}
+      {%-   set _ = out.append({'enabled': true, 'name': a.name, 'action': a.action,
+                               'networks': a.networks | join(','), 'description': a.description}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_unbound_acls
+
+- name: viktorbarzin.lan auth-zone (secondary of Technitium)
+  ansible.builtin.template:
+    src: unbound-auth-zone.conf.j2
+    dest: /usr/local/etc/unbound.opnsense.d/viktorbarzin-lan.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  register: opn_unbound_zone
+
+- name: Reconfigure Unbound
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/unbound/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: >-
+    not ansible_check_mode and (opn_unbound_settings is changed or opn_unbound_dots is changed
+    or opn_unbound_forwards is changed or opn_unbound_hosts is changed or opn_unbound_acls is changed or opn_unbound_zone is changed)

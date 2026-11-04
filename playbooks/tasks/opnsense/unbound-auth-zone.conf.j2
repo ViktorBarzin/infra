@@ -1,0 +1,15 @@
+# Managed by playbooks/opnsense.yml (unbound.yml auth_zone). Edit the YAML, not this file.
+auth-zone:
+    name: "{{ opn_unbound.auth_zone.name }}"
+    primary: {{ opn_unbound.auth_zone.primary }}
+{% if opn_unbound.auth_zone.url %}
+    url: "{{ opn_unbound.auth_zone.url }}"
+{% endif %}
+    zonefile: "{{ opn_unbound.auth_zone.zonefile }}"
+    allow-notify: {{ opn_unbound.auth_zone.allow_notify }}
+    fallback-enabled: {{ 'yes' if opn_unbound.auth_zone.fallback_enabled else 'no' }}
+    for-downstream: {{ 'yes' if opn_unbound.auth_zone.for_downstream else 'no' }}
+    for-upstream: {{ 'yes' if opn_unbound.auth_zone.for_upstream else 'no' }}
+
+# Back to the server clause for any include that follows.
+server:

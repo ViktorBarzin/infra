@@ -1,0 +1,28 @@
+# Run after every area (plan rule: check access and the staging guarantees each time).
+# Read-only, so they run in --check too.
+- name: "Safety: SSH answers and no DHCP/RA daemon runs"
+  ansible.builtin.command: pgrep -l 'dnsmasq|kea|radvd'
+  register: opn_safety_pgrep
+  changed_when: false
+  check_mode: false
+  failed_when: >-
+    opn_safety_pgrep.rc > 1 or
+    (not opn_production and opn_safety_pgrep.stdout | trim | length > 0)
+
+- name: "Safety: no gif or wg device in staging"
+  ansible.builtin.command: ifconfig -l
+  register: opn_safety_ifs
+  changed_when: false
+  check_mode: false
+  failed_when: >-
+    opn_safety_ifs.rc != 0 or
+    (not opn_production and (opn_safety_ifs.stdout is search('\b(gif|wg)[0-9]+')))
+
+- name: "Safety: API answers from the controller"
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/core/system/status"
+  delegate_to: localhost
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  check_mode: false
+  changed_when: false

@@ -1,0 +1,15 @@
+# Static routes (routes.yml). Routes via production-only gateways are production-only.
+# The route model checks gateways against a list configd caches for 20 s, so a
+# gateway added in the same run can be rejected at first; the task retries.
+- name: Static routes
+  opnsense_mvc:
+    controller: routes/routes
+    item: route
+    match_key: network
+    items: "{{ (lookup('file', opn_dir + '/routes.yml') | from_yaml).routes | opn_active(opnsense_profile) | opn_render(fw) | opn_routes }}"
+    prune: true
+    reconfigure: routes/routes/reconfigure
+  register: opn_routes
+  retries: 3
+  delay: 15
+  until: opn_routes is not failed

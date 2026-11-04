@@ -63,7 +63,7 @@ frontends:
   acls:
   - name: sni_pfsense
     expression: custom
-    value: req.ssl_sni -i -m str pfsense.viktorbarzin.lan pfsense.viktorbarzin.me
+    value: req.ssl_sni -i -m str pfsense.viktorbarzin.lan pfsense.viktorbarzin.me opnsense.viktorbarzin.lan opnsense.viktorbarzin.me
   - name: sni_any
     expression: custom
     value: req.ssl_sni -m found

@@ -932,3 +932,41 @@ rules:
   statetype: keep state
   managed_by: pfsense-k8s-ipv6.yml
   profile: production
+# Added for OPNsense (not from pfSense): k8s nodes on VLAN 20 reach the firewall's own
+# opt1 address for the GUI (Traefik ingress opnsense.viktorbarzin.me) and node_exporter
+# (Prometheus). The opt1 pass-all rule above admits this today; these keep it working
+# when that rule is tightened. They follow the profile through opt1ip.
+- pfsense_tracker: opnsense-gui-from-vlan20
+  description: 'OPNsense: GUI 8443 from VLAN 20 (Traefik ingress)'
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 10.0.20.0/24
+  destination:
+    ip: opt1ip
+    port: '8443'
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: opnsense-node-exporter-from-vlan20
+  description: 'OPNsense: node_exporter 9100 from VLAN 20 (Prometheus)'
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 10.0.20.0/24
+  destination:
+    ip: opt1ip
+    port: '9100'
+  log: false
+  disabled: false
+  statetype: keep state
