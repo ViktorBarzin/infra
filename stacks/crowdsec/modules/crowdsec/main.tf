@@ -687,6 +687,44 @@ resource "kubernetes_service" "crowdsec_appsec_crs" {
 
 # NodePort service for pfSense syslog → CrowdSec agent
 # pfSense sends firewall logs to 10.0.20.202:30514 (any k8s node IP works)
+# LAPI for the edge firewall (ADR-0038). OPNsense's os-crowdsec bouncer pulls
+# decisions from here and enforces them at the edge, range bans included, which
+# also covers mail (the node bouncer stores a range as its first address).
+# Only the two firewall addresses may connect: 10.0.20.1 (production) and
+# 10.0.20.2 (staging until cutover). Bouncer authentication is an API key
+# (`cscli bouncers add`, Vault secret/opnsense crowdsec_bouncer_key). The
+# OPNsense agent does not push alerts here until a LAPI-side allowlist exists
+# (migration plan, review changes).
+resource "kubernetes_service" "crowdsec_lapi_edge" {
+  metadata {
+    name      = "crowdsec-lapi-edge"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app = "crowdsec-lapi-edge"
+    }
+    annotations = {
+      "metallb.io/loadBalancerIPs" = "10.0.20.210"
+    }
+  }
+  spec {
+    type                        = "LoadBalancer"
+    load_balancer_source_ranges = ["10.0.20.1/32", "10.0.20.2/32"]
+    selector = {
+      "k8s-app" = "crowdsec"
+      type      = "lapi"
+    }
+    port {
+      name        = "lapi"
+      port        = 8080
+      target_port = 8080
+      protocol    = "TCP"
+    }
+  }
+  lifecycle {
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
+}
+
 resource "kubernetes_service" "crowdsec_syslog" {
   metadata {
     name      = "crowdsec-syslog"

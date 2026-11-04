@@ -183,3 +183,17 @@
     - name: Safety checks after HAProxy
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [haproxy]
+
+    - name: CrowdSec bouncer
+      ansible.builtin.import_tasks: tasks/opnsense/crowdsec.yml
+      tags: [crowdsec]
+    - name: Safety checks after CrowdSec
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [crowdsec]
+
+    - name: Tailscale
+      ansible.builtin.import_tasks: tasks/opnsense/tailscale.yml
+      tags: [tailscale]
+    - name: Safety checks after Tailscale
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [tailscale]

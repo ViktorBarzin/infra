@@ -1,0 +1,39 @@
+# Tailscale (os-tailscale) against our Headscale. Plan decision 12: in staging
+# the box joins as its own node with no advertised routes, no exit node and
+# accept-DNS off, so it cannot take any of pfSense's routes. The pre-auth key
+# is one-time and untagged (Vault secret/opnsense tailscale_preauth_key), so
+# tag:infra's autoApprovers in Headscale's ACL never apply to it.
+#
+# Production (cutover) advertises pfSense's seven routes and the exit node from
+# tailscale.yml with a tag:infra key; that part is written at cutover, so the
+# production profile stops here until it is.
+- name: Tailscale production settings are not written yet
+  ansible.builtin.assert:
+    that: opnsense_profile == 'staging'
+    fail_msg: >-
+      tasks/opnsense/tailscale.yml only implements the staging node. Add the
+      production routes and exit node (playbooks/files/opnsense/tailscale.yml)
+      before running the production profile.
+
+- name: Tailscale authentication (Headscale)
+  opnsense_mvc:
+    mode: settings
+    controller: tailscale/authentication
+    item_root: authentication
+    settings:
+      loginServer: https://headscale.viktorbarzin.me
+      preAuthKey: "{{ lookup('pipe', 'vault kv get -field=tailscale_preauth_key secret/opnsense') }}"
+  no_log: true
+
+- name: Tailscale settings (staging node, no routes)
+  opnsense_mvc:
+    mode: settings
+    controller: tailscale/settings
+    item_root: settings
+    settings:
+      enabled: true
+      acceptDNS: false
+      advertiseExitNode: false
+      acceptSubnetRoutes: false
+      enableSSH: false
+    reconfigure: tailscale/service/reconfigure

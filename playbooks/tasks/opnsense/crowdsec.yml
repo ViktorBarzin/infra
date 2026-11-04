@@ -1,0 +1,46 @@
+# CrowdSec on OPNsense (os-crowdsec), plan decision 9 as revised by the
+# challenger reviews: the box is a BOUNCER of our cluster LAPI, reached at the
+# crowdsec-lapi-edge LoadBalancer (10.0.20.210:8080, stacks/crowdsec, which
+# admits only 10.0.20.1 and 10.0.20.2). Its own agent and local LAPI are off:
+# a remote agent's alerts would skip the cluster agents' parser whitelist, so
+# the agent waits for a LAPI-side allowlist (prepared for cutover).
+#
+# lapi_manual_configuration keeps the plugin's reconfigure from rewriting the
+# bouncer's api_url; the url and key below are what it then uses.
+- name: CrowdSec plugin settings (bouncer only)
+  opnsense_mvc:
+    mode: settings
+    controller: crowdsec/general
+    item_root: general
+    settings:
+      agent_enabled: false
+      lapi_enabled: false
+      firewall_bouncer_enabled: true
+      lapi_manual_configuration: true
+      rules_enabled: true
+  register: opn_crowdsec_settings
+
+- name: Bouncer talks to the cluster LAPI
+  ansible.builtin.lineinfile:
+    path: /usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+    regexp: "^{{ item.key }}:"
+    line: "{{ item.key }}: {{ item.value }}"
+  loop:
+    - { key: api_url, value: "http://10.0.20.210:8080/" }
+    - { key: api_key, value: "{{ lookup('pipe', 'vault kv get -field=crowdsec_bouncer_key secret/opnsense') }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  register: opn_crowdsec_bouncer_cfg
+
+- name: Apply CrowdSec settings
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/crowdsec/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: (opn_crowdsec_settings is changed or opn_crowdsec_bouncer_cfg is changed) and not ansible_check_mode
+
+- name: Restart the bouncer when its config changed
+  ansible.builtin.command: service crowdsec_firewall restart
+  when: opn_crowdsec_bouncer_cfg is changed and not ansible_check_mode
