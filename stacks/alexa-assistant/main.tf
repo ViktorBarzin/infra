@@ -46,13 +46,9 @@ module "app" {
   app_secret_env = {
     AGENT_API_TOKEN = "agent_api_token"
     ALEXA_SKILL_ID  = "alexa_skill_id"
-    # ha-london's Delivery webhook; the id in the URL is the only HA
-    # credential the app holds.
+    # ha-london's Delivery webhook ("speak" reads an answer aloud on the
+    # Echo); the id in the URL is the only HA credential the app holds.
     HA_WEBHOOK_URL = "ha_webhook_url"
-    # The skill's Alexa Skill Messaging credentials: Delivery pushes an
-    # answer into its reminder through a Skill Message.
-    ALEXA_MESSAGING_CLIENT_ID     = "skill_messaging_client_id"
-    ALEXA_MESSAGING_CLIENT_SECRET = "skill_messaging_client_secret"
   }
   extra_env = [
     # Pods resolve *.viktorbarzin.me to the Traefik LB, so this reaches
