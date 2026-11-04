@@ -86,7 +86,7 @@ resource "kubernetes_deployment" "aiostreams" {
           # On 2026-10-14 the rails reverted v2.36.0 after it had applied migrations
           # 43-46, and v2.35.9 then crash-looped for 20 hours; v2.36.0 was rolled
           # forward by hand.
-          image = "viren070/aiostreams:v2.36.0"
+          image = "viren070/aiostreams:v2.37.0"
           name  = "aiostreams"
           port {
             container_port = 3000
