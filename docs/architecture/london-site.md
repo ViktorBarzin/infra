@@ -175,6 +175,24 @@ the Echo only talks to Amazon, and Amazon reaches ha-london through
 `ha-london.viktorbarzin.me`. How it fits together, how to add a device, and what
 to watch for: `docs/runbooks/london-alexa.md`.
 
+## Projector
+
+The Anker Nebula projector (Google TV, MAC `f4:9d:8a:26:0b:18`) is reachable
+from the devvm as `projector-london.viktorbarzin.lan`, with adb on port 5555.
+Its address has moved between 192.168.8.0/24 and 192.168.9.0/24, so use the
+name; on 2026-11-04 it held 192.168.8.100 on `br-lan`. Its energy mode is
+"Increased (Always connected)", which keeps Wi-Fi up in standby, so it answers
+ping and adb with the lamp off.
+
+`scripts/london-projector/wake-projector.sh --status` reports whether it is
+free (asleep or on the launcher), in use, or off the network, and changes
+nothing on the set. Without `--status` it wakes the screen over adb, falling
+back to wake-on-LAN and a layer-2 probe on the Flint 2 when the set does not
+answer. Put it back to standby with
+`adb -s <address>:5555 shell input keyevent KEYCODE_SLEEP`. The tests are
+`scripts/london-projector/wake_projector_test.py` (pytest, no network). The
+device's measured quirks live in the tv repo, `docs/design/device-facts.md`.
+
 ## Robot vacuum camera
 
 The robot vacuum Yiko (Ecovacs DEEBOT X8 PRO OMNI, 192.168.8.175) is
