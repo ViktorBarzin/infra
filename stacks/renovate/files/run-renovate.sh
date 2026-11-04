@@ -134,6 +134,20 @@ if [ "$age" != "none" ] && [ "$age" -lt "${RAILS_HOLD_COOLDOWN:-7200}" ] 2>/dev/
   exit 0
 fi
 
+# CVE-first ordering (CVE_PRIORITY=1, set on the infra CronJob only,
+# 2026-11-04). cve-priority.js reads Trivy's fixable Critical/High findings
+# from Prometheus and prints packageRules that give each affected image (and
+# Helm charts in the affected namespaces' stacks) a prPriority equal to its
+# CVE count, so the pending patch or minor update with the most fixable CVEs
+# lands first. Still one bump per run. When Prometheus does not answer it
+# prints nothing and Renovate keeps its usual order.
+if [ "${CVE_PRIORITY:-0}" = 1 ]; then
+  cve_rules=$(node "$(dirname "$0")/cve-priority.js" "${PROMETHEUS_URL:-http://prometheus-server.monitoring}")
+  if [ -n "$cve_rules" ]; then
+    export RENOVATE_PACKAGE_RULES="$cve_rules"
+  fi
+fi
+
 # Optional stop after the first automerge (RENOVATE_STOP_AFTER_AUTOMERGE=1).
 # Once a branch is automerged, Renovate logs "Restarting repository job after
 # automerge result" and runs the whole repository job again. With
