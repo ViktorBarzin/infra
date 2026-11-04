@@ -1,6 +1,6 @@
 # Replace pfSense with OPNsense: build alongside, then swap
 
-Status: approved 2026-11-03 (grilling session with Viktor, same day; revised after two blind challenger reviews). Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table.
+Status: executing. Phases 1-7 ran overnight 2026-11-03/04 on the staging box (see "Execution, 2026-11-04"); phase 8 (Viktor tries it) is next, then the cutover session. Approved 2026-11-03 after a grilling session with Viktor and two blind challenger reviews. Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table. Runbook: `docs/runbooks/opnsense.md`.
 
 ## Goal
 
@@ -129,6 +129,26 @@ Both reviews read OPNsense 26.7 source and the live systems. They found no block
 | Missing from the move list | NAT reflection (pure NAT) and the UDP helper to 10.0.20.200:3479, Unbound's `viktorbarzin.me` override and WAN listener, DNSSEC and serve-expired, KMS connection limits, offload settings, gif MSS 1480, the Prometheus target moving from .2 to .1 |
 
 What staging cannot test, so the cutover checks it: WAN port forwards (the TP-Link forwards to .2), DHCP, router advertisements, the HE tunnel, WireGuard, Tailscale routes, and HAProxy's PROXY path (Traefik trusts 10.0.20.1 only).
+
+## Execution, 2026-11-04
+
+Built overnight inside the decision 17 boundary: pfSense, the production addresses, DHCP/RA, the HE tunnel and the WireGuard peers were not touched, and nothing that existed before was rebooted.
+
+| Phase | Result | Differences from the plan |
+|---|---|---|
+| 2 VM | VM 100 created by `stacks/opnsense` on a token scoped to VM 100, `local`, `local-lvm`, the node and the bridge zone; first boot with all NICs disconnected; bootstrap `config.xml` written over serial; gate passed (staging addresses, no DHCP/RA daemon, no gif, no global IPv6), then NICs connected one at a time, WAN last | The stack does not include the root `terragrunt.hcl` (it already names telmate `proxmox`); boot order stays with `reboot-boot-order.yml` because PVE wants `Sys.Modify` on `/` for `startup`; the nano image is uploaded over the API as `import` content (`pve-host.yml` enabled that content type) rather than imported compressed, which would need a root SSH login for the provider |
+| 3 Update | 26.7 to 26.7.8_2; os-crowdsec, os-haproxy, os-tailscale, os-node_exporter | none |
+| 4 Converter | `playbooks/files/opnsense/*.yml` from pfSense's `config.xml`, 19 literal addresses mapped to placeholders, `REPORT.md` lists every drop | none |
+| 5 Ansible | every area applied to staging, `--check` then reports `changed=0`; 23 filter rules, 22 port forwards (12 create their own pass rule), 12 outbound rules, Unbound with the zone file, Kea and radvd configured but off, NetFlow, Suricata IDS with 83,318 rules, HAProxy | NTP and the Unbound auth-zone are set outside the API (Config class, include file); the auth-zone is empty in staging because Technitium allows transfers from 10.0.20.1 only |
+| 6 Around the box | `opnsense.viktorbarzin.me` (Authentik), Prometheus `opnsense-node`, Loki `host="opnsense"`, `crowdsec-lapi-edge` LoadBalancer with the box as a bouncer (15,549 IPv4 and 597 IPv6 entries in pf, ranges included), Tailscale node `opnsense-staging` with no routes, daily `config.xml` backup, root SSH keys for the backup | Syslog goes to Alloy over TCP: the UDP flow from this box never reached the pod. The CrowdSec agent stays off until a LAPI-side allowlist exists (review change) |
+| 7 Verify | `scripts/opnsense-verify`: 32 checks pass; unit tests for the YAML mapping pass | The production-profile pieces (WireGuard, HE tunnel and IPv6, Tailscale routes, the production `config.xml`) are listed in the runbook under "Before cutover" rather than written untested |
+
+### What to try
+
+- Log in at https://opnsense.viktorbarzin.me and compare Firewall > Rules, NAT > Port Forward and Outbound, Services > Kea, Unbound, HAProxy and Intrusion Detection with pfSense.
+- Firewall > Log Files > Live View and Loki `{job="syslog", host="opnsense"}` show its traffic; Intrusion Detection > Alerts shows Suricata.
+- `scripts/opnsense-verify` from the devvm; `ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml --check --diff` reports no changes.
+- Anything you change in the GUI shows up as drift in the next `--check`; the YAML is the source of truth.
 
 ## Phases
 

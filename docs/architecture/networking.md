@@ -8,6 +8,10 @@ Last updated: 2026-10-26 (R730 uplink on bond0 with eno2 as backup via the garag
 
 The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:5a7f:20::203`) directly: IPv4 via the TP-Link and pfSense port forwards on 80/443 to Traefik, IPv6 natively through the HE tunnel to Traefik's dual-stack VIP (see IPv6 Ingress). The same direct path carries SSH on 443 to the bastion (see below).
 
+### Edge firewall migration (in progress)
+
+OPNsense 26.7 is replacing pfSense as the edge firewall (ADR-0038). Since 2026-11-04 it runs as VM 100 next to pfSense on spare addresses (192.168.1.250, 10.0.10.2, 10.0.20.2, 10.0.30.2) with routing for production, DHCP, router advertisements, the HE tunnel and WireGuard off; pfSense still carries all traffic, and everything below describes pfSense until the cutover. OPNsense's configuration is declared in `playbooks/files/opnsense/` and applied by `playbooks/opnsense.yml`; operations and the cutover steps are in `docs/runbooks/opnsense.md`.
+
 ## Architecture Diagram
 
 ```mermaid
