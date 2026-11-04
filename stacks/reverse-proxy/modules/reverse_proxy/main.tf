@@ -32,6 +32,24 @@ module "tls_secret" {
   depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
+# https://opnsense.viktorbarzin.me/ — the OPNsense edge firewall (ADR-0038),
+# on its staging address until cutover (then 10.0.20.1). Public behind
+# Authentik (protected), Viktor's choice in the migration plan; OPNsense's own
+# login sits behind it. The GUI listens on 8443, as pfSense's does, because
+# the internal SNI frontend takes 443. The box allows this host name
+# (webgui althostnames) and accepts 8443 on opt1 from the k8s nodes.
+module "opnsense" {
+  source           = "./factory"
+  dns_type         = "proxied"
+  name             = "opnsense"
+  backend_ip       = "10.0.20.2"
+  port             = 8443
+  backend_protocol = "HTTPS"
+  tls_secret_name  = var.tls_secret_name
+  protected        = true
+  depends_on       = [kubernetes_namespace.reverse-proxy]
+}
+
 # https://pfsense.viktorbarzin.me/
 module "pfsense" {
   source          = "./factory"

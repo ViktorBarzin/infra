@@ -72,6 +72,14 @@ alloy:
           target_label  = "host"
           replacement   = "mladost3-openwrt"
         }
+        // OPNsense edge firewall (ADR-0038) sends over TCP as
+        // opnsense.viktorbarzin.lan; label it by name as for Mladost 3.
+        rule {
+          source_labels = ["__syslog_message_hostname"]
+          regex         = "opnsense(\\..*)?"
+          target_label  = "host"
+          replacement   = "opnsense"
+        }
       }
       loki.write "default" {
         endpoint {
