@@ -6,7 +6,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | wireguard | VPN server | wireguard |
-| technitium | DNS server (10.0.20.201, query logging on PostgreSQL via custom PG plugin) | technitium |
+| technitium | DNS server (10.0.20.201 = primary + 2 replicas; blocking and PostgreSQL query logging on all three, replicas kept in step by `technitium-blocking-sync`) | technitium |
 | headscale | Tailscale control server | headscale |
 | traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |

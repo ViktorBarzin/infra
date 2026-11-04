@@ -272,18 +272,27 @@ The update ACL is the pfSense addresses (10.0.20.1, 10.0.10.1, 192.168.1.2) plus
 
 ### Ad Blocking
 
-Technitium runs built-in DNS blocking with:
-- **OISD Big List** (~486K domains)
-- **StevenBlack hosts list**
+Blocking is configured on the primary and copied to the replicas:
+- Built-in block lists: **OISD Big List** (~486K domains) and the **StevenBlack hosts list**, answered as NXDOMAIN.
+- The **Advanced Blocking** app: an `everyone` group (StevenBlack, `^ads\.`) and a `kids` group for `192.168.10.20` (StevenBlack's social list).
+- The **Drop Requests** app: drops `viktorbarzin.lan` questions from outside the private ranges.
 
-Blocking is enabled on all three instances (`DNS_SERVER_ENABLE_BLOCKING=true` on secondary/tertiary).
+Change blocking on the primary (web UI or API). The `technitium-blocking-sync` CronJob (`blocking_sync.tf`, every 6h at :20) copies the built-in blocking settings and both app configs to secondary and tertiary, and installs any of those apps a replica is missing. It sends only the blocking keys, so the replicas' forwarders and recursion settings stay their own (today the primary forwards to Cloudflare DoH and the replicas resolve recursively).
+
+Until 2026-11-04 only the primary blocked. `DNS_SERVER_ENABLE_BLOCKING=true` turned blocking on for the replicas, but they had no lists, and the LB sends about 7 in 10 lookups to them (last-hour share measured that day: tertiary 46%, secondary 25%, primary 29%). An ad domain tested against each pod was blocked by the primary and answered by both replicas.
 
 ### Query Logging
 
 | Backend | Status | Retention | Purpose |
 |---------|--------|-----------|---------|
 | MySQL (`technitium` DB) | Disabled | — | Legacy, disabled by password-sync CronJob |
-| PostgreSQL (`technitium` DB on CNPG) | Enabled | 90 days | Primary query log store |
+| PostgreSQL (`technitium` DB on CNPG) | Enabled on all three instances | 90 days | Query log store (`dns_logs`), read by Grafana and the daily `dns-digest` |
+
+All three instances write to the same `dns_logs` table. The `server` column holds each instance's server name, which is the pod name it first started with (`technitium-658c8944b9-lmd52` for the primary); strip the two pod suffixes to get the deployment name.
+
+- The primary runs a side-loaded build named **Query Logs (Postgres)** 1.0 (installed from a zip on 2026-04-12). It owns retention: it deletes rows older than 90 days by timestamp.
+- Secondary and tertiary run the store app **Query Logs (PostgreSQL)** (installed by `technitium-blocking-sync`, configured by `technitium-password-sync`) with `maxLogDays=0`. The store app trims by counting old rows and then deleting that many of the lowest `dlid`s, which removes rows inside the window when several instances run it at once, so it does no retention here.
+- Before 2026-11-04 only the primary logged (about 6.6 GB for 13.75M rows). With all three, expect roughly 20 GB at steady state; the CNPG volumes autoresize up to 100Gi.
 
 Grafana dashboard (`grafana-technitium-dashboard` ConfigMap) visualizes query logs from the MySQL datasource. A Grafana datasource is auto-provisioned via sidecar.
 
@@ -516,7 +525,9 @@ flowchart LR
 | CronJob | Schedule | Namespace | Purpose |
 |---------|----------|-----------|---------|
 | `technitium-zone-sync` | `*/30 * * * *` | technitium | AXFR replication to secondary/tertiary |
-| `technitium-password-sync` | `0 */6 * * *` | technitium | Vault-rotated MySQL password → Technitium config, configure PG logging |
+| `technitium-password-sync` | `0 */6 * * *` | technitium | Vault-rotated PG password → Technitium config, configure PG logging on all three instances |
+| `technitium-blocking-sync` | `20 */6 * * *` | technitium | Copy the primary's block lists, Advanced Blocking and Drop Requests configs to the replicas; install the replicas' query-log app |
+| `dns-anomaly-monitor` | `*/30 * * * *` | technitium | Last-hour dashboard stats summed over all three instances → Pushgateway |
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
 | `technitium-static-records` | `35 * * * *` | technitium | Internal-only A records for names served by a LoadBalancer rather than an Ingress (currently `turn`) |
@@ -535,7 +546,8 @@ Vault DB engine rotates password
     1. Logs into Technitium API
     2. Uninstalls MySQL + SQLite query-log plugins (migrated to PG)
     3. Checks PG plugin is loaded (warns if missing)
-    4. Configures PG query logging (90-day retention)
+    4. Configures PG query logging: the primary's app with 90-day retention,
+       the replicas' app with retention off (see Query Logging)
     5. Sets maxLogFileDays=7 on all three instances (see below)
 ```
 
@@ -573,7 +585,9 @@ password produced the same-looking auth-path failure.
 | CoreDNS Prometheus metrics (:9153) | Grafana CoreDNS dashboard | `CoreDNSErrors`, `CoreDNSForwardFailureRate` |
 | Technitium zone-sync CronJob (Pushgateway) | — | `TechnitiumZoneSyncFailed`, `TechnitiumZoneSyncStale`, `TechnitiumZoneCountMismatch` |
 | Technitium DNS pod availability | — | `TechnitiumDNSDown` |
-| `dns-anomaly-monitor` CronJob (Pushgateway) | — | `DNSQuerySpike`, `DNSQueryRateDropped`, `DNSHighErrorRate` |
+| `dns-anomaly-monitor` CronJob (Pushgateway) | Grafana Network Traffic | `DNSQueryRateDropped`, `DNSHighErrorRate`, `DNSAnomalyMonitorDown`, `DNSAnomalyMonitorStale` |
+| `technitium-blocking-sync` CronJob (Pushgateway) | — | `TechnitiumBlockingSyncFailed`, `TechnitiumBlockingSyncStale` |
+| `dns-digest` CronJob (monitoring ns, daily 08:00 London) | Slack #alerts, only when there is something to report | `DNSDigestStale`, `DNSDigestBlind` |
 | Uptime Kuma | External monitors for all proxied domains | ExternalAccessDivergence (15min) |
 
 ### Metrics pushed by `technitium-zone-sync`
@@ -587,10 +601,22 @@ The zone-sync CronJob (runs every 30min) pushes the following to the Prometheus 
 | `technitium_zone_sync_last_run` | — | Unix timestamp of last run (used by `TechnitiumZoneSyncStale`) |
 | `technitium_zone_count` | `instance=primary\|<replica-host>` | Zone count on each Technitium instance (drives `TechnitiumZoneCountMismatch`) |
 
-### DNS alert rewrites
+### DNS volume alerts
 
-- `DNSQuerySpike` was previously broken: it compared current queries against `dns_anomaly_avg_queries`, which was computed from a per-pod `/tmp/dns_avg` file. Each CronJob run started with a fresh `/tmp`, so `NEW_AVG == TOTAL_QUERIES` every time and the spike condition could never fire. Rewritten to use `avg_over_time(dns_anomaly_total_queries[1h] offset 15m)` which compares against the actual 1h Prometheus history.
-- `DNSQueryRateDropped` (new): fires when query rate drops below 50% of 1h average — upstream clients may be failing to reach Technitium.
+`dns-anomaly-monitor` (`stacks/technitium/modules/technitium/anomaly_monitor.tf`) logs in to each instance, reads `/api/dashboard/stats/get?type=LastHour`, and PUTs the sums to the Pushgateway as `dns_anomaly_total_queries`, `_server_failure`, `_nx_domain`, `_blocked` and `_no_error`, plus `dns_anomaly_up` (1 when every instance answered), `dns_anomaly_instances_up` and `dns_anomaly_check_timestamp`. The volume gauges are pushed only when all three instances answered, so a partial read cannot look like a traffic drop.
+
+- `DNSQueryRateDropped`: under 10% of the previous hour's average. `DNSHighErrorRate`: more than 100 SERVFAIL in the last hour.
+- `DNSAnomalyMonitorDown` / `DNSAnomalyMonitorStale`: the monitor cannot read every instance, or has not reported for 2h.
+
+History. Until 2026-11-04 the monitor ran in the monitoring namespace and called `/api/stats/get` (a path Technitium 15.x no longer serves) with an empty token. jq turned the `invalid-token` reply into zeros, so it reported 0 queries for at least 180 days and none of its alerts could fire. The 2x spike rule and the 50% drop rule were removed rather than revived (Viktor): replayed over the 7 days before, they would have fired in 13 half-hour windows, none of them an outage. The top-domains "DGA" heuristic was dropped too; `dns-digest` checks every name against a threat feed instead.
+
+### Daily DNS digest
+
+`dns-digest` (`stacks/monitoring/modules/monitoring/dns_digest.py`, tests `dns_digest_test.py`) checks the last 24 h of lookups at both sites against HaGeZi's Threat Intelligence Feeds list (about 1.8M malware, phishing and C2 domains; an entry covers its subdomains). Sofia's lookups come from `dns_logs` through psql, London's from the Flint's dnsmasq log in Loki (`docs/architecture/london-site.md`). The post lists threat-feed matches per site and device with whether the lookup was blocked, London DNS errors that point at a real problem, GL content-protection blocks, and hours in which a query log recorded nothing (per Sofia instance, and for London). It posts nothing on a quiet day. Each successful run PUTs `dns_digest_last_success`, `dns_digest_names_checked{site}`, `dns_digest_feed_entries` and `dns_digest_threat_matches`; `DNSDigestStale` (no success in 26h) and `DNSDigestBlind` (a site checked no names, or the feed is nearly empty) fire when it stops working.
+
+Replayed before rollout over London's 30 days (19,933 names) and Sofia's 90 days (25,849 names), the feed matched two names, both from Sofia, both real and both already blocked: `cdn.polyfill.io` (the compromised polyfill CDN, 20 lookups from the devvm on 2026-09-23, a browser session) and `pahtef.tech` (malvertising on a news site, 2026-11-01).
+
+Run by hand inside the cluster with `DRY_RUN=1` (prints the post and the metrics instead of sending them). The CNPG server refuses connections that arrive through `kubectl port-forward`, so a run from the devvm cannot reach `dns_logs`.
 
 ## Troubleshooting
 

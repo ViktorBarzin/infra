@@ -6491,26 +6491,21 @@ serverFiles:
               summary: "NetFlow processing delay p50: {{ $value | printf \"%.0f\" }}s — softflowd may be overloaded"
       - name: "DNS Anomaly Detection"
         rules:
-          # Spike detection: compare current value against its own 1h history via
-          # avg_over_time. Previous version compared against dns_anomaly_avg_queries
-          # which was computed from a per-pod /tmp file and always equalled the
-          # current value (fresh /tmp each run), so the alert could never fire.
-          - alert: DNSQuerySpike
-            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and dns_anomaly_total_queries > 1000
-            # for: 5m (was 0m) — a single 15-min scrape spike self-clears; a real
-            # spike persists across scrapes (alert-noise 2026-06-12)
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x 1h avg)"
+          # dns_anomaly_* come from the dns-anomaly-monitor CronJob (technitium
+          # stack, every 30 min): Technitium's last-hour dashboard stats summed
+          # over primary, secondary and tertiary. Until 2026-11-04 it called a
+          # removed API path with no token and pushed 0 for at least 180 days.
+          # Outages and failures only (Viktor, 2026-11-04): replayed over 7 days,
+          # the 2x spike and 50% drop rules would have fired in 13 half-hour
+          # windows, none of them an outage. A full Technitium outage also shows
+          # in the apex-dns blackbox probe.
           - alert: DNSQueryRateDropped
-            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and avg_over_time(dns_anomaly_total_queries[1h] offset 30m) > 1000
+            expr: dns_anomaly_total_queries < 0.1 * avg_over_time(dns_anomaly_total_queries[1h] offset 30m) and avg_over_time(dns_anomaly_total_queries[1h] offset 30m) > 1000
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "DNS query volume dropped: {{ $value | printf \"%.0f\" }} queries (<50% of 1h avg) — upstream clients may be failing to reach Technitium"
+              summary: "Sofia DNS answered {{ $value | printf \"%.0f\" }} queries in the last hour, under 10% of normal. Clients may not be reaching Technitium"
           - alert: DNSHighErrorRate
             expr: dns_anomaly_server_failure > 100
             for: 5m
@@ -6518,6 +6513,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "High DNS SERVFAIL rate: {{ $value | printf \"%.0f\" }} failures detected"
+          - alert: DNSAnomalyMonitorDown
+            expr: dns_anomaly_up == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "dns-anomaly-monitor could not read the stats of every Technitium instance (see dns_anomaly_instances_up and the CronJob log in the technitium namespace). The DNS volume alerts are blind"
+          - alert: DNSAnomalyMonitorStale
+            expr: (time() - dns_anomaly_check_timestamp) > 7200 or absent(dns_anomaly_check_timestamp)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "dns-anomaly-monitor has not reported for over 2h. The DNS volume alerts are blind"
+          # dns_digest_* come from the daily dns-digest CronJob (monitoring stack).
+          - alert: DNSDigestStale
+            expr: (time() - dns_digest_last_success) > 93600 or absent(dns_digest_last_success)
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "dns-digest has not completed a run in over 26h. Threat-feed matches and London DNS errors are not being reported"
+          - alert: DNSDigestBlind
+            expr: min(dns_digest_names_checked) == 0 or dns_digest_feed_entries < 100000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "dns-digest ran but checked no names for a site, or its threat feed was nearly empty. A query log may have stopped"
           - alert: TechnitiumZoneSyncFailed
             expr: technitium_zone_sync_status != 0
             for: 30m
@@ -6539,6 +6563,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Technitium zone counts differ across instances (max-min delta: {{ $value | printf \"%.0f\" }}) — replica has drifted from primary"
+          - alert: TechnitiumBlockingSyncFailed
+            expr: technitium_blocking_sync_status != 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "technitium-blocking-sync could not copy the primary's blocking to every replica. Lookups that reach a replica may go unblocked or unlogged"
+          - alert: TechnitiumBlockingSyncStale
+            expr: (time() - technitium_blocking_sync_last_run) > 25200 or absent(technitium_blocking_sync_last_run)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "technitium-blocking-sync has not run in over 7h"
           - alert: TechnitiumDynamicUpdatesFailed
             expr: technitium_dynamic_updates_status != 0
             for: 10m
