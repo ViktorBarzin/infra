@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "send" {
       }
       spec {
         container {
-          image = "registry.gitlab.com/timvisee/send:v3.4.27"
+          image = "registry.gitlab.com/timvisee/send:v3.5.1"
           name  = "send"
 
           port {
