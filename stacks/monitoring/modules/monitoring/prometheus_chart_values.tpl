@@ -6890,11 +6890,35 @@ serverFiles:
             # Reachability: any ingress in the namespace with the ingress_factory
             # dns-type annotation proxied or non-proxied.
             #
-            # keep_firing_for bridges the daily rescan: a report is deleted at its
-            # 24h TTL and its series vanish until the new scan lands (up to about
-            # 40 minutes when the whole cluster expires at once).
+            # keep_firing_for bridges the rescan: a report is deleted at its 72h
+            # TTL and its series vanish until the new scan lands (up to about 40
+            # minutes when the whole cluster expires at once).
+            #
+            # Old ReplicaSets (2026-11-04). The operator keeps the report of a
+            # Deployment's previous ReplicaSet, scaled to 0 after a rollout, until
+            # its TTL, so a bumped app went on alerting for up to 3 days on the
+            # image it no longer runs (tripit counted 1631 findings across 8
+            # builds, 572 on the running one). A ReplicaSet finding counts only
+            # when that ReplicaSet has a pod (kube_pod_info created_by_name), or
+            # when no ReplicaSet of its Deployment has one: a Deployment scaled
+            # to 0, such as an app Sablier has parked, keeps alerting on all of
+            # its ReplicaSets rather than dropping out. The Deployment name is the
+            # ReplicaSet name without its pod-template-hash suffix. Other kinds
+            # (StatefulSet, DaemonSet, CronJob, Job, Pod) count as before.
             expr: |
-              count by (namespace) (trivy_vulnerability_id{severity=~"Critical|High"})
+              count by (namespace) (
+                  trivy_vulnerability_id{severity=~"Critical|High", resource_kind!="ReplicaSet"}
+                or (
+                  trivy_vulnerability_id{severity=~"Critical|High", resource_kind="ReplicaSet"}
+                  and on (namespace, resource_name)
+                    label_replace(group by (namespace, created_by_name) (kube_pod_info{created_by_kind="ReplicaSet"}), "resource_name", "$1", "created_by_name", "(.+)")
+                )
+                or (
+                  label_replace(trivy_vulnerability_id{severity=~"Critical|High", resource_kind="ReplicaSet"}, "deployment", "$1", "resource_name", "(.+)-[a-z0-9]+")
+                  unless on (namespace, deployment)
+                    label_replace(group by (namespace, created_by_name) (kube_pod_info{created_by_kind="ReplicaSet"}), "deployment", "$1", "created_by_name", "(.+)-[a-z0-9]+")
+                )
+              )
               and on (namespace)
               count by (namespace) (kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type=~"proxied|non-proxied"})
             for: 1h
