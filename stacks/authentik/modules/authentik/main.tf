@@ -74,7 +74,10 @@ resource "helm_release" "authentik" {
   cleanup_on_fail = true
   timeout         = 6000
 
-  values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key })]
+  # file(), not templatefile(): values.yaml has no template expressions, and
+  # templatefile() with the sensitive Vault inputs failed the 2026.8.5 apply
+  # with "function returned an inconsistent result" (pipeline #2812).
+  values = [file("${path.module}/values.yaml")]
 }
 
 

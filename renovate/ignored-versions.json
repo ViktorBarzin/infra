@@ -14,17 +14,6 @@
       "enabled": false
     },
     {
-      "description": "rails revert 2026-10-21 pipeline #2812: stack authentik failed after this bump: its terragrunt apply failed (commit 8f2d27b8)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "authentik"
-      ],
-      "matchNewValue": "2026.8.5",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-10-22 pipeline #2821: stack android-emulator failed after this bump: its terragrunt apply failed (commit d70b9cc9)",
       "matchDatasources": [
         "docker"
