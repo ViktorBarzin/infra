@@ -126,7 +126,7 @@ resource "kubernetes_deployment" "technitium_secondary" {
               memory = "512Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi" # 512Mi until 2026-11-04; block lists (blocking_sync.tf) take the primary to ~420 MB
             }
           }
           port {
@@ -290,7 +290,7 @@ resource "kubernetes_deployment" "technitium_tertiary" {
               memory = "512Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi" # 512Mi until 2026-11-04; block lists (blocking_sync.tf) take the primary to ~420 MB
             }
           }
           port {

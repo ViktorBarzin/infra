@@ -819,6 +819,30 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
                 echo "PG logging configured on primary"
 
+                # Secondary and tertiary log to the same dns_logs table (since
+                # 2026-11-04) through the store app "Query Logs (PostgreSQL)",
+                # which technitium-blocking-sync installs. The primary runs an
+                # older side-loaded build named "Query Logs (Postgres)". Retention
+                # stays with the primary (maxLogDays=0 here): the store app trims
+                # by counting old rows and then deleting that many of the lowest
+                # dlids, which deletes rows inside the window when several
+                # instances run it at once. The primary's build deletes by
+                # timestamp.
+                REPLICA_PG_CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":0,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Host=${var.postgresql_host}; Port=5432; Username=technitium; Password=$$DB_PASSWORD;\"}"
+                for INST in http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
+                  P_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                  if [ -z "$$P_TOKEN" ]; then echo "WARNING: login failed for $$INST, PG logging not configured"; continue; fi
+                  if curl -sf "$$INST/api/apps/list?token=$$P_TOKEN" | grep -q 'Query Logs (PostgreSQL)'; then
+                    if curl -sf -X POST "$$INST/api/apps/config/set?token=$$P_TOKEN" --data-urlencode "name=Query Logs (PostgreSQL)" --data-urlencode "config=$$REPLICA_PG_CONFIG" | grep -q '"status":"ok"'; then
+                      echo "PG logging configured on $$INST"
+                    else
+                      echo "WARNING: could not configure PG logging on $$INST"
+                    fi
+                  else
+                    echo "Query Logs (PostgreSQL) not installed on $$INST yet; technitium-blocking-sync installs it"
+                  fi
+                done
+
                 # Bound the on-disk log. Technitium's LogManager opens the day's
                 # log file BEFORE it binds :53, so a full config PVC is a hard
                 # startup failure that no restart can clear — that is how the DNS

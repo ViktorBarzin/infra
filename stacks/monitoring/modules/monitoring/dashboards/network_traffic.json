@@ -51,15 +51,15 @@
       "id": 5, "title": "DNS Queries (Last Hour)", "type": "stat",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5000 }, { "color": "red", "value": 20000 }] } } },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
       "targets": [{ "expr": "dns_anomaly_total_queries", "legendFormat": "Queries", "refId": "A" }]
     },
     {
-      "id": 6, "title": "DNS DGA Suspects", "type": "stat",
+      "id": 6, "title": "DNS Threat-Feed Matches (24h)", "type": "stat",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] } } },
-      "targets": [{ "expr": "dns_anomaly_dga_suspects", "legendFormat": "DGA Suspects", "refId": "A" }]
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } },
+      "targets": [{ "expr": "dns_digest_threat_matches", "legendFormat": "Matches", "refId": "A" }]
     },
     {
       "id": 7, "title": "NetFlow Bytes/s Over Time", "type": "timeseries",
@@ -129,8 +129,7 @@
         { "expr": "dns_anomaly_total_queries", "legendFormat": "Total Queries", "refId": "A" },
         { "expr": "dns_anomaly_nx_domain", "legendFormat": "NX Domain", "refId": "B" },
         { "expr": "dns_anomaly_server_failure", "legendFormat": "SERVFAIL", "refId": "C" },
-        { "expr": "dns_anomaly_blocked", "legendFormat": "Blocked", "refId": "D" },
-        { "expr": "dns_anomaly_dga_suspects", "legendFormat": "DGA Suspects", "refId": "E" }
+        { "expr": "dns_anomaly_blocked", "legendFormat": "Blocked", "refId": "D" }
       ]
     }
   ],
