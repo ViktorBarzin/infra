@@ -1,0 +1,16 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Flow export. pfSense used softflowd; OPNsense has built-in NetFlow.
+
+source: softflowd (pfSense package); maps to OPNsense Reporting > NetFlow
+interfaces:
+- lan
+- opt1
+collectors:
+- 10.0.20.100:32055
+version: 9
+max_flows: 8192
+timeouts:
+  maxlife: 300
+tracking_level: full
+hop_limit: null

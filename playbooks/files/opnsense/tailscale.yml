@@ -1,0 +1,43 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Tailscale (Headscale) node. Top-level values are pfSense's; the profiles block
+# follows plan decision 12 (staging joins without routes or exit node).
+
+managed_by: pfsense-tailscale.yml
+enabled: true
+login_server: https://headscale.viktorbarzin.me/
+listen_port: 41641
+advertise_exit_node: true
+accept_routes: false
+accept_dns: false
+advertised_routes:
+- route: 192.168.1.0/24
+  description: sofia lan
+- route: 10.0.10.0/24
+  description: mgmt vlan
+- route: 10.0.20.0/24
+  description: k8s vlan
+- route: 192.168.0.0/24
+  description: valchedrym (via wg)
+- route: 192.168.8.0/24
+  description: london lan (via wg)
+- route: 192.168.9.0/24
+  description: london guest (via wg)
+- route: 192.168.3.0/24
+  description: mladost3 lan (via wg)
+syslog:
+  enabled: true
+  priority: warning
+  facility: daemon
+profiles:
+  staging:
+    hostname: opnsense-staging
+    advertised_routes: []
+    advertise_exit_node: false
+    accept_dns: false
+    tags: []
+  production:
+    advertised_routes: as above
+    advertise_exit_node: true
+    tags:
+    - tag:infra

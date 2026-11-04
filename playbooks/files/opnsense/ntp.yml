@@ -1,0 +1,11 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# NTP service.
+
+servers:
+- host: 2.pfsense.pool.ntp.org
+  pool: true
+interfaces:
+- all
+restrictions: null
+note: CCTV on opt4 may only reach NTP on the firewall (filter rule 1783022274).

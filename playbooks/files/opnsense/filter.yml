@@ -1,0 +1,934 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Filter rules in pfSense evaluation order. Semantics follow pfSense:
+# - interface rules are quick; floating rules are quick only when quick: true
+# - an empty pfSense type became action: pass, a missing ipprotocol became inet
+# - source/destination: any | net (interface subnet) | ip (interface address, e.g. wanip)
+#   | address | alias | self, with optional port and not
+# - linked_nat_rule: pfSense generated this rule from a port forward. On OPNsense a
+#   linked rule is created by the port forward (associated_rule: linked), so the
+#   playbook should not create these a second time
+# - managed_by: the pfSense playbook that owned the rule; profile: production means
+#   the rule is not rendered in staging (opt2 WireGuard, opt3 HE gif)
+
+rules:
+- pfsense_tracker: '1775639929'
+  description: Allow DNS (UDP) from LAN to pfSense
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: udp
+  source:
+    net: wan
+  destination:
+    address: '{{ fw.wan }}'
+    port: '53'
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1759755540'
+  description: null
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '443'
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1621023633'
+  description: NAT https
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: nginx
+    port: '443'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_609edb9119f233.58457284
+- pfsense_tracker: '1621023661'
+  description: NAT http
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: nginx
+    port: '80'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_609edbadb8d653.23622303
+- pfsense_tracker: '1621029035'
+  description: NAT KMS public (rate-limited 10/60, max 50/src)
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    alias: k8s_kms_lb
+    port: '1688'
+  log: false
+  disabled: false
+  statetype: keep state
+  max_src_conn: 50
+  max_src_conn_rate: 10
+  max_src_conn_rates: 60
+  linked_nat_rule: nat_609ef0abc7c380.15307332
+- pfsense_tracker: '1668879390'
+  description: NAT shadowsocks
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '8388'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_6379141e5dd694.39054144
+- pfsense_tracker: '1609759405'
+  description: Allow all from LAN
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 192.168.1.0/24
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1694783835'
+  description: NAT dns
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    address: 10.0.20.101
+    port: '30053'
+  log: false
+  disabled: true
+  statetype: keep state
+  linked_nat_rule: nat_6504595bb1a981.62511497
+- pfsense_tracker: '1703509640'
+  description: NAT Redirect WAN DNS to technitium svc
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: udp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '53'
+  log: true
+  disabled: true
+  statetype: keep state
+  linked_nat_rule: nat_65897e88be6129.69910123
+- pfsense_tracker: '1708873708'
+  description: NAT qbittorrent incoming port
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '6881'
+  log: false
+  disabled: true
+  statetype: keep state
+  linked_nat_rule: nat_65db57ec381e00.30418945
+- pfsense_tracker: '1743803154'
+  description: NAT alarm system
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    address: 192.168.1.11
+    port: '10000'
+  log: false
+  disabled: true
+  statetype: keep state
+  linked_nat_rule: nat_67f05312bd78a5.10676362
+- pfsense_tracker: '1743809095'
+  description: NAT
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '51820'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_67f06a4787e923.39720669
+- pfsense_tracker: '1743809536'
+  description: wireguard server
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    ip: wanip
+    port: '51821'
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1755892284'
+  description: NAT xray + reality + vless -> loadbalancer ip
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '7443'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_68a8ca3c2fcfc6.41938594
+- pfsense_tracker: '1774354435'
+  description: Allow all ipv4+ipv6 via pfSsh.php
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet46
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1774397444'
+  description: Passed via EasyRule
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 192.168.1.0/24
+  destination:
+    address: 10.0.20.0/24
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1774397446'
+  description: Passed via EasyRule
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: udp
+  source:
+    address: 192.168.1.0/24
+  destination:
+    address: 10.0.20.0/24
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1742945723'
+  description: Disable ipv6 for now
+  interface: lan
+  floating: false
+  direction: in
+  action: reject
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: true
+  statetype: keep state
+- pfsense_tracker: '0100000101'
+  description: Default allow LAN to any rule
+  interface: lan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    net: lan
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '0100000102'
+  description: Default allow LAN IPv6 to any rule
+  interface: lan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    net: lan
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1631646092'
+  description: Allow all ipv6
+  interface: lan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1785789485'
+  description: tailnet -> CCTV blocked (ADR-0017 keeps that segment isolated)
+  interface: Tailscale
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 100.64.0.0/10
+  destination:
+    address: 10.0.30.0/24
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-tailscale.yml
+- pfsense_tracker: '1694821660'
+  description: tailnet -> homelab (subnet routes + exit node)
+  interface: Tailscale
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet46
+  protocol: any
+  source:
+    address: 100.64.0.0/10
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-tailscale.yml
+- pfsense_tracker: '1743809585'
+  description: null
+  interface: WireGuard
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  profile: production
+- pfsense_tracker: '1673174786'
+  description: Allow all eebug
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1669845687'
+  description: 'Easy Rule: Passed from Firewall Log View'
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 10.0.20.200
+  destination:
+    address: 137.220.79.137
+  log: true
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1793732840'
+  description: 'k8s-ipv6: VLAN 20 ICMPv6'
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: icmp
+  source:
+    address: 2001:470:5a7f:20::/64
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+- pfsense_tracker: '1793732841'
+  description: 'k8s-ipv6: VLAN 20 to VLAN 20'
+  interface: opt1
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: 2001:470:5a7f:20::/64
+  destination:
+    address: 2001:470:5a7f:20::/64
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+- pfsense_tracker: '1793732842'
+  description: 'k8s-ipv6: reject other IPv6 from VLAN 20'
+  interface: opt1
+  floating: false
+  direction: in
+  action: reject
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+- pfsense_tracker: '1793739927'
+  description: 'k8s-ipv6: antispoof ULA in on HE_IPv6'
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: fc00::/7
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793739928'
+  description: 'k8s-ipv6: antispoof our routed /48 in on HE_IPv6'
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: 2001:470:5a7f::/48
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793739929'
+  description: 'k8s-ipv6: antispoof VLAN 10 /64 in on HE_IPv6'
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: 2001:470:6f:43d::/64
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793739930'
+  description: 'k8s-ipv6: antispoof multicast in on HE_IPv6'
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: ff00::/8
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1774224124'
+  description: IPv6 ICMPv6 safe types (echo,unreach,toobig,timex)
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: icmp
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  icmptype:
+  - echoreq
+  - unreach
+  - toobig
+  - timex
+  profile: production
+- pfsense_tracker: '1775855648'
+  description: IPv6 WireGuard site-to-site
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: udp
+  source:
+    any: true
+  destination:
+    address: 2001:470:6e:43d::2
+    port: '51821'
+  log: false
+  disabled: false
+  statetype: keep state
+  profile: production
+- pfsense_tracker: '1793732843'
+  description: 'k8s-ipv6: HTTP to Traefik ::203'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '80'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732844'
+  description: 'k8s-ipv6: HTTPS to Traefik ::203'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '443'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732845'
+  description: 'k8s-ipv6: QUIC to Traefik ::203'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: udp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::203
+    port: '443'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732846'
+  description: 'k8s-ipv6: mail 25 to ::204'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::204
+    port: '25'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732847'
+  description: 'k8s-ipv6: mail 465 to ::204'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::204
+    port: '465'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732848'
+  description: 'k8s-ipv6: mail 587 to ::204'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::204
+    port: '587'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1793732849'
+  description: 'k8s-ipv6: mail 993 to ::204'
+  interface: opt3
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    address: 2001:470:5a7f:20::204
+    port: '993'
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production
+- pfsense_tracker: '1774224125'
+  description: Block all other traffic on HE_IPv6 tunnel
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet46
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: true
+  disabled: false
+  statetype: keep state
+  profile: production
+- pfsense_tracker: '1774397449'
+  description: Passed via EasyRule
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: icmp
+  source:
+    address: 192.168.1.0/24
+  destination:
+    address: 10.0.20.0/24
+  log: false
+  disabled: false
+  statetype: keep state
+  icmptype:
+  - echoreq
+- pfsense_tracker: '1776118561'
+  description: Allow all WireGuard VPN traffic
+  interface: opt2
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    any: true
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  profile: production
+- pfsense_tracker: '1778092957'
+  description: NAT DNS forward to Technitium
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp/udp
+  source:
+    any: true
+  destination:
+    address: 10.0.20.201
+    port: '53'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_69fb8b9db29f73.61762937
+- pfsense_tracker: '1783022274'
+  description: 'CCTV: allow NTP to gateway only (default deny covers the rest)'
+  interface: opt4
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: udp
+  source:
+    net: opt4
+  destination:
+    address: '{{ fw.opt4 }}'
+    port: '123'
+  log: false
+  disabled: false
+  statetype: keep state
+- pfsense_tracker: '1783022275'
+  description: 'HA -> vermont-garage camera: ISAPI/ONVIF (hikvision_next)'
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 192.168.1.8
+  destination:
+    address: 10.0.30.70
+    port: '80'
+  log: false
+  disabled: false
+  statetype: keep state
+  reply_to_disabled: true
+- pfsense_tracker: '1783022276'
+  description: 'HA -> vermont-garage camera: RTSP'
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    address: 192.168.1.8
+  destination:
+    address: 10.0.30.70
+    port: '554'
+  log: false
+  disabled: false
+  statetype: keep state
+  reply_to_disabled: true
+- pfsense_tracker: '1788723309'
+  description: NAT Forgejo git SSH - git.viktorbarzin.me
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    any: true
+  destination:
+    alias: k8s_shared_lb
+    port: '22'
+  log: false
+  disabled: false
+  statetype: keep state
+  linked_nat_rule: nat_6a9dc06d2bf487.08020455
+- pfsense_tracker: '1792256910'
+  description: 'Vermont complex alias: only k8s nodes and devvm (ADR-0035)'
+  interface:
+  - wan
+  floating: true
+  direction: out
+  action: block
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    alias: vermont_complex_clients
+    not: true
+  destination:
+    alias: vermont_complex_alias
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-vermont-alias.yml
+- pfsense_tracker: '1793732850'
+  description: 'k8s-ipv6: no ULA source out of HE_IPv6'
+  interface:
+  - opt3
+  floating: true
+  direction: out
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    address: fc00::/7
+  destination:
+    any: true
+  log: false
+  disabled: false
+  statetype: keep state
+  managed_by: pfsense-k8s-ipv6.yml
+  profile: production

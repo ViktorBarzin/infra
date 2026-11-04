@@ -1,0 +1,138 @@
+# Generated from pfSense config.xml on 2026-11-04 by scripts/pfsense-to-opnsense.py, then reviewed;
+# edit this file, do not regenerate.
+# Settings without a file of their own.
+
+hostname: pfSense
+domain: viktorbarzin.lan
+timezone: Europe/Sofia
+language: en_US
+dns_servers:
+- 1.1.1.1
+- 1.0.0.1
+dns_server_gateways:
+- none
+- none
+dns_localhost: remote
+webgui:
+  protocol: https
+  port: 8443
+  http_redirect: false
+  dns_rebind_check: false
+  http_referer_check: false
+  login_autocomplete: true
+  max_processes: 2
+  alt_hostnames_needed:
+  - opnsense.viktorbarzin.me
+ssh:
+  enabled: true
+  agent_forwarding: true
+  login_lockout:
+    threshold: 10
+    blocktime_s: 86400
+    detection_time_s: 1800
+    whitelist:
+    - 10.0.0.0/8
+    - 192.168.1.0/24
+console:
+  primary: serial
+  serial_speed: 115200
+offload:
+  checksum_disabled: true
+  tso_disabled: true
+  lro_disabled: true
+  hn_altq_enable: true
+firewall:
+  optimization: normal
+  maximum_states: null
+  maximum_table_entries: 400000
+  maximum_frags: null
+  aliases_resolve_interval: null
+  scrub: true
+  ipv6_allow: true
+  bogons_update: monthly
+nat_reflection:
+  port_forward_mode: purenat
+  reflection_timeout: null
+  outbound_reflection: false
+  per_rule:
+  - port_forward: alarm system
+    mode: purenat
+    disabled: true
+  - port_forward: xray + reality + vless -> loadbalancer ip
+    mode: purenat
+    disabled: false
+  - port_forward: Headscale STUN (embedded DERP)
+    mode: enable
+    disabled: false
+  note: pfSense's 'enable' per-rule mode is NAT + proxy; for UDP it runs an xinetd helper (127.0.0.1:19000 to 10.0.20.200:3479 per the fact sheet). OPNsense has pure NAT reflection only.
+sysctl:
+- tunable: kern.ipc.maxsockbuf
+  value: '16777216'
+  description: Maximum socket buffer size - set by FRR package
+interfaces:
+- key: wan
+  device: vtnet0
+  description: WAN
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+- key: lan
+  device: vtnet1
+  description: dManagementsVms
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+- key: opt1
+  device: vtnet2
+  description: dKubernetes
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+- key: opt2
+  device: tun_wg0
+  description: OPT2
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+  profile: production
+- key: opt3
+  device: gif0
+  description: HE_IPv6
+  mtu: 1480
+  mss: 1480
+  block_private: false
+  block_bogons: false
+  profile: production
+- key: opt4
+  device: vtnet3
+  description: dCCTV
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+interface_groups:
+- name: WireGuard
+  members: []
+  description: WireGuard Interface Group (DO NOT EDIT/DELETE!)
+- name: Tailscale
+  members: []
+  description: Tailscale Interface Group (DO NOT EDIT/DELETE!)
+he_tunnel:
+  profile: production
+  device: gif0
+  parent_interface: wan
+  remote_address: 216.66.86.122
+  inner_local: 2001:470:6e:43d::2
+  inner_remote: 2001:470:6e:43d::1/64
+  description: HE Tunnel Broker
+  mtu: 1480
+  mss: 1480
+  managed_by: pfsense-k8s-ipv6.yml
+powerd:
+  ac: hadp
+  battery: hadp
+  normal: hadp
