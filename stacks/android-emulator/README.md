@@ -115,8 +115,12 @@ watcher, which wait up to 20 min and 8 min for such a claim (see above).
 - The container image (built from `docker/`) holds only JDK 17, cmdline-tools,
   emulator native libs, Xvfb/x11vnc/noVNC and socat — ~1GB.
 - The SDK proper (platform-tools, emulator, system image, AVD, snapshots)
-  lives on the `android-emulator-sdk` PVC (`proxmox-lvm`); the entrypoint
-  installs it idempotently. **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
+  lives on the `android-emulator-sdk` PVC (`proxmox-lvm-ssd` since
+  2026-11-03); the entrypoint installs it idempotently. The emulator is pinned
+  to build 36.1.9 (`EMULATOR_BUILD`) from the raw dl.google.com zip; the
+  entrypoint carries sdkmanager's `emulator/package.xml` across that swap,
+  because `avdmanager create avd` refuses with `"emulator" package must be
+  installed!` without it (infra#166, first hit on the fresh volume). **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
 - Rendering is on the T4 (`EMULATOR_GPU=host`, since 2026-10-12). The pod
   requests a GPU time-slice and an 800 MiB VRAM seat, which places it on
