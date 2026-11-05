@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "privatebin" {
       }
       spec {
         container {
-          image             = "privatebin/nginx-fpm-alpine:2.0.6"
+          image             = "privatebin/nginx-fpm-alpine:2.1.0"
           name              = "privatebin"
           image_pull_policy = "IfNotPresent"
           volume_mount {
