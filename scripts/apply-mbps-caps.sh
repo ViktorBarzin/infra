@@ -17,6 +17,18 @@ set -uo pipefail  # NOT -e — keep going if a single VM step fails.
 
 # vmid:disk_slot:mbps_rd:mbps_wr  (Linux VMs only — skipping 101 pfsense BSD, 300 Windows)
 #
+# WORKER ROOT DISKS LOWERED 2026-11-05 from 150/120 to 60/60. Measured over 7
+# days (guest-side, worst worker per 5-min sample): reads p99 11 MB/s, max 115;
+# writes p99 20 MB/s, max 74. So 60 leaves ordinary work untouched and clips
+# the outliers. The read cap is the one that matters: on 2026-10-13, -19, -21
+# and -30 a reader outside Kubernetes (cause still unknown, see memory #17090)
+# read node2/node3's whole root disk at 90-157 MB/s, i.e. AT the old 150 MiB/s
+# cap, for 40-60 min, and etcd fsync p99 reached 168 ms - 2.8 s. At 60 the
+# same read takes ~2.5x longer but leaves sdc headroom.
+# What this does NOT fix: the 3-minute image-pull / container-start bursts that
+# set sdc's hourly read p99 on 2026-11-05 ran at only 5-17 MB/s host-side. They
+# are IOPS-bound, not bandwidth-bound, and no byte cap here touches them.
+#
 # EXTRA_OPTS[vmid] adds per-VM options beyond the byte caps. It exists for
 # IOPS caps, which the byte caps cannot express: sdc is oversubscribed on
 # random IOPS, not on bandwidth. Measured 2026-09-08 — sdc serves ~560 r+w
@@ -28,11 +40,11 @@ TARGETS=(
   "102:scsi0:60:60"      # devvm
   "103:sata0:40:40"      # home-assistant
   "200:scsi0:100:60"     # k8s-master (alloy storm origin — firmest clip)
-  "201:scsi1:150:120"    # k8s-node1 (GPU + many CSI disks; boots from scsi1)
-  "202:scsi0:150:120"    # k8s-node2
-  "203:scsi0:150:120"    # k8s-node3
-  "204:scsi0:150:120"    # k8s-node4
-  "205:scsi0:150:120"    # k8s-node5 (built after this list; uncapped until 2026-08-16)
+  "201:scsi1:60:60"      # k8s-node1 (GPU + many CSI disks; boots from scsi1)
+  "202:scsi0:60:60"      # k8s-node2
+  "203:scsi0:60:60"      # k8s-node3
+  "204:scsi0:60:60"      # k8s-node4
+  "205:scsi0:60:60"      # k8s-node5 (built after this list; uncapped until 2026-08-16)
   "220:scsi0:40:40"      # docker-registry
 )
 
@@ -127,8 +139,10 @@ TARGETS=(
 # is not saturated, it is serialised, which is what fsync-heavy small writes
 # look like on a spindle. etcd on rotational storage is the cause, and the
 # measurement above is why capping devvm never addressed it. Bead code-oflt
-# moves etcd's 64 GB disk to the SSD (475 GB free, 0.22% utilised). Once that
-# lands this cap can go up again or away entirely.
+# proposed moving etcd's 64 GB disk to the SSD; that was NOT adopted. The
+# 2026-09-12 plan (docs/plans/2026-09-12-io-bottleneck-ssd-vs-spindles.md)
+# keeps etcd on mirrored spinning disk, and on 2026-11-04 a two-reviewer pass
+# also held moving it to the SAS pair (sdd) until a 7-day re-baseline.
 #
 # This is an interim unblock. The intended fix is an SSD read cache in front of
 # the guest's root LV, which removes the reason for a read cap on this VM at

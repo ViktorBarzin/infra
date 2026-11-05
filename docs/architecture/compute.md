@@ -110,16 +110,19 @@ graph TB
 > live-rewriting QEMU throttle state via QMP (implicated in the devvm
 > I/O stall; see `post-mortems/2026-06-11-devvm-qemu-io-stall.md`). Current caps:
 > 102 devvm 60/60, 103 home-assistant 40/40, 200 k8s-master 100/60,
-> 201 k8s-node1 150/120, 202 k8s-node2 150/120, 203 k8s-node3 150/120,
-> 204 k8s-node4 150/120, 205 k8s-node5 150/120, 220 docker-registry 40/40.
+> 201 k8s-node1 60/60, 202 k8s-node2 60/60, 203 k8s-node3 60/60,
+> 204 k8s-node4 60/60, 205 k8s-node5 60/60, 220 docker-registry 40/40.
+> The worker caps were lowered from 150/120 on 2026-11-05 to contain
+> recurring whole-root-disk reads (90-157 MB/s, cause unknown) that ran
+> at the old cap; the measurements are in the script.
 >
 > **k8s-node5 (205) was added to `TARGETS` on 2026-08-16.** The array
 > predates the node (joined 2026-05-26), so node5 was the one k8s
 > worker running uncapped, and the hourly timer had no way to notice —
 > it reconciles the list, not the VM inventory. Adding a VM to the host
 > means adding it here too. The caps are burst insurance rather than a
-> throughput reducer: node5's 30d write peak is 38.0 MB/s against the
-> 120 MB/s cap and its 30d average is 755 KB/s, so on the observed
+> throughput reducer: node5's 30d write peak was 38.0 MB/s against the
+> then 120 MB/s cap and its 30d average is 755 KB/s, so on the observed
 > record the cap would not have bound. Figures are 5-minute-averaged
 > (Prometheus scrape resolution), so sub-minute bursts are not visible
 > in them.
