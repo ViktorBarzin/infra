@@ -12,7 +12,7 @@ the top processes by bytes read with their command line and cgroup.
 Cost: reads /proc/diskstats and /proc/<pid>/{io,stat} once a minute, all
 in-memory; state lives in /run (tmpfs), so it writes nothing to disk. Findings
 are logged at journal priority warning, which the node-journal Alloy job ships
-to Loki:  {job="node-journal"} |= "disk-read-sampler"
+to Loki:  {job="node-journal"} |= "top reader"
 """
 
 import json
@@ -99,9 +99,14 @@ def sample(proc_root: Path, disk: str, state_path: Path, now: float,
         if dr > 0:
             deltas.append((dr, dw, key.split(":")[0]))
     deltas.sort(reverse=True)
-    lines = [f"{disk} read {rate:.1f} MB/s, write {wrate:.1f} MB/s over {secs:.0f}s; top readers:"]
+    # /proc/<pid>/io counts bytes from every block device, so a process reading
+    # its PVC (a separate disk) is listed too. The trigger above is root-disk
+    # only; the list is "who read from storage in that window", say so.
+    lines = [f"{disk} read {rate:.1f} MB/s, write {wrate:.1f} MB/s over {secs:.0f}s; "
+             "top readers (bytes from all disks, not only " + disk + "):"]
     for dr, dw, pid in deltas[:TOP]:
-        lines.append(f"  read={dr / 1e6:.1f}MB write={dw / 1e6:.1f}MB {describe(proc_root, pid)}")
+        lines.append(f"  top reader: read={dr / 1e6:.1f}MB write={dw / 1e6:.1f}MB "
+                     f"{describe(proc_root, pid)}")
     return lines
 
 

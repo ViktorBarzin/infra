@@ -1625,7 +1625,7 @@
 #
 # In memory only (state in /run), so it adds no disk writes. Findings are
 # journal priority warning, which the node-journal Alloy job ships to Loki:
-#   homelab logs query '{job="node-journal"} |= "top readers"' --since 30d
+#   homelab logs query '{job="node-journal"} |= "top reader"' --since 30d
 #
 # Tag: `io-sampler`.
 - name: Kubernetes node disk-read sampler
