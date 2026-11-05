@@ -165,6 +165,22 @@ Edit `scripts/london-flint/drop-probe.sh`, bump `PROBE_VERSION` in
 python3 scripts/london-flint/build-ipk.py <version> <out-dir>
 ```
 
+## Home Assistant Pi (ha-london)
+
+ha-london is Home Assistant OS on a Raspberry Pi 3 B (903 MB RAM, 32 GB SD
+card) at 192.168.8.103, on Wi-Fi. It runs Core 2026.11.0 since 2026-11-05. The
+only add-on kept running is Advanced SSH, which is the access path when Core is
+down (`ssh hassio@192.168.8.103`, then `sudo -n`). Whisper, Piper, VS Code and
+the ESPHome builder were uninstalled on 2026-11-05 to free memory and disk;
+the ESPHome device YAMLs stay in `/homeassistant/esphome`.
+
+| Item | State | Notes |
+|---|---|---|
+| Power | Tapo P100 "pi living room Tapo P100", `plug-tapo` (192.168.8.108) | Third-Party Compatibility is on (Tapo app, Tapo Lab), so it speaks KLAP and python-kasa can switch it from the devvm: `kasa --host 192.168.8.108 --username <u> --password <p> off`, then `on`. The working login is the Vaultwarden item `www.tplinkcloud.com`. |
+| Wi-Fi failure | Onboard Wi-Fi can stop under load while the Pi keeps running | Kernel line `mmc1: Timeout waiting for hardware interrupt` (mmc1 is the Wi-Fi chip). Seen 2026-11-03 and four times on 2026-11-04, each 2-4 minutes after boot while Core started. The hardware watchdog does not fire, because the Pi is not frozen. An Ethernet cable would remove the cause. |
+| Self-recovery | HA automation `wifi_watchdog_reboot` | Every 2 minutes: if `binary_sensor.192_168_8_1` (ping of the Flint) has been off for 6 minutes and the automation has not run in the last 30 minutes, it calls `hassio.host_reboot`. It cannot help while Core is stopped; power-cycle through the plug then. |
+| Upgrades | Core image needs about 3.1 GB free at peak | Procedure that worked twice: stop Core, `nohup docker pull` the image over SSH, `ha core update --version <v> --backup=false`, `ha core start`. A UI update with a backup starved the Pi on 2026-11-04. |
+
 ## Alexa voice control
 
 The Echo Dot on the guest network ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`)
