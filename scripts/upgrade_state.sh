@@ -6,7 +6,7 @@
 # Read-only by design — no --fix.
 #
 # The three pipelines:
-#   1. Apps  — Renovate (CronJob every 30 min) pushes one version bump per
+#   1. Apps  — Renovate (CronJob hourly) pushes one version bump per
 #              run to master; the Woodpecker rails apply, verify, and revert
 #              on failure. Pushgateway holds renovate_* gauges.
 #   2. OS    — unattended-upgrades patches in-release per node; kured
@@ -163,7 +163,7 @@ collect_apps() {
     else
         APPS_ERROR_LINE="no revert recorded; last run exit code: ${last_exit:-none}"
     fi
-    APPS_NEXT="every 30 min, one bump per run"
+    APPS_NEXT="hourly at :17, one bump per run"
 
     if [[ "$suspended" == "true" ]]; then
         APPS_STATUS_ICON="⚠"; APPS_STATUS_TEXT="paused"

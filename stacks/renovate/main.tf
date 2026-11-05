@@ -45,6 +45,16 @@ variable "apps_schedule" {
 
 variable "schedule" {
   type = string
+  # Every hour (2026-11-05). At every 2 hours the queue held 29 to 34 updates
+  # from 2026-10-21 to 2026-11-05 while landing 11 to 12 a day, the ceiling,
+  # so it never drained and majors never reached the front. Hourly doubles the
+  # ceiling to about 24 a day; RENOVATE_MIN_GAP (20 minutes after the last
+  # Renovate pipeline), the calm gate and the busy-pipeline skip still hold
+  # each bump to its own pipeline, so a run whose predecessor is still
+  # settling lands nothing. Viktor chose this over grouping shared base images
+  # across stacks, which would verify ~20 stacks per commit and revert them
+  # all on one failing check.
+  #
   # Every 2 hours (2026-10-21). Every 6 hours from 2026-10-15 left 34 updates
   # queued: at one bump per run that is at most 4 a day, fewer when the calm
   # gate skips a night run, and new releases arrived about as fast. Every 10
@@ -56,7 +66,7 @@ variable "schedule" {
   # chose this over raising prCommitsPerRunLimit, which would push several
   # bumps per run and let their pipelines cancel each other. The wrapper still
   # skips a run while an infra pipeline is running or queued.
-  default = "17 */2 * * *"
+  default = "17 * * * *"
 }
 
 locals {

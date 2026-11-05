@@ -50,7 +50,7 @@ Exit codes: `0` healthy, `1` attention warranted, `2` stalled / broken.
 
 | Layer | What runs | Cadence | Data sources |
 |---|---|---|---|
-| **Apps** | Renovate pushes one version bump per run to master; the Woodpecker rails apply it, run the stack's verify, and revert on failure | every 30 min | Pushgateway (`renovate_*`, `renovate_rails_*`), `renovate` CronJob |
+| **Apps** | Renovate pushes one version bump per run to master; the Woodpecker rails apply it, run the stack's verify, and revert on failure | hourly at :17 | Pushgateway (`renovate_*`, `renovate_rails_*`), `renovate` CronJob |
 | **OS** | `unattended-upgrades` in-release patching; `kured` reboots when `/var/run/reboot-required` is set | daily 02:00-06:00 London | SSH fan-out to all 5 nodes |
 | **K8s** | `k8s-version-check` CronJob detects new kubeadm patch/minor; spawns the Job-chain that drains+upgrades node-by-node | nightly 23:00 UTC | Pushgateway (`k8s_upgrade_*`), `kubectl get nodes` |
 
