@@ -282,7 +282,12 @@ fi
 # no auth — reachable only inside the LAN via the MetalLB IP. Bind to the pod
 # IP only: the emulator itself already listens on 127.0.0.1:5555, so a
 # wildcard bind fails with EADDRINUSE.
-POD_IP=$(hostname -i | awk '{print $1}')
+# The pod is dual-stack since 2026-11-03 and `hostname -i` can list the IPv6
+# address first; TCP-LISTEN is IPv4, so socat then died with "Address family
+# for hostname not supported" right after boot (infra#166). The adb Service
+# (10.0.20.200) is IPv4, so take the IPv4 address.
+POD_IP=$(hostname -i | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$')
+[ -n "$POD_IP" ] || { echo "FATAL: no IPv4 pod address in: $(hostname -i)" >&2; exit 1; }
 socat "TCP-LISTEN:5555,bind=${POD_IP},fork,reuseaddr" TCP:127.0.0.1:5555 &
 SUPERVISED[$!]=socat
 
