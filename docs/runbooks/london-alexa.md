@@ -26,7 +26,7 @@ flowchart TD
 | HA side | `alexa:` block at the end of `/config/configuration.yaml` on ha-london | Exposes only the entities listed in its filter |
 | Alexa events | `endpoint`, `client_id`, `client_secret` in the `alexa:` block (2026-11-03) | The skill has the `alexa::async_event:write` permission, so HA reports sensor state to Alexa and a sensor can trigger a Routine. Credentials are the skill's messaging credentials (`ask.sh smapi get-skill-credentials`), in `secrets.yaml` and Vault |
 | Assistant delivery | `packages/alexa_assistant.yaml` on ha-london | The alexa-assistant app POSTs `{"action":"speak","text":...}` to its webhook when an answer is ready, and the automation reads the text aloud on Milea's Echo Dot through `notify.milea_s_echo_dot` (never 22:00 to 08:00). The older open/close contact sensor is still there but unused, because a Routine cannot open a development skill (alexa-assistant ADR-0003) |
-| Alexa Devices | HA integration, logged in as Anca (2026-11-04) | Gives HA Speak and Announce entities for each Echo. Login: Anca's Amazon password (Vaultwarden "amazon.com") and a TOTP from a second authenticator app on her 2-step verification, secret in Vault `secret/viktor` `amazon_anca_totp_secret`. Until Core 2026.11, `custom_components/alexa_devices` is a temporary copy of the 2026.10.4 integration pinned to aioamazondevices 16.11.1 (the bundled 16.3.2 cannot log in since Amazon changed its sign-in page), notify platform only. After upgrading Core to 2026.11, delete that directory, restart, and check the entry still loads |
+| Alexa Devices | HA integration, logged in as Anca (2026-11-04) | Gives HA Speak and Announce entities for each Echo; the alexa-assistant app speaks through `notify.milea_s_echo_dot` (the Speak entity, unique_id `G090VC0783955B4A-speak`). Login: Anca's Amazon password (Vaultwarden "amazon.com") and a TOTP from a second authenticator app on her 2-step verification, secret in Vault `secret/viktor` `amazon_anca_totp_secret`. Since Core 2026.11.0 (2026-11-05) the built-in integration is used (aioamazondevices 17.2.4). The temporary 2026.10.4 copy that ran before it is out of `custom_components`; it is kept at `/homeassistant/alexa_devices.shadow.bak` and can be deleted |
 | HA login | non-admin HA user `alexa` | Alexa holds this user's refresh token. Changes made by voice show this user in the logbook |
 | Cost | $0 | Lambda and CloudWatch stay inside the always-free allowance; the Alexa developer account is free |
 
@@ -90,6 +90,14 @@ it in the Alexa app.
 
 ## Gotchas found while building it
 
+- **Core updates can knock the Pi off Wi-Fi.** On 2026-11-04 the Core 2026.11.0
+  update (with a backup, and only 2.6 GB free on the card) dropped ha-london off
+  the network for about four hours and needed power cycles. The Pi 3's onboard
+  Wi-Fi dies under heavy load (`mmc1: Timeout waiting for hardware interrupt`)
+  while the Pi keeps running. What worked on 2026-11-05: free disk first, stop
+  Core, pull the image, then `ha core update --backup=false`. The
+  `wifi_watchdog_reboot` automation now reboots the host if the router stays
+  unreachable for 6 minutes, and the Pi's power is on the Tapo plug.
 - **The Lambda permission principal is `alexa-connectedhome.amazon.com`.** The
   `amazonaws.com` spelling is rejected by Lambda with "The provided principal was
   invalid".
