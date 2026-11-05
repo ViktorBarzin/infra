@@ -19,11 +19,11 @@ Until 2026-10 two other systems handled app images: Keel rolled live Deployments
 
 Design: `docs/plans/2026-10-09-software-currency-design.md` ("Ownership of versions", "Phase 3"). Decision: ADR-0030. Operations: `docs/runbooks/renovate.md`.
 
-Renovate runs as a CronJob in `stacks/renovate` every 2 hours (`17 */2 * * *`) and skips a run while an infra pipeline is running, so each run lands at most one bump. It reads `renovate.json5` at the repo root, picks the highest-priority pending update, and pushes it straight to master as the `renovate-bot` Forgejo account: one commit per run, no pull request. The infra pipeline applies the commit, and for Renovate commits `scripts/renovate-rails` wraps that apply with a gate, a snapshot, a verify and a revert.
+Renovate runs as a CronJob in `stacks/renovate` every hour (`17 * * * *`, since 2026-11-05) and skips a run while an infra pipeline is running, so each run lands at most one bump. It reads `renovate.json5` at the repo root, picks the highest-priority pending update, and pushes it straight to master as the `renovate-bot` Forgejo account: one commit per run, no pull request. The infra pipeline applies the commit, and for Renovate commits `scripts/renovate-rails` wraps that apply with a gate, a snapshot, a verify and a revert.
 
 ```mermaid
 flowchart TD
-  R[Renovate CronJob<br/>every 2 h] -->|one bump per run| M[master]
+  R[Renovate CronJob<br/>hourly] -->|one bump per run| M[master]
   M --> P[Woodpecker infra pipeline]
   P --> G{upgrade gate:<br/>blocking alerts clear?}
   G -->|no, after 10 min| H[revert, no ignore entry<br/>Slack: held]
@@ -38,7 +38,7 @@ flowchart TD
 
 App repos have their own Renovate job: the `renovate-apps` CronJob in the same stack, with its own config (`stacks/renovate/files/config-apps.js`), repo list (`viktor/tasks` since 2026-10-16) and run limit. It updates `bun.lock` dependencies after a 3-day npm wait and lands them on the app's master without review, TanStack Start and Router and the Bun runtime pin included (since 2026-10-18). The rails do not cover it: the app's own build and deploy run after each landed commit. See `docs/runbooks/renovate.md` "App repos".
 
-Status on 2026-11-04: the CronJob runs every 2 hours (every 30 minutes until 2026-10-11, every 10 minutes until the upgrade backlog cleared on 2026-10-15, every 6 hours until 2026-10-21) (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
+Status on 2026-11-05: the CronJob runs every hour (every 30 minutes until 2026-10-11, every 10 minutes until the upgrade backlog cleared on 2026-10-15, every 6 hours until 2026-10-21, every 2 hours until 2026-11-05, when 29 updates were queued while it landed its ceiling of about 12 a day) (`variable "suspended"` in `stacks/renovate/main.tf`, default `false` since wave 6 of the build plan). The rails were exercised end to end on one passing and one failing bump in wave 4.
 
 ### Who updates which version
 
