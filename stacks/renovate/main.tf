@@ -259,6 +259,13 @@ resource "kubernetes_cron_job_v1" "renovate" {
                 name  = "CVE_PRIORITY"
                 value = "1"
               }
+              env {
+                # Saturday (UTC): pending majors go ahead of everything else, so
+                # they do not wait behind a queue that never empties
+                # (files/cve-priority.js, 2026-11-05). 0 = Sunday ... 6 = Saturday.
+                name  = "MAJORS_FIRST_WEEKDAY"
+                value = "6"
+              }
               volume_mount {
                 name       = "config"
                 mount_path = "/opt/renovate"
