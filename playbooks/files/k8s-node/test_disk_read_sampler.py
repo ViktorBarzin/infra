@@ -86,6 +86,8 @@ def test_busy_disk_names_the_top_reader_with_its_cgroup(tree):
                cgroup="0::/system.slice/containerd.service")
     lines = run(proc, state, now=160.0)
     assert lines[0].startswith("sda read 90.0 MB/s")
+    assert "all disks" in lines[0]
+    assert all("top reader" in line for line in lines)
     assert "pid=10" in lines[1] and "comm=dd" in lines[1]
     assert "cmd=dd if=/dev/sda of=/dev/null bs=1M" in lines[1]
     assert "cgroup=/system.slice/ssh.service" in lines[1]
