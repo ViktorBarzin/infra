@@ -50,11 +50,35 @@ if [ ! -f "$MARKER" ]; then
 fi
 
 # --- pin the emulator build (replaces whatever sdkmanager installed) ---------
-if [ ! -f "/sdk/.emulator-pinned-${EMULATOR_BUILD}" ]; then
+# The raw dl.google.com zip carries no package.xml (sdkmanager writes that on
+# install), and avdmanager only recognises a package by its package.xml: without
+# it, "create avd" fails with 'Error: "emulator" package must be installed!'.
+# So keep sdkmanager's manifest across the swap, with its revision set to the
+# pinned build. A volume pinned before this fix (marker present, manifest
+# missing) is repaired by running the pin again. (infra#166: hit on the fresh
+# proxmox-lvm-ssd volume of 2026-11-03.)
+if [ ! -f "/sdk/.emulator-pinned-${EMULATOR_BUILD}" ] || [ ! -f /sdk/emulator/package.xml ]; then
   echo "Pinning emulator build ${EMULATOR_BUILD}..."
+  if [ ! -f /sdk/emulator/package.xml ]; then
+    # Get a manifest the only way sdkmanager hands one out: install the package.
+    rm -rf /sdk/emulator
+    sdkmanager --sdk_root=/sdk "emulator"
+  fi
+  cp /sdk/emulator/package.xml /sdk/emulator-package.xml
   wget -q "https://dl.google.com/android/repository/emulator-linux_x64-${EMULATOR_BUILD}.zip" -O /sdk/emu.zip
   rm -rf /sdk/emulator
   unzip -qo /sdk/emu.zip -d /sdk && rm -f /sdk/emu.zip
+  mv /sdk/emulator-package.xml /sdk/emulator/package.xml
+  # Record the pinned revision (source.properties ships in the zip) so
+  # sdkmanager --list reports what is really installed.
+  rev=$(sed -n 's/^Pkg\.Revision=//p' /sdk/emulator/source.properties 2>/dev/null | tr -d '\r')
+  if [[ "$rev" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    sed -i -E \
+      -e "s#<major>[0-9]+</major>#<major>${BASH_REMATCH[1]}</major>#" \
+      -e "s#<minor>[0-9]+</minor>#<minor>${BASH_REMATCH[2]}</minor>#" \
+      -e "s#<micro>[0-9]+</micro>#<micro>${BASH_REMATCH[3]}</micro>#" \
+      /sdk/emulator/package.xml
+  fi
   rm -f /sdk/.emulator-pinned-*
   touch "/sdk/.emulator-pinned-${EMULATOR_BUILD}"
 fi
