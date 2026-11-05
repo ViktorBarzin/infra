@@ -57,6 +57,51 @@
         state: started
         daemon_reload: true
 
+    # ---- cgroup io accounting + no swap for etcd's VM ------------------------
+    # Delegates the io controller into qemu.slice (accounting only) and sets
+    # memory.swap.max=0 on k8s-master's scope so etcd's VM is never swapped
+    # onto sdc. Reasoning in the script. Installed by hand until 2026-11-05.
+    - name: Install the cgroup script
+      ansible.builtin.copy:
+        src: ../scripts/pve-cgroup-io.sh
+        dest: /usr/local/bin/pve-cgroup-io.sh
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the cgroup units
+      ansible.builtin.copy:
+        src: "../scripts/pve-cgroup-io.{{ item }}"
+        dest: "/etc/systemd/system/pve-cgroup-io.{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - service
+        - timer
+      notify: reload systemd
+
+    - name: Enable the cgroup timer
+      ansible.builtin.systemd_service:
+        name: pve-cgroup-io.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ---- swappiness ----------------------------------------------------------
+    # The swap LV (pve/swap, 8 GiB) is on sdc, etcd's spindle. At the default
+    # 60 it was full on 2026-11-04 with 1.2 GB of k8s-master swapped out; both
+    # daytime etcd stalls on 2026-11-05 (~420 ms) carried 50-70 swap-in
+    # reads/s, and on 2026-11-02 a page-cache surge swapped ~5 GiB onto sdc at
+    # 807 writes/s (etcd 5.5 s). 10 makes the kernel drop page cache first.
+    # Deliberately not swapoff: it would re-read 7.8 GB from sdc at once.
+    - name: Prefer dropping page cache over swapping VM memory
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: "10"
+        sysctl_file: /etc/sysctl.d/90-swappiness.conf
+        reload: true
+
     # ---- journald in RAM -----------------------------------------------------
     # This host was the last one still writing its journal to disk, and that
     # disk is pve-root on sdc. Measured 2026-09-13: 258.9 GB over 57.6 days of

@@ -1,0 +1,118 @@
+#!/usr/bin/python3
+"""Name the process behind a root-disk read burst on a k8s node.
+
+WHY (2026-11-05). Four times in October something read node2's or node3's whole
+root disk (134-436 GB in 40-60 min, at 90-157 MB/s) and etcd, which shares the
+Proxmox spindle sdc, stalled for 168 ms to 2.8 s. The reader was outside every
+pod (no pod CPU rose), logged nothing, and nothing kept per-process IO history,
+so the cause is still unknown (memory #17090). This samples once a minute and,
+only when the root disk read faster than the threshold since the last run, logs
+the top processes by bytes read with their command line and cgroup.
+
+Cost: reads /proc/diskstats and /proc/<pid>/{io,stat} once a minute, all
+in-memory; state lives in /run (tmpfs), so it writes nothing to disk. Findings
+are logged at journal priority warning, which the node-journal Alloy job ships
+to Loki:  {job="node-journal"} |= "disk-read-sampler"
+"""
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+THRESHOLD_MBPS = float(os.environ.get("THRESHOLD_MBPS", "40"))
+TOP = 8
+SECTOR = 512
+
+
+def root_disk() -> str:
+    """The whole-disk name under / (sda on these nodes), from sysfs."""
+    dev = os.stat("/").st_dev
+    link = Path(f"/sys/dev/block/{os.major(dev)}:{os.minor(dev)}").resolve()
+    # .../block/sda/sda1 for a partition, .../block/sda for a whole disk
+    return link.parent.name if (link / "partition").exists() else link.name
+
+
+def disk_sectors(proc_root: Path, disk: str) -> tuple[int, int] | None:
+    for line in (proc_root / "diskstats").read_text().splitlines():
+        f = line.split()
+        if len(f) > 9 and f[2] == disk:
+            return int(f[5]), int(f[9])
+    return None
+
+
+def read_proc(proc_root: Path) -> dict[str, dict]:
+    out = {}
+    for d in proc_root.iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            io = dict(l.split(": ") for l in (d / "io").read_text().splitlines())
+            stat = (d / "stat").read_text()
+            start = stat[stat.rindex(")") + 2:].split()[19]  # field 22, starttime
+            out[f"{d.name}:{start}"] = {
+                "r": int(io["read_bytes"]),
+                "w": int(io["write_bytes"]),
+            }
+        except (OSError, KeyError, ValueError, IndexError):
+            continue  # exited mid-read, or a kernel thread without io
+    return out
+
+
+def describe(proc_root: Path, pid: str) -> str:
+    d = proc_root / pid
+    try:
+        comm = (d / "comm").read_text().strip()
+        cmd = (d / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+        cg = (d / "cgroup").read_text().strip().split("::", 1)[-1]
+    except OSError:
+        return f"pid={pid} (exited)"
+    return f"pid={pid} comm={comm} cgroup={cg} cmd={cmd[:200]}"
+
+
+def sample(proc_root: Path, disk: str, state_path: Path, now: float,
+           threshold_mbps: float) -> list[str]:
+    sectors = disk_sectors(proc_root, disk)
+    procs = read_proc(proc_root)
+    if sectors is None:
+        return []
+    prev = None
+    try:
+        prev = json.loads(state_path.read_text())
+    except (OSError, ValueError):
+        pass
+    state_path.write_text(json.dumps(
+        {"t": now, "sectors_read": sectors[0], "sectors_written": sectors[1], "procs": procs}))
+    if not prev or now <= prev["t"] or sectors[0] < prev["sectors_read"]:
+        return []  # first run, clock went back, or counters reset (reboot)
+    secs = now - prev["t"]
+    rate = (sectors[0] - prev["sectors_read"]) * SECTOR / secs / 1e6
+    if rate < threshold_mbps:
+        return []
+    wrate = max(0, sectors[1] - prev["sectors_written"]) * SECTOR / secs / 1e6
+    old = prev.get("procs", {})
+    deltas = []
+    for key, cur in procs.items():
+        before = old.get(key, {"r": 0, "w": 0})  # new process: count all it has read
+        dr, dw = cur["r"] - before["r"], cur["w"] - before["w"]
+        if dr > 0:
+            deltas.append((dr, dw, key.split(":")[0]))
+    deltas.sort(reverse=True)
+    lines = [f"{disk} read {rate:.1f} MB/s, write {wrate:.1f} MB/s over {secs:.0f}s; top readers:"]
+    for dr, dw, pid in deltas[:TOP]:
+        lines.append(f"  read={dr / 1e6:.1f}MB write={dw / 1e6:.1f}MB {describe(proc_root, pid)}")
+    return lines
+
+
+def main() -> int:
+    state_dir = Path(os.environ.get("RUNTIME_DIRECTORY", "/run/disk-read-sampler"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    disk = root_disk()
+    for line in sample(Path("/proc"), disk, state_dir / "state.json", time.time(), THRESHOLD_MBPS):
+        print(f"<4>{line}", flush=True)  # <4> = journal priority warning
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

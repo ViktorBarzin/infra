@@ -1,0 +1,12 @@
+[Unit]
+Description=Log the top processes behind a root-disk read burst
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/disk-read-sampler
+Environment=THRESHOLD_MBPS=40
+# State between runs lives here (tmpfs); keep it after each oneshot exits.
+RuntimeDirectory=disk-read-sampler
+RuntimeDirectoryPreserve=yes
+Nice=10
+IOSchedulingClass=idle

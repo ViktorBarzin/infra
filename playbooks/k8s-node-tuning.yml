@@ -1608,3 +1608,58 @@
         mode: "0644"
       when: cloud_init_bin.stat.exists
       tags: cloudinit
+
+# ---------------------------------------------------------------------------
+# Disk-read sampler
+# ---------------------------------------------------------------------------
+# WHY (2026-11-05). On 2026-10-13, -19, -21 and -30 something read node2's or
+# node3's whole root disk (134-436 GB in 40-60 min, 90-157 MB/s) and etcd, on
+# the same Proxmox spindle, stalled for 168 ms to 2.8 s. Guest and host byte
+# counts matched, so the reader was inside the VM; no pod's CPU rose, node
+# system CPU rose ~0.1 core, and the node syslog showed nothing at the start
+# minute. Nothing kept per-process IO history, so the cause is still unknown
+# (memory #17090). This timer logs the top readers with command line and
+# cgroup, once a minute, only while the root disk reads above 40 MB/s. Worker
+# root disks were capped to 60 MB/s the same day (scripts/apply-mbps-caps.sh),
+# so a repeat now reads at 40-60 MB/s and still crosses the threshold.
+#
+# In memory only (state in /run), so it adds no disk writes. Findings are
+# journal priority warning, which the node-journal Alloy job ships to Loki:
+#   homelab logs query '{job="node-journal"} |= "top readers"' --since 30d
+#
+# Tag: `io-sampler`.
+- name: Kubernetes node disk-read sampler
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Install the sampler
+      ansible.builtin.copy:
+        src: files/k8s-node/disk-read-sampler
+        dest: /usr/local/bin/disk-read-sampler
+        owner: root
+        group: root
+        mode: "0755"
+      tags: io-sampler
+
+    - name: Install the sampler units
+      ansible.builtin.copy:
+        src: "files/k8s-node/disk-read-sampler.{{ item }}"
+        dest: "/etc/systemd/system/disk-read-sampler.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - service
+        - timer
+      register: sampler_units
+      tags: io-sampler
+
+    - name: Run the sampler every minute
+      ansible.builtin.systemd_service:
+        name: disk-read-sampler.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ sampler_units.changed }}"
+      when: not (ansible_check_mode and sampler_units.changed)
+      tags: io-sampler
