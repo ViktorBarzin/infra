@@ -256,7 +256,7 @@ resource "helm_release" "grafana" {
   # The chart moved to grafana-community; grafana.github.io stops at 10.5.15 (deprecated).
   repository = "https://grafana-community.github.io/helm-charts"
   chart      = "grafana"
-  version    = "14.3.1"
+  version    = "14.4.0"
 
   values = [templatefile("${path.module}/grafana_chart_values.yaml", { mysql_host = var.mysql_host })]
   # The admin password comes from a vault_kv_secret_v2 data source, which
