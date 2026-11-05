@@ -208,7 +208,7 @@ resource "kubernetes_deployment" "phpipam_web" {
       }
       spec {
         container {
-          image = "phpipam/phpipam-www:v1.8.3"
+          image = "phpipam/phpipam-www:v1.9.0"
           volume_mount {
             name       = "php2shell-mitigation"
             mount_path = "/etc/php83/conf.d/zz-php2shell.ini"
