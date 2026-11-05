@@ -135,7 +135,7 @@ resource "kubernetes_deployment" "changedetection" {
 
         container {
           name  = "changedetection"
-          image = "ghcr.io/dgtlmoon/changedetection.io:0.60.10@sha256:72f97681f390e4d6ae3e6585e1e0036449910f347144b766fc23910458566a1a"
+          image = "ghcr.io/dgtlmoon/changedetection.io:0.70.1@sha256:72e761d84463553c4a276127df46a4967e9feea8878b88b05d8c058ddbe1a4c8"
           env {
             name  = "PLAYWRIGHT_DRIVER_URL"
             value = "ws://localhost:3000"
