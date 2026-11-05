@@ -631,7 +631,7 @@ resource "helm_release" "crowdsec" {
   name             = "crowdsec"
   atomic           = true
   cleanup_on_fail  = true
-  version          = "0.24.2"
+  version          = "0.24.3"
 
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
