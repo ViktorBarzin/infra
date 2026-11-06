@@ -8099,16 +8099,26 @@ serverFiles:
           # fires about 10 minutes before lights out at the earliest, after
           # the extraction cadence (900s pre-session) has had two runs to find
           # a stream.
+          #
+          # Not while Sky Sports F1 plays (2026-11-06, Viktor): it carries every
+          # session in English, so an empty F1 Live then leaves the session
+          # watchable. Brazil FP1 fired this and the Watcher's sev2 issue
+          # (viktor/infra#167) with Sky Sports F1 up the whole time, because
+          # streamed.pk has closed and ppv listed the session at T-29 minutes.
+          # tv_watcher_channel_up is the Watcher's own up gauge (a Feed played
+          # in the last 2 minutes); the `or on() vector(0)` keeps the rule a
+          # floor when the Watcher is down and exports nothing.
           - alert: TvF1LiveWithoutFeeds
             expr: |
               max(tv_f1_live_on_air{rehearsal="0"}) == 1
               and on() (sum(tv_f1_live_feeds) or on() vector(0)) == 0
+              and on() (max(tv_watcher_channel_up{channel="sky-sports-f1"}) or on() vector(0)) == 0
             for: 20m
             labels:
               severity: warning
             annotations:
-              summary: "tv F1 Live is on air with no Feed for 20m"
-              description: "A session is on (tv_f1_live_on_air) and F1 Live has no Feed from any site, so the F1 group shows only the 24/7 F1 Channels. Check what extraction found with `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"' --since 1h`, and whether F1 detection or English-only rejected the session's streams. The Watcher files a `channel-source` issue for f1-live at T-30 minutes when it has no Feed; look for it on viktor/infra before filing another."
+              summary: "tv F1 Live is on air with no Feed and Sky Sports F1 is down, for 20m"
+              description: "A session is on (tv_f1_live_on_air), F1 Live has no Feed from any site, and the Watcher sees Sky Sports F1 down too, so the F1 group has no English stream of the session. Check what extraction found with `homelab logs query '{namespace=\"tv\"} |= \"Extraction run complete\"' --since 1h`, and whether F1 detection or English-only rejected the session's streams. The Watcher files a `channel-source` issue for f1-live at T-30 minutes when it has no Feed; look for it on viktor/infra before filing another."
           # Playback failing at the client, which no rule watched either.
           #
           # ADR-0003 decided against alerting on client-reported playback,
