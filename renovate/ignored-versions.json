@@ -89,6 +89,17 @@
       ],
       "matchNewValue": "29.44.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-06 pipeline #3365: stack traefik failed after this bump: its terragrunt apply failed (commit 0f49dfa6)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "traefik"
+      ],
+      "matchNewValue": "42.3.1",
+      "enabled": false
     }
   ]
 }
