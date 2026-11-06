@@ -1161,6 +1161,10 @@ resource "kubernetes_deployment_v1" "tv_worker" {
         }
       }
       spec {
+        # Its own account, which may start and delete the replay remux Jobs
+        # (tv_worker_media_jobs below).
+        service_account_name            = kubernetes_service_account_v1.tv_worker.metadata[0].name
+        automount_service_account_token = true
         # uvicorn's 30s graceful shutdown plus lifespan shutdown and margin.
         termination_grace_period_seconds = 60
         # k8s-node1 carries nvidia.com/gpu=true:NoSchedule so only work that
@@ -1605,6 +1609,57 @@ resource "kubernetes_role_binding_v1" "tv_edge_peers_reader" {
   subject {
     kind      = "ServiceAccount"
     name      = kubernetes_service_account_v1.tv_edge.metadata[0].name
+    namespace = local.tv_namespace
+  }
+}
+
+# The Worker's account. It runs each replay remux as a Kubernetes Job, so a
+# release of the Worker no longer kills a remux halfway and starts it again
+# from zero (tv repo, tv/media_jobs.py): over the 30 days to 2026-11-04 there
+# were 26 remux starts for 16 finished, and on 2026-11-02 the 26 GB 4K Mexico
+# race started four times, each start reading the source again over NFS from
+# the disks etcd shares. The Job copies the Worker's own image, node,
+# tolerations and its /data and /replay-cache mounts, which is why the Worker
+# reads its own pod. Only Jobs and Pods in this namespace, and no write on
+# Pods: a Job's pod is created by the Job controller, not by the Worker.
+resource "kubernetes_service_account_v1" "tv_worker" {
+  metadata {
+    name      = "tv-worker"
+    namespace = local.tv_namespace
+  }
+  automount_service_account_token = true
+}
+
+resource "kubernetes_role_v1" "tv_worker_media_jobs" {
+  metadata {
+    name      = "tv-worker-media-jobs"
+    namespace = local.tv_namespace
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["create", "get", "list", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "tv_worker_media_jobs" {
+  metadata {
+    name      = "tv-worker-media-jobs"
+    namespace = local.tv_namespace
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.tv_worker_media_jobs.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.tv_worker.metadata[0].name
     namespace = local.tv_namespace
   }
 }
