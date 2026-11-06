@@ -55,7 +55,7 @@ resource "helm_release" "traefik" {
   # transparency-log witnesses) do not touch this install, and the rendered
   # manifest differs only in the helm.sh/chart label. No image.tag pin: the
   # chart default image is the version.
-  version         = "42.3.1"
+  version         = "42.3.0"
   atomic          = true
   cleanup_on_fail = true
   timeout         = 600
