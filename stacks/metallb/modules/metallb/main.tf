@@ -23,7 +23,7 @@ resource "helm_release" "metallb" {
   # target 127.0.0.1 on a non-hostNetwork pod (fixed in 0.16.1, metallb#3062).
   # CRDs are templates in the chart's crds subchart, so helm upgrades them with
   # the release.
-  version   = "0.16.1"
+  version   = "0.16.2"
   namespace = kubernetes_namespace.metallb.metadata[0].name
   timeout   = 600
 
