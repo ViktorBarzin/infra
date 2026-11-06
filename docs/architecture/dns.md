@@ -222,7 +222,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 - **Pod anti-affinity**: `required` on `kubernetes.io/hostname` — all 3 pods run on different nodes
 - **PodDisruptionBudget**: `minAvailable=2` — at least 2 DNS pods survive voluntary disruptions
 - **Recreate strategy**: Each deployment uses `Recreate` (RWO block storage)
-- **Zone sync CronJob** (`technitium-zone-sync`, every 30min): Replicates all primary zones to secondary/tertiary via AXFR. Idempotent — skips existing zones, creates missing ones as Secondary type.
+- **Zone sync CronJob** (`technitium-zone-sync`, every 30min): Replicates all primary zones to secondary/tertiary via AXFR. Idempotent and type-aware: a Primary zone becomes a Secondary on the replicas, and a Forwarder zone (e.g. `ntp.org`, which Technitium auto-creates to skip DNSSEC validation for NTP) becomes a SecondaryForwarder. A replica zone of the wrong type is deleted and recreated. A Forwarder mirrored as a plain Secondary is authoritative with only SOA + FWD records and answers NXDOMAIN for every name under it (infra#169: all of `*.ntp.org` failed on both replicas).
 
 ### Services
 

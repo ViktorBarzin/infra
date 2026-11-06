@@ -384,6 +384,8 @@ resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
 # Setup Job — configures secondary + tertiary zones via Technitium REST API
 # Zone sync CronJob — replicates all primary zones to secondary/tertiary
 # Runs every 30 minutes. Idempotent: skips zones that already exist on replicas.
+# Type-aware: Primary -> Secondary, Forwarder -> SecondaryForwarder (infra#169);
+# a replica zone of the wrong type is deleted and recreated.
 resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
   metadata {
     name      = "technitium-zone-sync"
@@ -422,8 +424,14 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
 
                 if [ "$OVERALL_STATUS" -eq 0 ]; then
                   # Get zones from primary (excluding default zones that don't need replication)
-                  curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | \
-                    grep -v -E '^(localhost|0\.in-addr\.arpa|127\.in-addr\.arpa|255\.in-addr\.arpa|1\.0\.0.*ip6\.arpa)$$' > /tmp/primary_zones.txt
+                  # "<zone> <type>" per line. The zone's type decides what the replica
+                  # holds (the case statement below), so it is read alongside the name.
+                  zones_with_types() {
+                    tr ',' '\n' | awk -F'"' '/"name":"/ { for (i = 1; i < NF; i++) if ($i == "name") n = $(i + 2) } /"type":"/ { for (i = 1; i < NF; i++) if ($i == "type") print n, $(i + 2) }'
+                  }
+                  curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | zones_with_types | \
+                    grep -v -E '^(localhost|0\.in-addr\.arpa|127\.in-addr\.arpa|255\.in-addr\.arpa|1\.0\.0.*ip6\.arpa) ' > /tmp/primary_zone_types.txt
+                  cut -d' ' -f1 /tmp/primary_zone_types.txt > /tmp/primary_zones.txt
                   PRIMARY_COUNT=$(wc -l < /tmp/primary_zones.txt)
                   echo "Primary has $PRIMARY_COUNT zones to replicate"
 
@@ -447,11 +455,31 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                     fi
 
                     # Get existing zones on this replica
-                    curl -sf "$REPLICA/api/zones/list?token=$R_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/replica_zones.txt
+                    curl -sf "$REPLICA/api/zones/list?token=$R_TOKEN" | zones_with_types > /tmp/replica_zone_types.txt
+                    cut -d' ' -f1 /tmp/replica_zone_types.txt > /tmp/replica_zones.txt
                     REPLICA_COUNT=$(wc -l < /tmp/replica_zones.txt)
 
-                    while read -r zone; do
-                      if grep -qx "$zone" /tmp/replica_zones.txt; then
+                    while read -r zone ptype; do
+                      # What the replica holds for a zone of this type on the primary.
+                      # A Forwarder zone MUST become SecondaryForwarder: as a plain
+                      # Secondary the replica is authoritative for a zone that has
+                      # only SOA + FWD records, so it answers NXDOMAIN for every
+                      # name under it. That took out all of *.ntp.org (the zone
+                      # Technitium auto-creates to skip DNSSEC for NTP) on both
+                      # replicas, infra#169.
+                      case "$ptype" in
+                        Primary|Secondary) want=Secondary ;;
+                        Forwarder|SecondaryForwarder) want=SecondaryForwarder ;;
+                        *) echo "SKIP: $zone has type $ptype on the primary, not replicated"; continue ;;
+                      esac
+                      have=$(awk -v z="$zone" '$1 == z { print $2 }' /tmp/replica_zone_types.txt)
+                      if [ -n "$have" ] && [ "$have" != "$want" ]; then
+                        # Wrong type from an earlier sync: drop it so it is recreated below.
+                        echo "FIX: $zone is $have on $REPLICA, recreating as $want"
+                        curl -sf "$REPLICA/api/zones/delete?token=$R_TOKEN&zone=$zone" > /dev/null || true
+                        have=""
+                      fi
+                      if [ -n "$have" ]; then
                         # Zone exists — reconcile primaryNameServerAddresses to the
                         # stable FQDN before resync. Without this, a zone created
                         # against an old pod IP (pre-service-ClusterIP era) stays
@@ -460,9 +488,9 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                         curl -sf "$REPLICA/api/zones/options/set?token=$R_TOKEN&zone=$zone&primaryNameServerAddresses=$PRIMARY_HOST" > /dev/null || true
                         curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" > /dev/null || true
                       else
-                        # New zone — create as Secondary and validate response
-                        echo "NEW: Creating $zone on $REPLICA"
-                        RESP=$(curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_HOST" || echo '{"status":"error"}')
+                        # New zone — create as $want and validate response
+                        echo "NEW: Creating $zone ($want) on $REPLICA"
+                        RESP=$(curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=$want&primaryNameServerAddresses=$PRIMARY_HOST" || echo '{"status":"error"}')
                         if echo "$RESP" | grep -q '"status":"ok"'; then
                           SYNCED=$((SYNCED + 1))
                         else
@@ -471,7 +499,7 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                           FAIL_COUNT=$((FAIL_COUNT + 1))
                         fi
                       fi
-                    done < /tmp/primary_zones.txt
+                    done < /tmp/primary_zone_types.txt
 
                     # Push per-replica zone count
                     printf 'technitium_zone_count{instance="%s"} %s\n' "$R_NAME" "$REPLICA_COUNT" | \
