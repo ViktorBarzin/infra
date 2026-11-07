@@ -85,6 +85,17 @@ answers "what is happening now" within Loki's 30 days and Prometheus's 26
 weeks. The on-demand path answers "how do we work" over everything on disk,
 with no retention ceiling.
 
+Update 2026-11-07: "no retention ceiling" held only while transcripts stayed
+on disk, and they did not. Claude Code deletes transcripts older than
+`cleanupPeriodDays` (default 30) at every session start, so the on-disk
+history was also a rolling 30 days; on 2026-11-07 the oldest transcript in
+`-home-wizard-code-infra/` was from 2026-10-09. `managed-settings.json` now
+sets `cleanupPeriodDays: 36500` for every user, which keeps transcripts
+indefinitely. The setting must stay a positive integer: Claude Code 2.1.319
+rejects `0`, which in older versions turned transcript writes off entirely.
+History deleted before this change cannot be recovered from the devvm, though
+`devvm-home-backup` generations (14 days) may still hold some of it.
+
 ## Why not the alternatives
 
 - **Hooks writing our own events.** The org-wide settings already run seven

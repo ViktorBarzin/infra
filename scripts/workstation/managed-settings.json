@@ -3,6 +3,7 @@
   "model": "claude-opus-5-5",
   "effortLevel": "high",
   "autoMemoryEnabled": false,
+  "cleanupPeriodDays": 36500,
   "modelPicker": {
     "replaceBuiltInOptions": true,
     "options": [
