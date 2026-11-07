@@ -81,7 +81,7 @@ resource "kubernetes_deployment" "idrac-redfish" {
           # resource again since v2.6.0 (commit 46f4ff6), which retires the
           # viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix rebuild.
           # Upstream publishes to GHCR since v2.3.0.
-          image = "ghcr.io/mrlhansen/idrac_exporter:2.6.3"
+          image = "ghcr.io/mrlhansen/idrac_exporter:3.0.0"
           name  = "redfish-exporter"
           port {
             container_port = 9610
