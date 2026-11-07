@@ -2607,15 +2607,19 @@
 
               iif lo accept
 
-              # The Traefik nodes, and this box reaching its own address.
-              tcp dport 7681 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              # The Traefik nodes, and this box reaching its own address. Every
+              # worker is listed: node1 (the GPU node) carries only a soft
+              # PreferNoSchedule taint, so Traefik lands there when the other
+              # nodes are full. Leaving it out made a third of T3 and lobby
+              # requests time out at 60s on 2026-11-07.
+              tcp dport 7681 ip saddr { 10.0.10.10, 10.0.20.101, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 7681 drop
 
               # agent-api's LAN listener, for terminal-api.viktorbarzin.me. Same
               # sources as ttyd. Pods on those nodes are SNATed to the node
               # address too; the AdminNetworkPolicy devvm-lobby-ports in
               # stacks/terminal keeps every namespace but traefik off it.
-              tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.101, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 8710 drop
 
               # acd-demux (stacks/ac), the browser WebSocket front of acd.
@@ -2623,7 +2627,7 @@
               # used 7690; it is retired (terminal-lobby ADR-0046). Same
               # sources as ttyd, and the same ClusterNetworkPolicy keeps pods
               # other than traefik's off it.
-              tcp dport 7690 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 7690 ip saddr { 10.0.10.10, 10.0.20.101, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 7690 drop
 
               # T3: each user's t3-serve@ (3773-3779, roster.yaml t3_port) and
@@ -2636,7 +2640,7 @@
               # the t3-probe pod reaches 3773 from a Traefik node, and the
               # ClusterNetworkPolicy in stacks/terminal keeps every other
               # namespace off these ports.
-              tcp dport 3773-3780 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 3773-3780 ip saddr { 10.0.10.10, 10.0.20.101, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 3773-3780 drop
 
               # Traefik reaches the lobby over IPv4 only. The services listen on
