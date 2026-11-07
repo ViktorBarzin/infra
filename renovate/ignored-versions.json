@@ -111,6 +111,17 @@
       ],
       "matchNewValue": "29.45.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-07 pipeline #3385: stack monitoring failed after this bump: its terragrunt apply failed (commit af7d26e3)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/mrlhansen/idrac_exporter"
+      ],
+      "matchNewValue": "3.0.0",
+      "enabled": false
     }
   ]
 }
