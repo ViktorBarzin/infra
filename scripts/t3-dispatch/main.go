@@ -361,7 +361,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			e.OsUser, ip, time.Since(start).Milliseconds(), cause)
 		return
 	}
-	proxy.ModifyResponse = injectPWATags // HTML documents only; see pwa.go
+	proxy.ModifyResponse = modifyResponse // immutable hashed assets + PWA tags; see cache.go
 	proxy.ServeHTTP(w, r)
 }
 

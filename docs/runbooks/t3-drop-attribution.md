@@ -141,3 +141,17 @@ the WS server with it. Post-mortem addendum:
    visible as `cloudflare`-leg-only blips.
 4. **t3 nightly autoupdate** — pinned after the 2026-06-09 outage, see
    `docs/post-mortems/2026-06-09-t3-nightly-autoupdate-auth-outage.md`.
+5. **Slow or lossy client link (seen from mainland China, 2026-11-07).**
+   Traefik logs `504` after exactly 60s on `/assets/*` requests, yet the same
+   log line shows `OriginStatus` 200 and `OriginDuration` 0. That combination
+   means `t3 serve` answered at once and the stall was on the way back to the
+   client, not upstream. In that case 98 of ~230 requests in one app open
+   stalled, both on a direct China Mobile connection and through the
+   VLESS-REALITY endpoint on the Oracle box. Since then `t3-dispatch` marks
+   content-hashed build files (`/assets/<name>-<8-char hash>.<ext>`) as
+   `public, max-age=31536000, immutable` (`scripts/t3-dispatch/cache.go`), so
+   after one good load a browser stops revalidating them. `t3 serve` itself
+   still sends `no-cache`. For a client in China, the home REALITY endpoint
+   (176.12.22.76:8080) avoids Cloudflare for `t3.viktorbarzin.me`: the xray
+   pod resolves the name through cluster DNS to the internal Traefik LB
+   10.0.20.203.
