@@ -23,8 +23,10 @@ Live) has zero or more **Feeds**, one per site route, keyed `<site>/<site_slug>`
 The sites are of two kinds, and you handle both:
 
 - **Channel sites** list Channels and resolve a Feed when somebody presses it:
-  the Bulgarian and Romanian restream sites, TvVoo (`tvvoo`, a Stremio addon
-  with per-country catalogues) and dlhd (`dlhd`, through a chrome-fleet
+  the Bulgarian and Romanian restream sites, TvVoo (`tvvoo`, the Vavoo
+  network read directly through its signed catalogue and resolve API; the
+  TvVoo Stremio addon it was first read through was retired on 2026-11-06)
+  and dlhd (`dlhd`, through a chrome-fleet
   capture). Code in `tv/channels/`.
 - **F1 sites** are read ahead by the Worker's extraction: aceztrims (24/7 F1
   channels such as Sky F1), streamed and ppv (per-session streams). Their
@@ -275,6 +277,14 @@ plays without frame gaps**, so the Channel has 2 clean Feeds.
    help, and neither does a site on a serving host the Channel already has a
    clean Feed from.
 3. Fixing a Feed that fails now counts too, if that Feed played clean before.
+   Check this before step 2 when several of the Channel's Feeds share a site:
+   resolve one of them from this pod and look at whether that site's Feeds
+   fail on other Channels too. A site whose every Feed fails is a broken
+   site, not extra sources. On 2026-11-07 Sky Sports F1 looked thin on 1
+   clean Feed beside 5 TvVoo Feeds, and an earlier run ruled TvVoo out as
+   "already 5 Feeds"; in fact the TvVoo addon had been retired the day
+   before and all 5 were dead. Fixing the site (viktor/tv 142ffd88) brought
+   the Channel back to 2 clean Feeds.
 4. Gate on the tests and ship as below. After the rollout, confirm the new Feed
    is on the card and being watched. It needs about 15 minutes of clean
    watching to count; you do not have to wait for that.
