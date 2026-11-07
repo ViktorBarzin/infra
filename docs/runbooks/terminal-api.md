@@ -148,7 +148,8 @@ duration. To lift a ban on a legitimate caller:
 - devvm nftables: `7681`, `7690` (acd-demux, `stacks/ac`; until 2026-11-01 also the lobby's
   retired T3 view sidecar `tl-t3-view`), `8710` and `3773-3780` (each user's `t3-serve@` and `t3-dispatch`, behind
   `t3.viktorbarzin.me` and `t3-<user>.viktorbarzin.me`, see `stacks/t3code`) accept only the
-  Traefik node addresses and loopback; the Lobby ports are dropped on IPv6. `t3-dispatch` also
+  Traefik node addresses (every worker, 10.0.20.101-105: node1 runs Traefik when the other
+  nodes are full) and loopback; the Lobby ports are dropped on IPv6. `t3-dispatch` also
   requires the lobby proxy secret (`/etc/t3-dispatch.env`).
 - devvm nftables, forward hook: a port published with `docker run -p` is reachable only from the
   devvm itself. A connection DNATed into `docker0` or a `br-*` bridge from anywhere else is

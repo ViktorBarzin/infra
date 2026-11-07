@@ -80,9 +80,12 @@ for n in "$H" "$L" "$C" "$C2"; do ip netns add "$n"; nsx "$n" ip link set lo up;
 ip link add lan0 netns "$H" type veth peer name eth0 netns "$L"
 nsx "$H" ip addr add 10.99.0.1/24 dev lan0; nsx "$H" ip link set lan0 up
 nsx "$L" ip addr add 10.99.0.2/24 dev eth0; nsx "$L" ip link set eth0 up
-# A Traefik node's address on the lan side, for the ports only Traefik reaches.
-nsx "$L" ip addr add 10.0.20.102/32 dev eth0
-nsx "$H" ip route add 10.0.20.102/32 dev lan0
+# Traefik node addresses on the lan side, for the ports only Traefik reaches.
+# Every worker can run Traefik, node1 (10.0.20.101, the GPU node) included.
+for a in 10.0.20.101 10.0.20.102 10.0.20.105; do
+  nsx "$L" ip addr add "$a/32" dev eth0
+  nsx "$H" ip route add "$a/32" dev lan0
+done
 
 # host docker0 <-> ctr, host br-rvtest <-> ctr2
 mkbridge() {  # bridge subnet-prefix ctr-ns
@@ -145,6 +148,12 @@ no "lan (not a Traefik node) reaches a t3 serve" reach "$L" 10.99.0.1 3773
 no "lan (not a Traefik node) reaches t3-dispatch" reach "$L" 10.99.0.1 3780
 ok "a Traefik node reaches a t3 serve" reach_from "$L" 10.0.20.102 10.99.0.1 3773
 ok "a Traefik node reaches t3-dispatch" reach_from "$L" 10.0.20.102 10.99.0.1 3780
+# Traefik on any worker (2026-11-07): a pod on node1 timed out at 60s.
+for a in 10.0.20.101 10.0.20.105; do
+  for port in 3773 3780 7681 7690; do
+    ok "Traefik on $a reaches $port" reach_from "$L" "$a" 10.99.0.1 "$port"
+  done
+done
 ok "the box reaches t3-dispatch on loopback" reach "$H" 127.0.0.1 3780
 
 echo "$pass passed, $fail failed"
