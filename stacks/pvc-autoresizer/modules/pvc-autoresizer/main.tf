@@ -23,7 +23,7 @@ resource "helm_release" "pvc_autoresizer" {
 
   repository = "https://topolvm.github.io/pvc-autoresizer"
   chart      = "pvc-autoresizer"
-  version    = "0.20.1"
+  version    = "0.21.0"
 
   values = [yamlencode({
     controller = {
