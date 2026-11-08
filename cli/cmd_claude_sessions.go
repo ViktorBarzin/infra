@@ -130,6 +130,9 @@ How to read it
             subagents, compactions, tokens, models, started/ended.
             cost_usd sums the last cost-state of each Claude process, so a
             resumed session counts every run.
+  model_costs  view, one row per session and model: cost_usd and tokens.
+            Use it for spend per model. Do NOT arrayJoin(sessions.models):
+            that credits a session's whole cost to every model it used.
   turns     view, one row per finished turn with duration_ms.
 
 Search: hasAnyTokens(text, 'traefik') / hasAllTokens(text, ['git','crypt'])
@@ -139,8 +142,8 @@ month and sorted by (os_user, session_id, ts).
 
 Examples
   -- spend per week and model
-  SELECT toStartOfWeek(started) week, arrayJoin(models) model, round(sum(cost_usd),2) usd
-  FROM claude.sessions WHERE os_user='wizard' GROUP BY week, model ORDER BY week
+  SELECT toStartOfWeek(started) week, model, round(sum(cost_usd),2) usd
+  FROM claude.model_costs WHERE os_user='wizard' GROUP BY week, model ORDER BY week, usd DESC
 
   -- tools that fail most, last 30 days
   SELECT u.tool_name, count() calls, countIf(r.is_error) failed, round(failed/calls,3) rate

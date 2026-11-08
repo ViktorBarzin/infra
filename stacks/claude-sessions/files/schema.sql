@@ -153,6 +153,42 @@ SELECT
 FROM claude.lines
 GROUP BY os_user, session_id;
 
+-- One row per session and model. cost-state's modelUsage is cumulative per
+-- Claude Code process, so take each process's maximum and sum the processes,
+-- as sessions.cost_usd does for the total. Use this for spend per model:
+-- sessions.models lists every model a session used, so arrayJoin(models)
+-- would credit the whole session's cost to each of them.
+CREATE VIEW IF NOT EXISTS claude.model_costs AS
+SELECT
+    os_user,
+    session_id,
+    model,
+    min(process_started) AS started,
+    sum(cost) AS cost_usd,
+    sum(input) AS input_tokens,
+    sum(output) AS output_tokens,
+    sum(cache_read) AS cache_read_tokens,
+    sum(cache_creation) AS cache_creation_tokens
+FROM
+(
+    SELECT
+        os_user,
+        session_id,
+        mu.1 AS model,
+        JSONExtractInt(raw, 'startTime') AS process_start,
+        fromUnixTimestamp64Milli(process_start, 'UTC') AS process_started,
+        max(JSONExtractFloat(mu.2, 'costUSD')) AS cost,
+        max(JSONExtractUInt(mu.2, 'inputTokens')) AS input,
+        max(JSONExtractUInt(mu.2, 'outputTokens')) AS output,
+        max(JSONExtractUInt(mu.2, 'cacheReadInputTokens')) AS cache_read,
+        max(JSONExtractUInt(mu.2, 'cacheCreationInputTokens')) AS cache_creation
+    FROM claude.lines
+    ARRAY JOIN JSONExtractKeysAndValuesRaw(raw, 'modelUsage') AS mu
+    WHERE type = 'cost-state' AND agent_id = ''
+    GROUP BY os_user, session_id, model, process_start
+)
+GROUP BY os_user, session_id, model;
+
 -- One row per finished turn, from Claude Code's turn_duration records.
 CREATE VIEW IF NOT EXISTS claude.turns AS
 SELECT
