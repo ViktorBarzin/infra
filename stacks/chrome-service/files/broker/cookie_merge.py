@@ -15,6 +15,9 @@ nothing ever signs him out, so:
 - a cookie that disappeared from the hub before expiring (a sign-out there)
   leaves a tombstone, and only a cookie expiring after the tombstone may
   recreate it, so an old copy cannot undo the sign-out;
+- a push may replace a site's cookies only when it carries every cookie the
+  hub holds live for that site; a browser the site signed out lacks the login
+  cookies, so its fresh anonymous ones can fill gaps but replace nothing;
 - on protected domains a push can fill a missing cookie but never replace one,
   so a test login or a prompt-injected page cannot swap the hub's session;
 - session cookies, expired cookies and cookies for our own hosts are never
@@ -49,6 +52,22 @@ def _bare(domain: str) -> str:
 def _under(domain: str, suffix: str) -> bool:
     d = _bare(domain)
     return d == suffix or d.endswith("." + suffix)
+
+
+_SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu", "ltd", "plc"}
+
+
+def site_of(domain: str) -> str:
+    """The registrable site a cookie domain belongs to (amazon.co.uk, google.com).
+
+    An approximation of the public suffix list that is right for every domain in
+    the hubs today: two labels, or three under a two-letter country code with a
+    generic second level (co.uk, com.au).
+    """
+    labels = _bare(domain).split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
 
 
 def cookie_key(c: Cookie) -> Key:
@@ -127,12 +146,30 @@ def merge(incoming: Iterable[Cookie], hub: Iterable[Cookie], tombstones: dict[Ke
             continue
         candidates[key] = c
 
+    # A browser that a site signed out pushes that site's cookies minus the
+    # login ones, with fresh anonymous cookies that expire LATER (Amazon did this
+    # to T3's headless browser, 2026-11-08). Expiry alone would let those replace
+    # the hub's signed-in set. So a push may replace a site's cookies only when it
+    # carries every cookie the hub currently holds live for that site; otherwise
+    # it may only fill gaps.
+    live_by_site: dict[str, set] = {}
+    for k, h in hub_by_key.items():
+        if not _is_session(h) and _expires(h) > now:
+            live_by_site.setdefault(site_of(h["domain"]), set()).add(k)
+    pushed_by_site: dict[str, set] = {}
+    for k, c in candidates.items():
+        pushed_by_site.setdefault(site_of(c["domain"]), set()).add(k)
+    incomplete = {s for s, keys in live_by_site.items() if not keys <= pushed_by_site.get(s, set())}
+
     new_keys = 0
     for key, c in candidates.items():
         existing = hub_by_key.get(key)
         if existing is not None:
             if any(_under(c["domain"], p) for p in protected):
                 result.skip("protected")
+                continue
+            if site_of(c["domain"]) in incomplete and _expires(c) > _expires(existing) and not _is_session(existing):
+                result.skip("site_incomplete")
                 continue
             if _is_session(existing) or _expires(c) <= _expires(existing):
                 result.skip("not_newer")
