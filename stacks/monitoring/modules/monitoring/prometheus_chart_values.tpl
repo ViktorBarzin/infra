@@ -42,9 +42,9 @@ alertmanager:
       # smtp_smarthost: "smtp.viktorbarzin.me:587"
       smtp_smarthost: "mailserver.mailserver.svc.cluster.local:587"
       smtp_auth_username: "alertmanager@viktorbarzin.me"
-      smtp_auth_password: "${alertmanager_mail_pass}"
+      smtp_auth_password: "@@ALERTMANAGER_MAIL_PASS@@"
       smtp_require_tls: true
-      slack_api_url: "${alertmanager_slack_api_url}"
+      slack_api_url: "@@ALERTMANAGER_SLACK_API_URL@@"
     # templates:
     #   - "/etc/alertmanager/template/*.tmpl"
     route:
@@ -8895,8 +8895,8 @@ extraScrapeConfigs: |
   # gets from its ExternalSecret.
   - job_name: 'dawarich-sidekiq-metrics'
     basic_auth:
-      username: '${dawarich_metrics_username}'
-      password: '${dawarich_metrics_password}'
+      username: '@@DAWARICH_METRICS_USERNAME@@'
+      password: '@@DAWARICH_METRICS_PASSWORD@@'
     kubernetes_sd_configs:
     - role: pod
       namespaces:
@@ -9180,7 +9180,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bfe98afa941d5a1e2def8s'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9196,7 +9196,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf62301ef04e38d881ugcu'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9212,7 +9212,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf1a684e80ae942e4dji6b'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9228,7 +9228,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf7efce9519bd508df431s'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9244,7 +9244,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf70e80159641f61a5lzho'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9260,7 +9260,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf9597a0064f0349d4b09x'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -9276,7 +9276,7 @@ extraScrapeConfigs: |
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bfe64da91577117e0annt5'
     params:
-      api-key: ['${tuya_api_key}']
+      api-key: ['@@TUYA_API_KEY@@']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'

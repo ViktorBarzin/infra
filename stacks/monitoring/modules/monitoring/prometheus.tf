@@ -85,7 +85,28 @@ resource "helm_release" "prometheus" {
   # same cap for the same reason.
   max_history = 10
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, authentik_walloff_targets = local.authentik_walloff_targets, authentik_walloff_options_targets = local.authentik_walloff_options_targets, dawarich_metrics_username = var.dawarich_metrics_username, dawarich_metrics_password = var.dawarich_metrics_password })]
+  # The Vault-derived secrets are NOT passed into templatefile(). They come
+  # from data "vault_kv_secret_v2", which vault provider v5 marks deprecated,
+  # so each value carries sensitive + deprecation marks. Terraform 1.15 checks
+  # that templatefile() returns the same result at plan and apply, hashing the
+  # marks too, and that check failed intermittently with "function returned an
+  # inconsistent result" -- the monitoring apply broke from ~2026-11-02 (infra
+  # #172; grafana.tf hit the same on 2026-10-17). The template carries literal
+  # @@NAME@@ placeholders instead and replace() fills them after rendering;
+  # replace() is not consistency-checked. set_sensitive cannot be used because
+  # the tuya and dawarich values sit inside extraScrapeConfigs strings.
+  values = [
+    replace(replace(replace(replace(replace(
+      templatefile("${path.module}/prometheus_chart_values.tpl", {
+        authentik_walloff_targets         = local.authentik_walloff_targets
+        authentik_walloff_options_targets = local.authentik_walloff_options_targets
+      }),
+      "@@ALERTMANAGER_MAIL_PASS@@", var.alertmanager_account_password),
+      "@@ALERTMANAGER_SLACK_API_URL@@", var.alertmanager_slack_api_url),
+      "@@TUYA_API_KEY@@", var.tiny_tuya_service_secret),
+      "@@DAWARICH_METRICS_USERNAME@@", var.dawarich_metrics_username),
+    "@@DAWARICH_METRICS_PASSWORD@@", var.dawarich_metrics_password)
+  ]
 
   # The haos scrape job now reads its credential from this Secret's mount, so
   # the Secret has to exist before the pod is rescheduled onto the new values.
