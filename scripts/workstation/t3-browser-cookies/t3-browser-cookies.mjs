@@ -145,12 +145,16 @@ async function main() {
     let pushed = 0, injected = 0, rejected = 0;
     try {
       const mine = await ctx.cookies();
-      const changed = changedSince(pushable(mine, now), state.baseline || {});
+      const all = pushable(mine, now);
+      const changed = changedSince(all, state.baseline || {});
       if (changed.length) {
+        // The whole set, not just what changed: the hub lets a push replace a
+        // site's cookies only when it carries every cookie the hub holds for
+        // that site, which is how it tells a signed-out browser apart.
         try {
-          const res = await push(hub, changed);
+          const res = await push(hub, all);
           pushed = res.accepted ?? 0;
-          log(`pushed ${changed.length} changed cookie(s): hub accepted ${pushed}, skipped ${JSON.stringify(res.skipped || {})}`);
+          log(`${changed.length} cookie(s) changed, pushed ${all.length}: hub accepted ${pushed}, skipped ${JSON.stringify(res.skipped || {})}`);
           refreshSnapshot();
         } catch (e) {
           log(`push failed: ${e instanceof Error ? e.message : e}`);
