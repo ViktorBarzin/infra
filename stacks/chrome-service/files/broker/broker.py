@@ -246,8 +246,16 @@ def list_workers() -> list:
     """All pool pods in every hub's namespace as normalized dicts (name, namespace,
     session, owner, purpose, ready, ip, released_at, heartbeat_at, bare, started)."""
     out = []
-    for ns in dict.fromkeys(h.namespace for h in HUBS):
-        out.extend(_list_workers_in(ns))
+    for i, ns in enumerate(dict.fromkeys(h.namespace for h in HUBS)):
+        if i == 0:
+            out.extend(_list_workers_in(ns))  # Viktor's: an error here is a real outage
+            continue
+        try:
+            out.extend(_list_workers_in(ns))
+        except Exception as e:
+            # Another person's namespace not readable yet (stack not applied,
+            # Role missing): their pool is down, Viktor's must not be.
+            print("[broker] cannot list workers in %s: %s" % (ns, e), file=sys.stderr, flush=True)
     return out
 
 

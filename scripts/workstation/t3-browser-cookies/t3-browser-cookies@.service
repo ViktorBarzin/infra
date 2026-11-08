@@ -1,0 +1,17 @@
+[Unit]
+# Keeps %i's T3 browser signed in with the logins in %i's hub, and sends logins
+# it picked up back to the hub. Restarts T3's browser only while it has no tab
+# open. See /usr/local/lib/t3-browser-cookies/t3-browser-cookies.mjs.
+Description=Sync %i's T3 browser cookies with their hub
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/home/%i/.config/chrome-hub/hub.json
+
+[Service]
+Type=oneshot
+User=%i
+ExecStart=/usr/bin/node /usr/local/lib/t3-browser-cookies/t3-browser-cookies.mjs
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=180
+Nice=10
