@@ -45,7 +45,7 @@ resource "helm_release" "trivy_operator" {
   # Latest on 2026-10-10 (app v0.35.0, Trivy 0.75.0). Renovate owns this pin.
   # Helm installs the chart's CRDs on first install only, so a chart bump that
   # changes a report CRD needs the CRDs applied separately (see trivy.md).
-  version = "0.37.0"
+  version = "0.38.1"
 
   atomic          = true
   cleanup_on_fail = true
