@@ -15,11 +15,13 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -257,7 +259,7 @@ func (c dbConn) do(query string, settings url.Values, body io.Reader, gzipped bo
 	if gzipped {
 		req.Header.Set("Content-Encoding", "gzip")
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Minute}).Do(req)
+	resp, err := sessionsHTTPClient(req.URL.Hostname()).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -267,6 +269,28 @@ func (c dbConn) do(query string, settings url.Values, body io.Reader, gzipped bo
 		return nil, fmt.Errorf("clickhouse %d: %s", resp.StatusCode, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// sessionsHTTPClient dials the internal Traefik LB directly for
+// *.viktorbarzin.me, like the other homelab verbs, so ingest does not depend
+// on DNS (a new record can sit behind a cached NXDOMAIN on Technitium for a
+// while). Unlike clientDialingIP it keeps certificate verification: the
+// wildcard certificate covers the name, and these requests carry passwords.
+func sessionsHTTPClient(host string) *http.Client {
+	c := &http.Client{Timeout: 5 * time.Minute}
+	if !strings.HasSuffix(host, ".viktorbarzin.me") || os.Getenv("CLAUDE_SESSIONS_USE_DNS") == "1" {
+		return c
+	}
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if i := strings.LastIndex(addr, ":"); i >= 0 {
+			addr = internalLBIP + addr[i:]
+		}
+		return d.DialContext(ctx, network, addr)
+	}
+	c.Transport = tr
+	return c
 }
 
 // insert sends a JSONEachRow body, gzip-compressed.
