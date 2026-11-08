@@ -1209,87 +1209,26 @@ resource "kubernetes_deployment_v1" "tv_worker" {
           # No CPU limit: Kyverno's strip-cpu-limits removes one at admission.
           resources {
             limits = {
-              # One GPU slice, for the replay ladders' NVDEC and the Early
-              # copies' NVENC. This pins the pod to k8s-node1, so f1-stream
-              # shares node1's fate. Accepted: every video path on the
-              # hardware is worth more here than spreading the risk.
-              "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016), declared 2026-08-31 at 500 and
-              # RAISED to 1200 on 2026-09-10. This pod ran with NO gpumem
-              # declaration until 2026-08-31, so the gpu-vram-watchdog could
-              # never see or recycle it and its usage did not count against the
-              # seating chart.
-              #
-              # WHY 500 WAS UNDER, measured rather than estimated. 500 was sized
-              # from a replay ladder ALONE, at 418 MiB. It missed that this pod
-              # runs live transcode sessions from the same container, and
-              # TRANSCODE_MAX_SESSIONS is 2, each its own ffmpeg process at a
-              # measured 291 MiB. The worst legitimate total is therefore
-              # 2 x 291 + 418 = 1000 MiB, twice the declaration, and it needs no
-              # unusual event to be reached: someone watching live while a
-              # ladder builds does it.
-              #
-              # Under-declaring is NOT the safe direction. The watchdog acts on
-              # a tenant that is over its CONTRACT, so a pod that quietly
-              # exceeds a too-small number becomes the recycle target during a
-              # contention event it did not cause. The floor is crossed often
-              # today: 84 contention events in the six hours to 2026-09-10, free
-              # VRAM measured at 487-1067 MiB at trigger time. Every one of the
-              # 84 recycled llama-swap, which is seatless and holds 6.6 GB; an
-              # over-contract f1-stream would have been chosen ahead of it,
-              # killing the live stream.
-              #
-              # 1200 leaves margin over the 1000 worst case. Declared total
-              # across the card goes 12,300 -> 13,000 MiB against the node's
-              # advertised 14k, so roughly 1,000 MiB stays unallocated.
-              #
-              # Sizing rule this cost us: size a VRAM declaration from every
-              # process the container can run AT ONCE under its own configured
-              # limits, not from the one workload you were thinking about.
-              #
-              # Sablier scale-to-zero was considered and NOT applied: this
-              # ingress has traffic in 162 of the last 168 hours — a ~12/h floor
-              # of monitors and bots hitting the Anubis challenge, on top of
-              # race-day peaks of 339-1369/h — and the Sablier middleware would
-              # sit in FRONT of Anubis, so that floor alone would hold the group
-              # awake permanently. Parking it needs the bot floor addressed
-              # first.
-              #
-              # RAISED to 2048 on 2026-09-26. Wanted sessions (app ADR-0015)
-              # prefer the highest quality, so 4K HLG sources now reach the
-              # ladder: NVDEC decoding 2160p 10-bit plus the encoders measured
-              # 1707 MiB, and the watchdog recycled this pod at 18:03 in a
-              # contention event. The node budget went 14000 -> 14200 first
-              # (stacks/nvidia) so this fits. A 4K ladder plus two live
-              # transcodes (1707 + 2 x 291 = 2289) can still exceed it; Viktor
-              # accepted that over CPU decoding for HDR sources.
-              #
-              # RAISED to 2848 on 2026-10-10 for Early copies of 4K HDR replays
-              # (app ADR-0024): one copy, NVDEC 2160p Main 10 + scale_cuda +
-              # OpenCL tone-map + two NVENC rungs, measured 1782 MiB, and in a
-              # test beside the pod's own encoders the watchdog recycled this
-              # pod. 1782 + two live transcodes (2 x 291) + headroom ~= 2848.
-              # The node budget went 14200 -> 15000 first (stacks/nvidia).
-              # While a copy runs the card can drop under the watchdog floor,
-              # and llama-swap (seatless) is then the one recycled; Viktor
-              # chose this knowing that.
-              #
-              # LOWERED to 2000 when ADR-0029 moved the live transcodes (the
-              # 2 x 291 above) to the Transcoder, so the Transcoder can take
-              # 1850 and run HDR live sessions (Viktor, 2026-10-12). One Early
-              # copy at 1782 fits; an Early copy beside a 4K ladder build
-              # (1782 + 1707) never fit, at 2848 either.
-              "viktorbarzin.me/gpumem" = "2000"
+              # No graphics card since 2026-11-08 (tv ADR
+              # 2026-11-08-replay-gpu-work-runs-as-jobs). The replay ladder builds and
+              # Early copies run as Kubernetes Jobs that each declare the 2000 gpumem
+              # this pod declared before, one at a time (tv/f1/replays/jobs.py), so a
+              # release no longer restarts them and node1's budget is unchanged. The
+              # sizing history of the seat is in this file's git history.
               # 2Gi -> 4Gi on 2026-09-27: a 4K HDR replay ladder build was
               # OOM-killed at 99% after ~4.5 h. Measured on a 2-minute excerpt,
               # the HDR ladder's ffmpeg alone peaks at 1405 MiB RSS, and it shares
               # this container with the app (7-day working-set peak 1532 MiB).
-              memory = "4Gi"
+              # 4Gi -> 1536Mi on 2026-11-08: the 4Gi was for the HDR ladder's ffmpeg
+              # (1405 MiB RSS), which now runs in its own Job. 3-day working-set peak
+              # without it: 224 MiB. Lowered so the namespace quota (16Gi of limits)
+              # fits a card Job (3Gi), a remux Job and the Transcoder's surge pod.
+              memory = "1536Mi"
             }
             requests = {
               cpu = "100m"
-              # 384Mi -> 1Gi, closer to the measured 1.3-1.5 GiB working set.
-              memory = "1Gi"
+              # 1Gi -> 512Mi with the limit above.
+              memory = "512Mi"
             }
           }
           # Ready once the scheduler has started and the stream store has
@@ -1342,6 +1281,12 @@ resource "kubernetes_deployment_v1" "tv_worker" {
           env {
             name  = "ROLE"
             value = "worker"
+          }
+          # Run the replay ladder builds and Early copies as card Jobs, since
+          # this pod no longer has a card of its own (see resources above).
+          env {
+            name  = "TV_GPU_JOBS"
+            value = "1"
           }
           env {
             name  = "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"
