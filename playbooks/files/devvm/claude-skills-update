@@ -79,6 +79,24 @@ matt_skills() {
   jq -r '.skills | to_entries[] | select(.value.source=="mattpocock/skills") | .key' "$lock" 2>/dev/null | sort -u
 }
 
+# The matt skills from the lockfile whose folder is actually there. The lock
+# can list a skill whose directory is gone (domain-modeling, found 2026-11-08:
+# grill-with-docs failed on "Unknown skill" 53 times), and `skills update`
+# does not bring it back, so "wanted but not present" is what gets installed.
+present_matt_skills() {
+  local home="$1" s
+  matt_skills "$home" | while read -r s; do
+    [ -n "$s" ] && [ -e "$home/.claude/skills/$s/SKILL.md" ] && echo "$s"
+  done
+}
+
+# Install one skill fresh from upstream, overwriting what is there.
+reinstall_skill() {
+  local user="$1" skill="$2"
+  agent_args "$user"
+  as_user "$user" "npx --yes $SKILLS_CLI add mattpocock/skills -s $skill$AGENT_ARGS -g -y" >"$TMP/$user.reinstall" 2>&1
+}
+
 # The -a flags for this user's installs. The CLI copies a skill straight into
 # ~/.claude/skills when every target shares that one directory; with a second
 # harness such as codex it keeps the real copy in ~/.agents/skills, which Codex
@@ -150,8 +168,19 @@ apply_patches() {
     if patch -p1 -d "$target" -F3 --forward --no-backup-if-mismatch --silent < "$p" >/dev/null 2>&1; then
       chown -R "$user":"$(id -gn "$user")" "$target"
       note "$user: re-applied local patch to '$skill'"
+      continue
+    fi
+    # Neither way round: usually the skill still carries an OLDER version of
+    # our edit (teach, 2026-11: the patch moved to Forgejo viktor/learn, the
+    # file kept the monorepo text, and every night failed). `skills update`
+    # leaves an unchanged-upstream skill alone, so fetch a fresh copy and try
+    # once more before calling it a conflict.
+    reinstall_skill "$user" "$skill" "$home"
+    if patch -p1 -d "$target" -F3 --forward --no-backup-if-mismatch --silent < "$p" >/dev/null 2>&1; then
+      chown -R "$user":"$(id -gn "$user")" "$target"
+      note "$user: reinstalled '$skill' from upstream and re-applied the local patch"
     else
-      problem "$user: local patch for '$skill' NO LONGER APPLIES — the skill is on upstream text, your edit is not in it. Patch: $p"
+      problem "$user: local patch for '$skill' NO LONGER APPLIES, even on a fresh upstream copy — the skill is on upstream text, your edit is not in it. Patch: $p"
     fi
   done
 }
@@ -190,7 +219,8 @@ process_user() {
   [ -r "$exclude" ] && excluded=$(grep -vE '^\s*(#|$)' "$exclude" | sort -u)
 
   local want; want=$(comm -23 <(echo "$promoted") <(echo "$excluded"))
-  local to_add; to_add=$(comm -13 <(echo "$installed_matt") <(echo "$want"))
+  local present_matt; present_matt=$(present_matt_skills "$home")
+  local to_add; to_add=$(comm -13 <(echo "$present_matt") <(echo "$want"))
   # Only ever remove something we know came from mattpocock, that upstream no
   # longer ships, and that we are not patching.
   local patched=""
@@ -271,4 +301,7 @@ main() {
   fi
 }
 
-main "$@"
+# Sourcing the file (claude-skills-update-test.sh does) must not run it.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
