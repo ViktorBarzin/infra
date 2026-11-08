@@ -125,33 +125,69 @@ CREATE TABLE IF NOT EXISTS claude.files
 ENGINE = ReplacingMergeTree(mtime)
 ORDER BY (os_user, session_id, path);
 
--- One row per session (main transcript only; subagent usage is summed in).
-CREATE VIEW IF NOT EXISTS claude.sessions AS
+-- One row per API request. Claude Code writes one transcript line per content
+-- block and repeats the message's usage on each, so token sums must come from
+-- here, never from summing lines (that inflates them about 2.5x).
+CREATE VIEW IF NOT EXISTS claude.requests AS
 SELECT
     os_user,
-    session_id,
     any(project) AS project,
-    anyIf(cwd, cwd != '') AS cwd,
-    anyIf(git_branch, git_branch != '') AS git_branch,
-    minIf(ts, has_own_ts) AS started,
-    maxIf(ts, has_own_ts) AS ended,
-    dateDiff('second', started, ended) AS wall_seconds,
-    countIf(type = 'user' AND agent_id = '' AND NOT is_tool_result AND NOT is_meta) AS prompts,
-    countIf(type = 'user' AND agent_id = '' AND prompt_origin = 'human') AS human_prompts,
-    countIf(type = 'assistant') AS assistant_messages,
-    uniqExactIf(agent_id, agent_id != '') AS subagents,
-    countIf(type = 'system' AND subtype = 'compact_boundary') AS compactions,
-    -- cost-state is cumulative per Claude Code process; a resumed session
-    -- starts a new process (new startTime), so sum each process's maximum.
-    arraySum(maxMapIf([JSONExtractInt(raw, 'startTime')], [JSONExtractFloat(raw, 'totalCostUSD')], type = 'cost-state' AND agent_id = '').2) AS cost_usd,
-    sum(input_tokens) AS input_tokens,
-    sum(output_tokens) AS output_tokens,
-    sum(cache_read_tokens) AS cache_read_tokens,
-    sum(cache_creation_tokens) AS cache_creation_tokens,
-    groupUniqArrayIf(model, model != '') AS models,
-    anyIf(version, version != '') AS claude_version
+    session_id,
+    agent_id,
+    JSONExtractString(raw, 'requestId') AS request_id,
+    min(ts) AS ts,
+    any(model) AS model,
+    max(input_tokens) AS input_tokens,
+    max(output_tokens) AS output_tokens,
+    max(thinking_tokens) AS thinking_tokens,
+    max(cache_read_tokens) AS cache_read_tokens,
+    max(cache_creation_tokens) AS cache_creation_tokens
 FROM claude.lines
-GROUP BY os_user, session_id;
+WHERE type = 'assistant' AND JSONExtractString(raw, 'requestId') != ''
+GROUP BY os_user, session_id, agent_id, request_id;
+
+-- One row per session; subagent requests are included in the token sums.
+-- cost_usd sums the last cost-state of each Claude Code process (resuming
+-- starts a new process). It is final once the session has exited; for a
+-- running session it is the last snapshot Claude Code wrote, which can lag.
+CREATE VIEW IF NOT EXISTS claude.sessions AS
+SELECT s.*, r.api_requests, r.input_tokens, r.output_tokens, r.thinking_tokens,
+       r.cache_read_tokens, r.cache_creation_tokens
+FROM
+(
+    SELECT
+        os_user,
+        session_id,
+        any(project) AS project,
+        anyIf(cwd, cwd != '') AS cwd,
+        anyIf(git_branch, git_branch != '') AS git_branch,
+        minIf(ts, has_own_ts) AS started,
+        maxIf(ts, has_own_ts) AS ended,
+        dateDiff('second', started, ended) AS wall_seconds,
+        countIf(type = 'user' AND agent_id = '' AND NOT is_tool_result AND NOT is_meta) AS prompts,
+        countIf(type = 'user' AND agent_id = '' AND prompt_origin = 'human') AS human_prompts,
+        uniqExactIf(agent_id, agent_id != '') AS subagents,
+        countIf(type = 'system' AND subtype = 'compact_boundary') AS compactions,
+        arraySum(maxMapIf([JSONExtractInt(raw, 'startTime')], [JSONExtractFloat(raw, 'totalCostUSD')], type = 'cost-state' AND agent_id = '').2) AS cost_usd,
+        groupUniqArrayIf(model, model != '' AND model != '<synthetic>') AS models,
+        anyIf(version, version != '') AS claude_version
+    FROM claude.lines
+    GROUP BY os_user, session_id
+) AS s
+LEFT JOIN
+(
+    SELECT
+        os_user,
+        session_id,
+        count() AS api_requests,
+        sum(input_tokens) AS input_tokens,
+        sum(output_tokens) AS output_tokens,
+        sum(thinking_tokens) AS thinking_tokens,
+        sum(cache_read_tokens) AS cache_read_tokens,
+        sum(cache_creation_tokens) AS cache_creation_tokens
+    FROM claude.requests
+    GROUP BY os_user, session_id
+) AS r USING (os_user, session_id);
 
 -- One row per session and model. cost-state's modelUsage is cumulative per
 -- Claude Code process, so take each process's maximum and sum the processes,
