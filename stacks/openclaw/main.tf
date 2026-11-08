@@ -589,7 +589,7 @@ resource "kubernetes_deployment" "openclaw" {
         # See docs/plans/2026-05-22-openclaw-devvm-access-design.md.
         init_container {
           name  = "install-host-tools"
-          image = "debian:bookworm-20261027-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+          image = "debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc"
           command = ["bash", "-c", <<-EOT
             set -euo pipefail
             DEST=/tools/host-tools
@@ -675,7 +675,7 @@ resource "kubernetes_deployment" "openclaw" {
         # ssh-keyscan works without LD_LIBRARY_PATH gymnastics.
         init_container {
           name  = "setup-ssh-config"
-          image = "debian:bookworm-20261027-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+          image = "debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc"
           command = ["bash", "-c", <<-EOT
             set -euo pipefail
             SSH=/home/node/.openclaw/.ssh
