@@ -46,14 +46,12 @@ find /backups -mindepth 1 -maxdepth 1 -type d -name 'full-*' -mtime +35 -exec rm
 dur=$(( $(date -u +%s) - t0 ))
 bytes=$(du -sb "/backups/$name" | cut -f1)
 echo "backup written: /backups/$name kind=$kind bytes=$bytes lines=$lines duration_s=$dur"
+# No "# TYPE" lines: other backup jobs push these names untyped, and
+# Pushgateway rejects a push whose type disagrees (400 Bad Request).
 cat > /tmp/metrics <<METRICS
-# TYPE backup_last_success_timestamp gauge
 backup_last_success_timestamp $(date -u +%s)
-# TYPE backup_duration_seconds gauge
 backup_duration_seconds $dur
-# TYPE backup_output_bytes gauge
 backup_output_bytes{kind="$kind"} $bytes
-# TYPE claude_sessions_backup_lines gauge
 claude_sessions_backup_lines $lines
 METRICS
-wget -qO- --post-file=/tmp/metrics "$PUSHGATEWAY/metrics/job/claude-sessions-backup" || echo "pushgateway push failed"
+wget -qO- --post-file=/tmp/metrics "$PUSHGATEWAY/metrics/job/claude-sessions-backup" || { echo "pushgateway push failed"; exit 1; }
