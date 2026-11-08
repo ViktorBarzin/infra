@@ -166,6 +166,17 @@
       ],
       "matchNewValue": "v1.97.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-08 pipeline #3438: stack resume failed after this bump: its terragrunt apply failed (commit f0124ab0)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "amruthpillai/reactive-resume"
+      ],
+      "matchNewValue": "v6.1.0",
+      "enabled": false
     }
   ]
 }
