@@ -151,6 +151,14 @@ EXCLUDES=(
     # plan 2026-11-01-tv-rebrand). Both stay until /srv/nfs/f1-stream is gone.
     --exclude='/tv/replays-mp4/'
 
+    # ---- tv recordings (added 2026-11-08): the Recorder's Archives of TV
+    # Channels (tv docs/design/2026-11-08-recordings.md). Each segment is kept
+    # 1 to 7 days under a 150 GB cap, so a nightly copy would write up to
+    # 150 GB to sda and then to the Synology for files gone within days, and
+    # the Synology keeps them until its monthly full sync. Recordings are
+    # broadcast television; losing them costs nothing that matters.
+    --exclude='/tv/recordings/'
+
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
     --exclude='*@synoeastream'
