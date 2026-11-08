@@ -188,6 +188,17 @@
       ],
       "matchNewValue": "1.19.1",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-08 pipeline #3455: stack paperless-ngx failed after this bump: its terragrunt apply failed (commit df96be61)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "gotenberg/gotenberg"
+      ],
+      "matchNewValue": "9.2.0",
+      "enabled": false
     }
   ]
 }
