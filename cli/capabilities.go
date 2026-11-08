@@ -319,6 +319,18 @@ func capabilities() []capability {
 				"claude usage", "cost", "tokens", "history"},
 		},
 		{
+			Intent:  "query or search every past Claude session in bulk: cost, tool failures, slow turns, what was worked on",
+			Use:     "homelab claude-sessions schema  /  homelab claude-sessions sql \"SELECT ...\"",
+			Instead: "grep/rg/jq over ~/.claude/projects, or claude-usage for anything over the 30-day window",
+			Synonyms: []string{"all sessions", "session history", "how to improve", "trends", "tool errors",
+				"failed commands", "spend over time", "search transcripts", "clickhouse", "evals"},
+			Detail: []string{
+				"Every Claude Code session on the devvm since 2026-10, all users, kept forever (ADR-0039).",
+				"Run `schema` first: it lists the tables and ten example queries.",
+				"Admins only for now. New lines arrive within 15 minutes.",
+			},
+		},
+		{
 			Intent:   "remember something across sessions, or recall what we decided",
 			Use:      "homelab memory store \"...\"  /  homelab memory recall \"<context>\"",
 			Instead:  "a local file under ~/.claude",

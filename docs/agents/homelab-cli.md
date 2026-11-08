@@ -21,3 +21,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 ## Releasing tv by hand (v0.32, 2026-10-30)
 
 `homelab deploy tv` builds tv's landed master in a fresh clone on the devvm and puts it live as its GitHub Actions workflows would: the server image to ghcr plus the Woodpecker deploy, and the TV app to ghcr plus the publish pipeline. It skips what is already live or already built, refuses a TV versionCode that is not above the live one, and runs one release at a time. `--check` prints the plan and builds nothing. The credential is Vault `secret/ci/tv-release`, readable by admins and emo (infra#153). Details: `cli/README.md`.
+
+## Claude session store (v0.34, 2026-11-08)
+
+`homelab claude-sessions schema` and `homelab claude-sessions sql "<SELECT ...>"` query every Claude Code session on the devvm, all users, in ClickHouse (admins only). Run `schema` first: it lists the tables (`lines`, `blocks`, `files`, `sessions`, `turns`) and example queries for cost, tool failures, slow turns and full-text search. Reach for it before reading transcripts with grep or `claude-usage` when the question spans many sessions. `claude-sessions ingest` is the root timer's half. Design: `docs/architecture/claude-session-store.md`, ADR-0039.

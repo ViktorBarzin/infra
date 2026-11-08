@@ -2516,6 +2516,79 @@
         daemon_reload: true
       when: not ansible_check_mode
 
+    # ---- 8d) Claude session store ingest ------------------------------------
+    # Every Claude Code transcript on the box goes to the claude-sessions
+    # ClickHouse (stacks/claude-sessions, ADR-0039). `homelab claude-sessions
+    # ingest` runs as root every 15 minutes, reads only bytes appended since
+    # the last run, and writes claude_sessions_ingest_* to the textfile
+    # collector (ClaudeSessionsIngestStale alerts on it).
+    #
+    # Credentials come from Vault secret/claude-sessions, the same keys the
+    # stack's ExternalSecret reads. ingest.env is root-only; reader.env is
+    # readable by the sudo group, which makes `homelab claude-sessions sql`
+    # admin-only (Viktor, 2026-11-07).
+    - name: Read the claude-sessions passwords from Vault
+      ansible.builtin.command: "vault kv get -field={{ item }}_password secret/claude-sessions"
+      delegate_to: localhost
+      become: false
+      loop: [ingest, reader]
+      register: devvm_claude_sessions_pw
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Refuse to write empty claude-sessions credentials
+      ansible.builtin.assert:
+        that: "(item.stdout | trim | length) >= 32"
+        quiet: true
+      loop: "{{ devvm_claude_sessions_pw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: Create /etc/claude-sessions
+      ansible.builtin.file:
+        path: /etc/claude-sessions
+        state: directory
+        owner: root
+        group: sudo
+        mode: "0750"
+
+    - name: Write the claude-sessions credential files
+      ansible.builtin.copy:
+        dest: "/etc/claude-sessions/{{ item.item }}.env"
+        owner: root
+        group: "{{ 'root' if item.item == 'ingest' else 'sudo' }}"
+        mode: "{{ '0600' if item.item == 'ingest' else '0640' }}"
+        content: |
+          # Managed by playbooks/devvm.yml from Vault secret/claude-sessions.
+          CLAUDE_SESSIONS_URL=https://claude-sessions-db.viktorbarzin.me
+          CLAUDE_SESSIONS_USER={{ item.item }}
+          CLAUDE_SESSIONS_PASSWORD={{ item.stdout | trim }}
+      loop: "{{ devvm_claude_sessions_pw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: Install the claude-sessions ingest units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - claude-sessions-ingest.service
+        - claude-sessions-ingest.timer
+      notify: reload systemd
+
+    - name: Enable the claude-sessions ingest timer
+      ansible.builtin.systemd_service:
+        name: claude-sessions-ingest.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
     # ---- 9) docker containment ----------------------------------------------
     - name: Create the capped docker slice
       ansible.builtin.template:

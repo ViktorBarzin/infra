@@ -85,6 +85,8 @@ answers "what is happening now" within Loki's 30 days and Prometheus's 26
 weeks. The on-demand path answers "how do we work" over everything on disk,
 with no retention ceiling.
 
+Update 2026-11-08: ADR-0039 amends this ADR. Every transcript now goes to a ClickHouse store (`stacks/claude-sessions`) through a oneshot root timer, which accepts reading every user's transcripts, and local transcripts are bounded at 180 days once that store is proven.
+
 Update 2026-11-07: "no retention ceiling" held only while transcripts stayed
 on disk, and they did not. Claude Code deletes transcripts older than
 `cleanupPeriodDays` (default 30) at every session start, so the on-disk
