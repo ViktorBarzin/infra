@@ -59,16 +59,20 @@ export function changedSince(cookies, baseline) {
 
 /**
  * Hub cookies T3's browser should take: ones it lacks, or holds with an earlier
- * expiry. Never replaces a newer login T3 made itself; never removes anything.
+ * expiry. Session cookies come over too when T3 lacks them: some sites keep the
+ * login in one (chess.com's PHPSESSID next to its remember-me cookie, measured
+ * 2026-11-08: without it T3 landed on the login page). Never replaces a newer
+ * login T3 made itself; never removes anything.
  * @param {Cookie[]} hub @param {Cookie[]} t3 @param {number} now
  */
 export function toInject(hub, t3, now) {
   const have = new Map(t3.map((c) => [cookieKey(c), c]));
   const out = [];
   for (const c of hub) {
-    if (!(c.expires > now)) continue;
+    const session = !(c.expires > 0);
+    if (!session && !(c.expires > now)) continue;
     const held = have.get(cookieKey(c));
-    if (held && !(c.expires > held.expires)) continue;
+    if (held && (session || !(c.expires > held.expires))) continue;
     const { _crHasCrossSiteAncestor, ...clean } = c;
     out.push(clean);
   }

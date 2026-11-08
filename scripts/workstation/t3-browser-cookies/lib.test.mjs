@@ -45,6 +45,12 @@ test("toInject adds missing cookies and replaces only with a later expiry", () =
   assert.deepEqual(toInject(hub, t3, NOW).map((c) => c.name).sort(), ["missing", "older"]);
 });
 
+test("toInject brings over hub session cookies T3 lacks, never replacing one it has", () => {
+  const hub = [ck({ name: "PHPSESSID", expires: -1, value: "hub" }), ck({ name: "held", expires: -1, value: "hub" })];
+  const t3 = [ck({ name: "held", expires: -1, value: "t3" })];
+  assert.deepEqual(toInject(hub, t3, NOW).map((c) => c.name), ["PHPSESSID"]);
+});
+
 test("toInject strips Playwright's internal partition flag", () => {
   const [c] = toInject([ck({ partitionKey: "https://p.example", _crHasCrossSiteAncestor: false })], [], NOW);
   assert.equal("_crHasCrossSiteAncestor" in c, false);
