@@ -119,6 +119,12 @@ How to read it
             type: user | assistant | system | attachment | cost-state | ...
             subtype: system subtype or attachment type (turn_duration,
             compact_boundary, hook_success, ...). agent_id != '' is a subagent.
+            Its token columns repeat on every content-block line of a
+            message: never sum them, use claude.requests.
+            Write the column file as lines.file or ` + "`file`" + ` (bare file can
+            parse as the file() table function, which the reader may not use).
+  requests  view, one row per API request: model and token counts. Sum
+            tokens here.
   blocks    one row per message content block. role user|assistant,
             kind text|thinking|tool_use|tool_result. tool_use rows carry
             tool_name and the input JSON in text; tool_result rows carry
@@ -127,9 +133,10 @@ How to read it
   files     large tool outputs (kind tool-result) and subagent metadata; use
             FROM claude.files FINAL.
   sessions  view, one row per session: cost_usd, prompts, human_prompts,
-            subagents, compactions, tokens, models, started/ended.
-            cost_usd sums the last cost-state of each Claude process, so a
-            resumed session counts every run.
+            subagents, compactions, api_requests, tokens, models,
+            started/ended. cost_usd sums the last cost-state of each Claude
+            process, so a resumed session counts every run. It is final once
+            the session has exited; a running session's cost can lag.
   model_costs  view, one row per session and model: cost_usd and tokens.
             Use it for spend per model. Do NOT arrayJoin(sessions.models):
             that credits a session's whole cost to every model it used.
@@ -144,6 +151,10 @@ Examples
   -- spend per week and model
   SELECT toStartOfWeek(started) week, model, round(sum(cost_usd),2) usd
   FROM claude.model_costs WHERE os_user='wizard' GROUP BY week, model ORDER BY week, usd DESC
+
+  -- output tokens and requests per day
+  SELECT toDate(ts) day, count() requests, sum(output_tokens) out_tokens
+  FROM claude.requests WHERE os_user='wizard' GROUP BY day ORDER BY day
 
   -- tools that fail most, last 30 days
   SELECT u.tool_name, count() calls, countIf(r.is_error) failed, round(failed/calls,3) rate
