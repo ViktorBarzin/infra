@@ -1,0 +1,10 @@
+[Unit]
+Description=Ship new Claude Code transcript lines every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

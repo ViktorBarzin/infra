@@ -4239,6 +4239,24 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ClickHouse (rybbit) backup has never reported a successful run to Pushgateway"
+          # claude-sessions (ADR-0039): native BACKUP to NFS, weekly full plus
+          # daily incrementals at 01:40 UTC. The job pushes only after
+          # ClickHouse reports BACKUP_CREATED and the .backup file exists.
+          - alert: ClaudeSessionsBackupStale
+            expr: (time() - backup_last_success_timestamp{job="claude-sessions-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude session store backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:40)"
+              description: "claude-sessions/clickhouse-backup has not pushed a successful backup. Read the last job's logs; restore steps are in docs/runbooks/restore-claude-sessions.md."
+          - alert: ClaudeSessionsBackupNeverRun
+            expr: absent(backup_last_success_timestamp{job="claude-sessions-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude session store backup has never reported a successful run to Pushgateway"
           - alert: DoltBackupStale
             expr: (time() - backup_last_success_timestamp{job="dolt-backup"}) > 129600
             for: 30m
@@ -6145,6 +6163,30 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ClickHouse in rybbit has been unreachable for 10m — Rybbit analytics ingestion and dashboards are failing"
+          - alert: ClaudeSessionsDBDown
+            # The claude-sessions ClickHouse (ADR-0039). While it is down the
+            # devvm ingest timer fails and keeps its offsets, so nothing is
+            # lost; ClaudeSessionsIngestStale fires after an hour as well.
+            expr: (max(up{job="kubernetes-pods", namespace="claude-sessions", app="clickhouse"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude session store (ClickHouse) has been unreachable for 10m"
+          - alert: ClaudeSessionsIngestStale
+            # Written by `homelab claude-sessions ingest` (claude-sessions-ingest.timer,
+            # every 15 min) to the devvm node_exporter textfile. The timestamp only
+            # moves on a run with no database error. Local transcripts are kept
+            # 180 days, so a long gap still loses nothing once it is fixed.
+            expr: |
+              (time() - max(claude_sessions_ingest_last_success_timestamp_seconds{job="devvm"})) > 3600
+              or absent(claude_sessions_ingest_last_success_timestamp_seconds{job="devvm"})
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude session ingest on the devvm has not succeeded for over an hour"
+              description: "Check `journalctl -u claude-sessions-ingest` on the devvm and the claude-sessions ClickHouse. Offsets are kept, so the next good run catches up."
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m

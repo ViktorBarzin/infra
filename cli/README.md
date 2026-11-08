@@ -518,6 +518,20 @@ The app was called f1-stream until v0.33 (the 2026-11-01 rename);
   `projects-emo` (`stacks/vault/main.tf`). The docker login goes into a
   throwaway config with the token on stdin.
 
+### v0.34 verbs — claude-sessions (every Claude session, queryable)
+
+`homelab claude-sessions schema` prints the tables, their columns and ten
+example queries; `homelab claude-sessions sql "<SELECT ...>"` runs one
+(`--format TSVWithNames|JSONEachRow|...`, `-` reads the query from stdin).
+Both are admin-only: they read `/etc/claude-sessions/reader.env`, which is
+`root:sudo 0640`. The reader account is read-only with a 120 s, 2 GB and
+100,000-row limit.
+
+`homelab claude-sessions ingest` is the write half, run as root by
+`claude-sessions-ingest.timer` every 15 minutes. It sends only the bytes
+appended to each transcript since the last run, with a dedup token per batch.
+Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` by the hourly devvm provisioner

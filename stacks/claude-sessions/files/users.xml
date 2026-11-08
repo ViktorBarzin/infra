@@ -1,0 +1,41 @@
+<clickhouse>
+    <!-- default (password from CLICKHOUSE_PASSWORD, set by the image entrypoint)
+         is the admin: schema changes and the backup CronJob. -->
+    <profiles>
+        <ingest>
+            <max_memory_usage>1500000000</max_memory_usage>
+            <deduplicate_blocks_in_dependent_materialized_views>1</deduplicate_blocks_in_dependent_materialized_views>
+        </ingest>
+        <!-- Agents write the reader's queries, so it gets limits: a stray
+             SELECT * over raw must not take the server down. -->
+        <reader>
+            <readonly>2</readonly>
+            <max_execution_time>120</max_execution_time>
+            <max_memory_usage>2000000000</max_memory_usage>
+            <max_result_rows>100000</max_result_rows>
+            <result_overflow_mode>break</result_overflow_mode>
+            <max_result_bytes>200000000</max_result_bytes>
+        </reader>
+    </profiles>
+    <users>
+        <ingest>
+            <password from_env="CLAUDE_SESSIONS_INGEST_PASSWORD"/>
+            <profile>ingest</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT INSERT ON claude.lines</query>
+                <query>GRANT INSERT ON claude.files</query>
+            </grants>
+        </ingest>
+        <reader>
+            <password from_env="CLAUDE_SESSIONS_READER_PASSWORD"/>
+            <profile>reader</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT SELECT ON claude.*</query>
+            </grants>
+        </reader>
+    </users>
+</clickhouse>

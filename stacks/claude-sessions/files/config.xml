@@ -1,0 +1,48 @@
+<clickhouse>
+    <!-- Memory cap below the pod limit (4Gi), so ClickHouse refuses a query
+         before the kernel OOM-kills the pod. -->
+    <max_server_memory_usage>3400000000</max_server_memory_usage>
+
+    <!-- System logs off: they are the bulk of ClickHouse's own disk writes and
+         nothing reads them here (same choice as stacks/rybbit). -->
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <query_log remove="1"/>
+    <part_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <error_log remove="1"/>
+    <latency_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <session_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <blob_storage_log remove="1"/>
+    <background_schedule_pool_log remove="1"/>
+
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <events>false</events>
+        <errors>false</errors>
+    </prometheus>
+
+    <!-- BACKUP ... TO Disk('backups', ...) writes to the NFS share mounted at
+         /backups (backup.sh, docs/runbooks/restore-claude-sessions.md). -->
+    <storage_configuration>
+        <disks>
+            <backups>
+                <type>local</type>
+                <path>/backups/</path>
+            </backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups</allowed_disk>
+        <allowed_path>/backups/</allowed_path>
+    </backups>
+</clickhouse>

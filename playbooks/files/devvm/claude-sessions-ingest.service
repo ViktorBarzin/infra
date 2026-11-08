@@ -1,0 +1,26 @@
+[Unit]
+Description=Ship new Claude Code transcript lines to the claude-sessions ClickHouse
+Documentation=file:///home/wizard/code/infra/docs/architecture/claude-session-store.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root, because it reads every user's ~/.claude/projects (ADR-0039 accepts
+# this); read-only everywhere except its own state and the textfile metric.
+ExecStart=/usr/local/bin/homelab claude-sessions ingest
+EnvironmentFile=/etc/claude-sessions/ingest.env
+StateDirectory=claude-sessions-ingest
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/node_exporter/textfile
+PrivateTmp=yes
+NoNewPrivileges=yes
+# The devvm disk shares a spindle with etcd, and the IO guard only throttles
+# user slices, so this unit limits itself. scheduler is "none" on dm-0, so
+# IOSchedulingClass would do nothing; the IOPS cap is the real limit.
+IOReadIOPSMax=/dev/dm-0 60
+Nice=15
+MemoryMax=512M
+TimeoutStartSec=6h
