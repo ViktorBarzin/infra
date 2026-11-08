@@ -347,6 +347,11 @@ module "ingress" {
   # Ingest bursts several 8 MB inserts in a row; the default limit is sized
   # for browsers.
   skip_default_rate_limit = true
+  # ClickHouse answers many query errors (bad SQL, illegal aggregation) with
+  # HTTP 500 and the reason in the body. The shared error-pages middleware
+  # replaced that body with a generic HTML page, so an agent writing SQL never
+  # saw what was wrong.
+  skip_error_pages = true
   extra_annotations = {
     "gethomepage.dev/description" = "ClickHouse store of every Claude Code session (LAN only)"
     "gethomepage.dev/icon"        = "clickhouse.png"
