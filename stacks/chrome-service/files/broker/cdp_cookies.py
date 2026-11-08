@@ -183,28 +183,61 @@ def as_storage_state_cookie(cookie: dict) -> dict:
     return out
 
 
+def _browser_framer(cdp_base: str, timeout: float) -> _Framer:
+    version_url = cdp_base.rstrip("/") + "/json/version"
+    with urllib.request.urlopen(version_url, timeout=timeout) as resp:
+        ws_url = json.loads(resp.read())["webSocketDebuggerUrl"]
+    return _handshake(ws_url, timeout)
+
+
+def _call(framer: _Framer, msg_id: int, method: str, params: dict | None = None) -> dict:
+    """Send one browser-level command and return its reply message."""
+    command = {"id": msg_id, "method": method}
+    if params is not None:
+        command["params"] = params
+    framer.send(_OP_TEXT, json.dumps(command).encode())
+    while True:
+        message = json.loads(framer.message())
+        if message.get("id") == msg_id:
+            return message
+
+
 def storage_state(cdp_base: str, timeout: float = 20.0) -> dict:
     """The master's cookies as a Playwright storageState dict.
 
     `origins` is always empty — see the module docstring.
     """
-    version_url = cdp_base.rstrip("/") + "/json/version"
-    with urllib.request.urlopen(version_url, timeout=timeout) as resp:
-        ws_url = json.loads(resp.read())["webSocketDebuggerUrl"]
-    framer = _handshake(ws_url, timeout)
+    framer = _browser_framer(cdp_base, timeout)
     try:
-        framer.send(_OP_TEXT, json.dumps({"id": 1, "method": "Storage.getCookies"}).encode())
-        while True:
-            message = json.loads(framer.message())
-            if message.get("id") != 1:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"Storage.getCookies failed: {message['error']}")
-            cookies = message["result"]["cookies"]
-            break
+        message = _call(framer, 1, "Storage.getCookies")
+        if "error" in message:
+            raise RuntimeError(f"Storage.getCookies failed: {message['error']}")
+        cookies = message["result"]["cookies"]
     finally:
         framer.close()
     return {"cookies": [as_storage_state_cookie(c) for c in cookies], "origins": []}
+
+
+def set_cookies(cdp_base: str, params: list[dict], timeout: float = 20.0) -> tuple[int, int]:
+    """Set CDP CookieParams in the browser, one per call; returns (set, rejected).
+
+    One cookie per Storage.setCookies call because Chrome rejects the whole call
+    when any single cookie in it is invalid (measured 2026-11-08 on 156).
+    """
+    if not params:
+        return 0, 0
+    framer = _browser_framer(cdp_base, timeout)
+    ok = rejected = 0
+    try:
+        for i, param in enumerate(params, start=1):
+            message = _call(framer, i, "Storage.setCookies", {"cookies": [param]})
+            if "error" in message:
+                rejected += 1
+            else:
+                ok += 1
+    finally:
+        framer.close()
+    return ok, rejected
 
 
 if __name__ == "__main__":

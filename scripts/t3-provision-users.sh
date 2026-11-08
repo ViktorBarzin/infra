@@ -564,7 +564,7 @@ install_user_claude_native() {
 # only while a Claude process that read the old http entry is still running,
 # see playwright_stdio_settled.
 install_playwright() {
-  local user="$1" home port token_staged=/etc/t3-serve/chrome-service-token
+  local user="$1" home port
   local tl_browser="${TL_BROWSER_BIN:-/usr/local/bin/tl-browser}"
   local since_file="$STATEDIR/playwright-stdio-$user.since" entry
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -572,17 +572,8 @@ install_playwright() {
   port="$(grep -oE 'PLAYWRIGHT_PORT=[0-9]+' "$ENVDIR/playwright-$user.env" 2>/dev/null | cut -d= -f2 || true)"
   [[ -n "$port" ]] || { log "WARN: no PLAYWRIGHT_PORT for $user -> skip playwright"; return 0; }
 
-  # (1) chrome-service snapshot token, if-absent (0600, owned by the user)
-  if [[ ! -f "$home/.config/playwright/token" && -r "$token_staged" ]]; then
-    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] seed playwright token -> $user"; else
-      if mkdir_as "$user" 0700 "$home/.config/playwright" \
-         && write_as "$user" 0600 "$home/.config/playwright/token" < "$token_staged"; then
-        log "seeded playwright snapshot token -> $user"
-      else
-        log "WARN: could not seed the playwright token for $user"
-      fi
-    fi
-  fi
+  # (1) the user's own hub config (snapshot + write-back URLs and tokens)
+  install_chrome_hub "$user" "$home"
 
   # (2) wire user-scope ~/.claude.json (AS the user, login shell so the native
   #     ~/.local/bin/claude is on PATH; clobber-proof + if-absent via `mcp get`).
@@ -657,6 +648,31 @@ install_playwright() {
     return 0
   fi
   run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+}
+
+# Copy USER's staged hub config (stage-chrome-hubs.sh) to ~/.config/chrome-hub/
+# hub.json whenever it differs, so a token rotation reaches the user on the next
+# reconcile. A user with no staged file has no hub: nothing is written, and the
+# snapshot refresh and every browser's write-back stay off for them.
+install_chrome_hub() {
+  local user="$1" home="$2" staged="$ENVDIR/chrome-hub-$1.json" dest
+  dest="$home/.config/chrome-hub/hub.json"
+  [[ -r "$staged" ]] || return 0
+  if ! cmp -s "$staged" "$dest" 2>/dev/null; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install chrome hub config -> $user"; return 0; fi
+    if mkdir_as "$user" 0700 "$home/.config/chrome-hub" \
+       && write_as "$user" 0600 "$dest" < "$staged"; then
+      log "installed chrome hub config -> $user"
+    else
+      log "WARN: could not install the chrome hub config for $user"
+      return 0
+    fi
+  fi
+  # The T3 browser sync (units from the devvm playbook). enable --now is
+  # idempotent and never restarts a running unit.
+  if [[ -f /etc/systemd/system/t3-browser-cookies@.timer ]]; then
+    run systemctl enable --now "t3-browser-cookies@$user.timer" >/dev/null 2>&1 || true
+  fi
 }
 
 # True once USER's playwright entry has been switched to tl-browser (SINCE_FILE
