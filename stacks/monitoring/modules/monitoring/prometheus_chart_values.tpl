@@ -8290,6 +8290,20 @@ serverFiles:
             annotations:
               summary: "tv Watcher is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
               description: "The Watcher's received traffic has stayed above 1.2 times its download budget (tv_watcher_download_budget_mbps, WATCHER_DOWNLOAD_BUDGET_MBPS in stacks/tv/watcher.tf) for 30 minutes. Compare with its own estimate, tv_watcher_download_mbps, and the watch counts, tv_watcher_watches by mode. An estimate well under the measured rate means the per-watch costing in tv/watcher/plan.py misses some traffic; an estimate near the budget with the measured rate far above means a watch is reading more than one Feed's worth. The budget is in tv ADR-0044, Build decisions, Download budget."
+          - alert: TvRecorderDown
+            # Added 2026-11-08 with the Recorder (tv docs/design/2026-11-08-recordings.md).
+            # The Recorder archives every Channel a Recording asks for; while it is
+            # down, every running Recording has a gap and Timeshift stops at the
+            # moment it went. One replica that rolls with overlap, so a release
+            # never takes it to zero ready pods; 5 minutes is past any roll.
+            expr: |
+              max(up{job="tv",role="recorder"}) < 1 or absent(up{job="tv",role="recorder"})
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv Recorder has been down for 5 minutes"
+              description: "No tv-recorder pod has answered a scrape for 5 minutes, so Recordings are not being written. Check `kubectl -n tv get pods -l role=recorder` and its logs; the Deployment is stacks/tv/recorder.tf. Recordings that ran through the outage show their gap in the Recordings list."
           - alert: TvRelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
