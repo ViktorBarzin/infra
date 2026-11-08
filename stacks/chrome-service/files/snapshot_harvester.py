@@ -17,14 +17,14 @@ between 13:23 and 23:23 failed on that assert. cdp_cookies.storage_state()
 asks the browser endpoint for its cookies and never touches a target.
 """
 
-import json
 import logging
 import os
 import pathlib
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import cdp_cookies  # noqa: E402  (mounted beside this script in the same ConfigMap)
+import hub_store  # noqa: E402  (mounted beside this script in the same ConfigMap)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("snapshot-harvester")
@@ -33,24 +33,22 @@ CDP_URL = os.environ.get(
     "CDP_URL", "http://chrome-service.chrome-service.svc.cluster.local:9222"
 )
 SNAPSHOT_DIR = pathlib.Path(os.environ.get("SNAPSHOT_DIR", "/profile/snapshots"))
-SNAPSHOT_FILE = SNAPSHOT_DIR / "storage-state.json"
-TMP_FILE = SNAPSHOT_DIR / "storage-state.json.tmp"
 
 
 def main() -> int:
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    store = hub_store.HubStore(CDP_URL, SNAPSHOT_DIR)
     try:
-        state = cdp_cookies.storage_state(CDP_URL)
+        # Same path the hub's push uses: records sign-outs as tombstones and
+        # keeps the last good snapshot if the browser returns an empty jar.
+        cookies = store.refresh(time.time())
     except Exception:
         log.exception("could not read cookies from %s", CDP_URL)
         return 3
-    if not state["cookies"]:
-        log.error("master returned no cookies — refusing to overwrite the snapshot")
+    if not cookies:
+        log.error("master returned no cookies — kept the previous snapshot")
         return 4
-    TMP_FILE.write_text(json.dumps(state))
-    os.replace(TMP_FILE, SNAPSHOT_FILE)
     log.info("wrote snapshot (%d bytes, %d cookies) to %s",
-             SNAPSHOT_FILE.stat().st_size, len(state["cookies"]), SNAPSHOT_FILE)
+             store.snapshot_path.stat().st_size, len(cookies), store.snapshot_path)
     return 0
 
 
