@@ -26,7 +26,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { baselineOf, changedSince, pushable, rendererCount, toInject } from "./lib.mjs";
+import { baselineOf, browserPgrepArgs, changedSince, pushable, rendererCount, toInject } from "./lib.mjs";
 
 const HOME = os.homedir();
 const HUB_FILE = process.env.CHROME_HUB_CONFIG || path.join(HOME, ".config/chrome-hub/hub.json");
@@ -56,7 +56,8 @@ function fileSig(p) {
 
 /** PIDs of T3's browser main process(es) for this profile. */
 function browserPids() {
-  const out = spawnSync("pgrep", ["-u", String(process.getuid?.() ?? ""), "-f", `--user-data-dir=${PROFILE}`], { encoding: "utf8" });
+  const out = spawnSync("pgrep", browserPgrepArgs(process.getuid?.() ?? -1, PROFILE), { encoding: "utf8" });
+  if (out.status === 2) throw new Error(`pgrep failed: ${(out.stderr || "").trim().slice(0, 200)}`);
   return (out.stdout || "").split("\n").map(Number).filter((pid) => pid && pid !== process.pid)
     .filter((pid) => !cmdline(pid).includes("--type="));
 }

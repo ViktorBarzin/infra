@@ -57,12 +57,17 @@ export function changedSince(cookies, baseline) {
   return cookies.filter((c) => baseline[cookieKey(c)] !== `${c.value}|${c.expires}`);
 }
 
+/** Life given to a hub session cookie written into T3's cookie store (seconds). */
+export const SESSION_COOKIE_TTL = 86400;
+
 /**
  * Hub cookies T3's browser should take: ones it lacks, or holds with an earlier
  * expiry. Session cookies come over too when T3 lacks them: some sites keep the
  * login in one (chess.com's PHPSESSID next to its remember-me cookie, measured
- * 2026-11-08: without it T3 landed on the login page). Never replaces a newer
- * login T3 made itself; never removes anything.
+ * 2026-11-08: without it T3 landed on the login page). Chrome deletes session
+ * cookies from its store when it starts, so they are written with a 1-day
+ * expiry instead, renewed by every sync. Never replaces a newer login T3 made
+ * itself; never removes anything.
  * @param {Cookie[]} hub @param {Cookie[]} t3 @param {number} now
  */
 export function toInject(hub, t3, now) {
@@ -74,9 +79,19 @@ export function toInject(hub, t3, now) {
     const held = have.get(cookieKey(c));
     if (held && (session || !(c.expires > held.expires))) continue;
     const { _crHasCrossSiteAncestor, ...clean } = c;
-    out.push(clean);
+    out.push(session ? { ...clean, expires: now + SESSION_COOKIE_TTL } : clean);
   }
   return out;
+}
+
+/**
+ * pgrep arguments that find T3's browser for `profile`. The pattern starts with
+ * "--", so it must follow a "--" or pgrep takes it for an option and finds
+ * nothing (which made the first version write under a running browser).
+ * @param {number} uid @param {string} profile
+ */
+export function browserPgrepArgs(uid, profile) {
+  return ["-u", String(uid), "-f", "--", `--user-data-dir=${profile}`];
 }
 
 /** @param {string[]} commandLines descendants of T3's browser process */

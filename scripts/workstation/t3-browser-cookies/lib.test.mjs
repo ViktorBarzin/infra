@@ -1,7 +1,9 @@
 // Run: node --test scripts/workstation/t3-browser-cookies/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cookieKey, pushable, changedSince, toInject, rendererCount, baselineOf } from "./lib.mjs";
+import {
+  cookieKey, pushable, changedSince, toInject, rendererCount, baselineOf, browserPgrepArgs, SESSION_COOKIE_TTL,
+} from "./lib.mjs";
 
 const NOW = 1_800_000_000;
 const ck = (over = {}) => ({
@@ -47,8 +49,18 @@ test("toInject adds missing cookies and replaces only with a later expiry", () =
 
 test("toInject brings over hub session cookies T3 lacks, never replacing one it has", () => {
   const hub = [ck({ name: "PHPSESSID", expires: -1, value: "hub" }), ck({ name: "held", expires: -1, value: "hub" })];
-  const t3 = [ck({ name: "held", expires: -1, value: "t3" })];
-  assert.deepEqual(toInject(hub, t3, NOW).map((c) => c.name), ["PHPSESSID"]);
+  const t3 = [ck({ name: "held", expires: NOW + 100, value: "t3" })];
+  const out = toInject(hub, t3, NOW);
+  assert.deepEqual(out.map((c) => c.name), ["PHPSESSID"]);
+  // Chrome drops session cookies when it starts, so they go in with a 1-day life
+  // that every sync renews.
+  assert.equal(out[0].expires, NOW + SESSION_COOKIE_TTL);
+});
+
+test("browserPgrepArgs keeps the --user-data-dir pattern from being read as an option", () => {
+  const args = browserPgrepArgs(1000, "/home/u/.t3/userdata/server-browser/profiles/default");
+  assert.deepEqual(args.slice(-2), ["--", "--user-data-dir=/home/u/.t3/userdata/server-browser/profiles/default"]);
+  assert.deepEqual(args.slice(0, 3), ["-u", "1000", "-f"]);
 });
 
 test("toInject strips Playwright's internal partition flag", () => {
