@@ -76,6 +76,17 @@ def test_list_workers_covers_every_hub_namespace(monkeypatch):
     assert len(calls) == 2
 
 
+def test_an_unreadable_second_namespace_does_not_hide_the_first(monkeypatch):
+    def fake_kube(method, path, body=None):
+        if "/chrome-emo/" in path:
+            raise PermissionError("403")
+        return {"items": [{"metadata": {"name": "w1", "labels": {}}, "status": {}}]}
+
+    monkeypatch.setattr(broker, "kube", fake_kube)
+    monkeypatch.setattr(broker, "HUBS", HUBS)
+    assert [w["name"] for w in broker.list_workers()] == ["w1"]
+
+
 def test_workers_for_filters_to_one_hub():
     ws = [{"name": "a", "namespace": "chrome-service"}, {"name": "b", "namespace": "chrome-emo"}]
     assert [w["name"] for w in broker.workers_for(HUBS[1], ws)] == ["b"]

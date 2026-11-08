@@ -639,9 +639,25 @@ resource "kubernetes_deployment" "chrome_service" {
               }
             }
           }
+          # Write token for POST /api/cookies (cookie write-back from Viktor's
+          # other browsers). Separate from the read token above so a leaked
+          # read token can never plant cookies.
+          env {
+            name = "PW_WRITE_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-secrets"
+                key  = "api_write_token"
+              }
+            }
+          }
           env {
             name  = "SNAPSHOT_PATH"
             value = "${local.snapshot_dir}/storage-state.json"
+          }
+          env {
+            name  = "CDP_URL"
+            value = "http://127.0.0.1:9222"
           }
           env {
             name  = "PORT"
@@ -671,9 +687,11 @@ resource "kubernetes_deployment" "chrome_service" {
           }
 
           volume_mount {
+            # Writable, but only the snapshots/ subdirectory: a push rewrites the
+            # snapshot and the tombstones there, and never needs Chrome's profile.
             name       = "profile"
-            mount_path = "/profile"
-            read_only  = true
+            mount_path = local.snapshot_dir
+            sub_path   = "snapshots"
           }
           volume_mount {
             name       = "scripts"
@@ -682,8 +700,8 @@ resource "kubernetes_deployment" "chrome_service" {
           }
 
           resources {
-            requests = { cpu = "5m", memory = "32Mi" }
-            limits   = { memory = "96Mi" }
+            requests = { cpu = "5m", memory = "48Mi" }
+            limits   = { memory = "160Mi" }
           }
         }
 
@@ -758,6 +776,11 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
     # and the hourly snapshot cannot drift apart. Unit-tested in
     # files/broker/test_broker.py.
     "cdp_cookies.py" = file("${path.module}/files/broker/cdp_cookies.py")
+    # Write-back merge rules and the snapshot/tombstone store, shared by the
+    # snapshot-server's POST /api/cookies and the harvester. Unit-tested in
+    # files/broker/test_cookie_merge.py and test_hub_store.py.
+    "cookie_merge.py" = file("${path.module}/files/broker/cookie_merge.py")
+    "hub_store.py"    = file("${path.module}/files/broker/hub_store.py")
     # Pool worker Chrome launcher (mounted into broker-created worker pods, which
     # also reuse cdp_bridge.py above). See files/broker/worker_pod.json.
     "worker_entrypoint.sh" = file("${path.module}/files/worker_entrypoint.sh")
@@ -904,8 +927,9 @@ module "ingress" {
   name            = "chrome"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
-  # ADR-0023: live shared-browser sessions — Chrome Users only (admins via bypass).
-  allowed_groups = ["Chrome Users"]
+  # Viktor's live signed-in browser: a users-only host in
+  # stacks/authentik/forward-auth-apps.json (Viktor and his agents' svc-agent),
+  # so allowed_groups stays at the default. emo has his own hub (stacks/chrome-emo).
   # neko serves its UI at / and the signaling WebSocket at /ws on the same host.
   ingress_path = ["/"]
   extra_annotations = {
@@ -937,6 +961,31 @@ module "ingress_snapshot" {
   port            = 8088
   ingress_path    = ["/api/snapshot"]
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
+# Viktor's hub API on a LAN-only host: GET /api/snapshot (read token) and
+# POST /api/cookies (write token), where his devvm browsers push logins they
+# picked up. The write route exists only here, never on the public host above.
+# Same pattern as prometheus-otlp: internal DNS plus the LAN allowlist, with the
+# bearer checks in snapshot_server.py as the gate.
+module "ingress_hub" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": devvm timers and browsers hold no SSO cookie; the LAN
+  # allowlist plus the read/write bearer checks in snapshot_server.py gate it.
+  auth                    = "none"
+  dns_type                = "internal"
+  allow_local_access_only = true
+  external_monitor        = false
+  namespace               = kubernetes_namespace.chrome_service.metadata[0].name
+  name                    = "chrome-hub"
+  host                    = "chrome-hub"
+  service_name            = kubernetes_service.chrome_snapshot.metadata[0].name
+  port                    = 8088
+  ingress_path            = ["/api/snapshot", "/api/cookies"]
+  tls_secret_name         = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }

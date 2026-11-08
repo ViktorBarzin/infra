@@ -1,0 +1,12 @@
+{
+  "wizard": {
+    "vault_path": "chrome-service",
+    "host": "chrome-hub.viktorbarzin.me",
+    "namespace": "chrome-service"
+  },
+  "emo": {
+    "vault_path": "chrome-emo",
+    "host": "chrome-hub-emo.viktorbarzin.me",
+    "namespace": "chrome-emo"
+  }
+}

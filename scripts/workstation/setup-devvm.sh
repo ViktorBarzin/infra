@@ -242,16 +242,11 @@ if command -v vault >/dev/null; then
   else
     log "WARN: secret/workstation codex_shared_auth_json absent -> shared Codex auth not staged"
   fi
-  # 8c) chrome-service snapshot bearer token -> root file the provisioner copies
-  #     per-user (if-absent) to ~/.config/playwright/token, which the per-user
-  #     playwright-snapshot-refresh reads. One token for all users (single shared
-  #     warm profile, by design). 0600: the snapshot it fetches holds cookies.
-  if cs_tok="$(vault kv get -field=api_bearer_token secret/chrome-service 2>/dev/null)"; then
-    install -m 0600 /dev/stdin /etc/t3-serve/chrome-service-token <<<"$cs_tok"
-    log "staged /etc/t3-serve/chrome-service-token (playwright snapshot auth)"
-  else
-    log "WARN: secret/chrome-service api_bearer_token absent -> playwright snapshot refresh will 401"
-  fi
+  # 8c) Each person's hub config (one hub per person, 2026-11-08) -> root files
+  #     /etc/t3-serve/chrome-hub-<user>.json, which the provisioner copies to
+  #     ~/.config/chrome-hub/hub.json whenever they differ. Replaces the single
+  #     shared chrome-service-token every user used to receive.
+  bash "$HERE/stage-chrome-hubs.sh" || log "WARN: chrome hub staging failed -> browser logins will not sync"
 fi
 
 # 9) service layer: install + enable the machine-wide systemd units (sources in

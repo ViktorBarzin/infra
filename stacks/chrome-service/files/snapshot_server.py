@@ -133,5 +133,25 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[chrome-hub] %s - %s\n" % (self.address_string(), fmt % args))
 
 
+def refresh_loop(store, every: float) -> None:
+    """Rewrite the snapshot every `every` seconds.
+
+    For a hub without the harvester CronJob (emo's headless hub): the CronJob
+    needs the RWO volume on the same node, the sidecar already has it.
+    """
+    while True:
+        try:
+            n = len(store.refresh(time.time()))
+            sys.stderr.write("[chrome-hub] refreshed snapshot: %d cookies\n" % n)
+        except Exception as e:
+            sys.stderr.write("[chrome-hub] snapshot refresh failed: %s: %s\n" % (type(e).__name__, e))
+        time.sleep(every)
+
+
 if __name__ == "__main__":
+    import threading
+
+    every = float(os.environ.get("REFRESH_SECONDS", "0"))
+    if every > 0:
+        threading.Thread(target=refresh_loop, args=(STORE, every), daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

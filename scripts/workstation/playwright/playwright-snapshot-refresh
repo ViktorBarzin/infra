@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
-# Refresh the local cookie+localStorage snapshot served by chrome-service.
+# Refresh this user's local copy of their hub's logins.
 #
-# Run per-user by the hourly playwright-snapshot-refresh@<user>.timer systemd
-# unit (as that user, so $HOME resolves to the user's home). Per-session Claude
-# Code MCP contexts (`@playwright/mcp --isolated --storage-state=…`) read this
-# file on each connection — fresh state is visible to NEW sessions, existing
-# ones keep what they were seeded with.
+# One hub per person (docs/architecture/chrome-service.md "One hub per person"):
+# a cluster Chrome holding that person's logins. ~/.config/chrome-hub/hub.json
+# (installed by t3-provision-users from /etc/t3-serve/chrome-hub-<user>.json)
+# names it: snapshot_url and read_token. The snapshot lands in
+# ~/.cache/playwright-shared-storage-state.json, which every terminal-lobby
+# session browser (tl-browser) and the T3 browser sync seed from.
 #
-# Token: cached at ~/.config/playwright/token. Seeded per-user (if-absent) by
-#   t3-provision-users.sh from the root-staged /etc/t3-serve/chrome-service-token
-#   (which setup-devvm.sh writes from Vault `secret/chrome-service`
-#   api_bearer_token). Rotate by re-staging + re-copying; the snapshot endpoint
-#   reloads the token via Reloader, local caches must be refreshed.
+# Run hourly by playwright-snapshot-refresh@<user>.timer as that user. The
+# lobby's cookie write-back also rewrites the same file after each push, so
+# both take flock on the .lock file beside it and never interleave.
+#
+# A user without hub.json has no hub: nothing to do, exit 0.
 set -euo pipefail
 
-URL="${PLAYWRIGHT_SNAPSHOT_URL:-https://chrome.viktorbarzin.me/api/snapshot}"
-TOKEN_FILE="${PLAYWRIGHT_SNAPSHOT_TOKEN:-$HOME/.config/playwright/token}"
+HUB="${CHROME_HUB_CONFIG:-$HOME/.config/chrome-hub/hub.json}"
 DEST="${PLAYWRIGHT_SNAPSHOT_PATH:-$HOME/.cache/playwright-shared-storage-state.json}"
+LOCK="$DEST.lock"
 
-if [ ! -r "$TOKEN_FILE" ]; then
-  echo "ERROR: token file $TOKEN_FILE missing or unreadable" >&2
+if [ ! -r "$HUB" ]; then
+  echo "no hub config at $HUB: this user has no hub, nothing to refresh"
+  exit 0
+fi
+URL="$(jq -r '.snapshot_url // empty' "$HUB")"
+TOKEN="$(jq -r '.read_token // empty' "$HUB")"
+if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
+  echo "ERROR: $HUB lacks snapshot_url or read_token" >&2
   exit 1
 fi
 
 mkdir -p "$(dirname "$DEST")"
 TMP="$DEST.new.$$"
 trap 'rm -f "$TMP"' EXIT
-
-TOKEN="$(cat "$TOKEN_FILE")"
 
 HTTP_CODE=$(curl -sS \
   -H "Authorization: Bearer $TOKEN" \
@@ -38,7 +43,7 @@ HTTP_CODE=$(curl -sS \
 
 if [ "$HTTP_CODE" != "200" ]; then
   echo "ERROR: HTTP $HTTP_CODE from $URL" >&2
-  cat "$TMP" >&2
+  head -c 300 "$TMP" >&2 || true
   exit 1
 fi
 
@@ -51,7 +56,10 @@ if "cookies" not in data or "origins" not in data:
     raise SystemExit("missing required keys")
 PY
 
-mv -f "$TMP" "$DEST"
+chmod 600 "$TMP"
+(
+  flock -w 30 9
+  mv -f "$TMP" "$DEST"
+) 9>"$LOCK"
 trap - EXIT
-chmod 600 "$DEST"
 echo "snapshot refreshed: $DEST ($(stat -c %s "$DEST") bytes)"

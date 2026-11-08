@@ -222,19 +222,20 @@ browser download — that caller runs on a plain `python:3.12-slim` with
 
 ## Auth + secrets
 
-- Vault KV `secret/chrome-service.api_bearer_token` — 32-byte URL-safe
-  random, rotated by hand:
-  `vault kv put secret/chrome-service api_bearer_token=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')`.
+- Vault KV `secret/chrome-service`: `api_bearer_token` (hub read token: snapshot
+  and broker) and `api_write_token` (hub write-back, `POST /api/cookies`), both
+  32-byte URL-safe random, rotated by hand (runbook "Token rotation"). emo's hub
+  has its own pair at `secret/chrome-emo`.
 - ESO syncs into namespace-local Secret `chrome-service-secrets`. The
-  `snapshot-server` sidecar reads it via `secret_key_ref`.
+  `snapshot-server` sidecar and the broker read it via `secret_key_ref`.
 - tv still imports the secret (via `chrome-service-client-secrets`)
   for parity, but the CDP endpoint no longer requires it for connection —
   NetworkPolicy is the gate.
 - Reloader (`reloader.stakater.com/auto = "true"`) cascades token rotation
   to the snapshot-server sidecar.
-- **Dev-box cache**: each dev box keeps a local copy at
-  `~/.config/playwright/token` (chmod 600). Re-fetch from Vault after
-  rotation: `vault kv get -field=api_bearer_token secret/chrome-service > ~/.config/playwright/token`.
+- **Dev-box copy**: each person with a hub has `~/.config/chrome-hub/hub.json`
+  (0600), staged from Vault and installed by the provisioner. See "One hub per
+  person".
 
 ## Network controls
 
@@ -307,7 +308,8 @@ Nothing long-lived needs rotating by hand.
 > moved to its own `10.0.20.205` with `ETP=Local` the same day, because on the
 > shared IP kube-proxy's SNAT hid every client from it.
 
-**Two gates.** Authentik forward-auth on the ingress (`Chrome Users`, ADR-0023)
+**Two gates.** Authentik forward-auth on the ingress (a users-only host since
+2026-11-08: Viktor and `svc-agent`; was `Chrome Users`, ADR-0023)
 plus neko's own admin password from Vault
 (`secret/chrome-service.neko_admin_password`). A bookmark with `?pwd=<value>`
 keeps it one click. The user-role password is a fresh random value generated per
@@ -395,51 +397,111 @@ Key facts:
   byte-identical copy of `files/stealth.js`, guarded by a drift test — so the
   CLI's stealth never diverges from the in-cluster callers'.
 
-## Multi-user access (sharing the browser)
+## One hub per person (since 2026-11-08)
 
-There is ONE chrome-service browser with ONE persistent profile, warmed with
-**Viktor's** logged-in sessions. CDP has no per-context auth, so anyone who can
-drive the browser — over the neko view OR the CDP/`homelab browser` path — can
-reach the persistent profile (`browser.contexts[0]`) and therefore Viktor's
-sessions. Access is gated accordingly, per user.
+Each person signs in to a site once, and every browser their agents use is signed
+in too. The browser that holds a person's logins is their **hub**:
 
-**Decision (2026-06-28):** emo (`emil.barzin` / `emil.barzin@gmail.com`) SHARES
-Viktor's browser for form-filling + captcha solving, rather than getting an
-isolated instance. The session-exposure trade-off above was explicitly accepted.
+| person | hub | namespace | LAN-only API host | live view |
+|---|---|---|---|---|
+| Viktor (`wizard`) | this master (neko) | `chrome-service` | `chrome-hub.viktorbarzin.me` | chrome.viktorbarzin.me |
+| emo | headless Chrome on its own encrypted PVC (`stacks/chrome-emo`) | `chrome-emo` | `chrome-hub-emo.viktorbarzin.me` | none |
 
-Two independent grants make up "browser access" for a user:
+```mermaid
+flowchart LR
+  HV["Viktor's hub (chrome-service)"] -- "hourly pull + after each push" --> SNAP["~/.cache/playwright-shared-storage-state.json"]
+  SNAP -- seed --> TL["lobby session browsers (tl-browser)"]
+  SNAP -- "inject while idle" --> T3["T3 browser profile"]
+  TL -- "POST /api/cookies" --> HV
+  T3 -- "POST /api/cookies" --> HV
+  BR["chrome-broker"] -- "seed by caller's token" --> HV
+  BR -. "emo's jobs, in chrome-emo" .-> HE["emo's hub (chrome-emo)"]
+  TV[tv] -- "CDP + seed, no bearer" --> HV
+```
 
-1. **neko (interactive view, `chrome.viktorbarzin.me`)** — gated by a per-host
-   Authentik application bound to the **`Chrome Users` group** (ADR-0031;
-   the `chrome`/`chrome-fleet` ingresses set `allowed_groups = ["Chrome Users"]`,
-   matched in `stacks/authentik/forward-auth-apps.json`).
-   Add the user to `Chrome Users` — kept deliberately tighter than admin, though
-   `Home Server Admins` is bound on every per-host application too. No kubeconfig/RBAC
-   needed. (Was a hardcoded `CHROME_ALLOWED` username/email set until 2026-07-26.)
-2. **CLI (`homelab browser`, CDP over port-forward)** — needs `pods/portforward`
-   in `chrome-service` PLUS a non-interactive credential (a normal devvm user's
-   kubeconfig is interactive-OIDC-only and can't authenticate a headless agent
-   session). Provided by a per-user **ServiceAccount** with a long-lived token
-   (`stacks/chrome-service/rbac.tf`, e.g. `emo-browser`): `pods/portforward` in
-   this namespace + cluster read-only (`oidc-power-user-readonly`, so it can also
-   resolve the Service and doesn't regress the user's normal read). The devvm
-   provisioner (`scripts/t3-provision-users.sh` → `install_browser_kubeconfig`)
-   reads that token and installs it as the user's DEFAULT kubeconfig context
-   (`<user>-browser@homelab`), keeping their personal OIDC login as the
-   `oidc@homelab` named context. The SA's existence is the source of truth for who
-   gets the CLI — the provisioner no-ops for users without a `<user>-browser` SA.
+**Hub API** (`files/snapshot_server.py`, a sidecar beside the hub's Chrome):
 
-**To grant another user:** add them to the `Chrome Users` group (the view) and/or add a
-`<user>-browser` SA + bindings mirroring `emo-browser` in `rbac.tf` (CLI), then run
-the provisioner. To revoke: remove from `Chrome Users` and delete the SA (rotate
-a token by deleting its `<user>-browser-token` Secret).
+- `GET /api/snapshot`, read token: the storageState devvm browsers seed from.
+- `POST /api/cookies`, write token, LAN-only host only: cookies a person's other
+  browsers picked up. `hub_store.HubStore.push` applies `cookie_merge`'s rules,
+  sets the accepted cookies in Chrome over local CDP (one per `Storage.setCookies`
+  call, because one bad cookie fails a whole batch), and rewrites the snapshot
+  before answering.
 
-Because the SA is the user's DEFAULT kubectl credential, other per-namespace
-port-forward grants hang off the same identity: `stacks/excalidraw/rbac.tf`
-grants `emo-browser` `pods/portforward` in `excalidraw` (2026-07-02) so emo's
-agent can upload drawings via the port-forward + `X-Authentik-Username` recipe
-in his AGENTS.md (Forgejo `ebarzin/agents`, installed as `~/.agents/AGENTS.md`,
-which his `~/.claude/CLAUDE.md` links to). Revoking the SA revokes those too.
+**Merge rules** (`files/broker/cookie_merge.py`, tests beside it). They exist so
+the sync can never sign anyone out:
+
+- A pushed cookie replaces the hub's copy only if it expires later. Re-logins and
+  rotations move expiry forward; a stale copy cannot overwrite a newer login, and
+  two browsers cannot flap.
+- A cookie that left the hub before expiring (a sign-out there) becomes a
+  tombstone (`snapshots/tombstones.json`); only a cookie expiring after the
+  tombstone may recreate it. The harvester and every push record tombstones the
+  same way (`hub_store.refresh`).
+- Protected domains (Google, YouTube, Fidelity, chess.com, TripIt; env
+  `PROTECTED_DOMAINS`) take missing cookies but never replace one, so a test login
+  or a prompt-injected page cannot swap the hub's session.
+- Session cookies, expired cookies and our own hosts (`viktorbarzin.me`, `.lan`,
+  IPs, localhost) are never taken. Nothing is ever deleted.
+- New domains need an httpOnly or secure cookie; a hub stops taking new keys at
+  3,000 cookies (`HUB_LIMIT`).
+
+**Clients on the devvm**, all driven by `~/.config/chrome-hub/hub.json` (0600),
+which `t3-provision-users` installs from `/etc/t3-serve/chrome-hub-<user>.json`,
+staged from Vault by `scripts/workstation/stage-chrome-hubs.sh` using
+`scripts/workstation/chrome-hubs.json` (user → Vault path, host, namespace). A
+person without a staged file has no hub, and every client does nothing for them.
+
+- `playwright-snapshot-refresh@<user>.timer`, hourly: GET the snapshot, write it
+  under `flock` on `…storage-state.json.lock`.
+- terminal-lobby `tl-browser`: seeds each session browser from the snapshot, and
+  pushes what the session picked up before the browser freezes and every 5
+  minutes while active, then refreshes the snapshot under the same lock
+  (terminal-lobby ADR on cookie write-back).
+- `t3-browser-cookies@<user>.timer`, every 10 minutes (devvm playbook): if the
+  snapshot or T3's cookie store changed and T3's browser has no tab open (no
+  renderer process), stop that idle browser, open a copy of its cookie store with
+  Playwright and T3's own `chrome-headless-shell`, push what changed since the last
+  run, add hub cookies it lacks or holds with an earlier expiry, and rename the
+  copy into place unless T3 started its browser meanwhile.
+- `homelab browser`: reaches the broker at `chrome-fleet-api.viktorbarzin.me`
+  (LAN-only) with the hub read token; the token picks whose seed the worker gets
+  and the namespace it runs in.
+
+**Broker** (`files/broker/broker.py`, `Hub`, `resolve_hub`): a bearer names its
+hub. Without one, a request routed through FleetView (Authentik, Viktor only) or
+arriving in-cluster without passing Traefik (tv, by Viktor's decision; the
+`chrome-broker-ingress` NetworkPolicy admits only traefik, tv and monitoring) acts
+on Viktor's hub; anything else gets 401. Each person sees, releases and
+heartbeats only their own workers. Only Viktor's hub keeps a warm pod, so a
+worker one person used is never handed to another.
+
+**Access, per person.**
+
+- Viktor: chrome.viktorbarzin.me and chrome-fleet are users-only Authentik hosts
+  (`stacks/authentik/forward-auth-apps.json`: `vbarzin@gmail.com` and his agents'
+  `svc-agent`), so Home Server Admins membership no longer reaches them.
+- emo: the `emo-browser` ServiceAccount (still in `chrome-service`, where the
+  provisioner finds it) has cluster read-only and `pods/portforward` only in
+  `chrome-emo`. His hub's CDP admits only the broker and his own namespace.
+
+**Known limits.**
+
+- tv keeps CDP and unauthenticated seed access to Viktor's hub, and emo deploys
+  tv. Viktor accepted this on 2026-11-08.
+- emo is in the devvm `docker` group, which can read any file on the box,
+  Viktor's hub config included. See the open item in the 2026-11-08 plan.
+- The profile backups on NFS hold cookies under Chrome's fixed Linux key and the
+  export is mountable from the LAN. emo's hub has no NFS backup; its hourly
+  snapshot is the restore source.
+- localStorage logins are not synced; the harvester has never captured
+  localStorage (`cdp_cookies.py`).
+
+**Add a person:** a Vault path with `api_bearer_token` and `api_write_token`, a
+hub stack modelled on `stacks/chrome-emo`, an entry in the broker's `HUBS`
+(`broker.tf`) plus their read token via ExternalSecret, an entry in
+`scripts/workstation/chrome-hubs.json`, then `stage-chrome-hubs.sh` and the
+provisioner.
 
 ## Browser pool (broker + FleetView) — since 2026-07-14
 

@@ -1684,6 +1684,53 @@
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
         - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
 
+    # One hub per person (2026-11-08, docs/architecture/chrome-service.md "One hub
+    # per person"): each person signs in once and every browser their agents use
+    # is signed in too. On the devvm that is the hourly snapshot refresh (now per
+    # person, from ~/.config/chrome-hub/hub.json, under a lock shared with the
+    # lobby browser's write-back) and the T3 browser sync, which loads hub logins
+    # into T3's browser while it has no tab open and pushes back what it picked
+    # up. t3-provision-users enables one t3-browser-cookies@ timer per person with
+    # a hub. setup-devvm.sh section 9e installs the same refresh script.
+    - name: Install the hub snapshot refresh
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/workstation/playwright/playwright-snapshot-refresh"
+        dest: /usr/local/bin/playwright-snapshot-refresh
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Make the T3 browser sync directory
+      ansible.builtin.file:
+        path: /usr/local/lib/t3-browser-cookies
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the T3 browser sync
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/workstation/t3-browser-cookies/{{ item }}"
+        dest: "/usr/local/lib/t3-browser-cookies/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - t3-browser-cookies.mjs
+        - lib.mjs
+
+    - name: Install the T3 browser sync units
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/workstation/t3-browser-cookies/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - t3-browser-cookies@.service
+        - t3-browser-cookies@.timer
+      notify: reload systemd
+
     # T3's headless browser (html_preview, the preview_* tools) runs Chrome's
     # sandbox in an unprivileged user namespace, which Ubuntu 24.04 blocks
     # unless an AppArmor profile allows it. This is the profile
