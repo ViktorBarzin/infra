@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -185,13 +186,14 @@ func cdpHealthy(jsonBody []byte) (browser string, healthy bool, err error) {
 	return v.Browser, healthy, nil
 }
 
-// buildPortForwardArgs is the kubectl invocation that exposes a chrome-service
-// target locally. target is "svc/chrome-service" (master CDP), "svc/chrome-fleet"
-// (broker API), or "pod/<worker>" (a specific pool worker's CDP). port-forward
+// buildPortForwardArgs is the kubectl invocation that exposes a browser target
+// locally. target is "svc/chrome-service" (master CDP), "svc/chrome-hub" (a
+// user's hub CDP), "svc/chrome-fleet" (broker API, pre-hub path only), or
+// "pod/<worker>" (a specific pool worker's CDP) in namespace ns. port-forward
 // tunnels API-server→pod, so it bypasses the NetworkPolicy that gates in-cluster
 // callers and works for a named pod under the existing pods/portforward grant.
-func buildPortForwardArgs(target string, localPort, remotePort int) []string {
-	return []string{"-n", chromeServiceNamespace, "port-forward",
+func buildPortForwardArgs(ns, target string, localPort, remotePort int) []string {
+	return []string{"-n", ns, "port-forward",
 		target, fmt.Sprintf("%d:%d", localPort, remotePort)}
 }
 
@@ -338,9 +340,10 @@ func patchPatchrightContextlessAssert(dir string) error {
 	return nil
 }
 
-// waitForCDP polls the local CDP endpoint until it answers as a healthy
-// (non-headless) Chrome, or the timeout elapses.
-func waitForCDP(cdpURL string, timeout time.Duration) (string, error) {
+// waitForCDP polls the local CDP endpoint until it answers as a Chrome, or the
+// timeout elapses. requireHeadful rejects a headless Chrome (the chrome-service
+// master and pool workers are headed; a non-master hub may be headless).
+func waitForCDP(cdpURL string, timeout time.Duration, requireHeadful bool) (string, error) {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 3 * time.Second}
 	var lastErr error
@@ -359,7 +362,7 @@ func waitForCDP(cdpURL string, timeout time.Duration) (string, error) {
 			time.Sleep(300 * time.Millisecond)
 			continue
 		}
-		if !healthy {
+		if !healthy && requireHeadful {
 			return browser, fmt.Errorf("CDP reports %q — expected a non-headless Chrome (wrong target?)", browser)
 		}
 		return browser, nil
@@ -370,21 +373,21 @@ func waitForCDP(cdpURL string, timeout time.Duration) (string, error) {
 	return "", lastErr
 }
 
-// startForward starts a kubectl port-forward to target's remotePort on a fresh
-// local port, in its own process group so the whole tree dies on teardown. It
-// does NOT wait for readiness — the caller polls the specific endpoint.
-func startForward(target string, remotePort int) (localPort int, teardown func(), logbuf *strings.Builder, err error) {
+// startForward starts a kubectl port-forward to target's remotePort in ns on a
+// fresh local port, in its own process group so the whole tree dies on
+// teardown. It does NOT wait for readiness — the caller polls the endpoint.
+func startForward(ns, target string, remotePort int) (localPort int, teardown func(), logbuf *strings.Builder, err error) {
 	localPort, err = freePort()
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("pick local port: %w", err)
 	}
-	pf := exec.Command("kubectl", buildPortForwardArgs(target, localPort, remotePort)...)
+	pf := exec.Command("kubectl", buildPortForwardArgs(ns, target, localPort, remotePort)...)
 	pf.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logbuf = &strings.Builder{}
 	pf.Stdout = logbuf
 	pf.Stderr = logbuf
 	if err = pf.Start(); err != nil {
-		return 0, nil, logbuf, fmt.Errorf("start kubectl port-forward %s (kubeconfig set?): %w", target, err)
+		return 0, nil, logbuf, fmt.Errorf("start kubectl port-forward -n %s %s (kubeconfig set?): %w", ns, target, err)
 	}
 	var once sync.Once
 	teardown = func() {
@@ -399,10 +402,14 @@ func startForward(target string, remotePort int) (localPort int, teardown func()
 }
 
 // runBrowser is the orchestration: ensure the pinned client, acquire a session
-// (pool worker by default; the MASTER for --shared-context or if the broker is
-// down), then run the node runner against its CDP. All port-forwards + the pool
-// session are ALWAYS torn down.
+// (pool worker by default; the caller's own hub for --shared-context or if the
+// pool is unavailable), then run the node runner against its CDP. All
+// port-forwards + the pool session are ALWAYS torn down.
 func runBrowser(o browserOpts) error {
+	hub, err := loadHubConfig(hubConfigPath())
+	if err != nil {
+		return err
+	}
 	dir, err := browserClientDir()
 	if err != nil {
 		return err
@@ -437,61 +444,82 @@ func runBrowser(o browserOpts) error {
 	var cdpURL string
 	usePool := !o.sharedCtx
 	if usePool {
-		url, err := setupPoolSession(&o, addTeardown)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "homelab browser: pool unavailable (%v); falling back to the master browser\n", err)
+		url, err := setupPoolSession(&o, hub, addTeardown)
+		switch {
+		case errors.Is(err, errBrokerUnauthorized):
+			// A broken token is a provisioning fault the user has to fix;
+			// falling back would hide it behind a working run.
+			return err
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "homelab browser: pool unavailable (%v); falling back to your hub browser\n", err)
 			usePool = false
-		} else {
+		default:
 			cdpURL = url
 		}
 	}
 	if !usePool {
-		port, td, logbuf, err := startForward("svc/"+chromeServiceName, chromeServiceCDPPort)
+		t := hubTarget(hub)
+		port, td, logbuf, err := startForward(t.namespace, "svc/"+t.service, chromeServiceCDPPort)
 		if err != nil {
 			return err
 		}
 		addTeardown(td)
 		cdpURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-		browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second)
+		browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second, t.requireHeadful)
 		if err != nil {
-			return fmt.Errorf("chrome-service CDP not ready on %s: %w\n--- port-forward log ---\n%s", cdpURL, err, logbuf.String())
+			return fmt.Errorf("%s/%s CDP not ready on %s: %w\n--- port-forward log ---\n%s", t.namespace, t.service, cdpURL, err, logbuf.String())
 		}
-		fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (master)\n", browser, cdpURL)
+		fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (hub %s/%s)\n", browser, cdpURL, t.namespace, t.service)
 	}
 
 	return runBrowserNode(dir, cdpURL, o)
 }
 
-// setupPoolSession port-forwards the broker, acquires a worker, seeds it from the
-// master (unless --no-seed), port-forwards that worker's CDP, and returns its
-// local CDP URL. It registers teardowns (forwards + release) via addTeardown and
-// mutates o.seedPath with the fetched seed file. Any error means "fall back to
-// the master" — the caller handles that.
-func setupPoolSession(o *browserOpts, addTeardown func(func())) (string, error) {
-	bport, btd, blog, err := startForward("svc/"+brokerServiceName, brokerAPIPort)
+// openBroker returns a client for the pool broker. With a hub it is the
+// broker's HTTPS route plus the hub's bearer token; without one it is a
+// port-forward to svc/chrome-fleet in chrome-service, as before hubs existed.
+func openBroker(hub *hubConfig, addTeardown func(func())) (brokerClient, error) {
+	if hub != nil {
+		return brokerClient{base: hub.BrokerURL, token: hub.ReadToken, remote: true}, nil
+	}
+	bport, btd, blog, err := startForward(chromeServiceNamespace, "svc/"+brokerServiceName, brokerAPIPort)
 	if err != nil {
-		return "", err
+		return brokerClient{}, err
 	}
 	addTeardown(btd)
-	brokerBase := fmt.Sprintf("http://127.0.0.1:%d", bport)
-	if err := waitHTTP(brokerBase+"/healthz", 20*time.Second); err != nil {
-		return "", fmt.Errorf("broker not reachable: %w\n--- port-forward log ---\n%s", err, blog.String())
+	base := fmt.Sprintf("http://127.0.0.1:%d", bport)
+	if err := waitHTTP(base+"/healthz", 20*time.Second); err != nil {
+		return brokerClient{}, fmt.Errorf("broker not reachable: %w\n--- port-forward log ---\n%s", err, blog.String())
 	}
-	pod, session, err := acquireSession(brokerBase, sessionOwner(), sessionPurpose(*o))
+	return brokerClient{base: base}, nil
+}
+
+// setupPoolSession reaches the broker, acquires a worker, seeds it from the
+// caller's hub (unless --no-seed), port-forwards that worker's CDP, and returns
+// its local CDP URL. It registers teardowns (forwards + release) via
+// addTeardown and mutates o.seedPath with the fetched seed file. The caller
+// decides whether an error falls back to the hub browser.
+func setupPoolSession(o *browserOpts, hub *hubConfig, addTeardown func(func())) (string, error) {
+	broker, err := openBroker(hub, addTeardown)
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(os.Stderr, "homelab browser: acquired pool session %s (pod %s)\n", session, pod)
+	acq, err := broker.acquire(sessionOwner(), sessionPurpose(*o))
+	if err != nil {
+		return "", err
+	}
+	ns := workerNamespace(acq.Namespace, hub)
+	fmt.Fprintf(os.Stderr, "homelab browser: acquired pool session %s (pod %s/%s)\n", acq.Session, ns, acq.Pod)
 	// release the session when the run ends (or on signal) — best-effort.
-	addTeardown(func() { releaseSession(brokerBase, session) })
+	addTeardown(func() { broker.release(acq.Session) })
 	// Hold the claim with a heartbeat for as long as this process lives, so a
 	// run that never reaches the teardown above does not strand the worker.
 	// Registered after the release so LIFO stops the beat first.
-	addTeardown(startSessionHeartbeat(brokerBase, session))
+	addTeardown(broker.startHeartbeat(acq.Session))
 
 	if !o.noSeed {
 		seedFile := filepath.Join(os.TempDir(), fmt.Sprintf("homelab-browser-seed-%d.json", os.Getpid()))
-		if err := fetchSeed(brokerBase, seedFile); err != nil {
+		if err := broker.fetchSeed(seedFile); err != nil {
 			fmt.Fprintf(os.Stderr, "homelab browser: seed fetch failed (%v); continuing with a clean context\n", err)
 		} else {
 			o.seedPath = seedFile
@@ -499,21 +527,19 @@ func setupPoolSession(o *browserOpts, addTeardown func(func())) (string, error) 
 		}
 	}
 
-	wport, wtd, wlog, err := startForward("pod/"+pod, chromeServiceCDPPort)
+	wport, wtd, wlog, err := startForward(ns, "pod/"+acq.Pod, chromeServiceCDPPort)
 	if err != nil {
 		return "", err
 	}
 	addTeardown(wtd)
 	cdpURL := fmt.Sprintf("http://127.0.0.1:%d", wport)
-	browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second)
+	browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second, true)
 	if err != nil {
 		return "", fmt.Errorf("worker CDP not ready on %s: %w\n--- port-forward log ---\n%s", cdpURL, err, wlog.String())
 	}
-	fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (pool worker %s)\n", browser, cdpURL, pod)
+	fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (pool worker %s/%s)\n", browser, cdpURL, ns, acq.Pod)
 	return cdpURL, nil
 }
-
-// --- broker client -------------------------------------------------------
 
 // sessionOwner labels the pool session with the invoking OS user (mirrors the
 // presence model). Falls back to $USER / "unknown".
@@ -564,156 +590,27 @@ func waitHTTP(url string, timeout time.Duration) error {
 	return lastErr
 }
 
-// parseAcquire reads the broker's /acquire response into (pod, cdpPort, session).
-// An {"error":...} body (e.g. pool at capacity) is surfaced as an error.
-func parseAcquire(body []byte) (pod string, port int, session string, err error) {
-	var v struct {
-		Pod     string `json:"pod"`
-		CDPPort int    `json:"cdpPort"`
-		Session string `json:"session"`
-		Error   string `json:"error"`
-	}
-	if e := json.Unmarshal(body, &v); e != nil {
-		return "", 0, "", fmt.Errorf("parse /acquire response: %w", e)
-	}
-	if v.Error != "" {
-		return "", 0, "", fmt.Errorf("broker: %s", v.Error)
-	}
-	if v.Pod == "" || v.Session == "" {
-		return "", 0, "", fmt.Errorf("broker /acquire returned no pod/session: %s", string(body))
-	}
-	return v.Pod, v.CDPPort, v.Session, nil
-}
-
-// acquireSession asks the broker for a worker; returns its pod name + session id.
-func acquireSession(brokerBase, owner, purpose string) (pod, session string, err error) {
-	reqBody, _ := json.Marshal(map[string]string{"owner": owner, "purpose": purpose})
-	client := &http.Client{Timeout: 90 * time.Second} // create+ready can take a few s
-	resp, err := client.Post(brokerBase+"/acquire", "application/json", strings.NewReader(string(reqBody)))
+// listSessions prints the live pool session table.
+func listSessions() error {
+	hub, err := loadHubConfig(hubConfigPath())
 	if err != nil {
-		return "", "", fmt.Errorf("POST /acquire: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	pod, _, session, err = parseAcquire(b)
-	return pod, session, err
-}
-
-// sessionHeartbeatInterval is how often a running session tells the broker it
-// is still alive. The broker reclaims a heartbeating session after
-// HEARTBEAT_TIMEOUT_SECONDS (120s) of silence, so this leaves room for four
-// missed beats before a live run is at risk.
-const sessionHeartbeatInterval = 30 * time.Second
-
-// startSessionHeartbeat keeps the pool claim alive for as long as this process
-// is, and returns a function that stops it.
-//
-// A run killed before its teardown (SIGKILL, OOM, a dropped connection) leaves
-// chrome-pool/session set on the warm pod. pick_free_worker skips any pod
-// carrying one, so the pool falls back to cold burst pods until the reaper
-// deletes the pod 60 minutes later. With a heartbeat the broker reclaims it in
-// about two minutes instead, and reclaims it in place, so the pod stays warm.
-//
-// The first beat is sent immediately rather than after the first tick: a run
-// killed in its first 30 seconds would otherwise have no heartbeat on record
-// and fall back to the 60-minute path, which is the case being fixed.
-func startSessionHeartbeat(brokerBase, session string) func() {
-	done := make(chan struct{})
-	beat := func() {
-		reqBody, _ := json.Marshal(map[string]string{"session": session})
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Post(brokerBase+"/heartbeat", "application/json", strings.NewReader(string(reqBody)))
-		if err == nil {
-			resp.Body.Close()
-		}
-	}
-	beat()
-	go func() {
-		t := time.NewTicker(sessionHeartbeatInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-t.C:
-				beat()
-			}
+	var teardowns []func()
+	defer func() {
+		for i := len(teardowns) - 1; i >= 0; i-- {
+			teardowns[i]()
 		}
 	}()
-	var once sync.Once
-	return func() { once.Do(func() { close(done) }) }
-}
-
-// releaseSession tells the broker to reap/return the worker. Best-effort.
-func releaseSession(brokerBase, session string) {
-	reqBody, _ := json.Marshal(map[string]string{"session": session})
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Post(brokerBase+"/release", "application/json", strings.NewReader(string(reqBody)))
-	if err == nil {
-		resp.Body.Close()
-	}
-}
-
-// fetchSeed downloads the broker's on-demand storage_state export to dest.
-func fetchSeed(brokerBase, dest string) error {
-	client := &http.Client{Timeout: 40 * time.Second}
-	resp, err := client.Get(brokerBase + "/seed")
+	broker, err := openBroker(hub, func(f func()) { teardowns = append(teardowns, f) })
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("seed status %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
+	list, err := broker.sessions()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dest, b, 0o600)
-}
-
-// listSessions port-forwards the broker and prints the live pool session table.
-func listSessions() error {
-	bport, btd, blog, err := startForward("svc/"+brokerServiceName, brokerAPIPort)
-	if err != nil {
-		return err
-	}
-	defer btd()
-	brokerBase := fmt.Sprintf("http://127.0.0.1:%d", bport)
-	if err := waitHTTP(brokerBase+"/healthz", 20*time.Second); err != nil {
-		return fmt.Errorf("broker not reachable: %w\n--- port-forward log ---\n%s", err, blog.String())
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(brokerBase + "/sessions")
-	if err != nil {
-		return fmt.Errorf("GET /sessions: %w", err)
-	}
-	defer resp.Body.Close()
-	var out struct {
-		Sessions []struct {
-			Owner, Purpose, Session, URL, Name string
-			Ready                              bool
-		} `json:"sessions"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fmt.Errorf("decode /sessions: %w", err)
-	}
-	active := 0
-	fmt.Printf("%-14s  %-6s  %-24s  %s\n", "OWNER", "READY", "POD", "PURPOSE / URL")
-	for _, s := range out.Sessions {
-		if s.Session == "" {
-			continue // idle/warm worker, not a claimed session
-		}
-		active++
-		detail := s.Purpose
-		if s.URL != "" {
-			detail = s.URL
-		}
-		fmt.Printf("%-14s  %-6t  %-24s  %s\n", s.Owner, s.Ready, s.Name, detail)
-	}
-	if active == 0 {
-		fmt.Println("(no active pool sessions)")
-	}
+	printSessions(os.Stdout, list)
 	return nil
 }
 

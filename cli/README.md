@@ -220,6 +220,24 @@ agent supplies the Playwright script — judgment stays out of the CLI.
 Default context is a **fresh incognito** one (closed on exit) — safe for the
 shared browser and concurrent callers (e.g. tripit's fare scrape); `--shared-context`
 reuses the warmed persistent profile when a pre-logged-in session is needed.
+
+**Per-user hubs.** When `~/.config/chrome-hub/hub.json` exists (path overridable
+with `$HOMELAB_CHROME_HUB_CONFIG`), the pool path calls the broker at its
+`broker_url` over HTTPS with `Authorization: Bearer <read_token>` for `/acquire`,
+`/heartbeat`, `/seed`, `/release` and `/sessions` (`browser ls`), with no
+port-forward to the broker. The token decides which hub seeds the worker and
+which namespace the worker pod runs in; the CLI port-forwards `pod/<worker>` in
+the namespace the `/acquire` response names (hub.json's `namespace` if the
+response has none). `--shared-context`, and the fallback when the pool is
+unavailable, go to the caller's own hub: `svc/chrome-service` in
+`chrome-service` when hub.json's namespace is `chrome-service`, otherwise
+`svc/chrome-hub` in hub.json's namespace (whose Chrome may be headless, so the
+headful assertion applies only to the master and pool workers). A 401 stops
+the run with "token wrong or rotated, re-run provisioning" instead of falling
+back; an unreachable host or a 403 says the broker is LAN-only. Without
+hub.json the CLI port-forwards `svc/chrome-fleet` in `chrome-service` with no
+bearer, as before. Contract: `hub.json` fields and broker endpoints per the
+cookie hub interface (2026-11-08).
 `port-forward` tunnels API-server→pod, so it bypasses the `:9222` NetworkPolicy
 that gates in-cluster callers — no namespace label needed. The node CDP client is
 pinned to **`playwright-core@1.48.2`** to match the chrome-service image minor
