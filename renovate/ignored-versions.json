@@ -177,6 +177,17 @@
       ],
       "matchNewValue": "v6.1.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-08 pipeline #3438: stack sablier failed after this bump: its terragrunt apply failed (commit 307ea294)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "sablierapp/sablier"
+      ],
+      "matchNewValue": "1.19.1",
+      "enabled": false
     }
   ]
 }
