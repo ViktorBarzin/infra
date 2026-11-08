@@ -1684,6 +1684,21 @@
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
         - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
 
+    # T3's headless browser (html_preview, the preview_* tools) runs Chrome's
+    # sandbox in an unprivileged user namespace, which Ubuntu 24.04 blocks
+    # unless an AppArmor profile allows it. This is the profile
+    # `t3 browser setup` would write. The path glob matches every user's
+    # ~/.t3/tools copy, so one profile covers the whole box. The libraries and
+    # fonts that setup also checks for were already present on 2026-11-08.
+    - name: Allow T3's headless browser to use Chrome's sandbox
+      ansible.builtin.copy:
+        src: files/devvm/t3-chrome-headless-shell.apparmor
+        dest: /etc/apparmor.d/t3-chrome-headless-shell
+        mode: "0644"
+        owner: root
+        group: root
+      notify: load t3 browser apparmor profile
+
     # t3-dispatch, the web front door for each user's T3 host (t3 for wizard,
     # t3-<user> for the rest, from roster.yaml t3_host): it serves a host only
     # to the Authentik user who owns it, proxies to their t3-serve@ instance
@@ -3321,6 +3336,10 @@
     # and not a reboot, so nothing running is disturbed.
     - name: reexec systemd
       ansible.builtin.command: systemctl daemon-reexec
+      changed_when: true
+
+    - name: load t3 browser apparmor profile
+      ansible.builtin.command: apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell
       changed_when: true
 
     - name: restart ssh

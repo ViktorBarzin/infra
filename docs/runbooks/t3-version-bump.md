@@ -118,6 +118,13 @@ sudo systemctl start t3-autoupdate.service   # runs in its own cgroup, isolated 
    **one-way door**. A binary downgrade alone does NOT roll it back; you must
    restore the DB. The tracker does this automatically on a canary failure; do it
    by hand (below) if a problem surfaces *after* a successful bump.
+3. **Browser sandbox profile**: T3's headless browser (`html_preview`, the
+   `preview_*` tools) needs `/etc/apparmor.d/t3-chrome-headless-shell`, which the
+   devvm playbook installs from `playbooks/files/devvm/t3-chrome-headless-shell.apparmor`.
+   If a build changes the profile it writes (`APPARMOR_PROFILE` in its bundle) or
+   the path it installs Chrome under, update that file and re-run the playbook.
+   `t3 browser setup --base-dir ~/.t3`, run without sudo, says whether the host is
+   ready and changes nothing.
 
 ## Manual rollback (problem surfaces after a bump the gate let through)
 
