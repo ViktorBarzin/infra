@@ -1,0 +1,10 @@
+# Written by `t3 browser setup`: lets T3 Code's headless browser use Chrome's sandbox.
+# Declared in infra playbooks/devvm.yml, which installs it as
+# /etc/apparmor.d/t3-chrome-headless-shell. Keep it identical to the profile the
+# installed t3 build writes (APPARMOR_PROFILE in its bundle).
+abi <abi/4.0>,
+include <tunables/global>
+profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-headless-shell flags=(unconfined) {
+  userns,
+  include if exists <local/t3-chrome-headless-shell>
+}
