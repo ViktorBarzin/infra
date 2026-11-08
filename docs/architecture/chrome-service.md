@@ -469,7 +469,11 @@ person without a staged file has no hub, and every client does nothing for them.
   renderer process), stop that idle browser, open a copy of its cookie store with
   Playwright and T3's own `chrome-headless-shell`, push what changed since the last
   run, add hub cookies it lacks or holds with an earlier expiry, and rename the
-  copy into place unless T3 started its browser meanwhile.
+  copy into place unless T3 started its browser meanwhile. Only T3's `default`
+  profile carries these logins: an agent's `preview_open` without
+  `profileId: "default"` gets an isolated throwaway context (T3 0.1.7,
+  `isolatedContext` when an automation owner names no profile), which looks
+  signed out everywhere.
 - `homelab browser`: reaches the broker at `chrome-fleet-api.viktorbarzin.me`
   (LAN-only) with the hub read token; the token picks whose seed the worker gets
   and the namespace it runs in.
