@@ -329,7 +329,10 @@ resource "kubernetes_service" "clickhouse" {
 # allow_local_access_only adds the IP allowlist. ClickHouse's own users and
 # passwords are the authentication; there is no browser to hold an SSO cookie.
 module "ingress" {
-  source                  = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": the clients are the devvm ingest timer and the homelab CLI,
+  # not browsers, so there is no SSO cookie. ClickHouse users and passwords
+  # authenticate, and allow_local_access_only limits it to the LAN/VPN.
   auth                    = "none"
   namespace               = kubernetes_namespace.claude_sessions.metadata[0].name
   name                    = "claude-sessions-db"
