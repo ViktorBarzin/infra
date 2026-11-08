@@ -9,9 +9,11 @@ external Claude Code sessions on the dev box. Architecture in
 | Component | Where | When | What |
 |---|---|---|---|
 | chrome-service Deployment | `chrome-service` ns | always-on | headed chromium, CDP :9222, persistent /profile/chromium-data |
-| snapshot-server sidecar | same pod | always-on | serves `/api/snapshot`, bearer-gated, port 8088 |
-| snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | reads the master's cookies over raw CDP → `/profile/snapshots/storage-state.json` |
-| dev-box refresh timer | each dev box, per OS user | hourly (`*:28`) | `playwright-snapshot-refresh@<user>.timer` curls `chrome.viktorbarzin.me/api/snapshot` → `~/.cache/playwright-shared-storage-state.json` |
+| snapshot-server sidecar | same pod | always-on | the hub API, port 8088: `GET /api/snapshot` (read token) and `POST /api/cookies` (write token, LAN-only host `chrome-hub.viktorbarzin.me`) |
+| snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | reads the master's cookies over raw CDP → `/profile/snapshots/storage-state.json`, records sign-outs as tombstones |
+| emo's hub | `chrome-emo` ns | always-on | headless Chrome + the same sidecar, which refreshes its own snapshot hourly (`REFRESH_SECONDS`); API at `chrome-hub-emo.viktorbarzin.me` |
+| dev-box refresh timer | each dev box, per OS user with a hub | hourly (`*:28`) | `playwright-snapshot-refresh@<user>.timer` GETs the `snapshot_url` in `~/.config/chrome-hub/hub.json` → `~/.cache/playwright-shared-storage-state.json`, under `flock` on `.lock` beside it |
+| dev-box T3 browser sync | each dev box, per OS user with a hub | every 10 min | `t3-browser-cookies@<user>.timer`: pushes T3's new logins to the hub and loads hub logins into T3's browser while it has no tab open |
 | dev-box `playwright-mcp@<user>.service` | each dev box, per OS user | always-on | pinned `@playwright/mcp@<ver> --isolated --storage-state=…` on the user's `PLAYWRIGHT_PORT`; per-MCP-connection (per-session) contexts |
 | dev-box `tl-browser` (terminal-lobby) | each dev box, per Claude session | while the agent browses | since 2026-10-01: stdio launcher started by Claude itself; one headless Chrome per session in the user's `tl-browser.slice`, context seeded from the same `~/.cache/playwright-shared-storage-state.json`. Replaces `playwright-mcp@<user>` once `t3-provision-users.sh` switches the user (see `docs/architecture/multi-tenancy.md`) |
 
@@ -30,11 +32,15 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
   `PLAYWRIGHT_PORT` from `/etc/t3-serve/playwright-<user>.env`.
 - **Port allocation**: `roster_engine.py` (`PLAYWRIGHT_BASE_PORT=8931`, sticky)
   — emitted in the derive JSON, written per-user by `t3-provision-users.sh` (§5c).
-- **Snapshot token**: `setup-devvm.sh` (§8c) stages Vault
-  `secret/chrome-service` `api_bearer_token` → root file
-  `/etc/t3-serve/chrome-service-token`; the provisioner copies it (if-absent,
-  0600) to each user's `~/.config/playwright/token` (the hourly root reconcile
-  has no Vault token, hence the staging — mirrors the Claude OAuth token in §8a).
+- **Hub config** (one hub per person, since 2026-11-08): `setup-devvm.sh` (§8c)
+  runs `scripts/workstation/stage-chrome-hubs.sh`, which reads each person's
+  Vault path from `scripts/workstation/chrome-hubs.json` and writes
+  `/etc/t3-serve/chrome-hub-<user>.json` (root, 0600). The provisioner's
+  `install_chrome_hub` copies it to `~/.config/chrome-hub/hub.json` whenever they
+  differ and enables `t3-browser-cookies@<user>.timer` (the hourly root
+  reconcile has no Vault token, hence the staging — mirrors the Claude OAuth
+  token in §8a). The old single `/etc/t3-serve/chrome-service-token`, which every
+  user received, is gone.
 - **MCP wiring + enablement**: `t3-provision-users.sh` `install_playwright()` runs
   `claude mcp add --scope user … playwright` AS the user (clobber-proof, if-absent)
   and `systemctl enable --now` the system instances. Idempotent; never restarts a
@@ -52,6 +58,11 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
 ## Day-to-day
 
 ### Log into a new site (warm the profile)
+
+Since 2026-11-08 any of a person's browsers works: a login made in a lobby session
+browser or in T3's browser is pushed to their hub (within 5 minutes, or 10 for
+T3) and reaches every other browser from there. The hub's live view is the
+direct route, and the only one for Viktor's in-cluster callers:
 
 1. Open `https://chrome.viktorbarzin.me/` (Authentik will gate).
 2. The neko view of the in-cluster headed Chrome loads. Click on the
@@ -150,17 +161,15 @@ episode took a day to name.
 
 ### Dev-box `playwright-snapshot-refresh` returns 401
 
-The bearer token in `~/.config/playwright/token` doesn't match the
-server's. Almost always means the Vault secret was rotated and the
-local cache is stale.
+The `read_token` in `~/.config/chrome-hub/hub.json` doesn't match the hub's.
+Almost always means the Vault secret was rotated and the staged copy is stale.
 
-**Fix** (re-stage centrally so a rebuild stays correct, then re-copy to the user):
+**Fix** (re-stage centrally; the provisioner copies changed files on its next
+run, or run it now):
 ```bash
 vault login -method=oidc  # if needed
-sudo install -m 0600 <(vault kv get -field=api_bearer_token secret/chrome-service) \
-  /etc/t3-serve/chrome-service-token
-sudo install -o <user> -g <user> -m 0600 \
-  /etc/t3-serve/chrome-service-token /home/<user>/.config/playwright/token
+sudo VAULT_TOKEN="$(cat ~/.vault-token)" bash ~/code/infra/scripts/workstation/stage-chrome-hubs.sh
+sudo systemctl start t3-provision-users.service
 sudo systemctl start playwright-snapshot-refresh@<user>.service
 ```
 
@@ -244,26 +253,30 @@ sudo ss -ltnp | grep 893                 # what is live
 
 ## Token rotation
 
+Each hub has a read token (`api_bearer_token`: snapshot and broker) and a write
+token (`api_write_token`: `POST /api/cookies`) in its own Vault path
+(`secret/chrome-service` for Viktor, `secret/chrome-emo` for emo).
+
 ```bash
-# Rotate Vault secret (32-byte URL-safe random).
-vault kv put secret/chrome-service \
+# Rotate one token (patch keeps the other keys).
+vault kv patch secret/chrome-service \
   api_bearer_token=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# Reloader auto-restarts chrome-service pod (snapshot-server picks up new token).
+# ESO refreshes hourly; force it so the sidecar and broker move now. Reloader
+# then restarts the hub pod and the broker.
+kubectl -n chrome-service annotate externalsecret chrome-service-secrets force-sync=$(date +%s) --overwrite
 
-# On EVERY dev box: re-stage the root file, then overwrite each user's copy
-# (the provisioner's per-user copy is if-absent, so a ROTATION must overwrite).
-sudo install -m 0600 <(vault kv get -field=api_bearer_token secret/chrome-service) \
-  /etc/t3-serve/chrome-service-token
-for u in $(ls /etc/t3-serve/playwright-*.env 2>/dev/null | sed 's#.*/playwright-##;s#\.env##'); do
-  sudo install -o "$u" -g "$u" -m 0600 \
-    /etc/t3-serve/chrome-service-token /home/"$u"/.config/playwright/token
-done
+# On the dev box: re-stage, then let the provisioner copy the changed files.
+sudo VAULT_TOKEN="$(cat ~/.vault-token)" bash ~/code/infra/scripts/workstation/stage-chrome-hubs.sh
+sudo systemctl start t3-provision-users.service
 
 # Verify the next refresh succeeds for a user:
 sudo systemctl start playwright-snapshot-refresh@<user>.service
 sudo journalctl -u playwright-snapshot-refresh@<user>.service -n 20
 ```
+
+tv extracts the whole `secret/chrome-service` path and picks a rotated read token
+up on its own ESO refresh.
 
 ## Restore from a backup tarball
 

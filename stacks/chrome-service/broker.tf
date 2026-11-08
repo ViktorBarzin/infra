@@ -94,6 +94,39 @@ resource "kubernetes_deployment" "broker" {
             name  = "PYTHONUNBUFFERED"
             value = "1"
           }
+          # One hub per person (broker.py Hub / resolve_hub). A request's bearer
+          # (that person's hub read token) picks the hub its seed comes from and
+          # the namespace its worker runs in. The first entry is Viktor's: FleetView
+          # and in-cluster callers without a bearer (tv) act on it. Tokens come
+          # from their own variables below, so this JSON holds no secret.
+          env {
+            name = "HUBS"
+            value = jsonencode([
+              { user = "wizard", namespace = local.namespace, warm = true,
+              cdp = "http://chrome-service.${local.namespace}.svc:9222", token_env = "HUB_TOKEN_WIZARD" },
+              { user = "emo", namespace = "chrome-emo",
+              cdp = "http://chrome-hub.chrome-emo.svc:9222", token_env = "HUB_TOKEN_EMO" },
+            ])
+          }
+          env {
+            name = "HUB_TOKEN_WIZARD"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-secrets"
+                key  = "api_bearer_token"
+              }
+            }
+          }
+          env {
+            name = "HUB_TOKEN_EMO"
+            value_from {
+              secret_key_ref {
+                name     = "chrome-emo-hub-token"
+                key      = "api_bearer_token"
+                optional = true
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 8080
@@ -174,11 +207,12 @@ module "ingress_fleet" {
   service_name    = kubernetes_service.broker.metadata[0].name
   port            = 8080
   tls_secret_name = var.tls_secret_name
-  # FleetView is an admin control surface (lists + kills agent sessions) — gate
-  # every request with Authentik. The broker has no auth of its own.
+  # FleetView is a control surface for Viktor's pool sessions (lists + kills
+  # them) — gate every request with Authentik. A users-only host in
+  # stacks/authentik/forward-auth-apps.json (Viktor and svc-agent), so
+  # allowed_groups stays at the default. Requests routed through this host need
+  # no bearer and act on Viktor's hub (broker.py resolve_hub).
   auth = "required"
-  # ADR-0023: admin control surface — Chrome Users only (admins via bypass).
-  allowed_groups = ["Chrome Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "FleetView"
@@ -186,6 +220,99 @@ module "ingress_fleet" {
     "gethomepage.dev/icon"        = "chromium.png"
     "gethomepage.dev/group"       = "Infrastructure"
   }
+}
+
+# The broker API for `homelab browser` on the devvm: LAN-only, every request
+# carries the caller's hub read token (~/.config/chrome-hub/hub.json), which
+# decides whose seed and namespace it gets. Replaces port-forwarding the broker
+# Service, which needed pods/portforward across chrome-service.
+module "ingress_fleet_api" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": the CLI holds no SSO cookie; the LAN allowlist plus the hub
+  # bearer that broker.py resolve_hub requires on this host gate it.
+  auth                    = "none"
+  dns_type                = "internal"
+  allow_local_access_only = true
+  external_monitor        = false
+  namespace               = kubernetes_namespace.chrome_service.metadata[0].name
+  name                    = "chrome-fleet-api"
+  host                    = "chrome-fleet-api"
+  service_name            = kubernetes_service.broker.metadata[0].name
+  port                    = 8080
+  tls_secret_name         = var.tls_secret_name
+  # An acquire waits for a cold worker pod (up to ~45s).
+  skip_default_rate_limit = true
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
+# Who may reach the broker at all. Through Traefik (FleetView behind Authentik,
+# the LAN-only API behind bearers), and in-cluster from tv, which by Viktor's
+# decision keeps using his hub without a bearer, plus Prometheus.
+resource "kubernetes_network_policy_v1" "broker_ingress" {
+  metadata {
+    name      = "chrome-broker-ingress"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+  spec {
+    pod_selector {
+      match_labels = { app = "chrome-broker" }
+    }
+    policy_types = ["Ingress"]
+    ingress {
+      ports {
+        port     = 8080
+        protocol = "TCP"
+      }
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "traefik" }
+        }
+      }
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "tv" }
+        }
+      }
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "monitoring" }
+        }
+      }
+    }
+  }
+}
+
+# emo's hub token, synced into this namespace for the broker (HUB_TOKEN_EMO).
+# Only that one property: the rest of secret/chrome-emo stays in chrome-emo.
+resource "kubernetes_manifest" "emo_hub_token" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "chrome-emo-hub-token"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "chrome-emo-hub-token"
+      }
+      data = [{
+        secretKey = "api_bearer_token"
+        remoteRef = {
+          key      = "chrome-emo"
+          property = "api_bearer_token"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.chrome_service]
 }
 
 # Custom namespace quota (replaces the Kyverno tier-4-aux tier-quota — the ns is

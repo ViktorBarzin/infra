@@ -1,24 +1,19 @@
-# emo's hands-off "homelab browser" credential + chrome-service port-forward RBAC.
+# emo's hands-off "homelab browser" credential.
 #
-# Access decision (2026-06-28, Viktor's explicit call): emo SHARES Viktor's single
-# chrome-service browser rather than getting an isolated instance. The noVNC half of
-# that grant is the Authentik allowlist in
-# stacks/authentik/admin-services-restriction.tf (CHROME_ALLOWED); THIS file is the
-# CLI half — it lets emo's `homelab browser` reach the headed Chrome over CDP.
+# History: on 2026-06-28 Viktor chose to let emo SHARE his chrome-service browser.
+# On 2026-11-08 he reversed that: each person now has their own hub browser with
+# their own logins (emo's: stacks/chrome-emo), and emo must not reach Viktor's.
 #
-# `homelab browser` shells out to `kubectl port-forward -n chrome-service svc/chrome-service`
-# (cli/browser.go). emo's normal kubeconfig is interactive-OIDC-only (kubelogin) and
-# can't authenticate a headless agent session, and his power-user tier has no
-# pods/portforward. So we mint a dedicated ServiceAccount with a long-lived token
-# (the dashboard-sa.tf pattern) that the devvm provisioner installs as emo's DEFAULT
-# kubeconfig context (scripts/t3-provision-users.sh install_browser_kubeconfig); his
-# personal OIDC login stays available as the `oidc@homelab` named context.
-#
-# TRADE-OFF (accepted): CDP access == full control of the shared browser, including
-# the persistent profile (browser.contexts[0]) where Viktor's warmed logins live.
-# CDP has no per-context auth, so this SA can reach Viktor's sessions. That is inherent
-# to sharing one browser (the isolated per-user instance was declined).
-# See docs/architecture/chrome-service.md "Multi-user access".
+# This ServiceAccount stays here as emo's non-interactive kubectl identity: the
+# devvm provisioner (scripts/t3-provision-users.sh install_browser_kubeconfig)
+# looks it up in this namespace and installs its token as emo's DEFAULT kubeconfig
+# context, keeping his personal OIDC login as `oidc@homelab`. What it may do:
+# cluster read-only (below), and pods/portforward ONLY in chrome-emo
+# (stacks/chrome-emo), where his hub and his pool workers run. It has NO
+# port-forward in chrome-service any more, so it cannot reach Viktor's master,
+# its CDP, or Viktor's pool workers. The broker is reached over the LAN-only
+# chrome-fleet-api host with emo's hub token instead of a port-forward.
+# See docs/architecture/chrome-service.md "One hub per person".
 
 resource "kubernetes_service_account" "emo_browser" {
   metadata {
@@ -39,38 +34,6 @@ resource "kubernetes_secret" "emo_browser_token" {
   }
   type                           = "kubernetes.io/service-account-token"
   wait_for_service_account_token = true
-}
-
-# The ONLY verb emo's SA lacks for `kubectl port-forward svc/chrome-service`: the
-# port-forward subresource. (get/list of pods + services + endpoints comes from the
-# cluster-read binding below.) Namespace-scoped to chrome-service.
-resource "kubernetes_role" "browser_portforward" {
-  metadata {
-    name      = "chrome-service-portforward"
-    namespace = kubernetes_namespace.chrome_service.metadata[0].name
-  }
-  rule {
-    api_groups = [""]
-    resources  = ["pods/portforward"]
-    verbs      = ["create"]
-  }
-}
-
-resource "kubernetes_role_binding" "emo_browser_portforward" {
-  metadata {
-    name      = "emo-browser-portforward"
-    namespace = kubernetes_namespace.chrome_service.metadata[0].name
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.browser_portforward.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.emo_browser.metadata[0].name
-    namespace = kubernetes_namespace.chrome_service.metadata[0].name
-  }
 }
 
 # Cluster-wide read-only (NO secrets), mirroring emo's power-user OIDC access, bound
@@ -98,10 +61,10 @@ resource "kubernetes_cluster_role_binding" "emo_browser_readonly" {
 # The chrome-broker (broker.tf) manages the worker POOL: it creates one bare Pod
 # per session, claims/releases the warm-pool pod by patching its session label,
 # and deletes bare pods on release/idle-reap. Namespace-scoped pods CRUD only —
-# NO deployments, NO cluster scope. (Note: the wizard/emo `homelab browser`
-# callers keep their existing `pods/portforward create` grant above, which is
-# namespace-wide and already covers port-forwarding to a NAMED worker pod — no
-# new port-forward RBAC needed for the pool.)
+# NO deployments, NO cluster scope. It holds the same pods Role in each other
+# person's hub namespace (stacks/chrome-emo), where it runs their workers.
+# Viktor's `homelab browser` port-forwards to his workers with his own admin
+# credential; emo's port-forward grant exists only in chrome-emo.
 resource "kubernetes_service_account" "broker" {
   metadata {
     name      = "chrome-broker"

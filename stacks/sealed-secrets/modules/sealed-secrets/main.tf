@@ -35,7 +35,7 @@ resource "helm_release" "sealed_secrets" {
   # so Helm never upgrades it; the 2.18.3 -> 2.20.0 CRD diff is description-only.
   repository = "https://bitnami.github.io/sealed-secrets"
   chart      = "sealed-secrets"
-  version    = "2.20.0"
+  version    = "2.22.0"
 
   values = [yamlencode({
     crds = {

@@ -399,7 +399,7 @@ def test_claim_does_not_stamp_a_heartbeat(monkeypatch):
     that never heartbeat, and they would be reclaimed after 120s."""
     seen = {}
     monkeypatch.setattr(broker, "kube", lambda m, p, b=None: seen.update(b or {}))
-    broker.claim_worker("w", "abc", "wizard", "scrape")
+    broker.claim_worker({"name": "w", "namespace": "chrome-service"}, "abc", "wizard", "scrape")
     assert "chrome-pool/heartbeat" not in seen["metadata"]["annotations"]
 
 
@@ -467,7 +467,7 @@ def test_a_stuck_target_skips_reopening_the_blank_page(monkeypatch):
 def test_heartbeat_worker_stamps_only_the_annotation(monkeypatch):
     patches = []
     monkeypatch.setattr(broker, "kube", lambda m, p, b=None: patches.append((m, p, b)))
-    broker.heartbeat_worker("chrome-worker-warm-x")
+    broker.heartbeat_worker({"name": "chrome-worker-warm-x", "namespace": "chrome-service"})
     method, path, body = patches[0]
     assert method == "PATCH" and "chrome-worker-warm-x" in path
     assert set(body["metadata"]) == {"annotations"}

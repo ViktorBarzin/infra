@@ -9,6 +9,8 @@ CDP (cdp_cookies.py, stdlib only). Serves the FleetView SPA (static/) + a JSON A
 
 Design: docs/plans/2026-07-13-chrome-service-pool-design.md
 """
+import dataclasses
+import hmac
 import json
 import os
 import ssl
@@ -56,7 +58,67 @@ RESET_CONFIRM_SECONDS = float(os.environ.get("RESET_CONFIRM_SECONDS", "3"))
 # worked before can start being cut short.
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT_SECONDS", "120"))
 POOL_LABEL = "app=chrome-worker"
+# FleetView's host. It is Authentik-gated to Viktor, so a request routed
+# through it needs no bearer and acts on Viktor's hub.
+FLEET_HOST = os.environ.get("FLEET_HOST", "chrome-fleet.viktorbarzin.me")
 
+
+# ------------------------------------------------------------------ hubs
+@dataclasses.dataclass(frozen=True)
+class Hub:
+    """One person's identity browser: where their seed comes from and where
+    their pool workers run. Its bearer is the same read token their devvm
+    uses for the hub's snapshot."""
+    user: str
+    namespace: str
+    cdp: str
+    token: str = ""
+    warm: bool = False
+
+
+def hubs_from_env(raw: str, default_cdp: str) -> list:
+    """HUBS env: JSON list of {user, namespace, cdp, token_env, warm}.
+
+    Tokens are read from their own variables (secret_key_ref), so the JSON
+    itself holds no secret. Empty means today's single master, Viktor's.
+    """
+    if not raw.strip():
+        return [Hub(user="wizard", namespace="chrome-service", cdp=default_cdp,
+                    token=os.environ.get("HUB_TOKEN_WIZARD", ""), warm=True)]
+    return [Hub(user=h["user"], namespace=h["namespace"], cdp=h["cdp"],
+                token=os.environ.get(h.get("token_env", ""), ""), warm=bool(h.get("warm")))
+            for h in json.loads(raw)]
+
+
+def resolve_hub(hubs: list, *, authorization: str, host: str, forwarded: bool,
+                fleet_host: str):
+    """Which person's hub a request acts on, or None (answer 401).
+
+    - A valid bearer names its hub, whatever the route.
+    - No bearer, routed through FleetView's Authentik-gated host: Viktor's.
+    - No bearer, not routed through Traefik at all: an in-cluster caller the
+      NetworkPolicy admitted (tv, by Viktor's decision): Viktor's.
+    - Anything else (the LAN API host without a token): nobody.
+    """
+    if authorization.startswith("Bearer "):
+        given = authorization[len("Bearer "):].encode()
+        for hub in hubs:
+            if hub.token and hmac.compare_digest(given, hub.token.encode()):
+                return hub
+        return None
+    owner = hubs[0] if hubs else None
+    if forwarded:
+        return owner if host.split(":")[0] == fleet_host else None
+    return owner
+
+
+def workers_for(hub: Hub, workers: list) -> list:
+    return [w for w in workers if w.get("namespace") == hub.namespace]
+
+
+HUBS = hubs_from_env(os.environ.get("HUBS", ""), MASTER_CDP)
+
+_seeds = {}  # hub user -> {"at", "json", "last_export_seconds", "errors"}
 _seed = {"at": 0.0, "json": None, "last_export_seconds": 0.0, "errors": 0}
 _seed_lock = threading.Lock()
 # Serializes the acquire pick-or-create decision (ThreadingHTTPServer → many
@@ -72,7 +134,8 @@ def worker_name(session: str) -> str:
     return ("chrome-worker-" + session).lower()[:63]
 
 
-def build_pod_spec(template: dict, *, name, owner, purpose, session, started, deadline) -> dict:
+def build_pod_spec(template: dict, *, name, owner, purpose, session, started, deadline,
+                   namespace=None) -> dict:
     """Substitute the worker_pod.json placeholders. Does NOT mutate `template`."""
     s = json.dumps(template)
     for k, v in {
@@ -82,6 +145,8 @@ def build_pod_spec(template: dict, *, name, owner, purpose, session, started, de
         s = s.replace(k, v)
     spec = json.loads(s)
     spec["spec"]["activeDeadlineSeconds"] = int(deadline)  # numeric, k8s rejects a string
+    if namespace:
+        spec["metadata"]["namespace"] = namespace
     return spec
 
 
@@ -178,9 +243,24 @@ def kube(method: str, path: str, body=None):
 
 
 def list_workers() -> list:
-    """All pool pods as normalized dicts (name, session, owner, purpose, ready, ip,
-    released_at, heartbeat_at, bare, started)."""
-    resp = kube("GET", f"/api/v1/namespaces/{NS}/pods?labelSelector={POOL_LABEL}")
+    """All pool pods in every hub's namespace as normalized dicts (name, namespace,
+    session, owner, purpose, ready, ip, released_at, heartbeat_at, bare, started)."""
+    out = []
+    for i, ns in enumerate(dict.fromkeys(h.namespace for h in HUBS)):
+        if i == 0:
+            out.extend(_list_workers_in(ns))  # Viktor's: an error here is a real outage
+            continue
+        try:
+            out.extend(_list_workers_in(ns))
+        except Exception as e:
+            # Another person's namespace not readable yet (stack not applied,
+            # Role missing): their pool is down, Viktor's must not be.
+            print("[broker] cannot list workers in %s: %s" % (ns, e), file=sys.stderr, flush=True)
+    return out
+
+
+def _list_workers_in(ns: str) -> list:
+    resp = kube("GET", f"/api/v1/namespaces/{ns}/pods?labelSelector={POOL_LABEL}")
     out = []
     for p in resp.get("items", []):
         md, st = p["metadata"], p.get("status", {})
@@ -191,6 +271,7 @@ def list_workers() -> list:
         heartbeat = ann.get("chrome-pool/heartbeat")
         out.append({
             "name": md["name"],
+            "namespace": md.get("namespace") or ns,
             "session": labels.get("chrome-pool/session", ""),
             "owner": labels.get("chrome-pool/owner", ""),
             "purpose": ann.get("chrome-pool/purpose", ""),
@@ -205,15 +286,20 @@ def list_workers() -> list:
     return out
 
 
-def create_worker(session, owner, purpose):
+def _pod_path(pod: dict) -> str:
+    return f"/api/v1/namespaces/{pod.get('namespace') or NS}/pods/{pod['name']}"
+
+
+def create_worker(session, owner, purpose, namespace=NS):
     tpl = json.load(open(TEMPLATE_PATH))
     spec = build_pod_spec(tpl, name=worker_name(session), owner=owner, purpose=purpose,
-                          session=session, started=int(time.time()), deadline=DEADLINE)
-    kube("POST", f"/api/v1/namespaces/{NS}/pods", spec)
+                          session=session, started=int(time.time()), deadline=DEADLINE,
+                          namespace=namespace)
+    kube("POST", f"/api/v1/namespaces/{namespace}/pods", spec)
 
 
-def claim_worker(name, session, owner, purpose):
-    kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{name}", {
+def claim_worker(pod, session, owner, purpose):
+    kube("PATCH", _pod_path(pod), {
         "metadata": {"labels": {"chrome-pool/session": session, "chrome-pool/owner": owner},
                      "annotations": {"chrome-pool/purpose": purpose,
                                      "chrome-pool/started": str(int(time.time()))}}})
@@ -222,9 +308,9 @@ def claim_worker(name, session, owner, purpose):
     # every caller, including the ones that never heartbeat.
 
 
-def heartbeat_worker(name):
+def heartbeat_worker(pod):
     """Record that the caller holding this pod is still alive."""
-    kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{name}", {
+    kube("PATCH", _pod_path(pod), {
         "metadata": {"annotations": {"chrome-pool/heartbeat": str(int(time.time()))}}})
 
 
@@ -311,7 +397,7 @@ def release_worker(pod):
     deleted too and the Deployment builds a fresh one.
     """
     if pod["bare"]:
-        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
+        kube("DELETE", _pod_path(pod))
         return
     # A bare pod's browser dies with the pod. A warm one is reused as-is, so
     # it has to be cleaned here or the next caller inherits the last
@@ -334,7 +420,7 @@ def release_worker(pod):
         print("[broker] %s: %d target(s) would not close — deleting the pod "
               "so the Deployment replaces it" % (pod["name"], stuck),
               file=sys.stderr, flush=True)
-        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
+        kube("DELETE", _pod_path(pod))
         return
     # The heartbeat is cleared, not just left to go stale. A warm pod is
     # reused, so a heartbeat left behind by the last caller would make the
@@ -351,7 +437,7 @@ def release_worker(pod):
     # cold start and a stranded worker costs the pool a whole slot.
     for attempt in (1, 2):
         try:
-            kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
+            kube("PATCH", _pod_path(pod), {
                 "metadata": {"labels": {"chrome-pool/session": ""},
                              "annotations": {"chrome-pool/released": str(int(time.time())),
                                              "chrome-pool/heartbeat": None}}})
@@ -362,7 +448,7 @@ def release_worker(pod):
     print("[broker] %s: could not clear the session label — deleting the pod "
           "so the Deployment replaces it" % pod["name"], file=sys.stderr, flush=True)
     try:
-        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
+        kube("DELETE", _pod_path(pod))
     except Exception as e:
         print("[broker] %s: delete after a failed release also failed: %s"
               % (pod["name"], e), file=sys.stderr, flush=True)
@@ -403,8 +489,18 @@ def usable_stale_age(now: float, cached_at: float, has_cached: bool,
     return age
 
 
-def storage_state():
-    """The master's cookies, cached SEED_TTL seconds so an acquire-burst shares one read.
+def _seed_cache(hub) -> dict:
+    """Per-hub seed cache. Viktor's (the first hub) is the module-level _seed,
+    which the metrics read."""
+    if hub is None or hub is HUBS[0]:
+        return _seed
+    return _seeds.setdefault(hub.user, {"at": 0.0, "json": None,
+                                        "last_export_seconds": 0.0, "errors": 0})
+
+
+def storage_state(hub=None):
+    """A hub's cookies (default: the master's), cached SEED_TTL seconds so an
+    acquire-burst shares one read.
 
     Read over raw CDP (one Storage.getCookies on the browser endpoint) rather than
     through playwright. connect_over_cdp enumerates every target and asserts each
@@ -414,28 +510,30 @@ def storage_state():
     Returns (state, stale_age) — stale_age is None for a fresh read, or the age in
     seconds of the last good seed being served because the export just failed.
     """
+    cdp = hub.cdp if hub is not None else MASTER_CDP
     with _seed_lock:
+        cache = _seed_cache(hub)
         now = time.time()
-        if _seed["json"] is not None and now - _seed["at"] < SEED_TTL:
-            return _seed["json"], None
+        if cache["json"] is not None and now - cache["at"] < SEED_TTL:
+            return cache["json"], None
         t0 = time.time()
         try:
-            st = cdp_cookies.storage_state(MASTER_CDP)
-            _seed.update(at=now, json=st, last_export_seconds=time.time() - t0)
+            st = cdp_cookies.storage_state(cdp)
+            cache.update(at=now, json=st, last_export_seconds=time.time() - t0)
             return st, None
         except Exception as e:
-            _seed["errors"] += 1
+            cache["errors"] += 1
             # The subprocess this used to run swallowed its own stderr, so a year's
             # worth of 502s said only "seed export failed" with no reason. Log it.
-            print("[broker] seed export from %s failed: %s: %s" % (MASTER_CDP, type(e).__name__, e),
+            print("[broker] seed export from %s failed: %s: %s" % (cdp, type(e).__name__, e),
                   file=sys.stderr, flush=True)
             traceback.print_exc()
-            age = usable_stale_age(time.time(), _seed["at"], _seed["json"] is not None)
+            age = usable_stale_age(time.time(), cache["at"], cache["json"] is not None)
             if age is None:
                 raise
             print("[broker] serving the last good seed, %.0fs old" % age,
                   file=sys.stderr, flush=True)
-            return _seed["json"], age
+            return cache["json"], age
 
 
 # ------------------------------------------------------------------ thumbnails
@@ -503,7 +601,7 @@ def reaper_loop():
                     except ValueError:
                         started = now
                     if now - started > DEADLINE:
-                        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{w['name']}")
+                        kube("DELETE", _pod_path(w))
         except Exception:
             pass
         time.sleep(30)
@@ -562,21 +660,38 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         return json.loads(self.rfile.read(n) or b"{}")
 
+    def _hub(self):
+        """The hub this request acts on (see resolve_hub), or None."""
+        forwarded = bool(self.headers.get("X-Forwarded-For") or self.headers.get("X-Forwarded-Host"))
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
+        return resolve_hub(HUBS, authorization=self.headers.get("Authorization", ""),
+                           host=host, forwarded=forwarded, fleet_host=FLEET_HOST)
+
+    def _mine(self, hub, session):
+        """The caller's own worker holding `session`, never another hub's."""
+        if not session:
+            return None
+        return next((w for w in workers_for(hub, list_workers()) if w["session"] == session), None)
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/healthz":
             return self._send(200, b"ok", "text/plain")
         if path == "/metrics":
             return self._send(200, render_metrics(), "text/plain; version=0.0.4")
+        if path in ("/sessions", "/seed", "/thumb"):
+            hub = self._hub()
+            if hub is None:
+                return self._send(401, {"error": "bearer required (your hub read token)"})
         if path == "/sessions":
-            ws = list_workers()
+            ws = workers_for(hub, list_workers())
             for w in ws:
                 w["url"] = current_url(w["ip"]) if w["session"] else ""
                 w.pop("ip", None)
             return self._send(200, {"sessions": ws})
         if path == "/seed":
             try:
-                state, stale_age = storage_state()
+                state, stale_age = storage_state(hub)
             except Exception as e:
                 return self._send(502, {"error": f"seed export failed: {type(e).__name__}: {e}"})
             extra = {"X-Seed-Stale-Seconds": "%.0f" % stale_age} if stale_age is not None else None
@@ -584,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/thumb":
             from urllib.parse import parse_qs, urlparse
             sess = parse_qs(urlparse(self.path).query).get("session", [""])[0]
-            pod = next((w for w in list_workers() if w["session"] == sess and sess), None)
+            pod = self._mine(hub, sess)
             png = thumbnail(sess, pod["ip"]) if pod else b""
             if not png:
                 return self._send(204, b"", "image/png")
@@ -594,27 +709,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        hub = self._hub()
+        if hub is None:
+            return self._send(401, {"error": "bearer required (your hub read token)"})
         try:
             body = self._body()
         except Exception:
             return self._send(400, {"error": "invalid JSON body"})
         if path == "/acquire":
-            return self._acquire(body)
+            return self._acquire(hub, body)
         if path == "/release":
-            pod = next((w for w in list_workers() if w["session"] == body.get("session")), None)
+            pod = self._mine(hub, body.get("session"))
             if pod:
                 release_worker(pod)
             return self._send(200, {"released": bool(pod)})
         if path == "/heartbeat":
-            pod = next((w for w in list_workers() if w["session"] == body.get("session")), None)
+            pod = self._mine(hub, body.get("session"))
             if pod:
-                heartbeat_worker(pod["name"])
+                heartbeat_worker(pod)
             # 200 either way: a caller heartbeating a session the reaper already
             # took should log and carry on, not crash on its way out.
             return self._send(200, {"alive": bool(pod)})
         return self._send(404, {"error": "not found"})
 
-    def _acquire(self, body):
+    def _acquire(self, hub, body):
         owner = str(body.get("owner", "unknown"))[:63]
         purpose = str(body.get("purpose", ""))[:200]
         import secrets
@@ -624,15 +742,17 @@ class Handler(BaseHTTPRequestHandler):
         # done outside the lock (it's seconds — don't block other acquires on it).
         with _acquire_lock:
             workers = list_workers()
-            free = pick_free_worker(workers)
+            # Only the hub that keeps a warm pod reuses workers: a pod one person
+            # used is never handed to another.
+            free = pick_free_worker(workers_for(hub, workers)) if hub.warm else None
             if free:
-                claim_worker(free["name"], session, owner, purpose)
+                claim_worker(free, session, owner, purpose)
                 # podIP lets an IN-CLUSTER caller dial CDP directly; the devvm
                 # CLI keeps port-forwarding to pod/<name> as before. Deliberately
                 # not added to /sessions, which redacts it for browser-facing
                 # FleetView.
-                return self._send(200, {"pod": free["name"], "cdpPort": 9222,
-                                        "podIP": free.get("ip", ""),
+                return self._send(200, {"pod": free["name"], "namespace": free["namespace"],
+                                        "cdpPort": 9222, "podIP": free.get("ip", ""),
                                         "session": session, "reused": True})
             # Count only NON-terminal pods toward capacity (Failed/Succeeded orphans
             # are GC'd by the reaper and must not wedge the pool).
@@ -641,14 +761,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"error": f"pool at capacity ({MAX_WORKERS}); retry shortly"})
             name = worker_name(session)
             try:
-                create_worker(session, owner, purpose)
+                create_worker(session, owner, purpose, namespace=hub.namespace)
             except Exception as e:
                 return self._send(500, {"error": f"create worker: {e}"})
         try:
             worker = wait_ready(name)
         except Exception as e:
             return self._send(500, {"error": f"worker not ready: {e}"})
-        return self._send(200, {"pod": name, "cdpPort": 9222,
+        return self._send(200, {"pod": name, "namespace": hub.namespace, "cdpPort": 9222,
                                 "podIP": worker.get("ip", ""),
                                 "session": session, "reused": False})
 
