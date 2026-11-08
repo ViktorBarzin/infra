@@ -438,6 +438,12 @@ the sync can never sign anyone out:
   tombstone (`snapshots/tombstones.json`); only a cookie expiring after the
   tombstone may recreate it. The harvester and every push record tombstones the
   same way (`hub_store.refresh`).
+- A push may replace a site's cookies only when it carries every cookie the hub
+  holds live for that site (`site_of`, registrable domain). Measured 2026-11-08:
+  Amazon and chess.com sign T3's headless browser out, deleting the login
+  cookies and issuing anonymous ones that expire later; such a push can fill
+  gaps but replaces nothing (`site_incomplete`). Clients therefore send their
+  whole cookie set when anything changed.
 - Protected domains (Google, YouTube, Fidelity, chess.com, TripIt; env
   `PROTECTED_DOMAINS`) take missing cookies but never replace one, so a test login
   or a prompt-injected page cannot swap the hub's session.

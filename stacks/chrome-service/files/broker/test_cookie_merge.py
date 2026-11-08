@@ -100,10 +100,39 @@ def test_unknown_domain_needs_httponly_or_secure():
 
 def test_hub_limit_blocks_new_keys_but_not_updates():
     hub = [ck(name=f"c{i}") for i in range(3)]
-    new = run([ck(name="extra")], hub=hub, hub_limit=3)
-    assert new.skipped == {"hub_full": 1}
-    update = run([ck(name="c0", expires=MUCH_LATER)], hub=hub, hub_limit=3)
+    new = run([*hub, ck(name="extra")], hub=hub, hub_limit=3)
+    assert new.skipped == {"hub_full": 1, "not_newer": 3}
+    update = run([ck(name="c0", expires=MUCH_LATER), ck(name="c1"), ck(name="c2")], hub=hub, hub_limit=3)
     assert len(update.accepted) == 1
+
+
+def test_a_browser_signed_out_of_a_site_cannot_replace_its_cookies():
+    # Measured 2026-11-08: Amazon signed T3's headless browser out, deleting
+    # x-acbuk and issuing a session-token that expires LATER than the hub's.
+    hub = [ck(name="session-token", domain=".amazon.co.uk", value="signed-in"),
+           ck(name="x-acbuk", domain=".amazon.co.uk")]
+    signed_out = [ck(name="session-token", domain=".amazon.co.uk", value="anon", expires=MUCH_LATER),
+                  ck(name="aws-waf-token", domain=".amazon.co.uk")]
+    result = run(signed_out, hub=hub)
+    assert [c["name"] for c in result.accepted] == ["aws-waf-token"]  # filling a gap is fine
+    assert result.skipped == {"site_incomplete": 1}
+
+
+def test_a_browser_holding_the_full_site_set_may_replace():
+    hub = [ck(name="session-token", domain=".amazon.co.uk"), ck(name="x-acbuk", domain="www.amazon.co.uk")]
+    rotated = [ck(name="session-token", domain=".amazon.co.uk", value="new", expires=MUCH_LATER),
+               ck(name="x-acbuk", domain="www.amazon.co.uk")]
+    result = run(rotated, hub=hub)
+    assert [c["value"] for c in result.accepted] == ["new"]
+
+
+@pytest.mark.parametrize("domain,site", [
+    (".amazon.co.uk", "amazon.co.uk"), ("www.amazon.co.uk", "amazon.co.uk"),
+    (".accounts.google.com", "google.com"), ("github.com", "github.com"),
+    ("eu-west-1.console.aws.amazon.com", "amazon.com"),
+])
+def test_site_of(domain, site):
+    assert cm.site_of(domain) == site
 
 
 def test_partitioned_and_unpartitioned_cookies_are_different_keys():
