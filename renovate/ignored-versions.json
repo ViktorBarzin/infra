@@ -155,6 +155,17 @@
       ],
       "matchNewValue": "29.45.1",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-08 pipeline #3432: stack redis failed after this bump: its terragrunt apply failed (commit 68526387)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/oliver006/redis_exporter"
+      ],
+      "matchNewValue": "v1.97.0",
+      "enabled": false
     }
   ]
 }
