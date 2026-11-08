@@ -143,9 +143,13 @@ def refresh_loop(store, every: float) -> None:
         try:
             n = len(store.refresh(time.time()))
             sys.stderr.write("[chrome-hub] refreshed snapshot: %d cookies\n" % n)
+            wait = every
         except Exception as e:
+            # Chrome starts after this sidecar, so the first try usually fails;
+            # retry soon rather than leave the hub without a snapshot for an hour.
             sys.stderr.write("[chrome-hub] snapshot refresh failed: %s: %s\n" % (type(e).__name__, e))
-        time.sleep(every)
+            wait = min(every, 30)
+        time.sleep(wait)
 
 
 if __name__ == "__main__":
