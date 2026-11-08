@@ -100,7 +100,7 @@ func TestCDPHealthy(t *testing.T) {
 }
 
 func TestBuildPortForwardArgsMaster(t *testing.T) {
-	got := buildPortForwardArgs("svc/chrome-service", 18080, 9222)
+	got := buildPortForwardArgs("chrome-service", "svc/chrome-service", 18080, 9222)
 	want := []string{"-n", "chrome-service", "port-forward", "svc/chrome-service", "18080:9222"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildPortForwardArgs(master) =\n %v\nwant\n %v", got, want)
@@ -111,7 +111,7 @@ func TestBuildPortForwardArgsWorkerPodTarget(t *testing.T) {
 	// The pool path forwards to a NAMED worker pod, not the Service (which would
 	// load-balance to a random pool pod). Covered by the existing namespace-wide
 	// pods/portforward grant.
-	got := buildPortForwardArgs("pod/chrome-worker-abc123", 12345, 9222)
+	got := buildPortForwardArgs("chrome-service", "pod/chrome-worker-abc123", 12345, 9222)
 	want := []string{"-n", "chrome-service", "port-forward", "pod/chrome-worker-abc123", "12345:9222"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildPortForwardArgs(worker) =\n %v\nwant\n %v", got, want)
@@ -119,18 +119,24 @@ func TestBuildPortForwardArgsWorkerPodTarget(t *testing.T) {
 }
 
 func TestParseAcquire(t *testing.T) {
-	pod, port, session, err := parseAcquire([]byte(`{"pod":"chrome-worker-abc123","cdpPort":9222,"session":"abc123","reused":false}`))
+	got, err := parseAcquire([]byte(`{"pod":"chrome-worker-abc123","cdpPort":9222,"session":"abc123","reused":false}`))
 	if err != nil {
 		t.Fatalf("parseAcquire: %v", err)
 	}
-	if pod != "chrome-worker-abc123" || port != 9222 || session != "abc123" {
-		t.Fatalf("parseAcquire = %q %d %q", pod, port, session)
+	want := acquireResult{Pod: "chrome-worker-abc123", CDPPort: 9222, Session: "abc123"}
+	if got != want {
+		t.Fatalf("parseAcquire = %+v, want %+v", got, want)
+	}
+	// the hub-aware broker names the namespace the worker pod lives in
+	got, err = parseAcquire([]byte(`{"pod":"chrome-worker-x","cdpPort":9222,"session":"x","namespace":"chrome-emo"}`))
+	if err != nil || got.Namespace != "chrome-emo" {
+		t.Fatalf("parseAcquire namespace = %+v, %v; want chrome-emo", got, err)
 	}
 	// an error body (broker at capacity) must surface as an error, not empty success
-	if _, _, _, err := parseAcquire([]byte(`{"error":"pool at capacity (6); retry shortly"}`)); err == nil {
+	if _, err := parseAcquire([]byte(`{"error":"pool at capacity (6); retry shortly"}`)); err == nil {
 		t.Fatalf("parseAcquire must error on an {\"error\":...} broker response")
 	}
-	if _, _, _, err := parseAcquire([]byte(`not json`)); err == nil {
+	if _, err := parseAcquire([]byte(`not json`)); err == nil {
 		t.Fatalf("parseAcquire must error on malformed JSON")
 	}
 }

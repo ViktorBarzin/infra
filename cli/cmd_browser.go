@@ -119,13 +119,25 @@ CONTEXT (pool by default)
   Default: you get your OWN isolated worker pod from the pool (broker at
   chrome-fleet), seeded read-only with the master's logged-in cookies +
   localStorage, in a fresh context closed on exit. Concurrent callers never
-  contend; a wedged session is capped to its own pod. If the broker is down this
-  falls back to the shared master browser automatically.
-  --no-seed:         a pure clean context (no master cookies injected).
-  --shared-context:  bypass the pool and reuse the master's warmed PERSISTENT
-                     profile (cookies from a manual noVNC login at
+  contend; a wedged session is capped to its own pod. If the pool is
+  unavailable this falls back to your hub browser automatically.
+  --no-seed:         a pure clean context (no hub cookies injected).
+  --shared-context:  bypass the pool and reuse your hub's warmed PERSISTENT
+                     profile (for Viktor, the master and its manual login at
                      chrome.viktorbarzin.me) — needed for write-back workflows
                      (e.g. Google Maps saved lists) and IndexedDB-bound auth.
+
+YOUR HUB (~/.config/chrome-hub/hub.json)
+  Each devvm user with a hub has its own cluster Chrome holding their logins.
+  When hub.json exists, this talks to the broker at its broker_url over HTTPS
+  with the hub's read_token: the token picks the hub the seed comes from and
+  the namespace your worker runs in. --shared-context then drives your own hub
+  (svc/chrome-service in chrome-service for Viktor, svc/chrome-hub in your hub
+  namespace for everyone else). Without hub.json it port-forwards the broker in
+  chrome-service, as before. Override the path with $HOMELAB_CHROME_HUB_CONFIG.
+  401 from the broker: the token is wrong or was rotated; re-run the chrome-hub
+  provisioning. Host unreachable or 403: the broker is LAN-only, so call it
+  from the devvm or the home network.
   --viewport WxH:    context viewport (default 1920x1080 DPR1).
   --tall:            1280x2000 — pulls more lazy-loaded/virtualized DOM per snapshot.
   --keep-open:       leave the pages your script used open on exit. The runner

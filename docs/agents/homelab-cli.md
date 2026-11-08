@@ -25,3 +25,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 ## Claude session store (v0.34, 2026-11-08)
 
 `homelab claude-sessions schema` and `homelab claude-sessions sql "<SELECT ...>"` query every Claude Code session on the devvm, all users, in ClickHouse (admins only). Run `schema` first: it lists the tables (`lines`, `blocks`, `files`, `sessions`, `turns`) and example queries for cost, tool failures, slow turns and full-text search. Reach for it before reading transcripts with grep or `claude-usage` when the question spans many sessions. `claude-sessions ingest` is the root timer's half. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+
+## Browser hubs (2026-11-08)
+
+`homelab browser run|open|ls` read `~/.config/chrome-hub/hub.json` (or `$HOMELAB_CHROME_HUB_CONFIG`). When it exists they call the pool broker at its `broker_url` over HTTPS with the hub's `read_token` as a bearer, instead of port-forwarding `svc/chrome-fleet`; the token picks the hub that seeds the worker and the namespace the worker runs in. `--shared-context` drives the caller's own hub: `svc/chrome-service` in `chrome-service` for Viktor, `svc/chrome-hub` in the hub's namespace for anyone else (`chrome-emo` for emo). Without hub.json nothing changes. A 401 means the token is wrong or rotated (re-run provisioning); an unreachable host or a 403 means the call did not come from the LAN. Details: `cli/README.md`, `docs/architecture/chrome-service.md`.

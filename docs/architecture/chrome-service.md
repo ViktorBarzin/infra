@@ -394,6 +394,15 @@ Key facts:
 - **`stealth.js` is vendored** into the CLI (`cli/browser_stealth.js`) as a
   byte-identical copy of `files/stealth.js`, guarded by a drift test — so the
   CLI's stealth never diverges from the in-cluster callers'.
+- **Per-user hubs (2026-11-08).** A user with `~/.config/chrome-hub/hub.json`
+  reaches the pool broker over its LAN-only HTTPS route (`broker_url`, today
+  `https://chrome-fleet-api.viktorbarzin.me`) with `Authorization: Bearer
+  <read_token>`, so the broker is no longer port-forwarded for them. CDP still
+  goes over `kubectl port-forward`: to `pod/<worker>` in the namespace the
+  `/acquire` response names, and for `--shared-context` to the caller's own hub
+  (`svc/chrome-service` in `chrome-service` for Viktor, `svc/chrome-hub` in
+  `chrome-emo` for emo). Users without hub.json keep the port-forward to
+  `svc/chrome-fleet` with no bearer. See "Browser pool" below for the flow.
 
 ## Multi-user access (sharing the browser)
 
@@ -521,8 +530,18 @@ from CDP `/json/list`, age) + best-effort screenshot thumbnails + kill. Promethe
 `ChromePoolQuotaExhausted`.
 
 **CLI.** `homelab browser` uses the pool by default (acquire → port-forward the
-named worker pod → run → release; falls back to the master if the broker is down).
-`--shared-context` → master; `--no-seed` → clean context; `--viewport WxH`/`--tall`
+named worker pod → run → release; falls back to the caller's hub browser if the
+pool is unavailable). How it reaches the broker depends on the caller:
+
+| caller | broker transport | auth | worker CDP | `--shared-context` / fallback |
+|---|---|---|---|---|
+| has `~/.config/chrome-hub/hub.json` | HTTPS to `broker_url` (LAN-only) | `Bearer <read_token>`; the token picks the seeding hub and the worker namespace | port-forward `pod/<worker>` in the `/acquire` response's `namespace` (hub.json's if absent) | `svc/chrome-service` in `chrome-service` if hub.json's namespace is `chrome-service`, else `svc/chrome-hub` in that namespace |
+| no hub.json | port-forward `svc/chrome-fleet` in `chrome-service` | none | port-forward `pod/<worker>` in `chrome-service` | `svc/chrome-service` in `chrome-service` |
+
+A 401 from the broker stops the run with a message to re-run the chrome-hub
+provisioning (the token is wrong or was rotated) rather than falling back; an
+unreachable host or a 403 is reported as the broker being LAN-only.
+`--shared-context` → the caller's hub; `--no-seed` → clean context; `--viewport WxH`/`--tall`
 → context viewport (default 1920×1080 DPR1); `homelab browser ls` lists sessions.
 CDP client is **patchright-core** (playwright-core drop-in that closes the
 `Runtime.enable` anti-bot leak).
