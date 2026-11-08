@@ -90,6 +90,13 @@ def test_push_with_nothing_new_does_not_call_the_browser(store):
     assert browser.set_calls == []
 
 
+def test_a_new_empty_hub_still_gets_a_snapshot(store):
+    hub, browser = store
+    browser.cookies.clear()
+    hub.refresh(NOW)
+    assert json.loads(hub.snapshot_path.read_text()) == {"cookies": [], "origins": []}
+
+
 def test_refresh_refuses_to_overwrite_with_an_empty_jar(store):
     hub, browser = store
     hub.refresh(NOW)

@@ -59,10 +59,12 @@ class HubStore:
         tombstones = cookie_merge.update_tombstones(self._previous(), current,
                                                     self.load_tombstones(), now)
         self._write(self.tombstones_path, cookie_merge.tombstones_to_json(tombstones))
-        if current:
+        if current or not self.snapshot_path.exists():
             # An empty jar is far more likely a browser that just restarted
             # than a person who signed out of everything; keep the last good
             # snapshot for clients and let the tombstones carry the change.
+            # A brand-new hub has no snapshot yet: an empty one lets its
+            # person's devvm refresh succeed until they first sign in.
             self._write(self.snapshot_path, json.dumps({"cookies": current, "origins": []}))
         return current
 
