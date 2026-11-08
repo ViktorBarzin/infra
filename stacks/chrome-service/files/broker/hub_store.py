@@ -35,7 +35,9 @@ class HubStore:
         self._lock = threading.Lock()
 
     def _write(self, path: pathlib.Path, text: str) -> None:
-        tmp = path.with_name(path.name + ".tmp")
+        # Unique per writer: the harvester runs as root and the sidecar as 1000,
+        # so a temp file one of them left behind must never block the other.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(text)
         os.replace(tmp, path)
 
