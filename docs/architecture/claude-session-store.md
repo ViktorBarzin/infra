@@ -31,6 +31,7 @@ flowchart LR
 | `claude.blocks` | message content block | Filled by materialized view `blocks_mv` from `lines`: prompts, replies, thinking, `tool_use` (with `tool_name` and input) and `tool_result` (with `is_error` and output). Text index on `text`. |
 | `claude.files` | side file | `tool-results/*.txt` and `subagents/*.meta.json`. `ReplacingMergeTree(mtime)`, so query with `FINAL`. Text index on `content`. |
 | `claude.sessions` | session (view) | cost, prompts, human prompts, subagents, compactions, tokens, models, start and end. |
+| `claude.model_costs` | session and model (view) | cost and tokens per model, from `cost-state`'s per-model `modelUsage`. Use it for spend per model; `arrayJoin(sessions.models)` credits a session's whole cost to every model it touched. |
 | `claude.turns` | finished turn (view) | `duration_ms` from Claude Code's `turn_duration` records. |
 
 Details worth knowing before writing queries (`homelab claude-sessions schema` prints them with ten example queries):
