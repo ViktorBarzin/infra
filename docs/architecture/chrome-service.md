@@ -500,7 +500,9 @@ worker one person used is never handed to another.
 - tv keeps CDP and unauthenticated seed access to Viktor's hub, and emo deploys
   tv. Viktor accepted this on 2026-11-08.
 - emo is in the devvm `docker` group, which can read any file on the box,
-  Viktor's hub config included. See the open item in the 2026-11-08 plan.
+  Viktor's hub config included. His agents use Docker for LibreOffice document
+  conversions (242 runs in the 90 days to 2026-11-08). Viktor chose on
+  2026-11-08 to keep that membership for now.
 - The profile backups on NFS hold cookies under Chrome's fixed Linux key and the
   export is mountable from the LAN. emo's hub has no NFS backup; its hourly
   snapshot is the restore source.
