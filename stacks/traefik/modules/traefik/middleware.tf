@@ -812,6 +812,58 @@ resource "kubectl_manifest" "middleware_real_ip" {
   depends_on = [helm_release.traefik]
 }
 
+# analytics-inject: the Rybbit script for the `hosted` Analytics site (id 2)
+# on HTML pages of the third-party apps we host (ADR-0041, design "Third-party
+# apps"). Runs as a websecure entrypoint middleware after compress (main.tf).
+# excludeHosts keeps it off authentication, secrets, admin consoles, remote
+# browsers and every first-party app, which load the script themselves (they
+# also carry the <meta name="analytics" content="sdk"> opt-out). includeHosts,
+# while non-empty, limits it to those hosts for the staged start.
+locals {
+  analytics_inject_exclude_hosts = [
+    "authentik.viktorbarzin.me", "public-auth.viktorbarzin.me",
+    "vault.viktorbarzin.me", "vaultwarden.viktorbarzin.me",
+    "k8s.viktorbarzin.me", "k8s-portal.viktorbarzin.me",
+    "proxmox.viktorbarzin.me", "opnsense.viktorbarzin.me", "pfsense.viktorbarzin.me",
+    "headscale.viktorbarzin.me",
+    "chrome.viktorbarzin.me", "chrome-hub.viktorbarzin.me", "*.chrome-fleet.viktorbarzin.me", "chrome-fleet.viktorbarzin.me", "chrome-fleet-api.viktorbarzin.me", "chrome-hub-emo.viktorbarzin.me",
+    "android-emulator.viktorbarzin.me", "terminal.viktorbarzin.me", "terminal-api.viktorbarzin.me",
+    "rybbit.viktorbarzin.me", "glitchtip.viktorbarzin.me",
+    # First-party apps (Instrumented apps), which load the script themselves.
+    "viktorbarzin.me", "www.viktorbarzin.me", "tv.viktorbarzin.me", "f1.viktorbarzin.me",
+    "tripit.viktorbarzin.me", "tripit-api.viktorbarzin.me", "health.viktorbarzin.me", "health-api.viktorbarzin.me",
+    "fire-planner.viktorbarzin.me", "offline-reader.viktorbarzin.me", "learn.viktorbarzin.me",
+    "interview-prep.viktorbarzin.me", "priority-pass.viktorbarzin.me", "vpn.viktorbarzin.me",
+    "plotting-book.viktorbarzin.me", "wrongmove.viktorbarzin.me", "kms.viktorbarzin.me",
+    "tasks.viktorbarzin.me", "alexa-assistant.viktorbarzin.me", "nextcloud-todos.viktorbarzin.me",
+    "pages.viktorbarzin.me", "pages-publish.viktorbarzin.me",
+  ]
+  # Staged start (2026-11-09): one static third-party app first.
+  analytics_inject_include_hosts = ["cc.viktorbarzin.me"]
+}
+
+resource "kubectl_manifest" "middleware_analytics_inject" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "analytics-inject"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        analytics-inject = {
+          siteId       = "2"
+          excludeHosts = local.analytics_inject_exclude_hosts
+          includeHosts = local.analytics_inject_include_hosts
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
+}
+
 # crowdsec: enforces CrowdSec ban decisions in-process. Attached to the
 # `websecure` ENTRYPOINT (main.tf), not to individual routers, so it covers all
 # ~195 Ingresses, the 10 IngressRoutes and the catchall without per-ingress
