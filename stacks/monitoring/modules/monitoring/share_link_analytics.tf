@@ -83,7 +83,8 @@ resource "kubernetes_cron_job_v1" "share_link_geo" {
                 name  = "PUSHGATEWAY_URL"
                 value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
               }
-              # 30d = Loki retention; swept in 72h instant-query chunks (a
+              # 30d window (Loki itself keeps 26w since 2026-11-09); swept in
+              # 72h instant-query chunks (a
               # single 720h query 504s the SingleBinary — 2026-07-06).
               env {
                 name  = "WINDOW_HOURS"

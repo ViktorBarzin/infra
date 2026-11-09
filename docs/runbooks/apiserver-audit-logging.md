@@ -23,7 +23,7 @@ been on (see post-incident note below).
   **On-disk history is ~2.8 days, not 30.** Measured 2026-09-01: at ~415 MB/day
   the size cap rotates a 100 MB file every 6-7 hours (9 rotations in 55 h), so
   `maxbackup=10` is reached long before `maxage=30` matters. The 1 GB ceiling
-  holds. Loki keeps 30 days, so the trail survives there; the on-node grep
+  holds. Loki keeps 26 weeks, so the trail survives there; the on-node grep
   fallback below covers roughly three days. `--audit-log-maxbackup` is the knob
   if more on-node history is wanted (k8s-master `/` had 33 GB free of 59 GB).
 - **Persistence across `kubeadm upgrade`:** the same flags + volumes are in the
