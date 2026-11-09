@@ -50,36 +50,44 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "uptime-kuma-data-proxmox"
-    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "50%"
-      "resize.topolvm.io/storage_limit" = "20Gi"
-    }
+# MySQL password for the uptimekuma user, rotated by the Vault static role
+# mysql-uptimekuma (stacks/vault, Tuesday 10:12 UTC, dual password). Uptime Kuma
+# reads UPTIME_KUMA_DB_* at start and rewrites data/db-config.json from them
+# (server/setup-database.js at 2.5.9), so the data dir holds nothing that has to
+# persist. Reloader restarts the pod when the Secret changes.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
   }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "5Gi"
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "uptime-kuma-db-creds"
+      namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
       }
+      target = {
+        name = "uptime-kuma-db-creds"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-uptimekuma"
+          property = "password"
+        }
+      }]
     }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
 resource "kubernetes_deployment" "uptime-kuma" {
+  depends_on = [kubernetes_manifest.db_external_secret]
   metadata {
     name      = "uptime-kuma"
     namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
@@ -88,7 +96,8 @@ resource "kubernetes_deployment" "uptime-kuma" {
       tier = var.tier
     }
     annotations = {
-      "reloader.stakater.com/search" = "true"
+      "reloader.stakater.com/search"        = "true"
+      "secret.reloader.stakater.com/reload" = "uptime-kuma-db-creds"
     }
   }
   spec {
@@ -122,6 +131,36 @@ resource "kubernetes_deployment" "uptime-kuma" {
           # image back, or a remote browser.
           image = "louislam/uptime-kuma:2.5.9-slim"
           name  = "uptime-kuma"
+
+          env {
+            name  = "UPTIME_KUMA_DB_TYPE"
+            value = "mariadb"
+          }
+          env {
+            name  = "UPTIME_KUMA_DB_HOSTNAME"
+            value = "mysql.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "UPTIME_KUMA_DB_PORT"
+            value = "3306"
+          }
+          env {
+            name  = "UPTIME_KUMA_DB_NAME"
+            value = "uptimekuma"
+          }
+          env {
+            name  = "UPTIME_KUMA_DB_USERNAME"
+            value = "uptimekuma"
+          }
+          env {
+            name = "UPTIME_KUMA_DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "uptime-kuma-db-creds"
+                key  = "password"
+              }
+            }
+          }
 
           resources {
             requests = {
@@ -161,11 +200,13 @@ resource "kubernetes_deployment" "uptime-kuma" {
             mount_path = "/app/data"
           }
         }
+        # emptyDir since 2026-11-09: monitors live in MySQL and db-config.json
+        # is rebuilt from env at every start. Upstream does not support NFS for
+        # /app/data, and monitoring must not depend on NFS anyway. Freed a
+        # proxmox-csi slot (docs/research/2026-11-09-block-volume-db-consolidation.md).
         volume {
           name = "data"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
-          }
+          empty_dir {}
         }
         dns_config {
           option {

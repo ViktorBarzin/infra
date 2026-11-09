@@ -36,9 +36,11 @@ Every claim carries one of three labels:
   volumeClaimTemplates are immutable, so it needs an orphan delete, a Helm
   recreate and a pod-by-pod restart. Loki keeps logs 720h by default, so a
   365-day `retention_stream` for the audit stream was chosen for when it is done.
-- **uptime-kuma**: in progress. Its MySQL password is not in Vault (the
-  `uptime_kuma_db_password` key does not exist in `secret/viktor`); Viktor chose
-  a rotating Vault static role before the volume goes.
+- 2026-11-09, **uptime-kuma**: its MySQL password was recorded only in
+  `db-config.json` on the volume (no `uptime_kuma_db_password` in `secret/viktor`).
+  Now Vault static role `mysql-uptimekuma` (Tuesday 10:12, dual password) feeds
+  `UPTIME_KUMA_DB_*` env through ExternalSecret `uptime-kuma-db-creds`, and
+  `/app/data` is emptyDir. 1 slot freed; the old PV is Released under Retain.
 
 ## Why there are so many
 

@@ -38,7 +38,7 @@ Four pieces:
    app restarts once (Grafana and the six Postgres roles behind its datasources at 10:02). The
    slot table is in `stacks/vault/main.tf`, "Static role rotation slots".
    `pg-tasks` lives in `stacks/vault/app_db_roles.tf`.
-2. **MySQL dual password.** The nine MySQL roles rotate with
+2. **MySQL dual password.** The ten MySQL roles rotate with
    `ALTER USER ... RETAIN CURRENT PASSWORD`, so the previous password keeps
    working until the following rotation. MySQL apps see no window at all.
    Postgres has no equivalent.
