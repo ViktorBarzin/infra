@@ -28,6 +28,19 @@ flowchart TD
 | Ingest path | `/_t/` on every host, routed to the three services above | one host-independent Traefik route in `stacks/rybbit` |
 | Injection plugin | Adds the Rybbit script to HTML from third-party apps | `stacks/traefik/modules/traefik/` local plugin, enabled per ingress by `ingress_factory` |
 
+## One standard, several transports
+
+Each app imports one library per language and follows one naming and id scheme. The data still travels by more than one path, because the clients differ:
+
+| Data | App code calls | Path |
+|---|---|---|
+| Logs (backends) | its usual logger | JSON on stdout, Alloy, Loki |
+| Product events | `track`, `identify` | Segment SDK, `/_t/e/`, Vector, Rybbit and Raw events |
+| Pageviews and replay (browser) | nothing, the script loads itself | Rybbit script, `/_t/r/`, Rybbit |
+| Errors and crashes | nothing, captured automatically | Sentry SDK, `/_t/x/`, GlitchTip |
+
+Browsers and the Android TV app can only send over HTTP. Logs stay on stdout so they survive a pipeline outage. Vector could later replace Alloy as the log shipper as well, giving one collector for everything. That is a separate change, because Alloy also ships logs from software we did not write.
+
 ## Ingest path
 
 One Traefik `IngressRoute` matches `PathPrefix(/_t/)` on any host, at a priority above app routes. It carries no forward-auth, because beacons have to work for signed-out visitors. The middlewares strip the prefix as follows:
