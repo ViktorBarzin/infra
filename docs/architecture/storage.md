@@ -232,7 +232,7 @@ SQLite uses `fsync()` to guarantee durability. NFS's soft mount + async semantic
 
 **The proxmox-csi-plugin hardcodes a per-VM LUN ceiling at 29.** The plugin
 scans `scsi1..scsi29` for a free slot when attaching a PVC
-(`pkg/csi/utils.go:394`: `for lun = 1; lun < 30; lun++`); when the loop exits
+(`pkg/csi/utils.go:662` at v0.22.0: `for lun = 1; lun < 30; lun++`); when the loop exits
 without a hit, ControllerPublishVolume returns
 `Internal desc = no free lun found`. `CSINode.allocatable.count` is advertised
 as `28` for every worker — derived from this plugin limit, NOT from Proxmox or
@@ -266,6 +266,10 @@ Levers (in order of leverage-per-effort):
    the block footprint, prevent the ghost loop (`code-dfjn`); not TopoLVM/Longhorn.
 2. **Add another K8s worker VM** — each new worker brings up to 29 fresh
    slots; the most durable answer if PVC count keeps growing.
+Designs that remove the cap rather than raise it (network attach from the
+host, LINSTOR, Mayastor, Longhorn, Ceph) are compared against the wear and
+copy-on-write constraints in `docs/research/2026-11-09-block-storage-without-slot-cap.md`.
+
 3. **Patch+fork `sergelogvinov/proxmox-csi-plugin`** to bump the loop bound
    from `< 30` to `< 31` (matches Proxmox `MAX_SCSI_DISKS`). +1 slot per VM.
    File upstream PR. Self-maintained image until merged.
