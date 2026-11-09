@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export SMART data for every physical drive behind the R730's PERC H730.
 
-Installed by playbooks/pve-host.yml (tag smart); runs every 5 minutes from
+Installed by playbooks/pve-host.yml (tag smart); runs hourly from
 disk-smart-status.timer and writes disk_smart.prom for node_exporter's
 textfile collector. Reads only: smartctl -a and the Seagate FARM log are log
 page reads, so no self-test is started and nothing touches the media.

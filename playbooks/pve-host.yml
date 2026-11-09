@@ -428,7 +428,7 @@
     # Nothing read the physical drives' own SMART data until 2026-11-09; the
     # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads
     # every drive behind the PERC (smartctl -d megaraid,N, plus the Seagate FARM
-    # log) every 5 minutes and writes it to the textfile directory created
+    # log) hourly and writes it to the textfile directory created
     # above. The "R730 Drives" alert group in stacks/monitoring reads it. Read
     # only: no self-tests are scheduled, by Viktor's choice on 2026-11-09, since
     # the drives' background media scan and the PERC's patrol read already cover
