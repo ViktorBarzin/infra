@@ -108,12 +108,6 @@ resource "kubernetes_deployment_v1" "tv_recorder" {
             name  = "RECORDINGS_CAP_GB"
             value = "150"
           }
-          # Habits are learned for these accounts only, comma-separated; empty
-          # means every account. emo only for now (Viktor, 2026-11-09).
-          env {
-            name  = "RECORDINGS_HABIT_ACCOUNTS"
-            value = "emil.barzin@gmail.com"
-          }
           env {
             name = "TV_SLACK_WEBHOOK"
             value_from {
