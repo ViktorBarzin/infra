@@ -22,6 +22,9 @@ locals {
     # alexa-assistant (TanStack Start, Forgejo viktor/alexa-assistant): the
     # London Echo skill's state and its pg-boss queue (schema pgboss).
     alexa_assistant = {}
+    # GlitchTip error tracker (stacks/glitchtip, ADR-0041). Migrations run
+    # from the deployment's `migrate` init container.
+    glitchtip = {}
   }
 }
 

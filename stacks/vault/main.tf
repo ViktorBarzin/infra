@@ -1151,6 +1151,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #         pg-wealthfolio-sync,    10:28 pg-affine              10:39 pg-tasks (app_db_roles.tf)
 #         pg-goldmane-edges,      10:30 pg-claude-memory       10:40 pg-trading
 #                                                              10:41 pg-alexa-assistant (app_db_roles.tf)
+#                                                              10:42 pg-glitchtip (app_db_roles.tf)
 #         pg-job-hunter,          10:32 pg-goodreads-sync      10:45 pg-terraform-state, away
 #         pg-payslip-ingest,      10:34 pg-health                    from the CI-heavy slots
 #         both technitium roles)
