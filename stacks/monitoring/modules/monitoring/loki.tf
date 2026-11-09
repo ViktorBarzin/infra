@@ -731,6 +731,68 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Crawls that REACH the Forgejo backend (2026-11-09). Forgejo is where
+          # crawlers land, and the ones worth knowing about are the ones the
+          # Turnstile gate and Anubis let through. Both rules count only
+          # requests Traefik handed to forgejo-forgejo-80, so traffic already
+          # refused at the gate or by CrowdSec never counts.
+          #
+          # WHY LOKI AND NOT PROMETHEUS. The crawler that prompted this
+          # (from 2026-11-01, UA "X11; Linux x86_64 ... Chrome/157") uses one
+          # residential IP per page and adds about 0.03 req/s to a backend
+          # baseline of 0.175 req/s that internal clients dominate.
+          # ForgejoCrawlSurge (removed in the same change), EdgeBlockSurge and
+          # DistributedCrawlDetected all stayed silent through it. What
+          # separates it is per-request detail only the access log has.
+          #
+          # 6h WINDOWS, interval 5m. Root route repeat_interval is 8760h, so
+          # each firing episode notifies once. A 1h count swung between 5 and
+          # 175 during the crawl and would have notified every time it crossed
+          # the line. 6h holds steady through a crawl and resolves about 6h
+          # after it stops. The 5m interval keeps a 6h scan of the traefik
+          # stream (~700k lines, about 1s) from running every minute.
+          #
+          # Private, CGNAT (tailnet) and ULA sources are excluded: the gate
+          # trusts those networks, and our own browsing is not a crawl.
+          name     = "Forgejo crawl"
+          interval = "5m"
+          rules = [
+            {
+              # The filter-permutation crawl: /<owner>/<repo>/issues? and
+              # /pulls? with query strings, served a real page. Backtested every
+              # 6h from 2026-10-15 to 2026-11-09: 0 on every quiet window until
+              # 2026-10-30, at most 8 on 10-30/31, then 217 to 764 on every
+              # window from 2026-11-01 06:00 on.
+              alert  = "ForgejoFilterCrawlReachingBackend"
+              expr   = "sum(count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"forgejo-forgejo-80@kubernetes\" |~ `\"RequestPath\":\"/[^/\"]+/[^/\"]+/(issues|pulls)\\?` | json ServiceName, DownstreamStatus, ClientHost | ServiceName=\"forgejo-forgejo-80@kubernetes\" | DownstreamStatus=\"200\" | ClientHost!~`(10\\.|127\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.|f[cd]|fe80:).*` [6h])) > 50"
+              for    = "15m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $value | printf \"%.0f\" }} filtered issue/PR list pages served to outside clients in 6h, baseline under 10. A crawler is getting past the Turnstile gate and Anubis."
+                description = "Outside clients are walking Forgejo's issue and PR filter permutations and receiving real pages from the backend. Identify the user agent and the gate route it takes (verify_ok means it solves Turnstile, fallback_set means it waits Turnstile out and solves Anubis). Runbook: docs/runbooks/forgejo-crawl.md."
+              }
+            },
+            {
+              # Path-agnostic: how many distinct outside addresses reached the
+              # backend at all. Catches a crawl on commits, trees or any other
+              # route. Backtested every 6h from 2026-10-15 to 2026-11-09:
+              # quiet-window median 70, highest quiet reading 110. Readings over
+              # 300 were all crawlers: the 2026-10-15/16 commit crawl (up to
+              # 4,102), a 2026-10-28 evening probe where 294 of 307 addresses
+              # carried the Chrome/157 crawler's exact UA, and 571 to 1,151
+              # during the 2026-11 filter crawl.
+              alert  = "ForgejoExternalClientSurge"
+              expr   = "count(sum by (ClientHost) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"forgejo-forgejo-80@kubernetes\" | json ServiceName, ClientHost | ServiceName=\"forgejo-forgejo-80@kubernetes\" | ClientHost!~`(10\\.|127\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.|f[cd]|fe80:).*` [6h]))) > 300"
+              for    = "15m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $value | printf \"%.0f\" }} distinct outside addresses reached the Forgejo backend in 6h, usual is about 70. Likely a distributed crawl getting past the gate."
+                description = "Many different outside IPs are being served by Forgejo itself, past the Turnstile gate and Anubis. Group the requests by user agent and path to find the crawler. Runbook: docs/runbooks/forgejo-crawl.md."
+              }
+            },
+          ]
+        },
+        {
           # Immich worker split (2026-07-12): the job tier (immich-worker) has
           # no HTTP surface, so its death is invisible to HTTP probes — but the
           # api pods' checkWorkers() logs this exact warning every interval
