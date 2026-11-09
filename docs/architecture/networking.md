@@ -599,6 +599,7 @@ The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP p
 | CrowdSec, Traefik plugin | address and range bans | address and range bans; local IPv6 bans are copied to their /64 every 2 minutes (`crowdsec-ipv6-ban-widen` CronJob) |
 | Rate limits | per client address | per client /64: `X-Client-Prefix` from the real-ip plugin, or `ipStrategy.ipv6Subnet = 64` where the limiter keys on the TCP peer |
 | Proxy trust (real-ip, CrowdSec plugin, Traefik forwarded headers) | pod CIDR `10.10.0.0/16`, `10.0.0.0/8` | adds the pod ULA `fd62:f088:7d06:100::/56` (`fd62:f088:7d06::/48` for forwarded headers) |
+| Source allowlists (`local-only`, `home-lans-only`) | `192.168.1.0/24`, `10.0.0.0/8` and the WG spoke LANs | `fc00::/7`, `fe80::/10` and the management VLAN's SLAAC prefix `2001:470:6f:43d::/64` (added 2026-11-09: the devvm reached `.lan` hosts over IPv6 from that prefix and got 403, which silenced its Loki shipping) |
 | Outbound | NAT through pfSense | new outbound IPv6 from VLAN 20 is rejected, so egress stays IPv4 |
 
 Known gap, shared by both families: the nftables bouncer's sets have no `interval` flag, so a range decision lands as its first address only (`23.91.105.0/24` is stored as `23.91.105.0`). Range bans are enforced by the Traefik plugin, which covers web traffic but not mail.

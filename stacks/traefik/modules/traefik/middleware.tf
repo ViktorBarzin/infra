@@ -226,6 +226,7 @@ resource "kubernetes_manifest" "middleware_local_only" {
         sourceRange = [
           "192.168.1.0/24",
           "10.0.0.0/8",
+          "2001:470:6f:43d::/64", # management VLAN 10 by SLAAC (devvm); pfSense drops it as a WAN source
           "fc00::/7",
           "fe80::/10",
         ]
@@ -262,6 +263,7 @@ resource "kubernetes_manifest" "middleware_home_lans_only" {
           "192.168.9.0/24", # London GUEST net — the Portal Plus actually leases here (Portal-75AE8F9C2A8A = 192.168.9.198)
           "192.168.0.0/24", # Valchedrym LAN (via WG tunnel)
           "192.168.3.0/24", # Mladost 3 LAN (via WG tunnel)
+          "2001:470:6f:43d::/64", # management VLAN 10 by SLAAC (devvm); pfSense drops it as a WAN source
           "fc00::/7",
           "fe80::/10",
         ]
