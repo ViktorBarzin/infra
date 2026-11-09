@@ -62,6 +62,7 @@
 | tv | TV channels with an F1 section at `tv.viktorbarzin.me`; `f1.viktorbarzin.me` only redirects there, 308 to the same path (Cloudflare Single Redirects, plus a Traefik IngressRoute for clients on internal DNS: `stacks/tv/f1-redirect.tf`) (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/tv` (Forgejo, extracted 2026-06-05 as f1-stream, renamed tv 2026-11-01); GHA-built → `ghcr.io/viktorbarzin/tv` (private), Woodpecker deploy-only (ADR-0002). One image, three Deployments chosen by `ROLE` (app ADR-0029): `tv-edge` (2 replicas, no GPU, behind the `tv` Service: site, API, `/proxy`, `/relay`, replays; mounts `/data` read-only), `tv-transcoder` (1, GPU 1850 gpumem, live quality ladders incl. HDR, Service `tv-transcoder`) and `tv-worker` (1, GPU 2000 gpumem, Recreate: scheduler, extraction, scrapes, replay ladders, Early copies; the only `/data` writer, Service `tv-worker`). Extraction logs and metrics live on `deploy/tv-worker`. `/data` is the RWX claim `tv-data-shared`, a second claim on the same `/srv/nfs/tv` directory as the old RWO `f1-stream-data-host`; Prometheus scrapes every pod (job `tv`, `role` label). CNPG `tv` db (Vault static role `pg-tv`, rotated Tuesdays 10:00 UTC; password mounted as a file with `reloader.stakater.com/ignore` so rotation never restarts the pod) holds the visitor, viewing and delivery record behind the site's `/admin/viewing` page (app ADR-0014) | tv |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
+| glitchtip | Sentry-compatible error and crash tracker (GlitchTip 6.2.6, ADR-0041) at `glitchtip.viktorbarzin.me`, OIDC sign-in through Authentik for Home Server Admins. Apps send through the `/_t/x/` Ingest path on their own host to Service `glitchtip.glitchtip:80`. Shared CNPG database `glitchtip`, 90-day retention. Doc: `docs/architecture/glitchtip.md` | glitchtip |
 | claude-sessions | ClickHouse store of every Claude Code session on the devvm, all users, kept indefinitely (ADR-0039). Ingested every 15 min by the devvm `claude-sessions-ingest.timer`; queried by admins with `homelab claude-sessions sql/schema`. LAN-only `claude-sessions-db.viktorbarzin.me`, PVC on `proxmox-lvm-encrypted-sas`, nightly native BACKUP to `/srv/nfs/claude-sessions-backup` | claude-sessions |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
 | actualbudget | Budgeting (factory pattern). Per-user actual-server + actual-http-api + nightly GoCardless `bank-sync-<user>` CronJob. Runbook: `docs/runbooks/actualbudget-bank-sync.md` | actualbudget |
@@ -151,7 +152,7 @@ blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
 travel, netbox, phpipam, tripit, t3, stem95su, tasks, agentmd,
-eurooffice
+eurooffice, glitchtip
 ```
 
 ### Non-Proxied (Direct DNS)

@@ -23,6 +23,7 @@ variable "pg_app_roles" {
     # Slot table: "Static role rotation slots" in main.tf.
     tasks           = { username = "tasks", rotation_schedule = "39 10 * * TUE", rotation_window = 3600 }
     alexa-assistant = { username = "alexa_assistant", rotation_schedule = "41 10 * * TUE", rotation_window = 3600 }
+    glitchtip       = { username = "glitchtip", rotation_schedule = "42 10 * * TUE", rotation_window = 3600 }
   }
 }
 
