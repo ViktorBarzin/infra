@@ -8,16 +8,16 @@ This design adds one analytics pipeline covering every app we serve, and a share
 
 ```mermaid
 flowchart TD
-  W[First-party web<br/>Rybbit script + Segment SDK] -->|/_t/r/| R[Rybbit]
-  W -->|/_t/e/| V[Vector]
-  N[Backends and Android TV<br/>Segment SDKs] -->|/_t/e/ or in-cluster| V
-  H[Third-party apps<br/>script injected by Traefik plugin] -->|/_t/r/| R
-  V -->|accepted| R
-  V -->|accepted, unchanged| C[(ClickHouse raw events)]
-  V -->|rejected| L[Loki]
-  W -. /_t/x/ errors .-> G[GlitchTip]
-  N -. errors, crashes .-> G
+  B[Browsers] -->|/_t/r/| R[Rybbit]
+  B -->|/_t/e/| V[Vector]
+  N[Servers,<br/>Android TV] --> V
+  V --> R
+  V --> C[(Raw events)]
+  B -.->|/_t/x/| G[GlitchTip]
+  N -.-> G
 ```
+
+Browsers cover first-party apps (Rybbit script and Segment SDK) and third-party apps (Rybbit script injected by the Traefik plugin). Vector also sends rejected events to Loki.
 
 | Part | What it does | Where it lives |
 |---|---|---|
