@@ -74,7 +74,7 @@ resource "kubernetes_deployment" "event_pipeline" {
       spec {
         container {
           name  = "vector"
-          image = "timberio/vector:0.61.0-debian"
+          image = "docker.io/timberio/vector:0.61.0-debian"
           args  = ["--config", "/etc/vector/vector.yaml"]
           env {
             name = "RYBBIT_INGEST_KEY"
