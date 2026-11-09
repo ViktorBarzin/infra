@@ -229,11 +229,8 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.glitchtip]
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.glitchtip.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# Kyverno ClusterPolicy `sync-tls-secret` clones the wildcard TLS secret into
+# every namespace, so there is no setup_tls_secret module here.
 
 resource "kubernetes_config_map" "config" {
   metadata {
