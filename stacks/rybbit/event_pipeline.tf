@@ -76,24 +76,6 @@ resource "kubernetes_deployment" "event_pipeline" {
           name  = "vector"
           image = "docker.io/timberio/vector:0.61.0-debian"
           args  = ["--config", "/etc/vector/vector.yaml"]
-          env {
-            name = "RYBBIT_INGEST_KEY"
-            value_from {
-              secret_key_ref {
-                name = "rybbit-secrets"
-                key  = "ingest_api_key"
-              }
-            }
-          }
-          env {
-            name = "CLICKHOUSE_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = "rybbit-secrets"
-                key  = "clickhouse_password"
-              }
-            }
-          }
           port {
             name           = "http"
             container_port = 8080
@@ -129,6 +111,11 @@ resource "kubernetes_deployment" "event_pipeline" {
             name       = "data"
             mount_path = "/var/lib/vector"
           }
+          volume_mount {
+            name       = "secrets"
+            mount_path = "/etc/vector/secrets"
+            read_only  = true
+          }
           resources {
             requests = {
               cpu    = "25m"
@@ -149,6 +136,20 @@ resource "kubernetes_deployment" "event_pipeline" {
           name = "keys"
           secret {
             secret_name = kubernetes_secret.event_pipeline_keys.metadata[0].name
+          }
+        }
+        volume {
+          name = "secrets"
+          secret {
+            secret_name = "rybbit-secrets"
+            items {
+              key  = "ingest_api_key"
+              path = "ingest_api_key"
+            }
+            items {
+              key  = "clickhouse_password"
+              path = "clickhouse_password"
+            }
           }
         }
         # Disk buffers for the Rybbit and ClickHouse sinks. They survive a

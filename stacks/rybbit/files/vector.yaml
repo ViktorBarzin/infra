@@ -6,6 +6,15 @@
 
 data_dir: /var/lib/vector
 
+# Vector 0.61 does not interpolate environment variables unless started with
+# --dangerously-allow-env-var-interpolation; an unresolved variable reference
+# is sent as literal text. Secrets come from files instead: rybbit-secrets is
+# mounted at /etc/vector/secrets, one file per key.
+secret:
+  k8s:
+    type: directory
+    path: /etc/vector/secrets
+
 api:
   enabled: false
 
@@ -262,7 +271,7 @@ sinks:
     method: post
     auth:
       strategy: bearer
-      token: "${RYBBIT_INGEST_KEY}"
+      token: "SECRET[k8s.ingest_api_key]"
     encoding:
       codec: json
     framing:
@@ -284,7 +293,7 @@ sinks:
     method: post
     auth:
       strategy: bearer
-      token: "${RYBBIT_INGEST_KEY}"
+      token: "SECRET[k8s.ingest_api_key]"
     encoding:
       codec: json
     framing:
@@ -308,7 +317,7 @@ sinks:
     auth:
       strategy: basic
       user: default
-      password: "${CLICKHOUSE_PASSWORD}"
+      password: "SECRET[k8s.clickhouse_password]"
     date_time_best_effort: true
     skip_unknown_fields: true
     batch:
