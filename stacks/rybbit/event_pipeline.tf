@@ -152,8 +152,7 @@ resource "kubernetes_deployment" "event_pipeline" {
             }
           }
         }
-        # Disk buffers for the Rybbit and ClickHouse sinks. They survive a
-        # container restart, not a reschedule; events_raw is the record.
+        # Vector's data_dir (checkpoints); sink buffers are in memory.
         volume {
           name = "data"
           empty_dir {
