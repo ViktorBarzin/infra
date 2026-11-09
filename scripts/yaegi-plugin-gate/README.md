@@ -66,9 +66,12 @@ Three failure classes, and the output names which one you hit:
   `-want-body` or `-want-hijacker` did not hold.
 
 `analytics_inject_test.go` covers what the single probe cannot: gzip
-passthrough, the unwrapped writer on non-HTML requests, and a 1 s budget for
-5 MiB bodies, since loops in plugin code are interpreted and a byte-by-byte
-scan once took 12.6 s.
+passthrough, the unwrapped writer on non-HTML requests, config rejection,
+`excludeHosts` / `includeHosts`, the `X-Analytics: sdk` header and the opt-out
+meta table, and a 1 s budget for 5 MiB bodies, since loops in plugin code are
+interpreted and a byte-by-byte scan once took 12.6 s. The meta table is there
+because interpreted code diverged on it once: `case a, b:` in a tagless switch
+evaluated only `a` under Yaegi v0.16.1.
 
 `-config` is JSON overlaid onto whatever `CreateConfig()` returned, exactly as
 Traefik overlays a Middleware CRD's `spec.plugin.<key>` block. Pass anything
