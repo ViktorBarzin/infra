@@ -23,6 +23,23 @@ Every claim carries one of three labels:
 4. Top 5 by slots per effort: Vault audit to stdout (3, S); uptime-kuma, learning, aiostreams and ntfy to no volume (4, S); roundcube html to emptyDir and enigma keys into MySQL (2, S); glitchtip and health uploads, both empty, to no volume (2, S); meshcentral files merged into data (1, S).
 5. Folding separate DB servers in is poor value: immich-postgresql needs VectorChord and 3 GB of buffers the shared pool does not have, and merging the two ClickHouse instances frees 1 slot for M effort; the shared Postgres is at 127 of 200 connections, about 7 more apps at 10 connections each, while MySQL is at 13 of 80 [measured, inferred].
 
+## Progress
+
+- 2026-11-09, **aiostreams**: `/app/data` moved to NFS (`aiostreams-data-host`,
+  `/srv/nfs/aiostreams`), 169 MB copied so caches and `instance-id` carried over.
+  1 slot freed; the old PV is Released under Retain.
+- 2026-11-09, **Vault audit**: deferred by Viktor. The real scope is larger than
+  candidate 1 below says: 7 Loki security rules match
+  `container="audit-tail"` and need rewriting for the Vault container's own
+  log; the `vault-audit-rotate` CronJob, its two Prometheus alerts and
+  `docs/runbooks/vault-audit-device-full.md` go; and the StatefulSet's
+  volumeClaimTemplates are immutable, so it needs an orphan delete, a Helm
+  recreate and a pod-by-pod restart. Loki keeps logs 720h by default, so a
+  365-day `retention_stream` for the audit stream was chosen for when it is done.
+- **uptime-kuma**: in progress. Its MySQL password is not in Vault (the
+  `uptime_kuma_db_password` key does not exist in `secret/viktor`); Viktor chose
+  a rotating Vault static role before the volume goes.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
