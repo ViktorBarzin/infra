@@ -21,11 +21,11 @@ Every claim carries one of three labels:
 2. Few of the 60 are a database that could live elsewhere: 19 hold an embedded DB with no supported external option or a sensitive remainder, 18 are DB servers or core state, and 13 belong to apps that already use the shared Postgres or MySQL and keep the volume only for files [measured, source].
 3. **17 slots** can be freed for S or M effort without breaking the sensitive-data rule, 23 with the low-value moves; only 4 of them go to NFS, because most remainders are sensitive and `/srv/nfs` is not encrypted [inferred].
 4. Top 5 by slots per effort: Vault audit to stdout (3, S); uptime-kuma, learning, aiostreams and ntfy to no volume (4, S); roundcube html to emptyDir and enigma keys into MySQL (2, S); glitchtip and health uploads, both empty, to no volume (2, S); meshcentral files merged into data (1, S).
-5. Folding separate DB servers in is poor value: immich-postgresql needs VectorChord and 3 GB of buffers the shared pool does not have, and merging the two ClickHouse instances frees 1 slot for M effort; the shared Postgres is at 127 of 200 connections, so it can take about 6 more small apps, while MySQL is at 13 of 80 [measured].
+5. Folding separate DB servers in is poor value: immich-postgresql needs VectorChord and 3 GB of buffers the shared pool does not have, and merging the two ClickHouse instances frees 1 slot for M effort; the shared Postgres is at 127 of 200 connections, about 7 more apps at 10 connections each, while MySQL is at 13 of 80 [measured, inferred].
 
 ## Why there are so many
 
-- **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after repeated SQLite-on-NFS corruption (vaultwarden, the calibre `queue.db`), and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
+- **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
 - **HA replicas each need their own volume.** Vault has 3 data and 3 audit PVCs, Technitium 3, CNPG 2 [measured].
 - **One PVC per concern.** Roundcube has 2 in one pod, meshcentral 2 in one pod, trek 2, openclaw 3, vault 2 per pod [measured].
 - **Leftovers.** 23 PVCs had no running pod at scan time. They hold no slot now, but CronJob and scale-to-zero users attach and detach on every run, which is the operation that leaks slots (`docs/architecture/storage.md`, "Poisoned LUN slots") [source].
@@ -75,13 +75,13 @@ multi-stack change with a shared-DB restart. All content columns are
 | 26 | matrix | matrix-data-encrypted | enc | Tuwunel RocksDB, media inside it (exec failed, distroless) | No, RocksDB only | n/a | 0 | | | Keep |
 | 27 | meshcentral | meshcentral-data-encrypted | enc | NeDB `meshcentral*.db`, CA and server private keys, config, 152M | Yes, MariaDB, MySQL, Postgres | Private keys, agent builds | 0 | | | Keep; target of the merge below |
 | 28 | meshcentral | meshcentral-files-encrypted | enc | User file store, 296K | n/a | Files | 1 | S | Low | Merge into meshcentral-data by subPath |
-| 29 | monitoring | storage-loki-0 | lvm | Loki chunks and TSDB index, 50Gi (exec failed) | Object store only | n/a | 0 | | | Keep: no object store in the cluster |
+| 29 | monitoring | storage-loki-0 | lvm | Loki chunks and TSDB index, 50Gi (exec failed) | Object store; the filesystem store is unsupported in production and NFS gives "a poor experience" | WAL and index cache need a volume anyway | 0 | | | Keep |
 | 30 | monitoring | storage-prometheus-alertmanager-0 | enc | nflog and silences, 540K | n/a | Same | 0 | | | Keep: must survive an NFS outage |
 | 31 | monitoring | prometheus-prometheus-pushgateway | enc | `pushgateway.bin`, 220K | n/a | Same | 1 | S | Medium | Optional emptyDir, see notes |
 | 32 | monitoring | prometheus-data-proxmox | lvm | Prometheus TSDB, 28.6G | n/a | Same | 0 | | | Keep |
 | 33 | n8n | n8n-data-encrypted | enc | Already on shared PG (`DB_TYPE`, `DB_POSTGRESDB_HOST`); `config` file with the encryption key, community `nodes/`, event logs, 57M | Yes, in use | Encryption key, community nodes | 1 | S | Medium | Key into a Secret, rest emptyDir, see notes |
 | 34 | navidrome | navidrome-data-proxmox | lvm | `navidrome.db` + 3 older copies, 297M | No; Postgres PR #2821 open, unmerged | n/a | 0 | | | Keep; old copies can go |
-| 35 | nextcloud | nextcloud-data-encrypted | enc | Already on MySQL (`dbtype mysql`); user files, app tree; 5 stale SQLite files of 40-51 MB and a 167 MB `nextcloud.log.1` from January to April 2026, 13G | Yes, in use | User files | 0 | | | Keep: user files are sensitive |
+| 35 | nextcloud | nextcloud-data-encrypted | enc | Already on MySQL (`dbtype mysql`); user files, app tree; 4 stale SQLite files of 40-51 MB, a 27 MB SQL dump and a 167 MB `nextcloud.log.1`, all from January to April 2026, 13G | Yes, in use | User files | 0 | | | Keep: user files are sensitive |
 | 36 | novelapp | novelapp-data-proxmox | lvm | `novelapp.db` SQLite, 27M; third-party Next.js reading tracker `mghee/novelapp:v1.1.6` | No, Prisma SQLite only | n/a | 0 | | | Keep |
 | 37 | ntfy | ntfy-data-proxmox | lvm | `user.db` auth SQLite only, 144K; no message cache file | Yes, Postgres via `database-url` since v2.18.0 | Nothing | 1 | S | Low | Shared PG, delete PVC |
 | 38 | owntracks | owntracks-data-encrypted | enc | LMDB `ghash/data.mdb` + `lock.mdb`; location history in `rec/` | No; LMDB is always linked | Location history | 0 | | | Keep: LMDB, and location history is sensitive |
@@ -172,8 +172,8 @@ request" when it cannot log to at least one enabled device, and the docs say to
 Today there is one: `file/` with `file_path=/vault/audit/vault-audit.log`
 [measured: `vault audit list -detailed`]. A stdout device does not fill, which
 a PVC can [inferred]. Enabling the stdout device next to the file one, then
-disabling the file one, keeps an audit device live throughout [inferred]. Downtime: one rolling
-restart of the 3 pods and an `audit enable` change. A cheaper middle step is
+disabling the file one, keeps an audit device live throughout [inferred].
+Downtime: one rolling restart of the 3 pods to drop the sidecar and volume. A cheaper middle step is
 pointing `auditStorage` off and the audit file into the data PVC; that also
 frees 3 slots but lets a log fill the raft volume [inferred]. Not a DB move, but
 it is the largest single gain.
@@ -190,9 +190,11 @@ it is the largest single gain.
   So the data dir stays writable but can be emptyDir: the file is rebuilt at
   every start. Upstream says NFS is not supported (`README.md` L52) [source],
   and Uptime Kuma must survive an NFS outage anyway; emptyDir meets both
-  [inferred]. Docker-TLS certs, if ever used, would need a Secret. The MySQL role uses the dual-password
-  rotation, so the file needs no rewrite when the password changes
-  (`docs/runbooks/db-credential-rotation.md:41-43`) [source].
+  [inferred]. Docker-TLS certs, if ever used, would need a Secret. A password
+  change then needs only a pod restart; MySQL roles that Vault rotates keep the
+  previous password valid until the next rotation
+  (`docs/runbooks/db-credential-rotation.md:41-43`) [source]. Whether
+  `uptimekuma` is one of those rotated roles was not checked.
 - **learning** (first-party): config says "sqlite for local/dev+tests;
   postgres+asyncpg in the cluster" (`~/code/learning/backend/learn_api/config.py:13-14`)
   but the stack sets `DB_CONNECTION_STRING = sqlite+aiosqlite:////data/learn.db`
@@ -286,8 +288,8 @@ in the stack [measured]. The env var is authoritative; n8n writes it into
 `n8n@3.1.0`) [source]. Copy that exact key into Vault and the env first; then
 the dir can be emptyDir. Binary data defaults to `filesystem` under
 `~/.n8n/storage` (`packages/core/src/binary-data/binary-data.config.ts`
-L28-37) [source], which is empty here [measured]; set
-`N8N_DEFAULT_BINARY_DATA_MODE=database` to keep it so. Community packages in
+L28-37) [source]; its size here was not measured. Set
+`N8N_DEFAULT_BINARY_DATA_MODE=database` so nothing lands there. Community packages in
 `nodes/` would need reinstalling after each restart; whether n8n does that by
 itself was not verified. Risk: a wrong key makes every stored credential
 unreadable [inferred].
@@ -300,7 +302,7 @@ on the unencrypted class already [measured]. NFS is fine for a single writer
 that writes whole files [inferred]; a Postgres table is the ADR-0001 answer and
 costs a code change.
 
-### 10. ntfy: 1 slot, S to M
+### 10. ntfy: 1 slot, S
 
 Only the auth DB `user.db` is on disk; no message cache is configured
 [measured]. ntfy keeps users, ACLs, message cache and web push in Postgres when
@@ -312,7 +314,7 @@ not configured [measured]. Users are few; recreate them with `ntfy user add`
 rather than port the SQLite rows [inferred]. MySQL is not supported, so this
 costs a Postgres pool.
 
-### 11. Possible, low value
+### 11. Possible, low value, or ruled out
 
 - **headscale**: v0.29.7's `config-example.yaml` L195-197 says "using Postgres
   is highly discouraged as it is only supported for legacy reasons. All new
@@ -322,8 +324,8 @@ costs a Postgres pool.
   L1125-1165) [source]. The DB is the blocker, so keep it on block.
 - **vaultwarden**: supports `mysql://` and `postgresql://` in `DATABASE_URL`
   (`.env.template` L57-66 at 1.37.5); the wiki calls the SQLite-to-server
-  migration itself "unsupported" [source]. MySQL fits: 13 of 80 connections and dual-password rotation,
-  so no restart window [measured, source]. The DB move alone frees no slot: 2
+  migration itself "unsupported" [source]. MySQL fits: 13 of 80 connections
+  and dual-password rotation, so no restart window [measured, source]. The DB move alone frees no slot: 2
   attachments and `rsa_key.*` remain. Attachments are encrypted by the
   Bitwarden client before upload, so on NFS they are ciphertext, but the
   storage rule names passwords as sensitive (`docs/agents/storage-backup.md:7`)
@@ -360,17 +362,26 @@ costs a Postgres pool.
 
 - **broker-sync** (first-party): 7 CronJobs mount the RWO volume, 4 of them
   daily and 2 suspended, so it attaches and detaches about 4 times a day
-  [measured: `kubectl get cronjob -n broker-sync`]. Its SQLite dedup and FX cache are a
-  natural fit for the existing `pg-wealthfolio-sync` database or a new one
+  [measured: `kubectl get cronjob -n broker-sync`]. Its SQLite dedup and FX
+  cache are a natural fit for the existing `pg-wealthfolio-sync` database or a new one
   [inferred]. This removes churn, not a standing slot.
 - **storage-tempo-0**: no owner found. It and its Released twin are candidates
   for deletion after Viktor confirms Tempo is gone.
 - **Rollback copies** `pg-cluster-1` (35Gi) and `data-mysql-standalone-0`
-  (30Gi): no slots, 65 GiB provisioned. Their windows opened 2026-10-15 and
-  2026-10-19.
+  (30Gi): no slots, 65 GiB provisioned. Both cutovers were on 2026-10-15, and
+  both copies have had no pod since 2026-10-19.
 - **trek**: data and uploads in one pod, a subPath merge halves its attach work.
-- **privatebin, stirling-pdf**: Sablier apps whose embedded store could go to
-  the shared PG (see sources), so a wake attaches nothing.
+- **privatebin**: a Sablier app; its `Database` model on MySQL or Postgres is
+  stable and tested with both, and keeps the traffic limiter and salt in a
+  `config` table (`cfg/conf.sample.php` L212-234, `lib/Data/Database.php`
+  L368-411 at 2.1.1) [source]. The PVC then goes, so a wake attaches nothing.
+- **stirling-pdf**: external Postgres is documented as an Enterprise feature
+  (`settings.yml.template` L220-228 at 3.3.0, docs.stirlingpdf.com) [source].
+  Keep the H2 file on block.
+- **grampsweb**: if revived, the tree via the SharedPostgreSQL addon,
+  `USER_DB_URI` and `SEARCH_INDEX_DB_URI` can all point at Postgres
+  (grampsweb.org install_setup/postgres; gramps-web-api `config.py` L43)
+  [source], leaving only caches and media.
 - **Dormant for months**: grampsweb (since 2026-03-14), actualbudget-emo (since
   2026-05-13), instagram-poster (since 2026-06-24), openclaw x3 and repowise
   (since 2026-09-27), paperless-ai (since 2026-10-12). Each is a decision for
@@ -398,8 +409,8 @@ renovate caches [source].
 - **Vault is circular.** DB credentials come from Vault, so Vault's storage
   cannot be the shared PG [inferred].
 - **NFS is unencrypted** and is unsafe for embedded DBs; every past corruption
-  here was SQLite on NFS (memory #205, #478) [source]. 49 of the 83 PVCs are on
-  the encrypted class [measured].
+  here was SQLite on NFS (memory #205, #478) [source]. 55 of the 83 PVCs are
+  encrypted, 49 on `enc` and 6 on `sas` [measured].
 
 ## Mismatches between docs and the live cluster
 
@@ -409,8 +420,8 @@ renovate caches [source].
   `proxmox-lvm-encrypted-sas` [measured].
 - `docs/architecture/databases.md:52` says `pg-cluster-v18` is "primary + 2
   replicas". Live: 2 instances, matching `docs/agents/databases.md` [measured].
-- Nextcloud's data dir still holds 5 SQLite files from before the MySQL move
-  and a 167 MB rotated log, about 380 MB in all [measured].
+- Nextcloud's data dir still holds 4 SQLite files from before the MySQL move,
+  a 27 MB SQL dump and a 167 MB rotated log, about 370 MB in all [measured].
 
 ## Open questions
 
@@ -422,6 +433,10 @@ renovate caches [source].
 - Are the PG16 and MySQL 8.4 rollback copies still wanted?
 - The renovate cache attaches 28 times a day. Is the cache worth that churn
   against emptyDir and a cold run? Not measured here.
+- How long does Loki keep `job=vault-audit` lines? That becomes the audit
+  retention if Vault audits to stdout.
+- Does Roundcube's enigma sync an existing homedir into the `filestore` table
+  on first start, or must keys be re-imported?
 - headscale, matrix, loki and wa-bot images have no shell, so their volumes were
   not listed [measured: exec failed].
 
@@ -438,4 +453,43 @@ First-party apps among the 83: learning, health, tripit, wa-bot,
 broker-sync, instagram-poster, android-emulator, chrome-service browser, and
 plotting-book (Anca's).
 
-Upstream: cited inline in each candidate section, with file and line at the version tag.
+Upstream, each at the version Terraform runs, read on GitHub at the tag or in
+the official docs:
+
+| App, version | Where |
+|---|---|
+| Vaultwarden 1.37.5 | `.env.template` L57-66; `src/config.rs` L521-535, L1701-1703 |
+| Headscale v0.29.7 | `config-example.yaml` L195-197; `hscontrol/app.go` L1125-1165 |
+| MeshCentral 1.3.1 | `meshcentral-config-schema.json` L193-224; `meshcentral.js` L209-215, L1429 |
+| ntfy v2.37.2 | `docs/config.md` L424-436; `docs/releases.md` L631-642 |
+| FreshRSS 1.30.4 | `README.md` L70; `lib/Minz/ModelPdo.php` L73 |
+| Prowlarr 2.7.0 | `src/NzbDrone.Core/Datastore/PostgresOptions.cs` L7-23; Servarr wiki `prowlarr/postgres-setup.md`, `prowlarr/faq.md` L310 |
+| Listenarr 0.2.47 | `listenarr.api/Extensions/ServiceRegistrationExtensions.cs` L215-230 |
+| Uptime Kuma 2.5.9 | `server/setup-database.js` L14-31, L98-110, L182; `README.md` L52 |
+| n8n 3.1.0 | `packages/core/src/instance-settings/instance-settings.ts` L53-61, L332-359; `packages/core/src/binary-data/binary-data.config.ts` |
+| Roundcube 1.7.6 image | roundcubemail-docker `apache/docker-entrypoint.sh` L38-45, L205-207; `plugins/enigma/config.inc.php.dist` L41-46 |
+| Forgejo 17.0.1 | `custom/conf/app.example.ini` L1482-1581; forgejo.org/docs/v17.0/admin/installation/docker/ |
+| Immich v3.3.6 | `docs/docs/administration/postgres-standalone.md`; `docs/docs/install/requirements.md` L39 |
+| Audiobookshelf 2.37.2 | `server/Database.js` L177, L228-229 |
+| Navidrome 0.64.2 | `db/db.go` L12, L27; PR #2821 |
+| Calibre-Web-Automated v4.0.8 | `cps/ub.py` L1291-1305; `scripts/cwa_db.py`; `README.md` L89-112, `NETWORK_SHARE_MODE` |
+| Frigate 0.18.2 | `frigate/app.py` L260-272; `docs/docs/configuration/advanced/system.md` L135-153 |
+| Actual 26.11.0 | `packages/sync-server/src/db.js` L1; `account-db.js` L19 |
+| Wealthfolio 3.12.0 | `crates/storage-sqlite`; no Postgres path in the tree |
+| Tuwunel v1.9.4 | `src/database/Cargo.toml` L64; `tuwunel-example.toml` L40-43 |
+| OwnTracks Recorder 1.0.4 | `Makefile` L22-23; `doc/STORE.md` |
+| TorrServer MatriX.150 | `server/settings/settings.go` L91-93, L154-162, L309 |
+| PrivateBin 2.1.1 | `cfg/conf.sample.php` L197-234; `doc/Installation.md` L216-217 |
+| Stirling-PDF 3.3.0 | `settings.yml.template` L220-228; `DatabaseConfig.java` L70-73 |
+| Gramps Web 26.11.2 | grampsweb.org/install_setup/postgres/; gramps-web-api `config.py` L43-89 |
+| TREK 5.1.1 | `server/src/db/connection.ts` L1; `.env.example` L55 |
+| Open DroneLog 3.3.2 | `src-tauri/Cargo.toml` L42-43; `src-tauri/src/database.rs` L51-68 |
+| AIOStreams v2.37.0 | `.env.sample` L46-55 |
+| Paperless-ngx 3.4.2 | `src/paperless/settings/__init__.py` L86-112, L742; `docs/setup.md` L155-160 |
+| Loki 3.7 | `docs/sources/operations/storage/filesystem.md`; `tsdb.md` L9, L47-48 |
+| GlitchTip 6.2.6, Linkwarden 2.16.3 | glitchtip-backend `glitchtip/settings.py` L27-39; linkwarden `.env.sample` L7-15, L84-90 |
+| novelapp 1.1.6 | image `package.json` and Prisma schema, `provider = "sqlite"`; no public repo found |
+| Vault | developer.hashicorp.com/vault/docs/audit/file and /vault/docs/audit |
+
+The Vaultwarden and Servarr wiki pages and the Roundcube image repo were read on
+master, not at a tag; the image Dockerfile pins 1.7.6.
