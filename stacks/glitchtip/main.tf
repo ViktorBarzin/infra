@@ -20,7 +20,7 @@ variable "postgresql_host" { type = string }
 locals {
   namespace = "glitchtip"
   host      = "glitchtip.viktorbarzin.me"
-  image     = "docker.io/glitchtip/glitchtip:6.2.6"
+  image     = "docker.io/glitchtip/glitchtip:7.0.0"
 
   oidc_client_id   = "glitchtip"
   oidc_provider_id = "authentik"
