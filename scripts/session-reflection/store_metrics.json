@@ -1,0 +1,101 @@
+{
+  "_comment": "Metrics `homelab reflect` reads from the claude-sessions ClickHouse store (ADR-0039). Each query is bound to the run's window ({start}, {end}) and user ({user}). scalar = one row with a `value` column; labelled = rows of `label`, `value`. Comparability rule as for patterns.json: changing what a key counts makes it a new key. Cost estimates use the per-request prices fitted on 2026-11-08 from Loki api_request events for claude-opus-5-5 (cache write $15.447/M); they are estimates, not billing.",
+  "metrics": [
+    {
+      "key": "sessions",
+      "kind": "scalar",
+      "description": "sessions with any activity in the window",
+      "sql": "SELECT uniqExact(session_id) AS value FROM claude.lines WHERE os_user = {user} AND ts >= {start} AND ts < {end}"
+    },
+    {
+      "key": "human_prompts",
+      "kind": "scalar",
+      "description": "prompts a person typed (main thread, not tool results or injected text)",
+      "sql": "SELECT count() AS value FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND role = 'user' AND kind = 'text' AND agent_id = '' AND NOT is_tool_result_line AND prompt_origin IN ('human', '') AND NOT startsWith(text, '<')"
+    },
+    {
+      "key": "spend_usd",
+      "kind": "scalar",
+      "description": "Claude Code's own cost for sessions whose process started in the window (lags for sessions still running)",
+      "sql": "SELECT round(sum(cost_usd), 2) AS value FROM claude.model_costs WHERE os_user = {user} AND started >= {start} AND started < {end}"
+    },
+    {
+      "key": "api_requests",
+      "kind": "scalar",
+      "description": "API requests, deduplicated by requestId, subagents included",
+      "sql": "SELECT count() AS value FROM claude.requests WHERE os_user = {user} AND ts >= {start} AND ts < {end}"
+    },
+    {
+      "key": "output_tokens_m",
+      "kind": "scalar",
+      "description": "output tokens in millions, per request (never summed from lines)",
+      "sql": "SELECT round(sum(output_tokens) / 1e6, 2) AS value FROM claude.requests WHERE os_user = {user} AND ts >= {start} AND ts < {end}"
+    },
+    {
+      "key": "cache_rewrite_usd_est",
+      "kind": "scalar",
+      "description": "estimated cost of re-writing over 100k tokens of context to cache after an idle gap over 1 h (main thread, Opus 5.5, $15.447/M)",
+      "sql": "SELECT round(sumIf(cw, cw >= 100e3 AND gap_s > 3600) * 15.447 / 1e6, 2) AS value FROM (SELECT cache_creation_tokens AS cw, dateDiff('second', lagInFrame(ts, 1, ts) OVER (PARTITION BY session_id ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), ts) AS gap_s FROM claude.requests WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND agent_id = '' AND model = 'claude-opus-5-5')"
+    },
+    {
+      "key": "tool_calls",
+      "kind": "scalar",
+      "description": "tool calls, subagents included",
+      "sql": "SELECT count() AS value FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_use'"
+    },
+    {
+      "key": "tool_failures",
+      "kind": "scalar",
+      "description": "tool results marked is_error (includes grep finding nothing)",
+      "sql": "SELECT count() AS value FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_result' AND is_error"
+    },
+    {
+      "key": "tool_choice",
+      "kind": "labelled",
+      "description": "Bash commands that reach past our tooling, beside the homelab verb meant to replace them",
+      "sql": "SELECT t.1 AS label, t.2 AS value FROM (SELECT countIf(match(c, 'kubectl (apply|edit|patch|set) ')) AS kubectl_mutate, countIf(match(c, '(^|[;&| ])sleep [0-9]')) AS sleep, countIf(match(c, 'git (-c [^ ]+ )*push [^|;&]*HEAD:master')) AS manual_push, countIf(match(c, 'homelab work land')) AS work_land, countIf(match(c, 'git (-C [^ ]+ )?worktree add')) AS manual_worktree, countIf(match(c, 'homelab work start')) AS work_start, countIf(match(c, '(^|[;&| ])kubectl logs')) AS kubectl_logs, countIf(match(c, '(^|[;&| ])journalctl')) AS journalctl, countIf(match(c, 'homelab logs query')) AS homelab_logs, countIf(match(c, 'homelab (deploy wait|ci watch)')) AS condition_waits FROM (SELECT JSONExtractString(text, 'command') AS c FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_use' AND tool_name = 'Bash')) ARRAY JOIN [('kubectl_mutate', toFloat64(kubectl_mutate)), ('sleep', toFloat64(sleep)), ('manual_push', toFloat64(manual_push)), ('work_land', toFloat64(work_land)), ('manual_worktree', toFloat64(manual_worktree)), ('work_start', toFloat64(work_start)), ('kubectl_logs', toFloat64(kubectl_logs)), ('journalctl', toFloat64(journalctl)), ('homelab_logs', toFloat64(homelab_logs)), ('condition_waits', toFloat64(condition_waits))] AS t"
+    },
+    {
+      "key": "blocked",
+      "kind": "labelled",
+      "description": "tool calls refused by a guard or failing for a known setup reason",
+      "sql": "SELECT t.1 AS label, t.2 AS value FROM (SELECT countIf(position(text, 'scan-guard') > 0) AS scan_guard, countIf(position(text, 'rm-guard') > 0 OR position(text, 'Dangerous rm') > 0) AS rm_guard, countIf(position(text, 'zsh-guard') > 0) AS zsh_guard, countIf(position(text, 'is isolated in the worktree') > 0) AS worktree_isolation, countIf(position(text, 'Unknown skill') > 0) AS unknown_skill, countIf(positionCaseInsensitive(text, 'permission denied') > 0) AS permission_denied FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_result' AND is_error) ARRAY JOIN [('scan_guard', toFloat64(scan_guard)), ('rm_guard', toFloat64(rm_guard)), ('zsh_guard', toFloat64(zsh_guard)), ('worktree_isolation', toFloat64(worktree_isolation)), ('unknown_skill', toFloat64(unknown_skill)), ('permission_denied', toFloat64(permission_denied))] AS t"
+    },
+    {
+      "key": "questions",
+      "kind": "labelled",
+      "description": "AskUserQuestion: how many were answered, how often the recommended option won, and how long sessions waited",
+      "sql": "SELECT t.1 AS label, t.2 AS value FROM (SELECT count() AS answered, round(countIf(rec) / greatest(count(), 1) * 100, 1) AS recommended_pct, round(sum(w) / 3600, 1) AS blocked_hours, countIf(w > 1800) AS waits_over_30m FROM (SELECT dateDiff('second', u.ts, r.ts) AS w, position(r.text, '(Recommended)') > 0 AS rec FROM claude.blocks AS r INNER JOIN (SELECT tool_use_id, ts FROM claude.blocks WHERE os_user = {user} AND kind = 'tool_use' AND tool_name = 'AskUserQuestion') AS u USING (tool_use_id) WHERE r.os_user = {user} AND r.ts >= {start} AND r.ts < {end} AND r.kind = 'tool_result' AND position(r.text, 'have been answered') > 0)) ARRAY JOIN [('answered', toFloat64(answered)), ('recommended_pct', toFloat64(recommended_pct)), ('blocked_hours', toFloat64(blocked_hours)), ('waits_over_30m', toFloat64(waits_over_30m))] AS t"
+    },
+    {
+      "key": "friction",
+      "kind": "labelled",
+      "description": "signs a person had to step in: interrupts, correction-like prompts, status check-ins",
+      "sql": "SELECT t.1 AS label, t.2 AS value FROM (SELECT countIf(startsWith(text, '[Request interrupted')) AS interrupts, countIf(match(lower(text), '^[[:space:]]*(no|nope|stop|wait|wrong|why did|why are|why is|you didn.t|you did not|you forgot|you missed|still broken|still not|it.s still|that.s wrong|that.s not)[^a-z]')) AS correction_like, countIf(match(lower(text), '(status[?]|any update|haven.t seen|no progress)')) AS status_asks FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND role = 'user' AND kind = 'text' AND agent_id = '' AND NOT is_tool_result_line) ARRAY JOIN [('interrupts', toFloat64(interrupts)), ('correction_like', toFloat64(correction_like)), ('status_asks', toFloat64(status_asks))] AS t"
+    },
+    {
+      "key": "grilling",
+      "kind": "labelled",
+      "description": "grilling sessions in the window, questions answered in them, and answers that overrode the recommendation",
+      "sql": "WITH g AS (SELECT DISTINCT session_id FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_use' AND tool_name = 'Skill' AND JSONExtractString(text, 'skill') IN ('grilling', 'grill-me', 'grill-with-docs')) SELECT t.1 AS label, t.2 AS value FROM (SELECT (SELECT count() FROM g) AS sessions, count() AS questions, countIf(position(r.text, '(Recommended)') = 0) AS overrides FROM claude.blocks AS r INNER JOIN (SELECT tool_use_id FROM claude.blocks WHERE os_user = {user} AND kind = 'tool_use' AND tool_name = 'AskUserQuestion') AS u USING (tool_use_id) WHERE r.os_user = {user} AND r.ts >= {start} AND r.ts < {end} AND r.kind = 'tool_result' AND position(r.text, 'have been answered') > 0 AND r.session_id IN g) ARRAY JOIN [('sessions', toFloat64(sessions)), ('questions', toFloat64(questions)), ('overrides', toFloat64(overrides))] AS t"
+    },
+    {
+      "key": "spend_by_model",
+      "kind": "labelled",
+      "description": "Claude Code's own cost per model, sessions started in the window",
+      "sql": "SELECT model AS label, round(sum(cost_usd), 2) AS value FROM claude.model_costs WHERE os_user = {user} AND started >= {start} AND started < {end} GROUP BY model ORDER BY value DESC LIMIT 10"
+    },
+    {
+      "key": "failures_by_tool",
+      "kind": "labelled",
+      "description": "failed tool results per tool, top 10",
+      "sql": "SELECT u.tool_name AS label, count() AS value FROM claude.blocks AS r INNER JOIN (SELECT tool_use_id, tool_name FROM claude.blocks WHERE os_user = {user} AND kind = 'tool_use') AS u USING (tool_use_id) WHERE r.os_user = {user} AND r.ts >= {start} AND r.ts < {end} AND r.kind = 'tool_result' AND r.is_error GROUP BY label ORDER BY value DESC LIMIT 10"
+    },
+    {
+      "key": "skill_uses",
+      "kind": "labelled",
+      "description": "Skill tool invocations per skill",
+      "sql": "SELECT JSONExtractString(text, 'skill') AS label, count() AS value FROM claude.blocks WHERE os_user = {user} AND ts >= {start} AND ts < {end} AND kind = 'tool_use' AND tool_name = 'Skill' GROUP BY label ORDER BY value DESC LIMIT 15"
+    }
+  ]
+}

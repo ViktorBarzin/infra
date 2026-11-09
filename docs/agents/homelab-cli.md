@@ -29,3 +29,8 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 ## Browser hubs (2026-11-08)
 
 `homelab browser run|open|ls` read `~/.config/chrome-hub/hub.json` (or `$HOMELAB_CHROME_HUB_CONFIG`). When it exists they call the pool broker at its `broker_url` over HTTPS with the hub's `read_token` as a bearer, instead of port-forwarding `svc/chrome-fleet`; the token picks the hub that seeds the worker and the namespace the worker runs in. `--shared-context` drives the caller's own hub: `svc/chrome-service` in `chrome-service` for Viktor, `svc/chrome-hub` in the hub's namespace for anyone else (`chrome-emo` for emo). Without hub.json nothing changes. A 401 means the token is wrong or rotated (re-run provisioning); an unreachable host or a 403 means the call did not come from the LAN. Details: `cli/README.md`, `docs/architecture/chrome-service.md`.
+
+## Session reflection from the store (v0.34.4, 2026-11-09)
+
+`homelab reflect` now measures the last 7 days (`--days N`) from the claude-sessions store in about 15 seconds: spend, `tool_choice` (`kubectl` edits, `sleep`, manual pushes beside `work land`, `homelab logs query`), guard blocks, question waits, friction and grilling overrides. `homelab reflect diff` compares the last two runs, so the way to check whether a rule or skill change helped is: run, change, use it for a few days, run, diff. The original transcript detectors are opt-in with `--with-transcripts`. Details: `scripts/session-reflection/README.md`.
+
