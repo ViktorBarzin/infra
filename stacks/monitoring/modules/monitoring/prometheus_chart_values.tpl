@@ -553,7 +553,9 @@ server:
   extraFlags:
     - "web.enable-admin-api"
     - "web.enable-lifecycle"
-    - "storage.tsdb.retention.size=180GB"
+    # 400GB of the 433Gi volume: 5 years at the 2026-11 rate (~160 MB/day)
+    # is ~290 GB, so this cap only bites if series keep growing fast.
+    - "storage.tsdb.retention.size=400GB"
     - "storage.tsdb.wal-compression"
     # Accept remote-write from the Loki ruler (share-link recording rules in
     # loki.tf). In-cluster senders only — the service isn't exposed for write
@@ -571,7 +573,12 @@ server:
     # enabled: false
     existingClaim: prometheus-data-proxmox
     # storageClass: rook-cephfs
-  retention: "26w"  # 6 months — reduces compaction writes vs 52w. Size limit (180GB) is the effective cap anyway.
+  # 5 years (Viktor, 2026-11-09): keep the tv and cluster metrics long term
+  # in Prometheus itself rather than a separate store. Was 26w; the longer
+  # retention adds one compaction level (486h blocks), about one more
+  # rewrite of each sample, ~160 MB/day on sdc. The backup below copies only
+  # the last 26 weeks, so the NAS copy stays near today's size.
+  retention: "5y"
   # NOTE: Memory must be >= 4Gi. The WAL tmpfs (2Gi, medium: Memory) shares
   # the container's cgroup limit. At 3Gi, Prometheus OOM-kills during WAL replay.
   resources:
@@ -645,12 +652,29 @@ server:
             fi
             echo "$(date) Snapshot created: $snap_name"
 
-            # Tar snapshot to NFS backup volume
+            # Tar only the blocks that hold data from the last 26 weeks, so the
+            # NAS copy (and its nightly mirror to /mnt/backup) stays ~13 GB
+            # while Prometheus keeps 5 years. Older blocks live only on the
+            # Prometheus volume (Viktor, 2026-11-09).
+            cutoff_ms=$(( ($(date +%s) - 26 * 7 * 86400) * 1000 ))
+            recent=""
+            for meta in /data/snapshots/"$snap_name"/*/meta.json; do
+              [ -f "$meta" ] || continue
+              max_ms=$(grep -o '"maxTime":[0-9]*' "$meta" | head -1 | cut -d: -f2)
+              if [ -n "$max_ms" ] && [ "$max_ms" -ge "$cutoff_ms" ]; then
+                recent="$recent $snap_name/$(basename "$(dirname "$meta")")"
+              fi
+            done
             backup_file="prometheus_$(date +%Y%m%d_%H%M).tar.gz"
-            tar cf - -C /data/snapshots/ "$snap_name" | gzip -9 > "/backup/$backup_file"
-            echo "$(date) Backup written: $backup_file ($(du -h /backup/$backup_file | cut -f1))"
+            if [ -n "$recent" ]; then
+              tar cf - -C /data/snapshots/ $recent | gzip -9 > "/backup/$backup_file"
+              echo "$(date) Backup written: $backup_file ($(du -h /backup/$backup_file | cut -f1))"
+            else
+              echo "$(date) ERROR: no blocks newer than 26 weeks in $snap_name"
+            fi
 
-            # Clean up snapshot from data dir
+            # Clean up the snapshot from the data dir whatever happened above:
+            # a run that stopped before this line left 52.6 GB behind in April.
             rm -rf "/data/snapshots/$snap_name"
 
             # Rotate: keep 2 most recent backups
