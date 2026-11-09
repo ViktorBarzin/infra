@@ -281,9 +281,12 @@ sinks:
     request:
       headers:
         content-type: application/json
+    # Memory buffer: a disk buffer held small writes without the sink ever
+    # reading them (seen 2026-11-09 on 0.61.0). events_raw is the durable
+    # record; events lost in a restart can be replayed from it.
     buffer:
-      type: disk
-      max_size: 268435488
+      type: memory
+      max_events: 10000
       when_full: block
 
   rybbit_identify:
@@ -303,9 +306,12 @@ sinks:
     request:
       headers:
         content-type: application/json
+    # Memory buffer: a disk buffer held small writes without the sink ever
+    # reading them (seen 2026-11-09 on 0.61.0). events_raw is the durable
+    # record; events lost in a restart can be replayed from it.
     buffer:
-      type: disk
-      max_size: 268435488
+      type: memory
+      max_events: 10000
       when_full: block
 
   raw_events:
@@ -322,9 +328,12 @@ sinks:
     skip_unknown_fields: true
     batch:
       timeout_secs: 5
+    # Memory buffer: a disk buffer held small writes without the sink ever
+    # reading them (seen 2026-11-09 on 0.61.0). events_raw is the durable
+    # record; events lost in a restart can be replayed from it.
     buffer:
-      type: disk
-      max_size: 268435488
+      type: memory
+      max_events: 10000
       when_full: block
 
   rejected_loki:
