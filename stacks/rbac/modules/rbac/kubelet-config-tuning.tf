@@ -36,7 +36,7 @@
 locals {
   kubelet_tune = {
     serializeImagePulls             = true
-    imageMaximumGCAge               = "168h"
+    imageMaximumGCAge               = "168h0m0s"
     memorySwap                      = { swapBehavior = "LimitedSwap" }
     shutdownGracePeriod             = "0s"
     shutdownGracePeriodCriticalPods = "0s"

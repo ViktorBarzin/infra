@@ -312,7 +312,10 @@
     # stage="" means GA and locked on. GA gates are hidden from `kubelet --help`,
     # so reading --help alone shows the gate as missing — that is a trap, the
     # metric is the instrument.
-    kubelet_image_maximum_gc_age: 168h
+    # Written as kubeadm normalises it (168h0m0s): kubeadm rewrites config.yaml on
+    # every upgrade, and the drift check compares text, so plain 168h read as drift
+    # on all six nodes after the 2026-11-01 v1.35.10 upgrade.
+    kubelet_image_maximum_gc_age: 168h0m0s
 
     # Verbatim from k8s-node-post-join-tune.sh lines 81-90, which this replaces.
     # Its own comment, kept because the numbers are drill output rather than
@@ -711,8 +714,8 @@
           # after kubelet defaulting is 2m0s. If a node ever carries an
           # imageMinimumGCAge expressed in hours, this stops the run rather than
           # writing a config that kubelet would refuse at its next boot.
-          - kubelet_image_maximum_gc_age is match('^[0-9]+h$')
-          - (kubelet_image_maximum_gc_age[:-1] | int) >= 1
+          - kubelet_image_maximum_gc_age is match('^[0-9]+h0m0s$')
+          - (kubelet_image_maximum_gc_age.split('h')[0] | int) >= 1
           - kubelet_config_current.imageMinimumGCAge | default('0s') is match('^[0-9]+(s|m([0-9]+s)?)$')
         fail_msg: >-
           imageMaximumGCAge={{ kubelet_image_maximum_gc_age }} against
