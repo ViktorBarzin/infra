@@ -6299,35 +6299,34 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Node {{ $labels.instance }}: NFS RPC retransmission rate {{ $value | printf \"%.1f\" }}/s — NFS server (192.168.1.127) may be degraded or unreachable"
-          # Proxmox CSI per-node LUN saturation. The plugin enforces
-          # csi.proxmox.sinextra.dev/max-volume-attachments=28 (set on every k8s-node*
-          # by stacks/proxmox-csi). QEMU's virtio-scsi-pci hard cap is 30 LUNs.
-          # When K8s-side VolumeAttachments approach the cap, new PVCs fail to
-          # attach with "no free lun found" — vaultwarden + 18 pods stuck 2026-05-26.
-          - alert: ProxmoxCSILunUsageHigh
-            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 24
-            for: 10m
+          # Proxmox CSI block-volume capacity (since 2026-11-09). Every worker
+          # advertises max-volume-attachments=20 (stacks/proxmox-csi,
+          # local.max_volume_attachments) and the scheduler enforces it, so a
+          # full node is safe: pods go to other nodes. What matters is cluster
+          # headroom with one node down, the case of a kured drain or a lost VM.
+          # The 20 below must match that local. Preemption cannot free a slot
+          # (kube-scheduler counts live VolumeAttachments), so headroom is the
+          # only guard. Memory for one node down is ClusterCannotTolerateNonGpuNodeLoss
+          # in the capacity group. Design notes:
+          # docs/plans/2026-11-09-volume-aware-scheduling-design.md.
+          - alert: BlockVolumeHeadroomLow
+            expr: |
+              count(kube_volumeattachment_info{attacher="csi.proxmox.sinextra.dev"})
+                > 0.8 * 20 * (count(kube_node_info{node=~"k8s-node.*"}) - 1)
+            for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.node }}: {{ $value }}/28 CSI volumes attached (>= 85% of cap)"
-              description: "Approaching the proxmox-csi-plugin per-node cap of 28 attachments. Workloads scheduled to this node with new PVCs may fail to attach. Consider rebalancing or migrating PVCs to other nodes."
-          - alert: ProxmoxCSILunUsageCritical
-            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 27
-            for: 3m
+              summary: "{{ $value }} block volumes attached: above 80% of what the workers hold with one node down"
+              description: "Each worker takes 20 proxmox-csi volumes. Past this line a node drain or loss can leave volume pods Pending with 'exceed max volume count'. Free slots by moving databases to the shared Postgres or MySQL or plain files to NFS (docs/research/2026-11-09-block-volume-db-consolidation.md), or add a worker."
+          - alert: NodeBlockVolumesOverCap
+            expr: count by (node) (kube_volumeattachment_info{attacher="csi.proxmox.sinextra.dev"}) > 20
+            for: 15m
             labels:
-              severity: critical
+              severity: warning
             annotations:
-              summary: "{{ $labels.node }}: {{ $value }}/28 CSI volumes attached — 1 slot left"
-              description: "Only 1 LUN slot remains before the proxmox-csi cap. Next PVC attach to this node will fail with 'no free lun found'."
-          - alert: ProxmoxCSILunCapReached
-            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 28
-            for: 1m
-            labels:
-              severity: critical
-            annotations:
-              summary: "{{ $labels.node }}: at proxmox-csi LUN cap (28/28) — attaches WILL fail"
-              description: "Pods needing new PVC attachments on {{ $labels.node }} will fail with 'no free lun found'. Detach unused volumes from this node's Proxmox VM config, or migrate PVCs to a less-loaded node."
+              summary: "{{ $labels.node }}: {{ $value }} block volumes attached, above the cap of 20"
+              description: "The scheduler should never place more than 20. Above it means ghost attachments or pods placed before the cap changed. Compare 'qm config' with VolumeAttachments (healthcheck #47) and move a volume pod off the node."
       - name: "Application Health"
         rules:
           - alert: ClickHouseDown

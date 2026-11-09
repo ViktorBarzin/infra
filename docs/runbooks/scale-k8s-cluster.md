@@ -20,7 +20,7 @@ Capacity envelope (5 workers): **~145 block-PVC slots**, ~160 GiB memory, ~80 vC
 
 The cluster has 6 capacity dimensions. The one that bites first depends on workload shape; check each before adding/removing nodes.
 
-1. **Per-VM block-PVC ceiling = 29** — hardcoded by `sergelogvinov/proxmox-csi-plugin` at `pkg/csi/utils.go:662` in v0.22.0 (`for lun = 1; lun < 30; lun++`). Symptom: pods stuck `ContainerCreating` with `FailedAttachVolume … no free lun found`. `CSINode.allocatable.count` advertises `28`/node. Switching `scsihw` to `virtio-scsi-single` does NOT raise this — it's a plugin constraint, not a Proxmox/QEMU one. See `docs/architecture/storage.md` § "Per-VM SCSI-LUN cap".
+1. **Per-VM block-PVC ceiling = 29** — hardcoded by `sergelogvinov/proxmox-csi-plugin` at `pkg/csi/utils.go:662` in v0.22.0 (`for lun = 1; lun < 30; lun++`). Symptom: pods stuck `ContainerCreating` with `FailedAttachVolume … no free lun found`. `CSINode.allocatable.count` advertises `20`/node since 2026-11-09 (was 28; set by `local.max_volume_attachments` in `stacks/proxmox-csi/modules/proxmox-csi/main.tf`). Switching `scsihw` to `virtio-scsi-single` does NOT raise this — it's a plugin constraint, not a Proxmox/QEMU one. See `docs/architecture/storage.md` § "Per-VM SCSI-LUN cap".
 
 2. **Memory commitment** — node1 has historically run hot (was 117% of limits before the 2026-06 memory bump to 48 GiB). Treat memory as the next-binding constraint after PVC slots, especially since limits-vs-requests divergence isn't enforced by the scheduler.
 
@@ -38,10 +38,10 @@ Add a worker when **any** of these is true for ≥7 days:
 
 | Trigger | Threshold | How to observe |
 |---------|-----------|----------------|
-| PVC slots per node | `max(per-node VA count) ≥ 25` (~86% of 29 cap) | `kubectl get volumeattachment -o json \| jq -r '.items[].spec.nodeName' \| sort \| uniq -c` |
-| Cluster memory requests | `> 90%` | `kubectl describe nodes \| grep -A4 "Allocated resources"` or Goldilocks dashboard |
+| PVC slots, cluster | attached block volumes > 80% of `20 × (workers − 1)`, alert `BlockVolumeHeadroomLow` (since 2026-11-09; the per-node cap is 20 and the scheduler enforces it, so a full node is not itself a trigger) | `kubectl get volumeattachment -o json \| jq -r '.items[].spec.nodeName' \| sort \| uniq -c` |
+| Cluster memory requests | `> 90%`, or alert `ClusterCannotTolerateNonGpuNodeLoss` (the most-loaded non-GPU worker's requests do not fit on the rest) | `kubectl describe nodes \| grep -A4 "Allocated resources"` or Goldilocks dashboard |
 | Planned PVC additions | ≥3 net-new block PVCs in next sprint AND current max VA ≥ 22 | Project-tracker / beads |
-| LUN-cap incident | Even one `no free lun found` event | Prometheus alert `ProxmoxCSILunsExhausted` (added 2026-05-31, commit `aded77d5`) |
+| LUN-cap incident | Even one `no free lun found` event, or alert `NodeBlockVolumesOverCap` | `kubectl get events -A --field-selector reason=FailedAttachVolume` |
 | Sustained pod-eviction churn | Eviction count > 20/day for ≥3 days | `kubectl get events -A --field-selector reason=Evicted` |
 
 ### Playbook — add a worker

@@ -235,8 +235,23 @@ scans `scsi1..scsi29` for a free slot when attaching a PVC
 (`pkg/csi/utils.go:662` at v0.22.0: `for lun = 1; lun < 30; lun++`); when the loop exits
 without a hit, ControllerPublishVolume returns
 `Internal desc = no free lun found`. `CSINode.allocatable.count` is advertised
-as `28` for every worker — derived from this plugin limit, NOT from Proxmox or
-QEMU constraints.
+as `20` for every worker since 2026-11-09 (was `28`), from the node label
+`csi.proxmox.sinextra.dev/max-volume-attachments` set by
+`local.max_volume_attachments` in `stacks/proxmox-csi/modules/proxmox-csi/main.tf`.
+
+**Capacity model (2026-11-09).** The scheduler's NodeVolumeLimits filter enforces
+the 20, so a full node is safe: new volume pods go elsewhere. 20 sits below the
+20-23 disks per VM where hotplug has failed. Nothing spreads or rebalances by
+volume count: no maintained project does it, and preemption cannot free a slot
+because kube-scheduler counts live VolumeAttachments, which a preemption dry run
+does not remove (`pkg/scheduler/framework/plugins/nodevolumelimits/csi.go:308-330`
+at v1.35.0). The guard is cluster headroom with one node down: alert
+`BlockVolumeHeadroomLow` above 80% of `20 x (workers - 1)`, plus
+`NodeBlockVolumesOverCap`; memory for one node down is the existing
+`ClusterCannotTolerateNonGpuNodeLoss`. Changing the cap
+restarts the node-plugin DaemonSet through Terraform so CSINode picks it up.
+Rejected spreading designs: `docs/plans/2026-11-09-volume-aware-scheduling-design.md`.
+Slot-freeing candidates: `docs/research/2026-11-09-block-volume-db-consolidation.md`.
 
 What this means in practice:
 - Each K8s node VM can hold at most 29 block PVCs simultaneously (scsi0 is the
