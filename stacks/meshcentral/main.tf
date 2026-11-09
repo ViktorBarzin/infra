@@ -54,35 +54,6 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   }
 }
 
-resource "kubernetes_persistent_volume_claim" "files_encrypted" {
-  wait_until_bound = false
-  metadata {
-    name      = "meshcentral-files-encrypted"
-    namespace = kubernetes_namespace.meshcentral.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
-}
-
 module "nfs_backups_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "meshcentral-backups-host"
@@ -225,9 +196,14 @@ EOT
             name       = "data"
             mount_path = "/opt/meshcentral/meshcentral-data"
           }
+          # User files live in the meshcentral-files subfolder of the data
+          # volume since 2026-11-09. They had their own volume, which used a
+          # proxmox-csi slot for 296 KB of empty folders
+          # (docs/research/2026-11-09-block-volume-db-consolidation.md).
           volume_mount {
-            name       = "files"
+            name       = "data"
             mount_path = "/opt/meshcentral/meshcentral-files"
+            sub_path   = "meshcentral-files"
           }
           resources {
             requests = {
@@ -249,12 +225,6 @@ EOT
           name = "data"
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
-          }
-        }
-        volume {
-          name = "files"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.files_encrypted.metadata[0].name
           }
         }
         volume {

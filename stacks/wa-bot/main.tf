@@ -81,23 +81,22 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.wa_bot]
 }
 
+variable "nfs_server" { type = string }
+
 # Dedupe ids, the WhatsApp message-id -> session map (30 days), the PIN and
-# lockout state and the monthly conversation count. A few hundred KB at most.
-resource "kubernetes_persistent_volume_claim" "data" {
-  wait_until_bound = false
-  metadata {
-    name      = "wa-bot-data"
-    namespace = kubernetes_namespace.wa_bot.metadata[0].name
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
+# lockout state and the monthly conversation count. A few hundred KB at most,
+# one JSON file written by one process with write-to-temp-then-rename
+# (~/code/wa-bot/store.go), so NFS is safe. Moved off the block PVC wa-bot-data
+# on 2026-11-09 to free a proxmox-csi slot
+# (docs/research/2026-11-09-block-volume-db-consolidation.md).
+module "nfs_data" {
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "wa-bot-data-host"
+  namespace          = kubernetes_namespace.wa_bot.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/wa-bot"
+  storage            = "1Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "wa_bot" {
@@ -210,7 +209,7 @@ resource "kubernetes_deployment" "wa_bot" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data.metadata[0].name
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

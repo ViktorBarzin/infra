@@ -7,33 +7,19 @@ variable "homepage_credentials" {
 }
 
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "servarr-qbittorrent-data-proxmox"
-    namespace = "servarr"
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# qBittorrent config: qBittorrent.conf, categories, RSS state and BT_backup
+# fastresume files (resume storage is the file backend, not the experimental
+# SQLite one). The QLockFile lockfile and ipc-socket work on NFSv4. Moved off
+# the block PVC servarr-qbittorrent-data-proxmox on 2026-11-09 to free a
+# proxmox-csi slot (docs/research/2026-11-09-block-volume-db-consolidation.md).
+module "nfs_config_host" {
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-config-host"
+  namespace          = "servarr"
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/servarr/qbittorrent-config"
+  storage            = "2Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_downloads_host" {
@@ -144,7 +130,7 @@ resource "kubernetes_deployment" "qbittorrent" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_config_host.claim_name
           }
         }
         volume {
