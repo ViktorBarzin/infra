@@ -395,6 +395,22 @@ resource "helm_release" "traefik" {
         # existing X-Real-Ip untouched). Vendored as a LOCAL plugin, same
         # rationale as sablier above. NOT YET ATTACHED to any route/Middleware
         # — this only registers it with Traefik; a later task wires it in.
+        # Adds the Rybbit script for the `hosted` Analytics site to HTML pages
+        # of the third-party apps we host (ADR-0041,
+        # analytics-inject-plugin/README.md). Wired as the Middleware
+        # `analytics-inject` (middleware.tf); attached to the websecure
+        # entrypoint after compress, with its own host filters.
+        analytics-inject = {
+          moduleName = "github.com/viktorbarzin/analytics-inject-plugin"
+          mountPath  = "/plugins-local/src/github.com/viktorbarzin/analytics-inject-plugin"
+          type       = "inlinePlugin"
+          source = {
+            "go.mod"       = file("${path.module}/analytics-inject-plugin/go.mod")
+            ".traefik.yml" = file("${path.module}/analytics-inject-plugin/.traefik.yml")
+            "main.go"      = file("${path.module}/analytics-inject-plugin/main.go")
+            "filters.go"   = file("${path.module}/analytics-inject-plugin/filters.go")
+          }
+        }
         realip = {
           moduleName = "github.com/viktorbarzin/real-ip-plugin"
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/real-ip-plugin"
