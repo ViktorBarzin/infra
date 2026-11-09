@@ -345,4 +345,4 @@ rm -f /tmp/kea-ddns.key
 
 - `docs/architecture/dns.md` — overall DNS architecture (K8s side, Technitium, CoreDNS)
 - `docs/architecture/networking.md` — VLAN layout, pfSense interface mapping
-- `.claude/skills/pfsense/skill.md` — SSH / CLI patterns for pfSense management
+- `.claude/pfsense.py` — SSH / CLI helper for pfSense management

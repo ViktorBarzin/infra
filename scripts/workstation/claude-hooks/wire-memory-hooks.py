@@ -9,7 +9,8 @@ Two passes, idempotent, never touching `env` (the per-user MEMORY_API_KEY) or an
 other setting:
   (0) PRUNE any hook command still pointing at a retired hook: the claude-memory
       plugin (`plugins/claude-memory/hooks/`), or the unslop-check.py style hook
-      (removed 2026-09-28 because each block made the user read the reply twice).
+      (removed 2026-09-28 because each block made the user read the reply twice),
+      or the homelab-memory-recall.py prompt hook (retired 2026-11-09).
       install_memory() deletes both, so those entries are dangling — and a missing UserPromptSubmit hook exits 2,
       a BLOCKING error that erases the prompt and freezes the session (devvm emo
       incident 2026-06-22). Must run BEFORE the additive pass: the plugin shares
@@ -33,7 +34,6 @@ hooks_dir = os.path.join(home, ".claude", "hooks")
 WANT = [
     ("PreCompact", "pre-compact-backup.sh", f"{hooks_dir}/pre-compact-backup.sh", {"timeout": 30}, None),
     ("UserPromptSubmit", "post-compact-recovery.sh", f"{hooks_dir}/post-compact-recovery.sh", {"timeout": 10}, None),
-    ("UserPromptSubmit", "homelab-memory-recall.py", f"python3 {hooks_dir}/homelab-memory-recall.py", {"timeout": 8}, None),
     ("Stop", "auto-learn.py", f"python3 {hooks_dir}/auto-learn.py", {"async": True}, None),
     # zsh-vs-bash guard: blocks unquoted $VAR flag-lists (zsh does not word-split)
     # and unquoted `word(...)` (zsh globs it away). Both fail silently otherwise.
@@ -69,7 +69,9 @@ changed = False
 
 # (0) Prune retired hooks (see module docstring). Must precede the additive pass
 # so shared basenames don't mask a needed install.
-DEAD_REFS = ("plugins/claude-memory/hooks/", "hooks/unslop-check.py")
+# homelab-memory-recall.py retired 2026-11-09: it added ~6.7 KB to every prompt;
+# agents recall on their own, as their instructions say.
+DEAD_REFS = ("plugins/claude-memory/hooks/", "hooks/unslop-check.py", "hooks/homelab-memory-recall.py")
 for event in list(hooks.keys()):
     new_groups = []
     removed_any = False

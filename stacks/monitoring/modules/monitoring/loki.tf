@@ -773,20 +773,27 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             {
-              # Path-agnostic: how many distinct outside addresses reached the
-              # backend at all. Catches a crawl on commits, trees or any other
-              # route. Backtested every 6h from 2026-10-15 to 2026-11-09:
-              # quiet-window median 70, highest quiet reading 110. Readings over
-              # 300 were all crawlers: the 2026-10-15/16 commit crawl (up to
-              # 4,102), a 2026-10-28 evening probe where 294 of 307 addresses
-              # carried the Chrome/157 crawler's exact UA, and 571 to 1,151
-              # during the 2026-11 filter crawl.
+              # Path-agnostic: how many distinct outside addresses were served a
+              # PAGE by the backend. Catches a crawl on commits, trees or any
+              # other route.
+              #
+              # STATIC FILES ARE EXCLUDED (2026-11-09). Once the gate's Forgejo
+              # site rule (ADR-0040) refused the filter crawl, the crawler's
+              # browser still fetched /favicon.ico after every refusal page and
+              # got a 301 from Forgejo, so counting every path kept this alert
+              # firing on a crawl that was receiving nothing. Favicons, /assets/,
+              # avatars, the web manifest and /.well-known/ no longer count.
+              #
+              # Re-backtested without them at nine points from 2026-10-16 to
+              # 2026-11-08: quiet windows 7 to 23, the 2026-11 filter crawl 311
+              # to 483. The threshold of 100 sits about 4x above the quiet
+              # maximum and 3x below the crawl's lowest reading.
               alert  = "ForgejoExternalClientSurge"
-              expr   = "count(sum by (ClientHost) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"forgejo-forgejo-80@kubernetes\" | json ServiceName, ClientHost | ServiceName=\"forgejo-forgejo-80@kubernetes\" | ClientHost!~`(10\\.|127\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.|f[cd]|fe80:).*` [6h]))) > 300"
+              expr   = "count(sum by (ClientHost) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"forgejo-forgejo-80@kubernetes\" !~ `\"RequestPath\":\"/(assets/|favicon|avatars/|avatar/|user/avatar/|apple-touch-icon|manifest\\.json|\\.well-known/)` | json ServiceName, ClientHost | ServiceName=\"forgejo-forgejo-80@kubernetes\" | ClientHost!~`(10\\.|127\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.|f[cd]|fe80:).*` [6h]))) > 100"
               for    = "15m"
               labels = { severity = "warning" }
               annotations = {
-                summary     = "{{ $value | printf \"%.0f\" }} distinct outside addresses reached the Forgejo backend in 6h, usual is about 70. Likely a distributed crawl getting past the gate."
+                summary     = "{{ $value | printf \"%.0f\" }} distinct outside addresses were served Forgejo pages in 6h, usual is under 25. Likely a distributed crawl getting past the gate."
                 description = "Many different outside IPs are being served by Forgejo itself, past the Turnstile gate and Anubis. Group the requests by user agent and path to find the crawler. Runbook: docs/runbooks/forgejo-crawl.md."
               }
             },

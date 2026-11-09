@@ -37,3 +37,7 @@ find-skills
 setup-matt-pocock-skills
 tdd
 to-spec
+
+# Unused in the 2026-11-09 cleanup: no call or slash command from 2026-10-04 to
+# 2026-11-09 (681 sessions in homelab claude-sessions).
+wizard

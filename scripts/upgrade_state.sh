@@ -2,7 +2,7 @@
 #
 # upgrade_state.sh — survey the three autonomous-upgrade pipelines.
 #
-# Companion to cluster_healthcheck.sh, surfaced via the /upgrade-state skill.
+# Companion to cluster_healthcheck.sh.
 # Read-only by design — no --fix.
 #
 # The three pipelines:
