@@ -838,8 +838,10 @@ locals {
     "tasks.viktorbarzin.me", "alexa-assistant.viktorbarzin.me", "nextcloud-todos.viktorbarzin.me",
     "pages.viktorbarzin.me", "pages-publish.viktorbarzin.me",
   ]
-  # Staged start (2026-11-09): one static third-party app first.
-  analytics_inject_include_hosts = ["cc.viktorbarzin.me"]
+  # Empty: every host not in the exclude list. The staged start on
+  # 2026-11-09 began with cc.viktorbarzin.me (CyberChef) alone; put a host here
+  # to narrow the plugin to it again.
+  analytics_inject_include_hosts = []
 }
 
 resource "kubectl_manifest" "middleware_analytics_inject" {
