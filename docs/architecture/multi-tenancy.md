@@ -577,8 +577,8 @@ makes is stamped `source:<user_id>` server-side, which the client can neither re
 forge. The reason this matters at the workstation layer: recall results reach every session on
 the box, so an entry written by an outside assistant is indistinguishable from one Viktor
 wrote unless something says so. The per-prompt recall hook rendered that tag inline
-(`#13293 [facts] [via muse] (0.20) …`) until it was retired on 2026-11-09; `homelab memory
-recall` does not mark these entries yet. It is generic in the agent name, so a second external key needs no change
+(`#13293 [facts] [via muse] (0.20) …`) until it was retired on 2026-11-09; since then `homelab memory
+recall` and `get` print the same marker (cli v0.36.0). It is generic in the agent name, so a second external key needs no change
 here. Note reads stay GLOBAL — recall, list and get carry no owner predicate, so an external
 key reads every user's entries, which is a recorded decision rather than an oversight
 (`docs/plans/2026-09-16-muse-memory-connector-design.md`). First consumer is Meta's Muse,
