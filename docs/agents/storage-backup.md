@@ -33,6 +33,8 @@ Choose storage class based on workload type:
 | Password managers, email, git repos | Tools with no user secrets | Large datasets (>10Gi) where snapshots matter |
 | Health/financial data | | Data you want to browse/inspect from outside k8s |
 
+**Ask first whether the app needs a block volume at all (2026-11-09).** Every attached block PVC uses one of 20 hotplug slots on its node VM (`docs/architecture/storage.md`, "Capacity model"), and preemption cannot free one. In order: put the app's data in the shared Postgres or MySQL (`docs/agents/new-app.md`; prefer MySQL when the app supports both, it has the connection headroom and rotates without a restart); plain files that need no encryption go to NFS; anything regenerated at start goes to `emptyDir`; a block volume only for software that locks files (SQLite, LMDB, RocksDB, bbolt, H2) or must survive an NFS outage. Read the app's code before calling a volume disposable: Roundcube's app folder looked regenerable but its plugin install breaks on a fresh tree (`docs/research/2026-11-09-block-volume-db-consolidation.md`, Progress).
+
 **Default for sensitive data is proxmox-lvm-encrypted.** Use plain `proxmox-lvm` only for non-sensitive workloads. Use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
 
 **NFS server:**
