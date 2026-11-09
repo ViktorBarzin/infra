@@ -18,9 +18,9 @@ Every claim carries one of three labels:
 ## Summary
 
 1. There are 83 block PVCs because the 2026-04-04 wave moved every SQLite app off NFS after corruption, the storage rule then made block the default for every new app, and several apps keep one PVC per concern; 60 were attached at scan time and 59 now, with 21 on k8s-node4 [measured].
-2. Most of the 60 are not "a database that could live elsewhere": 25 hold an embedded DB whose app has no external option, 13 are real DB servers or core state, and 11 apps already use the shared Postgres or MySQL and keep a volume only for files [measured, source].
-3. About **15 slots** can be freed for S or M effort without breaking the sensitive-data rule, up to 21 with the harder moves; NFS is the destination for only 4 of them, because most remainders are sensitive and `/srv/nfs` is not encrypted [inferred].
-4. Top 5 by slots per effort: Vault audit to stdout (3, S); uptime-kuma, learning and aiostreams to no volume (3, S); roundcube html to emptyDir and enigma merged (2, S); meshcentral files merged into data (1, S); glitchtip and health uploads, both empty, to no volume (2, S).
+2. Few of the 60 are a database that could live elsewhere: 19 hold an embedded DB with no supported external option or a sensitive remainder, 18 are DB servers or core state, and 13 belong to apps that already use the shared Postgres or MySQL and keep the volume only for files [measured, source].
+3. **17 slots** can be freed for S or M effort without breaking the sensitive-data rule, 23 with the low-value moves; only 4 of them go to NFS, because most remainders are sensitive and `/srv/nfs` is not encrypted [inferred].
+4. Top 5 by slots per effort: Vault audit to stdout (3, S); uptime-kuma, learning, aiostreams and ntfy to no volume (4, S); roundcube html to emptyDir and enigma keys into MySQL (2, S); glitchtip and health uploads, both empty, to no volume (2, S); meshcentral files merged into data (1, S).
 5. Folding separate DB servers in is poor value: immich-postgresql needs VectorChord and 3 GB of buffers the shared pool does not have, and merging the two ClickHouse instances frees 1 slot for M effort; the shared Postgres is at 127 of 200 connections, so it can take about 6 more small apps, while MySQL is at 13 of 80 [measured].
 
 ## Why there are so many
@@ -47,9 +47,9 @@ multi-stack change with a shared-DB restart. All content columns are
 
 | # | App | PVC | Class | Content | Ext DB | Remainder after DB moves | Slots | Effort | Risk | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | actualbudget | actualbudget-anca-data-encrypted | enc | SQLite `account.sqlite` + budget SQLite, 88M | No | n/a | 0 | | | Keep |
+| 1 | actualbudget | actualbudget-anca-data-encrypted | enc | SQLite `account.sqlite` + budget SQLite, 88M | No, SQLite only | n/a | 0 | | | Keep |
 | 2 | actualbudget | actualbudget-viktor-data-encrypted | enc | Same, 293M | No | n/a | 0 | | | Keep |
-| 3 | aiostreams | aiostreams-data-proxmox | lvm | Already on shared PG (`DATABASE_URI=postgres://...postgresql.dbaas`); content unread, the image has no `ls` | Yes, in use | Unknown, likely empty | 1 | S | Low | Check content, then emptyDir |
+| 3 | aiostreams | aiostreams-data-proxmox | lvm | Already on shared PG (`DATABASE_URI=postgres://...postgresql.dbaas`); content unread, the image has no `ls` | Yes, in use | Downloaded anime DB, ID mappings, disk caches, instance ID | 1 | S | Low | emptyDir, see notes |
 | 4 | android-emulator | android-emulator-sdk | ssd | Android SDK and AVD, 7.8G, regenerable | n/a | Same | 0 | | | Keep, placed on SSD by design 2026-11-03 |
 | 5 | beads-server | dolt-data | lvm | Dolt SQL server data, 211M | Dolt is the server | n/a | 0 | | | Keep; folding into MySQL loses Dolt history |
 | 6 | chrome-emo | chrome-emo-profile-encrypted | enc | Chromium profile: LevelDB + SQLite | No | n/a | 0 | | | Keep |
@@ -58,21 +58,21 @@ multi-stack change with a shared-DB restart. All content columns are
 | 9 | dbaas | data-mysql-v26-0 | sas | Shared MySQL, 11G | Is the server | n/a | 0 | | | Keep |
 | 10 | dbaas | pg-cluster-v18-1 | sas | Shared CNPG instance, 21G | Is the server | n/a | 0 | | | Keep |
 | 11 | dbaas | pg-cluster-v18-2 | sas | Shared CNPG primary, 22G | Is the server | n/a | 0 | | | Keep |
-| 12 | ebooks | ebooks-abs-config-proxmox | lvm | Audiobookshelf `absdatabase.sqlite`, 1.4M | No | n/a | 0 | | | Keep |
-| 13 | ebooks | ebooks-calibre-config-proxmox | lvm | CWA `app.db`, `cwa.db`, `gdrive.db`, Calibre `metadata.db`, 733M | No | n/a | 0 | | | Keep |
+| 12 | ebooks | ebooks-abs-config-proxmox | lvm | Audiobookshelf `absdatabase.sqlite`, 1.4M | No, SQLite only | n/a | 0 | | | Keep |
+| 13 | ebooks | ebooks-calibre-config-proxmox | lvm | CWA `app.db`, `cwa.db`, `gdrive.db`, Calibre `metadata.db`, 733M | No, SQLite only | n/a | 0 | | | Keep |
 | 14 | forgejo | forgejo-data-encrypted | enc | Already on MySQL (`DB_TYPE = mysql`, `HOST = mysql.dbaas`); `gitea.db` is 0 bytes; git repos, LevelDB queues, bleve issue index, 19.3G | Yes, in use | Git repos, packages, attachments; queue and index can move to Redis and DB | 0 | | | Keep: git repos are sensitive by rule |
 | 15 | freshrss | freshrss-data-proxmox | lvm | Already on MySQL (`'host' => 'mysql.dbaas'` in `data/config.php`); config, favicons, cache, `users/viktor`, 18M | Yes, in use | Config PHP files, favicons, cache | 1 | S | Low | NFS |
-| 16 | frigate | frigate-config-encrypted | enc | `frigate.db` SQLite + WAL, 384M | No | n/a | 0 | | | Keep |
+| 16 | frigate | frigate-config-encrypted | enc | `frigate.db` SQLite + WAL, 384M; holds the sqlite-vec search vectors too | No, SQLite only | n/a | 0 | | | Keep |
 | 17 | glitchtip | glitchtip-uploads-encrypted | enc | Already on shared PG; volume holds only `lost+found` | Yes, in use | Nothing today | 1 | S | Low | Drop volume or emptyDir, see notes |
 | 18 | headscale | headscale-data-encrypted | enc | `db.sqlite` (backup CronJob runs `sqlite3 /data/db.sqlite .backup`, `stacks/headscale/modules/headscale/main.tf:498`) plus keys | Postgres "highly discouraged", legacy only | Noise and DERP private keys | 0 | | | Keep: upstream steers to SQLite |
 | 19 | health | health-uploads-encrypted | enc | First-party; already on shared PG; volume holds only `lost+found` | Yes, in use | Upload staging, empty | 1 | S | Low | emptyDir |
-| 20 | immich | immich-postgresql-data-encrypted | sas | Separate Postgres 15 with `vchord 0.4.3`, `vector 0.8.1`, 3.9 GB, `shared_buffers=3072MB` | Is a server | n/a | 1 | L | High | Keep separate, see notes |
+| 20 | immich | immich-postgresql-data-encrypted | sas | Separate Postgres 15 with `vchord 0.4.3`, `vector 0.8.1`, 3.9 GB, `shared_buffers=3072MB` | Existing PG supported, "not officially recommended"; needs VectorChord | n/a | 1 | L | High | Keep separate, see notes |
 | 21 | learning | learning-data | enc | First-party; `learn.db` SQLite, 32K; TF sets `sqlite+aiosqlite:////data/learn.db` | Yes, code already supports asyncpg | Nothing | 1 | S | Low | Shared PG, delete PVC |
-| 22 | linkwarden | linkwarden-archives-encrypted | enc | Already on shared PG; volume holds only `lost+found` since 2026-08-15 | Yes, in use | Page archives, none written | 0 or 1 | S | Low | Open question: is archiving in use |
+| 22 | linkwarden | linkwarden-archives-encrypted | enc | Already on shared PG; volume holds only `lost+found` since 2026-08-15 | Yes, in use; archives can go to S3 | Page archives, none written | 0 or 1 | S | Low | Open question: is archiving in use |
 | 23 | mailserver | mailserver-data-encrypted | enc | Maildir, 3.0G | n/a | Same | 0 | | | Keep: dovecot locking, mail is sensitive |
 | 24 | mailserver | roundcubemail-html-encrypted | enc | Roundcube app tree copied from the image, `vendor/` with composer plugins, `config/`, `logs/`, `temp/`, 37M; DB already on MySQL | Yes, in use | Code, regenerated by the entrypoint | 1 | S | Low | emptyDir, see notes |
 | 25 | mailserver | roundcubemail-enigma-encrypted | enc | Enigma PGP homedirs for 2 users, 312K | Yes, `enigma_multihost` keeps keys in the `filestore` table | Local working copy only | 1 | S | Low | Keys to MySQL, homedir emptyDir |
-| 26 | matrix | matrix-data-encrypted | enc | Tuwunel RocksDB (exec failed, distroless) | No | n/a | 0 | | | Keep |
+| 26 | matrix | matrix-data-encrypted | enc | Tuwunel RocksDB, media inside it (exec failed, distroless) | No, RocksDB only | n/a | 0 | | | Keep |
 | 27 | meshcentral | meshcentral-data-encrypted | enc | NeDB `meshcentral*.db`, CA and server private keys, config, 152M | Yes, MariaDB, MySQL, Postgres | Private keys, agent builds | 0 | | | Keep; target of the merge below |
 | 28 | meshcentral | meshcentral-files-encrypted | enc | User file store, 296K | n/a | Files | 1 | S | Low | Merge into meshcentral-data by subPath |
 | 29 | monitoring | storage-loki-0 | lvm | Loki chunks and TSDB index, 50Gi (exec failed) | Object store only | n/a | 0 | | | Keep: no object store in the cluster |
@@ -80,12 +80,12 @@ multi-stack change with a shared-DB restart. All content columns are
 | 31 | monitoring | prometheus-prometheus-pushgateway | enc | `pushgateway.bin`, 220K | n/a | Same | 1 | S | Medium | Optional emptyDir, see notes |
 | 32 | monitoring | prometheus-data-proxmox | lvm | Prometheus TSDB, 28.6G | n/a | Same | 0 | | | Keep |
 | 33 | n8n | n8n-data-encrypted | enc | Already on shared PG (`DB_TYPE`, `DB_POSTGRESDB_HOST`); `config` file with the encryption key, community `nodes/`, event logs, 57M | Yes, in use | Encryption key, community nodes | 1 | S | Medium | Key into a Secret, rest emptyDir, see notes |
-| 34 | navidrome | navidrome-data-proxmox | lvm | `navidrome.db` + 3 older copies, 297M | No | n/a | 0 | | | Keep; old copies can go |
+| 34 | navidrome | navidrome-data-proxmox | lvm | `navidrome.db` + 3 older copies, 297M | No; Postgres PR #2821 open, unmerged | n/a | 0 | | | Keep; old copies can go |
 | 35 | nextcloud | nextcloud-data-encrypted | enc | Already on MySQL (`dbtype mysql`); user files, app tree; 5 stale SQLite files of 40-51 MB and a 167 MB `nextcloud.log.1` from January to April 2026, 13G | Yes, in use | User files | 0 | | | Keep: user files are sensitive |
-| 36 | novelapp | novelapp-data-proxmox | lvm | `novelapp.db` SQLite, 27M; third-party image `mghee/novelapp:v1.1.6` | See notes | n/a | 0 | | | Keep |
+| 36 | novelapp | novelapp-data-proxmox | lvm | `novelapp.db` SQLite, 27M; third-party Next.js reading tracker `mghee/novelapp:v1.1.6` | No, Prisma SQLite only | n/a | 0 | | | Keep |
 | 37 | ntfy | ntfy-data-proxmox | lvm | `user.db` auth SQLite only, 144K; no message cache file | Yes, Postgres via `database-url` since v2.18.0 | Nothing | 1 | S | Low | Shared PG, delete PVC |
-| 38 | owntracks | owntracks-data-encrypted | enc | LMDB `ghash/data.mdb` + `lock.mdb`; location history in `rec/` | No | Location history | 0 | | | Keep: LMDB, and location history is sensitive |
-| 39 | paperless-ngx | paperless-ngx-data-encrypted | enc | Already on shared PG; `data/documents` (originals, archive, thumbnails), Tantivy index, `celerybeat-schedule.db`, `media.lock`, 26G | Yes, in use | Documents, index, lock files | 0 | | | Keep |
+| 38 | owntracks | owntracks-data-encrypted | enc | LMDB `ghash/data.mdb` + `lock.mdb`; location history in `rec/` | No; LMDB is always linked | Location history | 0 | | | Keep: LMDB, and location history is sensitive |
+| 39 | paperless-ngx | paperless-ngx-data-encrypted | enc | Already on shared PG; `data/documents` (originals, archive, thumbnails), Tantivy index, `celerybeat-schedule.db`, `media.lock`, 26G | Yes, in use; `celerybeat-schedule.db` and the sqlite-vec `llm_index` stay in the data dir | Documents, index, lock files | 0 | | | Keep |
 | 40 | plotting-book | plotting-book-data-proxmox | lvm | `database.sqlite` + WAL, 46M; Anca's app on `better-sqlite3` | Code change | Nothing | 1 | M | Low | Only with a port to Postgres in the app |
 | 41 | redis | data-redis-v2-0 | sas | Shared Redis, 142M | Is a server | n/a | 0 | | | Keep |
 | 42 | rybbit | rybbit-clickhouse-data-proxmox | lvm | ClickHouse server, 1.8M | Is a server | n/a | 1 | M | Medium | Merge into claude-sessions ClickHouse, see notes |
@@ -95,7 +95,7 @@ multi-stack change with a shared-DB restart. All content columns are
 | 46 | technitium | technitium-primary-config-encrypted | enc | DNS zones, config, stats, 1.1G; query logs already go to MySQL/PG | n/a | Same | 0 | | | Keep: DNS must survive NFS outage |
 | 47 | technitium | technitium-secondary-config-encrypted | enc | Same, 785M | n/a | Same | 0 | | | Keep |
 | 48 | technitium | technitium-tertiary-config-encrypted | enc | Same, 763M | n/a | Same | 0 | | | Keep |
-| 49 | tor-proxy | tor-proxy-torrserver-data-proxmox | lvm | `config.db` bbolt, 808K | No | n/a | 0 | | | Keep |
+| 49 | tor-proxy | tor-proxy-torrserver-data-proxmox | lvm | `config.db` bbolt, 808K | No; settings can be JSON, the torrent list is always bbolt | n/a | 0 | | | Keep |
 | 50 | tripit | tripit-personal-documents | enc | Already on shared PG; app-encrypted ID documents | Yes, in use | Documents | 0 | | | Keep: LUKS under app AES by design, memory #7571 |
 | 51 | uptime-kuma | uptime-kuma-data-proxmox | lvm | Already on MySQL (`db-config.json` type `mariadb`, `uptimekuma`); 4 KB `kuma.db` from May; 25 MB `error.log`; `upload/` and `screenshots/` empty | Yes, in use; MariaDB by `UPTIME_KUMA_DB_*` env | `db-config.json`, rewritten from env at start | 1 | S | Low | Env from a Secret, data dir emptyDir |
 | 52 | vault | audit-vault-0 | enc | File audit log, tailed to Loki by the `audit-tail` sidecar | n/a | Log | 1 | S | Medium | Audit device to stdout, see notes |
@@ -106,7 +106,7 @@ multi-stack change with a shared-DB restart. All content columns are
 | 57 | vault | data-vault-2 | enc | As 53 | No | n/a | 0 | | | Keep |
 | 58 | vaultwarden | vaultwarden-data-encrypted | enc | `db.sqlite3` 3.1 MB, 2 attachment dirs, `icon_cache`, `rsa_key.*`, 19M | Yes, PG and MySQL, stable | RSA key, 2 attachments, icon cache | 0 or 1 | M | Medium | DB to MySQL is sound; the slot needs attachments off block, see notes |
 | 59 | wa-bot | wa-bot-data | lvm | First-party; one JSON file `/data/state.json` (`~/code/wa-bot/main.go:112`) | n/a, no DB | `state.json` | 1 | S | Low | NFS, or a table in shared PG |
-| 60 | wealthfolio | wealthfolio-data-encrypted | enc | `wealthfolio.db` SQLite + 3 pre-migration backups, 261M | See notes | n/a | 0 | | | Keep |
+| 60 | wealthfolio | wealthfolio-data-encrypted | enc | `wealthfolio.db` SQLite + 3 pre-migration backups, 261M | No, SQLite only | n/a | 0 | | | Keep |
 
 ### Not attached at scan time (23)
 
@@ -120,33 +120,33 @@ These hold no slot today. The ones that wake attach one when they do.
 | 64 | dbaas | data-mysql-standalone-0 | enc | MySQL 8.4 rollback copy, 0 replicas since 2026-10-19 | MySQL datadir as of the 2026-10-15 cutover | Delete once the rollback window is closed |
 | 65 | dbaas | dbaas-pgadmin-encrypted | enc | pgadmin at 0/0 | pgAdmin SQLite | Dormant |
 | 66 | dbaas | pg-cluster-1 | enc | PG16 rollback copy, hibernated since 2026-10-19 | Postgres datadir | Delete once the rollback window is closed |
-| 67 | drone-logbook | drone-logbook-data-encrypted | enc | Sablier, plus a daily backup CronJob | Embedded DB, see notes | Keep |
-| 68 | grampsweb | grampsweb-data-encrypted | enc | `replicas = 0` since 2026-03-14 ("Not actively used", `stacks/grampsweb/main.tf:190-192`) | Gramps tree SQLite, user DB | Dormant 8 months; looks abandoned |
+| 67 | drone-logbook | drone-logbook-data-encrypted | enc | Sablier, plus a daily backup CronJob | DuckDB `flights.db`, no external option | Keep |
+| 68 | grampsweb | grampsweb-data-encrypted | enc | `replicas = 0` since 2026-03-14 ("Not actively used", `stacks/grampsweb/main.tf:190-192`) | Gramps tree, user DB and search index, all SQLite; each can move to Postgres | Dormant 8 months; looks abandoned |
 | 69 | instagram-poster | instagram-poster-data | lvm | `replicas = 0` since 2026-06-24, crons suspended | First-party; already has role `pg-instagram-poster` | Dormant |
 | 70 | monitoring | storage-tempo-0 | lvm | No Tempo workload, Helm release or Terraform in this repo; PVC created 2026-06-22; a second Released PV of the same name exists | Unknown | **Orphan**: no owner found |
 | 71 | openclaw | openclaw-data-proxmox | lvm | Parked 2026-09-27 (`stacks/openclaw/main.tf:411-423`) | App data | Dormant; same pod as 72, could share one PVC |
 | 72 | openclaw | openclaw-home-proxmox | lvm | Same | Home dir | Dormant |
 | 73 | openclaw | openlobster-data-proxmox | lvm | `replicas = 0` | App data | Dormant |
 | 74 | paperless-ai | paperless-ai-data-encrypted | enc | Scaled down 2026-10-12, paperless-ngx's own AI does the work (`stacks/paperless-ai/main.tf:143-151`) | `.env`, RAG index | Dormant; replaced |
-| 75 | privatebin | privatebin-data-proxmox | lvm | Sablier | Paste files in `/srv/data` | Database model to shared PG, see notes |
+| 75 | privatebin | privatebin-data-proxmox | lvm | Sablier | Paste files in `/srv/data` | `Database` model on MySQL or PG, then no volume |
 | 76 | proxy | proxy-profile-edinpriqtelvirtual-gmail-com-432ab095 | enc | Created and reaped by the broker at runtime (`stacks/proxy/files/broker/broker.py:974,1014-1031`), not Terraform | Chromium profile | Keep, by design |
 | 77 | proxy | proxy-profile-vbarzin-gmail-com-5f8bbfba | enc | Same | Chromium profile | Keep |
 | 78 | renovate | renovate-apps-cache | ssd | CronJob every 6h | Regenerable cache | Keep; separate from 79 on purpose (`stacks/renovate/main.tf:340-344`) |
 | 79 | renovate | renovate-cache | ssd | CronJob hourly, so 24 attach cycles a day | Regenerable cache | Keep, see open questions |
 | 80 | repowise | repowise-workspace | enc | Parked; MCP endpoint removed 2026-10-02 | Per-repo SQLite `wiki.db` (memory #10948) | Dormant |
-| 81 | stirling-pdf | stirling-pdf-configs-proxmox | lvm | Sablier | H2 `stirling-pdf-DB-*.mv.db` (memory #2807) | Shared PG if supported, see notes |
-| 82 | trek | trek-data-encrypted | enc | Sablier | Embedded DB, see notes | Keep; same pod as 83 |
+| 81 | stirling-pdf | stirling-pdf-configs-proxmox | lvm | Sablier | H2 `stirling-pdf-DB-*.mv.db` (memory #2807); external Postgres is documented as Enterprise only | Keep |
+| 82 | trek | trek-data-encrypted | enc | Sablier | SQLite `data/travel.db`, no external option | Keep; same pod as 83 |
 | 83 | trek | trek-uploads-encrypted | enc | Sablier | Uploads | Merge into 82 by subPath |
 
 ### Tally of the 60 attached
 
 | Group | Count | Slots freed |
 |---|---|---|
-| Embedded DB, no supported external option, or sensitive remainder | 25 | 0 |
-| Shared DB servers, Vault data, Redis, Loki, Prometheus, Alertmanager, DNS, mail, tripit, android SDK | 20 | 0 |
-| Do now, S effort | 13 | 13: vault audit 3, uptime-kuma, learning, aiostreams, roundcube 2, meshcentral files, glitchtip, health, freshrss, qbittorrent |
-| Worth doing, M effort | 4 | 4: prowlarr, n8n, wa-bot, ntfy |
-| Possible, poor value or open | 6 | 0 to 6: headscale, vaultwarden, rybbit ClickHouse, immich-postgresql, pushgateway, linkwarden |
+| Embedded DB with no supported external option, or a sensitive remainder | 19 | 0 |
+| DB servers, Vault data, Loki, Prometheus, Alertmanager, DNS, mail, tripit, android SDK, Dolt | 18 | 0 |
+| Do now, S effort | 15 | 15: vault audit 3, uptime-kuma, learning, aiostreams, ntfy, roundcube 2, meshcentral files, glitchtip, health, freshrss, qbittorrent, wa-bot |
+| Worth doing with care | 2 | 2: n8n, prowlarr |
+| Possible, low value or open | 6 | 0 to 6: vaultwarden, rybbit ClickHouse, immich-postgresql, pushgateway, linkwarden, plotting-book |
 
 [inferred from the table]
 
@@ -199,8 +199,13 @@ it is the largest single gain.
   (`stacks/learning/main.tf`) [source]. `learn.db` is 32 KB [measured]. Follow
   `docs/agents/new-app.md` steps 2 and 3 for the DB and role, copy the few rows,
   delete the PVC.
-- **aiostreams**: already on shared PG [measured: pod env]. The image has no
-  `ls`, so the volume content is unread. If it is empty or a cache, emptyDir.
+- **aiostreams**: already on shared PG [measured: pod env]. With Postgres,
+  `/app/data` keeps only file caches: a downloaded anime database with ETag
+  files, ID and scene mappings, the SeaDex dataset, templates, an instance ID
+  and `cache/` (`.env.sample` L46-55 at v2.37.0, `anime-database/storage/paths.ts`)
+  [source]. The image has no `ls`, so the volume was not read. emptyDir means a
+  re-download after each restart and a new instance ID; whether the ID matters
+  to Stremio clients was not checked.
 
 ### 3. Roundcube: 2 slots, S
 
@@ -330,7 +335,14 @@ costs a Postgres pool.
   [measured]. One server with two databases frees 1 slot; it couples two apps'
   upgrades and the rybbit event pipeline now carries telemetry for several
   first-party apps [inferred]. M.
-- **immich-postgresql into CNPG**: immich v3.3.6 uses `vchord 0.4.3` and
+- **immich-postgresql into CNPG**: immich supports an existing Postgres 14 to
+  19 with pgvector `>=0.7,<0.9` and VectorChord `>=0.3,<2.0` in
+  `shared_preload_libraries`, calls it "not officially recommended", expects a
+  superuser for its `pg_dumpall` backups, and says the DB should "never [be on]
+  a network share" (`docs/docs/administration/postgres-standalone.md` L5-53,
+  `docs/docs/install/requirements.md` L39) [source]. TensorChord publishes CNPG
+  images with VectorChord (github.com/tensorchord/cloudnative-vectorchord)
+  [source]. Live, immich v3.3.6 uses `vchord 0.4.3` and
   `vector 0.8.1`; the shared image `cnpg-postgis-pgvector:18-pgvector0.8.7` has
   `vector` but no `vchord` [measured]. Adding it means a new image and a
   `shared_preload_libraries` change, which is a rolling restart of the shared
@@ -371,14 +383,6 @@ meshcentral data and files, vault audit and data, trek data and uploads,
 openclaw data and home [measured]. Cross-pod sharing of an RWO volume pins the
 pods to one node; `stacks/renovate/main.tf:342-344` rejected that for the two
 renovate caches [source].
-
-### Not finished
-
-The second research batch did not report back, so these rows point to notes
-that were never written: wealthfolio and novelapp (attached, verdict Keep, 0
-slots either way), and the unattached drone-logbook, trek, privatebin and
-stirling-pdf. Whether each supports an external Postgres is unverified. None of
-them holds a standing slot today, so the slot totals above do not change.
 
 ## Constraints that shape the verdicts
 
