@@ -60,7 +60,9 @@ resource "kubernetes_namespace" "tv" {
 # exists to remove. Only requests.memory moves; the other three values are the
 # tier-4-aux defaults the generated quota set (live 2026-10-11: requests.cpu 2,
 # limits.memory 16Gi, pods 20). Limits at the same peak come to about 13.7Gi,
-# and 14.7Gi since the Transcoder's limit went to 2560Mi (2026-11-01).
+# and 14.7Gi since the Transcoder's limit went to 2560Mi (2026-11-01). The
+# Edges went to 2Gi on 2026-11-09 for Server preloads (three at the peak:
+# +1.5Gi, about 16.2Gi), so limits.memory is 20Gi. Requests are unchanged.
 resource "kubernetes_resource_quota_v1" "tv" {
   metadata {
     name      = "tv-quota"
@@ -70,7 +72,7 @@ resource "kubernetes_resource_quota_v1" "tv" {
     hard = {
       "requests.cpu"    = "2"
       "requests.memory" = "6Gi"
-      "limits.memory"   = "16Gi"
+      "limits.memory"   = "20Gi"
       pods              = "20"
     }
   }
@@ -615,13 +617,17 @@ resource "kubernetes_deployment_v1" "tv_edge" {
           # Edge does not run. 384Mi is a first guess and 1536Mi leaves room to
           # find out; revisit after a week of data. No CPU limit (Kyverno
           # strip-cpu-limits removes one at admission anyway) and no GPU.
+          # 2Gi since 2026-11-09 (tv ADR 2026-11-09-presses-open-from-a-
+          # server-preload): the Upstream reader's copy goes from 384 to 768
+          # MiB so Server preloads fit beside the ordinary copy. The 7-day
+          # working-set peak before the change was 984 MiB.
           resources {
             requests = {
               cpu    = "100m"
               memory = "384Mi"
             }
             limits = {
-              memory = "1536Mi"
+              memory = "2Gi"
             }
           }
           # Ready once one read of the shared stream cache in Redis has
@@ -693,6 +699,13 @@ resource "kubernetes_deployment_v1" "tv_edge" {
           env {
             name  = "ROLE"
             value = "edge"
+          }
+          # The Upstream reader's in-memory copy cap (tv/upstream_copy.py,
+          # default 384). Raised for Server preloads, which are never evicted
+          # to make room for other segments.
+          env {
+            name  = "UPSTREAM_COPY_MAX_MB"
+            value = "768"
           }
           # Read by the uvicorn CLI (UVICORN_* env). See the grace period.
           env {
