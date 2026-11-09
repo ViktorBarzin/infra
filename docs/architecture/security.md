@@ -220,6 +220,16 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   Terraform-managed static blocklist** of 117 collapsed ranges from AS32934,
   AS63293 and AS54115, re-imported daily at 04:00 so its 168h decisions never
   lapse.
+- **Crawls that get past the gate are alerted on from the access log
+  (2026-11-09).** From 2026-11-01 a crawler running a real browser on a
+  residential proxy pool, one IP per page, walked Forgejo's issue and PR filter
+  permutations. It solved Turnstile itself or waited it out and solved Anubis,
+  and no existing alert saw it: it was invisible to `EdgeBlockSurge` (403
+  volume), `DistributedCrawlDetected` (no range ever filled) and the old
+  `ForgejoCrawlSurge` (backend rate, which internal clients dominate; removed).
+  `ForgejoFilterCrawlReachingBackend` and `ForgejoExternalClientSurge` (Loki
+  ruler, group "Forgejo crawl") count requests served by the backend to outside
+  addresses. Runbook: `docs/runbooks/forgejo-crawl.md`.
 - **Webhook carve-out from the Meta blocklist (2026-10-21, Viktor).** Meta's
   webhook callbacks come from the blocked space, so the Traefik bouncer's
   `exemptScenarios = ["static-blocklist/meta-asn"]` and `exemptRoutes` let that

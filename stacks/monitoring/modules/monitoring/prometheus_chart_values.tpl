@@ -1484,20 +1484,12 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Edge request rate {{ $value | printf \"%.1f\" }}/s is over 3x its 6h average for 15m — possible scrape or crawl. Check `homelab logs query` for a single host or user-agent dominating."
-          - alert: ForgejoCrawlSurge
-            # Forgejo specifically, because it is where every crawl has landed:
-            # 22,115 of 22,189 Meta requests in a 24h window, and 137,760
-            # direct-to-origin requests in 12h before it went behind Cloudflare.
-            # Baseline is ~0.4 req/s, so 5x is a real change and not jitter.
-            expr: |
-              sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))
-                > 5 * avg_over_time(sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))[6h:5m])
-              and sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m])) > 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "forgejo request rate {{ $value | printf \"%.1f\" }}/s is over 5x its 6h average — the crawl target. If the Meta blocklist retirement was premature, this is how we find out."
+          # ForgejoCrawlSurge was removed 2026-11-09. Since the 2026-10-16
+          # Anubis fold its service counter covers only the backend, which
+          # internal clients dominate, and a residential-proxy crawl adds about
+          # 0.03 req/s to it. Forgejo crawls are now alerted on from the access
+          # log: ForgejoFilterCrawlReachingBackend and ForgejoExternalClientSurge
+          # in loki.tf, group "Forgejo crawl".
           - alert: EdgeBlockSurge
             # A sustained 403 rate means something is being refused in volume,
             # which is the signature of a crawl meeting CrowdSec or the edge.
