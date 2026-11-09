@@ -4,7 +4,7 @@ Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CL
 
 ## Kyverno Drift Suppression (`# KYVERNO_LIFECYCLE_V1`)
 
-Kyverno's admission webhook mutates every pod with a `dns_config { option { name = "ndots"; value = "2" } }` block (fixes NxDomain search-domain floods — see `k8s-ndots-search-domain-nxdomain-flood` skill). Terraform does not manage that field, so without suppression every pod-owning resource shows perpetual `spec[0].template[0].spec[0].dns_config` drift.
+Kyverno's admission webhook mutates every pod with a `dns_config { option { name = "ndots"; value = "2" } }` block (it stops the NxDomain floods that the default ndots:5 search-domain expansion sends to external DNS). Terraform does not manage that field, so without suppression every pod-owning resource shows perpetual `spec[0].template[0].spec[0].dns_config` drift.
 
 **Rule**: every `kubernetes_deployment`, `kubernetes_stateful_set`, `kubernetes_daemon_set`, `kubernetes_cron_job_v1`, **and `kubernetes_job`** MUST include the following `lifecycle` block, tagged with the `# KYVERNO_LIFECYCLE_V1` marker so every site is greppable:
 
