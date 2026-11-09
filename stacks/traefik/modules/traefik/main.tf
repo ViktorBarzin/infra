@@ -226,6 +226,13 @@ resource "helm_release" "traefik" {
           middlewares = [
             "traefik-crowdsec@kubernetescrd",
             "traefik-compress@kubernetescrd",
+            # After compress: compress reads the browser's Accept-Encoding on
+            # the way in, then analytics-inject drops it for HTML pages it may
+            # change, and compress compresses the changed page on the way out
+            # (analytics-inject-plugin/README.md). Host filters live on the
+            # Middleware (middleware.tf). The Middleware was created by an
+            # earlier apply; it must exist before this reference does.
+            "traefik-analytics-inject@kubernetescrd",
           ]
           # CVE-2026-88879: a header whose name aliases another one (X_Foo vs
           # X-Foo) could slip past header-based checks. delete drops any request
