@@ -2997,6 +2997,34 @@
       failed_when: false
       no_log: true
 
+    # Product analytics and error reports (infra ADR-0041, terminal-lobby
+    # ADR-0048). The Write key is the terminal-lobby entry of the JSON map in
+    # secret/rybbit write_keys; the DSN is GlitchTip's same-origin form, which
+    # the box reaches through the public Ingest path like the events do.
+    - name: Read the lobby's analytics Write key
+      ansible.builtin.command: vault kv get -field=write_keys secret/rybbit
+      delegate_to: localhost
+      become: false
+      register: devvm_tl_write_keys
+      changed_when: false
+      check_mode: false
+      no_log: true
+      failed_when: >-
+        devvm_tl_write_keys.rc != 0 or
+        ((devvm_tl_write_keys.stdout | from_json).get('terminal-lobby', '') | length) < 16
+
+    - name: Read the lobby's GlitchTip DSN
+      ansible.builtin.command: vault kv get -field=dsn_terminal-lobby secret/glitchtip
+      delegate_to: localhost
+      become: false
+      register: devvm_tl_sentry_dsn
+      changed_when: false
+      check_mode: false
+      no_log: true
+      failed_when: >-
+        devvm_tl_sentry_dsn.rc != 0 or
+        not (devvm_tl_sentry_dsn.stdout | trim).startswith('https://')
+
     # Replaces the file wholesale rather than editing a line into it: the
     # package owns /etc/terminal-lobby.conf and never touches this one, so this
     # is the whole of what the box overrides, and a rebuilt machine gets it.
@@ -3050,6 +3078,15 @@
           # in devvm_external_agents. A field the pin leaves out stays the
           # Caller's choice.
           TL_CALLER_PINS={% for a in devvm_external_agents if a.pin is defined %}{{ a.name }}:{% for k, v in a.pin.items() %}{{ k }}={{ v }}{{ ',' if not loop.last }}{% endfor %}{{ ';' if not loop.last }}{% endfor %}
+
+          # Product events, JSON logs and error reports (terminal-lobby
+          # ADR-0048). The box cannot resolve the pipeline's cluster Service,
+          # so events go out through the public Ingest path on the lobby's own
+          # host, which carries no forward-auth. Only production sends.
+          TELEMETRY_HOST=https://terminal.viktorbarzin.me/_t/e
+          TELEMETRY_ENVIRONMENT=production
+          TELEMETRY_WRITE_KEY={{ (devvm_tl_write_keys.stdout | from_json)['terminal-lobby'] }}
+          SENTRY_DSN={{ devvm_tl_sentry_dsn.stdout | trim }}
 
       no_log: true
       notify: restart lobby services
