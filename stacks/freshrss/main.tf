@@ -64,33 +64,20 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "freshrss-data-proxmox"
-    namespace = kubernetes_namespace.immich.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# FreshRSS data dir: config.php files, favicons, cache, tokens and logs. The
+# feeds and articles live in the shared MySQL, so nothing here is an embedded
+# DB and NFS is safe. Moved off the block PVC freshrss-data-proxmox on
+# 2026-11-09 to free a proxmox-csi slot
+# (docs/research/2026-11-09-block-volume-db-consolidation.md).
+module "nfs_data" {
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "freshrss-data-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.nfs_server
+  # /srv/nfs/freshrss/data is a stale pre-2026-04 copy, left in place.
+  nfs_path           = "/srv/nfs/freshrss/data-2026-11"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # Migrated proxmox-lvm -> NFS (2026-06-04) to free a per-node SCSI-LUN slot
@@ -178,7 +165,7 @@ resource "kubernetes_deployment" "freshrss" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {

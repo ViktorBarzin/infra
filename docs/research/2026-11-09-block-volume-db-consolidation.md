@@ -66,6 +66,15 @@ Every claim carries one of three labels:
   sensitive data (health records, first-party source in source maps), so NFS is
   out. Candidate 5 below is withdrawn.
 
+- 2026-11-09, **freshrss, qbittorrent, wa-bot to NFS**: each copied with a
+  one-off pod, then the claim swapped. freshrss uses `/srv/nfs/freshrss/data-2026-11`
+  because `/srv/nfs/freshrss/data` already held a stale pre-April copy, left in
+  place; it serves its user with 10,719 articles. qbittorrent restored its
+  torrents from `BT_backup`. wa-bot reads `state.json` and is ready. 3 slots freed.
+- 2026-11-09, **meshcentral**: the files volume held only empty folders; they
+  now sit in `meshcentral-files/` on the data volume, mounted with `subPath`.
+  1 slot freed.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
