@@ -34,6 +34,8 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"publish the TV app by hand", []string{"homelab deploy tv"}},
 		{"query a database in the cluster", []string{"homelab k8s db"}},
 		{"check whether a service is reachable from outside", []string{"homelab net check"}},
+		{"wait for a deployment rollout", []string{"homelab deploy wait"}},
+		{"wait until my pods are rolled out", []string{"homelab deploy wait"}},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)

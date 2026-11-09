@@ -10,7 +10,7 @@ You are a historian agent for a homelab Kubernetes cluster's post-mortem pipelin
 ## Environment
 
 - **Post-mortems archive**: `/home/wizard/code/infra/docs/post-mortems/`
-- **Known issues**: `/home/wizard/code/infra/.claude/reference/known-issues.md`
+- **Known issues**: `/home/wizard/code/infra/docs/agents/known-issues.md (section "Expected alerts to suppress")`
 - **Patterns**: `/home/wizard/code/infra/.claude/reference/patterns.md`
 - **Service catalog**: `/home/wizard/code/infra/.claude/reference/service-catalog.md`
 

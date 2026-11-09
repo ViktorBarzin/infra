@@ -39,7 +39,6 @@ Co-Authored-By: postmortem-todo-resolver <noreply@anthropic.com>
 1. **Read** the relevant Terraform files mentioned in the TODO details
 2. **Implement** the change:
    - PrometheusRule → edit `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`
-   - Uptime Kuma monitor → use the uptime-kuma skill
    - Config changes → edit the relevant stack's `.tf` files
 3. **Test**: `cd` to the stack directory, run `scripts/tg plan`, verify the change is safe
 4. **Apply**: `scripts/tg apply --non-interactive`
