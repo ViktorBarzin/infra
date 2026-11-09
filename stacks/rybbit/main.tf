@@ -4,6 +4,14 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
+variable "redis_host" { type = string }
+
+# Sign-up stays off. It is switched on only for the few minutes it takes to
+# create the first admin account (docs/runbooks/rybbit.md, "Bootstrap").
+variable "rybbit_signup_open" {
+  type    = bool
+  default = false
+}
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -658,7 +666,17 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "DISABLE_SIGNUP"
-            value = "true"
+            value = var.rybbit_signup_open ? "false" : "true"
+          }
+          # Rybbit 2.9 keeps sessions, sticky identity and bot counters in
+          # Redis; without it every call waits for an ioredis timeout.
+          env {
+            name  = "REDIS_HOST"
+            value = var.redis_host
+          }
+          env {
+            name  = "REDIS_PORT"
+            value = "6379"
           }
           env {
             name  = "BETTER_AUTH_SECRET"
