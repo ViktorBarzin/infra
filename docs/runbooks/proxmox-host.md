@@ -119,7 +119,7 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | unattended-upgrades, Debian-Security origin only, no automatic reboot (tag `patching`) | Nothing installed updates on the host until 2026-10-19, when 29 security updates were waiting. Proxmox packages (kernel, QEMU, pve-manager) and Debian point releases are still upgraded by hand, because they need a reboot or a VM stop/start to take effect. Kernel autoremoval is off, after the first run removed the fallback kernel 6.14.11-3 |
 | `host-patch-status` (script, service, hourly timer) and the node_exporter textfile collector (tag `patching`) | Reports how many Proxmox packages are waiting and since when, and whether the running kernel is older than the newest installed one. `ProxmoxHostUpdatesWaiting` and `ProxmoxHostRebootWaiting` fire after 30 days, `ProxmoxHostPatchStatusStale` when the script stops running |
 | `csi-leak-reconcile` (script, service, 5-minute timer, tag `csi-leak`) | Clears Proxmox CSI disk slots a timed-out detach left poisoned (see `docs/runbooks/proxmox-csi-wedged-attach.md`). Acts only on a slot that has a throttle object, no config entry and no attached device on two runs in a row, under the same per-VM lock `qm set` takes. Exports `pve_csi_leaked_slots`, `pve_csi_leak_cleaned_total` and `pve_csi_leak_reconcile_errors` through the textfile collector |
-| `disk-smart-status` (script, service, 5-minute timer, tag `smart`) | Reads SMART data and the Seagate FARM log from every physical drive behind the PERC and exports `smart_*` metrics through the textfile collector. The "R730 Drives" alert group reads them. See "Drive health" below |
+| `disk-smart-status` (script, service, hourly timer, tag `smart`) | Reads SMART data and the Seagate FARM log from every physical drive behind the PERC and exports `smart_*` metrics through the textfile collector. The "R730 Drives" alert group reads them. See "Drive health" below |
 | Monthly Proxmox upgrade (tag `pve-upgrade`, runs only when asked for) | `apt full-upgrade` with no reboot. See below |
 
 The measurements and reasoning for each item sit next to its task in
@@ -183,9 +183,17 @@ Alerts (group "R730 Drives", plus two in "Server Health"):
 | `DiskSSDWearHigh` | warning | the SSD's `Wear_Leveling_Count` normalized value is below 20 |
 | `DiskSmartUnreadable` | warning | smartctl cannot read a drive the controller still lists |
 | `DiskSmartDriveMissing` | warning | fewer drives answer smartctl than the iDRAC reports |
-| `DiskSmartCollectorStale` | warning | the collector has not run for 30 minutes |
+| `DiskSmartCollectorStale` | warning | the collector has not run for 2 hours |
 | `iDRACStorageUnhealthy` | critical | the iDRAC storage roll-up is not OK: a degraded virtual disk, the PERC or its battery |
 | `iDRACBatteryUnhealthy` | critical | the iDRAC battery roll-up (PERC and CMOS) is not OK |
+
+The collector runs hourly (Viktor, 2026-11-09; it ran every 5 minutes on
+its first day). Its reads are SMART log pages the drive firmware answers
+from memory, so they do not move the heads, but nothing here changes fast
+enough to need more. A new error or defect therefore alerts within about
+an hour, and a temperature rise within about an hour plus the alert's
+`for`; `FanFailure` and `HighCPUTemperature` react faster to the
+cooling faults that would cause it.
 
 No SMART self-tests are scheduled. The drives run their own background
 media scans, the PERC runs patrol reads, and a long test on an Exos

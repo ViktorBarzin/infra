@@ -1845,7 +1845,7 @@ serverFiles:
               resolved_description_bg: "LAN2 (SW2 порт 5) отново е в готовност. Ако LAN1 отпадне, сървърът пак ще може да мине на него. Нищо не е нужно да се прави."
       # SMART data for every physical drive behind the R730's PERC, written by
       # disk-smart-status on the PVE host (playbooks/pve-host.yml, tag smart)
-      # every 5 minutes. "Increased" rules compare max_over_time with
+      # hourly. "Increased" rules compare max_over_time with
       # min_over_time over 24h: no counter extrapolation, and one event keeps
       # the alert up for a day. Thresholds chosen by Viktor on 2026-11-09.
       # Runbook: docs/runbooks/proxmox-host.md, "Drive health".
@@ -1931,12 +1931,12 @@ serverFiles:
               summary: "disk-smart-status sees {{ $value }} drives behind the PERC, fewer than the iDRAC reports"
               description: "A drive dropped off the controller's passthrough, or smartctl --scan stopped listing it. Compare: ssh root@192.168.1.127 smartctl --scan, and the iDRAC storage page."
           - alert: DiskSmartCollectorStale
-            expr: (time() - smart_collector_last_run_timestamp_seconds{job="proxmox-host"}) > 1800 or absent(smart_collector_last_run_timestamp_seconds{job="proxmox-host"})
+            expr: (time() - smart_collector_last_run_timestamp_seconds{job="proxmox-host"}) > 7200 or absent(smart_collector_last_run_timestamp_seconds{job="proxmox-host"})
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "disk-smart-status has not run on the Proxmox host for 30 minutes, so no drive alert can fire"
+              summary: "disk-smart-status has not run on the Proxmox host for 2 hours, so no drive alert can fire"
               description: "Check: systemctl status disk-smart-status.timer disk-smart-status.service on 192.168.1.127"
       - name: RPi Sofia
         rules:
