@@ -26,7 +26,7 @@ Browsers cover first-party apps (Rybbit script and Segment SDK) and third-party 
 | Raw events | Every accepted event as received, kept forever | ClickHouse database `events_raw` on Rybbit's ClickHouse |
 | GlitchTip | Errors and crashes from the Sentry SDKs | `stacks/glitchtip` |
 | Ingest path | `/_t/` on every host, routed to the three services above | one host-independent Traefik route in `stacks/rybbit` |
-| Injection plugin | Adds the Rybbit script to HTML from third-party apps | `stacks/traefik/modules/traefik/` local plugin, enabled per ingress by `ingress_factory` |
+| Injection plugin | Adds the Rybbit script to HTML from third-party apps | `stacks/traefik/modules/traefik/` local plugin, run as a `websecure` entrypoint middleware |
 
 ## One standard, several transports
 
@@ -121,7 +121,13 @@ The libraries are public, as app-kit is. The TypeScript packages publish to npm 
 
 ## Third-party apps
 
-The injection plugin adds `<script src="/_t/r/script.js" data-site-id="<hosted>" defer>` before `</head>` of HTML documents. It acts only on `GET` requests that ask for HTML and get a `text/html` 200 back. `ingress_factory` attaches it to every ingress by default (`analytics = "injected"`). First-party apps set `analytics = "sdk"` because they load the script themselves. The denylisted services set `analytics = "off"`: Authentik, Vault, Vaultwarden, the Kubernetes dashboard, Proxmox, OPNsense, Headscale, and APIs that serve no HTML.
+The injection plugin adds `<script src="/_t/r/script.js" data-site-id="<hosted>" defer>` before `</head>` of HTML documents. It acts only on `GET` requests that ask for HTML and get a `text/html` 200 back.
+
+It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression do, so every host is covered from one place and a new service needs no change. Putting it in `ingress_factory` instead would change a module about 100 stacks use, and CI would then apply all of them in turn. The plugin filters hosts itself:
+
+- `excludeHosts` lists the denylisted services: Authentik, Vault, Vaultwarden, the Kubernetes dashboard, Proxmox, OPNsense, Headscale, and APIs that serve no HTML.
+- First-party apps load the script themselves, so they opt out with `<meta name="analytics" content="sdk">` in their HTML or an `X-Analytics: sdk` response header. The plugin strips that header before it reaches the browser.
+- `includeHosts` limits the plugin to named hosts for a staged start. It is cleared once the first hosts work.
 
 ## Rollout
 

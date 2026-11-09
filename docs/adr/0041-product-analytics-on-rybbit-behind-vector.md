@@ -30,7 +30,7 @@ No self-hosted platform meets every requirement (see the comparison):
    The Rybbit browser script still carries pageviews and replay directly to Rybbit.
 3. **GlitchTip is the error and crash tracker.** Apps use the Sentry SDKs. GlitchTip runs as one app on the shared Postgres and signs users in through Authentik over OIDC.
 4. **Browsers reach all three through an Ingest path, `/_t/`, on each app's own host.** One host-independent Traefik route serves it, so no app stack changes for it.
-5. **Third-party apps get the Rybbit script from an in-repo Traefik plugin.** It is on by default through `ingress_factory`, with a denylist for authentication, secrets and admin consoles.
+5. **Third-party apps get the Rybbit script from an in-repo Traefik plugin.** It runs on every host as a Traefik entrypoint middleware, with a denylist for authentication, secrets and admin consoles, and first-party apps opt out because they load the script themselves.
 6. **Logs follow the same standard:** JSON lines on stdout using OpenTelemetry field names, collected by the existing Alloy into Loki.
 
 ## Consequences
