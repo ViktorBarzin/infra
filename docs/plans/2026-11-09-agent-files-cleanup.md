@@ -1,6 +1,6 @@
 # Agent files cleanup, round 3
 
-Status: approved 2026-11-09 (grilling with Viktor); drafts approved after the replay below.
+Status: done 2026-11-09. Approved in a grilling session with Viktor, drafts approved after the replay below, landed and verified live the same day.
 
 ## Goal
 
@@ -38,7 +38,7 @@ Skills with zero use in the window: job-hunter, lesson-harvester, teach, wizard,
 ## Decisions
 
 ```mermaid
-flowchart LR
+flowchart TD
   org["Org policy<br/>red-lines + devvm mechanics<br/>+ one homelab how line"]
   vik["Viktor's AGENTS.md<br/>one file, under 12 KB"]
   infra["infra/AGENTS.md<br/>~12 KB"]
