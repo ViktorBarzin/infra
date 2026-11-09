@@ -34,15 +34,44 @@ Run before any apply that changes a vendored plugin:
              -import github.com/sablierapp/sablier-traefik-plugin \
              -config '{"group":"gate","dynamic":{"theme":"ghost"}}'
 
+    go run . -dir ../../stacks/traefik/modules/traefik/analytics-inject-plugin \
+             -import github.com/viktorbarzin/analytics-inject-plugin \
+             -config '{"siteId":"7"}' -accept text/html \
+             -backend-type text/html -backend-body '<html><head></head></html>' \
+             -want-body 'data-site-id="7" defer></script></head>' -want-hijacker
+
+    go test -v .   # analytics_inject_test.go: the injection plugin under Yaegi
+
 Exit 0 = the plugin loads and serves a request under Yaegi.
 
-Two failure classes, and the output names which one you hit:
+The probe writer can hijack, as Traefik's does, and the gate prints whether the
+writer the backend receives still implements `http.Flusher` and
+`http.Hijacker`. A plugin that wraps the writer keeps only what Yaegi's wrapper
+exposes: v0.16.1 has a composed wrapper for ResponseWriter plus Hijacker, none
+with Flusher. `-want-hijacker` fails the run if websockets would break.
+
+`-accept`, `-backend-type` and `-backend-body` shape the probe request and the
+backend's answer, and `-want-body` fails the run unless the response body
+contains the given text. Plugins that rewrite responses need them; the others
+can ignore them.
+
+Three failure classes, and the output names which one you hit:
 
 * **Load failure** (staging / interpret / import / entrypoint lookup) — this is
   the one that disables every Traefik plugin at startup. Do not apply.
 * **`New()` rejected the config** — the plugin loaded; only these values were
   refused. In production that is a per-middleware error, not a fleet-wide
   outage. Usually it means the gate needs a `-config`, as sablier does above.
+* **Probe expectation failed** — the plugin loaded and served, but
+  `-want-body` or `-want-hijacker` did not hold.
+
+`analytics_inject_test.go` covers what the single probe cannot: gzip
+passthrough, the unwrapped writer on non-HTML requests, config rejection,
+`excludeHosts` / `includeHosts`, the `X-Analytics: sdk` header and the opt-out
+meta table, and a 1 s budget for 5 MiB bodies, since loops in plugin code are
+interpreted and a byte-by-byte scan once took 12.6 s. The meta table is there
+because interpreted code diverged on it once: `case a, b:` in a tagless switch
+evaluated only `a` under Yaegi v0.16.1.
 
 `-config` is JSON overlaid onto whatever `CreateConfig()` returned, exactly as
 Traefik overlays a Middleware CRD's `spec.plugin.<key>` block. Pass anything
