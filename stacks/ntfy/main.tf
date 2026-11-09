@@ -3,6 +3,7 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
 
 resource "kubernetes_namespace" "ntfy" {
@@ -24,32 +25,49 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "ntfy-data-proxmox"
-    namespace = kubernetes_namespace.ntfy.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
+# Database credentials from the Vault static role pg-ntfy (stacks/vault
+# app_db_roles.tf), rotated weekly in its Tuesday slot. The
+# db-rotation-watcher force-syncs this ExternalSecret and Reloader restarts
+# the pod. ntfy keeps users, access rules and tokens in this database.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
   }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "ntfy-db-creds"
+      namespace = kubernetes_namespace.ntfy.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
       }
+      target = {
+        name = "ntfy-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            NTFY_DATABASE_URL = "postgres://ntfy:{{ .password }}@${var.postgresql_host}:5432/ntfy"
+            password          = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-ntfy"
+          property = "password"
+        }
+      }]
     }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
@@ -127,9 +145,18 @@ resource "kubernetes_deployment" "ntfy" {
             name  = "NTFY_ENABLE_LOGIN"
             value = "true"
           }
+          # Users, access rules and tokens live in the shared Postgres since
+          # 2026-11-09 (database-url; auth-file must then be unset). Nothing
+          # else is configured to write to disk: no message cache, no
+          # attachments, no web push, so the pod needs no volume.
           env {
-            name  = "NTFY_AUTH_FILE"
-            value = "/var/lib/ntfy/user.db"
+            name = "NTFY_DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "ntfy-db-creds"
+                key  = "NTFY_DATABASE_URL"
+              }
+            }
           }
           env {
             name  = "NTFY_AUTH_DEFAULT_ACCESS"
@@ -139,10 +166,6 @@ resource "kubernetes_deployment" "ntfy" {
             name  = "NTFY_ENABLE_METRICS"
             value = "true"
           }
-          volume_mount {
-            name       = "data"
-            mount_path = "/var/lib/ntfy/"
-          }
           resources {
             requests = {
               cpu    = "10m"
@@ -151,12 +174,6 @@ resource "kubernetes_deployment" "ntfy" {
             limits = {
               memory = "128Mi"
             }
-          }
-        }
-        volume {
-          name = "data"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
       }

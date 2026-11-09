@@ -47,6 +47,14 @@ Every claim carries one of three labels:
   `learning-db-creds` builds `DB_CONNECTION_STRING`). 4 events and 4 progress
   rows copied with the app's own models; the volume is gone. 1 slot freed.
 
+- 2026-11-09, **ntfy**: users, access rules and tokens moved to the shared
+  Postgres (database and role `ntfy`, Vault static role `pg-ntfy` at Tuesday
+  10:44, `NTFY_DATABASE_URL` from ExternalSecret `ntfy-db-creds`). Upstream's
+  `tools/pgimport` refused: it expects user-db schema v6 and this one is v11. The
+  3 users, 2 access rules and 4 tokens were copied column for column into the v11
+  schema ntfy created; token values verified by hash, and an existing token
+  authenticates. No volume. 1 slot freed.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
