@@ -77,6 +77,8 @@ Vector rejects an event, and sends it to Loki under `{job="event-pipeline", outc
 
 Each app writes one JSON object per line to stdout. The existing Alloy collector ships it to Loki. Field names follow the OpenTelemetry log data model and semantic conventions. Attributes we add are snake_case.
 
+This replaces the earlier contract in app-kit ADR-0001 (`ts`, `level`, `logger`, `msg`, `exc`), which tripit, offline-reader, tasks and alexa-assistant use today. No Loki rule or dashboard reads those field names, so they change in the rollout without breaking a query. `@viktorbarzin/log` moves to the fields below in a major version (app-kit ADR-0002).
+
 | Field | Meaning |
 |---|---|
 | `timestamp` | RFC 3339 with nanoseconds, UTC |
@@ -102,6 +104,8 @@ Apps use the Sentry SDKs with a DSN per app pointing at `/_t/x/<project>` on the
 | Python | `telemetry` repo, `viktorbarzin-telemetry` | Segment client config, Sentry init, `logging` JSON formatter |
 | Go | `telemetry` repo, `telemetry/go` | Segment client config, Sentry init, `slog` JSON handler |
 | Kotlin | `telemetry` repo, `telemetry-android` | Segment client config (our settings host, telemetry off), Sentry init |
+
+The libraries are public, as app-kit is. The TypeScript packages publish to npm through app-kit's release workflow. The Python package publishes to PyPI through trusted publishing from the `telemetry` repo's GitHub mirror. The Go module is fetched from the mirror. JitPack builds the Android library from tags. The code holds no secrets: Write keys and DSNs come from each app's configuration.
 
 ## Settings
 
