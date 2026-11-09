@@ -385,7 +385,7 @@ follow-up commands below trace which VM / process is the source:
 
 ```bash
 # Per-core temps (broader than the package summary in check 43)
-ssh root@192.168.1.127 'for f in /sys/class/hwmon/hwmon0/temp*_input; do
+ssh root@192.168.1.127 'd=$(grep -lx coretemp /sys/class/hwmon/hwmon*/name); for f in ${d%/name}/temp*_input; do
     base=${f%_input}; label=$(cat ${base}_label 2>/dev/null || echo "${base##*/}")
     val=$(cat "$f"); echo "  $label: $((val/1000))°C"
 done'
