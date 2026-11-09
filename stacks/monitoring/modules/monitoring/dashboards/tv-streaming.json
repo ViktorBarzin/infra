@@ -909,7 +909,7 @@
       "type": "stat",
       "id": 15,
       "title": "CF window age",
-      "description": "Age of the newest window. Windows are read 3 minutes after they close, every 5 minutes, so 3 to 8 minutes is normal.",
+      "description": "Age of the newest window. Windows are read 3 minutes after they close, every 5 minutes, so 3 to 8 minutes is normal. The Edge stops exporting a window 20 minutes after it closed, so this panel goes empty rather than past that.",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
@@ -945,11 +945,11 @@
               },
               {
                 "color": "orange",
-                "value": 900
+                "value": 600
               },
               {
                 "color": "red",
-                "value": 1800
+                "value": 900
               }
             ]
           }
