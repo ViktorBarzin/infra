@@ -20,7 +20,7 @@ Capacity envelope (5 workers): **~145 block-PVC slots**, ~160 GiB memory, ~80 vC
 
 The cluster has 6 capacity dimensions. The one that bites first depends on workload shape; check each before adding/removing nodes.
 
-1. **Per-VM block-PVC ceiling = 29** — hardcoded by `sergelogvinov/proxmox-csi-plugin` at `pkg/csi/utils.go:394` (`for lun = 1; lun < 30; lun++`). Symptom: pods stuck `ContainerCreating` with `FailedAttachVolume … no free lun found`. `CSINode.allocatable.count` advertises `28`/node. Switching `scsihw` to `virtio-scsi-single` does NOT raise this — it's a plugin constraint, not a Proxmox/QEMU one. See `docs/architecture/storage.md` § "Per-VM SCSI-LUN cap".
+1. **Per-VM block-PVC ceiling = 29** — hardcoded by `sergelogvinov/proxmox-csi-plugin` at `pkg/csi/utils.go:662` in v0.22.0 (`for lun = 1; lun < 30; lun++`). Symptom: pods stuck `ContainerCreating` with `FailedAttachVolume … no free lun found`. `CSINode.allocatable.count` advertises `28`/node. Switching `scsihw` to `virtio-scsi-single` does NOT raise this — it's a plugin constraint, not a Proxmox/QEMU one. See `docs/architecture/storage.md` § "Per-VM SCSI-LUN cap".
 
 2. **Memory commitment** — node1 has historically run hot (was 117% of limits before the 2026-06 memory bump to 48 GiB). Treat memory as the next-binding constraint after PVC slots, especially since limits-vs-requests divergence isn't enforced by the scheduler.
 
