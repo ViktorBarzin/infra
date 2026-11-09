@@ -8,7 +8,24 @@ locals {
   # Rybbit records for server and Android events, which carry no page URL.
   # Each needs a key in Vault secret/rybbit `write_keys` (JSON, app -> key).
   analytics_apps = {
-    tv = "tv.viktorbarzin.me"
+    "alexa-assistant" = "alexa-assistant.viktorbarzin.me"
+    "blog"            = "viktorbarzin.me"
+    "fire-planner"    = "fire-planner.viktorbarzin.me"
+    "health"          = "health.viktorbarzin.me"
+    "interview-prep"  = "interview-prep.viktorbarzin.me"
+    "kms"             = "kms.viktorbarzin.me"
+    "learning"        = "learn.viktorbarzin.me"
+    "nextcloud-todos" = "nextcloud-todos.viktorbarzin.me"
+    "offline-reader"  = "offline-reader.viktorbarzin.me"
+    "pages"           = "pages.viktorbarzin.me"
+    "plotting-book"   = "plotting-book.viktorbarzin.me"
+    "priority-pass"   = "priority-pass.viktorbarzin.me"
+    "tasks"           = "tasks.viktorbarzin.me"
+    "terminal-lobby"  = "terminal.viktorbarzin.me"
+    "tripit"          = "tripit.viktorbarzin.me"
+    "tv"              = "tv.viktorbarzin.me"
+    "vpn-portal"      = "vpn.viktorbarzin.me"
+    "wrongmove"       = "wrongmove.viktorbarzin.me"
   }
 
   write_keys = jsondecode(data.vault_kv_secret_v2.secrets.data["write_keys"])
