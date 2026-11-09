@@ -172,6 +172,37 @@ resource "kubernetes_deployment" "health" {
               }
             }
           }
+          # Product events and errors (telemetry.tf, infra ADR-0041, health
+          # ADR-0014). Without TELEMETRY_WRITE_KEY the app sends nothing;
+          # optional=true so the Secret not yet written changes nothing.
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://event-pipeline.rybbit.svc.cluster.local"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.health_telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.health_telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
           env {
             # ADR-0008 (health repo): identity for the internal LAN test host.
             # Only reached when no X-authentik-email header is present — i.e. via

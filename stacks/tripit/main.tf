@@ -43,6 +43,10 @@ locals {
   # writable by the non-root user.
   app_env = {
     AUTH_MODE = "normal"
+    # Product events and errors (telemetry.tf, infra ADR-0041, tripit ADR-0077).
+    # Without TELEMETRY_WRITE_KEY from tripit-telemetry the app sends nothing.
+    TELEMETRY_HOST        = "http://event-pipeline.rybbit.svc.cluster.local"
+    TELEMETRY_ENVIRONMENT = "production"
     # Open-signup abuse controls sit behind Traefik (tripit ADR-0028, #95): trust
     # the proxy's X-Forwarded-For so the per-IP rate-limit keys on the real client,
     # not the shared ingress pod IP. (The PoW captcha is the primary control.)
@@ -554,6 +558,13 @@ resource "kubernetes_deployment" "tripit" {
           env_from {
             secret_ref { name = "tripit-db-creds" }
           }
+          # TELEMETRY_WRITE_KEY and SENTRY_DSN (telemetry.tf).
+          env_from {
+            secret_ref {
+              name     = kubernetes_secret.tripit_telemetry.metadata[0].name
+              optional = true
+            }
+          }
 
           dynamic "env" {
             for_each = local.app_env
@@ -683,6 +694,13 @@ resource "kubernetes_deployment" "mail_listener" {
           }
           env_from {
             secret_ref { name = "tripit-db-creds" }
+          }
+          # TELEMETRY_WRITE_KEY and SENTRY_DSN (telemetry.tf).
+          env_from {
+            secret_ref {
+              name     = kubernetes_secret.tripit_telemetry.metadata[0].name
+              optional = true
+            }
           }
 
           dynamic "env" {
@@ -985,6 +1003,13 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
               }
               env_from {
                 secret_ref { name = "tripit-db-creds" }
+              }
+              # TELEMETRY_WRITE_KEY and SENTRY_DSN (telemetry.tf).
+              env_from {
+                secret_ref {
+                  name     = kubernetes_secret.tripit_telemetry.metadata[0].name
+                  optional = true
+                }
               }
 
               dynamic "env" {

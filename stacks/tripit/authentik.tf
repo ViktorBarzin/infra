@@ -50,6 +50,20 @@ data "authentik_property_mapping_provider_scope" "offline_access" {
   scope_name = "offline_access"
 }
 
+# The Person id of the shared telemetry standard (infra ADR-0041, tripit
+# ADR-0077) is Authentik's hashed user id, which tv and every default provider
+# issue as `sub`. This provider's `sub` is the email (below), so this mapping
+# adds the uid as its own claim. Scope `openid`, which the website and the Shell
+# both request, so the claim is in their ID and access tokens without a client
+# change; Authentik merges every mapping of a requested scope. Named `ak_uid`,
+# not `uid`: Authentik sets `uid` in access tokens to a random token id.
+resource "authentik_property_mapping_provider_scope" "tripit_person_id" {
+  name        = "tripit: Person id (ak_uid)"
+  scope_name  = "openid"
+  description = "Authentik's hashed user id, the telemetry Person id"
+  expression  = "return {\"ak_uid\": user.uid}"
+}
+
 resource "authentik_provider_oauth2" "tripit_app" {
   name        = "tripit-app"
   client_id   = "tripit-app"
@@ -89,6 +103,7 @@ resource "authentik_provider_oauth2" "tripit_app" {
     data.authentik_property_mapping_provider_scope.profile.id,
     data.authentik_property_mapping_provider_scope.email.id,
     data.authentik_property_mapping_provider_scope.offline_access.id,
+    authentik_property_mapping_provider_scope.tripit_person_id.id,
   ]
 }
 
