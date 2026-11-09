@@ -94,7 +94,7 @@ UPGRADE_GATE_ALERTS='AuthentikDown|CSIDriverCrashLoop|CalicoNodeNotReady|Contain
 'KubeletRunningContainersDrop|LowUPSBattery|NFSCSIControllerDown|NFSCSINodeDown|'\
 'NFSMountFailures|NFSServerUnresponsive|NodeDown|NodeExporterDown|NodeNotReady|'\
 'OnBattery|PVFillingUp|PfSenseVMDown|PodUnschedulable|PostgreSQLDown|PowerOutage|'\
-'PrometheusRuleEvaluationFailing|ProxmoxCSILunCapReached|ProxmoxCSILunUsageCritical|'\
+'PrometheusRuleEvaluationFailing|BlockVolumeHeadroomLow|NodeBlockVolumesOverCap|'\
 'TraefikDown|WANGatewayUnreachable'
 KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml

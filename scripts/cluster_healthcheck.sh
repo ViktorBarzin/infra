@@ -3343,7 +3343,7 @@ check_immich_search() {
 # on a disk-heavy VM), the disk is left pinned in the VM config with NO
 # matching k8s VolumeAttachment — an orphaned "ghost". Ghosts accumulate
 # invisibly: the scheduler's per-node volume limit (CSINode.allocatable.count
-# = 28) counts only k8s attachments, so it keeps placing pods on a node whose
+# = 20 since 2026-11-09, was 28) counts only k8s attachments, so it keeps placing pods on a node whose
 # REAL scsi-disk count is already near the cap, until `query-pci` times out and
 # every attach/detach on that node wedges (the 2026-06-04 MAM grabber incident:
 # node3 had 13 tracked vs 23 real scsi disks). This check compares per-node

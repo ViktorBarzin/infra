@@ -197,6 +197,8 @@ locals {
     "--leader-election-retry-period=15s",
   ]
 
+  max_volume_attachments = "20"
+
   k8s_nodes = {
     "k8s-master" = { vmid = 200, proxmox_node = "pve" }
     "k8s-node1"  = { vmid = 201, proxmox_node = "pve" }
@@ -214,19 +216,22 @@ locals {
 resource "null_resource" "node_labels" {
   for_each = local.k8s_nodes
 
-  # max-volume-attachments: capped at 28 (4 below plugin's hard ceiling of 30,
-  # see VolumesPerNodeHardLimit in sergelogvinov/proxmox-csi-plugin pkg/csi/node.go).
-  # Default is 24; bumping to 28 gives ~4-PVC headroom per node while keeping
-  # 2 slots for recovery (boot disk + transient attach during reschedule).
-  # Without this label the plugin reports 24 and node1 cascades through that
-  # ceiling during evictions — see post-mortem 2026-05-25.
+  # max-volume-attachments: 20 since 2026-11-09 (was 28). The scheduler's
+  # NodeVolumeLimits filter enforces it through CSINode.allocatable.count, so no
+  # node VM is ever asked to carry more than 20 hotplugged PVC disks. Hotplug
+  # failures (query-pci timeouts, ghosts, half-attaches) have happened at 20-23
+  # disks per VM; 28 let a node pack into that zone (k8s-node4 reached 27 on
+  # 2026-11-09). The plugin's own ceiling is 29 (pkg/csi/utils.go:662 at v0.22.0)
+  # and its default without this label is 24. Cluster headroom is watched by the
+  # BlockVolumeHeadroomLow alert, not per node. Why not spread or rebalance by
+  # volume count: docs/plans/2026-11-09-volume-aware-scheduling-design.md.
   provisioner "local-exec" {
     command = <<-EOT
       kubectl --kubeconfig=${var.kube_config_path} label node ${each.key} \
         topology.kubernetes.io/region=${var.proxmox_cluster_name} \
         topology.kubernetes.io/zone=${each.value.proxmox_node} \
         node.csi.proxmox.sinextra.dev/name=${each.key} \
-        csi.proxmox.sinextra.dev/max-volume-attachments=28 \
+        csi.proxmox.sinextra.dev/max-volume-attachments=${local.max_volume_attachments} \
         --overwrite
     EOT
   }
@@ -234,7 +239,26 @@ resource "null_resource" "node_labels" {
   triggers = {
     region      = var.proxmox_cluster_name
     zone        = each.value.proxmox_node
-    max_volumes = "28"
+    max_volumes = local.max_volume_attachments
+  }
+}
+
+# The node plugin reads the label only in NodeGetInfo, at registration, and the
+# CSIDriver sets no nodeAllocatableUpdatePeriodSeconds, so CSINode keeps the old
+# count until the plugin re-registers. Restart the node DaemonSet when the cap
+# changes. Existing mounts and LUKS mappings survive a node-plugin restart.
+resource "null_resource" "node_plugin_reregister" {
+  depends_on = [null_resource.node_labels]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig=${var.kube_config_path} -n proxmox-csi rollout restart daemonset/proxmox-csi-plugin-node && \
+      kubectl --kubeconfig=${var.kube_config_path} -n proxmox-csi rollout status daemonset/proxmox-csi-plugin-node --timeout=600s
+    EOT
+  }
+
+  triggers = {
+    max_volumes = local.max_volume_attachments
   }
 }
 
