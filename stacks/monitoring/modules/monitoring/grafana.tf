@@ -141,11 +141,14 @@ locals {
     "terminal-lobby-usage.json" = "Applications"
     "claude-usage.json"         = "Applications"
     "alexa-assistant.json"      = "Applications"
-    "uk-payslip.json"           = "Finance (Personal)"
-    "wealth.json"               = "Finance (Personal)"
-    "job-hunter.json"           = "Finance"
-    "fire-planner.json"         = "Finance"
-    "cost-of-living.json"       = "Finance"
+    # tv streaming phases and the Cloudflare cache profile (tv repo,
+    # tv/cf_cache.py; stacks/tv/cloudflare-analytics.tf).
+    "tv-streaming.json"   = "Applications"
+    "uk-payslip.json"     = "Finance (Personal)"
+    "wealth.json"         = "Finance (Personal)"
+    "job-hunter.json"     = "Finance"
+    "fire-planner.json"   = "Finance"
+    "cost-of-living.json" = "Finance"
     # Security (owner-only — see admin_only_folders; proxy users' browsing)
     "proxy_visits.json" = "Security (Personal)"
   }
