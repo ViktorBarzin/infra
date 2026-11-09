@@ -69,28 +69,6 @@
       "enabled": false
     },
     {
-      "description": "rails revert 2026-11-06 pipeline #3338: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts) (commit 8367f82c)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.43.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-06 pipeline #3353: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts) (commit e9610eda)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.44.0",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-11-06 pipeline #3365: stack traefik failed after this bump: its terragrunt apply failed (commit 0f49dfa6)",
       "matchDatasources": [
         "helm"
@@ -99,17 +77,6 @@
         "traefik"
       ],
       "matchNewValue": "42.3.1",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-06 pipeline #3378: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts) (commit 7fbdfba8)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.45.0",
       "enabled": false
     },
     {
@@ -146,50 +113,6 @@
       "enabled": false
     },
     {
-      "description": "rails revert 2026-11-07 pipeline #3401: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts) (commit df171536)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.45.1",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-08 pipeline #3432: stack redis failed after this bump: its terragrunt apply failed (commit 68526387)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/oliver006/redis_exporter"
-      ],
-      "matchNewValue": "v1.97.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-08 pipeline #3438: stack resume failed after this bump: its terragrunt apply failed (commit f0124ab0)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "amruthpillai/reactive-resume"
-      ],
-      "matchNewValue": "v6.1.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-08 pipeline #3438: stack sablier failed after this bump: its terragrunt apply failed (commit 307ea294)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "sablierapp/sablier"
-      ],
-      "matchNewValue": "1.19.1",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-11-08 pipeline #3455: stack paperless-ngx failed after this bump: its terragrunt apply failed (commit df96be61)",
       "matchDatasources": [
         "docker"
@@ -209,28 +132,6 @@
         "bpg/proxmox"
       ],
       "matchNewValue": "0.121.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-09 pipeline #3513: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts;floor: rollout monitoring/Deployment/prometheus-kube-state-metrics;floor: unhealthy pod monitoring/prometheus-kube-state-metrics) (commit ff702255)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.46.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-09 pipeline #3540: stack monitoring failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: floor: new firing alerts) (commit 82694344)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.47.0",
       "enabled": false
     }
   ]
