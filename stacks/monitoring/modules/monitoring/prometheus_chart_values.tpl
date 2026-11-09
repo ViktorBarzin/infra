@@ -1843,6 +1843,101 @@ serverFiles:
               description_bg: "Сървърът работи нормално по LAN1, но резервата LAN2 (SW2 порт 5) е паднала. При следваща повреда на порт 1 на рутера няма да има резервен път. Провери кабела LAN2, порт 5 на SW2 и самия SW2."
               resolved_summary_bg: "Резервният линк LAN2 на сървъра R730 отново работи"
               resolved_description_bg: "LAN2 (SW2 порт 5) отново е в готовност. Ако LAN1 отпадне, сървърът пак ще може да мине на него. Нищо не е нужно да се прави."
+      # SMART data for every physical drive behind the R730's PERC, written by
+      # disk-smart-status on the PVE host (playbooks/pve-host.yml, tag smart)
+      # every 5 minutes. "Increased" rules compare max_over_time with
+      # min_over_time over 24h: no counter extrapolation, and one event keeps
+      # the alert up for a day. Thresholds chosen by Viktor on 2026-11-09.
+      # Runbook: docs/runbooks/proxmox-host.md, "Drive health".
+      - name: R730 Drives
+        rules:
+          - alert: DiskSmartHealthFailed
+            expr: smart_healthy{job="proxmox-host"} == 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) reports SMART health FAILED"
+              description: "The drive's own verdict is that it is failing. Order a replacement. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
+          - alert: DiskUncorrectedErrors
+            expr: max_over_time(smart_uncorrected_errors_total{job="proxmox-host"}[24h]) > min_over_time(smart_uncorrected_errors_total{job="proxmox-host"}[24h])
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) logged a new uncorrected {{ $labels.op }} error in the last 24h"
+              description: "The drive could not recover data it was asked for. RAID1 hides it from the host, but the mirror copy is now the only good one for that block. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
+          - alert: DiskGrownDefectsIncreased
+            expr: max_over_time(smart_grown_defects{job="proxmox-host"}[24h]) > min_over_time(smart_grown_defects{job="proxmox-host"}[24h])
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) reassigned new bad sectors in the last 24h (grown defects now {{ $value }})"
+              description: "The grown defect list grows when the drive retires sectors it can no longer use. A steady climb usually precedes failure. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
+          - alert: DiskPendingDefects
+            expr: smart_pending_defects{job="proxmox-host"} > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) has {{ $value }} sectors waiting to be reassigned"
+          - alert: DiskSSDMediaErrors
+            expr: max_over_time(smart_ata_attribute_raw{job="proxmox-host",attribute=~"Reallocated_Sector_Ct|Used_Rsvd_Blk_Cnt_Tot|Runtime_Bad_Block|Program_Fail_Cnt_Total|Erase_Fail_Count_Total|Uncorrectable_Error_Cnt|Reported_Uncorrect|CRC_Error_Count|UDMA_CRC_Error_Count"}[24h]) > min_over_time(smart_ata_attribute_raw{job="proxmox-host",attribute=~"Reallocated_Sector_Ct|Used_Rsvd_Blk_Cnt_Tot|Runtime_Bad_Block|Program_Fail_Cnt_Total|Erase_Fail_Count_Total|Uncorrectable_Error_Cnt|Reported_Uncorrect|CRC_Error_Count|UDMA_CRC_Error_Count"}[24h])
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 SSD in bay {{ $labels.bay }} ({{ $labels.model }}): {{ $labels.attribute }} rose in the last 24h (now {{ $value }})"
+              description: "The SSD (VG ssd, a single-drive RAID-0, so no mirror) retired blocks or hit errors. Back up what lives on it. A CRC error rise points at the cable or backplane rather than the flash. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
+          - alert: DiskSSDWearHigh
+            expr: smart_ata_attribute_normalized{job="proxmox-host",attribute="Wear_Leveling_Count"} < 20
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 SSD in bay {{ $labels.bay }} ({{ $labels.model }}) wear indicator is at {{ $value }} of 100"
+          - alert: DiskTemperatureHigh
+            expr: |
+              smart_temperature_celsius{job="proxmox-host"} >= smart_temperature_trip_celsius{job="proxmox-host"} - 5
+              or (smart_temperature_celsius{job="proxmox-host"} >= 60 unless smart_temperature_trip_celsius{job="proxmox-host"})
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }}) is at {{ $value }} C, within 5 C of its own limit"
+              description: "Each SAS drive reports the temperature it treats as its limit (Exos 50 C, the older SAS drives 60 C); the SSD, which reports none, uses 60 C. Check the fans: the IPMI fan actuator follows Home Assistant (docs/runbooks/fan-control.md)."
+          - alert: DiskTemperatureCritical
+            expr: |
+              smart_temperature_celsius{job="proxmox-host"} >= smart_temperature_trip_celsius{job="proxmox-host"}
+              or (smart_temperature_celsius{job="proxmox-host"} >= 70 unless smart_temperature_trip_celsius{job="proxmox-host"})
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }}) is at {{ $value }} C, at or past its own limit"
+              description: "Check the fans first (docs/runbooks/fan-control.md); a drive running past its limit wears fast and may start logging errors."
+          - alert: DiskSmartUnreadable
+            expr: smart_read_ok{job="proxmox-host"} == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "smartctl cannot read the R730 drive in bay {{ $labels.bay }} (exit status bits 0/1 set)"
+              description: "The PERC still lists the drive but SMART reads fail. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
+          - alert: DiskSmartDriveMissing
+            expr: count(smart_read_ok{job="proxmox-host"}) < count(r730_idrac_physicalDiskComponentStatus)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "disk-smart-status sees {{ $value }} drives behind the PERC, fewer than the iDRAC reports"
+              description: "A drive dropped off the controller's passthrough, or smartctl --scan stopped listing it. Compare: ssh root@192.168.1.127 smartctl --scan, and the iDRAC storage page."
+          - alert: DiskSmartCollectorStale
+            expr: (time() - smart_collector_last_run_timestamp_seconds{job="proxmox-host"}) > 1800 or absent(smart_collector_last_run_timestamp_seconds{job="proxmox-host"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "disk-smart-status has not run on the Proxmox host for 30 minutes, so no drive alert can fire"
+              description: "Check: systemctl status disk-smart-status.timer disk-smart-status.service on 192.168.1.127"
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown
@@ -2949,7 +3044,26 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "iDRAC storage drive {{ $labels.member_id }} unhealthy (state: {{ $value }})"
+              summary: "iDRAC: {{ $labels.physicalDiskDisplayName }} unhealthy (state: {{ $value }}, expected 3=OK)"
+          # The PERC's own roll-up: a degraded or failed virtual disk (a RAID1
+          # that lost a mirror), a controller fault or a bad PERC battery turns
+          # it non-OK. The iDRAC storage page names the virtual disk.
+          - alert: iDRACStorageUnhealthy
+            expr: r730_idrac_globalStorageStatus != 3
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC storage roll-up is not OK (state: {{ $value }}, expected 3=OK): a virtual disk, the PERC or its battery needs attention"
+              description: "Check the iDRAC storage page (https://192.168.1.4, Storage > Overview) for which virtual disk or component. A degraded RAID1 is running on one drive."
+          - alert: iDRACBatteryUnhealthy
+            expr: r730_idrac_systemStateBatteryStatusCombined != 3
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC battery roll-up is not OK (state: {{ $value }}, expected 3=OK): the PERC (ROMB) or CMOS battery"
+              description: "A failed PERC battery makes the controller drop to write-through, and sdc write latency goes from ~0.5 ms to spindle speed. Check: ssh root@192.168.1.127 ipmitool sdr type Battery"
           - alert: iDRACSSDWearCritical
             expr: r730_idrac_idrac_storage_drive_life_left_percent > 0 and r730_idrac_idrac_storage_drive_life_left_percent < 10
             for: 1h

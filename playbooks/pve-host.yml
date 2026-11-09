@@ -424,6 +424,52 @@
       when: not (ansible_check_mode and pve_csi_leak_units is changed)
       tags: csi-leak
 
+    # ---- drive SMART -----------------------------------------------------------
+    # Nothing read the physical drives' own SMART data until 2026-11-09; the
+    # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads
+    # every drive behind the PERC (smartctl -d megaraid,N, plus the Seagate FARM
+    # log) every 5 minutes and writes it to the textfile directory created
+    # above. The "R730 Drives" alert group in stacks/monitoring reads it. Read
+    # only: no self-tests are scheduled, by Viktor's choice on 2026-11-09, since
+    # the drives' background media scan and the PERC's patrol read already cover
+    # the surface and sdc has no spare I/O for a 20-hour long test.
+    - name: Install smartmontools
+      ansible.builtin.apt:
+        name: smartmontools
+        state: present
+      tags: smart
+
+    - name: Install disk-smart-status
+      ansible.builtin.copy:
+        src: files/pve/disk-smart-status
+        dest: /usr/local/bin/disk-smart-status
+        mode: "0755"
+        owner: root
+        group: root
+      tags: smart
+
+    - name: Install the disk-smart-status unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - disk-smart-status.service
+        - disk-smart-status.timer
+      register: pve_disk_smart_units
+      tags: smart
+
+    - name: Enable the disk-smart-status timer
+      ansible.builtin.systemd:
+        name: disk-smart-status.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_disk_smart_units is changed }}"
+      when: not (ansible_check_mode and pve_disk_smart_units is changed)
+      tags: smart
+
     # Runs only with `--tags pve-upgrade`. Installs everything a full-upgrade
     # would, Proxmox and Debian alike, and does not reboot: running VMs keep the
     # QEMU binary they started with, and a new kernel waits for the reboot,
