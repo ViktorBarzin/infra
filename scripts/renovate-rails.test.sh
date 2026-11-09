@@ -256,6 +256,34 @@ CI_COMMIT_AUTHOR=renovate-bot CI_COMMIT_SHA=$R1 stage_prepare >/dev/null
 out=$(CI_COMMIT_SHA=$R1 stage_finish)
 case "$out" in *SHOULD-NOT-RUN*) bad "apply fail: verify skipped" ;; *) ok "apply fail: verify skipped" ;; esac
 eq "apply fail: reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+eq "apply fail: ignore entry" "v1.1.0" "$(jq -r '.packageRules[0].matchNewValue' renovate/ignored-versions.json)"
+
+# Apply failed on a CI-side error after the loop's retries (the loop lists the
+# stack in .apply_transient: provider download, Vault): the bump was never
+# tried, so it is reverted like a hold, without an ignore entry.
+mkrepo; git reset -q --hard "$R1"; mkdir -p scripts/verify
+printf '#!/bin/bash\necho SHOULD-NOT-RUN; exit 0\n' >scripts/verify/run
+echo "$BASE" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; echo " app" >.app_failed; MARKER="" MARKED="" METRIC="" SLACKED=""
+CI_COMMIT_AUTHOR=renovate-bot CI_COMMIT_SHA=$R1 stage_prepare >/dev/null
+echo app >.apply_transient
+CI_COMMIT_SHA=$R1 stage_finish >"$T/finish.out"
+out=$(cat "$T/finish.out")
+case "$out" in *SHOULD-NOT-RUN*) bad "transient apply fail: verify skipped" ;; *) ok "transient apply fail: verify skipped" ;; esac
+eq "transient apply fail: reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
+eq "transient apply fail: no ignore entry" "0" "$(jq '.packageRules|length' renovate/ignored-versions.json)"
+case "$(git log -1 --format=%B)" in *"without an ignore entry"*) ok "transient apply fail: revert says no ignore entry" ;; *) bad "transient apply fail: revert says no ignore entry" "$(git log -1 --format=%B)" ;; esac
+case "$SLACKED" in *"ignored: docker"*) bad "transient apply fail: Slack names no ignored version" "$SLACKED" ;; *"not ignored"*) ok "transient apply fail: Slack names no ignored version" ;; *) bad "transient apply fail: Slack says not ignored" "$SLACKED" ;; esac
+eq "transient apply fail: outcome 2 (held)" "2" "$METRIC"
+eq "transient apply fail: marker moves" "$R1" "$MARKED"
+eq "transient apply fail: pipeline stays green" "0" "$(stage_exit >/dev/null; echo $?)"
+
+# A stale .apply_transient from an earlier run does not survive prepare.
+mkrepo; git reset -q --hard "$R1"
+echo "$BASE" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; echo " app" >.app_failed; MARKER=""
+echo app >.apply_transient
+CI_COMMIT_AUTHOR=renovate-bot CI_COMMIT_SHA=$R1 stage_prepare >/dev/null
+CI_COMMIT_SHA=$R1 stage_finish >/dev/null
+eq "stale .apply_transient: a real apply failure still writes the ignore entry" "v1.1.0" "$(jq -r '.packageRules[0].matchNewValue' renovate/ignored-versions.json)"
 
 # Gate blocked: hold = revert without ignore entry, applied by the normal loop.
 mkrepo; git reset -q --hard "$R1"
