@@ -133,6 +133,17 @@
       ],
       "matchNewValue": "0.121.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-09 pipeline #3550: stack monitoring failed after this bump: its terragrunt apply failed (commit d1098ed4)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "loki"
+      ],
+      "matchNewValue": "21.1.0",
+      "enabled": false
     }
   ]
 }
