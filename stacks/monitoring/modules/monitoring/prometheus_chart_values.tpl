@@ -477,6 +477,15 @@ alertmanager:
 # (storm 2026-06-26 08:42). Burstable: low request (minimal reservation) + a 512Mi
 # limit to absorb the relist peak. No CPU limit (cluster-wide policy).
 kube-state-metrics:
+  # Recreate, not RollingUpdate: with a surge pod, Prometheus scrapes the old and
+  # new KSM pods together for 1-2 minutes. Their series differ only in instance
+  # and helm_sh_chart, so every one-to-one join on KSM series (DaemonSetMissingPods,
+  # CloudflaredDegraded, KubeQuotaAlmostFull, ...) fails with "found duplicate
+  # series" and PrometheusRuleEvaluationFailing fires. That reverted every
+  # prometheus chart bump past 29.42.0 (KSM 8.8.0 -> 9.0.0) ten times in
+  # 2026-11-03..09. Recreate leaves a ~20 s gap instead (the pod is Ready 14 s
+  # after start), well inside KubeStateMetricsDown's for: 5m.
+  updateStrategy: Recreate
   # Export the sablier.enable Deployment label on kube_deployment_labels so the
   # SablierWakeFailed alert can scope to scale-to-zero-enrolled workloads
   # (ADR-0022). KSM exports NO workload labels unless allowlisted here.
