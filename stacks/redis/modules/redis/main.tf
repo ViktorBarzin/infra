@@ -528,6 +528,11 @@ locals {
     "paperless-ngx",
     "realestate-crawler",
     "redis",
+    # rybbit, added 2026-11-09: Rybbit 2.9 keeps sessions, sticky identity and
+    # bot counters in Redis (ADR-0041). It cannot pick a database, so it uses
+    # db 0; its prefixes (session:, user:, org:, m:, ...) were checked against
+    # db 0's keys and do not collide.
+    "rybbit",
     "trading-bot",
     # turnstile-gate, added 2026-10-16: the shared Anubis (forwardAuth mode,
     # db 13), the fallback for sites without their own Anubis. Same crashloop
