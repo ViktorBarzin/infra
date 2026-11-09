@@ -474,6 +474,10 @@ locals {
     { name = "REPORTS_SMTP_PORT", value = "587" },
     { name = "REPORTS_SMTP_USER", value = "spam@viktorbarzin.me" },
     { name = "REPORTS_SMTP_FROM", value = "f1@viktorbarzin.me" },
+    # Product events and errors (telemetry.tf, infra ADR-0041). Without
+    # TELEMETRY_WRITE_KEY the app sends nothing.
+    { name = "TELEMETRY_HOST", value = "http://event-pipeline.rybbit.svc.cluster.local" },
+    { name = "TELEMETRY_ENVIRONMENT", value = "production" },
   ]
 
   # Secret-backed env shared by the Edge and the Worker.
@@ -532,6 +536,10 @@ locals {
     # The Cloudflare cache profile (cloudflare-analytics.tf). Read on the
     # Edge holding the scheduler lease; without it the job does nothing.
     { name = "CF_ANALYTICS_TOKEN", secret = kubernetes_secret_v1.tv_cloudflare_analytics.metadata[0].name, key = "token", optional = true },
+    # The Write key and GlitchTip DSN (telemetry.tf). optional=true so an
+    # image without telemetry, or the Secret not yet written, changes nothing.
+    { name = "TELEMETRY_WRITE_KEY", secret = kubernetes_secret.tv_telemetry.metadata[0].name, key = "write_key", optional = true },
+    { name = "SENTRY_DSN", secret = kubernetes_secret.tv_telemetry.metadata[0].name, key = "sentry_dsn", optional = true },
   ]
 
   tv_namespace = kubernetes_namespace.tv.metadata[0].name
