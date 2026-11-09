@@ -61,7 +61,7 @@ Events use the [Segment spec](https://segment.com/docs/connections/spec/) and ar
 |---|---|
 | `type` | `track`, `identify`, or `screen` (Android). Browser pageviews come from the Rybbit script, so the browser SDK does not send `page` |
 | `event` | `noun.past_verb`, lower case, matching `^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`, e.g. `recording.started`, `trip.created` |
-| `userId` | The Person's Authentik `sub` once signed in, omitted before |
+| `userId` | The Person's Authentik hashed user id (`uid`) once signed in, omitted before. It equals the OIDC `sub` under Authentik's default `hashed_user_id` mode (tv, every `tanstack_app`). tripit's provider issues the email as `sub`, so tripit sends `uid` |
 | `anonymousId` | The SDK's own id, sent on every event, so Rybbit can merge it into the Person at `identify` |
 | `properties` | snake_case keys, at most 2,048 characters as JSON (Rybbit's limit) |
 | `context.page.url` | Set by the browser SDK. Server and Android events set `context.app` instead |

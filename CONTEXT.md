@@ -364,7 +364,7 @@ A Rybbit site. There are two: `apps` holds every **Instrumented app** so a **Per
 _Avoid_: one site per app (it splits a Person into one user per app).
 
 **Person**:
-One human across every app, keyed by their Authentik user id (`sub`). Anonymous events from before sign-in join the Person at sign-in.
+One human across every app, keyed by their Authentik hashed user id (`uid`). That is the OIDC `sub` under Authentik's default `hashed_user_id` mode, which tv and every `tanstack_app` use; an app whose provider issues another `sub` (tripit's is the email) sends `uid` instead. Anonymous events from before sign-in join the Person at sign-in.
 _Avoid_: "user" unqualified (each app has its own user records); "visitor" for a signed-in Person (a visitor is anonymous).
 
 ### Personal finance
