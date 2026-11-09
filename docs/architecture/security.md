@@ -230,6 +230,15 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   `ForgejoFilterCrawlReachingBackend` and `ForgejoExternalClientSurge` (Loki
   ruler, group "Forgejo crawl") count requests served by the backend to outside
   addresses. Runbook: `docs/runbooks/forgejo-crawl.md`.
+- **Cold filter opens on Forgejo are refused (2026-11-09, ADR-0040).** The
+  same crawler always opened a filtered issue or PR list as the first request
+  from a fresh IP, with a forged `google.com` Referer or none, which a person
+  clicking a filter in Forgejo never does. The Turnstile gate's Forgejo site
+  rule refuses such a request before any challenge; code, issues and PRs stay
+  public, and a person who opens a pasted filter link is one click from the
+  view. Replayed against 2026-11-08 it would have refused all 1,526 pages the
+  crawler was served that day. A crawler that forges one of our hostnames as
+  the Referer gets past it and is back to solving challenges.
 - **Webhook carve-out from the Meta blocklist (2026-10-21, Viktor).** Meta's
   webhook callbacks come from the blocked space, so the Traefik bouncer's
   `exemptScenarios = ["static-blocklist/meta-asn"]` and `exemptRoutes` let that

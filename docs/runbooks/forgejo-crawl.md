@@ -72,8 +72,12 @@ commit crawl at 1.05.
   2026-11-08 the median crawler IP lived 16s and made 11 requests, and 1 of
   1,113 fetched a second filter page. See `docs/architecture/security.md` on
   per-IP detection.
-- **Refuse the request shape** at Traefik, for example by requiring sign-in
-  for the crawled route, if the crawl is concentrated on one route.
+- **Refuse the request shape.** The filter-list crawl is already refused by
+  the Turnstile gate's Forgejo site rule (ADR-0040): count refusals with
+  `homelab logs query '{namespace="turnstile-gate",container="gate"} |= "\"event\": \"refused\""' --since 6h`.
+  If `ForgejoFilterCrawlReachingBackend` fires again, check whether the crawler
+  now sends one of our hostnames as its Referer. A new crawled route with an
+  equally unambiguous signature can get its own rule in `forgejo_rules.py`.
 - **CrowdSec manual ban** for a crawler that does reuse addresses or prefixes:
   `docs/runbooks/crowdsec-manual-bans.md`.
 
