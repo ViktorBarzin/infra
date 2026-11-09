@@ -69,6 +69,10 @@ Vector reads its secrets from files (`/etc/vector/secrets`, the mounted `rybbit-
 
 4. Wire the app with the shared telemetry library (design, "Client libraries").
 
+### An app outside the cluster
+
+terminal-lobby runs on the devvm, which cannot resolve the pipeline's cluster Service. Its services send to the public Ingest path on their own host, `TELEMETRY_HOST=https://terminal.viktorbarzin.me/_t/e`, and report errors through the same-origin DSN. `playbooks/devvm.yml` writes `TELEMETRY_*` and `SENTRY_DSN` into `/etc/terminal-lobby.local.conf` from Vault (`secret/rybbit` `write_keys`, `secret/glitchtip` `dsn_terminal-lobby`) and restarts the lobby services. The lobby's side is its ADR-0048.
+
 ## Check that it works
 
 ```sh
