@@ -1965,7 +1965,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "R730 {{ $labels.device }}: each drive ran {{ $value | humanize }}B/yr over the last 7 days, above the 550 TB/yr rating"
-              description: "Above its workload rating a drive's failure rate is no longer what Seagate specifies. Find what grew: the disk-wear skill (.claude/skills/disk-wear) walks host -> VM -> pod."
+              description: "Above its workload rating a drive's failure rate is no longer what Seagate specifies. Find what grew: docs/runbooks/disk-wear.md walks host -> VM -> pod."
           # The early warning: a drive doing real work whose last 7 days ran
           # 1.5x the 4 weeks before. Backtested over 90 days to 2026-11-09 it
           # would have fired once, for sdc on 2026-10-13..19 (up to 1.95x).
@@ -1991,7 +1991,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "R730 {{ $labels.device }}: this week's load per drive is {{ $value | printf \"%.1f\" }}x the previous 4 weeks"
-              description: "A workload started or grew and is wearing the drives faster. Find it: the disk-wear skill (.claude/skills/disk-wear) walks host -> VM -> pod. If the load is intended, the alert clears once the 4-week baseline catches up."
+              description: "A workload started or grew and is wearing the drives faster. Find it: docs/runbooks/disk-wear.md walks host -> VM -> pod. If the load is intended, the alert clears once the 4-week baseline catches up."
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown

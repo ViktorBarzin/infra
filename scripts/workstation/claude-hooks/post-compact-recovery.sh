@@ -46,7 +46,7 @@ ${PERSONALITY}
 Key memories from before compaction:
 ${FACTS_SUMMARY}
 
-Use the memory_recall MCP tool if you need more context about past conversations."
+Run homelab memory recall "<topic>" if you need more context about past conversations."
 
 # Output JSON with additional context for injection
 cat << EOF

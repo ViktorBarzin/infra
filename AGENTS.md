@@ -32,9 +32,7 @@ ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml                 
 
 A `--check` run against the live box should be a no-op; anything else is drift,
 and it means either the box carries something undeclared or a committed change
-has not been applied. Validated end to end on 2026-08-29 against a VM cloned
-from Proxmox template 1000: playbook, then `apt install terminal-lobby`, then
-all six services up and all eight verification probes passing.
+has not been applied.
 
 Routed elsewhere by design: accounts, groups, clones and kubeconfigs come from
 `roster.yaml` via `t3-provision-users.sh` (hourly; infra#88 ports that half),
@@ -42,13 +40,12 @@ and Terminal Lobby's own files ship in its Debian package.
 
 ## Execution
 - **Apply**: Authenticate via `vault login -method=oidc`, then **`homelab tf plan|validate|apply <stack>`** (always the full form — bare `homelab tf` prints `unknown command: "tf"`, which reads as "the verb does not exist"). It wraps `scripts/tg`, which handles state decrypt/encrypt. **Do not run bare `terragrunt`/`terraform`.** On a Tier-1 stack a bare terragrunt dies in "Initializing the backend" with `pq: password authentication failed for user "<your-os-user>"`, because `PG_CONN_STR` is set only by `scripts/tg`. **That error is not a permission-tier limit** — reading it as one led to abandoning local verification for CI and hand-rolling the offline check with plain `terraform init`, 15 times over a month. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
-- **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
 - **Before changing a stack**: read the relevant `docs/{architecture,runbooks,plans,post-mortems}/` files first; they are the starting state. A mismatch between the docs and the live cluster is itself a finding, so report it.
 
 ## Instructions
 - **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in your own AGENTS.md — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
-- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
-- **New service**: Use `setup-project` skill for full workflow. A new first-party TanStack Start app is one `modules/kubernetes/tanstack_app` call; steps in `docs/agents/new-app.md`.
+- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI per ADR-0002, see Architecture below.
+- **New service**: a new first-party TanStack Start app is one `modules/kubernetes/tanstack_app` call; steps in `docs/agents/new-app.md`.
 - **Adopting existing resources**: use HCL `import {}` blocks (TF 1.5+), not `terraform import` CLI. Commit stanza → plan-to-zero → apply → delete stanza. Canonical reason: reviewable in PR, plan-safe, idempotent, tier-agnostic. Full rules + per-provider ID formats in `docs/agents/terraform.md` → "Adopting Existing Resources".
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `docs/agents/*.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
@@ -70,7 +67,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
-- `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI, and auto Cloudflare DNS (`dns_type = "proxied"` — no per-name record, rides the zone-wide `*` wildcard CNAME per ADR-0021 (apex `"@"` carve-out excepted); `"non-proxied"` — explicit A/AAAA to the WAN IP, shadows the wildcard; `"internal"` — a public A record carrying the internal Traefik LB IP for household-only services, shadows the wildcard so the name stays dark; pair with the `home-lans-only` ipAllowList middleware, never with `"proxied"`. Since the wildcard, `dns_type = "none"` on a `.me` host is NOT private — recordless names resolve through the tunnel; internal-only ingresses must use `"internal"` or `.lan`)
+- `modules/kubernetes/ingress_factory/` — standard ingress: auth, rate limiting, anti-AI, Cloudflare DNS. Pick `dns_type` from `docs/agents/ingress.md`; `"none"` on a `.me` host is NOT private.
 - `modules/kubernetes/nfs_volume/` — NFS volume module (CSI-backed, soft mount)
 - `config.tfvars` — non-secret configuration (plaintext)
 - `scripts/cluster_healthcheck.sh` — 50-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability, Slack #alerts traffic)
@@ -79,64 +76,14 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
 ## Claude-Specific Resources
-- **Skills**: `.claude/skills/` (10).
+- **Skills**: `.claude/skills/` (cluster-health, home-assistant).
 - **Agents**: `.claude/agents/` (10 files).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
   - **Other**: issue-responder, postmortem-todo-resolver, source-fixer (tv sources: Channels the tv Watcher reports down, F1 Live, and dormant sites the daily probe finds answering again), tv-feedback-fixer (approved User reports on viktor/tv), payslip-extractor
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
 
 ## Contributor Onboarding
-1. Get Authentik account + Headscale VPN access (ask Viktor)
-2. Clone repo — `AGENTS.md` is auto-loaded by Codex
-3. Create branch → edit → push → open PR
-4. Viktor reviews → CI applies → Slack notification
-5. Portal: `https://k8s-portal.viktorbarzin.me/onboarding` for full guide
-
-### Non-admin workstation users — the AGENT does the git work
-
-Non-admin devvm users (power-user / namespace-owner tiers) may not know git at
-all. Their infra clone arrives preconfigured: git identity, a `forgejo` remote
-authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
-(auto-freshened hourly and at session launch, fast-forward only).
-
-Two per-user layouts exist (`code_layout` in
-`scripts/workstation/roster.yaml`): `single` (the default) — `~/code` IS the
-locked infra clone — and `workspace` — `~/code` is a plain directory of
-per-project clones: the infra clone at `~/code/infra`, plus each roster
-`repos` entry (e.g. `~/code/tripit`) cloned from Forgejo `viktor/<name>` with
-the user's own PAT. The reconcile auto-migrates a single-layout `~/code` when
-a user is flipped to `workspace`, and keeps every clone fresh either way.
-
-The model is **allow-then-audit** (Viktor, 2026-06-10): whitelisted users (emo)
-push straight to `master` — no PR gate — and the record of *what changed and
-why* is what matters. Force-push is disabled for everyone, so master history
-is append-only.
-
-**Feature-sized work is worktree-first** (org rule, 2026-06-10): develop in an
-isolated worktree (`.worktrees/<topic>`, branch `<os-user>/<topic>` off
-`forgejo/master`) so concurrent agent sessions never collide in the clone, then
-land by merging latest master into the branch and pushing it
-(`git push forgejo HEAD:master`, or the PR fallback below if not whitelisted).
-Locked (git-crypt) clones can use plain `git worktree add`. Trivial
-single-commit fixes may be committed directly on a clean `master`. Full
-lifecycle: your own AGENTS.md.
-
-To land a finished change from such a clone:
-
-1. Land it per the worktree paragraph above.
-2. Leave the clone on clean `master` so auto-refresh keeps working.
-
-If a push to `master` is rejected by branch protection (user not on the
-whitelist — e.g. new users before Viktor grants it), fall back to a
-`<os-user>/<short-topic>` branch + PR with the user's own PAT
-(`write:repository` suffices — verified 2026-06-10):
-
-```bash
-TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
-curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
-  https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
-  -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
-```
+Non-admin users (emo, Anca): access, the git-for-non-git-users model and the PR fallback are in `docs/agents/contributor-onboarding.md`.
 
 If a command's output ends with a `[devvm-io-guard] Stopped ...` note, the
 devvm disk was saturated and the guard stopped that scan to protect etcd,
@@ -175,6 +122,4 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 
 ## User Preferences
 - **Calendar**: Nextcloud at `nextcloud.viktorbarzin.me`
-- **Home Assistant**: ha-london (default), ha-sofia. "ha"/"HA" = ha-london
 - **New apps**: TanStack Start (React) on Bun with Drizzle on the shared Postgres and Authentik accounts, per `~/code/app-kit/docs/adr/0001-default-app-stack.md` (2026-10-16). Existing SvelteKit apps keep their stack
-- **Tools**: Docker containers only — never `brew install` locally
