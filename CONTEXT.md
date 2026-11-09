@@ -325,6 +325,32 @@ _Avoid_: bare "backup" without saying which copy you mean (a service is "backed 
 **CNPG** is the CloudNativePG operator; **`pg-cluster`** is the Postgres cluster it manages — the shared Postgres substrate. Backs Tier-1 Terraform state (`pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`) and ~12 application databases, reached through **PgBouncer** (a **critical-path Service**) for connection pooling; app credentials rotate via the `vault-database` ClusterSecretStore.
 _Avoid_: "the database" (many DBs share one cluster); the legacy `postgresql.dbaas` Service for NEW work (it is a live compatibility alias selecting the CNPG primary — authentik's PgBouncer still uses it — but `pg-cluster-rw` is the canonical name); conflating the CNPG operator with the `pg-cluster` it manages.
 
+### Product analytics
+
+**Product event**:
+A named record of something a person did in an app (`trip.created`, `recording.started`), sent to the analytics platform with the person's id and properties. Named `noun.past_verb`.
+_Avoid_: "telemetry" (that is **Ops telemetry**); "metric"; "tracking call".
+
+**Ops telemetry**:
+Signals about how a Service runs rather than what people do in it: Prometheus metrics, Loki logs, OTel traces. Stays in the monitoring stack and is never moved into the analytics platform.
+_Avoid_: calling Prometheus or Loki data "analytics".
+
+**Instrumented app**:
+A first-party app that sends **Product events** through the analytics SDK in its own code, on the web, on a server, or on Android.
+_Avoid_: "tracked site" (that also covers **Traffic-only apps**).
+
+**Traffic-only app**:
+A web app we host but did not write (Immich, Nextcloud, Forgejo) whose pages get a pageview script injected at the edge. It records traffic and nothing per person.
+_Avoid_: "third-party analytics" (the analytics platform is ours; only the app is third-party).
+
+**Ingest path**:
+The same-origin path on each app's own host through which browsers load the analytics script and send events, reverse-proxied to the analytics platform.
+_Avoid_: "analytics endpoint" when you mean the analytics host itself.
+
+**Person**:
+One human across every app, keyed by their Authentik user id (`sub`). Anonymous events from before sign-in join the Person at sign-in.
+_Avoid_: "user" unqualified (each app has its own user records); "visitor" for a signed-in Person (a visitor is anonymous).
+
 ### Personal finance
 
 **Net worth**:
