@@ -21,6 +21,19 @@ Ingest path routes:
 | `/_t/e/<x>` | Vector (Segment SDK endpoints: `/v1/batch`, `/t`, `/i`, `/b`, ...) |
 | `/_t/x/api/<project>/{envelope,store,minidump}/` | GlitchTip ingest only |
 
+## Third-party pageviews (injection plugin)
+
+The `analytics-inject` local plugin (`stacks/traefik/modules/traefik/analytics-inject-plugin/`) adds `<script src="/_t/r/script.js" data-site-id="2" defer>` to HTML pages, and those pageviews land on the `hosted` Analytics site. It runs on the `websecure` entrypoint after `compress`. Its host filters are in `stacks/traefik/modules/traefik/middleware.tf`:
+
+- `analytics_inject_exclude_hosts`: authentication, secrets, admin consoles, remote browsers, and every first-party app. Add a new first-party app here as well as giving it the `<meta name="analytics" content="sdk">` opt-out.
+- `analytics_inject_include_hosts`: empty means every other host. Put one host in it to narrow the plugin while testing a change.
+
+It acts only on `GET` HTML navigations answered with a `text/html` 200, up to 5 MiB, and leaves everything else streaming untouched. Apps with a nonce-based Content Security Policy block the injected script, which costs those apps their pageviews and nothing else.
+
+Changing the plugin: run its tests and the Yaegi gate first (`cd stacks/traefik/modules/traefik/analytics-inject-plugin && go test ./...`, `cd scripts/yaegi-plugin-gate && go test .`). A plugin that fails to load disables every local plugin in Traefik, CrowdSec's bouncer included. After the apply, check the Traefik logs for `Plugins are disabled` and that a gated host such as `paperless-mcp.viktorbarzin.me` still answers 403.
+
+Rolled out on 2026-11-09 in three applies: plugin and Middleware first, then the entrypoint reference with only `cc.viktorbarzin.me` included, then every host. The entrypoint reference must never land before the Middleware exists, because a missing entrypoint middleware breaks every router on `websecure`.
+
 ## Settings and secrets
 
 Vault `secret/rybbit`, extracted into the `rybbit-secrets` Secret:
