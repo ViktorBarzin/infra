@@ -145,8 +145,18 @@ transforms:
       .anonymous_id = string(m.anonymousId) ?? ""
       if reason == "" && kind == "identify" && .user_id == "" { reason = "identify without userId" }
 
+      # The user agent Rybbit sees must describe the person, not our SDK.
+      # Rybbit classifies the reported user agent even for keyed requests,
+      # and SDK agents (analytics-python/2.4.0, analytics-node-next/...)
+      # match its bot patterns, so those events were dropped as bots while
+      # Rybbit still answered 200. Forward the client's own context.userAgent,
+      # or the request's agent only for browser events; otherwise send none,
+      # and Rybbit falls back to Vector's agent, which it does not flag.
+      # events_raw keeps whatever arrived.
       ctx_ua = string(m.context.userAgent) ?? ""
-      .user_agent = if ctx_ua != "" { ctx_ua } else { string(.request_ua) ?? "" }
+      .raw_user_agent = if ctx_ua != "" { ctx_ua } else { string(.request_ua) ?? "" }
+      .user_agent = ctx_ua
+      if .user_agent == "" && .page_host != "" { .user_agent = string(.request_ua) ?? "" }
       ctx_ip = string(m.context.ip) ?? ""
       .client_ip = if ctx_ip != "" { ctx_ip } else { string(.request_ip) ?? "" }
       .message_id = string(m.messageId) ?? ""
@@ -253,7 +263,7 @@ transforms:
         "user_id": .user_id,
         "sent_at": sent_at,
         "client_ip": .client_ip,
-        "user_agent": .user_agent,
+        "user_agent": .raw_user_agent,
         "payload": encode_json(.msg)
       }
 
@@ -417,6 +427,7 @@ tests:
               assert_eq!(.pathname, "/")
               assert_eq!(.user_id, "sub-123")
               assert!(!exists(.ip_address))
+              assert!(!exists(.user_agent))
       - extract_from: to_rybbit_identify
         conditions:
           - type: vrl
