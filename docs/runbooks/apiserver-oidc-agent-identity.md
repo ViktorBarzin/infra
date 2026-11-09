@@ -460,7 +460,7 @@ Two things fall out of that table that are easy to miss.
 The on-disk retention is already **~2.8 days, not 30**. `--audit-log-maxage=30`
 never bites because `--audit-log-maxsize=100` with `maxbackup=10` does: the log
 rotates every 6 to 7 hours at current volume (9 rotations in the 55 hours to
-2026-09-01). Loki holds 30 days, so the trail survives, but the on-node fallback
+2026-09-01). Loki holds 26 weeks, so the trail survives, but the on-node fallback
 in `docs/runbooks/apiserver-audit-logging.md` covers about three days. Auditing
 Secret reads shortens that to about two. Raising `--audit-log-maxbackup` is the
 knob if node disk allows, and 33 GB free says it does.

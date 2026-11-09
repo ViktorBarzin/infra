@@ -12,7 +12,7 @@ Pipeline, once a day:
      account/license key. Licensed CC-BY 4.0: this product includes DB-IP
      data from https://db-ip.com (attribution satisfied by this notice).
   2. Sweep Loki for per-(slug, ip) request/open counts over the trailing
-     window (default 30d = Loki retention), in 72h instant-query chunks; one
+     window (default 30d; Loki keeps 26w), in 72h instant-query chunks; one
      unchunked 720h metric query 504s the SingleBinary (learned 2026-07-06).
   3. Classify IPs: internal/preview-proxy CIDRs are excluded from visitor
      counts (they are Viktor's own devices, the devvm, or Meta's WhatsApp/

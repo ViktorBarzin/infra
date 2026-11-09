@@ -86,7 +86,7 @@ ships audit lines to Loki as `job=vault-audit` — without it the audit log
 would sit on the PVC and the V1–V7 alert rules could not fire. Practically,
 this means the on-disk file is not the only copy of the audit record, which
 is what makes truncation a reasonable first move rather than evidence
-destruction. The limit to keep in mind is Loki's retention window (30 days),
+destruction. The limit to keep in mind is Loki's retention window (26 weeks),
 which is shorter than an on-disk log that never rotates.
 
 ## 0. Confirm the diagnosis

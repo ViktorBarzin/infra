@@ -111,7 +111,7 @@
       "CI/CD deploy targets: image builds and tests run off-infra on GitHub Actions and publish to ghcr.io/viktorbarzin/*; Woodpecker at ci.viktorbarzin.me is deploy-only. Infrastructure changes land as Terraform/Terragrunt in the infra repo and are applied by CI on push to master.",
       "Protected IaC scopes: the Terraform/Terragrunt stacks under infra/stacks/. Applies go through `scripts/tg` (or `homelab tf apply`), never direct kubectl apply/edit/patch or helm upgrade. Naming the stack being changed is expected for an apply or destroy.",
       "Sensitive data locations & audiences: household personal data lives in Immich (photos), Nextcloud, Vaultwarden, Linkwarden, and the health and finance apps. Audience is the household itself; none of it should leave the homelab's own domains and LANs listed above. Operator access to their own credentials and their own household's devices is in-audience.",
-      "Data retention / declassification: Loki retains logs 30 days, Prometheus 26 weeks. Claude session telemetry, including full prompt text, is recorded to Loki under service_name=claude-code by deliberate operator decision."
+      "Data retention / declassification: Loki retains logs 26 weeks, Prometheus 26 weeks. Claude session telemetry, including full prompt text, is recorded to Loki under service_name=claude-code by deliberate operator decision and kept there 30 days; full session transcripts are kept without a time limit in the admin-only claude-sessions ClickHouse store."
     ],
     "allow": [
       "$defaults",
