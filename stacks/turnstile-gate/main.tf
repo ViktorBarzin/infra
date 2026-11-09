@@ -104,7 +104,8 @@ resource "kubernetes_config_map" "gate" {
     namespace = kubernetes_namespace.gate.metadata[0].name
   }
   data = {
-    "gate.py" = file("${path.module}/files/gate.py")
+    "gate.py"          = file("${path.module}/files/gate.py")
+    "forgejo_rules.py" = file("${path.module}/files/forgejo_rules.py")
   }
 }
 
@@ -123,8 +124,8 @@ resource "kubernetes_deployment" "gate" {
       metadata {
         labels = local.gate_labels
         annotations = {
-          # Roll the pods when the script changes.
-          "turnstile-gate/gate-sha" = sha256(file("${path.module}/files/gate.py"))
+          # Roll the pods when the script or a site-rules module changes.
+          "turnstile-gate/gate-sha" = sha256(join("", [for f in ["gate.py", "forgejo_rules.py"] : file("${path.module}/files/${f}")]))
         }
       }
       spec {
@@ -476,6 +477,9 @@ locals {
   gate_middlewares = {
     auth            = "${local.shim_url}/auth?variant=strict" # sites behind their own Anubis
     "auth-standard" = "${local.shim_url}/auth"
+    # Strict variant plus Forgejo's site rules (ADR-0040, files/forgejo_rules.py).
+    # An ingress opts in with ingress_factory's turnstile_site = "forgejo".
+    "auth-forgejo" = "${local.shim_url}/auth?variant=strict&site=forgejo"
   }
 }
 

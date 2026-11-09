@@ -10,7 +10,12 @@ asked for. Two variants, chosen per site by the middleware's query string:
   strict    sites fronted by their own Anubis. Only a Turnstile pass skips it,
             so a crawler cannot dodge the check by not asking for HTML.
 
-GET  /auth[?variant=strict]   forwardAuth decision (stateless)
+A site may also opt in to SITE RULES (ADR-0040): refusals that use one site's
+own URL knowledge and run before any challenge. The middleware names the site
+(/auth?variant=strict&site=forgejo); a site that does not opt in is never
+affected. Each site's rules live in their own module (forgejo_rules.py).
+
+GET  /auth[?variant=strict][&site=<name>]   forwardAuth decision (stateless)
 POST /verify                  token -> siteverify -> pass cookie for the whole domain (30 days)
 POST /fallback                nonce from the page -> fallback cookie (1 h): the visitor gets Anubis, never a pass
 OPTIONS /verify, /fallback    CORS preflight (the page calls these cross-origin)
@@ -39,6 +44,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Union
+
+import forgejo_rules
 
 SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 PASS_COOKIE = "tsgate"
@@ -102,6 +109,8 @@ class Request:
     uri: str
     host: str
     strict: bool
+    referer: str = ""
+    site: str = ""
 
 
 @dataclass
@@ -122,6 +131,13 @@ class VerifyResult:
 
 
 SiteverifyFn = Callable[[dict, float], dict]
+
+# A site rule gets the request URI and whether the Referer is one of our own
+# sites, and returns a refusal or None. Keyed by the middleware's site= value.
+SiteRule = Callable[[str, bool], "forgejo_rules.Refusal | None"]
+SITE_RULES: "dict[str, SiteRule]" = {
+    "forgejo": forgejo_rules.cold_filter_open,
+}
 
 
 def parse_mode(value: str) -> str:
@@ -202,6 +218,14 @@ def in_net(net: str, ip: str, other_family_ok: bool) -> bool:
 def host_allowed(cfg: Config, host: str) -> bool:
     host = host.lower()
     return host == cfg.domain or host.endswith("." + cfg.domain)
+
+
+def referred_by_us(cfg: Config, referer: str) -> bool:
+    try:
+        parsed = urllib.parse.urlsplit(referer.strip())
+    except ValueError:
+        return False
+    return parsed.scheme in ("https", "http") and host_allowed(cfg, parsed.hostname or "")
 
 
 def cors_headers(cfg: Config, origin: str) -> "dict[str, str]":
@@ -291,6 +315,13 @@ def decide(cfg: Config, r: Request, now: float) -> Decision:
         return Decision(200, "no-ip", dict(skip))
     if any(addr in net for net in cfg.trusted if addr.version == net.version):
         return Decision(200, "trusted", dict(skip))
+    # Site rules come before the fallback cookie and every user-agent and
+    # Accept shortcut: a refused request is refused whatever it claims to be.
+    rule = SITE_RULES.get(r.site)
+    refusal = rule(r.uri, referred_by_us(cfg, r.referer)) if rule is not None else None
+    if refusal is not None:
+        return Decision(403, refusal.reason, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"},
+                        refusal.body)
     fb = cookie_of_kind(cfg, r.cookie, FALLBACK_COOKIE, KIND_FALLBACK, r.real_ip, now)
     if fb is not None:
         return Decision(200, "fallback", cookie_id=str(fb.get("id", "")))
@@ -508,11 +539,16 @@ def make_handler(cfg: Config, cache: TokenCache) -> "type[BaseHTTPRequestHandler
             if url.path != "/auth":
                 return self.send(404, "not found")
             h = self.headers
-            strict = urllib.parse.parse_qs(url.query).get("variant", [""])[0] == "strict"
+            query = urllib.parse.parse_qs(url.query)
+            strict = query.get("variant", [""])[0] == "strict"
             r = Request(method=h.get("X-Forwarded-Method", "GET"), real_ip=h.get("X-Real-Ip", ""),
                         accept=h.get("Accept", ""), ua=h.get("User-Agent", ""), cookie=h.get("Cookie", ""),
-                        uri=h.get("X-Forwarded-Uri", ""), host=h.get("X-Forwarded-Host", ""), strict=strict)
+                        uri=h.get("X-Forwarded-Uri", ""), host=h.get("X-Forwarded-Host", ""), strict=strict,
+                        referer=h.get("Referer", ""), site=query.get("site", [""])[0])
             d = decide(cfg, r, time.time())
+            if d.status == 403 and d.reason != "challenge":
+                log({"event": "refused", "reason": d.reason, "site": r.site, "host": r.host, "ip": r.real_ip,
+                     "ua": r.ua, "uri": r.uri[:300], "referer": r.referer[:200]})
             if d.reason in ("challenge", "fallback", "declared-bot") or (d.reason == "pass" and wants_html(r.accept)):
                 log({"event": "decision", "reason": d.reason, "variant": "strict" if strict else "standard",
                      "host": r.host, "ip": r.real_ip, "ua": r.ua, "uri": r.uri[:300], "cookie_id": d.cookie_id})
