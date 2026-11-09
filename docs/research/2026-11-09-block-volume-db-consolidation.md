@@ -55,6 +55,17 @@ Every claim carries one of three labels:
   schema ntfy created; token values verified by hash, and an existing token
   authenticates. No volume. 1 slot freed.
 
+- 2026-11-09, **glitchtip and health uploads: keep**, after reading the code.
+  health stores every Apple Health export under `UPLOAD_DIR` and never deletes
+  it; `reprocess` re-reads the stored file, and an import running in a
+  background task needs it across a restart (`~/code/health/backend/app/api/ingestion.py`).
+  GlitchTip keeps `FileBlob` rows in Postgres that point at `uploads/file_blobs`
+  on disk, plus symbol caches in `uploads/symbolcache` (glitchtip-backend v7.0.0
+  `apps/files/models.py:34`, `apps/symbolication/store.py:71-73`); an emptyDir
+  would leave rows pointing at missing files after each restart. Both hold
+  sensitive data (health records, first-party source in source maps), so NFS is
+  out. Candidate 5 below is withdrawn.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
