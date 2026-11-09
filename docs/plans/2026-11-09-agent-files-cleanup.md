@@ -1,6 +1,6 @@
 # Agent files cleanup, round 3
 
-Status: approved 2026-11-09 (grilling with Viktor). Drafts next, then review, replay, landing.
+Status: approved 2026-11-09 (grilling with Viktor); drafts approved after the replay below.
 
 ## Goal
 
@@ -89,6 +89,23 @@ flowchart LR
 2. Blind replay: about 8 of Viktor's past corrections and 2 of emo's, each run against the old and new files by agents that see only the prompt and the files.
 3. agentmd checker on the new files.
 4. After landing: a fresh session loads the new files (checked by size and content), and the removed hooks no longer inject context.
+
+## Replay results
+
+Twelve past corrections (ten of Viktor's, two of emo's), three samples per arm, each reply graded by a blind judge against the behaviour the user had asked for. Tools were disabled; agents described their reply and first actions.
+
+| scenario | old files | new files |
+|---|---|---|
+| claim presence before an apply | 0/3 | 2/3 |
+| read the plan before resuming work | 3/3 | 2/3 |
+| measure before building | 3/3 | 2/3 |
+| answer "A or B?" briefly | 0/3 | 0/3, then 2/3 with an added line |
+| the other eight | 22/24 | 22/24 |
+| total (before the added line) | 29/36 | 29/36 |
+
+Limits: the live org policy loaded in both arms, under a header saying the arm's copy replaces it, so the org-policy comparison is weaker than the personal-file one. Three samples per arm make a one-sample difference noise.
+
+Additions from the review: a "choose in two sentences" line in Viktor's file, and `homelab memory recall`/`get` now print the `[via <agent>]` marker the retired hook used to show (cli v0.36.0). disk-wear became `docs/runbooks/disk-wear.md` rather than being deleted, because the drive-wear alerts link to it.
 
 ## Open questions
 
