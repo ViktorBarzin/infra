@@ -152,10 +152,17 @@ counts. `smart_collector_last_run_timestamp_seconds` and
 
 Two workload counters disagree, and the logical one is the one to use.
 The SCSI error counter log's "Gigabytes processed"
-(`smart_processed_bytes_total`) runs 2.4 to 2.7 times above the data
-the host transferred on the Exos pair. The FARM log's logical sectors
-(`smart_logical_*_bytes_total{source="farm"}`) match the host-side
-counters, and the two RAID1 mirrors agree within 0.004%. On 2026-11-09
+(`smart_processed_bytes_total`) on the Exos pair is 2.7 times the FARM
+logical total for writes and 2.4 times for reads over the drives'
+lifetime, and was 1.4 times the host's sdc writes over a 16-minute
+window on 2026-11-09. The FARM log's logical sectors
+(`smart_logical_*_bytes_total{source="farm"}`) follow the host-side
+counters: 441 GB/day lifetime average against 477 GB/day host-side over
+the last 7 days, and 5.5 GB per drive against 7.1 GB host-side in the
+16-minute window. The drives seeing somewhat less than the host fits
+the PERC's write-back cache absorbing rewrites. The two RAID1 mirrors
+agree within 0.004%. A day of both series in Prometheus gives a tighter
+comparison than these samples. On 2026-11-09
 each Exos had 176 TB written and 82 TB read over 9,597 power-on hours,
 about 236 TB a year against Seagate's 550 TB/year workload rating. Only
 the Exos drives carry a FARM log; the SSD's figure comes from

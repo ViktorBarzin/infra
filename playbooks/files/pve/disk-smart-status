@@ -14,12 +14,13 @@ compares the count against the drives the iDRAC reports.
 
 Two counters measure workload, and they disagree:
   smart_processed_bytes_total  the SCSI error counter log's "Gigabytes
-      processed". On the Exos X24 pair it runs 2.4-2.7x above the data the
-      host actually transferred (measured 2026-11-09), so it is kept for
-      reference only.
+      processed". On the Exos X24 pair it is 2.4-2.7x the FARM logical total
+      over the drives' lifetime and ran 1.4x the host's own sdc writes in a
+      16-minute sample (2026-11-09), so it is kept for reference only.
   smart_logical_{read,written}_bytes_total  logical sectors from the Seagate
       FARM log (Exos only; the two RAID1 mirrors agree within 0.004%) or ATA
-      Total_LBAs_Written (the SSD). These match the host-side counters and are
+      Total_LBAs_Written (the SSD). These follow the host-side counters,
+      slightly below them (the PERC write cache absorbs rewrites), and are
       the numbers to compare against a drive's rated workload.
 """
 from __future__ import annotations
@@ -152,7 +153,7 @@ HELP = {
     "smart_pending_defects": ("gauge", "SCSI pending defects: sectors waiting to be reassigned."),
     "smart_uncorrected_errors_total": ("counter", "Errors the drive could not correct, from the SCSI error counter log."),
     "smart_corrected_errors_total": ("counter", "Errors corrected by ECC or retry, from the SCSI error counter log."),
-    "smart_processed_bytes_total": ("counter", "SCSI error counter log 'bytes processed'. Overstates host traffic 2.4-2.7x on the Exos; use smart_logical_*_bytes_total for workload."),
+    "smart_processed_bytes_total": ("counter", "SCSI error counter log 'bytes processed'. Reads well above host traffic on the Exos (2.4-2.7x FARM lifetime); use smart_logical_*_bytes_total for workload."),
     "smart_load_unload_cycles_total": ("counter", "Head load/unload cycles."),
     "smart_load_unload_cycles_rated": ("gauge", "Head load/unload cycles the drive is specified for over its lifetime."),
     "smart_logical_written_bytes_total": ("counter", "Logical bytes the host wrote to the drive (FARM logical sectors or ATA Total_LBAs_Written)."),
