@@ -6341,6 +6341,26 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ClickHouse in rybbit has been unreachable for 10m — Rybbit analytics ingestion and dashboards are failing"
+          - alert: EventPipelineDown
+            # Vector in rybbit (ADR-0041, docs/runbooks/product-analytics.md).
+            # While it is down, SDKs retry and then drop events; nothing else
+            # notices, because browsers still load the Rybbit script.
+            expr: (max(up{job="kubernetes-pods", namespace="rybbit", app="event-pipeline"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Event pipeline (Vector) in rybbit has been unreachable for 10m: SDK product events are not being accepted"
+          - alert: EventPipelineDeliveryErrors
+            # A sink that fails a request drops it (Rybbit answers 4xx to a
+            # payload it rejects). events_raw keeps the event when only Rybbit
+            # fails, so a gap can be replayed (runbook, "Replay events").
+            expr: sum by (component_id) (increase(vector_component_errors_total{namespace="rybbit", component_id=~"rybbit_track|rybbit_identify|raw_events"}[30m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Event pipeline sink {{ $labels.component_id }} failed requests in the last 30m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

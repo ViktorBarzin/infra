@@ -76,6 +76,8 @@ kubectl -n rybbit exec deploy/clickhouse -- clickhouse-client -q \
 homelab logs query '{job="event-pipeline", outcome="rejected"}' --since 1h
 ```
 
+Alerts: `EventPipelineDown` (Vector unreachable for 10m) and `EventPipelineDeliveryErrors` (a Rybbit or ClickHouse sink failed requests in the last 30m), both in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`. Rybbit and GlitchTip dashboards have Uptime Kuma monitors through `ingress_factory`.
+
 Vector's own counters are on port 9598 (`kubectl -n rybbit port-forward deploy/event-pipeline 9598`, then `/metrics`): `vector_component_sent_events_total` and `vector_component_errors_total` per component.
 
 Rybbit and ClickHouse write in batches, so a new event can take a few seconds to appear.
