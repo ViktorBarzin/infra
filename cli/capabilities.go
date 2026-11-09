@@ -123,7 +123,7 @@ func capabilities() []capability {
 			Synonyms: []string{"logs", "log", "journal", "journalctl", "metrics", "prometheus",
 				"loki", "dmesg", "errors", "oom", "killed", "why did this box", "syslog"},
 			Detail: []string{
-				"Loki holds 30 days cluster-wide, Prometheus 26 weeks.",
+				"Loki holds 26 weeks cluster-wide (Claude telemetry 30 days), Prometheus 26 weeks.",
 				"Host journals are in Loki too, not only on the box:",
 				"  {job=\"devvm-journal\", unit=\"<x>.service\"}   this workstation",
 				"  {job=\"pve-journal\"}                        the Proxmox host",

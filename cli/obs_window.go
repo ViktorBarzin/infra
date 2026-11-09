@@ -27,8 +27,8 @@ import (
 //     zero-result query.
 
 // parseWindow accepts everything time.ParseDuration does, plus `d` (days) and
-// `w` (weeks), which are the units people actually type against 30-day Loki and
-// 26-week Prometheus retention.
+// `w` (weeks), which are the units people actually type against 26-week Loki and
+// Prometheus retention.
 func parseWindow(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	bad := fmt.Errorf("bad window %q: use a number plus s/m/h/d/w (e.g. 30m, 24h, 7d, 2w)", s)
