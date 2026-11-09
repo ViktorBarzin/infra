@@ -4,11 +4,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,6 +30,11 @@ func main() {
 	cfgJSON := flag.String("config", "", "JSON overlaid onto CreateConfig(), as a Middleware CRD's plugin block is")
 	host := flag.String("host", "gate.example.invalid", "Host header for the probe request")
 	remote := flag.String("remote", "203.0.113.7:34567", "RemoteAddr for the probe request")
+	accept := flag.String("accept", "", "Accept header for the probe request")
+	backendType := flag.String("backend-type", "", "Content-Type the probe backend answers with")
+	backendBody := flag.String("backend-body", "", "body the probe backend answers with")
+	wantBody := flag.String("want-body", "", "fail unless the response body contains this")
+	wantHijacker := flag.Bool("want-hijacker", false, "fail unless the writer the backend gets implements http.Hijacker")
 	flag.Parse()
 
 	if *dir == "" || *importPath == "" {
@@ -41,13 +48,22 @@ func main() {
 		pkg = strings.ReplaceAll(path.Base(*importPath), "-", "_")
 	}
 
-	if err := run(*dir, *importPath, pkg, *cfgJSON, *host, *remote); err != nil {
+	p := probe{
+		host: *host, remote: *remote, accept: *accept,
+		backendType: *backendType, backendBody: *backendBody,
+		wantBody: *wantBody, wantHijacker: *wantHijacker,
+	}
+	if err := run(*dir, *importPath, pkg, *cfgJSON, p); err != nil {
 		fmt.Printf("FAIL  %v\n", err)
-		// The two failure classes have very different blast radii, so say which.
-		if errors.Is(err, errLoad) {
+		// The failure classes have very different blast radii, so say which.
+		switch {
+		case errors.Is(err, errLoad):
 			fmt.Println("\nYaegi could not load this plugin, which disables ALL Traefik plugins at")
 			fmt.Println("startup (api-token-middleware included). Do not apply.")
-		} else {
+		case errors.Is(err, errProbe):
+			fmt.Println("\nThe plugin loads and serves under Yaegi, but its behaviour on the probe")
+			fmt.Println("request did not match -want-body / -want-hijacker.")
+		default:
 			fmt.Println("\nThe plugin itself loads under Yaegi; this config was rejected. In production")
 			fmt.Println("that is a per-middleware error, not a fleet-wide plugin outage. Fix -config,")
 			fmt.Println("or the Middleware CRD if the same values are what you intend to ship.")
@@ -62,7 +78,30 @@ func main() {
 // Anything after that is this plugin's own config or behaviour.
 var errLoad = errors.New("plugin failed to load under yaegi")
 
-func run(dir, importPath, basePkg, cfgJSON, host, remote string) (err error) {
+// errProbe marks a -want-body or -want-hijacker expectation that did not hold.
+var errProbe = errors.New("probe expectation failed")
+
+// hijackableRecorder stands in for Traefik's real writer, which can hijack.
+// The probe can then tell whether the writer the backend receives still can:
+// a plugin that wraps the writer keeps only what Yaegi's wrapper exposes.
+type hijackableRecorder struct {
+	*httptest.ResponseRecorder
+}
+
+func (hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, errors.New("yaegi-plugin-gate: probe connection cannot be hijacked")
+}
+
+// probe describes the one request the gate sends through the plugin, the
+// backend's answer, and what must hold afterwards.
+type probe struct {
+	host, remote, accept     string
+	backendType, backendBody string
+	wantBody                 string
+	wantHijacker             bool
+}
+
+func run(dir, importPath, basePkg, cfgJSON string, p probe) (err error) {
 	// A Yaegi rejection can be a panic rather than an error, and a panic here is
 	// a PASS/FAIL signal, not a crash.
 	defer func() {
@@ -105,10 +144,21 @@ func run(dir, importPath, basePkg, cfgJSON, host, remote string) (err error) {
 		fmt.Println("ok    -config overlaid onto Config")
 	}
 
-	var reached bool
+	var reached, flusher, hijacker bool
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		reached = true
+		// What compiled code (Traefik's proxy) can see on the writer the plugin
+		// passes on. A plugin that wraps the writer keeps only what Yaegi's
+		// wrapper for it exposes, and websockets need Hijacker.
+		_, flusher = rw.(http.Flusher)
+		_, hijacker = rw.(http.Hijacker)
+		if p.backendType != "" {
+			rw.Header().Set("Content-Type", p.backendType)
+		}
 		rw.WriteHeader(http.StatusOK)
+		if p.backendBody != "" {
+			_, _ = rw.Write([]byte(p.backendBody))
+		}
 	})
 
 	out := vNew.Call([]reflect.Value{
@@ -126,12 +176,29 @@ func run(dir, importPath, basePkg, cfgJSON, host, remote string) (err error) {
 	}
 	fmt.Println("ok    New() returned an http.Handler")
 
-	req := httptest.NewRequest(http.MethodGet, "http://"+host+"/", nil)
-	req.Host = host
-	req.RemoteAddr = remote
+	req := httptest.NewRequest(http.MethodGet, "http://"+p.host+"/", nil)
+	req.Host = p.host
+	req.RemoteAddr = p.remote
+	if p.accept != "" {
+		req.Header.Set("Accept", p.accept)
+	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	h.ServeHTTP(hijackableRecorder{rec}, req)
 	fmt.Printf("ok    ServeHTTP ran: status=%d reached-backend=%v\n", rec.Code, reached)
+	if reached {
+		fmt.Printf("info  backend writer implements Flusher=%v Hijacker=%v\n", flusher, hijacker)
+	}
+
+	if p.wantHijacker && !hijacker {
+		return fmt.Errorf("%w: the writer the backend got does not implement http.Hijacker, so websockets through this plugin would fail", errProbe)
+	}
+	if p.wantBody != "" {
+		if !strings.Contains(rec.Body.String(), p.wantBody) {
+			return fmt.Errorf("%w: response body does not contain -want-body\n  body: %q", errProbe, rec.Body.String())
+		}
+		fmt.Printf("ok    response body contains -want-body (%d bytes, Content-Length %q)\n",
+			rec.Body.Len(), rec.Header().Get("Content-Length"))
+	}
 	return nil
 }
 
