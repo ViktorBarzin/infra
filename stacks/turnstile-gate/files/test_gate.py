@@ -204,6 +204,59 @@ class StrictVariantTest(DecideCase):
             self.assertAnubis(self.strict(**over), reason)
 
 
+FORGEJO = "forgejo.viktorbarzin.me"
+COLD_FILTER = "/viktor/infra/pulls?q=&type=all&sort=latest&state=open&labels=12%2C13%2C14&milestone=0&project=-1"
+
+
+class SiteRuleTest(DecideCase):
+    """Site rules (ADR-0040): run for an ingress that opted in, before any challenge."""
+
+    def forgejo(self, cfg: gate.Config = CFG, **over: object) -> gate.Decision:
+        base: dict = dict(strict=True, site="forgejo", host=FORGEJO, uri=COLD_FILTER)
+        base.update(over)
+        return gate.decide(cfg, req(**base), NOW)
+
+    def assertRefused(self, d: gate.Decision) -> None:
+        self.assertEqual((d.status, d.reason), (403, "forgejo-cold-filter"))
+        self.assertNotIn(gate.PASS_HEADER, d.headers)
+        self.assertIn("Open this view from the list", d.body)
+        self.assertEqual(d.headers.get("Content-Type"), "text/html; charset=utf-8")
+
+    def test_cold_filtered_list_is_refused_without_a_challenge(self) -> None:
+        for referer in ("", "https://www.google.com/", "https://viktorbarzin.me.example.com/",
+                        "https://example.com/viktorbarzin.me", "not a url"):
+            self.assertRefused(self.forgejo(referer=referer))
+
+    def test_refused_whatever_the_client_says_it_is(self) -> None:
+        for over in (dict(ua="curl/8.5.0"), dict(ua=GOOGLEBOT), dict(accept="*/*"), dict(cookie=FALLBACK)):
+            self.assertRefused(self.forgejo(**over))
+
+    def test_a_click_from_our_sites_gets_the_normal_check(self) -> None:
+        for referer in ("https://forgejo.viktorbarzin.me/viktor/infra/pulls",
+                        "https://anubis.viktorbarzin.me/",  # back from the Anubis fallback
+                        "https://challenge.viktorbarzin.me/", "https://viktorbarzin.me/"):
+            self.assertChallenge(self.forgejo(referer=referer))
+
+    def test_pass_trusted_writes_and_open_mode_are_never_refused(self) -> None:
+        self.assertSkip(self.forgejo(cookie=PASS), "pass")
+        self.assertAnubis(self.forgejo(real_ip="192.168.1.5"), "trusted")
+        self.assertAnubis(self.forgejo(method="POST"), "method")
+        self.assertAnubis(self.forgejo(make_config(mode=gate.MODE_OPEN)), "mode-open")
+
+    def test_still_refused_when_turnstile_is_switched_to_anubis(self) -> None:
+        # The rule does not depend on Turnstile, so the anubis switch leaves it on.
+        self.assertRefused(self.forgejo(make_config(mode=gate.MODE_ANUBIS)))
+
+    def test_other_pages_and_other_sites_are_untouched(self) -> None:
+        self.assertChallenge(self.forgejo(uri="/viktor/infra/pulls"))
+        self.assertChallenge(self.forgejo(uri="/viktor/infra/src/branch/master/README.md"))
+        self.assertChallenge(self.forgejo(site=""))  # an ingress that did not opt in
+        self.assertChallenge(self.forgejo(site="nonexistent"))
+
+    def test_site_rules_are_named_by_the_middleware(self) -> None:
+        self.assertEqual(sorted(gate.SITE_RULES), ["forgejo"])
+
+
 class ModeTest(DecideCase):
     def test_open_mode_never_challenges(self) -> None:
         cfg = make_config(mode=gate.MODE_OPEN)
