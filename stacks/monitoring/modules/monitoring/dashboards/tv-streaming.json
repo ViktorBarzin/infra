@@ -639,7 +639,7 @@
     {
       "type": "stat",
       "id": 11,
-      "title": "Segment hit ratio, last window",
+      "title": "Segment hits, 5 min",
       "description": "Cached bytes over cached plus origin-fetched bytes for media segments in the last 5-minute window Cloudflare reported. Hit, stale, updating and revalidated count as cached; miss and expired as fetched from the origin.",
       "datasource": {
         "type": "prometheus",
@@ -706,7 +706,7 @@
     {
       "type": "stat",
       "id": 12,
-      "title": "Playlist hit ratio, last window",
+      "title": "Playlist hits, 5 min",
       "description": "As the segment ratio, for .m3u8 playlists. Live playlists are cached for seconds, so most of them expire between viewers.",
       "datasource": {
         "type": "prometheus",
@@ -773,7 +773,7 @@
     {
       "type": "stat",
       "id": 13,
-      "title": "Segment hit ratio over the range",
+      "title": "Segment hits, range",
       "description": "Byte-weighted segment hit ratio over the whole time range, one sample per 5-minute window.",
       "datasource": {
         "type": "prometheus",
@@ -840,7 +840,7 @@
     {
       "type": "stat",
       "id": 14,
-      "title": "Origin egress through Cloudflare",
+      "title": "Origin egress",
       "description": "Bytes Cloudflare fetched from the origin to answer misses and expiries in the last window, as an average rate. This is the part that rides the home line.",
       "datasource": {
         "type": "prometheus",
@@ -898,7 +898,7 @@
     {
       "type": "stat",
       "id": 15,
-      "title": "Last Cloudflare window",
+      "title": "CF window age",
       "description": "Age of the newest window. Windows are read 3 minutes after they close, every 5 minutes, so 3 to 8 minutes is normal.",
       "datasource": {
         "type": "prometheus",
@@ -964,7 +964,7 @@
     {
       "type": "stat",
       "id": 16,
-      "title": "Cloudflare query",
+      "title": "CF query ok",
       "description": "1 when the last analytics query succeeded. Empty means no Edge has a token or the job has not run yet.",
       "datasource": {
         "type": "prometheus",
