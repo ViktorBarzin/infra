@@ -116,6 +116,21 @@ if compgen -G "${AVD_DIR}/*.lock" >/dev/null; then
   rm -rf "${AVD_DIR}"/*.lock
 fi
 
+# --- no snapshots, guest RAM in memory -------------------------------------------
+# Quickboot (on by default) maps the guest's RAM onto
+# snapshots/default_boot/ram.img with MAP_SHARED, so every page Android
+# dirties is written back to the volume, which is the unmirrored 850 EVO
+# (proxmox-lvm-ssd). Measured 2026-11-09: 13 GB written in the first 9 minutes
+# of a run, 268 GB in one day of use, 95% of everything written to that SSD.
+# It bought nothing: the snapshot never loaded and every boot was a cold boot.
+# The launch commands below pass -no-snapshot and -feature
+# -QuickbootFileBacked, so guest RAM stays in anonymous memory; the old
+# snapshot directory (a 4 GB ram.img) is removed here.
+if [ -d "${AVD_DIR}/snapshots" ]; then
+  echo "Removing emulator snapshots: $(du -sh "${AVD_DIR}/snapshots" | cut -f1)"
+  rm -rf "${AVD_DIR}/snapshots"
+fi
+
 # --- noVNC defaults: scaled view, autoconnect, self-reconnect ----------------
 cat > /usr/share/novnc/defaults.json <<'JSON'
 {
@@ -171,12 +186,14 @@ if [ "$EMULATOR_GPU" = host ]; then
     /sdk/emulator/qemu/linux-x86_64/qemu-system-x86_64-headless -avd "$AVD_NAME" \
     -no-window -gpu host -accel on \
     -memory "$EMULATOR_RAM_MB" \
+    -no-snapshot -feature -QuickbootFileBacked \
     -no-audio -no-boot-anim -no-metrics \
     &
 else
   emulator -avd "$AVD_NAME" \
     -gpu swiftshader_indirect -accel on \
     -memory "$EMULATOR_RAM_MB" \
+    -no-snapshot -feature -QuickbootFileBacked \
     -no-audio -no-boot-anim \
     &
 fi

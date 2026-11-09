@@ -1484,20 +1484,12 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Edge request rate {{ $value | printf \"%.1f\" }}/s is over 3x its 6h average for 15m — possible scrape or crawl. Check `homelab logs query` for a single host or user-agent dominating."
-          - alert: ForgejoCrawlSurge
-            # Forgejo specifically, because it is where every crawl has landed:
-            # 22,115 of 22,189 Meta requests in a 24h window, and 137,760
-            # direct-to-origin requests in 12h before it went behind Cloudflare.
-            # Baseline is ~0.4 req/s, so 5x is a real change and not jitter.
-            expr: |
-              sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))
-                > 5 * avg_over_time(sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))[6h:5m])
-              and sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m])) > 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "forgejo request rate {{ $value | printf \"%.1f\" }}/s is over 5x its 6h average — the crawl target. If the Meta blocklist retirement was premature, this is how we find out."
+          # ForgejoCrawlSurge was removed 2026-11-09. Since the 2026-10-16
+          # Anubis fold its service counter covers only the backend, which
+          # internal clients dominate, and a residential-proxy crawl adds about
+          # 0.03 req/s to it. Forgejo crawls are now alerted on from the access
+          # log: ForgejoFilterCrawlReachingBackend and ForgejoExternalClientSurge
+          # in loki.tf, group "Forgejo crawl".
           - alert: EdgeBlockSurge
             # A sustained 403 rate means something is being refused in volume,
             # which is the signature of a crawl meeting CrowdSec or the edge.
@@ -1938,6 +1930,68 @@ serverFiles:
             annotations:
               summary: "disk-smart-status has not run on the Proxmox host for 2 hours, so no drive alert can fire"
               description: "Check: systemctl status disk-smart-status.timer disk-smart-status.service on 192.168.1.127"
+          # Wear pace (Viktor, 2026-11-09): tell us when a workload, possibly
+          # one started by accident, wears a drive faster than intended.
+          # 31557600 = seconds per year.
+          #
+          # SSD: the 850 EVO is rated for 150 TB written (Samsung). Fires when
+          # the 7-day write pace would use up what is left of that within 10
+          # years. On 2026-11-09 that line was ~29 GB/day; the android
+          # emulator's file-backed RAM had pushed the week to 50 GB/day.
+          - alert: DiskSSDWearPace
+            expr: |
+              (150e12 - smart_logical_written_bytes_total{job="proxmox-host",source="ata",model="Samsung SSD 850 EVO 1TB"})
+                / (rate(smart_logical_written_bytes_total{job="proxmox-host",source="ata",model="Samsung SSD 850 EVO 1TB"}[7d]) * 31557600)
+              < 10
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 SSD: at this week's write pace its remaining rated writes last {{ $value | printf \"%.1f\" }} years (target: 10+)"
+              description: "Something is writing to the SSD (VG ssd) much more than usual. Find the volume: rate(node_disk_written_bytes_total{instance=\"pve-node-r730\",device=~\"dm-.*\"}[1h]) and lvs on the host (VG ssd: nfs-ssd-data is dm-0, PVCs vm-9999-pvc-*). Runbook: docs/runbooks/proxmox-host.md, Drive health."
+          # HDDs have no write budget; wear follows mechanical duty, which
+          # Seagate states as a workload rating counting reads and writes:
+          # 550 TB/yr for the Exos X24 and the 10K SAS drives (figure from
+          # reseller listings of Seagate's spec, not confirmed in a Seagate
+          # datasheet). Per drive of a RAID1 pair: every write lands on both
+          # drives, reads are shared, so writes + reads/2 of the virtual disk.
+          - alert: DiskHDDWorkloadAboveRating
+            expr: |
+              (rate(node_disk_written_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d])
+                + rate(node_disk_read_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d]) / 2) * 31557600
+              > 550e12
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 {{ $labels.device }}: each drive ran {{ $value | humanize }}B/yr over the last 7 days, above the 550 TB/yr rating"
+              description: "Above its workload rating a drive's failure rate is no longer what Seagate specifies. Find what grew: the disk-wear skill (.claude/skills/disk-wear) walks host -> VM -> pod."
+          # The early warning: a drive doing real work whose last 7 days ran
+          # 1.5x the 4 weeks before. Backtested over 90 days to 2026-11-09 it
+          # would have fired once, for sdc on 2026-10-13..19 (up to 1.95x).
+          # The 200 GB/day per drive floor (~13% of rating) keeps the light
+          # backup pair (sda, ~64 GB/day) from firing on small swings.
+          - alert: DiskWorkloadJump
+            expr: |
+              (
+                rate(node_disk_written_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d])
+                  + rate(node_disk_read_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d]) / 2
+              )
+              / (
+                rate(node_disk_written_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[28d] offset 7d)
+                  + rate(node_disk_read_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[28d] offset 7d) / 2
+              ) > 1.5
+              and on(device, instance)
+              (
+                rate(node_disk_written_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d])
+                  + rate(node_disk_read_bytes_total{job="proxmox-host",device=~"sda|sdc|sdd"}[7d]) / 2
+              ) * 86400 > 200e9
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "R730 {{ $labels.device }}: this week's load per drive is {{ $value | printf \"%.1f\" }}x the previous 4 weeks"
+              description: "A workload started or grew and is wearing the drives faster. Find it: the disk-wear skill (.claude/skills/disk-wear) walks host -> VM -> pod. If the load is intended, the alert clears once the 4-week baseline catches up."
       - name: RPi Sofia
         rules:
           - alert: RpiSofiaDown
@@ -3064,20 +3118,6 @@ serverFiles:
             annotations:
               summary: "iDRAC battery roll-up is not OK (state: {{ $value }}, expected 3=OK): the PERC (ROMB) or CMOS battery"
               description: "A failed PERC battery makes the controller drop to write-through, and sdc write latency goes from ~0.5 ms to spindle speed. Check: ssh root@192.168.1.127 ipmitool sdr type Battery"
-          - alert: iDRACSSDWearCritical
-            expr: r730_idrac_idrac_storage_drive_life_left_percent > 0 and r730_idrac_idrac_storage_drive_life_left_percent < 10
-            for: 1h
-            labels:
-              severity: critical
-            annotations:
-              summary: "SSD {{ $labels.id }} has {{ $value }}% life remaining"
-          - alert: iDRACSSDWearWarning
-            expr: r730_idrac_idrac_storage_drive_life_left_percent > 0 and r730_idrac_idrac_storage_drive_life_left_percent < 20
-            for: 6h
-            labels:
-              severity: warning
-            annotations:
-              summary: "SSD {{ $labels.id }} has {{ $value }}% life remaining"
           - alert: iDRACServerPoweredOff
             expr: r730_idrac_systemPowerState != 4
             for: 3m

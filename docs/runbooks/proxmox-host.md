@@ -184,6 +184,9 @@ Alerts (group "R730 Drives", plus two in "Server Health"):
 | `DiskSmartUnreadable` | warning | smartctl cannot read a drive the controller still lists |
 | `DiskSmartDriveMissing` | warning | fewer drives answer smartctl than the iDRAC reports |
 | `DiskSmartCollectorStale` | warning | the collector has not run for 2 hours |
+| `DiskSSDWearPace` | warning | at the SSD's 7-day write pace, its remaining rated writes (150 TB total) would run out within 10 years: about 29 GB/day on 2026-11-09 |
+| `DiskHDDWorkloadAboveRating` | warning | a hard-disk pair's 7-day load per drive (writes + reads/2) is above the 550 TB/yr workload rating |
+| `DiskWorkloadJump` | warning | a hard-disk pair doing over 200 GB/day per drive ran 1.5x its previous 4-week average this week. Backtested over 90 days it would have fired once, for sdc on 2026-10-13..19 |
 | `iDRACStorageUnhealthy` | critical | the iDRAC storage roll-up is not OK: a degraded virtual disk, the PERC or its battery |
 | `iDRACBatteryUnhealthy` | critical | the iDRAC battery roll-up (PERC and CMOS) is not OK |
 
@@ -194,6 +197,16 @@ enough to need more. A new error or defect therefore alerts within about
 an hour, and a temperature rise within about an hour plus the alert's
 `for`; `FanFailure` and `HighCPUTemperature` react faster to the
 cooling faults that would cause it.
+
+The last three are the wear-pace alerts Viktor asked for on 2026-11-09:
+they catch a workload, possibly one started by accident, that wears a
+drive faster than intended. Hard disks have no write budget the way
+flash does; their wear follows mechanical duty, which Seagate states as
+a workload rating counting reads and writes. The 550 TB/yr figure for
+both the Exos and the 10K drives comes from reseller listings of
+Seagate's spec, not a Seagate datasheet. They read host-side disk
+counters, so they have history from day one, and the SSD rule reads
+the drive's own `Total_LBAs_Written`.
 
 No SMART self-tests are scheduled. The drives run their own background
 media scans, the PERC runs patrol reads, and a long test on an Exos

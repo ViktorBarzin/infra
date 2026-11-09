@@ -114,7 +114,7 @@ watcher, which wait up to 20 min and 8 min for such a claim (see above).
 
 - The container image (built from `docker/`) holds only JDK 17, cmdline-tools,
   emulator native libs, Xvfb/x11vnc/noVNC and socat — ~1GB.
-- The SDK proper (platform-tools, emulator, system image, AVD, snapshots)
+- The SDK proper (platform-tools, emulator, system image, AVD)
   lives on the `android-emulator-sdk` PVC (`proxmox-lvm-ssd` since
   2026-11-03); the entrypoint installs it idempotently. The emulator is pinned
   to build 36.1.9 (`EMULATOR_BUILD`) from the raw dl.google.com zip; the
@@ -122,6 +122,12 @@ watcher, which wait up to 20 min and 8 min for such a claim (see above).
   because `avdmanager create avd` refuses with `"emulator" package must be
   installed!` without it (infra#166, first hit on the fresh volume). **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
+- Every boot is a cold boot. Since 2026-11-09 the emulator runs with
+  `-no-snapshot -feature -QuickbootFileBacked`: by default it mapped the
+  guest's 4 GB of RAM onto `snapshots/default_boot/ram.img` on the PVC and
+  wrote dirtied pages back continuously, up to 268 GB a day onto the
+  unmirrored SSD, for a snapshot that never loaded. Guest RAM now stays in
+  memory, and the entrypoint deletes any old `snapshots/` directory.
 - Rendering is on the T4 (`EMULATOR_GPU=host`, since 2026-10-12). The pod
   requests a GPU time-slice and an 800 MiB VRAM seat, which places it on
   k8s-node1. The emulator runs headless (`-no-window -gpu host`) with
