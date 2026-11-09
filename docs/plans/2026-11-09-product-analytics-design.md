@@ -151,6 +151,26 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
    - Logs moved to the standard.
 5. **Clean-up.** Retire the duplicated Loki dashboards for events that moved. tv's viewing tables stay, because tv features read them.
 
+## Rollout status (2026-11-09)
+
+| App | Server events | Browser (Rybbit script) | Errors | Logs on the standard | App ADR |
+|---|---|---|---|---|---|
+| tv (pilot, includes the Android TV app) | live | live | live | yes | 2026-11-09-tv-sends-product-events |
+| tripit | live | live | live | yes (keeps its formatter and secret scrubbing) | 0077 |
+| terminal-lobby | live | live | live | yes | 0048 |
+| offline-reader | live | wired, not seen signed-in | live | yes | 0007 |
+| learning | live | wired, not seen signed-in | live | yes | 0005 |
+| health | live | wired, not seen signed-in | live | yes | 0014 |
+| fire-planner | live | wired, not seen signed-in | live | yes | 0002 |
+| wrongmove | live | live | live | yes | 0004 |
+| blog, kms, pages | n/a | live (pages: on each page's next publish) | n/a | n/a | n/a |
+| tasks, alexa-assistant, interview-prep, priority-pass, plotting-book, nextcloud-todos, vpn-portal | waiting for `@viktorbarzin/telemetry` on npm | | | | |
+| Third-party apps (Forgejo, Immich, Home Assistant, Paperless, CyberChef and the rest) | n/a | pageviews through the injection plugin, `hosted` site | n/a | n/a | n/a |
+
+"Wired, not seen signed-in" means the app loads the script and calls `identify`, but the check ran without a signed-in browser. A signed-in visit settles it.
+
+Browser custom events, and the four apps whose logs follow app-kit's contract on npm (tasks, alexa-assistant), wait for the first npm publish of `@viktorbarzin/telemetry` and the trusted publishers on the app-kit packages, which need the owner's npm authenticator.
+
 ## Open questions
 
 - Whether Vector's `http_server` answers before or after the disk buffer write. This decides how much an outage can lose, and the tv test measures it.
