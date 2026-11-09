@@ -1153,6 +1153,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #                                                              10:41 pg-alexa-assistant (app_db_roles.tf)
 #                                                              10:42 pg-glitchtip (app_db_roles.tf)
 #                                                              10:43 pg-learning (app_db_roles.tf)
+#                                                              10:44 pg-ntfy (app_db_roles.tf)
 #         pg-job-hunter,          10:32 pg-goodreads-sync      10:45 pg-terraform-state, away
 #         pg-payslip-ingest,      10:34 pg-health                    from the CI-heavy slots
 #         both technitium roles)

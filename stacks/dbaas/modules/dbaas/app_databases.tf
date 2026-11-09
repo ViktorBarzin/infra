@@ -28,6 +28,10 @@ locals {
     # learning (Python, ~/code/learning). Tables come from SQLAlchemy
     # create_all at app start. Moved off SQLite on a block volume 2026-11-09.
     learning = {}
+    # ntfy (stacks/ntfy): users, access rules, tokens, and the message cache if
+    # one is ever enabled. ntfy creates its own schema on start (database-url,
+    # v2.18+). Moved off SQLite on a block volume 2026-11-09 with ntfy's pgimport.
+    ntfy = {}
   }
 }
 
