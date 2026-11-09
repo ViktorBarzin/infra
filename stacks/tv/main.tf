@@ -529,6 +529,9 @@ locals {
     { name = "REPORTS_INTAKE_TOKEN", secret = "tv-secrets", key = "reports_intake_token", optional = true },
     { name = "REPORTS_NTFY_TOKEN", secret = "tv-secrets", key = "reports_ntfy_token", optional = true },
     { name = "REPORTS_SMTP_PASSWORD", secret = "tv-secrets", key = "reports_smtp_password", optional = true },
+    # The Cloudflare cache profile (cloudflare-analytics.tf). Read on the
+    # Edge holding the scheduler lease; without it the job does nothing.
+    { name = "CF_ANALYTICS_TOKEN", secret = kubernetes_secret_v1.tv_cloudflare_analytics.metadata[0].name, key = "token", optional = true },
   ]
 
   tv_namespace = kubernetes_namespace.tv.metadata[0].name
