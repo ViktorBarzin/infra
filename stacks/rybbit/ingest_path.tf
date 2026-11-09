@@ -6,7 +6,9 @@
 #
 #   /_t/r/...  -> Rybbit /api/...        (script.js, track, identify, replay)
 #   /_t/e/...  -> Event pipeline (Vector) (Segment SDK endpoints)
-#   /_t/x/...  -> GlitchTip               (added with stacks/glitchtip)
+#   /_t/x/api/<project>/{envelope,store,minidump}/ -> GlitchTip (stacks/glitchtip).
+#     Only the ingest endpoints: the same port also serves GlitchTip's
+#     dashboard API, /admin/ and /metrics, which stay off this route.
 
 locals {
   ingest_priority = 10000
@@ -73,6 +75,22 @@ resource "kubernetes_manifest" "ingest_strip_events" {
   }
 }
 
+resource "kubernetes_manifest" "ingest_strip_errors" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "ingest-strip-errors"
+      namespace = kubernetes_namespace.rybbit.metadata[0].name
+    }
+    spec = {
+      stripPrefix = {
+        prefixes = ["/_t/x"]
+      }
+    }
+  }
+}
+
 resource "kubernetes_manifest" "ingest_route" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -108,6 +126,19 @@ resource "kubernetes_manifest" "ingest_route" {
             port = 80
           }]
         },
+        {
+          match    = "PathRegexp(`^/_t/x/api/[0-9]+/(envelope|store|minidump)/`)"
+          kind     = "Rule"
+          priority = local.ingest_priority
+          middlewares = concat(local.ingest_shared_middlewares, [
+            { name = "ingest-strip-errors", namespace = kubernetes_namespace.rybbit.metadata[0].name },
+          ])
+          services = [{
+            name      = "glitchtip"
+            namespace = "glitchtip"
+            port      = 80
+          }]
+        },
       ]
       tls = {
         secretName = var.tls_secret_name
@@ -118,5 +149,6 @@ resource "kubernetes_manifest" "ingest_route" {
     kubernetes_manifest.ingest_rate_limit,
     kubernetes_manifest.ingest_strip_rybbit,
     kubernetes_manifest.ingest_strip_events,
+    kubernetes_manifest.ingest_strip_errors,
   ]
 }
