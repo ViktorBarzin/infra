@@ -34,8 +34,11 @@ resource "kubernetes_manifest" "ingest_rate_limit" {
         average = 20
         burst   = 200
         period  = "1s"
+        # X-Client-Prefix is set by the real-ip middleware earlier in the
+        # chain: the client's IPv4 address or its IPv6 /64. The connecting
+        # address would be cloudflared's, one bucket for everyone.
         sourceCriterion = {
-          ipStrategy = { depth = 0 }
+          requestHeaderName = "X-Client-Prefix"
         }
       }
     }
