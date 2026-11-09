@@ -40,6 +40,12 @@ type Config struct {
 	// ExtraAttributes are added to the tag, sorted by name, for example
 	// data-track-errors: "true". An empty value renders a bare attribute.
 	ExtraAttributes map[string]string `json:"extraAttributes,omitempty" yaml:"extraAttributes,omitempty"`
+	// ExcludeHosts are never touched: no wrapping, no Accept-Encoding change.
+	// Exact names or "*.suffix" (subdomains only), case-insensitive, matched
+	// against req.Host without its port. Exclusion wins over IncludeHosts.
+	ExcludeHosts []string `json:"excludeHosts,omitempty" yaml:"excludeHosts,omitempty"`
+	// IncludeHosts, when non-empty, are the only eligible hosts. Same syntax.
+	IncludeHosts []string `json:"includeHosts,omitempty" yaml:"includeHosts,omitempty"`
 }
 
 // CreateConfig returns the defaults Traefik overlays the Middleware config on.
@@ -58,6 +64,8 @@ type Injector struct {
 	tag          []byte
 	marker       []byte
 	maxBodyBytes int64
+	exclude      *hostMatcher
+	include      *hostMatcher
 }
 
 // New builds the middleware. It rejects a config it cannot render safely.
@@ -105,12 +113,23 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 	}
 	b.WriteString(` defer></script>`)
 
+	exclude, err := newHostMatcher(cfg.ExcludeHosts)
+	if err != nil {
+		return nil, fmt.Errorf("analytics-inject: excludeHosts: %w", err)
+	}
+	include, err := newHostMatcher(cfg.IncludeHosts)
+	if err != nil {
+		return nil, fmt.Errorf("analytics-inject: includeHosts: %w", err)
+	}
+
 	return &Injector{
 		next:         next,
 		name:         name,
 		tag:          []byte(b.String()),
 		marker:       []byte(src),
 		maxBodyBytes: maxBody,
+		exclude:      exclude,
+		include:      include,
 	}, nil
 }
 
@@ -134,14 +153,14 @@ func validAttrName(s string) bool {
 }
 
 func (p *Injector) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if !qualifies(req) {
+	if !qualifies(req) || !p.hostEligible(req) {
 		p.next.ServeHTTP(rw, req)
 		return
 	}
 	// Ask the backend for an uncompressed body so it can be edited. Traefik's
-	// compress middleware on the websecure entrypoint runs outside this
-	// plugin: it has already read the client's Accept-Encoding and compresses
-	// what this plugin writes.
+	// compress middleware must run outside this plugin (earlier in the
+	// websecure entrypoint list): it has then already read the client's
+	// Accept-Encoding and compresses what this plugin writes.
 	req.Header.Del("Accept-Encoding")
 	w := &injectWriter{p: p, rw: rw}
 	p.next.ServeHTTP(w, req)
@@ -190,16 +209,32 @@ type injectWriter struct {
 	state int
 	code  int
 	buf   *bytes.Buffer
+	sdk   bool // the backend sent X-Analytics: sdk
 }
 
 func (w *injectWriter) Header() http.Header {
 	return w.rw.Header()
 }
 
+// takeOptOutHeader records and removes X-Analytics before any header block
+// goes to the client.
+func (w *injectWriter) takeOptOutHeader() {
+	h := w.rw.Header()
+	if vs, ok := h[optOutHeader]; ok {
+		for _, v := range vs {
+			if strings.EqualFold(strings.TrimSpace(v), "sdk") {
+				w.sdk = true
+			}
+		}
+		delete(h, optOutHeader)
+	}
+}
+
 func (w *injectWriter) WriteHeader(code int) {
 	if w.state != stateUndecided {
 		return
 	}
+	w.takeOptOutHeader()
 	// 1xx informational responses (103 Early Hints) go out immediately and
 	// the final status is still to come. 101 is final.
 	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
@@ -207,7 +242,7 @@ func (w *injectWriter) WriteHeader(code int) {
 		return
 	}
 	w.code = code
-	if size, ok := w.bufferable(code); ok {
+	if size, ok := w.bufferable(code); ok && !w.sdk {
 		w.state = stateBuffering
 		w.buf = &bytes.Buffer{}
 		if size > 0 {
@@ -297,7 +332,11 @@ func (w *injectWriter) committed() bool {
 
 // finish runs after the backend returns and sends a still-held body.
 func (w *injectWriter) finish() {
-	if w.state == stateBuffering {
+	switch w.state {
+	case stateUndecided:
+		// The backend wrote nothing; net/http will send the header map as is.
+		w.takeOptOutHeader()
+	case stateBuffering:
 		w.commit(true)
 	}
 	w.state = stateDone
@@ -317,14 +356,15 @@ func (w *injectWriter) release() error {
 }
 
 // commit sends the held bytes with the tag inserted when there is an insertion
-// point and the script is not already present. final means the held bytes are
+// point, the script is not already present, and the page has no SDK opt-out
+// meta tag. final means the held bytes are
 // the whole body, so Content-Length is set from them; otherwise a declared
 // Content-Length grows by the tag length and an absent one stays absent.
 func (w *injectWriter) commit(final bool) {
 	body := w.buf.Bytes()
 	w.buf = nil
 	pos := -1
-	if !bytes.Contains(body, w.p.marker) {
+	if !bytes.Contains(body, w.p.marker) && !hasOptOutMeta(body) {
 		pos = injectionPoint(body)
 	}
 	if pos < 0 {

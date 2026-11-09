@@ -4,7 +4,7 @@ type: middleware
 
 import: github.com/viktorbarzin/analytics-inject-plugin
 
-summary: "Inserts the Rybbit analytics <script> (same-origin, /_t/r/script.js by default) into the HTML documents of third-party apps, before </head>. Acts only on GET navigations (Accept text/html or Sec-Fetch-Dest document) that get a 200 text/html response with no Content-Encoding, and strips Accept-Encoding from those requests only so the backend answers uncompressed. Everything else, including websockets, SSE, range requests, HEAD, 304, and compressed or oversized bodies, streams through untouched."
+summary: "Inserts the Rybbit analytics <script> (same-origin, /_t/r/script.js by default) into the HTML documents of third-party apps, before </head>. Runs on the websecure entrypoint and filters hosts itself (excludeHosts, optional includeHosts); apps that load Rybbit themselves opt out with X-Analytics: sdk or <meta name=\"analytics\" content=\"sdk\">. Acts only on GET navigations (Accept text/html or Sec-Fetch-Dest document) that get a 200 text/html response with no Content-Encoding, and strips Accept-Encoding from those requests only so the backend answers uncompressed. Everything else, including websockets, SSE, range requests, HEAD, 304, and compressed or oversized bodies, streams through untouched."
 
 testData:
   siteId: "1"
