@@ -13,28 +13,61 @@ the reword worked.
 ## Run it
 
 ```sh
-homelab reflect            # run the detectors, record, push, print the delta
-homelab reflect history    # every recorded run
-homelab reflect diff       # last two runs, side by side
+homelab reflect                    # store pass for the last 7 days: record, push, print the delta
+homelab reflect run --days 30      # a longer window
+homelab reflect run --with-transcripts   # also the original transcript detectors
+homelab reflect history            # every recorded run
+homelab reflect diff               # last two runs, side by side
 homelab reflect diff --from 2026-09-01 --to 2026-10-01
 ```
 
-Deterministic, no model tokens, a couple of minutes over the whole corpus. Each
-`run`:
+Since 2026-11-09 a run reads the claude-sessions ClickHouse store (ADR-0039)
+instead of transcript files: the queries in `store_metrics.json`, run through
+`homelab claude-sessions sql`, take about 15 seconds and spend no model tokens.
+Admins only, like the store. Each `run`:
 
-1. classifies transcripts and builds per-session digests,
-2. applies the four detectors,
-3. writes a metrics snapshot to `history/` next to `reflect.py`, in the infra
-   checkout the CLI found (`~/code/infra`, or `~/code` when that is the infra
-   clone). Commit it to infra master: the before/after is a git diff,
-4. pushes the same numbers to Pushgateway as `session_reflection_*`
-   (Prometheus, 26-week retention, so the trend outlives the files),
+1. runs every query in `store_metrics.json` for the window (`--days`, default 7,
+   ending now) and user (`--user`, default you),
+2. with `--with-transcripts`, also classifies transcripts and applies the four
+   original detectors. That reads the whole corpus from the disk etcd shares,
+   so it is opt-in,
+3. writes a snapshot to `history/` next to `reflect.py`, in the infra checkout
+   the CLI found. Commit it to infra master: the before/after is a git diff,
+4. pushes the numbers to Pushgateway as `session_reflection_*` and
+   `session_reflection_store_*` (Prometheus, 26-week retention),
 5. stores one memory so a future session recalls the trend without running
    anything,
 6. prints the delta against the previous run.
 
-`--no-push`, `--no-memory`, `--no-record` and `--json` all exist. Nothing but
-`history/` is committed; the digests contain transcript content.
+`--no-push`, `--no-memory`, `--no-record` and `--json` all exist.
+
+### Checking whether a change helped
+
+Run `homelab reflect` before the change, use the change for a few days, run it
+again, and read `homelab reflect diff`. Compare windows of the same length, and
+expect noise: a week holds roughly 200 to 400 sessions and 100 to 1,000 typed
+prompts, so a small shift in a small count (11 grilling overrides, 3 interrupts)
+can be chance.
+
+### What the store pass measures
+
+`store_metrics.json` is the list, one named SQL query each:
+
+| Key | What it counts |
+|---|---|
+| `sessions`, `human_prompts`, `api_requests`, `output_tokens_m` | volume |
+| `spend_usd`, `spend_by_model` | Claude Code's own cost, sessions started in the window; lags for a running session |
+| `cache_rewrite_usd_est` | estimated cost of re-writing big contexts to cache after an idle hour |
+| `tool_calls`, `tool_failures`, `failures_by_tool` | tool use and errors (errors include a grep that finds nothing) |
+| `tool_choice` | `kubectl` edits, `sleep`, manual `git push HEAD:master` and worktrees, `kubectl logs`, `journalctl`, beside `work land`, `work start`, `homelab logs query`, `deploy wait`/`ci watch` |
+| `blocked` | scan-guard, rm-guard, zsh-guard, worktree isolation, unknown skill, permission denied |
+| `questions` | questions answered, share where the recommended option won, hours sessions waited |
+| `friction` | interrupts, correction-like prompts, status check-ins |
+| `grilling` | grilling sessions, questions, answers that overrode the recommendation |
+| `skill_uses` | Skill tool calls per skill |
+
+Adding or changing a query changes `store_fingerprint`, and `diff` warns, as
+for `patterns.json`. Tests: `python3 -I test_store.py`.
 
 ## The expensive half, on demand
 

@@ -24,7 +24,7 @@ import (
 func reflectCommands() []Command {
 	return []Command{
 		{Path: []string{"reflect"}, Tier: TierWrite,
-			Summary: "measure how often we reach past our own tooling: reflect [run|diff|history] (run records history + pushes metrics)",
+			Summary: "measure how sessions go, from the session store (spend, tool choice, guard blocks, questions, friction): reflect [run [--days 7]|diff|history] (run records history + pushes metrics)",
 			Run:     reflectRun},
 	}
 }

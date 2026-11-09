@@ -7,12 +7,16 @@ last fix working". So every run writes a metrics snapshot into history/ (which
 is committed, so the before/after is a git diff), pushes the same numbers to
 Prometheus for a trend line, and prints the delta against the previous run.
 
-  reflect.py run [--no-push] [--no-memory] [--json] [--work-dir D]
+  reflect.py run [--days 7] [--user U] [--with-transcripts] [--no-push]
+                 [--no-memory] [--json] [--work-dir D]
   reflect.py diff [--from A] [--to B]
   reflect.py history [--json]
 
-The deterministic half is cheap: no model tokens, a couple of minutes over the
-whole corpus. The expensive agent-judging half is a separate, on-demand
+A run reads the claude-sessions ClickHouse store (store.py, store_metrics.json):
+a few SQL queries over the last --days, about 15 s, no transcript files read and
+no model tokens. --with-transcripts also runs the original detectors over
+~/.claude transcripts (inventory/digest/detect), which reads the whole corpus
+from the disk etcd shares, so it is opt-in. The expensive agent-judging half is a separate, on-demand
 workflow — see workflow.js in this directory and the README.
 
 Comparability rule: a number here must mean the same thing next time. When you
@@ -30,6 +34,9 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import getpass
+
+import store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HISTORY = os.path.join(HERE, "history")
@@ -102,6 +109,7 @@ def push(metrics: dict) -> str:
     for verb, n in (metrics.get("d2_by_verb") or {}).items():
         safe = verb.replace('"', "").replace("\\", "")
         lines.append(f'session_reflection_d2_by_verb{{verb="{safe}"}} {n}')
+    lines.extend(store.metric_lines(metrics.get("store") or {}))
     body = ("\n".join(lines) + "\n").encode()
     last = ""
     for node in PUSH_NODES:
@@ -120,8 +128,16 @@ def push(metrics: dict) -> str:
 def remember(metrics: dict, delta_lines: list) -> str:
     """One memory per run, so a future session recalls the trend without
     running anything. Best-effort, like the push."""
-    head = ", ".join(f"{k}={metrics.get(k)}" for k in
-                     ("turns", "d1_corrections", "d2_anomalies", "d4_wins"))
+    parts = [f"{k}={metrics.get(k)}" for k in
+             ("turns", "d1_corrections", "d2_anomalies", "d4_wins") if k in metrics]
+    st = metrics.get("store") or {}
+    sc, tc = st.get("scalars") or {}, (st.get("labelled") or {}).get("tool_choice") or {}
+    w = st.get("window") or {}
+    if sc:
+        parts.append(f"store {w.get('start', '')[:10]}..{w.get('end', '')[:10]} {w.get('user', '')}: "
+                     + ", ".join(f"{k}={sc.get(k)}" for k in ("sessions", "spend_usd", "tool_failures"))
+                     + ", " + ", ".join(f"{k}={tc.get(k)}" for k in ("sleep", "kubectl_mutate", "manual_push")))
+    head = "; ".join(parts)
     body = (f"session-reflection run {metrics.get('recorded_at', '')[:10]}: {head}. "
             + ("Movement vs previous run: " + "; ".join(delta_lines[:6]) if delta_lines
                else "First recorded run, no baseline to compare.")
@@ -165,8 +181,10 @@ def render(cur: dict, prev: dict, notes: list) -> str:
                        "strictly comparable; a jump may be a new detector, not a regression")
     else:
         out.append("  no previous run — this is the baseline")
-    out.append("")
-    out.append(f"  {'metric':<26}{'now':>9}{'prev':>9}{'delta':>10}")
+    has_transcripts = any(isinstance(cur.get(k), (int, float)) for k in SCALARS)
+    if has_transcripts:
+        out.append("")
+        out.append(f"  {'metric':<26}{'now':>9}{'prev':>9}{'delta':>10}")
     for k in SCALARS:
         b = cur.get(k)
         a = prev.get(k) if prev else None
@@ -186,9 +204,30 @@ def render(cur: dict, prev: dict, notes: list) -> str:
             was = pverbs.get(verb)
             mark = "" if was is None else (f"  ({n - was:+d})" if n != was else "  (=)")
             out.append(f"    {n:>6}  {verb}{mark}")
+    if cur.get("store"):
+        pst = (prev or {}).get("store")
+        out.append("")
+        if pst and prev.get("store_fingerprint") != cur.get("store_fingerprint"):
+            out.append("  ! store_metrics.json CHANGED between these runs — compare with care")
+        if pst and (pst.get("window") or {}).get("user") != cur["store"]["window"].get("user"):
+            out.append("  ! the previous run measured a different user")
+        out.append(store.render(cur["store"], pst, store.load_specs()))
     for n in notes:
         out.append(f"\n  {n}")
     return "\n".join(out)
+
+
+def history_line(s: dict) -> str:
+    """One line per recorded run; a store-only run has no transcript fields."""
+    parts = [f"  {s.get('recorded_at', '')[:19]}"]
+    if "turns" in s:
+        parts.append(f"turns={s.get('turns')} d1={s.get('d1_corrections')} "
+                     f"d2={s.get('d2_anomalies')} wins={s.get('d4_wins')} "
+                     f"patterns={s.get('patterns_fingerprint', '')}")
+    sc = (s.get("store") or {}).get("scalars") or {}
+    if sc:
+        parts.append(" ".join(f"{k}={sc.get(k)}" for k in ("sessions", "spend_usd", "tool_failures")))
+    return "  ".join(parts)
 
 
 def main() -> None:
@@ -198,6 +237,10 @@ def main() -> None:
 
     r = sub.add_parser("run", help="run the detectors, record and diff")
     r.add_argument("--work-dir", default=os.path.join("/tmp", "session-reflection-run"))
+    r.add_argument("--days", type=int, default=7, help="store window length, ending now (default 7)")
+    r.add_argument("--user", default=getpass.getuser(), help="whose sessions the store pass measures")
+    r.add_argument("--with-transcripts", action="store_true",
+                   help="also run the transcript detectors (reads every transcript from disk)")
     r.add_argument("--no-push", action="store_true")
     r.add_argument("--no-memory", action="store_true")
     r.add_argument("--no-record", action="store_true", help="do not write to history/")
@@ -215,7 +258,13 @@ def main() -> None:
         opts = a if a.cmd else ap.parse_args(["run"])
         # Date.now equivalent, stamped once so the record and the memory agree.
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        metrics = run_detectors(opts.work_dir)
+        metrics = run_detectors(opts.work_dir) if opts.with_transcripts else {}
+        end = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        start = end - datetime.timedelta(days=opts.days)
+        fmt = "%Y-%m-%d %H:%M:%S"
+        metrics["store"] = store.run_specs(store.load_specs(), start.strftime(fmt),
+                                           end.strftime(fmt), opts.user)
+        metrics["store_fingerprint"] = store.fingerprint()
         prev = snapshots()[-1] if snapshots() else None
         metrics["recorded_at"] = now
         metrics["patterns_fingerprint"] = patterns_fingerprint()
@@ -224,7 +273,8 @@ def main() -> None:
             notes.append("recorded " + os.path.relpath(record(metrics, now), HERE))
         if not opts.no_push:
             notes.append(push(metrics))
-        dl = deltas(metrics, prev or {})
+        dl = deltas(metrics, prev or {}) + store.deltas(metrics.get("store") or {},
+                                                        (prev or {}).get("store"))
         if not opts.no_memory:
             notes.append(remember(metrics, dl))
         if opts.json:
@@ -242,9 +292,7 @@ def main() -> None:
             print("no recorded runs yet — `homelab reflect run` makes the first")
             return
         for s in snaps:
-            print(f"  {s.get('recorded_at','')[:19]}  turns={s.get('turns'):<6} "
-                  f"d1={s.get('d1_corrections'):<5} d2={s.get('d2_anomalies'):<6} "
-                  f"wins={s.get('d4_wins')}  patterns={s.get('patterns_fingerprint','')}")
+            print(history_line(s))
         return
 
     if a.cmd == "diff":
