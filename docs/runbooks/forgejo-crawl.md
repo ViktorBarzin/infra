@@ -10,7 +10,7 @@ by CrowdSec do not count towards either alert.
 | Alert | Counts over 6h | Fires above | Quiet baseline (2026-10-15 to 10-31) |
 |---|---|---|---|
 | `ForgejoFilterCrawlReachingBackend` | 200s on `/<owner>/<repo>/(issues\|pulls)?...` | 50 | 0, at most 8 |
-| `ForgejoExternalClientSurge` | distinct outside addresses on any path | 300 | median 70, highest 110 |
+| `ForgejoExternalClientSurge` | distinct outside addresses served a page (static files excluded) | 100 | 7 to 23 |
 
 Private, CGNAT (tailnet) and ULA sources are excluded from both.
 
