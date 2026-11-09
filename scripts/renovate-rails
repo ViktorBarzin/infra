@@ -497,7 +497,7 @@ tg_apply() { # stack -> 0 ok
 
 stage_prepare() {
   : >.rails_commits; : >.rails_stacks; echo none >.rails_mode; : >.rails_exit; : >.rails_snapshots; : >.rails_reason
-  rm -f .rails_baseline_* .baseline_*.log
+  rm -f .rails_baseline_* .baseline_*.log .apply_transient
   date +%s >.rails_since
   local head diffbase marker base pending c s mode=verify reason="" blocking waited=0 helm=0
 
@@ -590,7 +590,7 @@ stage_owned() {
 }
 
 stage_finish() {
-  local mode head s c rc failed=() why=() verified=() incomplete=() reverted="" rollback="" msg news
+  local mode head s c rc failed=() why=() modes=() verified=() incomplete=() reverted="" held="" rollback="" msg news
   mode=$(cat .rails_mode 2>/dev/null || echo none)
   head=${CI_COMMIT_SHA:-$(git rev-parse HEAD)}
   case "$mode" in
@@ -623,7 +623,15 @@ stage_finish() {
   jobs=${RAILS_VERIFY_JOBS:-10}
   for s in $(cat .rails_stacks); do
     if cat .platform_failed .app_failed 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
-      failed+=("$s"); why+=("its terragrunt apply failed")
+      failed+=("$s")
+      # The apply loops list a stack in .apply_transient when its last failure
+      # was a CI-side error they retry (provider download, Vault). The bump was
+      # never tried, so it is held: reverted without an ignore entry.
+      if grep -qx "$s" .apply_transient 2>/dev/null; then
+        why+=("its terragrunt apply failed on a CI-side error (provider download or Vault) after 3 attempts"); modes+=(hold)
+      else
+        why+=("its terragrunt apply failed"); modes+=(fail)
+      fi
       continue
     fi
     if grep -qx "$s" .apply_skipped 2>/dev/null; then
@@ -650,7 +658,7 @@ stage_finish() {
       verified+=("$s")
     else
       news=$(new_failures ".rails_baseline_$s" ".verify_$s.log" | paste -sd';' - | cut -c1-200)
-      failed+=("$s"); why+=("its verify checks failed (scripts/verify/run exit $rc${news:+; newly failing: $news})")
+      failed+=("$s"); why+=("its verify checks failed (scripts/verify/run exit $rc${news:+; newly failing: $news})"); modes+=(fail)
     fi
     rm -f ".verify_$s.log" ".verify_$s.rc"
   done
@@ -661,9 +669,10 @@ stage_finish() {
     for c in $(tac .rails_commits); do
       commit_stacks "$c" | grep -qx "$s" || continue
       grep -qx "$c" <<<"$reverted" && continue
-      if revert_commit fail "$c" "$stack_why" "Snapshot:
+      if revert_commit "${modes[$i]}" "$c" "$stack_why" "Snapshot:
 $(snapshot_text)"; then
         reverted=$(printf '%s\n%s' "$reverted" "$c")
+        [ "${modes[$i]}" = hold ] && held=$(printf '%s\n%s' "$held" "$c")
         log "reverted ${c:0:8} as $(git rev-parse --short HEAD)"
       else
         incomplete+=("$s")
@@ -708,8 +717,18 @@ $(snapshot_text)"; then
       fi
       forward="$forward ($(printf '%s' "$broken" | head -3 | paste -sd';' -))"
     done
+    # Reverts that wrote an ignore entry, as opposed to held ones.
+    local ignored
+    ignored=$(for c in $reverted; do grep -qx "$c" <<<"$held" || echo "$c"; done)
     msg=":rewind: Renovate rails reverted a bump that failed on master.
-$(for c in $reverted; do echo "- $(git log -1 --format=%s "$c")"; commit_deps "$c" | sed 's/^/    ignored: /'; done)
+$(for c in $reverted; do
+      echo "- $(git log -1 --format=%s "$c")"
+      if grep -qx "$c" <<<"$held"; then
+        echo "    not ignored: the apply failed on a CI-side error, so Renovate offers it again on a later run"
+      else
+        commit_deps "$c" | sed 's/^/    ignored: /'
+      fi
+    done)
 Failed: $(for i in "${!failed[@]}"; do printf '%s (%s) ' "${failed[$i]}" "${why[$i]}"; done)
 Rollback apply:${rollback}"
     if [ -n "$forward" ]; then
@@ -720,12 +739,18 @@ Both versions failed their checks. The bumped version is back on master and live
     msg="$msg
 Snapshot taken before the apply:
 $(snapshot_text)
-The revert commit and the ignore entry are pushed to master by this pipeline. No data was restored.
+The revert commit$([ -n "$ignored" ] && echo " and the ignore entry are" || echo " is") pushed to master by this pipeline. No data was restored.
 Pipeline: ${CI_PIPELINE_URL:-}"
     slack "$msg"
     log "$msg"
-    echo 1 >.rails_exit
-    if [ -n "$forward" ]; then push_metrics 4; else push_metrics 1; fi
+    if [ -n "$forward" ]; then
+      push_metrics 4; echo 1 >.rails_exit
+    elif [ -n "$ignored" ]; then
+      push_metrics 1; echo 1 >.rails_exit
+    else
+      # Only held reverts: like a gate hold, outcome 2 and a green pipeline.
+      push_metrics 2
+    fi
   fi
 
   if [ "${#incomplete[@]}" -gt 0 ]; then
