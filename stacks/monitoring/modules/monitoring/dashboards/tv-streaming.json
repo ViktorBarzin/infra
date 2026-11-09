@@ -79,6 +79,16 @@
       }
     ]
   },
+  "links": [
+    {
+      "title": "Viewing trends (tv admin)",
+      "type": "link",
+      "icon": "external link",
+      "url": "https://tv.viktorbarzin.me/admin/viewing/trends",
+      "targetBlank": true,
+      "tooltip": "Per-viewing startup, stalls and bitrate from the viewing record in Postgres, which this dashboard does not read."
+    }
+  ],
   "panels": [
     {
       "type": "row",
