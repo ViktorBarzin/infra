@@ -344,8 +344,24 @@ A web app we host but did not write (Immich, Nextcloud, Forgejo) whose pages get
 _Avoid_: "third-party analytics" (the analytics platform is ours; only the app is third-party).
 
 **Ingest path**:
-The same-origin path on each app's own host through which browsers load the analytics script and send events, reverse-proxied to the analytics platform.
+The same-origin path `/_t/` on each app's own host through which browsers load the analytics script and send events and errors, reverse-proxied to Rybbit, the **Event pipeline** and GlitchTip.
 _Avoid_: "analytics endpoint" when you mean the analytics host itself.
+
+**Event pipeline**:
+The Vector service that receives **Product events** in the Segment spec, checks them against the telemetry standard, and forwards them to Rybbit and the **Raw events** store. ADR-0041.
+_Avoid_: "Kafka", "event bus" (nothing is queued for several consumers); "collector" (that is Alloy, for logs).
+
+**Write key**:
+The per-app secret an SDK sends with every event. The **Event pipeline** derives the app from it. It can only submit events that pass the standard; the Rybbit ingest key never leaves the cluster.
+_Avoid_: "API key" (that is Rybbit's own ingest key).
+
+**Raw events**:
+Every event the **Event pipeline** accepted, stored unchanged in ClickHouse and kept forever. It is the record of what was sent, since Rybbit answers 200 for events it then drops as bots.
+_Avoid_: "backup" (it is a separate store, not a copy of Rybbit's tables).
+
+**Analytics site**:
+A Rybbit site. There are two: `apps` holds every **Instrumented app** so a **Person** is shared across them, and `hosted` holds the pageviews of every **Traffic-only app**. Per-app views filter by hostname.
+_Avoid_: one site per app (it splits a Person into one user per app).
 
 **Person**:
 One human across every app, keyed by their Authentik user id (`sub`). Anonymous events from before sign-in join the Person at sign-in.
