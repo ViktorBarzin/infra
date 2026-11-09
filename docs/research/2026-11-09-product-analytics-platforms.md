@@ -1,6 +1,6 @@
 # Product analytics platforms: comparison
 
-Researched 2026-11-09. Status: research, decision pending.
+Researched 2026-11-09. Status: decided 2026-11-09, see [ADR-0041](../adr/0041-product-analytics-on-rybbit-behind-vector.md) and the [design](../plans/2026-11-09-product-analytics-design.md): Rybbit behind a Vector pipeline, with GlitchTip for errors.
 
 We want one analytics pipeline across everything we serve, in place of the per-app mechanisms in use today. This page compares the self-hostable candidates against the requirements settled in the 2026-11-09 interview, covering both product analytics and error tracking. It ends with the combinations worth choosing between, and the questions this research could not settle.
 
