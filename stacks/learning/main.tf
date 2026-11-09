@@ -29,30 +29,47 @@ resource "kubernetes_namespace" "learning" {
   }
 }
 
-# Progress DB: SQLite on a persistent volume. This is a single-user, single-
-# writer app (1 replica, Recreate), so SQLite is sufficient for v1. The shared
-# CNPG cluster (ADR-0003) is the v2 upgrade — swap DB_CONNECTION_STRING and wire
-# the dbaas/vault static-role recipe; nothing else changes.
-resource "kubernetes_persistent_volume_claim" "data" {
-  # wait_until_bound is a TOP-LEVEL argument of the resource, not a spec
-  # attribute. It sat inside spec{} until 2026-08-14, which made every plan of
-  # this stack fail outright with:
-  #   Error: Unsupported argument ... An argument named "wait_until_bound" is
-  #   not expected here.
-  # so `learning` was the single persistent drift_error_count=1 in the nightly
-  # drift run, and the stack could be neither planned nor applied. Compare
-  # stacks/trek, which has always had it in the right place, and the PVC
-  # template in docs/agents/storage-backup.md.
-  wait_until_bound = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply (orphan PVC cleared, re-applied 2026-07-27)
-  metadata {
-    name      = "learning-data"
-    namespace = kubernetes_namespace.learning.metadata[0].name
+# Database credentials from the Vault static role pg-learning
+# (stacks/vault app_db_roles.tf), rotated weekly in its Tuesday slot. The
+# db-rotation-watcher force-syncs this ExternalSecret and Reloader restarts
+# the pod.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
   }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = { storage = "1Gi" }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "learning-db-creds"
+      namespace = kubernetes_namespace.learning.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "learning-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            DB_CONNECTION_STRING = "postgresql+asyncpg://learning:{{ .password }}@${var.postgresql_host}:5432/learning"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-learning"
+          property = "password"
+        }
+      }]
     }
   }
 }
@@ -62,11 +79,14 @@ resource "kubernetes_deployment" "learning" {
     name      = "learning"
     namespace = kubernetes_namespace.learning.metadata[0].name
     labels    = merge(local.labels, { tier = local.tiers.aux })
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
   spec {
     replicas = 1
     strategy {
-      type = "Recreate" # single SQLite writer on an RWO volume
+      type = "Recreate" # one writer; data in the shared Postgres since 2026-11-09
     }
     selector {
       match_labels = local.labels
@@ -76,8 +96,8 @@ resource "kubernetes_deployment" "learning" {
         labels = local.labels
       }
       spec {
-        # root: the image has no USER; SQLite writes to the root-owned
-        # PVC. Explicit so a future USER line can not silently CrashLoop.
+        # root: the image has no USER. Explicit so a future USER line is a
+        # visible change.
         security_context {
           run_as_user = 0
         }
@@ -101,8 +121,13 @@ resource "kubernetes_deployment" "learning" {
             value = "prod"
           }
           env {
-            name  = "DB_CONNECTION_STRING"
-            value = "sqlite+aiosqlite:////data/learn.db"
+            name = "DB_CONNECTION_STRING"
+            value_from {
+              secret_key_ref {
+                name = "learning-db-creds"
+                key  = "DB_CONNECTION_STRING"
+              }
+            }
           }
           # Authentik email -> content directory, learning repo ADR-0004.
           # Content lives in content/<user>/<topic>/ and each person reads their
@@ -153,10 +178,6 @@ resource "kubernetes_deployment" "learning" {
             }
           }
           # CONTENT_DIR + SERVE_FRONTEND_DIR are baked into the image.
-          volume_mount {
-            name       = "data"
-            mount_path = "/data"
-          }
           readiness_probe {
             http_get {
               path = "/api/healthz"
@@ -179,12 +200,6 @@ resource "kubernetes_deployment" "learning" {
           }
         }
 
-        volume {
-          name = "data"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data.metadata[0].name
-          }
-        }
       }
     }
   }
@@ -195,7 +210,6 @@ resource "kubernetes_deployment" "learning" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
-  depends_on = [kubernetes_persistent_volume_claim.data]
 }
 
 resource "kubernetes_service" "learning" {

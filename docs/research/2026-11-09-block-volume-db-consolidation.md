@@ -42,6 +42,11 @@ Every claim carries one of three labels:
   `UPTIME_KUMA_DB_*` env through ExternalSecret `uptime-kuma-db-creds`, and
   `/app/data` is emptyDir. 1 slot freed; the old PV is Released under Retain.
 
+- 2026-11-09, **learning**: SQLite moved to the shared Postgres (database and
+  role `learning`, Vault static role `pg-learning` at Tuesday 10:43, ExternalSecret
+  `learning-db-creds` builds `DB_CONNECTION_STRING`). 4 events and 4 progress
+  rows copied with the app's own models; the volume is gone. 1 slot freed.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
