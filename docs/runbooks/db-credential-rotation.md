@@ -11,7 +11,7 @@ file-mount pattern), post-mortem
 ## How it works
 
 Every app database login is a Vault **static role** (`database/static-roles/*`,
-32 roles: 9 MySQL, 23 Postgres). Vault changes the user's password in place.
+34 roles: 9 MySQL, 25 Postgres, counted in Terraform on 2026-11-09). Vault changes the user's password in place.
 Apps get it through an ExternalSecret on the `vault-database` store
 (`remoteRef.key = static-creds/<role>`), and Reloader restarts the pod when the
 Secret changes.
