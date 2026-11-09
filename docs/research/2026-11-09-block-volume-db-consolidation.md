@@ -83,7 +83,12 @@ Every claim carries one of three labels:
     `config/config.inc.php` on this volume (L158-170). persistent_login encrypts
     its tokens with it (`persistent_login.php:351,373`), so an emptyDir would
     rotate the key on every restart. Safe only with `ROUNDCUBEMAIL_DES_KEY` set
-    from a Secret (L192-193) holding the current key. Not done yet.
+    from a Secret (L192-193) holding the current key. **Tried and rolled back**
+    the same hour: on a fresh tree the entrypoint runs composer before writing
+    `config/config.inc.php`, so rcguard's database init fails, composer stops,
+    and `persistent_login` is left empty (PHP error on every request). The
+    volume stays, re-bound to its retained PV; `des_key` now comes from the
+    Terraform Secret `roundcube-des-key`, which logged everyone out once.
   - **enigma volume: keep.** `me@viktorbarzin.me` holds private keys. Turning
     on `enigma_multihost` with an existing keyring and an empty `filestore`
     table makes `db_sync()` delete every local keyring file, and the first-sync

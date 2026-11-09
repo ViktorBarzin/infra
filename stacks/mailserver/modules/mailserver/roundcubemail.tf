@@ -40,6 +40,34 @@ resource "kubernetes_config_map" "roundcubemail_config" {
 }
 
 
+# des_key encrypts the IMAP password in each session and the persistent_login
+# remember-me tokens (persistent_login.php:351,373). The docker entrypoint
+# otherwise generates one into config/config.inc.php under /var/www/html; this
+# Secret makes it declarative and survives a rebuilt tree (roundcubemail-docker
+# entrypoint, ROUNDCUBEMAIL_DES_KEY wins over the generated one). Replacing
+# this resource logs everyone out once.
+resource "random_password" "roundcube_des_key" {
+  length  = 24
+  special = false
+}
+
+resource "kubernetes_secret" "roundcube_des_key" {
+  metadata {
+    name      = "roundcube-des-key"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  data = {
+    des_key = random_password.roundcube_des_key.result
+  }
+}
+
+# /var/www/html stays on a volume. Tried emptyDir on 2026-11-09 and rolled
+# back the same hour: on a fresh tree the entrypoint runs composer before it
+# writes config/config.inc.php, so rcguard's database init fails, composer
+# stops, and persistent_login is left as an empty directory (PHP error on every
+# request, remember-me broken). With the tree kept, later starts take the
+# installto.sh + composer install path, which works. volume_name re-binds the
+# original PV (Retain) that holds the installed tree.
 resource "kubernetes_persistent_volume_claim" "roundcube_html_encrypted" {
   wait_until_bound = false
   metadata {
@@ -54,6 +82,7 @@ resource "kubernetes_persistent_volume_claim" "roundcube_html_encrypted" {
   spec {
     access_modes       = ["ReadWriteOnce"]
     storage_class_name = "proxmox-lvm-encrypted"
+    volume_name        = "pvc-d0626f0b-ec2d-4ed9-b3fe-848891792c4f"
     resources {
       requests = {
         storage = "1Gi"
@@ -193,6 +222,15 @@ resource "kubernetes_deployment" "roundcubemail" {
             value = var.roundcube_db_password
           }
           # Plugins
+          env {
+            name = "ROUNDCUBEMAIL_DES_KEY"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.roundcube_des_key.metadata[0].name
+                key  = "des_key"
+              }
+            }
+          }
           env {
             name  = "ROUNDCUBEMAIL_COMPOSER_PLUGINS"
             value = "mmvi/twofactor_webauthn,texxasrulez/persistent_login,dsoares/rcguard"
