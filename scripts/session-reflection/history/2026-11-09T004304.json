@@ -1,0 +1,92 @@
+{
+ "patterns_fingerprint": "e9fce188e431",
+ "recorded_at": "2026-11-09T00:43:04.024928+00:00",
+ "store": {
+  "errors": {},
+  "labelled": {
+   "blocked": {
+    "permission_denied": 7,
+    "rm_guard": 12,
+    "scan_guard": 22,
+    "unknown_skill": 3,
+    "worktree_isolation": 40,
+    "zsh_guard": 1
+   },
+   "failures_by_tool": {
+    "AskUserQuestion": 8,
+    "Bash": 468,
+    "ExitPlanMode": 6,
+    "Grep": 4,
+    "Read": 5,
+    "mcp__playwright__browser_run_code_unsafe": 9,
+    "mcp__playwright__browser_take_screenshot": 13,
+    "mcp__t3-code__html_preview": 8,
+    "mcp__t3-code__preview_evaluate": 3,
+    "mcp__t3-code__t3_background_wait": 4
+   },
+   "friction": {
+    "correction_like": 9,
+    "interrupts": 2,
+    "status_asks": 7
+   },
+   "grilling": {
+    "overrides": 6,
+    "questions": 54,
+    "sessions": 7
+   },
+   "questions": {
+    "answered": 93,
+    "blocked_hours": 26.1,
+    "recommended_pct": 84.9,
+    "waits_over_30m": 11
+   },
+   "skill_uses": {
+    "dataviz": 2,
+    "domain-modeling": 5,
+    "file-issue": 1,
+    "grilling": 7,
+    "home-assistant": 1,
+    "publish-page": 6,
+    "research": 3,
+    "visualize": 1,
+    "workflow-authoring": 1,
+    "wrap-up": 2,
+    "writing-for-agents": 1
+   },
+   "spend_by_model": {
+    "claude-haiku-5-5": 4.59,
+    "claude-opus-4-8": 8.01,
+    "claude-opus-5-5": 933.34,
+    "claude-sonnet-5-5": 0.33
+   },
+   "tool_choice": {
+    "condition_waits": 87,
+    "homelab_logs": 384,
+    "journalctl": 102,
+    "kubectl_logs": 11,
+    "kubectl_mutate": 15,
+    "manual_push": 42,
+    "manual_worktree": 3,
+    "sleep": 569,
+    "work_land": 161,
+    "work_start": 99
+   }
+  },
+  "scalars": {
+   "api_requests": 13015,
+   "cache_rewrite_usd_est": 398.02,
+   "human_prompts": 496,
+   "output_tokens_m": 9.24,
+   "sessions": 371,
+   "spend_usd": 946.26,
+   "tool_calls": 13991,
+   "tool_failures": 506
+  },
+  "window": {
+   "end": "2026-11-09 00:43:04",
+   "start": "2026-11-02 00:43:04",
+   "user": "wizard"
+  }
+ },
+ "store_fingerprint": "5872be3ce492"
+}
