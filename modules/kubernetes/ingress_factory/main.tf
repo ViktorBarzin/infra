@@ -218,6 +218,20 @@ variable "turnstile_strict" {
   default = false
 }
 
+# Site rules in the Turnstile gate (ADR-0040): refusals that use one site's own
+# URL knowledge and run before any challenge. Naming a site attaches the strict
+# gate variant plus that site's rules (middleware turnstile-gate-auth-<site>,
+# rules in stacks/turnstile-gate/files/<site>_rules.py). Only for the site the
+# rules were written for. Ignored when the gate is off.
+variable "turnstile_site" {
+  type    = string
+  default = null
+  validation {
+    condition     = var.turnstile_site == null || contains(["forgejo"], coalesce(var.turnstile_site, "-"))
+    error_message = "turnstile_site must be null or a site with rules in stacks/turnstile-gate (forgejo)."
+  }
+}
+
 # Forward-auth authorization (ADR-0023). Only meaningful when auth = "required":
 # the Authentik groups permitted to reach this host. Stamped as an annotation
 # (authentik.viktorbarzin.me/allowed-groups) that the authentik stack reads at
@@ -332,8 +346,11 @@ locals {
     (var.auth == "none" || var.auth == "app") && !var.allow_local_access_only &&
     var.dns_type != "internal" && contains(var.ingress_path, "/")
   )
-  turnstile_strip   = local.anubis_backend || local.effective_turnstile
-  turnstile_gate_mw = !local.effective_turnstile ? null : (local.anubis_backend || var.turnstile_strict ? "turnstile-gate-auth@kubernetescrd" : "turnstile-gate-auth-standard@kubernetescrd")
+  turnstile_strip = local.anubis_backend || local.effective_turnstile
+  turnstile_gate_mw = !local.effective_turnstile ? null : (
+    var.turnstile_site != null ? "turnstile-gate-auth-${var.turnstile_site}@kubernetescrd" :
+    local.anubis_backend || var.turnstile_strict ? "turnstile-gate-auth@kubernetescrd" : "turnstile-gate-auth-standard@kubernetescrd"
+  )
 
   # Auth middleware selection. "app" and "none" both attach no Authentik
   # middleware — "app" signals "the backend has its own user auth", "none"

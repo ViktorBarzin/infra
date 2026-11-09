@@ -649,7 +649,11 @@ module "ingress" {
   service_name     = kubernetes_service.forgejo.metadata[0].name
   port             = 80
   turnstile_strict = true
-  tls_secret_name  = var.tls_secret_name
+  # Forgejo's site rules in the gate (ADR-0040): a filtered issue or PR list
+  # opened cold, without a Referer from our sites, is refused before any
+  # challenge. Code, issues and PRs stay public; only that entry is refused.
+  turnstile_site  = "forgejo"
+  tls_secret_name = var.tls_secret_name
   # OCI registry pushes ship full image layer blobs in one request; default
   # Traefik buffering chokes on anything past a few hundred MB.
   max_body_size = "5g"
