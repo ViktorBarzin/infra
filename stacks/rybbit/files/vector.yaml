@@ -1,0 +1,497 @@
+# Event pipeline (ADR-0041, docs/plans/2026-11-09-product-analytics-design.md).
+# Segment-spec events in, checked against the telemetry standard, then:
+#   accepted -> Rybbit (/api/track, /api/identify) and events_raw.events
+#   rejected -> Loki {job="event-pipeline", outcome="rejected"}
+# Unit tests at the bottom run with `vector test` (see docs/runbooks/rybbit.md).
+
+data_dir: /var/lib/vector
+
+api:
+  enabled: false
+
+enrichment_tables:
+  write_keys:
+    type: file
+    file:
+      path: /etc/vector/keys/keys.csv
+      encoding:
+        type: csv
+    schema:
+      write_key: string
+      app: string
+      hostname: string
+      site_id: string
+
+sources:
+  segment_in:
+    type: http_server
+    address: 0.0.0.0:8080
+    path: /
+    strict_path: false
+    method: POST
+    path_key: path
+    headers:
+      - authorization
+      - user-agent
+      - x-forwarded-for
+      - x-real-ip
+    decoding:
+      codec: json
+    acknowledgements:
+      enabled: true
+
+  internal:
+    type: internal_metrics
+
+transforms:
+  # One request carries one event (/t, /i, /v1/track) or a batch (/b, /v1/batch).
+  # Emit one event per Segment message, carrying the request context with it.
+  explode:
+    type: remap
+    inputs: [segment_in]
+    source: |
+      auth = string(get!(., ["authorization"])) ?? ""
+      wk = ""
+      if starts_with(auth, "Basic ") {
+        decoded, err = decode_base64(slice!(auth, 6))
+        if err == null { wk = string(split(decoded, ":")[0]) ?? "" }
+      }
+      if wk == "" { wk = string(.writeKey) ?? "" }
+      ua = string(get!(., ["user-agent"])) ?? ""
+      xri = string(get!(., ["x-real-ip"])) ?? ""
+      xff = string(get!(., ["x-forwarded-for"])) ?? ""
+      ip = if xri != "" { xri } else { strip_whitespace(string(split(xff, ",")[0]) ?? "") }
+      items = if is_array(.batch) { array!(.batch) } else { [.] }
+      . = map_values(items) -> |m| {
+        {"write_key": wk, "request_ua": ua, "request_ip": ip, "msg": m}
+      }
+
+  # Every check sets .reject_reason; the first failure wins. The router below
+  # sends events with a reason to Loki and the rest onwards.
+  validate:
+    type: remap
+    inputs: [explode]
+    source: |
+      reason = ""
+      .app = "unknown"
+      .site_id = ""
+      .app_hostname = ""
+      row, err = get_enrichment_table_record("write_keys", {"write_key": string(.write_key) ?? ""})
+      if err != null {
+        reason = "unknown write key"
+      } else {
+        .app = string(row.app) ?? "unknown"
+        .site_id = string(row.site_id) ?? ""
+        .app_hostname = string(row.hostname) ?? ""
+      }
+
+      m = object(.msg) ?? {}
+      kind = downcase(string(m.type) ?? "")
+      .type = kind
+      if reason == "" && !includes(["track", "identify", "screen"], kind) {
+        reason = "type not accepted: " + kind
+      }
+
+      .event = ""
+      if kind == "track" {
+        name = string(m.event) ?? ""
+        if reason == "" && !match(name, r'^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$') {
+          reason = "event name is not noun.past_verb: " + name
+        }
+        .event = name
+      } else if kind == "screen" {
+        .event = string(m.name) ?? "screen"
+      }
+
+      props = object(m.properties) ?? {}
+      bad_keys = filter(keys(props)) -> |_i, k| { !match(k, r'^[a-z][a-z0-9_]*$') }
+      if reason == "" && length(bad_keys) > 0 {
+        reason = "property key is not snake_case: " + (string(bad_keys[0]) ?? "")
+      }
+      .properties_json = encode_json(props)
+      if reason == "" && length(.properties_json) > 2048 {
+        reason = "properties longer than 2048 characters"
+      }
+
+      url = string(m.context.page.url) ?? ""
+      .page_host = ""
+      .page_path = ""
+      .page_query = ""
+      if url != "" {
+        u, uerr = parse_url(url)
+        if uerr != null {
+          if reason == "" { reason = "page url does not parse" }
+        } else {
+          host = string(u.host) ?? ""
+          if reason == "" && host != "viktorbarzin.me" && !ends_with(host, ".viktorbarzin.me") {
+            reason = "not a production host: " + host
+          }
+          .page_host = host
+          .page_path = string(u.path) ?? "/"
+          .page_query = encode_key_value(object(u.query) ?? {}, field_delimiter: "&")
+        }
+      }
+
+      .user_id = string(m.userId) ?? ""
+      .anonymous_id = string(m.anonymousId) ?? ""
+      if reason == "" && kind == "identify" && .user_id == "" { reason = "identify without userId" }
+
+      ctx_ua = string(m.context.userAgent) ?? ""
+      .user_agent = if ctx_ua != "" { ctx_ua } else { string(.request_ua) ?? "" }
+      ctx_ip = string(m.context.ip) ?? ""
+      .client_ip = if ctx_ip != "" { ctx_ip } else { string(.request_ip) ?? "" }
+      .message_id = string(m.messageId) ?? ""
+      .sent_at = string(m.timestamp) ?? (string(m.sentAt) ?? "")
+      .reject_reason = reason
+
+  checked:
+    type: route
+    inputs: [validate]
+    route:
+      ok: '.reject_reason == ""'
+      rejected: '.reject_reason != ""'
+
+  accepted:
+    type: route
+    inputs: [checked.ok]
+    route:
+      track: '.type == "track" || .type == "screen"'
+      identify: '.type == "identify"'
+
+  to_rybbit_track:
+    type: remap
+    inputs: [accepted.track]
+    source: |
+      m = object(.msg) ?? {}
+      kind = string(.type) ?? ""
+      event = string(.event) ?? ""
+      page_host = string(.page_host) ?? ""
+      page_path = string(.page_path) ?? ""
+      page_query = string(.page_query) ?? ""
+      anon = string(.anonymous_id) ?? ""
+      uid = string(.user_id) ?? ""
+      ua = string(.user_agent) ?? ""
+      ip = string(.client_ip) ?? ""
+      host = if page_host != "" { page_host } else { string(.app_hostname) ?? "" }
+      path = "/"
+      if page_path != "" { path = page_path } else if kind == "screen" { path = "/" + event }
+      out = {
+        "site_id": string(.site_id) ?? "",
+        "hostname": truncate(host, 253),
+        "pathname": truncate(path, 2048)
+      }
+      if kind == "screen" {
+        out.type = "pageview"
+        out.page_title = truncate(event, 512)
+      } else {
+        out.type = "custom_event"
+        out.event_name = event
+        out.properties = string(.properties_json) ?? "{}"
+      }
+      if page_query != "" { out.querystring = truncate(page_query, 2048) }
+      if anon != "" { out.anonymous_id = truncate(anon, 255) }
+      if uid != "" { out.user_id = truncate(uid, 255) }
+      if ua != "" { out.user_agent = truncate(ua, 512) }
+      if match(ip, r'^\d{1,3}(\.\d{1,3}){3}$') || (contains(ip, ":") && match(ip, r'^[0-9a-fA-F:.]+$')) {
+        out.ip_address = ip
+      }
+      title = string(m.context.page.title) ?? ""
+      if title != "" && kind != "screen" { out.page_title = truncate(title, 512) }
+      ref = string(m.context.page.referrer) ?? ""
+      if ref != "" { out.referrer = truncate(ref, 2048) }
+      locale = string(m.context.locale) ?? ""
+      if locale != "" { out.language = truncate(locale, 35) }
+      w = int(m.context.screen.width) ?? 0
+      h = int(m.context.screen.height) ?? 0
+      if w > 0 && h > 0 {
+        out.screenWidth = w
+        out.screenHeight = h
+      }
+      . = out
+
+  to_rybbit_identify:
+    type: remap
+    inputs: [accepted.identify]
+    source: |
+      m = object(.msg) ?? {}
+      anon = string(.anonymous_id) ?? ""
+      ua = string(.user_agent) ?? ""
+      ip = string(.client_ip) ?? ""
+      out = {
+        "site_id": string(.site_id) ?? "",
+        "user_id": truncate(string(.user_id) ?? "", 255)
+      }
+      if anon != "" { out.anonymous_id = truncate(anon, 255) }
+      if ua != "" { out.user_agent = truncate(ua, 512) }
+      if match(ip, r'^\d{1,3}(\.\d{1,3}){3}$') || (contains(ip, ":") && match(ip, r'^[0-9a-fA-F:.]+$')) {
+        out.ip_address = ip
+      }
+      traits = object(m.traits) ?? {}
+      if length(traits) > 0 && length(encode_json(traits)) <= 2048 { out.traits = traits }
+      . = out
+
+  to_raw:
+    type: remap
+    inputs: [checked.ok]
+    source: |
+      sent_at = if .sent_at != "" { .sent_at } else { null }
+      . = {
+        "app": .app,
+        "type": .type,
+        "event": .event,
+        "message_id": .message_id,
+        "anonymous_id": .anonymous_id,
+        "user_id": .user_id,
+        "sent_at": sent_at,
+        "client_ip": .client_ip,
+        "user_agent": .user_agent,
+        "payload": encode_json(.msg)
+      }
+
+  to_rejected:
+    type: remap
+    inputs: [checked.rejected]
+    source: |
+      . = {"reason": .reject_reason, "app": .app, "client_ip": .request_ip, "msg": .msg}
+
+sinks:
+  rybbit_track:
+    type: http
+    inputs: [to_rybbit_track]
+    uri: http://rybbit.rybbit.svc.cluster.local/api/track
+    method: post
+    auth:
+      strategy: bearer
+      token: "${RYBBIT_INGEST_KEY}"
+    encoding:
+      codec: json
+    framing:
+      method: bytes
+    batch:
+      max_events: 1
+    request:
+      headers:
+        content-type: application/json
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+
+  rybbit_identify:
+    type: http
+    inputs: [to_rybbit_identify]
+    uri: http://rybbit.rybbit.svc.cluster.local/api/identify
+    method: post
+    auth:
+      strategy: bearer
+      token: "${RYBBIT_INGEST_KEY}"
+    encoding:
+      codec: json
+    framing:
+      method: bytes
+    batch:
+      max_events: 1
+    request:
+      headers:
+        content-type: application/json
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+
+  raw_events:
+    type: clickhouse
+    inputs: [to_raw]
+    endpoint: http://clickhouse.rybbit.svc.cluster.local:8123
+    database: events_raw
+    table: events
+    auth:
+      strategy: basic
+      user: default
+      password: "${CLICKHOUSE_PASSWORD}"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    batch:
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+
+  rejected_loki:
+    type: loki
+    inputs: [to_rejected]
+    endpoint: http://loki.monitoring.svc.cluster.local:3100
+    encoding:
+      codec: json
+    labels:
+      job: event-pipeline
+      outcome: rejected
+    out_of_order_action: accept
+
+  metrics:
+    type: prometheus_exporter
+    inputs: [internal]
+    address: 0.0.0.0:9598
+
+tests:
+  - name: browser track event maps to a Rybbit custom event
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          authorization: "Basic dGVzdGtleTo="
+          user-agent: "Mozilla/5.0 test"
+          x-real-ip: "81.2.69.142"
+          type: track
+          event: recording.started
+          anonymousId: anon-1
+          properties:
+            channel_id: bbc_one
+          context:
+            page:
+              url: "https://tv.viktorbarzin.me/watch?c=1"
+              title: Watch
+    outputs:
+      - extract_from: to_rybbit_track
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.type, "custom_event")
+              assert_eq!(.event_name, "recording.started")
+              assert_eq!(.site_id, "1")
+              assert_eq!(.hostname, "tv.viktorbarzin.me")
+              assert_eq!(.pathname, "/watch")
+              assert_eq!(.ip_address, "81.2.69.142")
+              assert_eq!(.anonymous_id, "anon-1")
+              assert_eq!(.properties, "{\"channel_id\":\"bbc_one\"}")
+              assert!(!exists(.user_id))
+      - extract_from: to_raw
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.app, "tv")
+              assert_eq!(.event, "recording.started")
+
+  - name: server batch splits into events and uses the app hostname
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          authorization: "Basic dGVzdGtleTo="
+          user-agent: "analytics-python/2.4.0"
+          batch:
+            - type: track
+              event: recording.finished
+              userId: sub-123
+              anonymousId: anon-9
+            - type: identify
+              userId: sub-123
+              anonymousId: anon-9
+              traits:
+                plan: member
+    outputs:
+      - extract_from: to_rybbit_track
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.hostname, "tv.viktorbarzin.me")
+              assert_eq!(.pathname, "/")
+              assert_eq!(.user_id, "sub-123")
+              assert!(!exists(.ip_address))
+      - extract_from: to_rybbit_identify
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.user_id, "sub-123")
+              assert_eq!(.anonymous_id, "anon-9")
+              assert_eq!(.traits.plan, "member")
+
+  - name: android screen becomes a pageview
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          writeKey: testkey
+          type: screen
+          name: player
+          anonymousId: device-1
+    outputs:
+      - extract_from: to_rybbit_track
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.type, "pageview")
+              assert_eq!(.pathname, "/player")
+              assert!(!exists(.event_name))
+
+  - name: bad event name is rejected
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          writeKey: testkey
+          type: track
+          event: Recording Started
+    outputs:
+      - extract_from: to_rejected
+        conditions:
+          - type: vrl
+            source: |
+              assert!(contains(string!(.reason), "noun.past_verb"))
+              assert_eq!(.app, "tv")
+    no_outputs_from: [to_rybbit_track, to_raw]
+
+  - name: unknown write key is rejected
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          writeKey: nope
+          type: track
+          event: trip.created
+    outputs:
+      - extract_from: to_rejected
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.reason, "unknown write key")
+              assert_eq!(.app, "unknown")
+    no_outputs_from: [to_rybbit_track, to_raw]
+
+  - name: non-production page host is rejected
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          writeKey: testkey
+          type: track
+          event: trip.created
+          context:
+            page:
+              url: "http://localhost:5173/"
+    outputs:
+      - extract_from: to_rejected
+        conditions:
+          - type: vrl
+            source: |
+              assert!(contains(string!(.reason), "not a production host"))
+    no_outputs_from: [to_rybbit_track, to_raw]
+
+  - name: camelCase property key is rejected
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          writeKey: testkey
+          type: track
+          event: trip.created
+          properties:
+            tripId: 5
+    outputs:
+      - extract_from: to_rejected
+        conditions:
+          - type: vrl
+            source: |
+              assert!(contains(string!(.reason), "snake_case"))
+    no_outputs_from: [to_rybbit_track, to_raw]
