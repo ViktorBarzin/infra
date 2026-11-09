@@ -23,35 +23,6 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "aiostreams-data-proxmox"
-    namespace = kubernetes_namespace.aiostreams.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
-}
-
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -165,7 +136,7 @@ resource "kubernetes_deployment" "aiostreams" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
@@ -379,6 +350,23 @@ sys.exit(0 if success else 1)
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
+}
+
+# /app/data holds only regenerable files since the database moved to the
+# shared Postgres: the anime database with its ETag sidecars, ID and scene
+# mappings, templates, cache/ and the instance-id file that lets a restarted
+# pod reclaim its own stream sessions. No embedded DB, so NFS is safe, and it
+# keeps those files across restarts without using a proxmox-csi hotplug slot.
+# Moved off aiostreams-data-proxmox on 2026-11-09
+# (docs/research/2026-11-09-block-volume-db-consolidation.md).
+module "nfs_data" {
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "aiostreams-data-host"
+  namespace          = kubernetes_namespace.aiostreams.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/aiostreams"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_backup" {
