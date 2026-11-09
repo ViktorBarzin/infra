@@ -460,6 +460,37 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               }
             }
           }
+          # Product events and errors (telemetry.tf, infra ADR-0041). optional
+          # so the Secret not yet written, or an image without telemetry,
+          # changes nothing.
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://event-pipeline.rybbit.svc.cluster.local"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.wrongmove_telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.wrongmove_telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 5001
@@ -700,6 +731,23 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
             name  = "OTP_URL"
             value = "http://otp.osm-routing.svc.cluster.local:8080"
           }
+          # Product events and errors (telemetry.tf, infra ADR-0041). optional
+          # so the Secret not yet written, or an image without telemetry,
+          # changes nothing.
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.wrongmove_telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/data"
@@ -818,6 +866,27 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           env {
             name  = "SCRAPE_SCHEDULES"
             value = local.scrape_schedules
+          }
+          # Product events and errors (telemetry.tf, infra ADR-0041). optional
+          # so the Secret not yet written, or an image without telemetry,
+          # changes nothing.
+          env {
+            name  = "SERVICE_NAME"
+            value = "celery-beat"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.wrongmove_telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
           }
           volume_mount {
             name       = "data"
