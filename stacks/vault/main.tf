@@ -1088,7 +1088,7 @@ resource "vault_database_secret_backend_connection" "mysql" {
     "mysql-speedtest", "mysql-wrongmove", "mysql-codimd",
     "mysql-nextcloud", "mysql-shlink", "mysql-grafana",
     "mysql-technitium", "mysql-phpipam",
-    "mysql-verify-probe",
+    "mysql-verify-probe", "mysql-uptimekuma",
   ]
 
   mysql {
@@ -1157,6 +1157,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #         both technitium roles)
 #   10:04 both verify-probe roles
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
+#   10:12 mysql-uptimekuma
 #   10:14 mysql-nextcloud   10:16 mysql-speedtest   10:18 mysql-wrongmove
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
@@ -1166,7 +1167,7 @@ locals {
   # MySQL keeps the previous password valid alongside the new one (dual
   # password, MySQL 8.0.14+), so a pod still holding it keeps logging in until
   # it restarts. The next rotation replaces the retained password, so an old
-  # one lives at most one week. Applies to users at host '%', which all nine are.
+  # one lives at most one week. Applies to users at host '%', which all ten are.
   mysql_dual_password_rotation = [
     "ALTER USER '{{name}}'@'%' IDENTIFIED BY '{{password}}' RETAIN CURRENT PASSWORD",
   ]
@@ -1240,6 +1241,19 @@ resource "vault_database_secret_backend_static_role" "mysql_technitium" {
   name                = "mysql-technitium"
   username            = "technitium"
   rotation_schedule   = "2 10 * * TUE"
+  rotation_window     = 3600
+  rotation_statements = local.mysql_dual_password_rotation
+}
+
+# Uptime Kuma 2.x keeps its monitors in this MySQL database. Before
+# 2026-11-09 the password was recorded only in db-config.json on the app's
+# block volume; the role makes it declarative so that volume could go.
+resource "vault_database_secret_backend_static_role" "mysql_uptimekuma" {
+  backend             = vault_mount.database.path
+  db_name             = vault_database_secret_backend_connection.mysql.name
+  name                = "mysql-uptimekuma"
+  username            = "uptimekuma"
+  rotation_schedule   = "12 10 * * TUE"
   rotation_window     = 3600
   rotation_statements = local.mysql_dual_password_rotation
 }
