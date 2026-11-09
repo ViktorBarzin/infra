@@ -75,6 +75,22 @@ Every claim carries one of three labels:
   now sit in `meshcentral-files/` on the data volume, mounted with `subPath`.
   1 slot freed.
 
+- 2026-11-09, **Roundcube, after reading the code** (roundcubemail-docker
+  `apache/docker-entrypoint.sh` at 9fcc6e7, roundcubemail 1.7.6):
+  - **html volume**: composer re-runs `require` for the 3 plugins on every start
+    whatever the storage (entrypoint L123-139), so emptyDir adds no network
+    dependency. The one piece of state is `des_key`: generated once into
+    `config/config.inc.php` on this volume (L158-170). persistent_login encrypts
+    its tokens with it (`persistent_login.php:351,373`), so an emptyDir would
+    rotate the key on every restart. Safe only with `ROUNDCUBEMAIL_DES_KEY` set
+    from a Secret (L192-193) holding the current key. Not done yet.
+  - **enigma volume: keep.** `me@viktorbarzin.me` holds private keys. Turning
+    on `enigma_multihost` with an existing keyring and an empty `filestore`
+    table makes `db_sync()` delete every local keyring file, and the first-sync
+    `db_save` is then skipped because the loop reassigns `$file`
+    (`plugins/enigma/lib/enigma_driver_gnupg.php:590-668`). Candidate 3's
+    "enigma keys into MySQL" is withdrawn.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
