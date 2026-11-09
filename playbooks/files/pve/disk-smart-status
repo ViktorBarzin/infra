@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Export SMART data for every physical drive behind the R730's PERC H730.
+
+Installed by playbooks/pve-host.yml (tag smart); runs every 5 minutes from
+disk-smart-status.timer and writes disk_smart.prom for node_exporter's
+textfile collector. Reads only: smartctl -a and the Seagate FARM log are log
+page reads, so no self-test is started and nothing touches the media.
+
+The PERC presents virtual disks (sda..sdd), so per-drive SMART needs
+`smartctl -d megaraid,N /dev/bus/0`, where N is the bay number. The drive list
+comes from `smartctl --scan` on every run, so a drive that drops off the
+controller disappears from the output; the DiskSmartDriveMissing alert
+compares the count against the drives the iDRAC reports.
+
+Two counters measure workload, and they disagree:
+  smart_processed_bytes_total  the SCSI error counter log's "Gigabytes
+      processed". On the Exos X24 pair it runs 2.4-2.7x above the data the
+      host actually transferred (measured 2026-11-09), so it is kept for
+      reference only.
+  smart_logical_{read,written}_bytes_total  logical sectors from the Seagate
+      FARM log (Exos only; the two RAID1 mirrors agree within 0.004%) or ATA
+      Total_LBAs_Written (the SSD). These match the host-side counters and are
+      the numbers to compare against a drive's rated workload.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any
+
+TEXTFILE_DIR = "/var/lib/node_exporter/textfile"
+OUT_NAME = "disk_smart.prom"
+SMARTCTL = "/usr/sbin/smartctl"
+
+# smartctl exit status bits 0 and 1 mean the command line or the device open
+# failed, so the JSON holds no SMART data. Other bits report findings about a
+# drive that was read (bit 2: some optional log was unavailable through the
+# PERC, which the SSD sets on every -x run).
+EXIT_UNREADABLE = 0b11
+
+Drive = dict[str, Any]
+
+
+def scan() -> list[tuple[str, str]]:
+    """Return (device, type) for every megaraid drive smartctl can see."""
+    out = subprocess.run([SMARTCTL, "-j", "--scan"], capture_output=True, text=True, check=False)
+    devices = json.loads(out.stdout).get("devices", [])
+    return [(d["name"], d["type"]) for d in devices if d.get("type", "").startswith("megaraid,")]
+
+
+def read_drive(name: str, dtype: str) -> Drive:
+    out = subprocess.run(
+        [SMARTCTL, "-j", "-a", "-l", "farm", "-d", dtype, name],
+        capture_output=True, text=True, check=False, timeout=60,
+    )
+    try:
+        data: Drive = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        data = {}
+    data.setdefault("smartctl", {})["exit_status"] = out.returncode
+    data["_type"] = dtype
+    return data
+
+
+def esc(value: object) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def labels(drive: Drive, **extra: object) -> str:
+    pairs = {
+        "bay": drive["_type"].split(",", 1)[1],
+        "model": drive.get("model_name") or drive.get("scsi_model_name") or "",
+        "serial": drive.get("serial_number", ""),
+        **extra,
+    }
+    return "{" + ",".join(f'{k}="{esc(v)}"' for k, v in pairs.items()) + "}"
+
+
+def drive_samples(drive: Drive) -> list[tuple[str, str, float]]:
+    """(metric, labels, value) for one drive. Pure: no I/O."""
+    exit_status = int(drive["smartctl"]["exit_status"])
+    s: list[tuple[str, str, float]] = [
+        ("smart_smartctl_exit_status", labels(drive), exit_status),
+    ]
+    readable = not (exit_status & EXIT_UNREADABLE) and "smart_status" in drive
+    s.append(("smart_read_ok", labels(drive), 1 if readable else 0))
+    if not readable:
+        return s
+
+    s.append(("smart_healthy", labels(drive), 1 if drive["smart_status"].get("passed") else 0))
+
+    temp = drive.get("temperature", {})
+    if "current" in temp:
+        s.append(("smart_temperature_celsius", labels(drive), temp["current"]))
+    if "drive_trip" in temp:
+        s.append(("smart_temperature_trip_celsius", labels(drive), temp["drive_trip"]))
+    if "hours" in drive.get("power_on_time", {}):
+        s.append(("smart_power_on_hours", labels(drive), drive["power_on_time"]["hours"]))
+
+    # SCSI (SAS) drives
+    if "scsi_grown_defect_list" in drive:
+        s.append(("smart_grown_defects", labels(drive), drive["scsi_grown_defect_list"]))
+    if "count" in (drive.get("scsi_pending_defects") or {}):
+        s.append(("smart_pending_defects", labels(drive), drive["scsi_pending_defects"]["count"]))
+    for op, counters in (drive.get("scsi_error_counter_log") or {}).items():
+        if "total_uncorrected_errors" in counters:
+            s.append(("smart_uncorrected_errors_total", labels(drive, op=op), counters["total_uncorrected_errors"]))
+        if "total_errors_corrected" in counters:
+            s.append(("smart_corrected_errors_total", labels(drive, op=op), counters["total_errors_corrected"]))
+        if "gigabytes_processed" in counters:
+            gb = float(counters["gigabytes_processed"])
+            s.append(("smart_processed_bytes_total", labels(drive, op=op), round(gb * 1e9)))
+    cycles = drive.get("scsi_start_stop_cycle_counter") or {}
+    if "accumulated_load_unload_cycles" in cycles:
+        s.append(("smart_load_unload_cycles_total", labels(drive), cycles["accumulated_load_unload_cycles"]))
+    if "specified_load_unload_count_over_device_lifetime" in cycles:
+        s.append(("smart_load_unload_cycles_rated", labels(drive), cycles["specified_load_unload_count_over_device_lifetime"]))
+
+    block = int(drive.get("logical_block_size") or 512)
+    work = (drive.get("seagate_farm_log") or {}).get("workload_statistics") or {}
+    if "logical_sectors_written" in work:
+        s.append(("smart_logical_written_bytes_total", labels(drive, source="farm"), work["logical_sectors_written"] * block))
+    if "logical_sectors_read" in work:
+        s.append(("smart_logical_read_bytes_total", labels(drive, source="farm"), work["logical_sectors_read"] * block))
+
+    # ATA (SATA SSD) drives
+    for attr in (drive.get("ata_smart_attributes") or {}).get("table", []):
+        name = attr.get("name", f"attr_{attr.get('id')}")
+        s.append(("smart_ata_attribute_normalized", labels(drive, attribute=name), attr.get("value", 0)))
+        raw = attr.get("raw", {}).get("value")
+        if isinstance(raw, int):
+            s.append(("smart_ata_attribute_raw", labels(drive, attribute=name), raw))
+            if name == "Total_LBAs_Written":
+                s.append(("smart_logical_written_bytes_total", labels(drive, source="ata"), raw * block))
+            elif name == "Total_LBAs_Read":
+                s.append(("smart_logical_read_bytes_total", labels(drive, source="ata"), raw * block))
+    return s
+
+
+HELP = {
+    "smart_smartctl_exit_status": ("gauge", "smartctl exit status bitmask for the drive (see smartctl(8) RETURN VALUES)."),
+    "smart_read_ok": ("gauge", "1 when smartctl could read the drive's SMART data."),
+    "smart_healthy": ("gauge", "1 when the drive's own SMART health verdict is OK/PASSED."),
+    "smart_temperature_celsius": ("gauge", "Current drive temperature."),
+    "smart_temperature_trip_celsius": ("gauge", "Temperature the drive itself treats as its limit (SCSI reference temperature)."),
+    "smart_power_on_hours": ("gauge", "Accumulated power-on hours."),
+    "smart_grown_defects": ("gauge", "Entries in the SCSI grown defect list (sectors reassigned since manufacture)."),
+    "smart_pending_defects": ("gauge", "SCSI pending defects: sectors waiting to be reassigned."),
+    "smart_uncorrected_errors_total": ("counter", "Errors the drive could not correct, from the SCSI error counter log."),
+    "smart_corrected_errors_total": ("counter", "Errors corrected by ECC or retry, from the SCSI error counter log."),
+    "smart_processed_bytes_total": ("counter", "SCSI error counter log 'bytes processed'. Overstates host traffic 2.4-2.7x on the Exos; use smart_logical_*_bytes_total for workload."),
+    "smart_load_unload_cycles_total": ("counter", "Head load/unload cycles."),
+    "smart_load_unload_cycles_rated": ("gauge", "Head load/unload cycles the drive is specified for over its lifetime."),
+    "smart_logical_written_bytes_total": ("counter", "Logical bytes the host wrote to the drive (FARM logical sectors or ATA Total_LBAs_Written)."),
+    "smart_logical_read_bytes_total": ("counter", "Logical bytes the host read from the drive (FARM logical sectors)."),
+    "smart_ata_attribute_normalized": ("gauge", "ATA SMART attribute normalized value (100 or 200 = new, lower is worse)."),
+    "smart_ata_attribute_raw": ("gauge", "ATA SMART attribute raw value."),
+}
+
+
+def render(drives: list[Drive], now: float) -> str:
+    by_metric: dict[str, list[str]] = {}
+    for drive in drives:
+        for metric, lbl, value in drive_samples(drive):
+            by_metric.setdefault(metric, []).append(f"{metric}{lbl} {value:g}" if isinstance(value, float) else f"{metric}{lbl} {value}")
+    lines: list[str] = []
+    for metric, (mtype, text) in HELP.items():
+        if metric in by_metric:
+            lines += [f"# HELP {metric} {text}", f"# TYPE {metric} {mtype}", *by_metric[metric]]
+    lines += [
+        "# HELP smart_collector_drives Drives disk-smart-status found on the controller in its last run.",
+        "# TYPE smart_collector_drives gauge",
+        f"smart_collector_drives {len(drives)}",
+        "# HELP smart_collector_last_run_timestamp_seconds Last completed run of disk-smart-status.",
+        "# TYPE smart_collector_last_run_timestamp_seconds gauge",
+        f"smart_collector_last_run_timestamp_seconds {int(now)}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    drives = [read_drive(name, dtype) for name, dtype in scan()]
+    text = render(drives, time.time())
+    fd, tmp = tempfile.mkstemp(prefix=".disk_smart.", dir=TEXTFILE_DIR)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, os.path.join(TEXTFILE_DIR, OUT_NAME))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

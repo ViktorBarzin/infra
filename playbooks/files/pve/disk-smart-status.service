@@ -1,0 +1,7 @@
+[Unit]
+Description=Export SMART data for the R730's physical drives to node_exporter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/disk-smart-status
+Nice=10

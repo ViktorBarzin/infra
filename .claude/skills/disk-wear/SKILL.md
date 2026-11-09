@@ -40,6 +40,8 @@ smartctl -d sat+megaraid,4 -A /dev/sda 2>/dev/null | grep -iE "power_on|realloca
 - `Total_LBAs_Written`: multiply by 512 bytes for total TB written. Compare against 150 TBW rating.
 - Estimate remaining life: `(150 TBW - current TBW) / annual write rate`.
 
+**Per-drive SMART history is in Prometheus** (since 2026-11-09, `disk-smart-status` on the host, every 5 minutes): `smart_logical_written_bytes_total`, `smart_logical_read_bytes_total`, `smart_temperature_celsius`, `smart_ata_attribute_normalized{attribute="Wear_Leveling_Count"}` and the rest, labelled by `bay`, `model` and `serial` (list in `docs/runbooks/proxmox-host.md`, "Drive health"). For a drive's workload use the `smart_logical_*` series, which come from the Seagate FARM log on the Exos pair. Do not use the SCSI "Gigabytes processed" counter (`smart_processed_bytes_total`, or `smartctl -a`'s error counter log): on the Exos it runs 2.4-2.7x above what the host transferred. Measured 2026-11-09, each Exos does about 236 TB/yr against the 550 TB/yr rating, not the 111% the processed counter suggests.
+
 ## Step 2: Real-Time Snapshot (30 seconds)
 
 SSH to PVE host and take two reads of block device stats 30 seconds apart. This gives instantaneous write rates independent of Prometheus scrape intervals.

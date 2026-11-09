@@ -119,10 +119,76 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | unattended-upgrades, Debian-Security origin only, no automatic reboot (tag `patching`) | Nothing installed updates on the host until 2026-10-19, when 29 security updates were waiting. Proxmox packages (kernel, QEMU, pve-manager) and Debian point releases are still upgraded by hand, because they need a reboot or a VM stop/start to take effect. Kernel autoremoval is off, after the first run removed the fallback kernel 6.14.11-3 |
 | `host-patch-status` (script, service, hourly timer) and the node_exporter textfile collector (tag `patching`) | Reports how many Proxmox packages are waiting and since when, and whether the running kernel is older than the newest installed one. `ProxmoxHostUpdatesWaiting` and `ProxmoxHostRebootWaiting` fire after 30 days, `ProxmoxHostPatchStatusStale` when the script stops running |
 | `csi-leak-reconcile` (script, service, 5-minute timer, tag `csi-leak`) | Clears Proxmox CSI disk slots a timed-out detach left poisoned (see `docs/runbooks/proxmox-csi-wedged-attach.md`). Acts only on a slot that has a throttle object, no config entry and no attached device on two runs in a row, under the same per-VM lock `qm set` takes. Exports `pve_csi_leaked_slots`, `pve_csi_leak_cleaned_total` and `pve_csi_leak_reconcile_errors` through the textfile collector |
+| `disk-smart-status` (script, service, 5-minute timer, tag `smart`) | Reads SMART data and the Seagate FARM log from every physical drive behind the PERC and exports `smart_*` metrics through the textfile collector. The "R730 Drives" alert group reads them. See "Drive health" below |
 | Monthly Proxmox upgrade (tag `pve-upgrade`, runs only when asked for) | `apt full-upgrade` with no reboot. See below |
 
 The measurements and reasoning for each item sit next to its task in
 the playbook.
+
+## Drive health
+
+The PERC H730 presents virtual disks (sda to sdd), so each physical
+drive is read with `smartctl -d megaraid,<bay> /dev/bus/0`. The bay
+number is the megaraid number:
+
+| Bay | Drive | Virtual disk |
+|---|---|---|
+| 0, 1 | Seagate Exos X24 ST12000NM007H 12 TB SAS | sdc, RAID1 (VG `pve`, `/srv/nfs`) |
+| 2, 3 | Seagate ST1200MM0099 1.2 TB 10K SAS | sda, RAID1 (VG `backup`) |
+| 4 | Samsung 850 EVO 1 TB SATA SSD | sdb, single-drive RAID-0 (VG `ssd`) |
+| 5 | empty | |
+| 6, 7 | Seagate ST600MM0069 600 GB 10K SAS | sdd, RAID1 (VG `sas`) |
+
+`disk-smart-status` exports, per drive, with labels `bay`, `model` and
+`serial`: `smart_healthy`, `smart_read_ok`, `smart_temperature_celsius`,
+`smart_temperature_trip_celsius`, `smart_power_on_hours`,
+`smart_grown_defects`, `smart_pending_defects` (Exos only),
+`smart_uncorrected_errors_total{op}`, `smart_corrected_errors_total{op}`,
+`smart_processed_bytes_total{op}`, `smart_logical_written_bytes_total`,
+`smart_logical_read_bytes_total`, `smart_ata_attribute_raw{attribute}`,
+`smart_ata_attribute_normalized{attribute}` and load/unload cycle
+counts. `smart_collector_last_run_timestamp_seconds` and
+`smart_collector_drives` describe the run itself.
+
+Two workload counters disagree, and the logical one is the one to use.
+The SCSI error counter log's "Gigabytes processed"
+(`smart_processed_bytes_total`) runs 2.4 to 2.7 times above the data
+the host transferred on the Exos pair. The FARM log's logical sectors
+(`smart_logical_*_bytes_total{source="farm"}`) match the host-side
+counters, and the two RAID1 mirrors agree within 0.004%. On 2026-11-09
+each Exos had 176 TB written and 82 TB read over 9,597 power-on hours,
+about 236 TB a year against Seagate's 550 TB/year workload rating. Only
+the Exos drives carry a FARM log; the SSD's figure comes from
+`Total_LBAs_Written`, and the older SAS drives have only the processed
+counter.
+
+Alerts (group "R730 Drives", plus two in "Server Health"):
+
+| Alert | Severity | Fires when |
+|---|---|---|
+| `DiskSmartHealthFailed` | critical | the drive's own SMART verdict is not OK for 10 minutes |
+| `DiskUncorrectedErrors` | critical | an uncorrected read, write or verify error was logged in the last 24 hours |
+| `DiskGrownDefectsIncreased` | critical | the grown defect list grew in the last 24 hours |
+| `DiskSSDMediaErrors` | critical | an SSD reallocation, reserved-block, program/erase fail, uncorrectable or CRC counter rose in the last 24 hours |
+| `DiskTemperatureCritical` | critical | a drive is at or above its own trip temperature (Exos 50 C, older SAS 60 C; the SSD reports none and uses 70 C) for 5 minutes |
+| `DiskTemperatureHigh` | warning | within 5 C of that limit (SSD: 60 C) for 15 minutes |
+| `DiskPendingDefects` | warning | sectors are waiting to be reassigned |
+| `DiskSSDWearHigh` | warning | the SSD's `Wear_Leveling_Count` normalized value is below 20 |
+| `DiskSmartUnreadable` | warning | smartctl cannot read a drive the controller still lists |
+| `DiskSmartDriveMissing` | warning | fewer drives answer smartctl than the iDRAC reports |
+| `DiskSmartCollectorStale` | warning | the collector has not run for 30 minutes |
+| `iDRACStorageUnhealthy` | critical | the iDRAC storage roll-up is not OK: a degraded virtual disk, the PERC or its battery |
+| `iDRACBatteryUnhealthy` | critical | the iDRAC battery roll-up (PERC and CMOS) is not OK |
+
+No SMART self-tests are scheduled. The drives run their own background
+media scans, the PERC runs patrol reads, and a long test on an Exos
+would read 12 TB from sdc, which is already 67-71% busy at p95. To read
+one drive by hand:
+
+```sh
+ssh root@192.168.1.127 smartctl -a -d megaraid,0 /dev/bus/0          # health, errors, defects
+ssh root@192.168.1.127 smartctl -l farm -d megaraid,0 /dev/bus/0     # Seagate FARM (Exos only)
+```
 
 ## Monthly Proxmox updates
 
