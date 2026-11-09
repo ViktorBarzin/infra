@@ -8488,6 +8488,45 @@ serverFiles:
             annotations:
               summary: "tv Watcher is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
               description: "The Watcher's received traffic has stayed above 1.2 times its download budget (tv_watcher_download_budget_mbps, WATCHER_DOWNLOAD_BUDGET_MBPS in stacks/tv/watcher.tf) for 30 minutes. Compare with its own estimate, tv_watcher_download_mbps, and the watch counts, tv_watcher_watches by mode. An estimate well under the measured rate means the per-watch costing in tv/watcher/plan.py misses some traffic; an estimate near the budget with the measured rate far above means a watch is reading more than one Feed's worth. The budget is in tv ADR-0044, Build decisions, Download budget."
+          - alert: TvCloudflareProfileStale
+            # Added 2026-11-09 with the Cloudflare cache profile (tv/cf_cache.py,
+            # job cf_cache_profile, one Edge every 5 minutes; tv ADR
+            # 2026-11-09-presses-record-a-start-timeline and the tv-streaming
+            # dashboard). Without it the hit ratio panels quietly stop moving.
+            expr: |
+              (max(tv_cf_scrape_ok) < 1)
+              or (time() - max(tv_cf_window_end_timestamp_seconds) > 1800)
+              or absent(tv_cf_window_end_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv Cloudflare cache profile has not updated for 30 minutes"
+              description: "The cf_cache_profile job on a tv Edge has failed its Cloudflare analytics query (tv_cf_scrape_ok 0) or its newest window is over 30 minutes old. Check the Edge logs for cf_cache, and that Secret tv-cloudflare-analytics (stacks/tv/cloudflare-analytics.tf) still holds a token Cloudflare accepts. The free plan allows 300 analytics queries per 5 minutes."
+          - alert: TvPreloadOverBudget
+            # Added 2026-11-09 with Server preload (tv ADR
+            # 2026-11-09-presses-open-from-a-server-preload): 40 Mbit/s of the
+            # Sofia line for all preloads together.
+            expr: |
+              max(tv_preload_mbps) > on() 1.2 * (max(tv_preload_budget_mbps) or on() vector(40))
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv Server preload is downloading {{ $value | printf \"%.0f\" }} Mbit/s, over its budget"
+              description: "tv_preload_mbps has stayed above 1.2 times tv_preload_budget_mbps for 30 minutes. The preloader (tv/server_preload/, job channel_preload) should admit Feeds only within the budget; compare tv_preload_admitted_mbps and tv_preload_feeds. A Feed whose real bitrate is far above its measured one is the usual cause."
+          - alert: TvCloudflareWarmOverCap
+            # Added 2026-11-09 with Cloudflare warming of preloaded segments (tv
+            # ADR 2026-11-09-channel-starts-in-three-seconds): it spends the
+            # house upload, about 150 Mbit/s, so it has a cap of its own.
+            expr: |
+              max(tv_preload_cf_warm_upload_mbps) > on() 1.2 * max(tv_preload_cf_warm_cap_mbps)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "tv Cloudflare warming is uploading {{ $value | printf \"%.0f\" }} Mbit/s, over its cap"
+              description: "tv_preload_cf_warm_upload_mbps has stayed above 1.2 times tv_preload_cf_warm_cap_mbps for 30 minutes. Warming sends each preloaded segment through the Cloudflare tunnel once; check tv_preload_cf_warms_total and tv_preload_feeds for a Feed being warmed more than once."
           - alert: TvRecorderDown
             # Added 2026-11-08 with the Recorder (tv docs/design/2026-11-08-recordings.md).
             # The Recorder archives every Channel a Recording asks for; while it is
