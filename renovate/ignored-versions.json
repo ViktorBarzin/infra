@@ -199,6 +199,17 @@
       ],
       "matchNewValue": "9.2.0",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-09 pipeline #3471: stack opnsense failed after this bump: its terragrunt apply failed (commit 4f73fd0e)",
+      "matchDatasources": [
+        "terraform-provider"
+      ],
+      "matchPackageNames": [
+        "bpg/proxmox"
+      ],
+      "matchNewValue": "0.121.0",
+      "enabled": false
     }
   ]
 }
