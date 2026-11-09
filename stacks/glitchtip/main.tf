@@ -530,6 +530,28 @@ resource "kubernetes_service" "glitchtip" {
   }
 }
 
+# The dashboard loads ~60 JavaScript chunks at once; the default 10/50
+# per-client limiter answered 429 to the tail on first load (2026-11-09).
+resource "kubernetes_manifest" "rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "glitchtip-rate-limit"
+      namespace = kubernetes_namespace.glitchtip.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 50
+        burst   = 300
+        sourceCriterion = {
+          requestHeaderName = "X-Client-Prefix"
+        }
+      }
+    }
+  }
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Forward auth would 302 sentry-cli and glitchtip-cli, which upload source
@@ -540,6 +562,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.glitchtip.metadata[0].name
   name            = "glitchtip"
   tls_secret_name = var.tls_secret_name
+  # real-ip first so X-Client-Prefix is set for the per-client limiter.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-real-ip@kubernetescrd",
+    "glitchtip-glitchtip-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "GlitchTip"
