@@ -301,6 +301,38 @@ resource "kubernetes_deployment" "fire_planner" {
             container_port = 8080
           }
 
+          # Product events and errors (telemetry.tf, infra ADR-0041,
+          # fire-planner ADR-0002). Without TELEMETRY_WRITE_KEY the app sends
+          # nothing; optional=true so the Secret not yet written changes nothing.
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://event-pipeline.rybbit.svc.cluster.local"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.fire_planner_telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.fire_planner_telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
+
           env_from {
             secret_ref {
               name = "fire-planner-secrets"
