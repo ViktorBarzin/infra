@@ -100,3 +100,24 @@ func TestMemRecallReqOmitsEmptyOptionals(t *testing.T) {
 		t.Fatalf("empty optionals must be omitted: %s", s)
 	}
 }
+
+func TestRenderMarksMemoriesWrittenByAnOutsideAssistant(t *testing.T) {
+	// The API stamps source:<agent> on every write from an external-scope key.
+	// Recall output is read as context, so an entry an outside assistant wrote
+	// has to be distinguishable from one written here.
+	raw, _ := json.Marshal(map[string]interface{}{"memories": []map[string]interface{}{
+		{"id": 5, "content": "from outside", "category": "facts", "tags": "a, source:muse,b", "importance": 0.2},
+		{"id": 6, "content": "from here", "category": "facts", "tags": "a,b", "importance": 0.2},
+		{"id": 7, "content": "empty source", "category": "facts", "tags": "source:", "importance": 0.2},
+	}})
+	got := renderMemories(raw, false)
+	for _, want := range []string{"#5 [facts] [via muse] (0.20) from outside", "#6 [facts] (0.20) from here", "#7 [facts] (0.20) empty source"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("want %q in:\n%s", want, got)
+		}
+	}
+	one := renderMemory([]byte(`{"id":5,"category":"facts","tags":"source:muse","importance":0.2,"content":"x"}`), false)
+	if !strings.HasPrefix(one, "#5 [facts] [via muse] (0.20)\n") {
+		t.Errorf("get output does not mark the source: %q", one)
+	}
+}

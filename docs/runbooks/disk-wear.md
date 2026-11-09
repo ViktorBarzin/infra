@@ -1,20 +1,6 @@
----
-name: disk-wear
-description: |
-  Analyze disk write patterns on the PVE host to assess wear and identify
-  top writers by VM, k8s app, and PVC. Use when:
-  (1) User asks about disk wear, disk writes, or storage health,
-  (2) User says "what's wearing the disk", "disk analysis", "I/O analysis",
-  (3) User wants to check write rates by VM, k8s namespace, or PVC,
-  (4) Periodic quarterly disk health review.
-  Combines PVE host I/O stats (SSH), Prometheus metrics (PromQL), and
-  k8s PVC-to-pod mapping for a full breakdown.
-author: Claude Code
-version: 1.0.0
-date: 2026-04-17
----
+# Disk wear analysis
 
-# Disk Wear Analysis
+Which VM, workload or PVC is writing to the PVE host drives. Moved here from the disk-wear skill on 2026-11-09; the drive-wear alerts link to this page.
 
 ## Infrastructure
 

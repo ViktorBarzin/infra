@@ -15,7 +15,7 @@ Coordinate a 4-stage pipeline where each stage is a separate agent with its own 
 
 - **Infra repo**: `/home/wizard/code/infra`
 - **Post-mortems archive**: `/home/wizard/code/infra/docs/post-mortems/`
-- **Known issues**: `/home/wizard/code/infra/.claude/reference/known-issues.md`
+- **Known issues**: `/home/wizard/code/infra/docs/agents/known-issues.md (section "Expected alerts to suppress")`
 
 ## NEVER Do
 
@@ -105,7 +105,7 @@ Spawn the `sev-historian` agent with:
 
 It will cross-reference against:
 - Past post-mortems in `docs/post-mortems/`
-- Known issues in `.claude/reference/known-issues.md`
+- Known issues in `docs/agents/known-issues.md`
 - Patterns in `.claude/reference/patterns.md`
 - Service catalog in `.claude/reference/service-catalog.md`
 

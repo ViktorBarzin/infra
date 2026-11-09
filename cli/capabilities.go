@@ -335,7 +335,7 @@ func capabilities() []capability {
 			Use:      "homelab memory store \"...\"  /  homelab memory recall \"<context>\"",
 			Instead:  "a local file under ~/.claude",
 			Synonyms: []string{"remember", "memory", "recall", "we decided", "last time", "note"},
-			Detail:   []string{"Recall runs automatically each turn, but only on the prompt text at turn start. Query it yourself before a non-obvious mid-turn decision."},
+			Detail:   []string{"Recall at the start of a task and before a non-obvious decision; nothing recalls for you."},
 		},
 		{
 			Intent:   "check a CI pipeline",
@@ -343,6 +343,12 @@ func capabilities() []capability {
 			Instead:  "hand-polling the Woodpecker or GitHub API",
 			Synonyms: []string{"ci", "pipeline", "build", "woodpecker", "actions", "deploy status", "green"},
 			Detail:   []string{"For a rollout specifically: homelab deploy wait <ns>/<deploy>."},
+		},
+		{
+			Intent:   "wait for a deployment rollout to finish with the new image",
+			Use:      "homelab deploy wait <ns>/<deploy> [--sha SHA] [--timeout 10m]",
+			Instead:  "sleep N, kubectl get pods -w, or kubectl rollout status alone (it reports success on the old ReplicaSet)",
+			Synonyms: []string{"wait", "rollout", "rolled out", "pods", "deployment", "until", "new image", "landed"},
 		},
 		{
 			Intent:   "share a log, config, snippet, or file with someone",

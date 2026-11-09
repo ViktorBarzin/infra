@@ -47,6 +47,19 @@ func printMemories(raw []byte, jsonOut bool) error {
 // no full-content read-back existed, and made blind `update --content` from
 // the preview silently destroy the stored tail. Full passthrough also can't
 // produce invalid UTF-8 (the old mid-rune cut crashed the recall hook).
+// viaMarker returns "[via <agent>] " when tags carry source:<agent>, which the
+// memory API stamps on every write from an external-scope key, so recall output
+// shows which entries an outside assistant wrote. Otherwise "".
+func viaMarker(tags string) string {
+	for _, t := range strings.Split(tags, ",") {
+		t = strings.TrimSpace(t)
+		if agent, ok := strings.CutPrefix(t, "source:"); ok && agent != "" {
+			return "[via " + agent + "] "
+		}
+	}
+	return ""
+}
+
 func renderMemories(raw []byte, jsonOut bool) string {
 	if jsonOut {
 		return string(raw) + "\n"
@@ -69,7 +82,7 @@ func renderMemories(raw []byte, jsonOut bool) string {
 	var b strings.Builder
 	for _, m := range r.Memories {
 		c := strings.ReplaceAll(m.Content, "\n", " ")
-		fmt.Fprintf(&b, "#%d [%s] (%.2f) %s\n", m.ID, m.Category, m.Importance, c)
+		fmt.Fprintf(&b, "#%d [%s] %s(%.2f) %s\n", m.ID, m.Category, viaMarker(m.Tags), m.Importance, c)
 		if m.Tags != "" {
 			fmt.Fprintf(&b, "       tags: %s\n", m.Tags)
 		}
@@ -255,7 +268,7 @@ func renderMemory(raw []byte, jsonOut bool) string {
 		return string(raw) + "\n"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "#%d [%s] (%.2f)\n", m.ID, m.Category, m.Importance)
+	fmt.Fprintf(&b, "#%d [%s] %s(%.2f)\n", m.ID, m.Category, viaMarker(m.Tags), m.Importance)
 	fmt.Fprintln(&b, m.Content)
 	if m.Tags != "" {
 		fmt.Fprintf(&b, "tags: %s\n", m.Tags)
