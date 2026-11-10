@@ -176,11 +176,18 @@ resource "helm_release" "tigera_operator" {
     # directly below (kubectl_manifest) now that the CRDs exist — see ADR-0014.
     goldmane = { enabled = false }
     whisker  = { enabled = false }
-    # 512Mi (was 256Mi): the operator idles at ~38Mi but its STARTUP spike
-    # (re-listing resources to build informer caches) exceeded 256Mi and
-    # OOM-crashlooped on 2026-06-23 the first time the pod restarted (a latent
-    # landmine — any restart would have triggered it). 512Mi covers the spike;
-    # data plane (calico-node) is unaffected by an operator restart.
+    # Memory limit 1Gi. The operator's STARTUP spike (re-listing resources to
+    # build informer caches) is what sizes it:
+    #   2026-06-23: idle ~38Mi, the spike passed 256Mi and OOM-crashlooped,
+    #     so the limit went to 512Mi.
+    #   2026-11-10: idle 274-305Mi, the spike reached 459-470Mi. Pinned that
+    #     close to 512Mi the kernel kept evicting and re-reading the operator's
+    #     file pages (450 major faults/s, ~103 MB/s of disk reads for 10 min).
+    #     The pod had landed on k8s-master during a kured drain of k8s-node3
+    #     (it tolerates every taint), so the reads hit etcd's own disk:
+    #     EtcdWalFsyncSlow fired at p99 0.98s and the operator lost its lease.
+    # 1Gi leaves about 2x the spike. The request stays 512Mi, above steady
+    # state. The data plane (calico-node) is unaffected by an operator restart.
     #
     # Requests explicit since 2026-10-02: with only a limit the pod had no CPU
     # request, so once this namespace got its tier ResourceQuota (which demands
@@ -188,7 +195,7 @@ resource "helm_release" "tigera_operator" {
     # appeared ~25 minutes later. Memory request = the old implicit value.
     resources = {
       requests = { cpu = "50m", memory = "512Mi" }
-      limits   = { memory = "512Mi" }
+      limits   = { memory = "1Gi" }
     }
   })]
 }

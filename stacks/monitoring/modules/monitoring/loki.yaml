@@ -120,9 +120,6 @@ loki:
   extraMemberlistConfig:
     abort_if_cluster_join_fails: false
 
-minio:
-  enabled: false
-
 # reboot-self-heal Phase 2: tolerate the GPU taint so the loki-canary DaemonSet
 # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule. (Chart
 # default lokiCanary.tolerations is [] — this is the only toleration added.)
@@ -213,8 +210,6 @@ distributor:
 compactor:
   replicas: 0
 indexGateway:
-  replicas: 0
-bloomCompactor:
   replicas: 0
 bloomGateway:
   replicas: 0
