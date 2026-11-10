@@ -1,25 +1,25 @@
 # OPNsense edge firewall
 
-OPNsense replaces pfSense as the edge firewall (ADR-0038, plan `docs/plans/2026-11-03-opnsense-migration.md`). Until cutover it runs next to pfSense on spare addresses (the **Staging profile**); pfSense still carries all traffic.
+OPNsense is the edge firewall since the cutover on 2026-11-10 (ADR-0038, plan `docs/plans/2026-11-03-opnsense-migration.md`), on pfSense's addresses and MACs (the **Production profile**). pfSense (VM 101) is stopped with its NICs link-down until 2026-11-24 as the rollback; see Cutover.
 
 | | |
 |---|---|
 | VM | 100 `opnsense` on the Proxmox host, 8 vCPU, 8 GB, 32 GB `local-lvm`, `stacks/opnsense` (Terraform, bpg/proxmox) |
 | Version | OPNsense 26.7.8, plugins os-crowdsec, os-haproxy, os-tailscale, os-node_exporter |
-| Staging addresses | WAN 192.168.1.250, VLAN 10 10.0.10.2, VLAN 20 10.0.20.2, VLAN 30 10.0.30.2; no IPv6 on the LAN NICs |
-| GUI | https://opnsense.viktorbarzin.me (Authentik, then OPNsense login as root); on the LAN `https://10.0.10.2:8443` |
-| SSH | `root@10.0.10.2`, key in Vault `secret/opnsense ssh_private_key` (`~/.ssh/opnsense/id_ed25519`); root's shell is csh, so pipe scripts to `/bin/sh -s` |
+| Addresses | WAN 192.168.1.2 and fdfe:e989:d3ce:1::1, VLAN 10 10.0.10.1 and 2001:470:6f:43d::1, VLAN 20 10.0.20.1 and 2001:470:5a7f:20::1, VLAN 30 10.0.30.1, WireGuard 10.3.2.1, HE tunnel 2001:470:6e:43d::2, tailnet 100.64.0.17 (staging used .250/.2, kept in `addresses.yml`) |
+| GUI | https://opnsense.viktorbarzin.me (Authentik, then OPNsense login as root); on the LAN `https://10.0.10.1:8443` |
+| SSH | `root@10.0.10.1` with the Ansible key (Vault `secret/opnsense ssh_private_key`, `~/.ssh/opnsense/id_ed25519`) or any key in `authorized_keys.yml` (pfSense's, carried over); root's shell is csh, so pipe scripts to `/bin/sh -s` |
 | Serial console | `qm terminal 100` on the Proxmox host (login prompt on serial since the second reboot after the console change) |
-| Secrets | Vault `secret/opnsense`: `root_password`, `api_key`, `api_secret`, `ssh_*`, `pve_api_token`, `crowdsec_bouncer_key`, `tailscale_preauth_key` |
+| Secrets | Vault `secret/opnsense`: `root_password`, `api_key`, `api_secret`, `ssh_*`, `pve_api_token`, `crowdsec_bouncer_key`, `tailscale_preauth_key`, `wireguard_tun_wg0_private_key` and `outbound_ssh_private_key` (both pfSense's) |
 | Config source | `playbooks/files/opnsense/*.yml` (converted from pfSense once, now edited by hand), applied by `playbooks/opnsense.yml` |
 
 ## Everyday
 
 ```sh
 cd ~/code/infra
-ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml --check --diff   # must be changed=0 when nothing was edited
-ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml [--tags filter,nat]
-scripts/opnsense-verify            # PASS/FAIL per check, plus what staging cannot test
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --check --diff   # changed=0 when nothing was edited
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true [--tags filter,nat]
+scripts/opnsense-verify --host 10.0.10.1 --profile production
 python3 -m pytest playbooks/filter_plugins/test_opnsense.py -q
 ```
 
@@ -64,20 +64,20 @@ Rollback, any time in the two weeks: `opnsense-cutover rollback` (runs as its ow
 
 Tested on throwaway VMs (2026-11-10): automatic revert, confirm, extend, and rollback after confirm. Two blind reviews of the script and of the production config found the issues fixed before the real run (rollback ordering, a manual rollback dying with its session, pfSense's duplicate MACs, the CrowdSec bouncer blocking both directions, NAT for the WireGuard site LANs, the KMS rate limits, DNS rebind protection).
 
-### Dependents
+### Dependents (changed at the cutover)
 
-Most keep working because OPNsense takes pfSense's addresses: CoreDNS's forwarder, Traefik's PROXY trust of 10.0.20.1, backup-mx's relay, Headscale ACLs, bastion, Technitium (it accepts zone transfers from 10.0.20.1), rpi-sofia's routes. These change at cutover:
+Most kept working because OPNsense took pfSense's addresses and MACs: CoreDNS's forwarder, Traefik's PROXY trust of 10.0.20.1, backup-mx's relay, Headscale ACLs (by address and tag), the bastion, Technitium's zone transfers to 10.0.20.1, rpi-sofia's routes, the TP-Link forwards. Changed with the cutover commit:
 
 | Dependent | Change |
 |---|---|
-| `scripts/daily-backup.sh` | `OPNSENSE_HOST=10.0.20.1`, remove the pfSense step and its Pushgateway job (and the `Pfsense*Backup*` alerts) |
-| Prometheus `opnsense-node` job | target 10.0.20.1:9100 |
-| `stacks/reverse-proxy` `module "opnsense"` | `backend_ip = "10.0.20.1"`; retire `module "pfsense"` |
-| Homepage widget | OPNsense widget (API key) instead of the pfSense REST package |
-| phpIPAM import (`stacks/phpipam/files/fetch_sources.sh`) | read Kea leases from OPNsense (`/var/db/kea/`) instead of pfSense's paths |
-| CrowdSec `crowdsec-lapi-edge` | drop 10.0.20.2 from the source ranges once staging is gone |
-| gatus on mx2 | external checks of the WAN forwards and IPv6 through OPNsense |
-| Docs | `docs/architecture/networking.md` and the pfSense runbooks |
+| `scripts/daily-backup.sh` (hand-copied to `/usr/local/bin/daily-backup` on the host) | pfSense step removed; OPNsense step on 10.0.20.1 pushes `job="opnsense-backup"` (`OpnsenseBackupStale`). The host's `known_hosts` for 10.0.20.1 now holds OPNsense's key |
+| Prometheus | `opnsense-node` on 10.0.20.1:9100; `PfSenseVMDown` became `EdgeFirewallVMDown` on qemu/100; Tailscale subnet-router alert names 100.64.0.17 |
+| `stacks/reverse-proxy` | `opnsense` on 10.0.20.1 with the Homepage link; `pfsense.viktorbarzin.me` retired |
+| `stacks/headscale` subnet-router probe | pings 100.64.0.17; node 399 tagged `tag:infra`, renamed `opnsense`, pfSense's routes approved |
+| `stacks/phpipam` | `fetch_sources.sh` logs in as root@10.0.20.1 and reads OPNsense's Kea and `wg0`; device entry renamed |
+| `stacks/crowdsec` `crowdsec-lapi-edge` | source range 10.0.20.1 only |
+| `playbooks/reboot-boot-order.yml` | 100 order 1, 101 disabled |
+| `stacks/opnsense` | pfSense's MACs pinned in `local.nics` |
 
 ## Gotchas found while building it
 
@@ -87,3 +87,7 @@ Most keep working because OPNsense takes pfSense's addresses: CoreDNS's forwarde
 - The user API stores `authorizedkeys` but does not rewrite `/root/.ssh/authorized_keys`; `tasks/opnsense/users.yml` calls `local_user_set()`.
 - Syslog to Alloy over UDP never arrived from this box (one-off UDP packets did); it uses TCP.
 - A placeholder in the YAML that the profile cannot fill now fails the run (`opn_render`), because an empty value reads as "any" in a rule.
+- Staging box only: the Proxmox host reaches 10.0.20.2 through pfSense, while the box answers straight out of its WAN leg, so pfSense saw one direction and stalled bulk uploads from the host (small commands passed). The cutover staged `config.xml.production` from the devvm on VLAN 10 instead. Production has no such middlebox: the host talks to the firewall itself.
+- On the first boot after the swap HAProxy did not start: the generated `haproxy.conf` on disk was most likely still the staging one, binding 10.0.20.2. `configctl haproxy start` fixed it, and `rc.syshook.d/start/99-haproxy-ensure` (`tasks/opnsense/haproxy.yml`) now starts it at the end of boot if the early start fails. A later reboot started it normally.
+- mx2 (Oracle) cannot test inbound SMTP: Oracle blocks outbound port 25. Use mladost3-openwrt: `(sleep 4; echo QUIT) | nc 176.12.22.76 25`.
+- The CrowdSec plugin's own rules block in and out on every interface; they are off, and `filter.yml` blocks the bouncer's tables inbound on WAN and the HE tunnel only, with the bouncer limited to `origins: [crowdsec, CAPI, cscli]` (`tasks/opnsense/crowdsec.yml`).

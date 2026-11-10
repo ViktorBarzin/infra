@@ -1,5 +1,7 @@
 # Runbook: pfSense WAN / egress outage
 
+> Since 2026-11-10 the edge firewall is OPNsense (VM 100) on the same addresses; this page describes the pfSense setup it replaced. For egress outage handling on OPNsense see `docs/runbooks/opnsense.md`.
+
 **Scope:** the cluster (and home) loses **internet egress** while pfSense is
 otherwise alive — internal VLAN routing and DNS keep working. This is the
 **2026-06-27 incident class**: pfSense (Proxmox **VMID 101**) stopped passing

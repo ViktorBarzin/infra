@@ -1,5 +1,7 @@
 # pfSense Unbound DNS Resolver
 
+> Since 2026-11-10 the edge firewall is OPNsense (VM 100) on the same addresses; this page describes the pfSense setup it replaced. For the resolver on OPNsense see `docs/runbooks/opnsense.md`.
+
 Last updated: 2026-04-19
 
 ## Overview

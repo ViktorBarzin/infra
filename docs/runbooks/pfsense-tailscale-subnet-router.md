@@ -1,5 +1,7 @@
 # Runbook — pfSense Tailscale subnet router
 
+> Since 2026-11-10 the edge firewall is OPNsense (VM 100) on the same addresses; this page describes the pfSense setup it replaced. For the subnet router on OPNsense see `docs/runbooks/opnsense.md`.
+
 **What it is:** pfSense (`10.0.20.1`, VMID 101) is a Tailscale subnet router on the
 self-hosted Headscale tailnet. It is what lets Tailscale clients reach the Sofia
 LAN, the mgmt and k8s VLANs, and the two WireGuard-transited remote sites. It also

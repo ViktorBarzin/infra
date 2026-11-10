@@ -1,6 +1,6 @@
 # Replace pfSense with OPNsense: build alongside, then swap
 
-Status: executing. Phases 1-7 ran overnight 2026-11-03/04 on the staging box (see "Execution, 2026-11-04"); phase 8 (Viktor tries it) is next, then the cutover session. Approved 2026-11-03 after a grilling session with Viktor and two blind challenger reviews. Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table. Runbook: `docs/runbooks/opnsense.md`.
+Status: done, cutover on 2026-11-10 (see "Cutover, 2026-11-10"). pfSense stays stopped as the rollback until 2026-11-24. Phases 1-7 ran overnight 2026-11-03/04 on the staging box (see "Execution, 2026-11-04"). Approved 2026-11-03 after a grilling session with Viktor and two blind challenger reviews. Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table. Runbook: `docs/runbooks/opnsense.md`.
 
 ## Goal
 
@@ -149,6 +149,20 @@ Built overnight inside the decision 17 boundary: pfSense, the production address
 - Firewall > Log Files > Live View and Loki `{job="syslog", host="opnsense"}` show its traffic; Intrusion Detection > Alerts shows Suricata.
 - `scripts/opnsense-verify` from the devvm; `ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml --check --diff` reports no changes.
 - Anything you change in the GUI shows up as drift in the next `--check`; the YAML is the source of truth.
+
+## Cutover, 2026-11-10
+
+Viktor asked for a switch that could not cut the lab off and could be reverted, and chose a dry run first, a 10-minute automatic revert and an unattended window.
+
+| Step | Result |
+|---|---|
+| Production pieces | HE gif and WireGuard Ansible areas (pfSense's key into Vault), Tailscale routes, interface rewrite `scripts/opnsense-production-config.py` (tested), pfSense's root SSH keys and client key |
+| Dry run | Clone of VM 100 on an isolated bridge, reached only from a network namespace on the host: production profile idempotent, 30/30 checks after a cold boot, DHCP offer, SLAAC from RA, DNS |
+| Swap script | `scripts/opnsense-cutover`: offline snapshot, MAC swap, dead-man revert, extend, confirm, rollback, as systemd units on the host; revert, confirm and rollback-after-confirm tested on throwaway VMs |
+| Reviews | Two blind challengers. Fixed before the run: rollback ordering and locking, a manual rollback dying with its session, pfSense's duplicate MACs (now `link_down`), the CrowdSec plugin blocking both directions (it would have blocked Meta for every client), NAT for the WireGuard site LANs, KMS rate limits, DNS rebind protection, `tailscale0` assignment |
+| Swap | 13:48:02 to 13:49:52; internet gone for about 75 s. Confirmed at 13:55 after: IPv4 and IPv6 from the devvm, 6/6 nodes, cluster DNS, Immich over IPv4 and IPv6 from outside, the bastion on 443, 4/4 WireGuard sites, Tailscale routes served by the OPNsense node, SMTP 25/465/587/993 from outside with the real client address in Postfix |
+| Found live | HAProxy did not start on the first boot (stale staging `haproxy.conf`, most likely); started by hand, boot hook added, a reboot test at 14:03 came back in 72 s with HAProxy up. A bulk upload from the host to the staging box stalls on the asymmetric path through pfSense; the config was staged from the devvm |
+| Not carried over | Kea leases (every lease was a reserved host); Homepage's pfSense widget became a plain link |
 
 ## Phases
 
