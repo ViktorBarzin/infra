@@ -113,7 +113,7 @@ resource "kubernetes_deployment" "crowdsec_journals" {
         priority_class_name = "tier-1-cluster"
         container {
           name  = "crowdsec-agent"
-          image = "crowdsecurity/crowdsec:v1.8.1"
+          image = "crowdsecurity/crowdsec:v1.8.2"
           env {
             name  = "DISABLE_LOCAL_API"
             value = "true"
