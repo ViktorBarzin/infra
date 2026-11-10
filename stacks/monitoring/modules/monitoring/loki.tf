@@ -28,7 +28,9 @@ resource "helm_release" "loki" {
   # nothing we set; the StatefulSet keeps its name, selector, serviceName and
   # the `storage` volumeClaimTemplate, so helm patches it in place and
   # storage-loki-0 keeps its data. 2026-10-17: 18.15.1 -> 18.17.0, rendered
-  # manifests differ only in the chart label.
+  # manifests differ only in the chart label. 2026-11-10: chart 20.0.0 made
+  # the values schema reject unknown top-level keys, so loki.yaml dropped the
+  # inert minio and bloomCompactor keys (21.0.0 and 21.1.0 had failed on them).
   version = "18.17.1"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
