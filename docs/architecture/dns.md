@@ -353,6 +353,8 @@ Priority class is `system-node-critical`; tolerations are permissive (`operator:
 
 **Kubelet clusterDNS**: **Unchanged** — still `10.96.0.10`. NodeLocal DNSCache co-listens on that IP so traffic interception is transparent; switching kubelet to `169.254.20.10` would require a rolling reconfigure of every node and provides no additional cache benefit over transparent mode.
 
+**Query log for the network IDS**: the `.:53` block (names outside the cluster) logs every query with the `log` plugin and a `netsec-dns` marker. Alloy sends those lines to the netsec Vector, and from there to `netsec.dns_queries` in ClickHouse; they are kept out of Loki. See `docs/architecture/network-security-monitoring.md`, phase 4.
+
 **Metrics**: A headless Service `node-local-dns` (ClusterIP `None`) exposes each pod on port `9253` for Prometheus scraping (annotated `prometheus.io/scrape=true`).
 
 ## CoreDNS Configuration

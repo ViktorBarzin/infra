@@ -44,6 +44,17 @@ sources:
     type: vector
     address: 0.0.0.0:6000
 
+  # Phase 4: NodeLocal DNSCache logs each external query (node-cache `log`
+  # plugin, stacks/nodelocal-dns); the node's Alloy keeps the netsec-dns lines
+  # out of Loki and sends them here over OTLP/HTTP. gRPC is bound because the
+  # source requires both; nothing sends to it. NetworkPolicy: Alloy pods only.
+  otlp:
+    type: opentelemetry
+    grpc:
+      address: 0.0.0.0:4317
+    http:
+      address: 0.0.0.0:4318
+
   internal:
     type: internal_metrics
 
@@ -123,6 +134,31 @@ transforms:
         "payload": e
       }
 
+  # node-cache log line: "[INFO] netsec-dns <pod ip> <qtype> <name> <rcode>".
+  # The cluster.local and reverse zones never log (only the Corefile's .:53
+  # block has the log plugin); the suffix check is a second guard. The log
+  # plugin runs before the cache, so cache hits are rows too. Answers are not
+  # in the log line; the answers column stays empty for these rows.
+  dns:
+    type: remap
+    inputs: [otlp.logs]
+    drop_on_abort: true
+    source: |
+      line = string(.message) ?? ""
+      p = parse_regex(line, r'netsec-dns (?P<ip>\S+) (?P<qtype>\S+) (?P<name>\S+) (?P<rcode>\S+)') ?? null
+      if p == null { abort }
+      name = downcase(string!(p.name))
+      if ends_with(name, ".cluster.local.") || ends_with(name, ".in-addr.arpa.") || ends_with(name, ".ip6.arpa.") { abort }
+      ts = timestamp(.timestamp) ?? now()
+      . = {
+        "ts": ts,
+        "client_ip": string!(p.ip),
+        "qname": replace(name, r'\.$', ""),
+        "qtype": string!(p.qtype),
+        "rcode": string!(p.rcode),
+        "answers": []
+      }
+
 sinks:
   flows_ch:
     type: clickhouse
@@ -169,6 +205,29 @@ sinks:
       type: memory
       max_events: 20000
       when_full: block
+
+  dns_ch:
+    type: clickhouse
+    inputs: [dns]
+    endpoint: http://clickhouse.claude-sessions.svc.cluster.local:8123
+    database: netsec
+    table: dns_queries
+    auth:
+      strategy: basic
+      user: netsec_writer
+      password: "SECRET[k8s.netsec_writer_password]"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    compression: gzip
+    batch:
+      max_events: 10000
+      timeout_secs: 10
+    # Full drops rather than blocks: a slow ClickHouse must not back up Alloy,
+    # which also ships every pod log to Loki.
+    buffer:
+      type: memory
+      max_events: 20000
+      when_full: drop_newest
 
   metrics:
     type: prometheus_exporter
@@ -259,3 +318,54 @@ tests:
         log_fields:
           message: 'not json'
     no_outputs_from: [eve]
+
+  - name: a node-cache netsec-dns line maps to a dns_queries row
+    inputs:
+      - insert_at: dns
+        type: vrl
+        source: |
+          . = {
+            "message": "[INFO] netsec-dns 10.10.3.17 A Icanhazip.com. NOERROR",
+            "timestamp": t'2026-11-10T16:23:06.123456Z',
+            "attributes": {"namespace": "kube-system", "container": "node-cache"}
+          }
+    outputs:
+      - extract_from: dns
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.client_ip, "10.10.3.17")
+              assert_eq!(.qname, "icanhazip.com")
+              assert_eq!(.qtype, "A")
+              assert_eq!(.rcode, "NOERROR")
+              assert_eq!(.answers, [])
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "microseconds"), 1794327786123456)
+              assert!(!exists(.message))
+              assert!(!exists(.attributes))
+
+  - name: an IPv6 pod and an NXDOMAIN keep their values
+    inputs:
+      - insert_at: dns
+        type: vrl
+        source: |
+          . = {"message": "[INFO] netsec-dns fd62:f088:7d06:100::5 AAAA no-such.example. NXDOMAIN", "timestamp": t'2026-11-10T16:23:06Z'}
+    outputs:
+      - extract_from: dns
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.client_ip, "fd62:f088:7d06:100::5")
+              assert_eq!(.qtype, "AAAA")
+              assert_eq!(.rcode, "NXDOMAIN")
+
+  - name: other node-cache lines and cluster-internal names are dropped
+    inputs:
+      - insert_at: dns
+        type: vrl
+        source: |
+          . = {"message": "[INFO] Reloading complete", "timestamp": t'2026-11-10T16:23:06Z'}
+      - insert_at: dns
+        type: vrl
+        source: |
+          . = {"message": "[INFO] netsec-dns 10.10.3.17 A clickhouse.claude-sessions.svc.cluster.local. NOERROR", "timestamp": t'2026-11-10T16:23:06Z'}
+    no_outputs_from: [dns]

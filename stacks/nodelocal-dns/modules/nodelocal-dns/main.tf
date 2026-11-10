@@ -192,6 +192,13 @@ resource "kubernetes_config_map" "node_local_dns" {
       }
       .:53 {
           errors
+          # Network IDS phase 4 (docs/runbooks/network-ids.md): one line per
+          # query for a name outside the cluster, cache hits included, with the
+          # asking pod's IP. Alloy sends lines carrying the netsec-dns marker to
+          # the netsec Vector (netsec.dns_queries) and keeps them out of Loki.
+          # Only this block logs: cluster.local and reverse lookups are service
+          # discovery and most of the volume.
+          log . "netsec-dns {remote} {type} {name} {rcode}"
           cache 30
           reload
           loop

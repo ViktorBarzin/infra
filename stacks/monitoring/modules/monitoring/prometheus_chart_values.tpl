@@ -6683,6 +6683,18 @@ serverFiles:
               lane: security
             annotations:
               summary: "No Suricata events written to netsec.eve for 30m"
+          - alert: NetsecDnsStale
+            # Pods resolve external names all the time (~67 queries/s cluster
+            # wide, a share of them outside cluster.local), so 30 minutes with no
+            # row in netsec.dns_queries means CoreDNS lost its dnstap line
+            # (stacks/technitium Corefile), the stream or the sink is stuck.
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="dns_ch"}[30m])) or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No pod DNS queries written to netsec.dns_queries for 30m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is
@@ -9650,8 +9662,10 @@ extraScrapeConfigs: |
           names:
             - crowdsec
     relabel_configs:
+    # agent-journals: the single crowdsec-journals Deployment that reads the
+    # server sshd journals from Loki (network IDS phase 4).
     - action: keep
-      regex: crowdsec;agent
+      regex: crowdsec;agent(-journals)?
       source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
     - source_labels: [__meta_kubernetes_pod_ip]
       target_label: __address__

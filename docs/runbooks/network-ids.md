@@ -215,3 +215,41 @@ in the agent log, a simulated `c2-block` decision on the LAPI, and
 `NetsecHomeHostMalware` for 10.0.20.104 in Slack; within 10 minutes the
 grouped CrowdSec Slack message. Run 2026-11-10: all four seen, nothing reached
 pf.
+
+## Server journals and pod DNS (phase 4)
+
+### Is the journals agent reading?
+
+```sh
+kubectl -n crowdsec logs deploy/crowdsec-journals | tail
+kubectl -n crowdsec exec deploy/crowdsec-journals -- cscli metrics show acquisition parsers
+homelab metrics query 'sum by (source, type) (rate(cs_parser_hits_total{pod=~"crowdsec-journals.*"}[1h]))'
+```
+
+If the agent cannot log in to the LAPI, the machine `journals` is not
+registered yet: the `crowdsec-lapi-reconcile` CronJob registers it every 15
+minutes, or run it now with
+`kubectl -n crowdsec create job --from=cronjob/crowdsec-lapi-reconcile reconcile-now`.
+
+Its decisions are simulated until the phase 6 review, together with the
+OPNsense agent's; turning bans on means setting `simulation: false` in
+`kubernetes_config_map.crowdsec_journals` too.
+
+### Which pod looked up a name?
+
+```sh
+homelab netsec sql "SELECT ts, client_ip, qtype, qname, rcode FROM netsec.dns_queries WHERE qname = 'icanhazip.com' ORDER BY ts DESC LIMIT 20"
+# then name the pod that held that IP at that time (unix seconds after @):
+homelab metrics query 'max by (namespace, pod) (max_over_time(kube_pod_info{pod_ip="10.10.3.17"}[10m] @ 1794320586))'
+```
+
+Rows cover names outside the cluster only. A pod IP that resolves to a
+`node-local-dns` or host-network pod means the query came from the node itself.
+
+### No rows in netsec.dns_queries (`NetsecDnsStale`)
+
+1. node-local-dns still logs: `kubectl -n kube-system logs ds/node-local-dns | grep -c netsec-dns`.
+   No lines: the `log` line is gone from the Corefile (`stacks/nodelocal-dns`).
+2. Alloy sends: `kubectl -n monitoring logs ds/alloy | grep -i -E 'otlphttp|netsec'` for export errors.
+3. Vector receives: `vector_component_received_events_total{namespace="netsec", component_id="otlp"}`.
+

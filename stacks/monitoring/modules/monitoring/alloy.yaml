@@ -141,6 +141,56 @@ alloy:
         forward_to = [loki.process.pod_logs.receiver]
       }
 
+      // Network IDS phase 4 (docs/runbooks/network-ids.md): node-local-dns logs
+      // one "netsec-dns <pod ip> <type> <name> <rcode>" line per query for a
+      // name outside the cluster (stacks/nodelocal-dns). Those lines go to the
+      // netsec Vector over OTLP/HTTP and from there to netsec.dns_queries in
+      // ClickHouse, not to Loki: ~20 lines/s cluster wide would be ~2M Loki
+      // lines a day on the contended log disk. This is a second tail of the
+      // node-cache files only; loki.process.pod_logs drops the same lines.
+      discovery.relabel "netsec_dns" {
+        targets = discovery.relabel.pod_logs.output
+        rule {
+          source_labels = ["namespace", "container"]
+          regex         = "kube-system;node-cache"
+          action        = "keep"
+        }
+      }
+
+      local.file_match "netsec_dns" {
+        path_targets = discovery.relabel.netsec_dns.output
+      }
+
+      loki.source.file "netsec_dns" {
+        targets    = local.file_match.netsec_dns.targets
+        forward_to = [loki.process.netsec_dns.receiver]
+      }
+
+      loki.process "netsec_dns" {
+        stage.cri { }
+        stage.match {
+          selector            = `{container="node-cache"} != "netsec-dns "`
+          action              = "drop"
+          drop_counter_reason = "netsec_dns_other_lines"
+        }
+        forward_to = [otelcol.receiver.loki.netsec.receiver]
+      }
+
+      otelcol.receiver.loki "netsec" {
+        output {
+          logs = [otelcol.exporter.otlphttp.netsec.input]
+        }
+      }
+
+      otelcol.exporter.otlphttp "netsec" {
+        client {
+          endpoint = "http://netsec-vector.netsec.svc.cluster.local:4318"
+          tls {
+            insecure = true
+          }
+        }
+      }
+
       // loki.process receives log entries from other Loki components, applies one or more processing stages,
       // and forwards the results to the list of receivers in the component's arguments.
       loki.process "pod_logs" {
@@ -175,6 +225,14 @@ alloy:
             expression          = `.*v1 Endpoints is deprecated in v1\.33\+; use discovery\.k8s\.io/v1 EndpointSlice.*`
             drop_counter_reason = "calico_endpoints_deprecation_warning"
           }
+        }
+
+        // netsec-dns lines from node-local-dns go to ClickHouse instead
+        // (loki.process.netsec_dns above).
+        stage.match {
+          selector            = `{container="node-cache"} |= "netsec-dns "`
+          action              = "drop"
+          drop_counter_reason = "netsec_dns_to_clickhouse"
         }
 
         stage.static_labels {

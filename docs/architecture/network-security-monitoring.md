@@ -12,7 +12,8 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 1 | `netsec` database, its own Vector, NetFlow into ClickHouse, `homelab netsec sql` | live 2026-11-10 |
 | 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
 | 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |
-| 4-5 | Server logs and pod DNS, Tetragon, decryption | planned |
+| 4 | Server sshd journals into CrowdSec (simulated), pod DNS queries into `netsec.dns_queries` | live 2026-11-10, simulation until the phase 6 review |
+| 4b-5 | Tetragon, decryption | planned |
 
 ## Phase 1: store and shipper
 
@@ -193,10 +194,52 @@ flowchart TD
 - **Alerts**: `CrowdSecOpnsenseAgentSilent`, `CrowdSecOpnsenseBouncerNotPulling`,
   `CrowdSecC2MirrorNotPulling` (lane `security`).
 
+## Phase 4: server logs and pod DNS
+
+```mermaid
+flowchart TD
+  J["sshd journals in Loki<br/>pve, devvm, rpi-sofia, k8s nodes"] --> CJ["crowdsec-journals<br/>one agent, simulation"]
+  CJ --> LAPI["CrowdSec LAPI"]
+  P["pod DNS query"] --> NL["node-local-dns<br/>log, .:53 block only"]
+  NL --> AL["Alloy on the node<br/>netsec-dns lines"]
+  AL -->|OTLP/HTTP :4318| V["netsec Vector"]
+  V --> CH[("netsec.dns_queries")]
+```
+
+- **Server journals**: nothing runs on the servers. The journals they already
+  ship to Loki are read by one CrowdSec agent Deployment, `crowdsec-journals`
+  (`stacks/crowdsec/modules/crowdsec/journals.tf`), registered with the LAPI as
+  machine `journals` by the `crowdsec-lapi-reconcile` CronJob (password: Vault
+  `secret/platform` `crowdsec_journals_agent_password`). A Loki acquisition in
+  the DaemonSet agents would count each event once per node, hence the single
+  replica. The journal lines in Loki are bare messages, so each LogQL query
+  rebuilds `<time> <host> sshd[1]: <message>` with `line_format`, and the stock
+  `crowdsecurity/sshd` and `crowdsecurity/linux` parsers apply unchanged.
+  `simulation.yaml` sets `simulation: true` for every scenario until the phase 6
+  review. Sources: `{job="sshd-pve"}`, `{job="sshd-devvm"}`,
+  `{job="systemd-journal", host="rpi-sofia", unit="ssh.service"}`,
+  `{job="node-journal", unit="ssh.service"}`. Windows VM 300 ships no logs and
+  is not covered. Scraped by the `crowdsec-agent` job (`type=agent-journals`).
+- **Pod DNS**: pods resolve through NodeLocal DNSCache (`stacks/nodelocal-dns`),
+  which answers from its own cache and reaches CoreDNS with the node's address,
+  so CoreDNS never sees the asking pod; the node-cache build has no `dnstap`
+  plugin. Its `.:53` block (names outside the cluster) carries
+  `log . "netsec-dns {remote} {type} {name} {rcode}"`. The `log` plugin runs
+  before the cache, so cache hits are rows too. Alloy tails only the node-cache
+  container a second time (`loki.process.netsec_dns`), sends the marked lines to
+  `netsec-vector:4318` over OTLP/HTTP, and the main pod-log pipeline drops them
+  from Loki. Vector parses them into `netsec.dns_queries` (pod IP, name, type,
+  rcode; the log line has no answers), 30 days. The sink drops rather than
+  blocks when full, so a slow ClickHouse never backs up Alloy.
+- **Pod names**: `kube_pod_info` in Prometheus keeps pod IP history; the
+  runbook has the lookup.
+- **Alert**: `NetsecDnsStale` (no `dns_queries` row for 30 minutes, lane
+  `security`).
+
 ## Open questions
 
 - Pod traffic reaches the firewall with the node's address (Calico NAT), so
-  `flows` attributes it to a node. Phase 4 (CoreDNS dnstap) and 4b (Tetragon)
-  add the pod.
+  `flows` attributes it to a node. Phase 4 names the pod behind a DNS lookup;
+  an IP reached without a lookup needs phase 4b (Tetragon).
 - The ClickHouse server is shared with the claude-sessions store (4 GiB
   limit). Measure after phase 2 and split if netsec load hurts it.
