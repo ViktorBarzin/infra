@@ -251,6 +251,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for   = "0m"
               labels = {
                 severity = "critical"
+                notify   = "page"
               }
               annotations = {
                 summary = "THE ESTATE IS ON EMERGENCY BASIC AUTH. {{ $value | printf \"%.0f\" }} fallback responses in 5m from the auth-proxy, baseline 0. Forward-auth is down and every protected host is prompting for the shared password. Check `kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost` and `kubectl -n authentik get pods`. Runbook: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html"
@@ -364,6 +365,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for   = "0m"
               labels = {
                 severity = "critical"
+                notify   = "page"
               }
               annotations = {
                 summary = "OOM killer killed {{ $labels.proc }} on {{ $labels.node }}"
@@ -456,6 +458,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for   = "0m"
               labels = {
                 severity = "critical"
+                notify   = "page"
               }
               annotations = {
                 summary = "Kernel panic on {{ $labels.node }}"
@@ -478,6 +481,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for   = "0m"
               labels = {
                 severity = "critical"
+                notify   = "page"
               }
               annotations = {
                 summary = "Soft lockup on {{ $labels.node }}"
@@ -489,6 +493,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for   = "1m"
               labels = {
                 severity = "critical"
+                notify   = "page"
               }
               annotations = {
                 summary = "containerd service unhealthy on {{ $labels.node }}"
@@ -745,7 +750,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "CloudflaredTunnelConnLoss"
               expr   = "sum(count_over_time({namespace=\"cloudflared\"} |~ \"(?i)(lost connection with the edge|failed to dial|register tunnel error|failed to serve quic)\" [5m])) > 20"
               for    = "2m"
-              labels = { severity = "warning", subsystem = "pfsense" }
+              labels = { severity = "warning", subsystem = "pfsense", notify = "page" }
               annotations = {
                 summary     = "cloudflared losing edge/tunnel connections (>20/5m) — possible egress/WAN trouble"
                 description = "cloudflared edge-connection failures exceeded 20 in 5m (steady-state ~2/6h; the 2026-06-27 egress incident hit 37-85/5m). Pods usually stay Running so the replica-health alert is blind — this log canary is the early egress signal. Correlate with InternetEgressDown / EgressOnlyDivergence. Runbook: docs/runbooks/pfsense-egress.md."
@@ -946,7 +951,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "T3PairingBroken"
               expr   = "sum(count_over_time({job=\"devvm-journal\", unit=\"t3-dispatch.service\"} |~ \"mint for .* failed|pairing exchange for .* failed|pairing for .* returned [0-9]\" [10m])) > 3"
               for    = "5m"
-              labels = { severity = "critical" }
+              labels = { severity = "critical", notify = "page" }
               annotations = {
                 summary     = "t3 dispatch pairing is failing for real users (>3/10m)"
                 description = "t3-dispatch is failing to mint/exchange session cookies — users land on the t3 pair prompt instead of their workspace. Likely a bad t3 build broke the pairing API/schema (2026-06-09 class). Freeze the tracker (touch /etc/t3-autoupdate.freeze) and roll back per the runbook."
@@ -993,7 +998,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "T3AutoUpdateRollbackFailed"
               expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
               for    = "0m"
-              labels = { severity = "critical" }
+              labels = { severity = "critical", notify = "page" }
               annotations = {
                 summary     = "t3 auto-update rollback FAILED — t3 may be broken on the devvm"
                 description = "The enforcer detected a bad build but could not reinstall the previous version. t3 may be broken for all users. Fix manually per the runbook (set T3_PIN to last-good, npm i -g, restore state if migrated)."
@@ -1036,7 +1041,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "T3WatchdogExhausted"
               expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-watchdog\"} |~ \"WATCHDOG-EXHAUSTED\" [15m])) > 0"
               for    = "0m"
-              labels = { severity = "critical" }
+              labels = { severity = "critical", notify = "page" }
               annotations = {
                 summary     = "t3-watchdog EXHAUSTED — a t3-serve instance keeps wedging and stays down"
                 description = "The watchdog restarted the same t3-serve instance to its flap cap within the window and it is still failing probes, so it stood down. Investigate: cgroup OOM kills (journalctl -k), state.sqlite size, the running build; restart manually once the cause is addressed."
@@ -1193,7 +1198,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "ClaudeOOMKilled"
               expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\" | regexp \"uid=(?P<uid>[0-9]+)\" [2h])) > 0"
               for    = "0m"
-              labels = { severity = "warning" }
+              labels = { severity = "warning", notify = "page" }
               annotations = {
                 summary     = "A claude was OOM-killed on the devvm (uid={{ $labels.uid }})"
                 description = "The kernel killed a claude process to satisfy a memory limit. constraint=CONSTRAINT_MEMCG means the pane hit its own 6G cap, not that the box ran out. Which pane and which victim: homelab logs query '{job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\"' --since 2h. uid 1000=wizard, 1002=emo. Cap design: docs/plans/2026-08-16-devvm-pane-memory-cap.md."
@@ -1228,7 +1233,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "ClaudeSessionDied"
               expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\" | logfmt [2h])) > 0"
               for    = "0m"
-              labels = { severity = "warning" }
+              labels = { severity = "warning", notify = "page" }
               annotations = {
                 summary     = "{{ $value }} of {{ $labels.user }}'s Claude sessions died in the last 2h"
                 description = "A session disappeared without being deliberately killed, or its claude died inside a pane that survived. WHICH ONES: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\"' --since 2h. Correlate with ClaudeOOMKilled for the memory cause; a death with no OOM line beside it was something else. A CLI `tmux kill-session` that skipped tmux-persist-forget also lands here."
@@ -1741,7 +1746,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "ClusterServiceCannotRelayMail"
               expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc\\.cluster\\.local\\[` [15m])) > 0"
               for    = "5m"
-              labels = { severity = "warning", subsystem = "mail" }
+              labels = { severity = "warning", subsystem = "mail", notify = "page" }
               annotations = {
                 summary     = "An in-cluster service is being refused mail relay"
                 description = "A pod tried to send mail through the mailserver and was refused. Find the sender and the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc.cluster.local[`' --since 1h — the line carries from=, to= and the helo, and the helo is the pod IP. A reject line with no sasl_username= means the client never authenticated, which is what happens when its stored password is unusable; check the sending service's SMTP credential against the secret it reads."
@@ -1771,7 +1776,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "OutboundMailBounced"
               expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"status=bounced\" [1h])) > 0"
               for    = "0m"
-              labels = { severity = "warning", subsystem = "mail" }
+              labels = { severity = "warning", subsystem = "mail", notify = "page" }
               annotations = {
                 summary     = "Mail we accepted has bounced"
                 description = "Postfix logged status=bounced, so a message was accepted from a sender and then permanently rejected downstream — the sending application already reported success. Read the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"status=bounced\"' --since 2h. For Send-to-Kindle, a bounce from Amazon usually means the From address is not on that Kindle's approved-sender list, or the @kindle.com address has changed."
@@ -1813,7 +1818,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               alert  = "InternalHostCannotSendMail"
               expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"cannot find your hostname\" |~ `\\[(10\\.|192\\.168\\.)` [15m])) > 0"
               for    = "15m"
-              labels = { severity = "warning", subsystem = "mail" }
+              labels = { severity = "warning", subsystem = "mail", notify = "page" }
               annotations = {
                 summary     = "An internal host is being refused mail relay — reverse DNS is failing"
                 description = "A host on 10.x or 192.168.x is getting 450 4.7.25 'cannot find your hostname', so its mail is not being accepted and will sit in its queue until it gives up. Find the host: homelab logs query '{namespace=\"mailserver\"} |= \"cannot find your hostname\"' --since 1h. Then check reverse DNS the way postfix does, from inside a pod: dig -x <ip> must return a name, and that name must resolve back to the same address. If the PTR resolves against Technitium (dig -x <ip> @10.96.0.53) but not through CoreDNS, the zone is missing a block in stacks/technitium/modules/technitium/main.tf — that was the 2026-08-22 fault, which had been silently discarding the nightly Proxmox backup report for a month."

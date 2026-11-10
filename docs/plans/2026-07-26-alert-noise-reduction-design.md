@@ -1,6 +1,8 @@
 # Alert-notification noise reduction — design
 
-- **Status:** approved (grilling session 2026-07-26)
+- **Status:** approved (grilling session 2026-07-26). Steps 1 and 2 built 2026-11-10; step 3 (presence-claim mute) not built.
+
+> **As built, 2026-11-10.** The rule count had grown to 552 (479 Prometheus, 73 Loki). 159 carry `notify: page`: the PAGE list below, plus rules added since July that meet the bar (R730 drive SMART failures, fan, PSU, the backup rules added since, NFS CSI, mail relay and bounce, `ClaudeOOMKilled`/`ClaudeSessionDied`, the three Trivy finding alerts, `BankSyncConsentExpired` which Viktor chose to keep re-paging every 6h). Security and event lanes (28 rules) page through the route matcher, not a label. Two departures from §3.2 and §4: the digest CronJob stays as a Monday-only Trivy summary (`ALERT_BOARD=off`) because the 2026-10-09 software-currency design hangs the weekly Trivy section on it, and nothing was removed. `HomeAssistantCriticalSensorsUnavailable` was reworked 2026-09-19 at Viktor's request to alert on a group going down, so it and `HomeAssistantMassUnavailable` page. `ExternalAccessDivergence` stays (silent, dead metric) because `/cluster-health` check 41 reads it. The `for:` lengthening in §3.6 was not done: every churn-prone rule it names is now silent.
 - **Owner:** Viktor / wizard
 - **Scope:** `stacks/monitoring` (Alertmanager routing + alert rules), the `alert-digest` CronJob, the `presence` CLI (`scripts/presence`), and a new small reconciler.
 - **Goal (Viktor's words):** *"reduce the number of notifications we get when things are fine, and only escalate when something is truly broken."*

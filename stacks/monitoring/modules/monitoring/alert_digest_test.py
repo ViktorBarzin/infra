@@ -170,6 +170,17 @@ def test_few_instances_stay_listed():
     assert msg.count("JobFailed") == 3, msg
 
 
+def test_trivy_only_message_has_no_alert_board():
+    msg = ad.trivy_only_message("TRIVY-BLOCK")
+    assert msg.endswith("TRIVY-BLOCK"), msg
+    assert "Firing now" not in msg and "All clear" not in msg, msg
+
+
+def test_trivy_only_message_is_none_without_a_section():
+    assert ad.trivy_only_message(None) is None
+    assert ad.trivy_only_message("") is None
+
+
 if __name__ == "__main__":
     import sys
 

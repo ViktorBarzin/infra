@@ -201,6 +201,16 @@ graph LR
 
 When a node goes down, all pod-level alerts for pods scheduled on that node are suppressed, reducing noise and focusing attention on the root cause.
 
+### Which alerts post to Slack
+
+Since 2026-11-10 only alerts labelled `notify: page`, plus the `lane=security`
+and `lane=event` alerts, post to `#alerts`. The first child route after
+`email-emo` sends everything else to the `silent` receiver, which has no
+notifier. Silent alerts are still evaluated and show in Alertmanager, Grafana
+and `/cluster-health`. 159 rules carry the label and 28 more page through
+their lane; 364 are silent. A new rule is silent until it gets the label.
+Design and classification: `docs/plans/2026-07-26-alert-noise-reduction-design.md`.
+
 ### Repeat notifications from flapping alerts
 
 Alert-on-change routing (`repeat_interval: 8760h` for warning/info) dedupes an
