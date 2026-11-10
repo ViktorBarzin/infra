@@ -93,7 +93,7 @@ UPGRADE_GATE_ALERTS='AuthentikDown|CSIDriverCrashLoop|CalicoNodeNotReady|Contain
 'KubeAPIServerDown|KubeStateMetricsDown|KubeletImagePullErrors|KubeletPLEGUnhealthy|'\
 'KubeletRunningContainersDrop|LowUPSBattery|NFSCSIControllerDown|NFSCSINodeDown|'\
 'NFSMountFailures|NFSServerUnresponsive|NodeDown|NodeExporterDown|NodeNotReady|'\
-'OnBattery|PVFillingUp|PfSenseVMDown|PodUnschedulable|PostgreSQLDown|PowerOutage|'\
+'OnBattery|PVFillingUp|EdgeFirewallVMDown|PodUnschedulable|PostgreSQLDown|PowerOutage|'\
 'PrometheusRuleEvaluationFailing|BlockVolumeHeadroomLow|NodeBlockVolumesOverCap|'\
 'TraefikDown|WANGatewayUnreachable'
 KUBECTL=kubectl

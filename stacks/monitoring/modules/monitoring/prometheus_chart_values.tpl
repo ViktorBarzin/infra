@@ -360,7 +360,7 @@ alertmanager:
       # Headscale control plane all take the tailnet path down as a SYMPTOM.
       # Suppress the tailnet alerts under any of those root causes.
       - source_matchers:
-          - alertname =~ "PfSenseVMDown|WANGatewayUnreachable|InternetEgressDown|HeadscaleDown"
+          - alertname =~ "EdgeFirewallVMDown|WANGatewayUnreachable|InternetEgressDown|HeadscaleDown"
         target_matchers:
           - alertname =~ "TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet|TailscaleSubnetRouterProbeStale"
       # Router unreachable subsumes per-route unreachability — one alert, not
@@ -404,7 +404,7 @@ alertmanager:
           - alertname = ScrapeTargetDown
           - job = flint-london
       - source_matchers:
-          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|PfSenseVMDown"
+          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|EdgeFirewallVMDown"
         target_matchers:
           - alertname = LondonTunnelDown
       # Mladost 3 (2026-10-03): same shape as London. The router is reachable
@@ -416,7 +416,7 @@ alertmanager:
           - alertname = ScrapeTargetDown
           - job = mladost3-router
       - source_matchers:
-          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|PfSenseVMDown"
+          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|EdgeFirewallVMDown"
         target_matchers:
           - alertname = Mladost3TunnelDown
       - source_matchers:

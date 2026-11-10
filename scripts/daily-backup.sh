@@ -394,6 +394,7 @@ fi
 log "--- Step 3: OPNsense backup ---"
 OPNSENSE_HOST="${OPNSENSE_HOST:-10.0.20.1}"
 OPNSENSE_DEST="${BACKUP_ROOT}/opnsense"
+DATE=$(date +%Y%m%d)
 OPNSENSE_STATUS=0
 mkdir -p "${OPNSENSE_DEST}"
 if scp -o BatchMode=yes -o ConnectTimeout=10 "root@${OPNSENSE_HOST}:/conf/config.xml" \
