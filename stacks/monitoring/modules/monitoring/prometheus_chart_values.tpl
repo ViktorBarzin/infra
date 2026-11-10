@@ -53,9 +53,9 @@ alertmanager:
       group_interval: 5m
       # alert-on-change (2026-06-12): warning/info no longer re-notify while they
       # stay firing — a 1y repeat is effectively "notify once, then only on a
-      # membership change or resolve". The daily alert-digest CronJob
-      # (alert_digest.tf) carries standing state. Criticals keep a slow re-ping
-      # (see the severity=critical child route).
+      # membership change or resolve". Criticals keep a slow re-ping (see the
+      # severity=critical child route). Only notify=page alerts get this far;
+      # see the `silent` route below.
       repeat_interval: 8760h
       receiver: slack-warning
       routes:
@@ -72,6 +72,17 @@ alertmanager:
           matchers:
             - notify_emo = "true"
           continue: true
+        # High-signal routing (2026-11-10, docs/plans/2026-07-26-alert-noise-
+        # reduction-design.md): a Slack post means something is broken. Only
+        # rules labelled `notify: page` (or in the security or event lane)
+        # reach Slack. Everything else lands here: still evaluated, still in
+        # Alertmanager, /cluster-health and Grafana, never posted. To make a
+        # rule post, add `notify: page` to its labels.
+        - receiver: silent
+          matchers:
+            - notify != "page"
+            - lane !~ "security|event"
+          continue: false
         - receiver: slack-warning
           matchers:
             - notify_emo = "true"
@@ -137,8 +148,7 @@ alertmanager:
         - receiver: slack-info
           group_wait: 5m
           group_interval: 30m
-          # alert-on-change (2026-06-12): info never re-pings while firing; the
-          # daily digest carries standing state.
+          # alert-on-change (2026-06-12): info never re-pings while firing.
           repeat_interval: 8760h
           matchers:
             - severity = info
@@ -410,6 +420,8 @@ alertmanager:
         target_matchers:
           - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
+      # No notifier on purpose: the sink for alerts without notify=page.
+      - name: silent
       - name: email-emo
         email_configs:
           - to: "emil.barzin@gmail.com"
@@ -1878,6 +1890,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Fan unhealthy on R730 - check iDRAC"
           # Second uplink (infra#142, 2026-10-24): bond0 active-backup, eno1 ->
@@ -1891,6 +1904,7 @@ serverFiles:
             expr: increase(node_network_transmit_packets_total{job="proxmox-host", device="eno2"}[5m]) > 0
             labels:
               severity: warning
+              notify: page
               notify_emo: "true"
             annotations:
               summary: "R730 is running on its backup uplink eno2 (SW2 P5) - primary eno1 / AX6000 port 1 failed"
@@ -1906,6 +1920,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
               notify_emo: "true"
             annotations:
               summary: "R730 backup uplink eno2 (SW2 P5) is down - the host has no second path"
@@ -1927,6 +1942,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) reports SMART health FAILED"
               description: "The drive's own verdict is that it is failing. Order a replacement. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
@@ -1934,6 +1950,7 @@ serverFiles:
             expr: max_over_time(smart_uncorrected_errors_total{job="proxmox-host"}[24h]) > min_over_time(smart_uncorrected_errors_total{job="proxmox-host"}[24h])
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) logged a new uncorrected {{ $labels.op }} error in the last 24h"
               description: "The drive could not recover data it was asked for. RAID1 hides it from the host, but the mirror copy is now the only good one for that block. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
@@ -1941,6 +1958,7 @@ serverFiles:
             expr: max_over_time(smart_grown_defects{job="proxmox-host"}[24h]) > min_over_time(smart_grown_defects{job="proxmox-host"}[24h])
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }} {{ $labels.serial }}) reassigned new bad sectors in the last 24h (grown defects now {{ $value }})"
               description: "The grown defect list grows when the drive retires sectors it can no longer use. A steady climb usually precedes failure. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
@@ -1955,6 +1973,7 @@ serverFiles:
             expr: max_over_time(smart_ata_attribute_raw{job="proxmox-host",attribute=~"Reallocated_Sector_Ct|Used_Rsvd_Blk_Cnt_Tot|Runtime_Bad_Block|Program_Fail_Cnt_Total|Erase_Fail_Count_Total|Uncorrectable_Error_Cnt|Reported_Uncorrect|CRC_Error_Count|UDMA_CRC_Error_Count"}[24h]) > min_over_time(smart_ata_attribute_raw{job="proxmox-host",attribute=~"Reallocated_Sector_Ct|Used_Rsvd_Blk_Cnt_Tot|Runtime_Bad_Block|Program_Fail_Cnt_Total|Erase_Fail_Count_Total|Uncorrectable_Error_Cnt|Reported_Uncorrect|CRC_Error_Count|UDMA_CRC_Error_Count"}[24h])
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "R730 SSD in bay {{ $labels.bay }} ({{ $labels.model }}): {{ $labels.attribute }} rose in the last 24h (now {{ $value }})"
               description: "The SSD (VG ssd, a single-drive RAID-0, so no mirror) retired blocks or hit errors. Back up what lives on it. A CRC error rise points at the cable or backplane rather than the flash. Check: ssh root@192.168.1.127 smartctl -a -d megaraid,{{ $labels.bay }} /dev/bus/0"
@@ -1982,6 +2001,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "R730 drive in bay {{ $labels.bay }} ({{ $labels.model }}) is at {{ $value }} C, at or past its own limit"
               description: "Check the fans first (docs/runbooks/fan-control.md); a drive running past its limit wears fast and may start logging errors."
@@ -1998,6 +2018,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "disk-smart-status sees {{ $value }} drives behind the PERC, fewer than the iDRAC reports"
               description: "A drive dropped off the controller's passthrough, or smartctl --scan stopped listing it. Compare: ssh root@192.168.1.127 smartctl --scan, and the iDRAC storage page."
@@ -2078,6 +2099,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "rpi-sofia node_exporter unreachable for 5m — Pi down or network/SD wedge (cameras + solar feed at risk)"
           - alert: RpiSofiaFilesystemReadonly
@@ -2085,6 +2107,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "rpi-sofia rootfs is READ-ONLY — failing SD card (the silent-journal failure mode from this incident). Reflash/replace the card."
           - alert: RpiSofiaUndervoltage
@@ -2144,6 +2167,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "devvm is not being scraped — the shared workstation may be down"
               description: "Every Claude session, t3-serve and agent on this box is gone or unreachable. Check the VM on Proxmox first (qm status on proxmox-1); a QEMU stall looks identical to a reboot from here and was the 2026-06-11 failure. Journal history survives in Loki even while the box is unreachable: homelab logs query '{job=\"devvm-journal\"}' --since 1h. When the box is back, ClaudeSessionDied reports what did not come back with it."
@@ -2559,6 +2583,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Terminal Lobby's API is not answering — nobody can open or list a session"
               description: "tmux-api serves every session list, open, rename and kill in the lobby, so while it is down the UI loads and does nothing. Check it: systemctl status tmux-api on devvm, and journalctl -u tmux-api -n 50. It binds 0.0.0.0:7684 and is scraped there directly. If the box itself is gone, DevvmDown fires alongside this and is the one to act on first; if the box is up and stalled on disk, DevvmIOStalled is the better description and this may just be the scrape timing out behind it."
@@ -2938,6 +2963,7 @@ serverFiles:
             for: 10m
             labels:
               severity: warning
+              notify: page
               subsystem: vpn
             annotations:
               summary: "Tailscale subnet router (pfSense 100.64.0.9) did not answer a tailnet ping — Tailscale clients cannot reach the Sofia LAN. Check `tailscale status` on pfSense; re-register with ansible-playbook playbooks/pfsense-tailscale.yml"
@@ -2968,6 +2994,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "UPS on battery: {{ $value | printf \"%.0f\" }}s"
           - alert: LowUPSBattery
@@ -2975,6 +3002,7 @@ serverFiles:
             for: 3m  # bumped from 1m for global scrape_interval=2m; snmp-ups job pinned to 30s
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "UPS battery low: {{ $value | printf \"%.0f\" }} min remaining (threshold: 25 min)"
           - alert: PowerOutage
@@ -2982,6 +3010,7 @@ serverFiles:
             for: 3m  # bumped from 1m for global scrape_interval=2m; snmp-ups job pinned to 30s
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
           # --- NAS power watchdog (scripts/server_safe_poweroff, code-xgcg) ---
@@ -3014,6 +3043,7 @@ serverFiles:
             for: 0m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "NAS watchdog GracefulShutdown POST FAILED — the shutdown safety path is broken"
           - alert: PowercheckPowerOnPostFailed
@@ -3021,6 +3051,7 @@ serverFiles:
             for: 0m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "NAS watchdog power-On POST FAILED — the (now sole) power-on path is broken"
           - alert: PowercheckShutdownIneffective
@@ -3028,6 +3059,7 @@ serverFiles:
             for: 0m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Watchdog issued a GracefulShutdown but the server is STILL ON — shutdown ineffective"
           # Renamed from HighPowerUsage 2026-08-10: the name was shared with the
@@ -3069,6 +3101,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "UPS has {{ $value }} active alarm(s)"
           - alert: UPSBatteryDegraded
@@ -3083,6 +3116,7 @@ serverFiles:
             for: 15m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "UPS load: {{ $value }}% (threshold: 80%)"
           - alert: UPSOutputVoltageAbnormal
@@ -3090,6 +3124,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "UPS output voltage: {{ $value }}V (expected 210-250V)"
           - alert: ATSFault
@@ -3097,6 +3132,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "ATS fault detected (value: {{ $value }})"
           - alert: ATSPowerFault
@@ -3104,6 +3140,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "ATS power fault detected (value: {{ $value }})"
           # UNITS: automatic_transfer_switch_load_power_watts carries DECIWATTS
@@ -3139,6 +3176,7 @@ serverFiles:
             keep_firing_for: 2h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 380W)"
           - alert: ATSInputVoltageAbnormal
@@ -3146,6 +3184,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "ATS input voltage: {{ $value | printf \"%.0f\" }}V (expected 200-260V)"
       - name: Server Health
@@ -3162,6 +3201,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "iDRAC PSU {{ $labels.member_id }} unhealthy (state: {{ $value }})"
           - alert: iDRACMemoryUnhealthy
@@ -3186,6 +3226,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "iDRAC storage roll-up is not OK (state: {{ $value }}, expected 3=OK): a virtual disk, the PERC or its battery needs attention"
               description: "Check the iDRAC storage page (https://192.168.1.4, Storage > Overview) for which virtual disk or component. A degraded RAID1 is running on one drive."
@@ -3216,6 +3257,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Main fuse panel fault detected"
           - alert: FuseGarageFault
@@ -3223,6 +3265,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Garage fuse panel fault detected"
           - alert: FuseMainHighLeakage
@@ -3230,6 +3273,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Main fuse leakage current: {{ $value }}mA (threshold: 30mA)"
           - alert: FuseGarageHighLeakage
@@ -3237,6 +3281,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Garage fuse leakage current: {{ $value }}mA (threshold: 30mA)"
           - alert: FuseMainOvertemperature
@@ -3244,6 +3289,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Main fuse temperature: {{ $value }}°C (threshold: 70°C)"
           - alert: FuseGarageOvertemperature
@@ -3251,6 +3297,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Garage fuse temperature: {{ $value }}°C (threshold: 70°C)"
           - alert: FuseMainVoltageAbnormal
@@ -3258,6 +3305,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Main fuse voltage: {{ $value }}V (expected 200-260V)"
           - alert: FuseGarageVoltageAbnormal
@@ -3265,6 +3313,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Garage fuse voltage: {{ $value }}V (expected 200-260V)"
       - name: Thermostats
@@ -3289,6 +3338,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Thermostat temperature {{ $value | printf \"%.1f\" }} (x10 °C) below 5°C — risk of freezing"
           - alert: ThermostatHumidityHigh
@@ -3402,6 +3452,7 @@ serverFiles:
             for: 15m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 5%)"
           # PVAutoExpanding removed — was info-only at >80% used, but
@@ -3414,6 +3465,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — pvc-autoresizer didn't expand in time (storage_limit reached, expansion failing, or no autoresizer annotations)"
           - alert: PVPredictedFull
@@ -3434,6 +3486,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Only {{ $value | printf \"%.0f\" }} node(s) have NFS activity — Proxmox NFS (192.168.1.127) may be down (need ≥2)"
       - name: K8s Health
@@ -3480,6 +3533,7 @@ serverFiles:
             keep_firing_for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: last terminated OOMKilled"
               description: "The container's most recent exit was an OOM kill. Check `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` for the restart count, and the container's memory limit against its working set. A Ruby/Python service plateauing just under its limit is usually glibc arena fragmentation — see stacks/dawarich/main.tf for the MALLOC_ARENA_MAX precedent."
@@ -3518,6 +3572,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Node {{ $labels.node }} is NotReady"
           - alert: NodeConditionBad
@@ -4079,6 +4134,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} critical HA sensor(s) unavailable on {{ $labels.instance }}"
               description: "The R730 / UPS / Tesla T4 telemetry sensors have been unavailable for 15+ minutes. They share a REST integration and fail together, so this counts them rather than naming one. List them with `homelab metrics query 'haos_entity_available{instance=\"{{ $labels.instance }}\"} == 0'`. Common cause: REST sensor needs an HA restart (reload_all doesn't rebuild the rest: platform). Verify the exporter endpoint from HA: `ssh vbarzin@192.168.1.8` → `curl -sk <exporter-url>`. Fix: `curl -X POST -H \"Authorization: Bearer $HOME_ASSISTANT_SOFIA_TOKEN\" $HOME_ASSISTANT_SOFIA_URL/api/services/homeassistant/restart`."
@@ -4131,6 +4187,7 @@ serverFiles:
             keep_firing_for: 1h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} more HA entities unavailable on {{ $labels.instance }} than an hour ago"
               description: "A group of devices dropped together rather than the usual trickle. Find the group with `homelab metrics query 'count by (domain) (haos_entity_available{instance=\"{{ $labels.instance }}\"} == 0)'` and compare against an hour ago. Tuya is the usual suspect and the split that matters is direct-WiFi versus gateway-attached: if only the direct-WiFi devices are gone it is the device VLAN or its AP, not the Tuya cloud or the integration, which reports state=loaded either way."
@@ -4180,6 +4237,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Prometheus TSDB: {{ $value | printf \"%.0f\" }} GiB (threshold: 150 GiB)"
           - alert: PrometheusNotificationsFailing
@@ -4187,6 +4245,7 @@ serverFiles:
             for: 10m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
           # phpipam-import runs every 30 minutes (ADR-0032; was 5 until 2026-10-15). JobFailed covers a
@@ -4204,6 +4263,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "etcd backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: EtcdBackupNeverSucceeded
@@ -4211,6 +4271,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "etcd backup CronJob has never completed successfully"
           - alert: PostgreSQLBackupStale
@@ -4218,6 +4279,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PostgreSQL backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
           - alert: PostgreSQLBackupNeverSucceeded
@@ -4225,6 +4287,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PostgreSQL backup CronJob has never completed successfully"
           - alert: MySQLBackupStale
@@ -4232,6 +4295,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "MySQL backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
           - alert: MySQLBackupNeverSucceeded
@@ -4239,6 +4303,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "MySQL backup CronJob has never completed successfully"
           - alert: VaultBackupStale
@@ -4246,6 +4311,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vault backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: VaultBackupNeverSucceeded
@@ -4253,6 +4319,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vault backup CronJob has never completed successfully"
           # 2026-08-23: the audit volume on the active leader filled and Vault
@@ -4270,6 +4337,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "VAULT WILL FAIL CLOSED: audit volume {{ $labels.persistentvolumeclaim }} is {{ $value | printf \"%.0f\" }}% full"
               description: "Vault's file audit device fails closed — when this volume fills, EVERY authenticated request returns HTTP 500 (logins, secret reads, ESO sync) while sys/health keeps returning 200, so the cluster looks healthy. This is not an ordinary disk-space warning. pvc-autoresizer will grow the volume only up to its storage_limit annotation (10Gi) and then stop. Fix: docs/runbooks/vault-audit-device-full.md"
@@ -4373,6 +4441,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vault raft leader {{ $labels.instance }} is active but has committed nothing and completed no requests for >2m"
               description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md)."
@@ -4384,6 +4453,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vault pods are Up but no pod reports HA active leader"
               description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md."
@@ -4392,6 +4462,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vaultwarden backup is {{ $value | humanizeDuration }} old (threshold: 24h, runs every 6h)"
           - alert: VaultwardenBackupNeverSucceeded
@@ -4399,6 +4470,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vaultwarden backup CronJob has never completed successfully"
           - alert: MailserverBackupStale
@@ -4406,6 +4478,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Mailserver backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 03:00)"
           - alert: MailserverBackupNeverSucceeded
@@ -4413,6 +4486,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Mailserver backup CronJob has never completed successfully"
           - alert: VaultwardenDown
@@ -4420,6 +4494,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vaultwarden has no available replicas — password manager down"
           - alert: VaultwardenSQLiteCorrupt
@@ -4427,6 +4502,7 @@ serverFiles:
             for: 0m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Vaultwarden SQLite database failed integrity check — data corruption detected"
           - alert: VaultwardenIntegrityCheckStale
@@ -4441,6 +4517,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Redis backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: RedisBackupNeverSucceeded
@@ -4448,6 +4525,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Redis backup CronJob has never completed successfully"
           # ClickHouse (rybbit) and Dolt (beads-server) daily backups, added
@@ -4462,6 +4540,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "ClickHouse (rybbit) backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:10)"
               description: "rybbit/clickhouse-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-clickhouse.md."
@@ -4470,6 +4549,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "ClickHouse (rybbit) backup has never reported a successful run to Pushgateway"
           # claude-sessions (ADR-0039): native BACKUP to NFS, weekly full plus
@@ -4480,6 +4560,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Claude session store backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:40)"
               description: "claude-sessions/clickhouse-backup has not pushed a successful backup. Read the last job's logs; restore steps are in docs/runbooks/restore-claude-sessions.md."
@@ -4488,6 +4569,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Claude session store backup has never reported a successful run to Pushgateway"
           - alert: DoltBackupStale
@@ -4495,6 +4577,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Dolt (beads-server) backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:25)"
               description: "beads-server/dolt-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-dolt.md."
@@ -4503,6 +4586,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Dolt (beads-server) backup has never reported a successful run to Pushgateway"
           # Dolt history backup (beads-server/dolt-history-backup, added
@@ -4514,6 +4598,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Dolt (beads-server) history backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:45)"
               description: "beads-server/dolt-history-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-dolt.md."
@@ -4522,6 +4607,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Dolt (beads-server) history backup has never reported a successful run to Pushgateway"
           # PostgreSQL dumps, grouped: the dbaas dump (globals plus one dump per
@@ -4536,6 +4622,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.job }} has not pushed a successful backup for {{ $value | humanizeDuration }} (threshold: 36h, runs daily)"
               description: "Read the last run of the {{ $labels.job }} CronJob (namespace dbaas, or immich for immich-postgresql-backup). Restore steps: docs/runbooks/restore-postgresql.md."
@@ -4546,6 +4633,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.job }} has never reported a successful run to Pushgateway"
           - alert: PrometheusBackupStale
@@ -4559,6 +4647,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 40d)"
           - alert: PrometheusBackupNeverRun
@@ -4566,6 +4655,7 @@ serverFiles:
             for: 32d
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Prometheus backup has never reported a successful run (sidecar runs monthly, 1st Sunday 04:00 UTC — alert only fires if absent for >32d)"
           - alert: CSIDriverCrashLoop
@@ -4573,6 +4663,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "CSI driver CrashLoopBackOff in {{ $labels.namespace }}/{{ $labels.pod }} — storage-layer failure risk"
           - alert: BackupCronJobFailed
@@ -4580,6 +4671,7 @@ serverFiles:
             for: 15m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
           - alert: LVMSnapshotStale
@@ -4587,6 +4679,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "LVM PVC snapshots are {{ $value | humanizeDuration }} old (expected daily)"
               description: "Timer lvm-pvc-snapshot.timer on 192.168.1.127 hasn't pushed fresh metrics. Runbook: docs/runbooks/restore-lvm-snapshot.md"
@@ -4595,6 +4688,7 @@ serverFiles:
             for: 48h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "LVM PVC snapshot job has never reported metrics to Pushgateway"
           - alert: LVMSnapshotFailing
@@ -4604,6 +4698,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "LVM PVC snapshot job failed (status={{ $value }})"
           # The SAS pool is 537 GiB, small enough that one wrongly placed bulk
@@ -4629,6 +4724,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Daily backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: WeeklyBackupFailing
@@ -4636,6 +4732,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Daily backup completed with errors (status={{ $value }})"
           - alert: PfsenseBackupStale
@@ -4643,6 +4740,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "pfsense backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
           # Site-router config backups (scripts/router-config-backup.sh, weekly
@@ -4652,6 +4750,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Router config backup for {{ $labels.instance }} is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: RouterConfigBackupFailing
@@ -4659,6 +4758,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Router config backup for {{ $labels.instance }} failed on its last run"
               description: "router-config-backup on the PVE host could not fetch a valid config archive. Run `systemctl start router-config-backup` and read `journalctl -u router-config-backup`; usually the tunnel to the router is down or the router's pinned key line in /etc/dropbear/authorized_keys is missing. Docs: docs/architecture/backup-dr.md."
@@ -4667,6 +4767,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Offsite backup sync is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: OffsiteBackupSyncFailing
@@ -4674,6 +4775,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Offsite backup sync last run reported errors (status={{ $value }})"
           # Destination capacity. Until 2026-08-06 NOTHING watched the Synology's
@@ -4706,6 +4808,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Offsite backup destination (Synology /volume1) is only {{ $value | printf \"%.1f\" }}% free — offsite backups are about to stop"
               description: "Act now. Delete the oldest Backup-share snapshots (see docs/runbooks/synology-storage.md), then let the btrfs cleaner reclaim (async, minutes)."
@@ -4724,6 +4827,7 @@ serverFiles:
             for: 30m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "NFS local mirror to sda is {{ $value | humanizeDuration }} old (threshold: 16d / 2 weekly cycles)"
           - alert: NfsMirrorFailing
@@ -4731,6 +4835,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
           # The three vzdump rules (VzdumpBackupStale, VzdumpBackupNeverRun,
@@ -4754,6 +4859,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Backup disk /mnt/backup is {{ $value | humanizePercentage }} full"
           - alert: NewTailscaleClient
@@ -4761,6 +4867,7 @@ serverFiles:
             for: 5m
             labels:
               severity: info
+              notify: page
             annotations:
               summary: "New Tailscale client registered ({{ $value | printf \"%.2f\" }} reauth/s)"
           - alert: CrowdSecDown
@@ -4933,6 +5040,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PostgreSQL pod {{ $labels.pod }} is not ready"
           - alert: RedisDown
@@ -4940,6 +5048,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Redis is down — statefulset redis-v2 has no ready pod"
           - alert: RedisMemoryPressure
@@ -4998,6 +5107,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Authentik auth server has no available replicas"
           - alert: PoisonFountainDown
@@ -5014,6 +5124,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PgBouncer down — Authentik cannot reach PostgreSQL"
           - alert: CNPGOperatorDown
@@ -5050,6 +5161,7 @@ serverFiles:
             for: 3m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PostgreSQL {{ $labels.cnpg_cluster }}: connection utilisation {{ $value | humanizePercentage }} — new client connections will be refused soon. Bump max_connections or reap idle backends."
           - alert: PGNotifyQueueHigh
@@ -5092,6 +5204,7 @@ serverFiles:
             for: 3m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Node down: {{ $labels.instance }}"
           - alert: DockerRegistryDown
@@ -5113,6 +5226,7 @@ serverFiles:
             for: 30m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "{{ $labels.instance }}: {{ $value }} broken manifest reference(s) — orphan index or missing blob"
               description: "The forgejo-integrity-probe CronJob found {{ $value }} manifest/blob references that return non-200 on {{ $labels.instance }}. Rebuild the affected image per docs/runbooks/forgejo-registry-rebuild-image.md. (registry.viktorbarzin.me retired Phase 4 of forgejo-registry-consolidation 2026-05-07 — only forgejo.viktorbarzin.me remains.)"
@@ -5128,6 +5242,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "{{ $labels.instance }} probe cannot fetch /v2/_catalog — auth failure or registry down"
           - alert: NodeHighCPUUsage
@@ -5211,6 +5326,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Image pull errors on {{ $labels.node }}: {{ $value | printf \"%.2f\" }}/s — containerd may be broken"
           - alert: KubeletPLEGUnhealthy
@@ -5218,6 +5334,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "PLEG on {{ $labels.instance }} not seen for {{ $value | printf \"%.0f\" }}s — kubelet lifecycle management broken"
           - alert: PodsStuckContainerCreating
@@ -5344,6 +5461,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Running containers on {{ $labels.instance }} dropped >50% in 10m ({{ $value | printf \"%.2f\" }} ratio)"
           - alert: CalicoNodeNotReady
@@ -5351,6 +5469,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
           # ---- node OS config drift (bead code-yypr) --------------------------
@@ -5421,6 +5540,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Kubernetes apiserver {{ $labels.instance }} is down — control plane degraded, blocks kured"
           - alert: KubeStateMetricsDown
@@ -5428,6 +5548,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "kube-state-metrics not responding — many alerts are SILENT until this is fixed"
           - alert: PrometheusRuleEvaluationFailing
@@ -5435,6 +5556,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Prometheus rule evaluation failing — alerting itself is degraded ({{ $value | printf \"%.0f\" }} failures in 10m)"
           - alert: PVCStuckPending
@@ -5515,6 +5637,7 @@ serverFiles:
             for: 3m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "mysql-v26 (the active MySQL) has 0 ready replicas — DB-dependent apps will fail"
           - alert: MySQLNotServing
@@ -5529,6 +5652,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "MySQL (mysql-v26) is running but not answering queries for 5m — check mysqld logs and connection count; DB-dependent apps will fail"
           - alert: ClusterPodReadyRatioDropped
@@ -5541,6 +5665,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Cluster pod-ready ratio is {{ $value | printf \"%.1f\" }} (threshold: 0.9) — possible cascade"
           - alert: NodeMemoryPressure
@@ -5555,6 +5680,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Node {{ $labels.node }} reports DiskPressure=true — image GC may not keep up"
           - alert: KubeQuotaAlmostFull
@@ -5738,6 +5864,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Traefik pod {{ $labels.instance }} is down"
 
@@ -5797,6 +5924,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Every ingress probe target is unreachable — the shared 443 path is down"
               description: >-
@@ -5872,6 +6000,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "authentik '/' router 5xx rate {{ $value | printf \"%.1f\" }}% — episodic backend-unavailable (blank login / 30s hang)"
               description: "The authentik UI '/' router is returning 502/503/504 — all 3 goauthentik-server pods are likely NotReady together during a PG/pgbouncer transient. Check `kubectl -n authentik get endpointslices` (should never be empty) and CNPG health."
@@ -5943,6 +6072,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "TLS cert {{ $labels.cn }} expires in {{ $value | printf \"%.0f\" }} days"
           - alert: TLSCertRenewalOverdue
@@ -5970,6 +6100,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "ForwardAuth fallback active — check Poison Fountain and Authentik availability"
           # - alert: OpenWRT High Memory Usage
@@ -6214,6 +6345,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 5% for 10m)"
           - alert: AnubisChallengeStoreErrors
@@ -6258,6 +6390,7 @@ serverFiles:
             keep_firing_for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Anubis service {{ $labels.service }} returning 500 ({{ $value | printf \"%.2f\" }} req/s) — likely challenge-store error"
       - name: "Networking & Access"
@@ -6267,6 +6400,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Cloudflared tunnel down — external access via Cloudflare broken"
           - alert: CloudflaredDegraded
@@ -6300,6 +6434,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "MetalLB speaker: {{ $value | printf \"%.0f\" }} pod(s) missing"
           - alert: MetalLBControllerDown
@@ -6307,6 +6442,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "MetalLB controller down — no LoadBalancer IP management"
           - alert: TechnitiumDNSDown
@@ -6317,6 +6453,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Both Technitium DNS instances down — internal DNS broken"
       - name: "Storage Drivers"
@@ -6326,6 +6463,7 @@ serverFiles:
             for: 5m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "NFS CSI controller down — new NFS volume provisioning broken"
           # ISCSICSIControllerDown alert removed — democratic-csi replaced by proxmox-csi (2026-04-05)
@@ -6334,6 +6472,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "{{ $value }} NFS CSI node pod(s) unavailable — NFS mounts will fail on affected nodes"
           - alert: NFSMountFailures
@@ -6344,6 +6483,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: ">5 pods stuck in ContainerCreating with sudden increase — possible NFS or storage outage"
           - alert: NFSHighRPCRetransmissions
@@ -6379,6 +6519,7 @@ serverFiles:
             for: 15m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.node }}: {{ $value }} block volumes attached, above the cap of 20"
               description: "The scheduler should never place more than 20. Above it means ghost attachments or pods placed before the cap changed. Compare 'qm config' with VolumeAttachments (healthcheck #47) and move a volume pod off the node."
@@ -6444,6 +6585,7 @@ serverFiles:
             for: 5m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Mail server has no available replicas - mail may not be received"
           # Note: no BankSyncFailing alert — GoCardless enforces per-account
@@ -6518,6 +6660,7 @@ serverFiles:
             for: 1h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent HAS EXPIRED. Imports for its accounts are dead until it is re-authorised by hand in Actual."
           # The check needs a GoCardless API credential that lives in each Actual
@@ -6543,6 +6686,7 @@ serverFiles:
             for: 60m
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "Email round-trip probe failing. Check MX DNS, Postfix, Mailgun API, and IMAP."
           - alert: EmailRoundtripStale
@@ -6596,6 +6740,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "viktorbarzin.me apex is not resolving to 10.0.20.203 via Technitium"
               description: "Technitium serves the split-horizon apex that ~80 *.viktorbarzin.me CNAMEs resolve through. If it is wrong or unanswered, every internal service (auth, vault, immich, ha-sofia, ...) breaks and fresh image pulls degrade to the public hairpin. Check the Technitium primary zone A record, and that Traefik's LB IP is still 10.0.20.203 — if the LB moved, update the dns_apex module regexp too."
@@ -6620,6 +6765,7 @@ serverFiles:
             for: 10m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Claude OAuth token {{ $labels.path }} expires in <7 days — rotate NOW"
               description: "The long-lived CLAUDE_CODE_OAUTH_TOKEN is within 1 week of expiry. Automated upgrades will break when it expires. Harvest via `claude setup-token` and update Vault + TF."
@@ -6986,6 +7132,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Headscale VPN control plane is down"
           - alert: HeadscaleNoOnlineNodes
@@ -7136,6 +7283,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "Authentik outpost returning {{ $value | printf \"%.0f\" }} 400s in 5m on {{ $labels.service }} — forward-auth broken for all 43 protected services"
           # AuthentikForwardAuthFallbackActive MOVED TO LOKI on 2026-09-19, see
@@ -7233,6 +7381,7 @@ serverFiles:
             keep_firing_for: 6h
             labels:
               severity: critical
+              notify: page
             annotations:
               summary: "{{ $labels.vuln_id }} is on CISA's known-exploited list and is in images run by {{ $value | printf \"%.0f\" }} internet-reachable namespace(s). `kubectl get vulnerabilityreports -A -o json | jq -r '.items[] | select(any(.report.vulnerabilities[]; .vulnerabilityID==\"{{ $labels.vuln_id }}\")) | .metadata.namespace + \" \" + .report.artifact.repository + \":\" + .report.artifact.tag' | sort -u`; runbook docs/runbooks/trivy-operator.md"
           - alert: UpgradeFixNotLanded
@@ -7257,6 +7406,7 @@ serverFiles:
             for: 1h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.namespace }}: a newer {{ $labels.package }} has been available for {{ $value | humanizeDuration }} while the running one has fixable CVEs, and Renovate has not landed it. Check renovate_cve_fix_available_since_seconds for the version, then the Renovate dashboard issue (viktor/infra #111) and renovate/ignored-versions.json; runbook docs/runbooks/trivy-operator.md"
           - alert: CisaKevFeedStale
@@ -7293,6 +7443,7 @@ serverFiles:
             keep_firing_for: 6h
             labels:
               severity: warning
+              notify: page
             annotations:
               summary: "{{ $labels.namespace }}: {{ $value | printf \"%.0f\" }} secret(s) found in image {{ $labels.image_repository }}. `kubectl get exposedsecretreports -n {{ $labels.namespace }} -o json`, see docs/runbooks/trivy-operator.md"
           - alert: TrivyMetricsAbsent
@@ -7528,6 +7679,7 @@ serverFiles:
             for: 15m
             labels:
               severity: critical
+              notify: page
               subsystem: traefik
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} Traefik pod(s) serve no routers and 404 every host. Find the pod missing from router metrics and delete it: `kubectl get pods -n traefik`; confirm with `kubectl logs -n traefik <pod> -c traefik | grep -c 'middleware does not exist'` and `kubectl logs -n traefik <pod> -c download-plugins`."
@@ -7725,6 +7877,7 @@ serverFiles:
             for: 3m
             labels:
               severity: critical
+              notify: page
               subsystem: pfsense
             annotations:
               summary: "pfSense WAN gateway 192.168.1.1 unreachable from the cluster (>3m)"
@@ -7737,6 +7890,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
               subsystem: pfsense
             annotations:
               summary: "Internet egress DOWN — in-cluster ICMP to both 9.9.9.9 and 1.1.1.1 failing (>2m)"
@@ -7748,6 +7902,7 @@ serverFiles:
             for: 3m
             labels:
               severity: warning
+              notify: page
               subsystem: pfsense
             annotations:
               summary: "External DNS resolution failing via both 9.9.9.9 and 1.1.1.1 (>3m)"
@@ -7761,6 +7916,7 @@ serverFiles:
             for: 3m
             labels:
               severity: critical
+              notify: page
               subsystem: pfsense
             annotations:
               summary: "Egress-only failure: t3 cloudflare leg DOWN while internal leg UP (>3m)"
@@ -7775,6 +7931,7 @@ serverFiles:
             for: 2m
             labels:
               severity: critical
+              notify: page
               subsystem: pfsense
             annotations:
               summary: "pfSense VM (Proxmox VMID 101) is DOWN while the host is up"

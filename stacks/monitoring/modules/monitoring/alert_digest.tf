@@ -1,13 +1,13 @@
 # =============================================================================
-# Daily alert digest -> #alerts Slack
+# Weekly Trivy summary -> #alerts Slack (historical name: alert-digest)
 # =============================================================================
-# Companion to the "alert on change" routing model (alert-noise-reduction
-# 2026-06-12). Warning/info alerts no longer re-notify while they stay firing
-# (repeat_interval is effectively off) and criticals only re-ping every 6h, so
-# Slack reflects *changes*, not steady state. This CronJob is the safety net:
-# once a day it posts the full current board of firing alerts grouped by
-# severity (+ what cleared in the last 24h) so the standing state is reviewed
-# on a schedule, the way the #security lane is skimmed daily.
+# Until 2026-11-10 this posted the full board of firing alerts every morning,
+# the safety net for alert-on-change routing (2026-06-12). Since notify=page
+# routing (docs/plans/2026-07-26-alert-noise-reduction-design.md) only alerts
+# that mean something is broken reach Slack, and the rest are visible in
+# /cluster-health and Grafana, so the daily board was dropped. What remains
+# is the weekly Trivy section (docs/architecture/trivy.md), posted Mondays.
+# alert_digest.py can still build the board when ALERT_BOARD is not "off".
 #
 # Implementation: stock python:3.12-alpine running a pure-stdlib script
 # (alert_digest.py, mounted from a ConfigMap). NO pip/apk at runtime — once a
@@ -54,9 +54,12 @@ resource "kubernetes_cron_job_v1" "alert_digest" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "0 8 * * *"
-    timezone                      = "Europe/London"
-    starting_deadline_seconds     = 600
+    # Weekly, Trivy section only (ALERT_BOARD=off below). The daily board of
+    # every firing alert went away 2026-11-10 with notify=page routing:
+    # docs/plans/2026-07-26-alert-noise-reduction-design.md.
+    schedule                  = "0 8 * * 1"
+    timezone                  = "Europe/London"
+    starting_deadline_seconds = 600
     job_template {
       metadata {}
       spec {
@@ -100,6 +103,10 @@ resource "kubernetes_cron_job_v1" "alert_digest" {
               env {
                 name  = "TRIVY_WEEKDAY"
                 value = "Mon"
+              }
+              env {
+                name  = "ALERT_BOARD"
+                value = "off"
               }
               volume_mount {
                 name       = "script"

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Daily alert digest -> Slack.
+"""Alert digest -> Slack.
 
-Posts a once-a-day "state of the lab" summary to the #alerts Slack channel:
-the full current board of firing alerts grouped by severity, plus a one-line
-list of what fired-and-cleared in the last 24h.
+Posts a "state of the lab" summary to the #alerts Slack channel: the full
+current board of firing alerts grouped by severity, plus a one-line list of
+what fired-and-cleared in the last 24h.
+
+Since 2026-11-10 the deployed CronJob runs weekly with ALERT_BOARD=off and
+posts only the Trivy section. Only alerts labelled notify=page reach Slack
+now, so a daily board of everything else is the noise the alert-noise design
+(docs/plans/2026-07-26-alert-noise-reduction-design.md) removes.
 
 This is the safety net for the "alert on change" routing model (warnings/info
 no longer re-notify while firing; criticals re-ping slowly). The digest is the
@@ -30,6 +35,8 @@ Env (all have in-cluster defaults):
   DRY_RUN            if set (any value), print instead of posting.
   TRIVY_WEEKDAY      day the weekly Trivy section is appended (Mon..Sun or
                      0..6, default Mon). "never" turns the section off.
+  ALERT_BOARD        "off" drops the alert board: the post is the Trivy
+                     section alone, and nothing is posted on a day without one.
 
 Weekly Trivy section (software-currency design, Phase 2): once a week the
 digest appends a summary of the Trivy Operator findings that do not alert on
@@ -61,6 +68,7 @@ SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "#alerts")
 DRY_RUN = bool(os.environ.get("DRY_RUN", "")) or not SLACK_WEBHOOK_URL
 
 TRIVY_WEEKDAY_RAW = os.environ.get("TRIVY_WEEKDAY", "Mon")
+ALERT_BOARD = os.environ.get("ALERT_BOARD", "on").strip().lower() != "off"
 
 SEV_ORDER = ["critical", "warning", "info"]
 SEV_EMOJI = {"critical": ":red_circle:", "warning": ":large_yellow_circle:", "info": ":large_blue_circle:"}
@@ -441,6 +449,12 @@ def build_message(alerts, resolved, trivy_section=None):
     return "\n".join(lines)
 
 
+def trivy_only_message(trivy_section):
+    """The post when ALERT_BOARD=off: the Trivy section alone, or None."""
+    # build_trivy_section already starts with its own header.
+    return trivy_section or None
+
+
 def post_to_slack(text):
     payload = {"channel": SLACK_CHANNEL, "text": text}
     if DRY_RUN:
@@ -456,6 +470,13 @@ def post_to_slack(text):
 
 
 def main():
+    if not ALERT_BOARD:
+        text = trivy_only_message(trivy_section_if_due(_now_utc()))
+        if text is None:
+            sys.stderr.write("digest: board off and no Trivy section due; nothing to post\n")
+            return
+        post_to_slack(text)
+        return
     try:
         alerts = fetch_current_from_alertmanager()
         source = "alertmanager"

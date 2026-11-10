@@ -104,7 +104,7 @@ Both CVE alerts leave out a Deployment's old ReplicaSets (since 2026-11-04). The
 
 Trivy's secret scanner also matches keys that ship inside third-party images: Debian snakeoil keys, python-ldap test fixtures, a key in the lua-resty-rsa docs, the public Azurite key in Nextcloud's Azure SDK, a public AWS key ID in yt-dlp's `extractor/shahid.py`, and an expired SAS URL in the Playwright base image's npm cache. These are suppressed in Trivy's ignore file, not in Alertmanager: `trivy.ignoreFile` in `stacks/trivy-operator/main.tf` renders a `.trivyignore.yaml` that every scan Job mounts (`TRIVY_IGNOREFILE`). Each entry names a rule ID, the paths it covers (doublestar globs against the report target, which starts with `/`) and a statement saying why. A suppressed secret never reaches the `ExposedSecretReport`, so the alert, the metric and the weekly digest all stop counting it, while the same rule at any other path still reports. Entries were reviewed on 2026-10-19. An edit takes effect at each image's next scan.
 
-The weekly section is appended to the daily `alert-digest` post on Mondays (`TRIVY_WEEKDAY` in `alert_digest.tf`). It reads Prometheus only and shows:
+The weekly section is the Monday `alert-digest` post (`TRIVY_WEEKDAY` in `alert_digest.tf`); since 2026-11-10 that CronJob runs only on Mondays with `ALERT_BOARD=off`, so the post is this section alone. It reads Prometheus only and shows:
 
 - Critical/High CVE findings (counted per workload container) and the change since last week, split into fixable and unfixable
 - fixable Critical/High on internet-reachable workloads (alerting only when known exploited or when a fix has not landed in 7 days)
