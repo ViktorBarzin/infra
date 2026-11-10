@@ -1,0 +1,21 @@
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: tetragon-agent
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: deny-host-namespaces
+      kind: ValidatingPolicy
+    - name: restrict-sys-admin
+      kind: ValidatingPolicy
+    - name: deny-privileged-containers
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: tetragon-daemonset
+      expression: >-
+        request.namespace == 'tetragon' &&
+        ((object.kind == 'DaemonSet' && object.metadata.?name.orValue('') == 'tetragon') ||
+         (object.kind == 'Pod' &&
+          object.metadata.?ownerReferences.orValue([]).exists(r,
+            r.kind == 'DaemonSet' && r.name == 'tetragon')))

@@ -601,6 +601,7 @@ This prevents resource exhaustion and enforces governance without manual quota m
 | Exception | Policy and rules | Scope | Why |
 |-----------|------------------|-------|-----|
 | `trivy-node-collector-hostpid` | `deny-host-namespaces` (Pod rule and the Job autogen rule) | `Pod`/`Job` named `node-collector-*` in `trivy-system` | The Trivy Operator node-collector sets `hostPID: true` and mounts node config read-only. It is not privileged, drops all capabilities and uses a trusted image, so hostPID is the only exemption it needs. See `docs/architecture/trivy.md`. |
+| `tetragon-agent` | `deny-host-namespaces`, `restrict-sys-admin`, `deny-privileged-containers` | the `tetragon` DaemonSet and the Pods it owns, in `tetragon` | Tetragon (network IDS phase 4b, `stacks/tetragon`) loads eBPF programs on every node: host network, `SYS_ADMIN` and related capabilities, and a privileged `mount-bpf-fs` init container that mounts bpffs on the host. The agent container itself is not privileged. Watch-only: no enforcement actions. The operator Deployment and anything else in the namespace stay enforced. |
 
 The trusted-registry list also allows `mirror.gcr.io/aquasec/*` for the Trivy Operator, Trivy server and scan-job images (scoped to the `aquasec` path, not all of `mirror.gcr.io`).
 

@@ -255,7 +255,9 @@ flowchart TD
 
 - **What**: `stacks/tetragon`, the Cilium Tetragon chart 1.8.0 through
   Terraform, a DaemonSet with host network, `SYS_ADMIN` and related
-  capabilities (the chart's defaults, not privileged). Watch-only: no policy
+  capabilities (the chart's defaults; the agent is not privileged, its
+  `mount-bpf-fs` init container is). Kyverno admits it through the narrow
+  PolicyException `kyverno/tetragon-agent` (`docs/architecture/security.md`). Watch-only: no policy
   carries a `Sigkill`, `Signal`, `Override` or `NotifyEnforcer` action.
 - **Events exported** (`exportAllowList`/`exportDenyList` in `main.tf`):
   - `exec`: every process start, except in platform namespaces

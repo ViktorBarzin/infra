@@ -193,3 +193,26 @@ resource "kubectl_manifest" "policy_exception_trivy_node_collector" {
 
   depends_on = [helm_release.kyverno, kubectl_manifest.policy_deny_host_namespaces]
 }
+
+# =============================================================================
+# PolicyException: Tetragon agent (network IDS phase 4b, stacks/tetragon)
+# =============================================================================
+# The Tetragon DaemonSet (chart 1.8.0) loads eBPF programs on every node:
+#   - hostNetwork: true                 -> blocked by deny-host-namespaces
+#   - SYS_ADMIN (+ SYS_PTRACE, ...)     -> blocked by restrict-sys-admin
+#   - init container mount-bpf-fs is privileged (mounts bpffs on the host
+#     when the agent itself is not privileged) -> deny-privileged-containers
+# Scope is the `tetragon` DaemonSet and the pods it owns, in the tetragon
+# namespace only; the operator Deployment and anything else there stay fully
+# enforced. Tetragon is watch-only by decision (plan decision 11).
+resource "kubectl_manifest" "policy_exception_tetragon_agent" {
+  yaml_body = file("${path.module}/policies/tetragon-agent.yaml")
+
+  depends_on = [
+    helm_release.kyverno,
+    kubectl_manifest.policy_deny_host_namespaces,
+    kubectl_manifest.policy_restrict_capabilities,
+    kubectl_manifest.policy_deny_privileged,
+  ]
+}
+
