@@ -295,7 +295,10 @@ main() {
             "${REPORT:+$(printf '\nalso changed:\n%s' "$REPORT")}")"
     exit 1
   elif [ -n "$REPORT" ]; then
-    slack "$(printf 'devvm mattpocock skills updated\n%s' "$REPORT")"
+    # A clean update is info: the journal keeps it, Slack does not get it
+    # (Viktor, 2026-11-10: success and info to logs, failures still post).
+    log "mattpocock skills updated:"
+    printf '%s' "$REPORT"
   else
     log "nothing changed anywhere — staying quiet"
   fi
