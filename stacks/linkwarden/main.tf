@@ -296,7 +296,7 @@ resource "kubernetes_deployment" "linkwarden" {
       }
       spec {
         container {
-          image = "ghcr.io/linkwarden/linkwarden:v2.16.3"
+          image = "ghcr.io/linkwarden/linkwarden:v2.17.0"
           name  = "linkwarden"
 
           port {
