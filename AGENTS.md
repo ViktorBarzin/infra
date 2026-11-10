@@ -118,7 +118,7 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 - `docs/agents/known-issues.md` — Known Issues
 - `docs/agents/homelab-cli.md` — the `homelab` verb catalogue
 - `docs/agents/new-app.md` — a new first-party app on the ADR-0001 stack: `modules/kubernetes/tanstack_app` plus the dbaas and vault map entries
-- Repowise: `docs/architecture/repowise.md`. Automated service upgrades: `docs/architecture/automated-upgrades.md`
+- Repowise (sunset 2026-11-10, as-built record): `docs/architecture/repowise.md`. Automated service upgrades: `docs/architecture/automated-upgrades.md`
 
 ## User Preferences
 - **Calendar**: Nextcloud at `nextcloud.viktorbarzin.me`

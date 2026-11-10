@@ -33,7 +33,6 @@ locals {
     "tv",
     "job-hunter",
     "lesson-harvester",
-    "instagram-poster",
     "payslip-ingest",
     "wealthfolio",
     # broker-sync pulls the same PRIVATE ghcr.io/viktorbarzin/wealthfolio-sync
@@ -99,12 +98,6 @@ locals {
     # Chess.com streak CronJob). Kept private deliberately — a public package
     # under this name would advertise the automation to the site it runs against.
     "chesscom-streak",
-    # repowise: PRIVATE ghcr.io/viktorbarzin/repowise (codebase intelligence
-    # over the Forgejo Corpus, built from upstream source by
-    # .github/workflows/build-repowise.yml). Private deliberately — publishing
-    # a derived image of an AGPL-3.0 work would be distribution and carry a
-    # source-offer obligation. Keel also needs this secret to poll the tag list.
-    "repowise",
     # orchestrator-sandbox: TEMPORARY, for the orchestrator bake-off. Scion's
     # agent pods pull the PRIVATE ghcr.io/viktorbarzin/scion-* images, and
     # Scion's pod spec has no imagePullSecrets, so the namespace's default

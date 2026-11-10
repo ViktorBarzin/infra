@@ -35,7 +35,7 @@ kubeconfig). Deployment image is `ignore_changes` (`# CI_SETS_IMAGE`) so the SHA
 sticks vs `terragrunt apply`; CronJobs track `:latest` + `imagePullPolicy:
 Always`. (Keel was a redundant net here until it was retired on
 2026-10-11.) Apps without a Woodpecker repo of their own (the infra-built
-k8s-portal, excalidraw, pages-publish and repowise, plus interview-prep-app,
+k8s-portal, excalidraw and pages-publish, plus interview-prep-app,
 learning and trading-bot) trigger the shared `.woodpecker/first-party-deploy.yml`
 on Woodpecker repo 1 instead, with `PIPELINE=first-party-deploy`, `APP` and
 `IMAGE_TAG`. **Never** `set image`/`rollout restart` operator-managed

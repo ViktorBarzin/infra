@@ -124,6 +124,15 @@ Every claim carries one of three labels:
   The rollback copies pg-cluster-1 and data-mysql-standalone-0 stay (decision
   2026-11-10).
 
+- 2026-11-10, **repowise, paperless-ai and instagram-poster sunset** (Viktor
+  chose these; grampsweb and openclaw stay parked). Each volume was archived as
+  a gzip-tested tarball under `/srv/nfs/archive/<app>-2026-11-10/` (mode 700),
+  plus a dump of the `instagram_poster` database; then the stacks were
+  destroyed, their outage-failover routes, Kyverno ghcr allowlist entries, the
+  instagram-poster wall-off probe, repowise's daily image build and deploy
+  entry removed, and the 3 volumes with their LVs and snapshots deleted. The
+  `instagram_poster` database and its Vault role `pg-instagram-poster` stay.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.

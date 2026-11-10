@@ -46,9 +46,6 @@ case "$app" in
     targets="learning learning learning=$g/learning:$ref" ;;
   pages-publish)
     targets="pages-publish pages-publish pages-publish=$g/pages-publish:$ref" ;;
-  repowise)
-    r="$g/repowise:$ref"
-    targets="repowise repowise cross-repo=$r api=$r web=$r sync=$r" ;;
   trading-bot)
     # One build tags both images with the same 0.1.N, so they move together.
     s="$g/trading-bot-service:$ref"
