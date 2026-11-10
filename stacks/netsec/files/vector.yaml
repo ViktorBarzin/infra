@@ -169,9 +169,15 @@ transforms:
     inputs: [otlp.logs]
     drop_on_abort: true
     source: |
-      line = string(.message) ?? ""
-      if !starts_with(line, "{") { abort }
-      e = object(parse_json(line) ?? null) ?? {}
+      # The body can arrive as the bare JSON line, with a leading container-log
+      # prefix, or already decoded; take the object from any of them.
+      e = object(.message) ?? {}
+      if e == {} {
+        line = string(.message) ?? ""
+        start = int(find(line, "{")) ?? -1
+        if start < 0 { abort }
+        e = object(parse_json(slice!(line, start)) ?? null) ?? {}
+      }
       kind = "exec"
       ev = object(e.process_exec) ?? null
       if ev == null {
@@ -502,3 +508,20 @@ tests:
           . = {"message": "{\"process_exit\":{\"process\":{}},\"node_name\":\"k8s-node1\"}"}
     no_outputs_from: [tetragon]
 
+  - name: a tetragon line with a container-log prefix or already decoded still maps
+    inputs:
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "2026-11-10T19:05:57.670Z stdout F {\"process_exec\":{\"process\":{\"binary\":\"/bin/sh\",\"pod\":{\"namespace\":\"matrix\",\"name\":\"a\"}}},\"node_name\":\"k8s-node1\",\"time\":\"2026-11-10T19:05:57Z\"}"}
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": {"process_exec": {"process": {"binary": "/bin/sh", "pod": {"namespace": "matrix", "name": "b"}}}, "node_name": "k8s-node1", "time": "2026-11-10T19:05:57Z"}}
+    outputs:
+      - extract_from: tetragon
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.binary, "/bin/sh")
+              assert_eq!(.namespace, "matrix")
