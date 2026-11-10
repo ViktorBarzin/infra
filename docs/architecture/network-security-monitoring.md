@@ -233,6 +233,11 @@ flowchart TD
   blocks when full, so a slow ClickHouse never backs up Alloy.
 - **Pod names**: `kube_pod_info` in Prometheus keeps pod IP history; the
   runbook has the lookup.
+- **Measured 2026-11-10** (first 15 minutes): about 84,000 rows an hour from 52
+  client IPs, about 6 bytes a row compressed, so roughly 13 MB a day and 0.4 GB
+  at the 30-day TTL. The busiest names are tv app sources. node-local-dns pods
+  stayed at 11-34 MiB; no DNS failures from a test pod during the rolling
+  restart. The journals agent uses about 35 MiB.
 - **Alert**: `NetsecDnsStale` (no `dns_queries` row for 30 minutes, lane
   `security`).
 

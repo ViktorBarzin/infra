@@ -223,7 +223,8 @@ pf.
 ```sh
 kubectl -n crowdsec logs deploy/crowdsec-journals | tail
 kubectl -n crowdsec exec deploy/crowdsec-journals -- cscli metrics show acquisition parsers
-homelab metrics query 'sum by (source, type) (rate(cs_parser_hits_total{pod=~"crowdsec-journals.*"}[1h]))'
+homelab metrics query 'cs_lokisource_hits_total{pod=~"crowdsec-journals.*"}'
+homelab metrics query 'cs_node_hits_ok_total{pod=~"crowdsec-journals.*", name="crowdsecurity/sshd-logs"}'
 ```
 
 If the agent cannot log in to the LAPI, the machine `journals` is not
@@ -238,11 +239,15 @@ OPNsense agent's; turning bans on means setting `simulation: false` in
 ### Which pod looked up a name?
 
 ```sh
-homelab netsec sql "SELECT ts, client_ip, qtype, qname, rcode FROM netsec.dns_queries WHERE qname = 'icanhazip.com' ORDER BY ts DESC LIMIT 20"
-# then name the pod that held that IP at that time (unix seconds after @):
-homelab metrics query 'max by (namespace, pod) (max_over_time(kube_pod_info{pod_ip="10.10.3.17"}[10m] @ 1794320586))'
+homelab netsec sql "SELECT ts, toUnixTimestamp(ts) unix, replaceOne(toString(client_ip), '::ffff:', '') ip, qtype, qname, rcode FROM netsec.dns_queries WHERE qname = 'icanhazip.com' ORDER BY ts DESC LIMIT 20"
+# then name the pod that held that IP at that moment (unix seconds after @):
+homelab metrics query 'kube_pod_info{pod_ip="10.10.108.9"} @ 1794334286'
 ```
 
+IPv4 clients are stored IPv4-mapped (`::ffff:10.10.108.9`); the query above
+strips the prefix. Use the instant query at the row's time, not a window: pod
+IPs are reused within minutes, and on 2026-11-10 a 10-minute window returned
+both the test pod and an earlier `netsec-alerts` CronJob pod for one address.
 Rows cover names outside the cluster only. A pod IP that resolves to a
 `node-local-dns` or host-network pod means the query came from the node itself.
 
