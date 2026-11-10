@@ -3,39 +3,6 @@
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
   "packageRules": [
     {
-      "description": "rails revert 2026-10-17 pipeline #2635: stack traefik failed after this bump: its terragrunt apply failed (commit 270b8f35)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "python"
-      ],
-      "matchNewValue": "3.15.0-alpine",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-22 pipeline #2821: stack android-emulator failed after this bump: its terragrunt apply failed (commit d70b9cc9)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "library/python"
-      ],
-      "matchNewValue": "3.15.1-alpine",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-10-26 pipeline #2953: stack android-emulator failed after this bump: its terragrunt apply failed (commit bf2aed47)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "library/python"
-      ],
-      "matchNewValue": "3.15.2-alpine",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-11-01 pipeline #3159: stack dbaas failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: mysql-backup Job) (commit 5f4efb2f)",
       "matchDatasources": [
         "docker"
@@ -44,28 +11,6 @@
         "dpage/pgadmin4"
       ],
       "matchNewValue": "9.19",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-03 pipeline #3235: stack monitoring failed after this bump: its terragrunt apply failed (commit 25e54850)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.40.3",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-05 pipeline #3330: stack monitoring failed after this bump: its terragrunt apply failed (commit 4b65c9e8)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "prometheus"
-      ],
-      "matchNewValue": "29.41.0",
       "enabled": false
     },
     {
