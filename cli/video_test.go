@@ -141,7 +141,6 @@ func TestYtdlpArgsWithCookies(t *testing.T) {
 	args := ytdlpArgs("https://youtu.be/abc", "/tmp/out", "1080", "/tmp/out/cookies.txt")
 	want := map[string]string{
 		"--cookies":           "/tmp/out/cookies.txt",
-		"--extractor-args":    "youtube:player_client=web_safari",
 		"--remote-components": "ejs:github",
 		"--js-runtimes":       "node",
 	}
@@ -152,6 +151,11 @@ func TestYtdlpArgsWithCookies(t *testing.T) {
 	}
 	if args[len(args)-1] != "https://youtu.be/abc" {
 		t.Errorf("the URL must be the last argument, got %v", args)
+	}
+	// Pinning a player client (web_safari) broke every download in 2026-11
+	// (infra#177); yt-dlp's own client choice is the one that keeps working.
+	if containsArg(args, "--extractor-args") {
+		t.Errorf("YouTube downloads must not pin a player client: %v", args)
 	}
 	// node is the runtime the playbook installs for every user. Clearing the
 	// defaults first stops a per-user deno from hiding a node failure.
