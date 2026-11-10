@@ -141,6 +141,10 @@ resource "kubernetes_config_map" "mailserver_config" {
     # keys can't contain '@', so the key is sanitized ("-at-") and the
     # volume_mount below restores the real filename.
     "docs-at-viktorbarzin.me.dovecot.sieve" = file("${path.module}/extra/docs-at-viktorbarzin.me.dovecot.sieve")
+    # me@ files the NAS's own UPS emails into Archive as read, so a few-second
+    # transfer does not notify; Alertmanager's UPSOnBatteryEmail covers real
+    # outages (2026-11-10).
+    "me-at-viktorbarzin.me.dovecot.sieve" = file("${path.module}/extra/me-at-viktorbarzin.me.dovecot.sieve")
 
     KeyTable      = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
     SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
@@ -545,6 +549,12 @@ resource "kubernetes_deployment" "mailserver" {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve"
             sub_path   = "docs-at-viktorbarzin.me.dovecot.sieve"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/me@viktorbarzin.me.dovecot.sieve"
+            sub_path   = "me-at-viktorbarzin.me.dovecot.sieve"
             read_only  = true
           }
           volume_mount {
