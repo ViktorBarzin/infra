@@ -168,7 +168,7 @@ resource "kubernetes_job" "db_init" {
       spec {
         container {
           name  = "db-init"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
           command = [
             "sh", "-c",
             <<-EOT
