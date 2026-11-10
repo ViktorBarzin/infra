@@ -3,6 +3,7 @@
 # claude-sessions ClickHouse.
 #
 #   OPNsense syslog-ng, raw EVE JSON lines --TCP 5140--> opnsense --> eve
+#   OPNsense syslog-ng, Squid netsec.json  --TCP 5140--> opnsense --> proxy
 #   goflow2 sidecar Vector ------------vector 6000----> shippers --> flows
 #   node Alloy, node-cache + tetragon lines --OTLP 4318--> otlp --> dns, tetragon
 #
@@ -102,11 +103,52 @@ transforms:
         "dst_net": string(d.dst_net) ?? ""
       }
 
+  # Phase 5: syslog-ng sends Squid's netsec.json (squid-netsec-log.conf on
+  # OPNsense) on the same connection as EVE; its lines start with a marker key.
+  route_opnsense:
+    type: route
+    inputs: [opnsense]
+    route:
+      proxy: 'starts_with(string(.message) ?? "", "{\"netsec_kind\":\"proxy\"")'
+
+  # Squid access log line (opted-in machines only) to netsec.proxy. Squid
+  # prints "-" for a value it does not have.
+  proxy:
+    type: remap
+    inputs: [route_opnsense.proxy]
+    drop_on_abort: true
+    source: |
+      p = object(parse_json(string!(.message)) ?? null) ?? {}
+      if !exists(p.ts) { abort }
+      dash = "-"
+      ts_ms = to_int(round((to_float(p.ts) ?? 0.0) * 1000.0))
+      server_ip = string(p.server_ip) ?? dash
+      if server_ip == dash || server_ip == "" { server_ip = "::" }
+      ua = string(p.user_agent) ?? dash
+      if ua == dash { ua = "" }
+      sni = string(p.sni) ?? dash
+      if sni == dash { sni = "" }
+      . = {
+        "ts": from_unix_timestamp!(ts_ms, unit: "milliseconds"),
+        "client_ip": string(p.client_ip) ?? "::",
+        "method": string(p.method) ?? "",
+        "host": string(p.host) ?? "",
+        "url": string(p.url) ?? "",
+        "sni": sni,
+        "bump_mode": string(p.bump_mode) ?? "",
+        "status": int(p.status) ?? 0,
+        "bytes": int(p.bytes) ?? 0,
+        "squid_status": string(p.squid_status) ?? "",
+        "duration_ms": int(p.duration_ms) ?? 0,
+        "server_ip": server_ip,
+        "user_agent": ua
+      }
+
   # Suricata EVE (any event type) to netsec.eve: common fields typed, the whole
   # event in payload.
   eve:
     type: remap
-    inputs: [opnsense]
+    inputs: [route_opnsense._unmatched]
     drop_on_abort: true
     source: |
       e = object(parse_json(string!(.message)) ?? null) ?? {}
@@ -309,6 +351,29 @@ sinks:
       type: memory
       max_events: 20000
       when_full: drop_newest
+
+  proxy_ch:
+    type: clickhouse
+    inputs: [proxy]
+    endpoint: http://clickhouse.claude-sessions.svc.cluster.local:8123
+    database: netsec
+    table: proxy
+    auth:
+      strategy: basic
+      user: netsec_writer
+      password: "SECRET[k8s.netsec_writer_password]"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    compression: gzip
+    batch:
+      max_events: 5000
+      timeout_secs: 10
+    # Blocks like eve_ch: both share the syslog-ng connection, which queues on
+    # OPNsense.
+    buffer:
+      type: memory
+      max_events: 20000
+      when_full: block
 
   metrics:
     type: prometheus_exporter
@@ -525,3 +590,54 @@ tests:
             source: |
               assert_eq!(.binary, "/bin/sh")
               assert_eq!(.namespace, "matrix")
+
+  - name: a Squid netsec line is routed to proxy and maps to a proxy row
+    inputs:
+      - insert_at: route_opnsense
+        type: log
+        log_fields:
+          message: '{"netsec_kind":"proxy","ts":1794340225.123,"client_ip":"10.0.20.250","method":"GET","host":"example.com","url":"https://example.com/path/page","sni":"example.com","bump_mode":"bump","status":200,"bytes":1256,"duration_ms":120,"squid_status":"TCP_MISS","server_ip":"2606:4700::6812:1a78","user_agent":"curl/8.5.0"}'
+    outputs:
+      - extract_from: proxy
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.client_ip, "10.0.20.250")
+              assert_eq!(.url, "https://example.com/path/page")
+              assert_eq!(.host, "example.com")
+              assert_eq!(.bump_mode, "bump")
+              assert_eq!(.status, 200)
+              assert_eq!(.bytes, 1256)
+              assert_eq!(.duration_ms, 120)
+              assert_eq!(.server_ip, "2606:4700::6812:1a78")
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "milliseconds"), 1794340225123)
+              assert!(!exists(.message))
+              assert!(!exists(.netsec_kind))
+
+  - name: Squid dashes for missing values become empty strings and the zero address
+    inputs:
+      - insert_at: route_opnsense
+        type: log
+        log_fields:
+          message: '{"netsec_kind":"proxy","ts":1794340225.5,"client_ip":"10.0.20.250","method":"CONNECT","host":"www.apple.com","url":"www.apple.com:443","sni":"www.apple.com","bump_mode":"splice","status":200,"bytes":5120,"duration_ms":300,"squid_status":"TCP_TUNNEL","server_ip":"-","user_agent":"-"}'
+    outputs:
+      - extract_from: proxy
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.server_ip, "::")
+              assert_eq!(.user_agent, "")
+              assert_eq!(.bump_mode, "splice")
+
+  - name: EVE lines still reach the eve transform through the route
+    inputs:
+      - insert_at: route_opnsense
+        type: log
+        log_fields:
+          message: '{"timestamp":"2026-11-10T16:23:06.000001+0200","event_type":"tls","src_ip":"10.0.20.103","dest_ip":"185.199.110.133","proto":"TCP","tls":{"sni":"example.org"}}'
+    outputs:
+      - extract_from: eve
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tls_sni, "example.org")

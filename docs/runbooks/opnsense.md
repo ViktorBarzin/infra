@@ -5,12 +5,12 @@ OPNsense is the edge firewall since the cutover on 2026-11-10 (ADR-0038, plan `d
 | | |
 |---|---|
 | VM | 100 `opnsense` on the Proxmox host, 8 vCPU, 8 GB, 32 GB `local-lvm`, `stacks/opnsense` (Terraform, bpg/proxmox) |
-| Version | OPNsense 26.7.8, plugins os-crowdsec, os-haproxy, os-tailscale, os-node_exporter |
+| Version | OPNsense 26.7.8, plugins os-crowdsec, os-haproxy, os-tailscale, os-node_exporter, os-squid (installed by the playbook's `squid` area) |
 | Addresses | WAN 192.168.1.2 and fdfe:e989:d3ce:1::1, VLAN 10 10.0.10.1 and 2001:470:6f:43d::1, VLAN 20 10.0.20.1 and 2001:470:5a7f:20::1, VLAN 30 10.0.30.1, WireGuard 10.3.2.1, HE tunnel 2001:470:6e:43d::2, tailnet 100.64.0.17 (staging used .250/.2, kept in `addresses.yml`) |
 | GUI | https://opnsense.viktorbarzin.me (Authentik, then OPNsense login as root); on the LAN `https://10.0.10.1:8443` |
 | SSH | `root@10.0.10.1` with the Ansible key (Vault `secret/opnsense ssh_private_key`, `~/.ssh/opnsense/id_ed25519`) or any key in `authorized_keys.yml` (pfSense's, carried over); root's shell is csh, so pipe scripts to `/bin/sh -s` |
 | Serial console | `qm terminal 100` on the Proxmox host (login prompt on serial since the second reboot after the console change) |
-| Secrets | Vault `secret/opnsense`: `root_password`, `api_key`, `api_secret`, `ssh_*`, `pve_api_token`, `crowdsec_bouncer_key`, `tailscale_preauth_key`, `wireguard_tun_wg0_private_key` and `outbound_ssh_private_key` (both pfSense's) |
+| Secrets | Vault `secret/opnsense`: `root_password`, `api_key`, `api_secret`, `ssh_*`, `pve_api_token`, `crowdsec_bouncer_key`, `squid_ca_intermediate_key` (the Squid interception intermediate, phase 5 of the network IDS plan), `tailscale_preauth_key`, `wireguard_tun_wg0_private_key` and `outbound_ssh_private_key` (both pfSense's) |
 | Config source | `playbooks/files/opnsense/*.yml` (converted from pfSense once, now edited by hand), applied by `playbooks/opnsense.yml` |
 
 ## Everyday
@@ -23,7 +23,7 @@ scripts/opnsense-verify --host 10.0.10.1 --profile production
 python3 -m pytest playbooks/filter_plugins/test_opnsense.py -q
 ```
 
-Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, radvd, netflow, syslog, node_exporter, suricata, netsec_eve, haproxy, users, crowdsec, tailscale). After every area the playbook checks that SSH and the API answer, that no DHCP/RA daemon runs and that there is no gif or wg device in staging. The production profile refuses to run without `-e opnsense_allow_production=true`.
+Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, radvd, netflow, syslog, node_exporter, suricata, netsec_eve, squid, haproxy, users, crowdsec, tailscale). After every area the playbook checks that SSH and the API answer, that no DHCP/RA daemon runs and that there is no gif or wg device in staging. The production profile refuses to run without `-e opnsense_allow_production=true`.
 
 Monitoring: Prometheus job `opnsense-node` (10.0.20.1:9100, `ScrapeTargetDown`; `EdgeFirewallVMDown` on qemu/100), Loki `{job="syslog", host="opnsense"}` (filter log, Suricata EVE, system), daily `config.xml` copy by `scripts/daily-backup.sh` to `/mnt/backup/opnsense/`.
 
@@ -53,6 +53,14 @@ Test that detection works: `dig icanhazip.com @10.0.10.1` from the devvm raises 
 A second EVE file, `eve-meta.json` (alert, DNS responses, TLS, HTTP), feeds ClickHouse `netsec.eve`; it comes from a `conf.d` file that restates the stock outputs, area `netsec_eve` (`docs/architecture/network-security-monitoring.md`, phase 2). Suricata allows one `anomaly` logger only, so a second output with `anomaly` stops it from starting.
 
 `ids/service/reconfigure` blocks while Suricata restarts with about 83,000 rules, longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
+
+## Squid (decryption for opted-in machines)
+
+os-squid decrypts HTTP and HTTPS only for the machines in alias `opted_in`, which is empty: the redirects in `nat_port_forwards.yml` match that alias alone, and Squid listens only on loopback (3128, 3129, and a plain 3130). The `squid` area installs the plugin, imports the interception root (certificate only) and intermediate (with its key from Vault) into System > Trust, writes the settings, the JSON access log (`/usr/local/etc/squid/post-auth/netsec-log.conf`), its rotation and syslog-ng tail, and the metrics cron. Opting a machine in, the no-bump list and CA renewal: `docs/runbooks/network-ids.md`, "Decryption (phase 5)".
+
+- The no-bump list is `opn_squid_nobump` in `tasks/opnsense/squid.yml`; apply `--tags squid` after editing it.
+- Squid logs `ERROR: No forward-proxy ports configured` when it has only intercept ports; the loopback port 3130 in `netsec-log.conf` is there for that.
+- Squid's `%"` log code escapes a value but does not add quotes; `netsec-log.conf` wraps each such field in quotes itself.
 
 ## Rebuild from nothing
 

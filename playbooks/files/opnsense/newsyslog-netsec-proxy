@@ -1,0 +1,6 @@
+# Installed as /etc/newsyslog.conf.d/netsec-proxy by playbooks/tasks/opnsense/squid.yml.
+# netsec.json is ours, so os-squid's /etc/newsyslog.conf.d/squid does not rotate
+# it. 20 MB per file, three kept. Squid's daemon logger reopens the file when
+# newsyslog signals squid's master process (USR1 = rotate, logfile_rotate 0).
+# logfilename			[owner:group]	mode	count	size	when	flags	[/pid_file]		[sig_num]
+/var/log/squid/netsec.json	squid:squid	640	3	20480	*	B	/var/run/squid/squid.pid	30

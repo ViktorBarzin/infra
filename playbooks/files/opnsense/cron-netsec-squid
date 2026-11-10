@@ -1,0 +1,2 @@
+# Installed as /usr/local/etc/cron.d/netsec-squid by playbooks/tasks/opnsense/squid.yml.
+*	*	*	*	*	root	/usr/local/bin/netsec-squid-metrics

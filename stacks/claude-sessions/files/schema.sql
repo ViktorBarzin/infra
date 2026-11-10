@@ -309,10 +309,15 @@ CREATE TABLE IF NOT EXISTS netsec.proxy
     client_ip  IPv6,
     method     LowCardinality(String),
     host       String,
-    url        String CODEC(ZSTD(3)),
-    status     UInt16,
-    bytes      UInt64,
-    user_agent String CODEC(ZSTD(3))
+    url          String CODEC(ZSTD(3)),
+    sni          String,
+    bump_mode    LowCardinality(String),
+    status       UInt16,
+    bytes        UInt64,
+    squid_status LowCardinality(String),
+    duration_ms  UInt32,
+    server_ip    IPv6,
+    user_agent   String CODEC(ZSTD(3))
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
@@ -320,7 +325,7 @@ ORDER BY (toStartOfHour(ts), client_ip, ts)
 TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
--- Pod DNS lookups from CoreDNS dnstap (phase 4). 30 days.
+-- Pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP (phase 4). 30 days.
 CREATE TABLE IF NOT EXISTS netsec.dns_queries
 (
     ts        DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),

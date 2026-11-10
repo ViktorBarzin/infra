@@ -89,7 +89,7 @@ graph TB
 
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
-| OPNsense | 26.7.8, Proxmox VM 100 | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for VLANs 10/20/30, Unbound, HAProxy, Suricata IDS, WireGuard hub, Tailscale subnet router |
+| OPNsense | 26.7.8, Proxmox VM 100 | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for VLANs 10/20/30, Unbound, HAProxy, Suricata IDS, Squid (decrypts only machines in alias `opted_in`, empty), WireGuard hub, Tailscale subnet router |
 | phpIPAM | v1.8.3 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Bridge on bond0, uplink to LAN |
 | bond0 | Linux bond (active-backup) | eno1 + eno2 | eno1 primary (AX6000 port 1), eno2 backup (TL-SG105PE P5); ARP monitoring, see "R730 uplink" below |
@@ -544,7 +544,7 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 | **10.0.20.204** (dedicated) | Local | frigate/frigate-rtsp→8554 RTSP (TCP+UDP), 8555 WebRTC/go2rtc (TCP+UDP) |
 | **10.0.20.207** (dedicated) | Local | wireguard/wireguard→51820/UDP |
 | **10.0.20.208** (dedicated) | Cluster | monitoring/alloy-syslog→514 UDP+TCP (syslog from the London Flint; Helm-owned, see `london-site.md`) |
-| **10.0.20.211** (dedicated) | Local | netsec/netsec-opnsense→5140 TCP (raw Suricata EVE lines from OPNsense; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
+| **10.0.20.211** (dedicated) | Local | netsec/netsec-opnsense→5140 TCP (raw Suricata EVE and Squid netsec.json lines from OPNsense; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
 | **10.0.20.212** (dedicated) | Local | crowdsec/crowdsec-c2-mirror→41412 TCP (plain-text list of CrowdSec `c2-block` decisions for OPNsense alias `crowdsec_c2`; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via OPNsense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)

@@ -6716,6 +6716,48 @@ serverFiles:
               lane: security
             annotations:
               summary: "Tetragon has fewer ready agents than nodes scheduled for 15m"
+          - alert: NetsecProxyStale
+            # Phase 5: Squid decrypts only machines in the OPNsense alias opted_in,
+            # so no proxy rows is normal while the alias is empty. With members,
+            # 30 minutes of nothing means Squid, the syslog-ng tail
+            # (netsec-proxy.conf) or the sink is stuck (docs/runbooks/network-ids.md).
+            expr: ((sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="proxy_ch"}[30m])) or on() vector(0)) == 0) and on() (max(netsec_opted_in_members) > 0)
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "Machines are opted in to decryption but no Squid rows reached netsec.proxy for 30m"
+          - alert: SquidInterceptDown
+            # A dead Squid cuts the web off for opted-in machines (their 80/443 is
+            # redirected to it); with the alias empty it affects nobody.
+            expr: (max(netsec_squid_up) == 0) and on() (max(netsec_opted_in_members) > 0)
+            for: 5m
+            labels:
+              severity: critical
+              lane: security
+            annotations:
+              summary: "Squid is down on OPNsense while machines are opted in to decryption"
+          - alert: SquidInterceptCAExpiring
+            # The intermediate that signs Squid's certificates expires a year after
+            # issue; renewal means a new root (runbook "CA renewal").
+            expr: max(netsec_squid_ca_not_after_seconds) - time() < 30 * 86400
+            for: 1h
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "Squid's interception CA expires in {{ $value | humanizeDuration }}"
+          - alert: SquidInterceptMetricsMissing
+            # netsec-squid-metrics (cron on OPNsense) writes the three metrics
+            # above; without them the CA expiry alert cannot fire.
+            expr: absent(netsec_squid_ca_not_after_seconds{job="opnsense-node"})
+            for: 30m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "OPNsense stopped reporting Squid intercept metrics for 30m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

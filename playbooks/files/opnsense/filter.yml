@@ -74,6 +74,39 @@ rules:
     alias: crowdsec_c2
   log: true
   disabled: false
+# Not from pfSense: opted-in machines (alias opted_in, network IDS plan phase 5)
+# may not use QUIC, so browsers fall back to TCP 443, which Squid intercepts
+# (nat_port_forwards.yml). Rejected rather than dropped so they fall back at once.
+- description: Opted-in machines may not use QUIC (VLAN 10)
+  interface: lan
+  floating: false
+  direction: in
+  action: reject
+  quick: true
+  ipprotocol: inet46
+  protocol: udp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  log: false
+  disabled: false
+- description: Opted-in machines may not use QUIC (VLAN 20)
+  interface: opt1
+  floating: false
+  direction: in
+  action: reject
+  quick: true
+  ipprotocol: inet46
+  protocol: udp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  log: false
+  disabled: false
 - pfsense_tracker: '1775639929'
   description: Allow DNS (UDP) from LAN to pfSense
   interface: wan

@@ -14,7 +14,7 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |
 | 4 | Server sshd journals into CrowdSec (simulated), pod DNS queries into `netsec.dns_queries` | live 2026-11-10, simulation until the phase 6 review |
 | 4b | Tetragon process starts and outbound connects into `netsec.tetragon`, watch-only | live 2026-11-10 |
-| 5 | Decryption | planned |
+| 5 | Squid decryption for machines in alias `opted_in` (empty), JSON log into `netsec.proxy` | live 2026-11-10, nobody opted in |
 
 ## Phase 1: store and shipper
 
@@ -35,8 +35,8 @@ flowchart TD
 |---|---|---|---|
 | `flows` | one NetFlow record | 14 days | goflow2 (phase 1) |
 | `eve` | one Suricata EVE event; typed columns plus the whole event in `payload` | alerts 365 days, everything else 30 | OPNsense (phase 2) |
-| `proxy` | one Squid request | 30 days | phase 5 |
-| `dns_queries` | one pod DNS lookup | 30 days | CoreDNS dnstap (phase 4) |
+| `proxy` | one Squid request from an opted-in machine | 30 days | Squid on OPNsense (phase 5) |
+| `dns_queries` | one pod DNS lookup | 30 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
 | `tetragon` | one process start or outbound connect | 30 days | phase 4b |
 
 Addresses are `IPv6` columns; IPv4 is stored mapped (`::ffff:10.0.20.101`).
@@ -302,6 +302,68 @@ flowchart TD
   `TetragonNotReady` (DaemonSet short of ready pods for 15 minutes), lane
   `security`. Process-event alert rules follow a one-week baseline (plan, open
   question 3).
+
+## Phase 5: decryption for opted-in machines
+
+```mermaid
+flowchart TD
+  M["machine in alias opted_in<br/>trusts the interception root"] -->|TCP 80/443| PF["pf rdr on VLAN 10/20<br/>source opted_in only"]
+  PF -->|127.0.0.1 / ::1 3128, 3129| SQ["Squid 7.7 on OPNsense<br/>bump, or splice for no-bump names"]
+  SQ --> NET["the site"]
+  SQ -->|netsec.json| SN["syslog-ng tail"]
+  SN -->|TCP 10.0.20.211:5140| V["netsec Vector<br/>route_opnsense.proxy"]
+  V --> CH[("netsec.proxy")]
+```
+
+- **Who is decrypted**: the members of the OPNsense host alias `opted_in`
+  (`playbooks/files/opnsense/aliases.yml`), empty on 2026-11-10. Eight rdr
+  rules (`nat_port_forwards.yml`: HTTPS and HTTP, IPv4 and IPv6, VLAN 10 and
+  20, no NAT reflection) send only those sources to Squid's loopback intercept
+  ports, and their linked pass rules admit only that. Squid has no listener on
+  any interface (`forward.interfaces` empty); its one plain forward port is
+  127.0.0.1:3130, which Squid needs for error pages. Two reject rules
+  (`filter.yml`) refuse UDP 443 from `opted_in`, so browsers fall back from
+  QUIC to TCP. Every other machine is untouched, and its traffic never reaches
+  Squid.
+- **Squid** (`os-squid` 1.5_1, Squid 7.7; `playbooks/tasks/opnsense/squid.yml`,
+  tag `squid`): transparent mode, SSL bump on, 2 workers, no cache, no Via or
+  X-Forwarded-For header. The no-bump list (`opn_squid_nobump`: Apple, Google,
+  Microsoft Update, messaging, password managers, Bulgarian and UK banks,
+  Revolut, Wise, PayPal, Trading 212, InvestEngine, gov.bg, gov.uk and our own
+  viktorbarzin.me) is spliced by SNI and never decrypted. The plugin has had
+  no named maintainer since December 2025; it still gets fixes.
+- **CA**: a root (EC P-256, valid to 2027-12-15, `pathlen:1`) signed one
+  intermediate (valid to 2027-11-10, `pathlen:0`), and the root's private key
+  was then destroyed, so nothing can mint another intermediate. The firewall
+  holds the intermediate and its key (System > Trust, and therefore
+  `config.xml` and its daily copy, like the box's other secrets); Vault holds
+  the same key as `secret/opnsense squid_ca_intermediate_key` so a rebuild can
+  import it. Opted-in machines trust the root,
+  `playbooks/files/opnsense/netsec-interception-root.pem`. Squid sends the
+  intermediate in the chain (os-squid's `ca.pem` carries the parent CA).
+  Renewal is a new pair (runbook "CA renewal").
+- **Log**: `post-auth/netsec-log.conf` defines one JSON line per request in
+  `/var/log/squid/netsec.json` (Squid's daemon logger, rotated at 20 MB by
+  `newsyslog.conf.d/netsec-proxy`): time, client, method, host, URL with the
+  query string stripped, SNI, bump mode, status, bytes, duration, Squid
+  status, server address, user agent. No Referer, no cookies. The plugin's
+  own access log is off. syslog-ng tails the file to the netsec Vector on the
+  same port as EVE; lines starting `{"netsec_kind":"proxy"` are routed to the
+  `proxy` transform and `netsec.proxy` (30 days).
+- **Metrics and alerts**: cron `netsec-squid-metrics` on OPNsense writes
+  `netsec_squid_ca_not_after_seconds`, `netsec_squid_up` and
+  `netsec_opted_in_members` for node_exporter's textfile collector.
+  `SquidInterceptCAExpiring` (under 30 days), `SquidInterceptDown` and
+  `NetsecProxyStale` (both only while `opted_in` has members) and
+  `SquidInterceptMetricsMissing`, lane `security`.
+- **Not covered**: Squid's own outbound connections leave from the firewall,
+  so the C2 block rules on VLAN 10 and 20 (`crowdsec_c2`) do not apply to an
+  opted-in machine's intercepted 80/443 traffic, and Suricata (VLAN 10 and 20
+  only) sees that traffic only on the client side, encrypted. A machine with
+  SLAAC privacy addresses bypasses Squid over IPv6; opted-in machines need
+  IPv6 off or a fixed address in the alias.
+- **Tested 2026-11-10** from a throwaway network namespace on VLAN 20
+  (runbook, "Testing the whole path"); nothing real was opted in.
 
 ## Open questions
 
