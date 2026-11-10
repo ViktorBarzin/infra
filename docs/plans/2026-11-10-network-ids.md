@@ -1,6 +1,6 @@
 # Network intrusion detection and prevention
 
-Status: approved by Viktor on 2026-11-10; executing. Phase 0 (Suricata tuning) and phase 1 (store and shipper) done; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
+Status: approved by Viktor on 2026-11-10; executing. Phases 0 to 5 done, phase 6 (turning bans on) due after the review from 2026-11-24; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
 
 ## Goal
 
@@ -32,7 +32,7 @@ Detect and store:
 
 ```mermaid
 flowchart TD
-  SRC["Suricata VLAN 10 + 20<br/>Squid, opted_in only<br/>NetFlow via goflow2<br/>CoreDNS dnstap<br/>Tetragon, watch-only"] --> VEC["Vector, ns netsec"]
+  SRC["Suricata VLAN 10 + 20<br/>Squid, opted_in only<br/>NetFlow via goflow2<br/>node-local-dns log<br/>Tetragon, watch-only"] --> VEC["Vector, ns netsec"]
   VEC --> CH[("ClickHouse netsec<br/>homelab netsec sql")]
   CH --> JOB["scheduled query job"]
   JOB --> SL["Alertmanager<br/>Slack #alerts"]
@@ -115,6 +115,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - No-bump list: Apple, Google, Microsoft Update, banking, messaging, password managers.
 - Squid JSON access log without Referer, to Vector, `netsec.proxy` 30d. Query strings stay stripped.
 - The alias starts empty; one throwaway VM proves it.
+- Done 2026-11-10 (as built: `docs/architecture/network-security-monitoring.md`, phase 5; opting in and CA renewal: `docs/runbooks/network-ids.md`). The root's private key was destroyed after it signed the intermediate, so renewal is a new pair, not a re-signing. Deviations: TCP 80 is intercepted too; UDP 443 is rejected rather than dropped so browsers fall back at once; a throwaway network namespace on VLAN 20, not a VM, proved it; the intermediate key also sits in Vault so a rebuild can import it. Not covered: Squid's own outbound traffic bypasses the `crowdsec_c2` block rules, and SLAAC privacy addresses bypass Squid, so opted-in machines need IPv6 off or fixed.
 
 ### 6. Go-live and enforcement
 - Simulation clock starts when phase 3 lands. After one hour of phase 2 data, measure `eve` volume and resize the claude-sessions PVC if the estimate (30-150 MB/day) is off.

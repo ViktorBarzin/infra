@@ -83,6 +83,10 @@ nothing, although the TCP port answers.
 | `CrowdSecOpnsenseAgentSilent` | OPNsense's agent sent nothing to LAPI for 15 minutes | `ssh root@10.0.10.1 'service crowdsec status'`, `/var/log/crowdsec/crowdsec.log` |
 | `CrowdSecOpnsenseBouncerNotPulling` | OPNsense's bouncer pulled nothing for 15 minutes | `service crowdsec_firewall status`, `/var/log/crowdsec/crowdsec-firewall-bouncer.log` |
 | `CrowdSecC2MirrorNotPulling` | the C2 blocklist mirror pulled nothing for 15 minutes | `kubectl logs -n crowdsec deploy/crowdsec-c2-mirror` |
+| `NetsecProxyStale` | machines are opted in but no Squid row reached `proxy` for 30 minutes (silent while the alias is empty) | "Decryption (phase 5)" below |
+| `SquidInterceptDown` | Squid is down while machines are opted in: their web traffic is cut off | `ssh root@10.0.10.1 'configctl proxy restart'`; `/var/log/squid/cache.log`; to stop the impact at once, empty `opted_in` |
+| `SquidInterceptCAExpiring` | the interception intermediate expires within 30 days | "CA renewal" below |
+| `SquidInterceptMetricsMissing` | the cron `netsec-squid-metrics` on OPNsense stopped writing its metrics | `ssh root@10.0.10.1 /usr/local/bin/netsec-squid-metrics`, then `cat /var/tmp/node_exporter/netsec_squid.prom` |
 
 ## Vector config tests
 
@@ -299,3 +303,107 @@ enforcement action to the policy: the stack is watch-only by decision.
 3. Alloy sends: `kubectl -n monitoring logs ds/alloy | grep -i -E 'otlphttp|netsec'`.
 4. Vector writes: `vector_component_sent_events_total{namespace="netsec", component_id="tetragon_ch"}`.
 
+## Decryption (phase 5)
+
+Squid on OPNsense decrypts HTTP and HTTPS for the machines in the firewall
+alias `opted_in` and nobody else. The alias is empty today, so Squid runs but
+no traffic reaches it. Design: architecture doc, "Phase 5".
+
+```sh
+ssh root@10.0.10.1 'pfctl -t opted_in -T show'          # who is opted in (empty = nobody)
+ssh root@10.0.10.1 'pfctl -sn | grep opted_in'           # the redirects (8: 80/443, v4/v6, VLAN 10/20)
+ssh root@10.0.10.1 'tail -n 3 /var/log/squid/netsec.json'
+homelab netsec sql "SELECT ts, toString(client_ip), method, url, sni, bump_mode, status FROM netsec.proxy ORDER BY ts DESC LIMIT 20"
+```
+
+`bump_mode` says what happened to a TLS connection: `bump` was decrypted (the
+`url` row after it has the path), `splice` passed through untouched because
+its name is on the no-bump list (only the SNI is logged). The `CONNECT` row
+with status 0 before each bumped request is Squid's own log of the TLS step.
+Query strings are stripped (`?` stays), and no Referer or cookie is logged.
+
+### Opting a machine in
+
+Only with the agreement of whoever uses the machine: it exposes their logins
+and messages to the firewall.
+
+1. Install the root certificate as trusted on the machine:
+   `playbooks/files/opnsense/netsec-interception-root.pem` (SHA-256
+   `87:1D:C9:B2:A2:02:70:CC:68:F0:34:C3:8C:B4:A4:40:D6:7E:AB:8C:D4:94:45:5F:8C:42:CD:B9:D0:A5:9E:B1`).
+   Windows: `certutil -addstore Root netsec-interception-root.pem`. Debian or
+   Ubuntu: copy to `/usr/local/share/ca-certificates/netsec-root.crt`, then
+   `update-ca-certificates`. Firefox keeps its own store
+   (`security.enterprise_roots.enabled` on Windows and macOS, or import it).
+   Phones: most apps ignore user-installed roots, so only the browser is
+   decrypted, and apps that pin certificates fail unless their domains are
+   on the no-bump list.
+2. Give it a fixed address (Kea reservation in `playbooks/files/opnsense/dhcp.yml`).
+   IPv6 must be off on the machine, or fixed and listed too: SLAAC privacy
+   addresses change and would bypass Squid.
+3. Add the address to `opted_in` in `playbooks/files/opnsense/aliases.yml`
+   and apply `--tags aliases` (production flag as usual).
+4. Check: `echo | openssl s_client -connect example.com:443 -servername example.com | openssl x509 -noout -issuer`
+   on the machine names `Homelab interception intermediate 2026-11`, and rows
+   with its address appear in `netsec.proxy` within a minute.
+
+Opting out is the reverse: remove the address from the alias and apply; the
+machine is untouched from the next connection on. Remove the root
+certificate from it too.
+
+A site that breaks under interception (pinned certificate, client
+certificate): add its domain with a leading dot to `opn_squid_nobump` in
+`playbooks/tasks/opnsense/squid.yml` and apply `--tags squid`.
+
+### CA renewal
+
+The intermediate that signs Squid's certificates is valid until 2027-11-10;
+the root until 2027-12-15. The root's private key was destroyed right after
+it signed the intermediate (2026-11-10), so no key exists that could sign
+another intermediate. Renewal is therefore a new pair, about a month before
+`SquidInterceptCAExpiring` would fire:
+
+```sh
+D=/dev/shm/netsec-ca; umask 077; mkdir -m 700 $D; cd $D     # tmpfs: keys never touch disk
+openssl ecparam -name prime256v1 -genkey -noout -out root.key
+openssl req -new -x509 -key root.key -sha256 -days 400 \
+  -subj "/O=viktorbarzin.me homelab/CN=Homelab interception root YYYY-MM" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:1" -addext "keyUsage=critical,keyCertSign,cRLSign" -out root.crt
+openssl ecparam -name prime256v1 -genkey -noout -out int.key
+openssl req -new -key int.key -subj "/O=viktorbarzin.me homelab/CN=Homelab interception intermediate YYYY-MM" -out int.csr
+printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,digitalSignature,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n' > int.ext
+openssl x509 -req -in int.csr -CA root.crt -CAkey root.key -CAcreateserial -days 365 -sha256 -extfile int.ext -out int.crt
+vault kv patch secret/opnsense squid_ca_intermediate_key=@int.key
+cp root.crt ~/code/infra/playbooks/files/opnsense/netsec-interception-root.pem
+cp int.crt ~/code/infra/playbooks/files/opnsense/netsec-interception-intermediate.pem
+shred -u -z root.key int.key; cd /; rm -rf $D
+```
+
+Then change `opn_squid_root_descr` and `opn_squid_int_descr` in
+`playbooks/tasks/opnsense/squid.yml` to the new month, apply `--tags squid`
+(it imports the new pair and points Squid at it), install the new root on
+every opted-in machine, and delete the old two entries in System > Trust >
+Authorities once nothing uses them. Commit the two certificates.
+
+### No rows in netsec.proxy (`NetsecProxyStale`)
+
+1. Somebody opted in: `ssh root@10.0.10.1 'pfctl -t opted_in -T show'`.
+2. Squid writes: `tail /var/log/squid/netsec.json` on OPNsense. Empty while
+   the machine browses: `pfctl -sn | grep opted_in` and `pfctl -vsr | grep opted_in`
+   (counters on the redirect pass rules).
+3. syslog-ng sends: `syslog-ng-ctl stats | grep netsec_vector_proxy` on OPNsense.
+4. Vector writes: `vector_component_sent_events_total{namespace="netsec", component_id="proxy_ch"}`;
+   a line that is not JSON is dropped by the `proxy` transform.
+
+### Testing the whole path without a real machine
+
+Done on 2026-11-10: a network namespace on the Proxmox host, attached to
+`vmbr1` with VLAN 20 untagged, address 10.0.20.190 (outside the Kea pool and
+the LoadBalancer range), IPv6 off, temporarily added to `opted_in` with
+`POST /api/firewall/alias_util/add/opted_in {"address":"10.0.20.190"}`.
+Result: with the root trusted, `https://example.com/...?token=...` returned
+through Squid and logged the path without the token; without it curl failed
+with `self-signed certificate in certificate chain`; `www.apple.com` came
+back with Apple's own certificate (spliced); plain HTTP was logged; UDP 443
+was refused; the devvm, not opted in, kept seeing the real certificate.
+Afterwards: `alias_util/delete`, `ip netns del netsec-test`, the veth and
+`/etc/netns/netsec-test` removed, the test rows deleted from `netsec.proxy`.

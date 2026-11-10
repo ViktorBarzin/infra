@@ -21,6 +21,15 @@ aliases:
   - http://10.0.20.212:41412/security/blocklist
   updatefreq: 0.0035
   description: CrowdSec C2 blocks (outbound), from the C2 blocklist mirror
+# Not from pfSense: machines whose HTTP and HTTPS the firewall's Squid decrypts
+# (network IDS plan, phase 5; docs/runbooks/network-ids.md "Opting a machine in").
+# Each member must trust playbooks/files/opnsense/netsec-interception-root.pem.
+# List IPv4 and any static IPv6 address; SLAAC privacy addresses cannot be listed,
+# so an opted-in machine needs IPv6 off or a fixed address.
+- name: opted_in
+  type: host
+  content: []
+  description: Opted-in machines, decrypted by Squid (empty = nobody)
 # Not from pfSense: pfSense's automatic outbound NAT covered these static-route
 # networks; OPNsense's covers interface subnets only (nat_outbound.yml).
 - name: wg_site_lans

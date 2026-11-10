@@ -201,6 +201,13 @@
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [netsec_eve]
 
+    - name: Squid intercept for opted-in machines
+      ansible.builtin.import_tasks: tasks/opnsense/squid.yml
+      tags: [squid]
+    - name: Safety checks after Squid
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [squid]
+
     - name: HAProxy
       ansible.builtin.import_tasks: tasks/opnsense/haproxy.yml
       tags: [haproxy]

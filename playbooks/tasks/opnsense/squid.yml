@@ -1,0 +1,286 @@
+# Squid (os-squid): transparent HTTP and HTTPS decryption for the machines in
+# alias opted_in only (network IDS plan phase 5, decision 12; runbook
+# docs/runbooks/network-ids.md "Decryption"). The alias starts empty, so Squid
+# runs but no traffic reaches it: the redirects in nat_port_forwards.yml match
+# opted_in sources only, and Squid has no listener on any interface, only the
+# loopback intercept ports 3128 (HTTP) and 3129 (TLS bump).
+#
+# Signing CA: an intermediate (pathlen 0, one year) under a root whose private
+# key was destroyed after signing (2026-11-10). Root certificate:
+# files/opnsense/netsec-interception-root.pem (what opted-in machines trust);
+# intermediate key: Vault secret/opnsense squid_ca_intermediate_key. Renewal
+# means a new root, see the runbook.
+- name: Check whether os-squid is installed
+  ansible.builtin.command: pkg info -e os-squid
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: opn_squid_pkg
+
+- name: Install os-squid
+  ansible.builtin.command: /usr/local/opnsense/scripts/firmware/install.sh os-squid
+  when: opn_squid_pkg.rc != 0 and not ansible_check_mode
+  changed_when: true
+
+- name: os-squid is installed
+  ansible.builtin.command: pkg info -e os-squid
+  check_mode: false
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Interception CA names and files
+  ansible.builtin.set_fact:
+    opn_squid_root_descr: netsec interception root 2026-11
+    opn_squid_int_descr: netsec interception intermediate 2026-11
+    opn_squid_root_pem: "{{ lookup('file', opn_dir + '/netsec-interception-root.pem') }}"
+    opn_squid_int_pem: "{{ lookup('file', opn_dir + '/netsec-interception-intermediate.pem') }}"
+    # Passed through untouched (spliced, never decrypted): services that pin
+    # certificates or break under interception, banking, messaging, password
+    # managers, government, and our own services. A leading dot covers subdomains.
+    opn_squid_nobump:
+      - .apple.com
+      - .icloud.com
+      - .icloud-content.com
+      - .mzstatic.com
+      - .apple-cloudkit.com
+      - .cdn-apple.com
+      - .google.com
+      - .googleapis.com
+      - .gstatic.com
+      - .1e100.net
+      - .googlevideo.com
+      - .windowsupdate.com
+      - .update.microsoft.com
+      - .delivery.mp.microsoft.com
+      - .whatsapp.com
+      - .whatsapp.net
+      - .signal.org
+      - .telegram.org
+      - .1password.com
+      - .bitwarden.com
+      - .bitwarden.eu
+      - .lastpass.com
+      - .dskbank.bg
+      - .unicreditbulbank.bg
+      - .postbank.bg
+      - .fibank.bg
+      - .ubb.bg
+      - .revolut.com
+      - .wise.com
+      - .paypal.com
+      - .monzo.com
+      - .hsbc.co.uk
+      - .barclays.co.uk
+      - .lloydsbank.co.uk
+      - .natwest.com
+      - .trading212.com
+      - .investengine.com
+      - .gov.bg
+      - .gov.uk
+      - .viktorbarzin.me
+
+- name: Read the certificate authorities
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/trust/ca/search"
+  check_mode: false
+  register: opn_squid_cas
+
+- name: Import the interception root (certificate only, it has no key anywhere)
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/trust/ca/add"
+    method: POST
+    body_format: json
+    body:
+      ca:
+        action: existing
+        descr: "{{ opn_squid_root_descr }}"
+        crt_payload: "{{ opn_squid_root_pem }}"
+  when: >-
+    not ansible_check_mode and
+    opn_squid_cas.json.rows | selectattr('descr', 'equalto', opn_squid_root_descr) | list | length == 0
+  changed_when: true
+
+- name: Import the interception intermediate with its key
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/trust/ca/add"
+    method: POST
+    body_format: json
+    body:
+      ca:
+        action: existing
+        descr: "{{ opn_squid_int_descr }}"
+        crt_payload: "{{ opn_squid_int_pem }}"
+        prv_payload: "{{ lookup('pipe', 'vault kv get -field=squid_ca_intermediate_key secret/opnsense') }}"
+  no_log: true
+  when: >-
+    not ansible_check_mode and
+    opn_squid_cas.json.rows | selectattr('descr', 'equalto', opn_squid_int_descr) | list | length == 0
+  changed_when: true
+
+- name: Read the certificate authorities again
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/trust/ca/search"
+  check_mode: false
+  register: opn_squid_cas
+
+- name: Pick the interception CAs
+  ansible.builtin.set_fact:
+    opn_squid_root: "{{ opn_squid_cas.json.rows | selectattr('descr', 'equalto', opn_squid_root_descr) | first | default({}) }}"
+    opn_squid_int: "{{ opn_squid_cas.json.rows | selectattr('descr', 'equalto', opn_squid_int_descr) | first | default({}) }}"
+
+- name: The intermediate is the one in the repo, has its key and chains to the root
+  ansible.builtin.assert:
+    that:
+      - opn_squid_int.prv | default('') | length > 0
+      - opn_squid_int.caref == opn_squid_root.refid
+      - opn_squid_int.crt_payload | trim == opn_squid_int_pem | trim
+      - opn_squid_root.crt_payload | trim == opn_squid_root_pem | trim
+      - opn_squid_root.prv | default('') | length == 0
+    fail_msg: The interception CAs on the box do not match files/opnsense/netsec-interception-*.pem
+  when: not ansible_check_mode or (opn_squid_int | length > 0)
+
+# Squid settings. No interface listener (forward.interfaces empty): only the
+# redirected opted_in traffic reaches the loopback intercept ports. No cache, no
+# Via or X-Forwarded-For header, the plugin's access log off (our JSON log in
+# squid-netsec-log.conf replaces it). allowedSubnets admits VLAN 10 and 20
+# clients; pf decides which of them get redirected at all.
+- name: Squid settings
+  opnsense_mvc:
+    mode: settings
+    get: proxy/settings/get
+    set: proxy/settings/set
+    item_root: proxy
+    settings:
+      general:
+        enabled: true
+        enablePinger: false
+        useViaHeader: false
+        suppressVersion: true
+        forwardedForHandling: delete
+        logging:
+          enable:
+            accessLog: false
+            storeLog: false
+        cache:
+          local:
+            enabled: false
+            cache_mem: 0
+      forward:
+        interfaces: ""
+        addACLforInterfaceSubnets: false
+        port: 3128
+        sslbumpport: 3129
+        transparentMode: true
+        sslbump: true
+        sslurlonly: false
+        sslcertificate: "{{ opn_squid_int.refid | default('') }}"
+        workers: 2
+        sslnobumpsites: "{{ opn_squid_nobump | join(',') }}"
+        acl:
+          allowedSubnets: 10.0.10.0/24,10.0.20.0/24,2001:470:6f:43d::/64,2001:470:5a7f:20::/64
+  register: opn_squid_settings
+  when: not ansible_check_mode or opn_squid_pkg.rc == 0
+
+- name: Squid JSON access log for netsec
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/squid-netsec-log.conf"
+    dest: /usr/local/etc/squid/post-auth/netsec-log.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  register: opn_squid_logconf
+  when: not ansible_check_mode or opn_squid_pkg.rc == 0
+
+- name: Reconfigure Squid
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/proxy/service/reconfigure"
+    timeout: 300
+    method: POST
+    body_format: json
+    body: {}
+  when: >-
+    not ansible_check_mode and
+    ((opn_squid_settings is changed) or (opn_squid_logconf is changed))
+  changed_when: true
+
+- name: Squid accepts its configuration
+  ansible.builtin.command: squid -k parse -f /usr/local/etc/squid/squid.conf
+  check_mode: false
+  changed_when: false
+  when: not ansible_check_mode or opn_squid_pkg.rc == 0
+
+- name: Squid runs
+  ansible.builtin.command: pgrep -x squid
+  check_mode: false
+  changed_when: false
+  register: opn_squid_pgrep
+  until: opn_squid_pgrep.rc == 0
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode or opn_squid_pkg.rc == 0
+
+- name: Rotation for netsec.json
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/newsyslog-netsec-proxy"
+    dest: /etc/newsyslog.conf.d/netsec-proxy
+    owner: root
+    group: wheel
+    mode: "0644"
+
+- name: Intercept metrics script
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/netsec-squid-metrics.sh"
+    dest: /usr/local/bin/netsec-squid-metrics
+    owner: root
+    group: wheel
+    mode: "0755"
+
+- name: Intercept metrics every minute
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/cron-netsec-squid"
+    dest: /usr/local/etc/cron.d/netsec-squid
+    owner: root
+    group: wheel
+    mode: "0644"
+
+# A bad file here would stop every syslog-ng log path at the next restart, so
+# it is removed again when the syntax check fails (as in netsec_eve.yml).
+- name: syslog-ng tail of netsec.json
+  block:
+    - name: syslog-ng file
+      ansible.builtin.copy:
+        src: "{{ opn_dir }}/syslog-ng-netsec-proxy.conf"
+        dest: /usr/local/etc/syslog-ng.conf.d/netsec-proxy.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      register: opn_squid_syslog_file
+
+    - name: syslog-ng accepts the configuration
+      ansible.builtin.command: syslog-ng --syntax-only -f /usr/local/etc/syslog-ng.conf
+      check_mode: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Restart syslog-ng
+      ansible.builtin.command: configctl syslog restart
+      when: opn_squid_syslog_file is changed and not ansible_check_mode
+      changed_when: true
+  rescue:
+    - name: Remove the file syslog-ng rejected
+      ansible.builtin.file:
+        path: /usr/local/etc/syslog-ng.conf.d/netsec-proxy.conf
+        state: absent
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: syslog-ng rejected netsec-proxy.conf; removed it, syslog-ng was not restarted
+
+- name: syslog-ng runs
+  ansible.builtin.command: pgrep -x syslog-ng
+  check_mode: false
+  changed_when: false
+  register: opn_squid_syslogng
+  until: opn_squid_syslogng.rc == 0
+  retries: 12
+  delay: 5

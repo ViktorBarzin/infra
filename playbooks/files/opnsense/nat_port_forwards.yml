@@ -429,3 +429,128 @@ port_forwards:
   disabled: false
   profile: production
   managed_by: pfsense-k8s-ipv6.yml
+# Not from pfSense: Squid's transparent intercept (network IDS plan phase 5).
+# Only sources in alias opted_in (empty = nobody) are redirected to Squid's
+# loopback listeners: 3129 bumps TLS, 3128 plain HTTP. The linked pass rules
+# admit exactly that redirected traffic. No NAT reflection: the redirect is
+# only for traffic arriving on VLAN 10 or 20. tasks/opnsense/squid.yml.
+- description: Squid intercept HTTPS from opted-in machines (VLAN 10, inet)
+  interface: lan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  target:
+    address: '127.0.0.1'
+  local_port: '3129'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTPS from opted-in machines (VLAN 10, inet6)
+  interface: lan
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  target:
+    address: '::1'
+  local_port: '3129'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTP from opted-in machines (VLAN 10, inet)
+  interface: lan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '80'
+  target:
+    address: '127.0.0.1'
+  local_port: '3128'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTP from opted-in machines (VLAN 10, inet6)
+  interface: lan
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '80'
+  target:
+    address: '::1'
+  local_port: '3128'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTPS from opted-in machines (VLAN 20, inet)
+  interface: opt1
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  target:
+    address: '127.0.0.1'
+  local_port: '3129'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTPS from opted-in machines (VLAN 20, inet6)
+  interface: opt1
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '443'
+  target:
+    address: '::1'
+  local_port: '3129'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTP from opted-in machines (VLAN 20, inet)
+  interface: opt1
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '80'
+  target:
+    address: '127.0.0.1'
+  local_port: '3128'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
+- description: Squid intercept HTTP from opted-in machines (VLAN 20, inet6)
+  interface: opt1
+  ipprotocol: inet6
+  protocol: tcp
+  source:
+    alias: opted_in
+  destination:
+    any: true
+    port: '80'
+  target:
+    address: '::1'
+  local_port: '3128'
+  natreflection: disable
+  associated_rule: linked
+  disabled: false
