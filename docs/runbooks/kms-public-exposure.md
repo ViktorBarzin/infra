@@ -13,7 +13,7 @@ visitor can activate Volume License Microsoft products. The webpage at
   the IPv6 tunnel doesn't forward 1688). Resolves to `10.0.20.202` on the LAN
   (Technitium split-horizon, set via API — `cloudflare_dns_record.vlmcs` in
   `stacks/kms` owns the public A) and to `176.12.22.76` on the internet
-  (Cloudflare → pfSense WAN NAT :1688). Every `slmgr` / `ospp` command on the
+  (Cloudflare → OPNsense WAN NAT :1688). Every `slmgr` / `ospp` command on the
   page points here.
 
 Pointing a client at `kms.viktorbarzin.me:1688` fails from the LAN with "KMS
@@ -26,7 +26,7 @@ how to tune the rate limit, how to revoke if abused.
 
 - **K8s service**: `windows-kms` in namespace `kms`, MetalLB **dedicated**
   LB IP `10.0.20.202:1688`. ETP=Local, so vlmcsd sees real WAN client IPs
-  in its log (pfSense WAN forwards do DNAT-only, no SNAT; ETP=Local skips
+  in its log (OPNsense WAN forwards do DNAT-only, no SNAT; ETP=Local skips
   the kube-proxy SNAT too). Same pattern mailserver used pre-2026-04-19.
   Sharing `10.0.20.200` isn't an option — all 10 services there are
   ETP=Cluster and MetalLB requires a single ETP per shared IP.
@@ -49,20 +49,27 @@ how to tune the rate limit, how to revoke if abused.
   per-pod) with no node affinity. TCP readiness/liveness probes on 1688
   gate Pod Ready on the listener actually being up, so MetalLB only
   advertises `10.0.20.202` from a node where vlmcsd is serving.
-- **pfSense WAN forward**: `WAN TCP/1688 → k8s_kms_lb:1688`
-  (alias = `10.0.20.202`, dedicated to KMS). Description: `KMS public —
-  kms.viktorbarzin.me`. Other forwards using `k8s_shared_lb` (WireGuard,
-  HTTPS, shadowsocks, smtps, etc.) are unaffected.
+- **OPNsense WAN forward**: `WAN TCP/1688 → k8s_kms_lb:1688`
+  (alias = `10.0.20.202`, dedicated to KMS; `aliases.yml`). Description:
+  `KMS public - kms.viktorbarzin.me` in
+  `playbooks/files/opnsense/nat_port_forwards.yml`. It registers no filter
+  rule of its own (`associated_rule: none`); the rule below passes it. Other
+  forwards using `k8s_shared_lb` (WireGuard, HTTPS, shadowsocks, smtps, etc.)
+  are unaffected.
 - **Filter rule** on the WAN interface, TCP/1688 destination
-  `<k8s_kms_lb>`, with state-table per-source caps:
+  `<k8s_kms_lb>`, description `NAT KMS public (rate-limited 10/60, max
+  50/src)` in `playbooks/files/opnsense/filter.yml` (`max_src_conn`,
+  `max_src_conn_rate`, `max_src_conn_rates`), with state-table per-source
+  caps:
   - `max-src-conn 50` — concurrent connections per source IP
   - `max-src-conn-rate 10/60` — 10 new connections per 60 seconds per
     source
   - `overload <virusprot>` flush — sources that exceed either cap get added
-    to pfSense's stock `virusprot` pf table and have their existing states
-    flushed. (`virusprot` is the only table pfSense's filter generator
-    targets for `overload`; see `/etc/inc/filter.inc`. Don't try to point
-    it at a custom table — the schema doesn't expose that knob.)
+    to the stock `virusprot` pf table and have their existing states
+    flushed. OPNsense renders it as `overload <virusprot> flush global`
+    (`pfctl -sr`, 2026-11-10). On pfSense `virusprot` was the only table the
+    filter generator targeted for `overload` (`/etc/inc/filter.inc`), and
+    `filter.yml` has no field for another table either.
 - **Probe filter in slack-notifier**: a bare TCP open/close (no
   Application/Activation block from vlmcsd) is treated as a probe — Uptime
   Kuma's port-type monitor on `windows-kms.kms.svc:1688` and the kubelet
@@ -157,7 +164,7 @@ kubectl logs -n kms -l app=kms-service -c windows-kms --tail=50 -f
 kubectl logs -n kms -l app=kms-service -c windows-kms | grep "Incoming KMS request"
 ```
 
-Source IPs from the WAN are real client IPs (pfSense DNAT-only + ETP=Local
+Source IPs from the WAN are real client IPs (OPNsense DNAT-only + ETP=Local
 preserve them through the chain). LAN clients hitting the LB IP directly
 appear as their own IP. Pod-source probes (Uptime Kuma) appear as a Calico
 pod IP in `10.10.0.0/16`. Kubelet readiness/liveness probes appear as the
@@ -185,10 +192,10 @@ rate(kms_connection_probes_total[5m])
 rate(kms_connection_probes_total{source="external"}[5m])
 ```
 
-### pfSense — virusprot table and filter hits
+### OPNsense: virusprot table and filter hits
 
 ```bash
-# SSH to 10.0.20.1 as root
+# ssh root@10.0.10.1 (root's shell is csh)
 pfctl -t virusprot -T show          # who's currently in the virusprot table
 pfctl -t virusprot -T expire 86400  # boot anyone added more than 24h ago
 pfctl -t virusprot -T flush         # nuke the entire table
@@ -202,20 +209,24 @@ pfctl -ss | grep ':1688 '
 
 ## Tightening or loosening the rate limit
 
-The filter rule is configured via the pfSense web UI
-(`Firewall → Rules → WAN`, look for the `KMS public — kms.viktorbarzin.me`
-rule) under **Advanced Options → "Maximum new connections per source per
-seconds"** and **"Maximum state entries per source"**.
+The caps are fields of the KMS rule in `playbooks/files/opnsense/filter.yml`
+(`max_src_conn`, `max_src_conn_rate` per `max_src_conn_rates` seconds). Edit
+them there, never in the GUI, and apply:
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags filter --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags filter
+```
 
 - **Default**: `max-src-conn 50`, `max-src-conn-rate 10/60`
 - To **tighten** (suspected abuse): drop to `max-src-conn 10`,
   `max-src-conn-rate 3/60`. Flush state and existing virusprot afterwards
-  (`pfctl -k 0.0.0.0/0 -K 0.0.0.0/0` is overkill — just save+apply the
-  rule, pfSense reloads pf and existing virusprot stay blocked).
+  (`pfctl -k 0.0.0.0/0 -K 0.0.0.0/0` is overkill; applying the rule
+  reloads pf, and existing virusprot entries stay blocked).
 - To **loosen** (legitimate users blocked): bump to
   `max-src-conn-rate 30/60`. The `virusprot` table flush still applies on
-  overload; reduce its lifetime via
-  `Firewall → Advanced → State Timeouts` if entries linger.
+  overload; if entries linger, expire them with
+  `pfctl -t virusprot -T expire <seconds>`.
 
 The `overload` table entry survives pf reloads. Running
 `pfctl -t virusprot -T flush` after a tuning change clears the slate.
@@ -224,19 +235,22 @@ The `overload` table entry survives pf reloads. Running
 
 If the activation surface needs to come down (abuse, legal, audit):
 
-1. **pfSense web UI** → `Firewall → NAT → Port Forward` → find
-   `WAN TCP/1688 → k8s_kms_lb` → **delete** (or disable). Apply.
-2. **pfSense web UI** → `Firewall → Rules → WAN` → find
-   `KMS public — kms.viktorbarzin.me` → **delete** (or disable). Apply.
-3. Verify externally: from a phone tether, `nc -zw3 kms.viktorbarzin.me 1688`
+1. In `playbooks/files/opnsense/nat_port_forwards.yml`, set `disabled: true`
+   on `KMS public - kms.viktorbarzin.me` (or delete the entry).
+2. In `playbooks/files/opnsense/filter.yml`, set `disabled: true` on
+   `NAT KMS public (rate-limited 10/60, max 50/src)` (or delete it).
+3. Apply: `ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags nat,filter`
+   (first with `--check --diff`).
+4. Verify externally: from a phone tether, `nc -zw3 kms.viktorbarzin.me 1688`
    should now fail.
 
 The k8s service stays reachable on the LAN
 (`10.0.20.202:1688` directly, and the website at `kms.viktorbarzin.lan`
 via Traefik on `10.0.20.203:443`) — only the WAN port-forward is removed.
 
-To put it back, recreate the NAT rule (target alias `k8s_kms_lb`,
-port `1688`) and the filter rule with the same per-source caps. The alias
+To put it back, re-enable (or restore from git) both entries and run the
+playbook again: the forward targets alias `k8s_kms_lb`, port `1688`, and the
+filter rule carries the per-source caps. The alias
 itself is independent of any forward and persists across delete/restore.
 
 ## Related

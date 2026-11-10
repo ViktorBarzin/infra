@@ -933,7 +933,7 @@ Internal, this repo:
   all-or-nothing bind gotcha and the 29-day silent outage)
 - `docs/architecture/dns.md` (record types, zone budget)
 - `docs/architecture/security.md` (CrowdSec enforcement surfaces since 2026-08-18)
-- `docs/runbooks/mailserver-pfsense-haproxy.md`
+- `docs/runbooks/mailserver-opnsense-haproxy.md`
 - `stacks/traefik/modules/traefik/crowdsec-bouncer-plugin/main.go`
 
 Live cluster measurements were taken read-only on 2026-08-31 with `kubectl get`,

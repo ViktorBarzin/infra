@@ -99,7 +99,7 @@ replaced them:
    the internal split-horizon answers with zero per-host config. No
    DNSSEC complications (zone unsigned), private-IP answers pass, mail's
    non-Traefik record (`→ 10.0.20.1`) verified working. Runbook:
-   `docs/runbooks/pfsense-unbound.md`; on-box backup
+   `docs/runbooks/opnsense-unbound.md`; on-box backup
    `config.xml.bak-2026-06-10-pre-me-forward`.
 2. **CoreDNS pod carve-out** (TF, `stacks/technitium`): a dedicated
    `viktorbarzin.me:53` server block pins forgejo to Traefik's

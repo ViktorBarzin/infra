@@ -277,7 +277,7 @@ broken tunnel. Use `127.0.0.1`.
 
 ## 8. Operations
 
-Runbook: [`docs/runbooks/pfsense-tailscale-subnet-router.md`](../runbooks/pfsense-tailscale-subnet-router.md)
+Runbook: [`docs/runbooks/opnsense-tailscale-subnet-router.md`](../runbooks/opnsense-tailscale-subnet-router.md)
 
 ```bash
 scripts/presence claim infra:pfsense --purpose "tailscale subnet router"

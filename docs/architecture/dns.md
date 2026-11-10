@@ -2,11 +2,11 @@
 
 <!-- showcase: Technitium answers for the internal zone and for recursive lookups, Cloudflare hosts the public zone, and records for new ingresses are created from the Kubernetes API. -->
 
-Last updated: 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
+Last updated: 2026-11-10 (OPNsense replaced pfSense as the edge firewall, ADR-0038: Unbound, Kea and the WAN DNS redirect run on OPNsense on the same addresses). Previously 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview
 
-DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage with zone replication via AXFR every 30 minutes. A **NodeLocal DNSCache** DaemonSet runs on every node and transparently intercepts pod DNS traffic, caching responses locally so pods keep resolving even during CoreDNS, Technitium, or pfSense disruptions.
+DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage with zone replication via AXFR every 30 minutes. A **NodeLocal DNSCache** DaemonSet runs on every node and transparently intercepts pod DNS traffic, caching responses locally so pods keep resolving even during CoreDNS, Technitium, or OPNsense disruptions.
 
 ## Architecture Diagram
 
@@ -29,10 +29,10 @@ graph TB
         TPLINK[TP-Link AP<br/>Dumb AP only]
     end
 
-    subgraph "pfSense (10.0.20.1)"
+    subgraph "OPNsense (10.0.20.1)"
         pf_unbound[Unbound<br/>Resolver<br/>auth-zone AXFR]
         pf_kea[Kea DHCP4<br/>3 subnets, 53 reservations]
-        pf_ddns[Kea DHCP-DDNS<br/>RFC 2136]
+        pf_ddns[Kea DHCP-DDNS<br/>RFC 2136, not running]
     end
 
     subgraph "Kubernetes Cluster"
@@ -63,7 +63,7 @@ graph TB
     CF -->|CNAME to tunnel| CFTunnel
     CF -->|"status A (grey-cloud)"| MX2
     MX2 -->|probes public hostnames<br/>edge-unreachable alerts| CF
-    LAN -->|DNS query UDP 53| pf_unbound
+    LAN -->|DNS query 53 to 192.168.1.2<br/>NAT rdr to Technitium| LB_DNS
     pf_kea -->|lease event| pf_ddns
     pf_ddns -->|A + PTR| LB_DNS
 
@@ -93,10 +93,10 @@ graph TB
 |-----------|----------|---------|---------|
 | Technitium DNS | K8s namespace `technitium` | 14.3.0 | Primary internal DNS + recursive resolver |
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
-| NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
+| NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/OPNsense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
-| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
-| Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease. Not running on pfSense since 2026-07-18 (see "Dynamic updates" below) |
+| OPNsense Unbound | 10.0.20.1 | OPNsense 26.7.8 (Unbound 1.26.2) | DNS resolver on VLAN 10/VLAN 20/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); forwards `viktorbarzin.me` to Technitium; DoT upstream to Cloudflare. Declared in `playbooks/files/opnsense/unbound.yml` |
+| Kea DHCP-DDNS | 10.0.20.1 | OPNsense 26.7.8 | Automatic DNS registration on DHCP lease. Not running on pfSense since 2026-07-18 and not configured on OPNsense (see "Dynamic updates" below) |
 | external-dns | K8s namespace `technitium` | v0.23.0 (chart 1.23.0) | A + TXT ownership records for `*.viktorbarzin.lan` Ingress hosts, over TSIG-signed RFC 2136 (ADR-0033) |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
@@ -107,18 +107,18 @@ graph TB
 | Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, CronJobs (including `technitium-dynamic-updates`), external-dns Helm release, CoreDNS ConfigMap |
 | NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
-| phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
-| pfSense | `stacks/pfsense/` | VM config only (Unbound config is managed out-of-band via pfSense web UI / direct config.xml edits; see `docs/runbooks/pfsense-unbound.md`) |
+| phpIPAM | `stacks/phpipam/` | `phpipam-import` CronJob |
+| OPNsense | `stacks/opnsense/` | VM only. The Unbound configuration is `playbooks/files/opnsense/unbound.yml`, applied by `playbooks/opnsense.yml --tags unbound`; see `docs/runbooks/opnsense.md` |
 
 ## DNS Resolution Paths
 
 ### Zone serial — `viktorbarzin.lan` uses the date scheme, and must keep doing so
 
-pfSense does **not** forward `.lan` to Technitium. Unbound holds its own AXFR
-copy (`auth-zone`, master `10.0.20.201`, `for-downstream: yes`) and answers LAN
-clients from it, refreshing on the zone's SOA refresh (900s). It receives no
-NOTIFY: the zone's NS record is the Technitium **pod name**, so nothing points at
-pfSense.
+OPNsense does **not** forward `.lan` to Technitium. Unbound holds its own AXFR
+copy (`auth-zone`, master `10.0.20.201`, `for-downstream: yes`) and answers VLAN
+clients from it, refreshing on the zone's SOA refresh (900s). It accepts NOTIFY
+from `10.0.20.201` (`allow-notify`) but receives none: the zone's NS record is the
+Technitium **pod name**, so nothing points at the firewall.
 
 That makes the serial load-bearing. A refresh only transfers when the master's
 serial is **higher** than the cached one — a lower serial reads as "nothing new".
@@ -134,8 +134,9 @@ counter can regress if the zone is ever recreated, and the failure is silent.
 **Symptom to recognise:** an old `.lan` name resolves everywhere, a newly added
 one resolves only at `10.0.20.201` and NXDOMAINs elsewhere with a fresh negative
 TTL each time — which looks like negative caching and is not. Compare
-`dig +short @10.0.20.201 viktorbarzin.lan SOA` with the serial pfSense returns;
-a lower number upstream is the signature.
+`dig +short @10.0.20.201 viktorbarzin.lan SOA` with the serial Unbound returns
+(`dig +short @10.0.10.1 viktorbarzin.lan SOA`; `192.168.1.2` reaches Technitium
+through the NAT rdr, not Unbound); a lower number upstream is the signature.
 
 ### K8s Pod → Internal Domain (.viktorbarzin.lan)
 
@@ -156,8 +157,8 @@ The ndots:5 template in CoreDNS short-circuits queries like `www.cloudflare.com.
 Pod → NodeLocal DNSCache (intercepts on kube-dns:10.96.0.10)
   → cache hit: serve locally
   → cache miss: forward to kube-dns-upstream (selects CoreDNS pods directly)
-     → CoreDNS: forward to pfSense (10.0.20.1), fallback 8.8.8.8, 1.1.1.1
-     → pfSense Unbound:
+     → CoreDNS: forward to OPNsense (10.0.20.1), fallback 8.8.8.8, 1.1.1.1
+     → OPNsense Unbound:
         - .viktorbarzin.lan → local auth-zone (AXFR-cached from Technitium)
         - public → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
@@ -165,41 +166,44 @@ Pod → NodeLocal DNSCache (intercepts on kube-dns:10.96.0.10)
 ### LAN Client (192.168.1.x) → Any Domain
 
 ```
-Client gets DNS=192.168.1.2 (pfSense WAN) from DHCP
-  → pfSense Unbound listens on 192.168.1.2:53 directly (no NAT rdr)
-    - .viktorbarzin.lan → auth-zone (AXFR-cached from Technitium 10.0.20.201)
-      Survives full Technitium/K8s outage — auth-zone keeps serving from
-      /var/unbound/viktorbarzin.lan.zone with `fallback-enabled: yes`.
-    - .viktorbarzin.me (non-proxied) and other public → DoT to Cloudflare
-      (1.1.1.1 / 1.0.0.1 on port 853, SNI cloudflare-dns.com)
+Client gets DNS=192.168.1.2 (OPNsense WAN) from DHCP
+  → OPNsense NAT rdr: TCP/UDP 53 to the WAN address → Technitium LB 10.0.20.201
+    (Unbound also listens on 192.168.1.2:53; the rdr takes the query first)
+  → Technitium, which sees the client's own address:
+    - .viktorbarzin.lan → its own zone
+    - non-proxied *.viktorbarzin.me → Split Horizon translation to 10.0.20.203
+    - other public → recursive resolution
 ```
 
-**Trade-off vs. prior NAT rdr**: Split Horizon hairpin translation
-(`176.12.22.76 → 10.0.20.200` for 192.168.1.x clients) was only applied
-when queries reached Technitium via the NAT rdr. With Unbound answering
-on 192.168.1.2:53 directly, non-proxied `*.viktorbarzin.me` queries on the
-192.168.1.x LAN return the public IP, which the TP-Link AP can't hairpin.
-If hairpin is broken on LAN for a given non-proxied service, the fix is
-either (a) switch the service to proxied (via `dns_type = "proxied"`)
-or (b) add a local-data override on pfSense Unbound. The pre-Unbound
-state is documented in the `docs/runbooks/pfsense-unbound.md` rollback
-section.
+Checked 2026-11-10: from the devvm, `192.168.1.2` returned Technitium's current
+`viktorbarzin.lan` serial while Unbound on `10.0.10.1` returned its own copy one
+refresh behind. The rdr is `DNS forward to Technitium (preserve client IP)` in
+`playbooks/files/opnsense/nat_port_forwards.yml`, carried over from pfSense. LAN
+DNS therefore depends on Technitium, and the Unbound auth-zone serves the VLANs.
+
+**History**: from 2026-04-19 (Workstream D) pfSense Unbound answered
+192.168.1.2:53 directly with no rdr, which took the Split Horizon translation
+off the LAN path; the pre-Unbound state and that change are in
+`docs/runbooks/opnsense-unbound.md`. The rdr was back on pfSense before the
+cutover and was ported unchanged.
 
 ### Management VLAN (10.0.10.x) → Any Domain
 
 ```
-Client gets DNS from Kea DHCP → pfSense (10.0.10.1)
-  → pfSense Unbound:
+Client gets DNS from Kea DHCP → OPNsense (10.0.10.1)
+  → OPNsense Unbound:
     - .viktorbarzin.lan → auth-zone (local)
+    - .viktorbarzin.me → forwarded to Technitium 10.0.20.201 (domain override)
     - other → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
 
 ### K8s VLAN (10.0.20.x) → Any Domain
 
 ```
-Client gets DNS from Kea DHCP → pfSense (10.0.20.1)
-  → pfSense Unbound:
+Client gets DNS from Kea DHCP → OPNsense (10.0.20.1)
+  → OPNsense Unbound:
     - .viktorbarzin.lan → auth-zone (local)
+    - .viktorbarzin.me → forwarded to Technitium 10.0.20.201 (domain override)
     - other → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
 
@@ -258,7 +262,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | external-dns | `external-dns` (Terraform `random_id`, `stacks/technitium/modules/technitium/dynamic_updates.tf`) | the primary, via ClusterIP `technitium-primary` | A, AAAA, CNAME, TXT under `*.viktorbarzin.lan` |
 | Kea DHCP-DDNS | `kea-ddns` (Vault `secret/viktor` `kea_ddns_tsig_secret`) | LB 10.0.20.201, so any instance; a replica checks the signature with its own copy of the key and forwards to the primary | ANY under `*.viktorbarzin.lan` and the three Kea reverse zones |
 
-The update ACL is the pfSense addresses (10.0.20.1, 10.0.10.1, 192.168.1.2) plus the pod network 10.10.0.0/16 on the primary (external-dns, and replicas forwarding Kea updates), and the pfSense addresses on the replicas. Key policies exist on the primary only, since Technitium accepts them on primary zones only. Zone options and TSIG keys are per-instance settings that AXFR does not copy, and a replica zone recreated by `technitium-zone-sync` starts at `update=Deny`. The hourly `technitium-dynamic-updates` CronJob therefore sets the full key list and these options on all three instances. When it first ran on 2026-10-14, all three had drifted back to `update=Deny` with no policies, so neither writer could update. Kea itself is also off: `kea-dhcp-ddns` is not running on pfSense, and pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the DDNS settings added by hand on 2026-04-19. Re-enabling it on pfSense is a separate task; the Technitium side accepts its updates again from 2026-10-14.
+The update ACL is the firewall addresses (10.0.20.1, 10.0.10.1, 192.168.1.2, OPNsense's since the cutover) plus the pod network 10.10.0.0/16 on the primary (external-dns, and replicas forwarding Kea updates), and the firewall addresses on the replicas. Key policies exist on the primary only, since Technitium accepts them on primary zones only. Zone options and TSIG keys are per-instance settings that AXFR does not copy, and a replica zone recreated by `technitium-zone-sync` starts at `update=Deny`. The hourly `technitium-dynamic-updates` CronJob therefore sets the full key list and these options on all three instances. When it first ran on 2026-10-14, all three had drifted back to `update=Deny` with no policies, so neither writer could update. Kea itself is also off: pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the DDNS settings added by hand on 2026-04-19, and OPNsense's Kea has no DDNS configured (`playbooks/files/opnsense/dhcp.yml` has none, and `kea-dhcp-ddns` was not running on 2026-11-10). Re-enabling it is a separate task; the Technitium side accepts its updates again from 2026-10-14.
 
 ### Resolver Settings
 
@@ -324,11 +328,11 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 - **Affected**: Non-proxied domains (ha-sofia, immich, headscale, calibre, vaultwarden, etc.) for 192.168.1.x clients
 - **Not affected**: Cloudflare-proxied domains (resolve to Cloudflare edge IPs, no translation needed)
-- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; the `apex-dns` blackbox scrape is the drift canary — a `dns_apex` module asking Technitium for the apex A record every 60s and failing unless the answer is the live LB IP, replacing the `viktorbarzin-apex-probe` CronJob on 2026-08-16). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally — pfSense carries an SNI-routed HAProxy frontend on 443 that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI, which moved to :8443; see `docs/runbooks/mailserver-pfsense-haproxy.md`). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
-  - **devvm**: also covered by a `~viktorbarzin.me → 10.0.20.201` resolved routing domain (predates the pfSense override, provisioned by `setup-devvm.sh`) — redundant-but-harmless belt-and-suspenders.
+- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **OPNsense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`, `domain_overrides` in `playbooks/files/opnsense/unbound.yml`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; the `apex-dns` blackbox scrape is the drift canary — a `dns_apex` module asking Technitium for the apex A record every 60s and failing unless the answer is the live LB IP, replacing the `viktorbarzin-apex-probe` CronJob on 2026-08-16). Every client of OPNsense Unbound, all VLANs and k8s nodes included, therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally: OPNsense carries an SNI-routed HAProxy frontend on 443 (`internal_https_443` in `playbooks/files/opnsense/haproxy.yml`) that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI on :8443; see `docs/runbooks/mailserver-opnsense-haproxy.md`). See `docs/runbooks/opnsense-unbound.md` for the override's history + rollback (written for pfSense; OPNsense operations are in `docs/runbooks/opnsense.md`), and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
+  - **devvm**: also covered by a `~viktorbarzin.me → 10.0.20.201` resolved routing domain (predates the resolver override, provisioned by `setup-devvm.sh`) — redundant-but-harmless belt-and-suspenders.
   - **in-cluster PODS are ordinary internal clients too** (since 2026-06-10 evening): CoreDNS's dedicated `viktorbarzin.me:53` block (in `stacks/technitium`, TF-managed) forwards to the Technitium ClusterIP (`10.96.0.53`, same as the `.lan` block), so pods get the same split-horizon answers as everyone else. This works because on k8s 1.34 **pods CAN reach the ETP=Local Traefik LB IP** — kube-proxy short-circuits in-cluster traffic to LB IPs via the cluster path (verified from pods on three non-Traefik nodes; re-verify after major k8s upgrades — the canary is the uptime-kuma `[External]` fleet going red). forgejo stays pinned to Traefik's **ClusterIP** in the same block so CI pushes survive a Technitium outage. History: the block briefly forwarded to `8.8.8.8/1.1.1.1` (morning of 2026-06-10), which kept pods on public IPs and the broken TP-Link NAT loopback — 27 non-proxied `[External]` uptime-kuma monitors dark (beads code-yh33). Note: in-cluster `[External]` monitors now test DNS+Traefik+service via the internal path for ALL names, including Cloudflare-proxied ones — genuine edge-path fidelity is the job of a true external vantage, not in-cluster probes. **Since 2026-07-08 that vantage is deployed: gatus on mx2** (Oracle Frankfurt, [ADR-0020](../adr/0020-mx2-outage-failover-and-external-vantage.md)) probes the public hostnames from outside, serves `status.viktorbarzin.me`, and fires edge-unreachable Slack alerts — superseding the earlier ha-london aspiration.
-  - **Trade-off**: `viktorbarzin.me` resolution via pfSense now depends on in-cluster Technitium (3 replicas). During a full cluster outage the zone SERVFAILs LAN-wide — acceptable, the services behind it are down anyway; node bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
-  - **Residual nondeterminism**: nodes keep `94.140.14.14` as a secondary resolver (netplan/qm `--nameserver`). If systemd-resolved fails over to it during a pfSense DNS blip, `.me` answers are public again until it switches back — a rare, self-healing window, accepted.
+  - **Trade-off**: `viktorbarzin.me` resolution via OPNsense depends on in-cluster Technitium (3 replicas). During a full cluster outage the zone SERVFAILs LAN-wide — acceptable, the services behind it are down anyway; node bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
+  - **Residual nondeterminism**: nodes keep `94.140.14.14` as a secondary resolver (netplan/qm `--nameserver`). If systemd-resolved fails over to it during an OPNsense DNS blip, `.me` answers are public again until it switches back — a rare, self-healing window, accepted.
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
@@ -387,7 +391,7 @@ viktorbarzin.lan:53 {
 
 **Kyverno ndots injection**: A Kyverno policy injects `ndots:2` on all pods cluster-wide to reduce search domain expansion noise. The template regex is a second layer of defense for any queries that still get expanded.
 
-**Failover behaviour**: With `policy sequential` on the root forward block, CoreDNS tries pfSense first; if `health_check 5s` detects pfSense as down, it fails over to 8.8.8.8 then 1.1.1.1 within ~5s rather than timing out per-query. Combined with `serve_stale`, pods keep resolving cached names for up to 24h even with full upstream failure.
+**Failover behaviour**: With `policy sequential` on the root forward block, CoreDNS tries OPNsense first; if `health_check 5s` detects OPNsense as down, it fails over to 8.8.8.8 then 1.1.1.1 within ~5s rather than timing out per-query. Combined with `serve_stale`, pods keep resolving cached names for up to 24h even with full upstream failure.
 
 ## Cloudflare DNS — External Domains
 
@@ -495,9 +499,9 @@ DDNS scope.
 Devices get automatic DNS registration without manual intervention. See [networking.md § IPAM & DNS Auto-Registration](networking.md#ipam--dns-auto-registration) for the full data flow diagram.
 
 Summary:
-1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
-2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones. Off on the pfSense side since 2026-07-18 (see "Dynamic updates" above), so DHCP names currently reach DNS through phpipam-import only.
-3. **phpipam-import** CronJob (every 30 min, ADR-0032) records every address in phpIPAM from Kea, pfSense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
+1. **Kea DHCP** on OPNsense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
+2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones. Off since 2026-07-18 on pfSense and not configured on OPNsense (see "Dynamic updates" above), so DHCP names currently reach DNS through phpipam-import only.
+3. **phpipam-import** CronJob (every 30 min, ADR-0032) records every address in phpIPAM from Kea, OPNsense ARP (after a ping sweep of the home LAN), the site routers, Kubernetes, WireGuard and Headscale. Names flow into phpIPAM from DHCP and DNS; it publishes to Technitium only the OpenWrt sites' lease names (below) and the names on hand rows (rows whose description does not start with `-- `), marking the records it owns outside the site ranges with the record comment `phpipam`. It never overwrites a record it does not own. `phpipam-pfsense-import`, `phpipam-remote-import` and `phpipam-dns-sync` were replaced by it on 2026-10-13.
 
 ### London devices
 
@@ -506,10 +510,10 @@ Every device that takes a lease from the London Flint (LAN 192.168.8.0/24, guest
 ```mermaid
 flowchart LR
   D[London device] -->|DHCP| F[Flint dnsmasq<br/>leases + curated names]
-  F -->|every 30 min, SSH via pfSense| I[phpipam-import<br/>files/phpipam_import.py]
+  F -->|every 30 min, SSH via OPNsense| I[phpipam-import<br/>files/phpipam_import.py]
   I -->|one row per MAC| P[(phpIPAM<br/>London LAN / London Guest)]
   I -->|A + PTR, changes only| T[Technitium primary<br/>viktorbarzin.lan]
-  T -->|AXFR| R[secondaries, pfSense Unbound]
+  T -->|AXFR| R[secondaries, OPNsense Unbound]
   LC[London client] -->|"*.viktorbarzin.lan"| F
   F -->|forwarded over the tunnel| T
 ```
@@ -632,22 +636,25 @@ Run by hand inside the cluster with `DRY_RUN=1` (prints the post and the metrics
 
 ### LAN Clients Can't Resolve
 
-1. Verify pfSense Unbound is running: `ssh admin@10.0.20.1 "sockstat -l -4 -p 53 | grep unbound"` — expect listeners on `192.168.1.2:53`, `10.0.10.1:53`, `10.0.20.1:53`, `127.0.0.1:53`
-2. Verify the auth-zone is loaded: `ssh admin@10.0.20.1 "unbound-control -c /var/unbound/unbound.conf list_auth_zones"` — expect `viktorbarzin.lan. serial N`
-3. Test from LAN: `dig @192.168.1.2 idrac.viktorbarzin.lan` (should return with `aa` flag)
-4. Test public upstream: `dig @192.168.1.2 example.com +dnssec` (should have `ad` flag — DoT via Cloudflare working)
-5. If auth-zone can't AXFR: check Technitium `viktorbarzin.lan` zone options → `zoneTransferNetworkACL` contains `10.0.20.1, 10.0.10.1, 192.168.1.2`
-6. See `docs/runbooks/pfsense-unbound.md` for full Unbound runbook and rollback instructions
+Queries to `192.168.1.2` reach Technitium through the NAT rdr (see "LAN Client" above), so start with Technitium (the section above), then check the rdr and Unbound on OPNsense:
+
+1. Verify the rdr: `ssh root@10.0.10.1 "pfctl -s nat | grep 'port = domain'"`, expect `rdr on vtnet0 ... -> 10.0.20.201 port 53` for TCP and UDP
+2. Verify OPNsense Unbound is running: `ssh root@10.0.10.1 "sockstat -l -4 -p 53 | grep unbound"`, expect listeners on `192.168.1.2:53`, `10.0.10.1:53`, `10.0.20.1:53`, `127.0.0.1:53`
+3. Verify the auth-zone is loaded: `ssh root@10.0.10.1 "unbound-control -c /var/unbound/unbound.conf list_auth_zones"`, expect `viktorbarzin.lan. serial N`
+4. Test from the LAN: `dig @192.168.1.2 idrac.viktorbarzin.lan` (should return with `aa` flag)
+5. Test Unbound's public upstream: `dig @10.0.10.1 example.com +dnssec` (should have `ad` flag, DoT via Cloudflare working)
+6. If auth-zone can't AXFR: check Technitium `viktorbarzin.lan` zone options → `zoneTransferNetworkACL` contains `10.0.20.1, 10.0.10.1, 192.168.1.2`
+7. See `docs/runbooks/opnsense.md` for OPNsense operations; `docs/runbooks/opnsense-unbound.md` has the pfSense-era Unbound history
 
 ### Hairpin NAT Not Working (LAN → *.viktorbarzin.me Fails)
 
-**Since 2026-06-10 this is largely solved at the resolver**: pfSense Unbound
+**Since 2026-06-10 this is largely solved at the resolver**: OPNsense Unbound
 carries a domain override forwarding the entire `viktorbarzin.me` zone to
-Technitium, so ANY client that queries pfSense (all VLANs + 192.168.1.x
-clients pointed at `192.168.1.2`) gets the internal Traefik answer. If
-hairpin still fails for a client, first check which resolver it actually
-uses — clients on the TP-Link's own DHCP DNS (router/ISP) bypass pfSense
-entirely. Options for those:
+Technitium, and the NAT rdr sends 192.168.1.x clients pointed at `192.168.1.2`
+to Technitium directly, so ANY client that queries the firewall gets the
+internal Traefik answer. If hairpin still fails for a client, first check
+which resolver it actually uses: clients on the TP-Link's own DHCP DNS
+(router/ISP) bypass the firewall entirely. Options for those:
 
 (Historical context: 2026-04-19 Workstream D made Unbound answer LAN
 queries directly, which had removed the Technitium Split Horizon
@@ -655,10 +662,10 @@ post-processing from the LAN path until the 2026-06-10 domain override
 restored internal answers at the zone level.)
 
 1. **Switch service to proxied Cloudflare** (preferred) — set `dns_type = "proxied"` in the `ingress_factory` module call; DNS now resolves to Cloudflare edge, hairpin-independent.
-2. **Add a local-data override on pfSense Unbound** — under `Services → DNS Resolver → Host Overrides`, set `<service>.viktorbarzin.me → 10.0.20.203` (Traefik LB IP). This is equivalent to what Split Horizon did, applied at the resolver.
-3. **Revert to prior NAT rdr + Technitium Split Horizon** — documented in `docs/runbooks/pfsense-unbound.md` rollback section.
+2. **Add a host override on OPNsense Unbound**: an entry in `host_overrides` in `playbooks/files/opnsense/unbound.yml` for `<service>.viktorbarzin.me → 10.0.20.203` (Traefik LB IP), applied with `playbooks/opnsense.yml --tags unbound`. This is equivalent to what Split Horizon does, applied at the resolver.
+3. **Technitium Split Horizon** already applies to clients whose queries reach Technitium, which includes `192.168.1.2` through the NAT rdr; the earlier rdr removal and its rollback are in `docs/runbooks/opnsense-unbound.md`.
 
-K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` queries DO reach Technitium (e.g., from pods that query via CoreDNS → Technitium forwarding for `.viktorbarzin.me` via pfSense). Verify Technitium split-horizon app:
+K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` queries DO reach Technitium (e.g., from pods that query via CoreDNS → Technitium forwarding for `.viktorbarzin.me` via OPNsense). Verify Technitium split-horizon app:
 
 1. Verify Split Horizon app is installed on all instances
 2. Check CronJob status: `kubectl get cronjob -n technitium technitium-split-horizon-sync`
@@ -682,7 +689,7 @@ Common causes:
 ### Adding a New DNS Record
 
 For internal `.viktorbarzin.lan` records:
-0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. Replicas and pfSense's copy follow on their next refresh, up to about 30 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
+0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. Replicas and OPNsense's Unbound copy follow on their next refresh, up to about 30 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
 1. In the phpIPAM web UI (`phpipam.viktorbarzin.me`), set the hostname on the address and give it a description that does not start with `-- ` (that makes it a hand row, which the importer never changes)
 2. Within 30 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
 3. A London, Valchedrym or Mladost 3 device is better named with a static lease on its site router (`ensure_host` in `scripts/london-flint/provision.sh` for London)
@@ -697,8 +704,8 @@ For external `.viktorbarzin.me` records:
 ## Incident History
 
 - **2026-04-14 (SEV1)**: NFS `fsid=0` caused Technitium primary data loss on restart. Fixed by migrating all 3 instances to `proxmox-lvm-encrypted`, adding zone-sync CronJob (30min AXFR). See [post-mortem](../post-mortems/2026-04-14-nfs-fsid0-dns-vault-outage.md).
-- **2026-04-19 (hardening, not outage)**: Workstream D — pfSense Unbound replaces dnsmasq as the pfSense DNS service. Unbound AXFR-slaves `viktorbarzin.lan` from Technitium so LAN-side resolution survives a full K8s outage. WAN NAT rdr `192.168.1.2:53 → 10.0.20.201` removed (Unbound listens on WAN directly). DoT upstream via Cloudflare. See `docs/runbooks/pfsense-unbound.md` and bd `code-k0d`.
-- **2026-04-19 (hardening, not outage)**: Workstream E — Kea DHCP now pushes TWO DNS IPs (internal + AdGuard public fallback `94.140.14.14`) via option 6 to the internal subnets (10.0.10/24, 10.0.20/24); 192.168.1/24 was already dual-IP (served by TP-Link). Kea DHCP-DDNS now TSIG-signs its RFC 2136 updates (key `kea-ddns`, HMAC-SHA256) and the Technitium zones require both source-IP ACL AND TSIG signature. See `docs/runbooks/pfsense-unbound.md` § "Kea DHCP-DDNS TSIG" and bd `code-o6j`.
+- **2026-04-19 (hardening, not outage)**: Workstream D — pfSense Unbound replaces dnsmasq as the pfSense DNS service. Unbound AXFR-slaves `viktorbarzin.lan` from Technitium so LAN-side resolution survives a full K8s outage. WAN NAT rdr `192.168.1.2:53 → 10.0.20.201` removed (Unbound listens on WAN directly). DoT upstream via Cloudflare. See `docs/runbooks/opnsense-unbound.md` and bd `code-k0d`.
+- **2026-04-19 (hardening, not outage)**: Workstream E — Kea DHCP now pushes TWO DNS IPs (internal + AdGuard public fallback `94.140.14.14`) via option 6 to the internal subnets (10.0.10/24, 10.0.20/24); 192.168.1/24 was already dual-IP (served by TP-Link). Kea DHCP-DDNS now TSIG-signs its RFC 2136 updates (key `kea-ddns`, HMAC-SHA256) and the Technitium zones require both source-IP ACL AND TSIG signature. See `docs/runbooks/opnsense-unbound.md` § "Kea DHCP-DDNS TSIG" and bd `code-o6j`.
 
 ## Related
 
@@ -726,7 +733,7 @@ Both halves are needed, and the internal one is easy to miss:
 Without the Technitium record the name resolves publicly and **not at all** on
 the LAN or in the cluster, so every internal client fails to resolve it. Path
 from outside: `git.viktorbarzin.me` -> 176.12.22.76 -> ISP router forward
-`ssh-pfense` (22 -> 192.168.1.2:22) -> pfSense rdr -> `k8s_shared_lb`
+`ssh-pfense` (22 -> 192.168.1.2:22) -> OPNsense rdr -> `k8s_shared_lb`
 (10.0.20.200:22) -> `forgejo-ssh` Service -> forgejo pod :2222.
 
 Forgejo's built-in SSH server is public-key only, so there is no password to

@@ -4,7 +4,7 @@ Last updated: 2026-10-20
 
 The registry VM is an Ubuntu 24.04 VM on the cluster LAN subnet
 `10.0.20.0/24`, with a static netplan config (no DHCP). Because it
-sits on a subnet that only has pfSense as its gateway, its DNS must
+sits on a subnet that only has the OPNsense edge firewall as its gateway, its DNS must
 be statically configured.
 
 **As of Phase 4 of forgejo-registry-consolidation 2026-05-07** the VM
@@ -145,8 +145,8 @@ Link 2 (eth0)
 
 | Field | Value | Purpose |
 |---|---|---|
-| Primary | `10.0.20.1` | pfSense OPT1 interface (dnsmasq forwarder → Technitium LB) — resolves `.viktorbarzin.lan` |
-| Fallback | `94.140.14.14` | AdGuard public DNS — used if pfSense unreachable (e.g., OPT1 flap) |
+| Primary | `10.0.20.1` | OPNsense OPT1 address (Unbound; `.viktorbarzin.lan` from its auth-zone copy of Technitium, see `opnsense-unbound.md`); resolves `.viktorbarzin.lan` |
+| Fallback | `94.140.14.14` | AdGuard public DNS, used if the firewall is unreachable, e.g. an OPT1 flap |
 | Search | `viktorbarzin.lan` | Unqualified names resolve against the internal zone |
 
 ### Why this matters for the registry

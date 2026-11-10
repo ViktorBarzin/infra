@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-14
-- Related: `docs/architecture/dns.md` ("Dynamic updates", "Adding a New DNS Record"), `docs/runbooks/pfsense-unbound.md` ("Kea DHCP-DDNS TSIG"), `stacks/technitium/modules/technitium/{external_dns.tf,dynamic_updates.tf}`
+- Related: `docs/architecture/dns.md` ("Dynamic updates", "Adding a New DNS Record"), `docs/runbooks/opnsense-unbound.md` ("Kea DHCP-DDNS TSIG"), `stacks/technitium/modules/technitium/{external_dns.tf,dynamic_updates.tf}`
 
 ## Context
 

@@ -10,7 +10,7 @@
  * here also avoids adding a pinned external collection dependency.
  *
  * Design: docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md
- * Runbook: docs/runbooks/pfsense-tailscale-subnet-router.md
+ * Runbook: docs/runbooks/opnsense-tailscale-subnet-router.md
  *
  * Idempotent: computes desired state, applies only differences, and reports
  * what it changed as JSON on stdout ({"changed": bool, "changes": [...]}).

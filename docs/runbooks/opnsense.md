@@ -25,7 +25,7 @@ python3 -m pytest playbooks/filter_plugins/test_opnsense.py -q
 
 Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, radvd, netflow, syslog, node_exporter, suricata, haproxy, users, crowdsec, tailscale). After every area the playbook checks that SSH and the API answer, that no DHCP/RA daemon runs and that there is no gif or wg device in staging. The production profile refuses to run without `-e opnsense_allow_production=true`.
 
-Monitoring: Prometheus job `opnsense-node` (10.0.20.2:9100, `ScrapeTargetDown`), Loki `{job="syslog", host="opnsense"}` (filter log, Suricata EVE, system), daily `config.xml` copy by `scripts/daily-backup.sh` to `/mnt/backup/opnsense/`.
+Monitoring: Prometheus job `opnsense-node` (10.0.20.1:9100, `ScrapeTargetDown`; `EdgeFirewallVMDown` on qemu/100), Loki `{job="syslog", host="opnsense"}` (filter log, Suricata EVE, system), daily `config.xml` copy by `scripts/daily-backup.sh` to `/mnt/backup/opnsense/`.
 
 ## Rebuild from nothing
 
@@ -92,3 +92,9 @@ Most kept working because OPNsense took pfSense's addresses and MACs: CoreDNS's 
 - mx2 (Oracle) cannot test inbound SMTP: Oracle blocks outbound port 25. Use mladost3-openwrt: `(sleep 4; echo QUIT) | nc 176.12.22.76 25`.
 - The CrowdSec plugin's own rules block in and out on every interface; they are off, and `filter.yml` blocks the bouncer's tables inbound on WAN and the HE tunnel only, with the bouncer limited to `origins: [crowdsec, CAPI, cscli]` (`tasks/opnsense/crowdsec.yml`).
 - HTTP/3 from outside: mx2's curl has no HTTP/3 and the box has no pip, so download the `aioquic` wheels on the devvm (`pip download --only-binary=:all: --platform manylinux2014_x86_64 --python-version 3.12 aioquic`), unzip them into `/tmp` on mx2 and run a small aioquic client with `PYTHONPATH`. Traefik's access log shows `RequestProtocol` HTTP/3.0.
+
+## CrowdSec agent, Homepage, Tailscale node
+
+- **CrowdSec agent** (since 2026-11-10): the box's agent reads the filter, GUI and audit logs (collections `firewallservices/pf`, `crowdsecurity/opnsense`, `opnsense-gui`, `sshd`) and pushes alerts to the cluster LAPI at 10.0.20.210:8080 as machine `opnsense-edge` (Vault `secret/opnsense crowdsec_agent_password`). Its local LAPI stays off. The LAPI's centralized allowlist `trusted-infra` (`stacks/crowdsec`, `lapi_allowlist`) keeps our own IPv4 and IPv6 space from being banned by any agent; the CronJob `crowdsec-lapi-reconcile` (every 15 minutes) keeps it and the machine in step. Only block lines feed the port-scan scenario; pass lines show as unparsed in `cscli metrics`, which is expected. Check: `ssh root@10.0.10.1 'cscli lapi status'`, and on the LAPI `cscli alerts list -m opnsense-edge`.
+- **Homepage widget**: user `homepage` (privileges Diagnostics: System Activity and Reporting: Traffic only, scrambled password) with one API key in Vault `secret/opnsense homepage_api_key` / `homepage_api_secret`, created by `--tags users`; the key gets 403 on everything else. To rotate: delete the key in the GUI, remove the two Vault fields, rerun `--tags users`, then let CI apply `stacks/reverse-proxy`.
+- **Tailscale node 399** has key expiry disabled (`headscale nodes expire -i 399 --disable`), like pfSense's node had. Without `--disable` that command expires the node at once.

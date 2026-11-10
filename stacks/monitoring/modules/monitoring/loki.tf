@@ -190,7 +190,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
 # apply, commit 7fe2d978) was cancel-raced by a newer push and SIGKILLed
 # mid-helm-upgrade: the live resources applied but the state write + helm-release
 # finalize were lost (the stuck pending-upgrade release was manually unstuck).
-# See docs/runbooks/pfsense-egress.md and the Woodpecker cancel-previous gotcha.
+# See docs/runbooks/opnsense-egress.md and the Woodpecker cancel-previous gotcha.
 resource "kubernetes_config_map" "loki_alert_rules" {
   metadata {
     name      = "loki-alert-rules"
@@ -745,7 +745,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # under WANGatewayUnreachable/InternetEgressDown so it doesn't
           # double-page. Calibrated against live Loki 2026-06-28: steady-state
           # ~2 matches/6h; the incident ran 37-85 matches/5m, so >20/5m sits
-          # well clear of noise. Runbook: docs/runbooks/pfsense-egress.md.
+          # well clear of noise. Runbook: docs/runbooks/opnsense-egress.md.
           name = "Egress / pfSense"
           rules = [
             {
@@ -755,7 +755,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               labels = { severity = "warning", subsystem = "pfsense", notify = "page" }
               annotations = {
                 summary     = "cloudflared losing edge/tunnel connections (>20/5m) — possible egress/WAN trouble"
-                description = "cloudflared edge-connection failures exceeded 20 in 5m (steady-state ~2/6h; the 2026-06-27 egress incident hit 37-85/5m). Pods usually stay Running so the replica-health alert is blind — this log canary is the early egress signal. Correlate with InternetEgressDown / EgressOnlyDivergence. Runbook: docs/runbooks/pfsense-egress.md."
+                description = "cloudflared edge-connection failures exceeded 20 in 5m (steady-state ~2/6h; the 2026-06-27 egress incident hit 37-85/5m). Pods usually stay Running so the replica-health alert is blind — this log canary is the early egress signal. Correlate with InternetEgressDown / EgressOnlyDivergence. Runbook: docs/runbooks/opnsense-egress.md."
               }
             },
           ]

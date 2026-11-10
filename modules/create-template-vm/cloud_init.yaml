@@ -99,7 +99,7 @@ runcmd:
   # Technitium (10.0.20.201), whose split-horizon zone CNAMEs every ingress
   # host to the apex A record that auto-tracks the live Traefik LB IP — so
   # every VLAN client, nodes included, gets internal answers with zero
-  # per-host config (2026-06-10; runbook: docs/runbooks/pfsense-unbound.md).
+  # per-host config (2026-06-10; runbook: docs/runbooks/opnsense-unbound.md).
   # Pods get the SAME internal answers via CoreDNS's `viktorbarzin.me:53`
   # block forwarding to the Technitium ClusterIP (+ forgejo pinned to
   # Traefik's ClusterIP for Technitium-outage resilience; stacks/technitium.

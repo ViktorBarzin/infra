@@ -102,7 +102,7 @@ options:
 - **Forgejo OOM-loop** — bump memory request+limit in
   `infra/stacks/forgejo/main.tf` and apply.
 - **Forgejo unreachable due to network** — check Traefik, MetalLB,
-  pfSense.
+  the OPNsense edge firewall.
 
 Once Forgejo is back, run `build-ci-image.yml` manually so the
 tarball regenerates with the latest commit.

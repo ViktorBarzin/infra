@@ -3,7 +3,7 @@
 <!-- showcase: A second site in a London flat: one GL.iNet router with a main and a guest network, joined to the Sofia network over a WireGuard tunnel. -->
 
 The London flat's network: one GL.iNet Flint 2 (GL-MT6000) router, a main LAN
-and a guest network, and a WireGuard tunnel to pfSense in Sofia. The router is
+and a guest network, and a WireGuard tunnel to OPNsense in Sofia. The router is
 configured through its own web UIs (GL admin UI and LuCI, under
 SYSTEM → Advanced Settings), not from this repo. This page lists the intended
 settings and why, so the live router can be compared against it.
@@ -18,7 +18,7 @@ flowchart TD
   isp[Hyperoptic wall port] --> flint[Flint 2]
   flint --> lan["Main LAN 192.168.8.0/24<br/>5G-Tower Admin, 2.4G-Tower"]
   flint --> guest["Guest 192.168.9.0/24<br/>5G-Tower"]
-  flint -->|"WireGuard, 10.3.2.6"| pf[pfSense, Sofia]
+  flint -->|"WireGuard, 10.3.2.6"| pf[OPNsense, Sofia]
 ```
 
 Since 2026-10-02 the Flint takes the Hyperoptic line directly; the Hyperoptic

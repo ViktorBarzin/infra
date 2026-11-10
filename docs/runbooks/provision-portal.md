@@ -170,16 +170,17 @@ The Mac is pinned to `192.168.8.168` by a static lease on the London Flint, and
 `stacks/technitium/.../static_records.tf`.
 
 > This name was invisible LAN-wide when it was first added, and the cause is worth
-> knowing: pfSense does not forward `.lan` — it holds its own AXFR copy
-> (`auth-zone`, master `10.0.20.201`, served `for-downstream`). That copy had been
+> knowing: the edge firewall does not forward `.lan`; it holds its own AXFR copy
+> (`auth-zone`, primary `10.0.20.201`, served `for-downstream`). That was pfSense
+> at the time; OPNsense, the firewall since 2026-11-10, keeps the same auth-zone. That copy had been
 > frozen since 2026-08-04 because the primary's SOA serial had regressed below the
 > cached one (`64125` vs `684609`), which reads as "nothing new", so Unbound never
 > re-transferred and every `.lan` record created after that date was missing.
 > Fixed 2026-08-15 by switching the zone to Technitium's **date-based serial
 > scheme** (`useSerialDateScheme`), which jumped the serial to `2026081500` and
 > cannot regress the same way. If new `.lan` names ever stop appearing again,
-> compare `dig +short @10.0.20.201 viktorbarzin.lan SOA` with what pfSense
-> returns — a lower serial upstream is the signature.
+> compare `dig +short @10.0.20.201 viktorbarzin.lan SOA` with what the firewall
+> (`10.0.20.1`) returns: a lower serial upstream is the signature.
 
 The reservation lists **two** MACs — the hardware Wi-Fi address
 `84:2f:57:39:9a:d9` and the macOS *private* Wi-Fi address currently in use. That

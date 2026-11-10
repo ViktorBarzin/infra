@@ -1105,7 +1105,7 @@ resource "kubernetes_deployment" "book_search" {
             # mid-respawn). The ClusterIP service points to pod port 587
             # (stock submission daemon, no PROXY) and is rock-solid (12/12
             # in <31ms vs 6/12 timeouts on the public path).
-            # See docs/runbooks/mailserver-pfsense-haproxy.md.
+            # See docs/runbooks/mailserver-opnsense-haproxy.md.
             value = "mailserver.mailserver.svc.cluster.local"
           }
           env {

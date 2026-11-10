@@ -89,7 +89,7 @@ lvchange -an pve/$LV_NAME
 # 8c. Repeat for all critical PVCs (prioritize: vaultwarden, vault, redis, nextcloud)
 ```
 
-**Note on pfSense restore**: If pfSense needs restoration, restore `config.xml` from `/mnt/backup/pfsense/<week>/config.xml` via web UI, or full filesystem tar for custom scripts.
+**Note on edge firewall restore**: the firewall is OPNsense (VM 100) since 2026-11-10. Its configuration is code in `playbooks/files/opnsense/`; rebuild it with `docs/runbooks/opnsense.md` (Rebuild from nothing). The daily `config.xml` copy is `/mnt/backup/opnsense/config-YYYYMMDD.xml`. Never start the stopped pfSense VM 101 directly; going back to pfSense is `/root/opnsense-cutover/opnsense-cutover rollback` on the Proxmox host.
 
 **Note on PVE config restore**: If custom scripts/timers are lost, restore from `/mnt/backup/pve-config/` (daily-backup, offsite-sync-backup, lvm-pvc-snapshot scripts + timers).
 

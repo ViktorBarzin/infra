@@ -34,7 +34,7 @@ host_overrides: []
 domain_overrides:
 - domain: viktorbarzin.me
   server: 10.0.20.201
-  description: 'Forward zone to Technitium internal split-horizon (serves live Traefik IP for ingress hosts; no per-client DNS config needed). 2026-06-10, runbook: pfsense-unbound.md'
+  description: 'Forward zone to Technitium internal split-horizon (serves live Traefik IP for ingress hosts; no per-client DNS config needed). 2026-06-10, runbook: opnsense-unbound.md'
   forward_tls_upstream: false
 private_domains:
 - viktorbarzin.me

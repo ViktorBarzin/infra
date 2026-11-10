@@ -292,7 +292,7 @@ while all of it holds, and two of them are human-dependent by design.
 
 | Link | Held by | Fails when |
 |---|---|---|
-| WireGuard Sofia to London | pfSense and the Flint | tunnel down |
+| WireGuard Sofia to London | OPNsense and the Flint | tunnel down |
 | Phone on Wi-Fi | Flint static lease `iphone-london`, `ios-rig-wifi.service` | it changes SSID or its private address, or drops off Wi-Fi |
 | Phone on the charger | the charger | unplugged; `doctor` reports `power` |
 | Mac reachable (building and re-signing only) | Flint static lease, Technitium record | it leaves the London LAN |

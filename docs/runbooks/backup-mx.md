@@ -16,16 +16,17 @@ homelab is unreachable, senders fall to mx2, which accepts and queues mail up to
 outages ≤ 30 days.
 
 ```
-sender ─MX─┬─ pri 1  mail.viktorbarzin.me → pfSense HAProxy → mailserver pod
+sender ─MX─┬─ pri 1  mail.viktorbarzin.me → OPNsense HAProxy → mailserver pod
            └─ pri 20 mx2.viktorbarzin.me (Oracle VM)
                        │ accepts + queues (≤30d)
                        └ drains: postfix → WireGuard tunnel → 10.0.20.1:25 (HAProxy) → primary
 ```
 
-- **Drain rides WireGuard, not the WAN.** mx2 is a road-warrior peer on pfSense
-  `tun_wg0` (tunnel IP `10.3.2.10`); the drain to `10.0.20.1:25` is
-  UDP-encapsulated to `:51821`, so Oracle's tenancy-wide egress-25 block never
-  applies and no new WAN mail port exists. Drain TLS is `none` (redundant inside
+- **Drain rides WireGuard, not the WAN.** mx2 is a road-warrior peer on the
+  OPNsense WireGuard hub `wg0` (tunnel IP `10.3.2.10`; pfSense's `tun_wg0`
+  before 2026-11-10); the drain to `10.0.20.1:25` is UDP-encapsulated to
+  `:51821`, so Oracle's tenancy-wide egress-25 block never applies and no new
+  WAN mail port exists. Drain TLS is `none` (redundant inside
   the encrypted tunnel; opportunistic STARTTLS to the IP literal fails the
   handshake anyway).
 - **Reserved public IP** `92.5.132.215` — stable across stop/start; four controls
@@ -49,7 +50,7 @@ sender ─MX─┬─ pri 1  mail.viktorbarzin.me → pfSense HAProxy → mailse
 |-----|-----|
 | `oci_api_private_key`, `oci_api_key_fingerprint`, `oci_user_ocid`, `oci_tenancy_ocid` | OCI Terraform provider + `oci` CLI |
 | `backup_mx_ssh_private_key` / `_public_key` | break-glass SSH (key at `~/.ssh/backup-mx`) |
-| `backup_mx_wg_private_key` / `_public_key` | WireGuard drain tunnel (pubkey is in the pfSense peer) |
+| `backup_mx_wg_private_key` / `_public_key` | WireGuard drain tunnel (pubkey is in the firewall's WireGuard peer, `playbooks/files/opnsense/wireguard.yml`) |
 | `backup_mx_headscale_preauth` | tailnet enrollment — **reusable + ephemeral**, so rebuilds need no re-mint |
 | Slack webhook — in **`secret/platform`** | gatus edge-unreachable alerts (ADR-0020) — **baked into the gatus config at provision**; mx2 never reads Vault at runtime (unreachable mid-outage), so rotation = re-converge/rebuild |
 
@@ -57,7 +58,7 @@ sender ─MX─┬─ pri 1  mail.viktorbarzin.me → pfSense HAProxy → mailse
 
 The VM is pure cattle: `stacks/backup-mx/` (OCI resources) + `cloud-init.yaml.tftpl`
 (the entire machine) + Vault-held identity. **One command rebuilds it**, and the
-pfSense peer + primary exemption never need re-touching (they key on the
+firewall's WireGuard peer + primary exemption never need re-touching (they key on the
 Vault-stable WG identity / tunnel IP):
 
 ```sh
@@ -84,33 +85,42 @@ Full teardown: `../../scripts/tg destroy` on `backup-mx`, then remove the
 Cloudflare state that keys on mx2 in `stacks/cloudflared` — `backup_mx_a`,
 `backup_mx_mx`, and since ADR-0020 the `status` A record (the status page dies
 with the VM) plus the failover Worker's error-page source (the Worker then
-degrades to its inline-HTML fallback) — and the pfSense peer
-(`wg set tun_wg0 peer jxwL9ZmO… remove` + delete from `/usr/local/etc/wireguard/tun_wg0.conf`).
+degrades to its inline-HTML fallback), and the firewall's WireGuard peer
+(delete the `backup-mx (Oracle mx2, ADR-0019)` entry from
+`playbooks/files/opnsense/wireguard.yml`, then run the OPNsense playbook with
+`--tags wireguard`; the task prunes peers that are not in the YAML).
 
-## The pfSense side (WireGuard peer)
+## The firewall side (WireGuard peer)
 
-mx2 is a proper WireGuard **package peer** on pfSense `tun_wg0` — stored in
-config.xml under `installedpackages/wireguard/peers`, exactly like the
-London/Sofia site peers. The WireGuard package regenerates
-`/usr/local/etc/wireguard/tun_wg0.conf` from config.xml on every boot, so mx2
-**survives reboots and config restores natively** — no boot hook needed.
-
-Add / verify it via **Services > WireGuard > Peers** (tunnel `tun_wg0`, public
-key `jxwL9ZmO…`, Allowed IPs `10.3.2.10/32`, then Apply), or reproduce on the CLI
-(idempotent, applies in place without blipping the site peers):
+mx2 is a peer on the OPNsense WireGuard instance (device `wg0`, interface
+`opt2`, `10.3.2.1/24`, port `51821`, pfSense's key), declared in
+`playbooks/files/opnsense/wireguard.yml` as `backup-mx (Oracle mx2, ADR-0019)`
+with public key `jxwL9ZmO…` and allowed IP `10.3.2.10/32`, like the London,
+Valchedrym and Mladost 3 site peers. It is part of OPNsense's `config.xml`,
+which generates `/usr/local/etc/wireguard/wg0.conf`, so mx2 **survives reboots
+and config restores**: no boot hook needed. Never add it in the GUI; edit the
+YAML and apply:
 
 ```sh
-scp scripts/pfsense-backup-mx-wg.sh admin@10.0.20.1:/tmp/ && ssh admin@10.0.20.1 'sh /tmp/pfsense-backup-mx-wg.sh'
+cd ~/code/infra
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags wireguard --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags wireguard
 ```
 
-No firewall rule needed — `opt2` (tun_wg0) already has an any→any allow. Verify:
-`ssh admin@10.0.20.1 'wg show tun_wg0 peers | wc -l'` → **3** (valchedrym, london, mx2).
+No extra firewall rule needed: `filter.yml` has an any→any pass on the
+`WireGuard` interfaces. Verify:
+`ssh root@10.0.10.1 'wg show wg0 peers | wc -l'` → **4** (valchedrym, london,
+mx2, mladost3; checked 2026-11-10).
+
+On pfSense (before the 2026-11-10 cutover) mx2 was a WireGuard package peer on
+`tun_wg0`, added through Services > WireGuard > Peers or
+`scripts/pfsense-backup-mx-wg.sh`; neither applies to OPNsense.
 
 > **History (2026-07-18):** mx2 had been added only as a *hand/live* peer (not a
 > package peer), so the pfSense reboot during the Sofia power outage regenerated
 > `tun_wg0.conf` without it and broke the drain (`connect to 10.0.20.1:25:
 > Connection timed out`; ~16 emails deferred on mx2 — held, not lost). Fixed by
-> promoting mx2 to a proper package peer (above); an interim boot-recovery
+> promoting mx2 to a proper pfSense package peer; an interim boot-recovery
 > `shellcmd` workaround was added then removed once the package peer was in place.
 > See the [post-mortem](../post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md).
 
@@ -128,14 +138,14 @@ No firewall rule needed — `opt2` (tun_wg0) already has an any→any allow. Ver
   timer); port 80 stays open.
 - **Verify the drain path** (from mx2): `python3 -c "import smtplib;s=smtplib.SMTP('10.0.20.1',25);print(s.ehlo(),s.mail('t@gmail.com'),s.rcpt('spam@viktorbarzin.me'));s.quit()"` → expect RCPT `250`.
 - **Drain stuck with `connect to 10.0.20.1[10.0.20.1]:25: Connection timed out`**:
-  mx2's WG peer is missing from `tun_wg0`. Diagnose — on mx2:
+  mx2's WG peer is missing from the firewall's `wg0`. Diagnose on mx2:
   `sudo wg show wg0 latest-handshakes` is stale (hours) and `ping -c2 10.0.20.1`
-  fails; on pfSense: `wg show tun_wg0 peers | grep -c jxwL9Zm` = `0` (and check
-  `grep -c jxwL9Zm /cf/conf/config.xml` — if `0`, mx2 was dropped from the package
-  config). **Fix**: re-add mx2 as a WG **package peer** — Services > WireGuard >
-  Peers, or re-run `scripts/pfsense-backup-mx-wg.sh` — then `sudo postqueue -f` on
-  mx2. As a package peer it is regenerated into the conf on every boot, so this
-  should not recur.
+  fails; on OPNsense (`ssh root@10.0.10.1`): `wg show wg0 peers | grep -c jxwL9Zm`
+  = `0` (and check `grep -c jxwL9Zm /conf/config.xml`; if `0`, mx2 was dropped
+  from the config). **Fix**: check the peer is still in
+  `playbooks/files/opnsense/wireguard.yml` and re-run the playbook with
+  `--tags wireguard`, then `sudo postqueue -f` on mx2. As part of `config.xml` it
+  is regenerated into `wg0.conf` on every boot, so this should not recur.
 - **VM hung, ports accept TCP but nothing answers** (seen 2026-09-26, 15:34 to
   16:29 UTC). SSH times out during the banner exchange, the status page never
   responds, and node-exporter and the Oracle Cloud Agent stop reporting in the

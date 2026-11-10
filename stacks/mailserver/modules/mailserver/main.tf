@@ -1031,7 +1031,7 @@ resource "kubernetes_service" "mailserver_proxy" {
     # data path (30125-30128 → 2525/4465/5587/10993) still gets PROXY v2 for
     # real client IP visibility — only the healthcheck path is split off.
     # See infra/scripts/pfsense-haproxy-bootstrap.php (`check port` directive)
-    # and docs/runbooks/mailserver-pfsense-haproxy.md.
+    # and docs/runbooks/mailserver-opnsense-haproxy.md.
     port {
       name        = "smtp-check"
       protocol    = "TCP"

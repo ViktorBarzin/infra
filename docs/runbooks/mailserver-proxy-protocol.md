@@ -7,7 +7,11 @@ Last updated: 2026-04-18 (original research). **Outcome implemented 2026-04-19 â
 > This doc describes the research that led to the Phase-6 rollout. **Option C
 > (pfSense HAProxy + PROXY v2)** was chosen and is now live. Operational
 > state, cutover history, bootstrap, and rollback procedures live in
-> [`mailserver-pfsense-haproxy.md`](mailserver-pfsense-haproxy.md).
+> [`mailserver-opnsense-haproxy.md`](mailserver-opnsense-haproxy.md).
+>
+> Since the 2026-11-10 cutover the same HAProxy setup runs on OPNsense
+> (`os-haproxy`, `playbooks/files/opnsense/haproxy.yml`). The research below
+> names pfSense because it was the firewall at the time.
 >
 > This file is retained as a decision record â€” it explains *why* Option A
 > (pod-pinning via nodeSelector) was rejected mid-session in favour of

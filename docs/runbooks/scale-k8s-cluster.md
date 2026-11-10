@@ -28,7 +28,7 @@ The cluster has 6 capacity dimensions. The one that bites first depends on workl
 
 4. **GPU concentration** — Tesla T4 is passthrough-only on node1. Frigate ML / Immich ML / Whisper / Piper / llama-cpp all schedule there via `nvidia.com/gpu.present` label. Cannot be spread without provisioning a second GPU node.
 
-5. **PVE host memory** — total PVE RAM 320 GiB. K8s VMs claim 240 GiB; TrueNAS / pfsense / Windows VMs claim ~80 GiB more. Adding a 32-GiB worker requires verifying PVE has the headroom (`free -h`).
+5. **PVE host memory**: total PVE RAM 320 GiB. K8s VMs claim 240 GiB; TrueNAS / OPNsense / Windows VMs claim ~80 GiB more. Adding a 32-GiB worker requires verifying PVE has the headroom (`free -h`).
 
 6. **Per-stack Terraform state** — adding/removing nodes does NOT live in any single Terragrunt stack today. VMs are created via `scripts/provision-k8s-worker` (which calls `qm clone`). They are *not* managed declaratively in TF. Consequence: removal is a manual `kubectl delete node` + `qm stop` + `qm destroy`, not `tg destroy`.
 

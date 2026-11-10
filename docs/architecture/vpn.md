@@ -1,8 +1,19 @@
 # VPN & Remote Access Architecture
 
-<!-- showcase: Remote access goes through Headscale, a self-hosted Tailscale control server, with pfSense advertising the home networks to the tailnet. WireGuard links the sites. -->
+<!-- showcase: Remote access goes through Headscale, a self-hosted Tailscale control server, with OPNsense advertising the home networks to the tailnet. WireGuard links the sites. -->
 
-Last updated: 2026-04-10
+Last updated: 2026-11-10
+
+> **Amendment (2026-11-10): OPNsense replaced pfSense as the edge firewall** (ADR-0038).
+> It took over pfSense's addresses, MACs and WireGuard key, so the hub address
+> `10.3.2.1`, port 51821 and every peer config are unchanged. The Tailscale subnet
+> router is now OPNsense: Headscale node 399 `opnsense`, `tag:infra`, `100.64.0.17`,
+> with the same seven routes and the exit node (plugin os-tailscale, interface
+> `tailscale0` assigned as opt5, `accept_dns` and `accept_routes` off). pfSense's node
+> 10 (`100.64.0.9`) is offline. The WireGuard hub and the Tailscale node are declared in
+> `playbooks/files/opnsense/wireguard.yml` and `tailscale.yml`, applied by
+> `playbooks/opnsense.yml`; operations in [`docs/runbooks/opnsense.md`](../runbooks/opnsense.md).
+> The 2026-08-03 amendment below describes the pfSense node as it was.
 
 > **Amendment (2026-08-03) — pfSense is now a real Tailscale subnet router.**
 > The body below claims Headscale clients already have "full access to the
@@ -29,7 +40,7 @@ Last updated: 2026-04-10
 >
 > Design + verification evidence + honest limitations:
 > [`docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md`](../plans/2026-08-03-pfsense-tailscale-subnet-router-design.md).
-> Operations: [`docs/runbooks/pfsense-tailscale-subnet-router.md`](../runbooks/pfsense-tailscale-subnet-router.md).
+> Operations: [`docs/runbooks/opnsense-tailscale-subnet-router.md`](../runbooks/opnsense-tailscale-subnet-router.md).
 > Reproducer: `playbooks/pfsense-tailscale.yml`. Watchdog: CronJob
 > `tailscale-subnet-router-probe` (every 6 h) → `TailscaleSubnetRouterDown` /
 > `TailscaleLanUnreachableViaTailnet` / `TailscaleSubnetRouterProbeStale`.
@@ -76,7 +87,7 @@ Remote access to the homelab is provided through a hybrid VPN architecture: Wire
 ```mermaid
 graph TB
     subgraph "Site-to-Site WireGuard (Hub-and-Spoke)"
-        Sofia[Sofia pfSense<br/>10.3.2.1<br/>tun_wg0]
+        Sofia[Sofia OPNsense<br/>10.3.2.1<br/>tun_wg0]
         London[London GL-iNet Flint 2<br/>10.3.2.6<br/>192.168.8.0/24]
         Valchedrym[Valchedrym OpenWRT<br/>10.3.2.5<br/>192.168.0.0/24]
         Mladost3[Mladost 3 OpenWRT<br/>10.3.2.7<br/>192.168.3.0/24]
@@ -147,7 +158,7 @@ sequenceDiagram
 
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
-| WireGuard | Built-in (pfSense/OpenWRT) | Sofia (pfSense), London (GL-iNet Flint 2), Valchedrym (OpenWRT) | Site-to-site encrypted tunnels (hub-and-spoke) |
+| WireGuard | Built-in (OPNsense/OpenWRT) | Sofia (OPNsense), London (GL-iNet Flint 2), Valchedrym (OpenWRT) | Site-to-site encrypted tunnels (hub-and-spoke) |
 | Headscale | v0.23.x (container) | K8s (headscale.viktorbarzin.me) | Tailscale control server, mesh coordinator |
 | Tailscale | Client v1.x | User devices | Mesh VPN client |
 | Authentik | OIDC provider | K8s | SSO authentication for Headscale |
@@ -159,15 +170,15 @@ sequenceDiagram
 
 ### WireGuard Site-to-Site
 
-Four physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries all peers on the `10.3.2.0/24` tunnel subnet:
+Four physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard instance (`tun_wg0`, device `wg0`) on OPNsense carries all peers on the `10.3.2.0/24` tunnel subnet:
 
-- **Sofia** (hub): `10.3.2.1` — pfSense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
+- **Sofia** (hub): `10.3.2.1`, OPNsense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
 - **London** (spoke): `10.3.2.6` — GL-iNet Flint 2 (GL-MT6000), LAN `192.168.8.0/24`, guest `192.168.9.0/24`
 - **Valchedrym** (spoke): `10.3.2.5` — OpenWRT router, LAN `192.168.0.0/24`
 - **Mladost 3** (spoke, since 2026-10): `10.3.2.7` — OpenWRT router (TP-Link TL-WDR4300 v1), LAN `192.168.3.0/24`
-- **mx2 / backup MX** (road-warrior peer, since 2026-07-08): `10.3.2.10/32` — the Oracle Always-Free backup-MX relay (ADR-0019). Not a site: no LAN behind it; its side allows only `10.0.20.1/32`. The tunnel exists solely so mx2 can drain queued mail to the mailserver HAProxy (Oracle blocks egress TCP 25; the drain is UDP-encapsulated to pfSense `:51821`). Peer reproducer: `scripts/pfsense-backup-mx-wg.sh` (pfSense WireGuard is hand-configured kernel `wg` via `/usr/local/etc/wireguard/tun_wg0.conf`, not the package). Runbook: [`backup-mx.md`](../runbooks/backup-mx.md).
+- **mx2 / backup MX** (road-warrior peer, since 2026-07-08): `10.3.2.10/32` — the Oracle Always-Free backup-MX relay (ADR-0019). Not a site: no LAN behind it; its side allows only `10.0.20.1/32`. The tunnel exists solely so mx2 can drain queued mail to the mailserver HAProxy (Oracle blocks egress TCP 25; the drain is UDP-encapsulated to OPNsense `:51821`). The peer is declared in `playbooks/files/opnsense/wireguard.yml`; on pfSense its reproducer was `scripts/pfsense-backup-mx-wg.sh`, against a hand-configured kernel `wg` in `/usr/local/etc/wireguard/tun_wg0.conf`. Runbook: [`backup-mx.md`](../runbooks/backup-mx.md).
 
-Routes are configured as static routes on pfSense. London, Valchedrym and Mladost 3 route Sofia-bound traffic through their WireGuard tunnels. Traffic between spokes transits through Sofia (no direct tunnels).
+Routes are configured as static routes on OPNsense (`playbooks/files/opnsense/routes.yml`). London, Valchedrym and Mladost 3 route Sofia-bound traffic through their WireGuard tunnels. Traffic between spokes transits through Sofia (no direct tunnels).
 
 **Use cases**:
 - Replication of Vault data between Sofia and London
@@ -237,7 +248,7 @@ everything. Full policy: `stacks/headscale/acl.hujson`.
 `dns.nameservers.split`, added 2026-08-31). Without it a tailnet client resolves
 `.me` publicly, and public DNS answers every non-Cloudflare-proxied host with our
 own WAN address — so the client has to hairpin off `176.12.22.76`, which NAT
-loopback on the CPE in front of pfSense does not reliably do. The failure is
+loopback on the CPE in front of OPNsense does not reliably do. The failure is
 partial and reads as flakiness: Cloudflare-proxied hosts keep working because
 their traffic genuinely leaves and returns, while directly-served ones hang.
 
@@ -262,7 +273,7 @@ Removing a user from the group revokes VPN access on next re-authentication (eve
 | Headscale | `stacks/headscale/` | Deployment, Service, Ingress, ConfigMap |
 | AdGuard | `stacks/adguard/` | Deployment, Service, PVC |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
-| pfSense (Sofia) | Not in Terraform | WireGuard tunnel configs (managed via pfSense UI) |
+| OPNsense (Sofia) | `stacks/opnsense/` (VM only) | WireGuard hub and Tailscale node in `playbooks/files/opnsense/wireguard.yml` and `tailscale.yml`, applied by `playbooks/opnsense.yml` |
 
 ### Headscale Configuration
 
@@ -323,36 +334,36 @@ dns_config:
 
 **Custom rules**: Block telemetry for Windows, macOS, and smart TVs.
 
-### WireGuard (pfSense — Hub)
+### WireGuard (OPNsense hub)
 
-**Single interface `tun_wg0`** (OPT2) with four peers (three sites + mx2) on subnet `10.3.2.0/24`. Listens on `*:51821` for both IPv4 and IPv6. IPv6 access via HE tunnel (`gif0`, `2001:470:6e:43d::2`) requires a `pass in` pf rule on the `HE_IPv6` interface (interface name `opt3` in config.xml):
+**Single instance `tun_wg0`** (device `wg0`, assigned as OPT2) with four peers (three sites + mx2) on subnet `10.3.2.0/24`. Listens on `*:51821` for both IPv4 and IPv6. IPv6 access via HE tunnel (`gif0`, `2001:470:6e:43d::2`) requires a `pass in` pf rule on the `HE_IPv6` interface (`opt3`), which `filter.yml` has as `IPv6 WireGuard site-to-site`. All four peers have a 25 s keepalive on the hub side and no configured endpoint there; they dial in.
 
 **Peer: London Flint 2**:
 - WireGuard IP: `10.3.2.6`
 - Remote endpoint: `vpn.viktorbarzin.me:51821` (A=176.12.22.76 only; its AAAA was removed on 2026-07-09 in `5da30b90`, so the peer connects over IPv4)
 - Allowed IPs: `192.168.8.0/24, 192.168.9.0/24, 192.168.10.0/24, 10.3.2.6/32`
-- Keepalive: 25 seconds (configured on London side)
+- Keepalive: 25 seconds (both sides)
 
 **Peer: Valchedrym**:
 - WireGuard IP: `10.3.2.5`
-- Remote endpoint: `85.130.41.28:51820`
+- Remote endpoint: none configured on the hub, so the router dials in. `wireguard.yml` has none, and neither had pfSense's config.xml, although this page listed `85.130.41.28:51820`.
 - Allowed IPs: `10.3.2.5/32, 192.168.0.0/24`
-- Keepalive: none (should be added)
+- Keepalive: 25 seconds on the hub side
 
-**Peer: Mladost 3** (added 2026-10-03, reproducer `scripts/pfsense-mladost3-wg.sh`):
+**Peer: Mladost 3** (added 2026-10-03 with `scripts/pfsense-mladost3-wg.sh` on pfSense):
 - WireGuard IP: `10.3.2.7`
-- Remote endpoint: none on the pfSense side. The router dials `vpn.viktorbarzin.me:51821`, so Mladost's own address can change freely and no DDNS or port forward is needed there.
+- Remote endpoint: none on the hub side. The router dials `vpn.viktorbarzin.me:51821`, so Mladost's own address can change freely and no DDNS or port forward is needed there.
 - Allowed IPs: `10.3.2.7/32, 192.168.3.0/24`
 - Keepalive: 25 seconds (both sides)
 
-**Static routes on pfSense**:
+**Static routes on OPNsense** (`routes.yml`):
 - `192.168.0.0/24` → gateway `valchedrym` (10.3.2.5)
 - `192.168.3.0/24` → gateway `mladost3` (10.3.2.7)
 - `192.168.8.0/24` → gateway `london_flint_2` (10.3.2.6)
 - `192.168.9.0/24` → gateway `london_flint_2` (10.3.2.6)
 - `192.168.10.0/24` → gateway `london_flint_2` (10.3.2.6)
 
-**Note**: WireGuard on pfSense is NOT managed by Terraform — configured via pfSense UI/shell.
+**Note**: WireGuard on OPNsense is not in Terraform. The instance and peers are in `playbooks/files/opnsense/wireguard.yml`, applied by `playbooks/opnsense.yml` with the private key from Vault (`secret/opnsense` `wireguard_tun_wg0_private_key`, pfSense's key).
 
 ### WireGuard (London — GL-iNet Flint 2)
 
@@ -380,8 +391,8 @@ dns_config:
 - WireGuard IP: `10.3.2.7`, interface `wg0`, peer `vpn.viktorbarzin.me:51821`, keepalive 25s
 - Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.8.0/24, 192.168.9.0/24` with `route_allowed_ips=1`. The site's own `192.168.3.0/24` stays out of this list, because routing it into the tunnel cuts the router off from its own LAN (the 2026-04-12 Valchedrym fix). Internet traffic stays on the local ISP.
 - LAN: `192.168.3.0/24`, router `192.168.3.1`. WAN: DHCP with the previous D-Link's MAC `00:18:F3:68:52:92` cloned.
-- Firewall: `lan → vpn` and `vpn → lan` forwarding, `vpn` zone masquerades (Sofia LAN hosts default-route to the TP-Link, which routes 10/8 back to pfSense but not 192.168.3.0/24). SSH (key only) and LuCI answer on the LAN and tunnel addresses for `10.0.0.0/8` sources. Since 2026-10-05 SSH is also open on the public address 77.85.22.145 to any source (firewall rule `mladost3-ssh-wan`, IPv4, key only; Viktor's choice over a Sofia + mx2 allowlist) as the way in when the tunnel is down: `ssh root@77.85.22.145`, or `ssh -J ubuntu@92.5.132.215 root@77.85.22.145` when Sofia's own internet is down (mx2 needs `-i ~/.ssh/backup-mx`). LuCI and everything else stay closed on the WAN.
-- banIP 1.0.1 (OpenWrt's nftables ban tool, chosen over fail2ban because Python would take most of the router's ~46 MB spare RAM) guards the WAN: it watches logread for dropbear `Exit before auth from` and LuCI `failed login`, bans an address after 3 hits for 24 h (`ban_logcount=3`, `ban_nftexpiry=24h`), and loads the firehol level 1 blocklist (~3,900 entries). Never banned (`/etc/banip/banip.allowlist`): 10.0.0.0/8, 192.168.0.0/16, Sofia WAN 176.12.22.76, mx2 92.5.132.215 and the router's own address (`ban_autoallowuplink=ip`, not the whole ISP /21). Its events reach Loki as `{job="syslog", host="mladost3-openwrt"} |= "banIP"`. Unban: `nft delete element inet banIP blocklistv4 { <ip> }`, or LuCI → Services → banIP. Verified 2026-10-05: four failed logins from mx2 (before it was allowlisted) banned it within 4 s while key login from Sofia kept working. The address is ISP DHCP and has not changed so far; if it does, pfSense's peer endpoint shows the new one once the tunnel is back. uhttpd serves plain HTTP on :80 with `redirect_https=0`, so the reverse-proxy ingress can reach it.
+- Firewall: `lan → vpn` and `vpn → lan` forwarding, `vpn` zone masquerades (Sofia LAN hosts default-route to the TP-Link, which routes 10/8 back to OPNsense but not 192.168.3.0/24). SSH (key only) and LuCI answer on the LAN and tunnel addresses for `10.0.0.0/8` sources. Since 2026-10-05 SSH is also open on the public address 77.85.22.145 to any source (firewall rule `mladost3-ssh-wan`, IPv4, key only; Viktor's choice over a Sofia + mx2 allowlist) as the way in when the tunnel is down: `ssh root@77.85.22.145`, or `ssh -J ubuntu@92.5.132.215 root@77.85.22.145` when Sofia's own internet is down (mx2 needs `-i ~/.ssh/backup-mx`). LuCI and everything else stay closed on the WAN.
+- banIP 1.0.1 (OpenWrt's nftables ban tool, chosen over fail2ban because Python would take most of the router's ~46 MB spare RAM) guards the WAN: it watches logread for dropbear `Exit before auth from` and LuCI `failed login`, bans an address after 3 hits for 24 h (`ban_logcount=3`, `ban_nftexpiry=24h`), and loads the firehol level 1 blocklist (~3,900 entries). Never banned (`/etc/banip/banip.allowlist`): 10.0.0.0/8, 192.168.0.0/16, Sofia WAN 176.12.22.76, mx2 92.5.132.215 and the router's own address (`ban_autoallowuplink=ip`, not the whole ISP /21). Its events reach Loki as `{job="syslog", host="mladost3-openwrt"} |= "banIP"`. Unban: `nft delete element inet banIP blocklistv4 { <ip> }`, or LuCI → Services → banIP. Verified 2026-10-05: four failed logins from mx2 (before it was allowlisted) banned it within 4 s while key login from Sofia kept working. The address is ISP DHCP and has not changed so far; if it does, the hub's peer endpoint shows the new one once the tunnel is back. uhttpd serves plain HTTP on :80 with `redirect_https=0`, so the reverse-proxy ingress can reach it.
 - DNS: dnsmasq forwards to `9.9.9.9` / `8.8.4.4`, with `rebind_domain viktorbarzin.me` so internal names (A = 10.0.20.203) resolve, as on Valchedrym.
 - Names: `mladost3.viktorbarzin.lan` = 10.3.2.7, `mladost3-openwrt.viktorbarzin.lan` = 192.168.3.1 (PTR in `3.168.192.in-addr.arpa`), all declared in `stacks/technitium/modules/technitium/static_records.tf`. LuCI is public at `mladost3.viktorbarzin.me` behind Authentik.
 - Hostname `mladost3-openwrt`, the same name it carries in DNS, Loki, Prometheus and Uptime Kuma. It doubles as a residential external vantage for testing the homelab from outside (public 77.85.22.145, BTC/Vivacom AS8866): [`../runbooks/external-vantages.md`](../runbooks/external-vantages.md).
@@ -400,7 +411,7 @@ dns_config:
 ### Vault Secrets
 
 - Headscale OIDC client secret: `secret/headscale/oidc_client_secret`
-- Site WireGuard keys live in `secret/viktor`: `mladost3_wg_private_key` / `mladost3_wg_public_key`, and `backup_mx_wg_*` for mx2. No London or Valchedrym router keys were found in Vault on 2026-10-03. An earlier version of this doc named `secret/pfsense/wg_privkey_*`, a path that does not exist.
+- Site WireGuard keys live in `secret/viktor`: `mladost3_wg_private_key` / `mladost3_wg_public_key`, and `backup_mx_wg_*` for mx2. No London or Valchedrym router keys were found in Vault on 2026-10-03. An earlier version of this doc named `secret/pfsense/wg_privkey_*`, a path that does not exist. The hub's private key is `wireguard_tun_wg0_private_key` in `secret/opnsense`.
 
 ## Decisions & Rationale
 
@@ -508,19 +519,19 @@ dns_config:
 
 ### VPN Client Can't Reach K8s Services
 
-**Symptoms**: Can `ping 10.0.20.1` (pfSense), but `curl https://immich.viktorbarzin.me` times out.
+**Symptoms**: Can `ping 10.0.20.1` (OPNsense), but `curl https://immich.viktorbarzin.me` times out.
 
 **Diagnosis**: Check connectivity at each layer:
 1. **DNS**: Does `nslookup immich.viktorbarzin.me` return correct IP?
 2. **Routing**: Can client reach MetalLB IP? `ping <loadbalancer-ip>`
-3. **Firewall**: Is pfSense blocking traffic from VPN subnet?
+3. **Firewall**: Is OPNsense blocking traffic from VPN subnet?
 
 **Common causes**:
 1. **Split DNS working too well**: Client resolves to Cloudflare IP instead of internal LAN IP. Expected for proxied domains — use direct domain (e.g., `immich-direct.viktorbarzin.me`).
 2. **ACL policy**: Headscale ACL blocks client from accessing certain subnets.
-3. **pfSense NAT rule missing**: Traffic from VPN subnet not routed to VLAN 20.
+3. **OPNsense NAT rule missing**: Traffic from VPN subnet not routed to VLAN 20.
 
-**Fix**: For proxied domains, use non-proxied DNS names. Check Headscale ACL policy. Verify pfSense NAT rules.
+**Fix**: For proxied domains, use non-proxied DNS names. Check Headscale ACL policy. Verify OPNsense NAT rules (`playbooks/files/opnsense/nat_outbound.yml`).
 
 ### DERP Relay Returns 502 Bad Gateway
 
@@ -539,11 +550,11 @@ dns_config:
 
 **Symptoms**: Can't reach services in London from Sofia. `ping 192.168.8.1` fails.
 
-**Diagnosis**: Check pfSense WireGuard status via `pfsense.py wireguard` or Dashboard → VPN → WireGuard → Status
+**Diagnosis**: Check the hub's WireGuard status: `ssh root@10.0.10.1 wg show wg0` lists each peer's endpoint, latest handshake and transfer. See `docs/runbooks/opnsense.md` for OPNsense access.
 
 **Common causes**:
 1. **AllowedIPs parse error on GL-iNet**: If `wg show wgclient1` shows no peers and interface is DOWN with `qdisc noop`, check `/etc/config/wireguard` peer config. AllowedIPs must be a single comma-separated entry, not multiple `list` entries (see London section above).
-2. **IPv6 endpoint resolution** (does not apply today): `vpn.viktorbarzin.me` has had no AAAA record since 2026-07-09, so peers resolve IPv4 only. If an AAAA is added back, the pfSense `HE_IPv6` (gif0) interface needs a `pass in` rule for UDP 51821.
+2. **IPv6 endpoint resolution** (does not apply today): `vpn.viktorbarzin.me` has had no AAAA record since 2026-07-09, so peers resolve IPv4 only. If an AAAA is added back, OPNsense's `HE_IPv6` (gif0) interface already has the `pass in` rule for UDP 51821 (`IPv6 WireGuard site-to-site` in `filter.yml`).
 3. **Keepalive packets dropped**: Firewall or ISP blocking UDP 51821.
 4. **Public IP changed**: Dynamic IP on remote site changed, config still has old IP.
 5. **GL-iNet policy routing lost**: After firewall reload, check if `TUNNEL10_ROUTE_POLICY` and `LOCAL_POLICY` mangle rules exist. If not, run `/etc/init.d/firewall restart` and check `/etc/firewall.user` execution.
