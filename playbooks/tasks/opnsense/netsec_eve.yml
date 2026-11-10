@@ -46,7 +46,8 @@
     dest: /usr/local/etc/suricata/conf.d/netsec-outputs.yaml
     owner: root
     group: wheel
-    mode: "0600"
+    # An IDS reconfigure sets conf.d files to 0700; matching it keeps --check a no-op.
+    mode: "0700"
   register: opn_netsec_suricata_file
 
 - name: Rotation for eve-meta.json
