@@ -29,13 +29,22 @@ resource "kubernetes_config_map" "redfish-config" {
         # from THIS exporter directly, so `sensors` MUST stay enabled.
         # events (SEL empty on this box), processors (cpu count via SNMP),
         # manager, extra -> left disabled (default false) to trim the walk.
-        all: false
-        system: true
-        sensors: true
-        power: true
-        storage: true
-        network: true
-        memory: true
+        # v3.0.0 (2026-11-10) nests each group as <group>: {enabled: ...};
+        # the flat 2.x form makes 3.x exit at start (rails revert 2026-11-07).
+        all:
+          enabled: false
+        system:
+          enabled: true
+        sensors:
+          enabled: true
+        power:
+          enabled: true
+        storage:
+          enabled: true
+        network:
+          enabled: true
+        memory:
+          enabled: true
     EOF
   }
 }
@@ -81,7 +90,7 @@ resource "kubernetes_deployment" "idrac-redfish" {
           # resource again since v2.6.0 (commit 46f4ff6), which retires the
           # viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix rebuild.
           # Upstream publishes to GHCR since v2.3.0.
-          image = "ghcr.io/mrlhansen/idrac_exporter:2.6.3"
+          image = "ghcr.io/mrlhansen/idrac_exporter:3.0.0"
           name  = "redfish-exporter"
           port {
             container_port = 9610
