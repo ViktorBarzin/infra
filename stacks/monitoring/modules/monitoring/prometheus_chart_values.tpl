@@ -6603,6 +6603,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Event pipeline sink {{ $labels.component_id }} failed requests in the last 30m"
+          - alert: NetsecVectorDown
+            # The netsec Vector (stacks/netsec, docs/runbooks/network-ids.md).
+            # While it is down, NetFlow records and Suricata events are lost:
+            # the goflow2 sidecar drops when its buffer fills.
+            expr: (max(up{job="kubernetes-pods", namespace="netsec", app="netsec-vector"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "netsec Vector has been unreachable for 10m: network IDS data is not reaching ClickHouse"
+          - alert: NetsecSinkErrors
+            expr: sum by (component_id) (increase(vector_component_errors_total{namespace="netsec", component_id=~"flows_ch|eve_ch"}[30m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "netsec Vector sink {{ $labels.component_id }} failed ClickHouse writes in the last 30m"
+          - alert: NetsecFlowsStale
+            # OPNsense exports ~100 flows/s, so 30 minutes with no row written to
+            # netsec.flows means goflow2, its sidecar or the sink is stuck.
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="flows_ch"}[30m])) or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No NetFlow rows written to netsec.flows for 30m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

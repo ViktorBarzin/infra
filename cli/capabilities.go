@@ -331,6 +331,18 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "query what the network IDS saw: NetFlow records, Suricata alerts and DNS/TLS/HTTP metadata, which host talked to what",
+			Use:     "homelab netsec schema  /  homelab netsec sql \"SELECT ...\"",
+			Instead: "Loki {job=\"syslog\", host=\"opnsense\"} for Suricata alerts, or the OPNsense GUI",
+			Synonyms: []string{"netflow", "flows", "suricata", "ids", "intrusion", "who talked to", "network traffic",
+				"top talkers", "netsec", "dns queries", "tls sni"},
+			Detail: []string{
+				"Database netsec on the claude-sessions ClickHouse (docs/architecture/network-security-monitoring.md).",
+				"Viktor only: it shows what every device looks up and connects to.",
+				"Run `schema` first for tables, retention and example queries.",
+			},
+		},
+		{
 			Intent:   "remember something across sessions, or recall what we decided",
 			Use:      "homelab memory store \"...\"  /  homelab memory recall \"<context>\"",
 			Instead:  "a local file under ~/.claude",

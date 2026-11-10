@@ -16,7 +16,26 @@
             <result_overflow_mode>break</result_overflow_mode>
             <max_result_bytes>200000000</max_result_bytes>
         </reader>
+        <!-- netsec (docs/architecture/network-security-monitoring.md): the
+             Vector in stacks/netsec writes NetFlow, Suricata and proxy rows. -->
+        <netsec_writer>
+            <max_memory_usage>1000000000</max_memory_usage>
+            <date_time_input_format>best_effort</date_time_input_format>
+        </netsec_writer>
     </profiles>
+    <!-- A runaway source (a NetFlow loop, an EVE storm) is refused here before
+         it fills the disk. Sized at about 10x the 2026-11-10 rates: 99 NetFlow
+         records/s is ~45 MB/h uncompressed; EVE metadata adds a similar amount. -->
+    <quotas>
+        <netsec_writer>
+            <interval>
+                <duration>3600</duration>
+                <written_bytes>4000000000</written_bytes>
+                <query_inserts>20000</query_inserts>
+                <errors>2000</errors>
+            </interval>
+        </netsec_writer>
+    </quotas>
     <users>
         <ingest>
             <password from_env="CLAUDE_SESSIONS_INGEST_PASSWORD"/>
@@ -37,5 +56,25 @@
                 <query>GRANT SELECT ON claude.*</query>
             </grants>
         </reader>
+        <netsec_writer>
+            <password from_env="NETSEC_WRITER_PASSWORD"/>
+            <profile>netsec_writer</profile>
+            <quota>netsec_writer</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT INSERT ON netsec.*</query>
+            </grants>
+        </netsec_writer>
+        <!-- Viktor only: /etc/netsec/reader.env on the devvm is root:sudo 0640
+             and he is the only member of sudo (playbooks/devvm.yml). -->
+        <netsec_reader>
+            <password from_env="NETSEC_READER_PASSWORD"/>
+            <profile>reader</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT SELECT ON netsec.*</query>
+            </grants>
+        </netsec_reader>
     </users>
 </clickhouse>

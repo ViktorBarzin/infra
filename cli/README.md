@@ -550,6 +550,17 @@ Both are admin-only: they read `/etc/claude-sessions/reader.env`, which is
 appended to each transcript since the last run, with a dedup token per batch.
 Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
+### v0.37 verbs — netsec (what the network IDS saw)
+
+`homelab netsec schema` prints the tables of the `netsec` database (NetFlow
+records, Suricata EVE events, proxy, pod DNS and Tetragon rows), their
+retention and example queries; `homelab netsec sql "<SELECT ...>"` runs one,
+with the same flags as `claude-sessions sql`. The database lives on the
+claude-sessions ClickHouse. Viktor only: the verbs read
+`/etc/netsec/reader.env` (`root:sudo 0640`, written by `playbooks/devvm.yml`),
+and the `netsec_reader` account is read-only with the same limits as the
+claude-sessions reader. Design: `docs/architecture/network-security-monitoring.md`.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` by the hourly devvm provisioner

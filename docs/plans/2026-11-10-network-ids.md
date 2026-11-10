@@ -1,6 +1,6 @@
 # Network intrusion detection and prevention
 
-Status: approved by Viktor on 2026-11-10; executing. Phase 0 (Suricata tuning) done. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
+Status: approved by Viktor on 2026-11-10; executing. Phase 0 (Suricata tuning) and phase 1 (store and shipper) done; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
 
 ## Goal
 

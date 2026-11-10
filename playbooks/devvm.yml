@@ -2632,6 +2632,46 @@
         label: "{{ item.item }}"
       no_log: true
 
+    # `homelab netsec sql` reads the network IDS store (netsec database on the
+    # same ClickHouse, docs/architecture/network-security-monitoring.md).
+    # root:sudo 0640 like reader.env above: only Viktor is in sudo, and the
+    # data shows what every device on the network looks up.
+    - name: Read the netsec reader password from Vault
+      ansible.builtin.command: "vault kv get -field=netsec_reader_password secret/claude-sessions"
+      delegate_to: localhost
+      become: false
+      register: devvm_netsec_reader_pw
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Refuse to write an empty netsec credential
+      ansible.builtin.assert:
+        that: "(devvm_netsec_reader_pw.stdout | trim | length) >= 32"
+        quiet: true
+      no_log: true
+
+    - name: Create /etc/netsec
+      ansible.builtin.file:
+        path: /etc/netsec
+        state: directory
+        owner: root
+        group: sudo
+        mode: "0750"
+
+    - name: Write the netsec reader credential file
+      ansible.builtin.copy:
+        dest: /etc/netsec/reader.env
+        owner: root
+        group: sudo
+        mode: "0640"
+        content: |
+          # Managed by playbooks/devvm.yml from Vault secret/claude-sessions.
+          NETSEC_URL=https://claude-sessions-db.viktorbarzin.me
+          NETSEC_USER=netsec_reader
+          NETSEC_PASSWORD={{ devvm_netsec_reader_pw.stdout | trim }}
+      no_log: true
+
     - name: Install the claude-sessions ingest units
       ansible.builtin.copy:
         src: "files/devvm/{{ item }}"

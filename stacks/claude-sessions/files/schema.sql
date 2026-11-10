@@ -233,3 +233,127 @@ SELECT
     JSONExtractUInt(raw, 'messageCount') AS message_count
 FROM claude.lines
 WHERE type = 'system' AND subtype = 'turn_duration';
+
+-- ===== netsec ===============================================================
+-- What the network IDS records (docs/plans/2026-11-10-network-ids.md,
+-- docs/architecture/network-security-monitoring.md). Written by the netsec
+-- Vector (stacks/netsec) as netsec_writer; read by Viktor as netsec_reader.
+-- Not in backup.sh on purpose: browsing data stays off NFS and offsite.
+-- Addresses are IPv6 columns; IPv4 arrives as text and is stored mapped.
+CREATE DATABASE IF NOT EXISTS netsec;
+
+-- One row per NetFlow record from OPNsense (lan, opt1) via goflow2. 14 days.
+CREATE TABLE IF NOT EXISTS netsec.flows
+(
+    ts        DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
+    ts_start  DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
+    received  DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
+    exporter  LowCardinality(String),
+    src_ip    IPv6,
+    dst_ip    IPv6,
+    src_port  UInt16,
+    dst_port  UInt16,
+    proto     LowCardinality(String),
+    etype     LowCardinality(String),
+    bytes     UInt64 CODEC(T64, ZSTD(1)),
+    packets   UInt64 CODEC(T64, ZSTD(1)),
+    tcp_flags UInt16,
+    in_if     UInt32,
+    out_if    UInt32,
+    next_hop  LowCardinality(String),
+    src_net   LowCardinality(String),
+    dst_net   LowCardinality(String)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (toStartOfHour(ts), src_ip, dst_ip, ts)
+TTL toDateTime(ts) + INTERVAL 14 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- Suricata EVE events. Alerts 365 days, dns/tls/http and anything else 30 days.
+-- Common fields are typed; the whole event is kept in payload.
+CREATE TABLE IF NOT EXISTS netsec.eve
+(
+    ts            DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    event_type    LowCardinality(String),
+    in_iface      LowCardinality(String),
+    src_ip        IPv6,
+    dest_ip       IPv6,
+    src_port      UInt16,
+    dest_port     UInt16,
+    proto         LowCardinality(String),
+    app_proto     LowCardinality(String),
+    flow_id       UInt64,
+    community_id  String,
+    signature_id  UInt32,
+    signature     LowCardinality(String),
+    category      LowCardinality(String),
+    severity      UInt8,
+    dns_rrname    String,
+    tls_sni       String,
+    http_hostname String,
+    payload       JSON(max_dynamic_paths = 256,
+                       SKIP REGEXP '^http\\.(request|response)_headers',
+                       SKIP REGEXP '^(packet|payload|payload_printable)$') CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (event_type, toStartOfHour(ts), src_ip, ts)
+TTL toDateTime(ts) + INTERVAL 30 DAY DELETE WHERE event_type != 'alert',
+    toDateTime(ts) + INTERVAL 365 DAY DELETE;
+
+-- Squid access log for opted-in machines (phase 5). 30 days.
+CREATE TABLE IF NOT EXISTS netsec.proxy
+(
+    ts         DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
+    client_ip  IPv6,
+    method     LowCardinality(String),
+    host       String,
+    url        String CODEC(ZSTD(3)),
+    status     UInt16,
+    bytes      UInt64,
+    user_agent String CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (toStartOfHour(ts), client_ip, ts)
+TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- Pod DNS lookups from CoreDNS dnstap (phase 4). 30 days.
+CREATE TABLE IF NOT EXISTS netsec.dns_queries
+(
+    ts        DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    client_ip IPv6,
+    qname     String,
+    qtype     LowCardinality(String),
+    rcode     LowCardinality(String),
+    answers   Array(String) CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (toStartOfHour(ts), client_ip, ts)
+TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- Tetragon process and connect events from k8s nodes (phase 4b). 30 days.
+CREATE TABLE IF NOT EXISTS netsec.tetragon
+(
+    ts            DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    node          LowCardinality(String),
+    event_type    LowCardinality(String),
+    namespace     LowCardinality(String),
+    pod           String,
+    container     LowCardinality(String),
+    binary        String,
+    arguments     String CODEC(ZSTD(3)),
+    parent_binary String,
+    dst_ip        IPv6,
+    dst_port      UInt16,
+    payload       JSON(max_dynamic_paths = 256) CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (event_type, toStartOfHour(ts), namespace, ts)
+TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;

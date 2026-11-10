@@ -50,11 +50,13 @@ alloy:
         targets = discovery.kubernetes.pod.targets
 
         // Drop high-volume, low-value producers from Loki to cut sdc write wear
-        // (the log PVC is on the contended sdc HDD). goflow2 emits one JSON line
-        // per NetFlow record to stdout (~8 GB/day, ~64% of all cluster logs) but
-        // we only use its Prometheus aggregate metrics, not the per-flow logs;
-        // vpa = Goldilocks/VPA recommender chatter (~1.3 GB/day). Both reversible
-        // — remove this rule to ship them again. (Added 2026-06-05.)
+        // (the log PVC is on the contended sdc HDD). vpa = Goldilocks/VPA
+        // recommender chatter (~1.3 GB/day). goflow2: since 2026-11-10 its
+        // per-flow JSON goes into a FIFO read by the netsec Vector sidecar
+        // (netsec.flows in ClickHouse), not stdout, but it stays dropped
+        // because a dead sidecar makes goflow2 log a send error per flow
+        // (~100/s). Reversible: remove this rule to ship them again.
+        // (Added 2026-06-05.)
         rule {
           source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_name"]
           separator     = "/"

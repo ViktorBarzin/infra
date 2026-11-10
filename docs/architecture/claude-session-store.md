@@ -62,6 +62,10 @@ Credentials come from Vault `secret/claude-sessions` (`clickhouse_password`, `in
 | `default` | backup CronJob, schema changes | admin |
 | `ingest` | devvm timer | `INSERT` on `claude.lines` and `claude.files` |
 | `reader` | `homelab claude-sessions sql/schema` | `SELECT` on `claude.*`, `readonly=2`, 120 s, 2 GB memory, 100,000 rows |
+| `netsec_writer` | `stacks/netsec` Vector | `INSERT` on `netsec.*`, hourly quota |
+| `netsec_reader` | `homelab netsec sql/schema` (Viktor only) | `SELECT` on `netsec.*`, same limits as `reader` |
+
+The server also hosts the `netsec` database of the network IDS since 2026-11-10 ([network-security-monitoring.md](network-security-monitoring.md)). It is not in the backup.
 
 `blocks_mv` runs with `SQL SECURITY DEFINER` as `default`. Without it, an insert by `ingest` reaches `lines` and then fails in the view.
 

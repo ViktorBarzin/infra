@@ -26,6 +26,7 @@ func buildRegistry() []Command {
 	reg = append(reg, usageCommands()...)
 	reg = append(reg, claudeUsageCommands()...)
 	reg = append(reg, claudeSessionsCommands()...)
+	reg = append(reg, netsecCommands()...)
 	reg = append(reg, haCommands()...)
 	reg = append(reg, browserCommands()...)
 	reg = append(reg, messageCommands()...)
