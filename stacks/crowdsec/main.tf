@@ -36,4 +36,6 @@ module "crowdsec" {
   # kvsync_bouncer_key field, deliberately left rather than deleted.
   traefik_bouncer_key  = data.vault_kv_secret_v2.secrets.data["traefik_bouncer_key"]
   firewall_bouncer_key = data.vault_kv_secret_v2.secrets.data["firewall_bouncer_key"]
+  # C2 blocklist mirror (modules/crowdsec/c2_mirror.tf): serves type c2-block only.
+  c2mirror_bouncer_key = data.vault_kv_secret_v2.secrets.data["crowdsec_c2mirror_bouncer_key"]
 }

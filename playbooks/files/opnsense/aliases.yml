@@ -12,6 +12,15 @@ aliases:
   type: external
   content: []
   description: CrowdSec bans (IPv6), filled by the bouncer
+# Not from pfSense: CrowdSec decisions of type c2-block (abuse.ch botnet C2
+# addresses our hosts reached), from the C2 blocklist mirror in stacks/crowdsec.
+# update_tables.py runs every minute; 0.0035 days refreshes about every 5 min.
+- name: crowdsec_c2
+  type: urltable
+  content:
+  - http://10.0.20.212:41412/security/blocklist
+  updatefreq: 0.0035
+  description: CrowdSec C2 blocks (outbound), from the C2 blocklist mirror
 # Not from pfSense: pfSense's automatic outbound NAT covered these static-route
 # networks; OPNsense's covers interface subnets only (nat_outbound.yml).
 - name: wg_site_lans

@@ -18,6 +18,14 @@
 # manual (cscli) decisions, and filter.yml blocks them inbound on WAN and the
 # HE tunnel (aliases crowdsec_blocklists / crowdsec6_blocklists, the tables the
 # bouncer fills). The static lists stay at Traefik (origin cscli-import).
+#
+# Network IDS phase 3 (docs/plans/2026-11-10-network-ids.md): the agent also
+# reads Suricata's eve.json (crowdsecurity/suricata), and every scenario here
+# runs in simulation until Viktor's review (simulation.yaml). abuse.ch C2 hits
+# are re-labelled by a local parser so their decision targets the C2 address
+# (scenario viktor/abusech-c2-destination, LAPI decision type c2-block, served
+# to the crowdsec_c2 alias by the C2 blocklist mirror, never to this bouncer,
+# which takes type ban only).
 - name: CrowdSec plugin settings (bouncer only)
   opnsense_mvc:
     mode: settings
@@ -59,6 +67,35 @@
   no_log: true
   register: opn_crowdsec_agent_cfg
 
+- name: CrowdSec agent files (simulation, Suricata acquisition, C2 parser and scenario)
+  ansible.builtin.copy:
+    src: "files/opnsense/crowdsec/{{ item.src }}"
+    dest: "/usr/local/etc/crowdsec/{{ item.dest }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  loop:
+    - { src: simulation.yaml, dest: simulation.yaml }
+    - { src: acquis-suricata.yaml, dest: acquis.d/suricata.yaml }
+    - { src: viktor-abusech-c2.yaml, dest: parsers/s02-enrich/viktor-abusech-c2.yaml }
+    - { src: viktor-abusech-c2-destination.yaml, dest: scenarios/viktor-abusech-c2-destination.yaml }
+  loop_control:
+    label: "{{ item.dest }}"
+  register: opn_crowdsec_agent_files
+
+- name: Read the installed CrowdSec collections
+  ansible.builtin.command: cscli collections list -o raw
+  check_mode: false
+  changed_when: false
+  register: opn_crowdsec_collections
+
+- name: Install the Suricata collection
+  ansible.builtin.command: cscli collections install crowdsecurity/suricata
+  when: >-
+    not ansible_check_mode and
+    not (opn_crowdsec_collections.stdout_lines | select('match', '^crowdsecurity/suricata,') | list)
+  register: opn_crowdsec_suricata_collection
+
 - name: Apply CrowdSec settings
   ansible.builtin.uri:
     url: "{{ opn_api_url }}/crowdsec/service/reconfigure"
@@ -73,6 +110,21 @@
   ansible.builtin.command: service crowdsec_firewall restart
   when: opn_crowdsec_bouncer_cfg is changed and not ansible_check_mode
 
-- name: Restart the agent when its credentials changed
+- name: Restart the agent when its credentials, files or collections changed
   ansible.builtin.command: service crowdsec restart
-  when: opn_crowdsec_agent_cfg is changed and not ansible_check_mode
+  when: >-
+    not ansible_check_mode and
+    (opn_crowdsec_agent_cfg is changed or opn_crowdsec_agent_files is changed
+     or opn_crowdsec_suricata_collection is changed)
+
+- name: Read the agent's simulation state
+  ansible.builtin.command: cscli simulation status
+  check_mode: false
+  changed_when: false
+  register: opn_crowdsec_simulation
+
+- name: Every scenario on the agent is simulated
+  ansible.builtin.assert:
+    that: "'global simulation: enabled' in (opn_crowdsec_simulation.stdout + opn_crowdsec_simulation.stderr)"
+    fail_msg: "CrowdSec global simulation is off on OPNsense: {{ opn_crowdsec_simulation.stdout }}"
+  when: not ansible_check_mode

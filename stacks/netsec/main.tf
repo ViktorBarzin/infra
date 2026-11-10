@@ -53,13 +53,23 @@ resource "kubernetes_manifest" "external_secret" {
       target = {
         name = "netsec-secrets"
       }
-      data = [{
-        secretKey = "netsec_writer_password"
-        remoteRef = {
-          key      = "claude-sessions"
-          property = "netsec_writer_password"
-        }
-      }]
+      data = [
+        {
+          secretKey = "netsec_writer_password"
+          remoteRef = {
+            key      = "claude-sessions"
+            property = "netsec_writer_password"
+          }
+        },
+        {
+          # read-only on netsec.eve, for the netsec-alerts CronJob below
+          secretKey = "netsec_alerts_password"
+          remoteRef = {
+            key      = "claude-sessions"
+            property = "netsec_alerts_password"
+          }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.netsec]
@@ -307,5 +317,95 @@ resource "kubernetes_network_policy" "vector" {
         protocol = "TCP"
       }
     }
+  }
+}
+
+# netsec-alerts (network IDS plan, decision 9): every minute, Suricata malware
+# and C2 alerts that involve one of our hosts go to Alertmanager with
+# lane=security, so Slack #alerts. CrowdSec whitelists private sources, so an
+# infected home host never becomes a CrowdSec alert; this is the path that
+# reports it. Query and its test: files/alerts.sql, files/alerts_test.sh.
+resource "kubernetes_config_map" "alerts" {
+  metadata {
+    name      = "netsec-alerts"
+    namespace = kubernetes_namespace.netsec.metadata[0].name
+  }
+  data = {
+    "alerts.sql" = file("${path.module}/files/alerts.sql")
+    "alerts.sh"  = file("${path.module}/files/alerts.sh")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "alerts" {
+  metadata {
+    name      = "netsec-alerts"
+    namespace = kubernetes_namespace.netsec.metadata[0].name
+  }
+  spec {
+    schedule                      = "* * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit           = 0
+        active_deadline_seconds = 50
+        template {
+          metadata {
+            labels = {
+              app = "netsec-alerts"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "alerts"
+              image   = "curlimages/curl:8.23.0"
+              command = ["/bin/sh", "/etc/netsec-alerts/alerts.sh"]
+              env {
+                name = "NETSEC_ALERTS_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "netsec-secrets"
+                    key  = "netsec_alerts_password"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "alerts"
+                mount_path = "/etc/netsec-alerts"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "5m"
+                  memory = "16Mi"
+                }
+                limits = {
+                  memory = "32Mi"
+                }
+              }
+            }
+            volume {
+              name = "alerts"
+              config_map {
+                name = kubernetes_config_map.alerts.metadata[0].name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

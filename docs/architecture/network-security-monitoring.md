@@ -11,7 +11,8 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 0 | Suricata tuning on OPNsense (VLAN 10 and 20 only, own-traffic signatures off) | live 2026-11-10 |
 | 1 | `netsec` database, its own Vector, NetFlow into ClickHouse, `homelab netsec sql` | live 2026-11-10 |
 | 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
-| 3-5 | Alerts into bans, server logs and pod DNS, Tetragon, decryption | planned |
+| 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |
+| 4-5 | Server logs and pod DNS, Tetragon, decryption | planned |
 
 ## Phase 1: store and shipper
 
@@ -140,6 +141,57 @@ All in `playbooks/tasks/opnsense/netsec_eve.yml` (tag `netsec_eve`), files in
 Traffic between VLAN 10 and VLAN 20 crosses both inspected interfaces, so it
 is logged twice with the same `community_id` (DNS from the devvm to Technitium,
 for example). Collapse with `LIMIT 1 BY community_id, event_type` (runbook).
+
+## Phase 3: alerts into bans
+
+```mermaid
+flowchart TD
+  EVE["/var/log/suricata/eve.json<br/>alerts only"] --> AG["CrowdSec agent on OPNsense<br/>simulation: true, every scenario"]
+  AG -->|opnsense-edge, 10.0.20.210:8080| LAPI["CrowdSec LAPI<br/>trusted-infra allowlist"]
+  LAPI -->|type ban| BOUNCERS["OPNsense bouncer (in: WAN, HE)<br/>Traefik plugin, node nftables"]
+  LAPI -->|type c2-block| MIRROR["crowdsec-c2-mirror<br/>10.0.20.212:41412"]
+  MIRROR -->|URL table, ~5 min| ALIAS["alias crowdsec_c2<br/>block out on VLAN 10 + 20"]
+  LAPI -->|grouped 10 min| SLACK["Slack #alerts"]
+  CH[("netsec.eve")] --> JOB["CronJob netsec-alerts<br/>every minute"] -->|lane=security| AM["Alertmanager"] --> SLACK
+```
+
+- **Agent** (`playbooks/tasks/opnsense/crowdsec.yml`, files in
+  `playbooks/files/opnsense/crowdsec/`): the os-crowdsec agent registered as
+  machine `opnsense-edge` reads the filter, GUI and audit logs plus Suricata's
+  stock `eve.json` (`acquis.d/suricata.yaml`, collection
+  `crowdsecurity/suricata`). `simulation.yaml` sets `simulation: true`, so
+  every scenario's decisions are recorded as simulated and no bouncer receives
+  them; the playbook asserts it after every run. No scenario bans on UDP.
+- **Allowlist**: the LAPI's `trusted-infra` list (`stacks/crowdsec`
+  `lapi_allowlist`, kept by the `crowdsec-lapi-reconcile` CronJob) holds our
+  address space plus what we depend on: the HE tunnel server, upstream
+  resolvers, Cloudflare and GitHub's own ranges.
+- **C2 blocks**: the local parser `viktor/abusech-c2` re-labels abuse.ch alerts
+  (Feodo Tracker, SSL Blacklist) so the alert's source is the C2 address, never
+  our host, and the hub's Suricata scenarios skip them. Scenario
+  `viktor/abusech-c2-destination` triggers on one hit; the LAPI profile
+  `c2_destination_block` turns it into a 24h decision of type `c2-block`. Only
+  `crowdsec-c2-mirror` (crowdsecurity/blocklist-mirror, `c2_mirror.tf`) serves
+  that type; every other bouncer and `ipv6-ban-widen.sh` take type `ban` only,
+  so a C2 on a shared cloud address is never banned inbound. OPNsense pulls the
+  list into URL-table alias `crowdsec_c2` (`update_tables.py` runs each minute,
+  refresh about every 5 minutes) and blocks it, logged, on `lan` and `opt1`.
+  The os-crowdsec bouncer fills one pair of pf tables, so a separate list needed
+  a second consumer; the mirror is CrowdSec's own and needs no code.
+- **Slack**: the LAPI's `slack_alerts` plugin has `group_wait: 10m`, so bans
+  arrive as one message per 10 minutes.
+- **`netsec-alerts`** (`stacks/netsec`, `files/alerts.sql`, test
+  `files/alerts_test.sh`): every minute, malware and C2 alerts that involve one
+  of our hosts (abuse.ch, `ET MALWARE`, `ET TROJAN`, `ET MOBILE_MALWARE`,
+  `ET CNC`, outbound `ET COMPROMISED`) go to Alertmanager as
+  `NetsecHomeHostMalware` with `lane=security`. CrowdSec drops private sources,
+  so this is the path that reports an infected host. ClickHouse user
+  `netsec_alerts` reads `netsec.eve` only.
+- **Camera VLAN**: Loki rule `CameraVlanBlockedTraffic` fires on any
+  default-deny block of traffic the VLAN 30 camera starts. Its late RTSP and
+  HTTP replies to Frigate and ha-sofia are excluded.
+- **Alerts**: `CrowdSecOpnsenseAgentSilent`, `CrowdSecOpnsenseBouncerNotPulling`,
+  `CrowdSecC2MirrorNotPulling` (lane `security`).
 
 ## Open questions
 

@@ -58,3 +58,20 @@ def test_unrendered_placeholder_rejected_in_nat():
             "target": {"address": "{{ fw.nope }}"}, "local_port": "25"}]
     with pytest.raises(ValueError):
         opn.opn_dnat_rules(opn.opn_render(fwd, FW), IFMAP)
+
+
+def test_aliases_urltable_carries_its_refresh_interval():
+    out = opn.opn_aliases([{
+        "name": "crowdsec_c2", "type": "urltable", "content": ["http://10.0.20.212:41412/security/blocklist"],
+        "updatefreq": 0.0035, "description": "C2 blocks",
+    }])
+    assert out == [{
+        "enabled": True, "name": "crowdsec_c2", "type": "urltable",
+        "content": "http://10.0.20.212:41412/security/blocklist", "description": "C2 blocks",
+        "updatefreq": "0.0035",
+    }]
+
+
+def test_aliases_without_a_refresh_interval_send_none():
+    out = opn.opn_aliases([{"name": "n", "type": "network", "content": ["10.0.0.0/8"]}])
+    assert "updatefreq" not in out[0]

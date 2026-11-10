@@ -12,7 +12,7 @@
 #   the rule is not rendered in staging (opt2 WireGuard, opt3 HE gif)
 
 rules:
-# Not from pfSense: CrowdSec bans, inbound only (tasks/opnsense/crowdsec.yml).
+# Not from pfSense: CrowdSec bans inbound (tasks/opnsense/crowdsec.yml); C2 blocks outbound below.
 - description: CrowdSec bans in from WAN (IPv4)
   interface: wan
   floating: false
@@ -42,6 +42,38 @@ rules:
   log: false
   disabled: false
   profile: production
+# Not from pfSense: outbound blocks to abuse.ch botnet C2 addresses our hosts
+# reached (network IDS plan, decision 4). Alias crowdsec_c2 is a URL table
+# from the C2 blocklist mirror (stacks/crowdsec), which serves only CrowdSec
+# decisions of type c2-block. Logged, so a block shows in the filter log.
+- description: Block our hosts reaching CrowdSec C2 blocks (VLAN 10)
+  interface: lan
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet46
+  protocol: any
+  source:
+    any: true
+  destination:
+    alias: crowdsec_c2
+  log: true
+  disabled: false
+- description: Block our hosts reaching CrowdSec C2 blocks (VLAN 20)
+  interface: opt1
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet46
+  protocol: any
+  source:
+    any: true
+  destination:
+    alias: crowdsec_c2
+  log: true
+  disabled: false
 - pfsense_tracker: '1775639929'
   description: Allow DNS (UDP) from LAN to pfSense
   interface: wan

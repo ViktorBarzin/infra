@@ -254,6 +254,10 @@ lapi:
       value: "${TRAEFIK_CROWDSEC_API_KEY}"
     - name: BOUNCER_KEY_firewall
       value: "${FIREWALL_CROWDSEC_API_KEY}"
+    # c2mirror -> crowdsecurity/blocklist-mirror (c2_mirror.tf): serves only
+    #             decisions of type c2-block to OPNsense's outbound C2 alias.
+    - name: BOUNCER_KEY_c2mirror
+      value: "${C2MIRROR_CROWDSEC_API_KEY}"
   dashboard:
     enabled: true
     env:
@@ -498,6 +502,22 @@ config:
   # already). If a legitimate source starts getting banned, whitelist it —
   # do not reintroduce a remediation that goes nowhere.
   profiles.yaml: |
+    # One of our hosts reached an abuse.ch botnet C2 (network IDS plan,
+    # decision 4). The OPNsense agent's parser points the alert at the C2
+    # address; this profile makes the decision type c2-block, which only the
+    # C2 blocklist mirror serves (OPNsense outbound alias crowdsec_c2). No
+    # other bouncer takes that type, so a C2 on a shared cloud address is never
+    # banned inbound. Placed first so no default profile turns it into a ban.
+    name: c2_destination_block
+    filters:
+      - Alert.Remediation == true && Alert.GetScenario() == "viktor/abusech-c2-destination"
+    decisions:
+      - type: c2-block
+        duration: 24h
+    notifications:
+      - slack_alerts
+    on_success: break
+    ---
     # A persistent crawl source is banned for longer than the 4h default,
     # because a 4h ban against a crawl that runs for days gets re-minted rather
     # than being effective. Measured 2026-09-11: viktor/distributed-crawl-range
@@ -604,6 +624,9 @@ config:
       type: slack
       name: slack_alerts
       log_level: info
+      # One message per 10 minutes, listing every alert since the last one
+      # (network IDS plan, decision 9); the format below already loops.
+      group_wait: 10m
       format: |
         :rotating_light: *CrowdSec Alert*
         {{range .}}
