@@ -500,8 +500,10 @@ locals {
     # nothing else (members.tf, ADR-0042, tv ADR 2026-11-02-new-households-start-on-a-trial).
     { name = "AUTHENTIK_APPROVER_TOKEN", secret = kubernetes_secret.tv_members.metadata[0].name, key = "authentik_approver_token", optional = true },
     { name = "DISCORD_TOKEN", secret = "tv-secrets", key = "discord_user_token", optional = false },
-    # Announces a television taking a different build, to the same
-    # #alerts webhook tv-guard-secrets carries in this namespace (watcher.tf).
+    # The startup session notice (a pod restarting mid-session) posts to the
+    # same #alerts webhook tv-guard-secrets carries in this namespace
+    # (watcher.tf). A television taking a new build is log-only since
+    # 2026-11-10.
     # optional=true so the pod starts before that ExternalSecret has
     # synced; the app logs the line instead of posting it when unset.
     { name = "TV_SLACK_WEBHOOK", secret = "tv-guard-secrets", key = "slack_webhook", optional = true },
