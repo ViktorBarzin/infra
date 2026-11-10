@@ -1,6 +1,6 @@
 # Network intrusion detection and prevention
 
-Status: draft, awaiting Viktor's approval. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
+Status: approved by Viktor on 2026-11-10; executing. Phase 0 (Suricata tuning) done. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
 
 ## Goal
 
@@ -28,23 +28,22 @@ Inspect Sofia traffic for malicious flows, keep what the IDS sees queryable in C
 
 ## Pipeline
 
+Detect and store:
+
+```mermaid
+flowchart TD
+  SRC["Suricata VLAN 10 + 20<br/>Squid, opted_in only<br/>NetFlow via goflow2<br/>CoreDNS dnstap<br/>Tetragon, watch-only"] --> VEC["Vector, ns netsec"]
+  VEC --> CH[("ClickHouse netsec<br/>homelab netsec sql")]
+  CH --> JOB["scheduled query job"]
+  JOB --> SL["Alertmanager<br/>Slack #alerts"]
 ```
-OPNsense (production)
-  Suricata IDS -- eve.json (stock) + eve-meta.json (alert, dns, tls, http)
-     |-- os-crowdsec agent (simulation) --> LAPI (k8s)
-     |        inbound bans  --> pf, WAN + HE tunnel, in
-     |        C2 dest. bans --> pf, lan + opt1, out   (OPNsense only)
-     |        Slack plugin, grouped 10 min
-     |-- syslog-ng file tail, TCP ----------+
-  Squid (opted_in only), JSON --------------+
-  NetFlow v9 --> goflow2 + shipper sidecar -+
-CoreDNS dnstap (pod IP, name) -----------+
-k8s nodes: Tetragon, JSON ---------------+
-                                            v
-                         Vector (new, ns netsec) --> ClickHouse netsec.*
-                                                        |
-                         homelab netsec sql          scheduled query job
-                                                        --> Alertmanager --> Slack
+
+Block and notify:
+
+```mermaid
+flowchart TD
+  IN["Suricata alerts, via the<br/>CrowdSec agent on OPNsense<br/>server journals, via Loki"] --> LAPI["CrowdSec LAPI<br/>Slack, grouped 10 min"]
+  LAPI --> PF["OPNsense pf<br/>in: attackers<br/>out: C2 servers"]
 ```
 
 ## What it sees and what it does not
