@@ -1,6 +1,9 @@
-# Suricata in IDS mode (pcap: alerts, no drops; plan decision 8) on WAN, VLAN 10 and
-# VLAN 20, with ET Open and the abuse.ch SSL blacklist, Feodo and URLhaus lists.
-# EVE alerts go to syslog, and from there to Alloy (syslog.yml).
+# Suricata in IDS mode (pcap: alerts, no drops; plan decision 8) on VLAN 10 (lan)
+# and VLAN 20 (opt1), with ET Open and the abuse.ch SSL blacklist, Feodo and URLhaus
+# lists. EVE alerts go to syslog, and from there to Alloy (syslog.yml).
+# WAN is not inspected: every routed flow also crossed VLAN 10 or 20, so it alerted
+# twice, and on WAN it showed the firewall's address instead of the inside host
+# (2026-11-10, docs/plans/2026-11-10-network-ids.md decision 14).
 - name: Suricata settings
   opnsense_mvc:
     mode: settings
@@ -11,7 +14,7 @@
         enabled: true
         mode: pcap
         promisc: false
-        interfaces: wan,lan,opt1
+        interfaces: lan,opt1
         homenet: 10.0.0.0/8,192.168.0.0/16,2001:470:5a7f::/48,2001:470:6f:43d::/64,fdfe:e989:d3ce:1::/64
         syslog_eve: true
   register: opn_ids_settings
@@ -48,6 +51,67 @@
   check_mode: false
   register: opn_ids_installed
 
+# Signatures that fired only on our own services and say nothing about a threat
+# (1,497 of 1,905 inside alerts on 2026-11-10). Each is off for every host, so add
+# one here only when the runbook's "Suricata tuning" section records why.
+- name: Signatures turned off
+  ansible.builtin.set_fact:
+    opn_ids_disabled_sids:
+      - {sid: 2016149, why: "STUN request: coturn, Matrix, Headscale DERP, WebRTC"}
+      - {sid: 2016150, why: "STUN response: same"}
+      - {sid: 2033078, why: "STUN on a high port: WebRTC to Google STUN"}
+      - {sid: 2046211, why: "global.stun.twilio.com lookups: WebRTC"}
+      - {sid: 2047122, why: "argotunnel.com lookups: cloudflared"}
+      - {sid: 2071407, why: "GitHub release assets lookup: image and tool downloads"}
+      - {sid: 2071408, why: "GitHub release assets TLS: same"}
+      - {sid: 2049201, why: "files.pythonhosted.org lookup: pip"}
+      - {sid: 2049202, why: "files.pythonhosted.org TLS: pip"}
+      - {sid: 2071637, why: "Tailscale control lookups: Headscale clients"}
+      - {sid: 2057745, why: "pages.dev lookups: tv app sources"}
+      - {sid: 2057746, why: "pages.dev TLS: tv app sources"}
+      - {sid: 2010144, why: "Vuze BitTorrent UDP: qBittorrent (servarr)"}
+      - {sid: 2008581, why: "BitTorrent DHT ping: qBittorrent"}
+      - {sid: 2008585, why: "BitTorrent DHT announce: qBittorrent"}
+      - {sid: 2102180, why: "BitTorrent announce: qBittorrent"}
+
+- name: Read the state of the turned-off signatures
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/get_rule_info/{{ item.sid }}"
+  loop: "{{ opn_ids_disabled_sids }}"
+  loop_control:
+    label: "{{ item.sid }}"
+  check_mode: false
+  register: opn_ids_rule_info
+
+- name: Work out which signatures are still on
+  ansible.builtin.set_fact:
+    opn_ids_to_disable: >-
+      {{ opn_ids_rule_info.results
+         | selectattr('json', 'mapping')
+         | selectattr('json.enabled', 'defined')
+         | selectattr('json.enabled', 'in', ['1', 1, true])
+         | map(attribute='item.sid') | map('string') | list }}
+    opn_ids_not_installed: >-
+      {{ opn_ids_rule_info.results
+         | rejectattr('json', 'mapping')
+         | map(attribute='item.sid') | list }}
+
+- name: Every turned-off signature exists in the installed rules
+  ansible.builtin.assert:
+    that: opn_ids_not_installed | length == 0
+    fail_msg: "Not installed, so the list needs a look: {{ opn_ids_not_installed }}"
+  when: (opn_ids_installed.json.total | default(0) | int) > 0
+
+- name: Turn the signatures off
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/toggle_rule/{{ opn_ids_to_disable | join(',') }}/0"
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_ids_to_disable | length > 0 and not ansible_check_mode
+  changed_when: true
+  register: opn_ids_rules_toggled
+
 - name: Apply settings, download the rules and (re)start Suricata
   when: >-
     not ansible_check_mode and (opn_ids_settings is changed or opn_ids_missing | length > 0
@@ -56,6 +120,9 @@
     - name: Reconfigure the IDS
       ansible.builtin.uri:
         url: "{{ opn_api_url }}/ids/service/reconfigure"
+        # Blocks while Suricata restarts with ~83k rules; 30 s was not enough on
+        # 2026-11-10.
+        timeout: 600
         method: POST
         body_format: json
         body: {}
@@ -69,3 +136,13 @@
         body_format: json
         body: {}
       changed_when: true
+
+- name: Reload the rules so the turned-off signatures take effect
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/service/reload_rules"
+    timeout: 300
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_ids_rules_toggled is changed
+  changed_when: true
