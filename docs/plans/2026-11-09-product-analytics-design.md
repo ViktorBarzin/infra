@@ -165,12 +165,14 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 | wrongmove | live | live | live | yes | 0004 |
 | blog, kms, pages | n/a | live (pages: on each page's next publish) | n/a | n/a | n/a |
 | interview-prep, vpn-portal, plotting-book | waiting for `@viktorbarzin/telemetry` on npm (interview-prep has no server) | wired, not seen signed-in | browser live, server waits for the package | waits for the package | 2026-11-10-telemetry-in-the-browser (each repo) |
-| tasks, alexa-assistant, priority-pass, nextcloud-todos | waiting for `@viktorbarzin/telemetry` on npm | | | | |
+| priority-pass | live | wired, not seen signed-in | live | yes | 0001 |
+| nextcloud-todos (no web UI; Person id from config) | live | n/a | live | yes | 0001 |
+| tasks, alexa-assistant | waiting for `@viktorbarzin/telemetry` and `@viktorbarzin/log` 1.0 on npm (scheduled 2026-11-11) | | | | |
 | Third-party apps (Forgejo, Immich, Home Assistant, Paperless, CyberChef and the rest) | n/a | pageviews through the injection plugin, `hosted` site | n/a | n/a | n/a |
 
 "Wired, not seen signed-in" means the app loads the script and calls `identify`, but the check ran without a signed-in browser. A signed-in visit settles it.
 
-Browser custom events, and the four apps whose logs follow app-kit's contract on npm (tasks, alexa-assistant), wait for the first npm publish of `@viktorbarzin/telemetry` and the trusted publishers on the app-kit packages, which need the owner's npm authenticator.
+Browser custom events, and the two app-kit apps (tasks, alexa-assistant), wait for the first npm publish of `@viktorbarzin/telemetry` and the trusted publishers on the app-kit packages, which need the owner's npm authenticator.
 
 ## Open questions
 
