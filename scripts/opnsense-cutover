@@ -296,7 +296,7 @@ case $cmd in
       || [[ $(cur_state) != new-answering ]]; then
       die "the revert fired or is running; not confirming (state: $(cur_state))"
     fi
-    # pfSense still has the same MACs; keep it off the wire while it waits out its two weeks.
+    # pfSense still has the same MACs; keep it off the wire while it is kept as the rollback.
     link_down "$OLD" 1
     rm -f "$DIR/config.xml"
     state confirmed

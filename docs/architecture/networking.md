@@ -10,7 +10,7 @@ The homelab network is built on three isolated segments behind pfSense (manageme
 
 ### Edge firewall: OPNsense since 2026-11-10
 
-OPNsense 26.7 replaced pfSense as the edge firewall on 2026-11-10 (ADR-0038). It runs as VM 100 on pfSense's addresses and MACs, so every address below is unchanged; where this page says pfSense, the same role is now OPNsense's (HAProxy, Kea, radvd, Unbound, the HE tunnel, the WireGuard hub, the Tailscale subnet router at 100.64.0.17). pfSense (VM 101) stays stopped with its NICs link-down until 2026-11-24 as the rollback. OPNsense's configuration is declared in `playbooks/files/opnsense/` and applied by `playbooks/opnsense.yml`; operations and the cutover steps are in `docs/runbooks/opnsense.md`.
+OPNsense 26.7 replaced pfSense as the edge firewall on 2026-11-10 (ADR-0038). It runs as VM 100 on pfSense's addresses and MACs, so every address below is unchanged; where this page says pfSense, the same role is now OPNsense's (HAProxy, Kea, radvd, Unbound, the HE tunnel, the WireGuard hub, the Tailscale subnet router at 100.64.0.17). pfSense (VM 101) stays stopped with its NICs link-down as the rollback, with no removal date. OPNsense's configuration is declared in `playbooks/files/opnsense/` and applied by `playbooks/opnsense.yml`; operations and the cutover steps are in `docs/runbooks/opnsense.md`.
 
 ## Architecture Diagram
 

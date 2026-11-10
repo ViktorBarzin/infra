@@ -35,7 +35,7 @@
       # boots first. Its onboot/startup are owned here, not by stacks/opnsense
       # (PVE needs Sys.Modify on / to set startup, which that stack's token lacks).
       - { vmid: 100,  name: opnsense,        state: active,   order: 1,  up: 90, down: 60 }
-      # pfSense, kept stopped with link_down NICs for two weeks as the rollback
+      # pfSense, kept stopped with link_down NICs as the rollback (no removal date)
       # (scripts/opnsense-cutover). It has the same MACs as VM 100: never start both.
       - { vmid: 101,  name: pfsense,         state: disabled }
       - { vmid: 220,  name: docker-registry, state: active,   order: 5,  up: 15, down: 60 }
