@@ -1,6 +1,6 @@
 # Replace pfSense with OPNsense: build alongside, then swap
 
-Status: done, cutover on 2026-11-10 (see "Cutover, 2026-11-10"). pfSense stays stopped as the rollback until 2026-11-24. Phases 1-7 ran overnight 2026-11-03/04 on the staging box (see "Execution, 2026-11-04"). Approved 2026-11-03 after a grilling session with Viktor and two blind challenger reviews. Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table. Runbook: `docs/runbooks/opnsense.md`.
+Status: done, cutover on 2026-11-10 (see "Cutover, 2026-11-10"). pfSense stays stopped as the rollback, with no removal date (Viktor, 2026-11-10). Phases 1-7 ran overnight 2026-11-03/04 on the staging box (see "Execution, 2026-11-04"). Approved 2026-11-03 after a grilling session with Viktor and two blind challenger reviews. Decision record: ADR-0038. Research behind it: `docs/research/2026-11-03-network-ids-options.md`; the pfSense inventory it ports is in the "Configuration (Ansible)" table. Runbook: `docs/runbooks/opnsense.md`.
 
 ## Goal
 
@@ -162,6 +162,8 @@ Viktor asked for a switch that could not cut the lab off and could be reverted, 
 | Reviews | Two blind challengers. Fixed before the run: rollback ordering and locking, a manual rollback dying with its session, pfSense's duplicate MACs (now `link_down`), the CrowdSec plugin blocking both directions (it would have blocked Meta for every client), NAT for the WireGuard site LANs, KMS rate limits, DNS rebind protection, `tailscale0` assignment |
 | Swap | 13:48:02 to 13:49:52; internet gone for about 75 s. Confirmed at 13:55 after: IPv4 and IPv6 from the devvm, 6/6 nodes, cluster DNS, Immich over IPv4 and IPv6 from outside, the bastion on 443, 4/4 WireGuard sites, Tailscale routes served by the OPNsense node, SMTP 25/465/587/993 from outside with the real client address in Postfix |
 | Found live | HAProxy did not start on the first boot (stale staging `haproxy.conf`, most likely); started by hand, boot hook added, a reboot test at 14:03 came back in 72 s with HAProxy up. A bulk upload from the host to the staging box stalls on the asymmetric path through pfSense; the config was staged from the devvm |
+| HTTP/3 | Checked after the swap from mx2 with aioquic: `GET /api/server/ping` on immich.viktorbarzin.me answered 200 with ALPN h3 over IPv4 and IPv6; Traefik logged both as HTTP/3.0 with mx2's real addresses |
+| Port forwards | 23 of pfSense's 24 enabled forwards; the missing IMAP 143 forward pointed at an alias pfSense never defined |
 | Not carried over | Kea leases (every lease was a reserved host); Homepage's pfSense widget became a plain link |
 
 ## Phases

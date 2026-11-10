@@ -38,3 +38,5 @@ OPNsense 26.7 replaces pfSense. It is built next to pfSense on spare addresses a
 ## Amendment, 2026-11-10: carried out
 
 The cutover ran on 2026-11-10 as a VM swap with pfSense's MACs and a dead-man revert (`scripts/opnsense-cutover`, runbook `docs/runbooks/opnsense.md`). Two changes to the decision as written: the CrowdSec bouncer blocks inbound on WAN and the HE tunnel only and takes CAPI, local and manual decisions, not the static ASN lists (the plugin's own rules blocked both directions for every client); and pfSense stays stopped with its NICs link-down until 2026-11-24 as the rollback.
+
+Amendment, 2026-11-10 (later the same day): Viktor chose to keep pfSense as the rollback with no removal date, instead of the two weeks above.
