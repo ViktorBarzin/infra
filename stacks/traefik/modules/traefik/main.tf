@@ -316,7 +316,8 @@ resource "helm_release" "traefik" {
     }
 
     service = {
-      type = "LoadBalancer"
+      # No service.type: the chart never read it (LoadBalancer comes from the
+      # chart default service.spec.type), and chart 42.3.1 rejects the key.
       # single = false puts the UDP entrypoint in its OWN Service, which is the
       # fix for the 443 merge-key drift documented at the websecure http3 block
       # above. With a single Service, websecure/TCP:443 and

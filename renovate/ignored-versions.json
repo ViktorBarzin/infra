@@ -69,17 +69,6 @@
       "enabled": false
     },
     {
-      "description": "rails revert 2026-11-06 pipeline #3365: stack traefik failed after this bump: its terragrunt apply failed (commit 0f49dfa6)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "traefik"
-      ],
-      "matchNewValue": "42.3.1",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-11-07 pipeline #3385: stack monitoring failed after this bump: its terragrunt apply failed (commit af7d26e3)",
       "matchDatasources": [
         "docker"
@@ -88,61 +77,6 @@
         "ghcr.io/mrlhansen/idrac_exporter"
       ],
       "matchNewValue": "3.0.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-07 pipeline #3388: stack monitoring failed after this bump: its terragrunt apply failed (commit abd97bd0)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "loki"
-      ],
-      "matchNewValue": "21.0.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-07 pipeline #3395: stack paperless-ngx failed after this bump: its terragrunt apply failed (commit 9ebd989f)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "gotenberg/gotenberg"
-      ],
-      "matchNewValue": "9.1.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-08 pipeline #3455: stack paperless-ngx failed after this bump: its terragrunt apply failed (commit df96be61)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "gotenberg/gotenberg"
-      ],
-      "matchNewValue": "9.2.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-09 pipeline #3471: stack opnsense failed after this bump: its terragrunt apply failed (commit 4f73fd0e)",
-      "matchDatasources": [
-        "terraform-provider"
-      ],
-      "matchPackageNames": [
-        "bpg/proxmox"
-      ],
-      "matchNewValue": "0.121.0",
-      "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-09 pipeline #3550: stack monitoring failed after this bump: its terragrunt apply failed (commit d1098ed4)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "loki"
-      ],
-      "matchNewValue": "21.1.0",
       "enabled": false
     }
   ]
