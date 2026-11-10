@@ -446,7 +446,16 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                 while IFS="$(printf '\t')" read -r db t hasdata; do
                   ch -q "SHOW CREATE TABLE \`$db\`.\`$t\` FORMAT TSVRaw" > "$work/$db.$t.sql"
                   if [ "$hasdata" = 1 ]; then
-                    n=$(ch -q "SELECT count() FROM \`$db\`.\`$t\`")
+                    # Replacing/Aggregating/Collapsing/Summing engines fold rows
+                    # with the same key when a part is written, so the restore's
+                    # single INSERT keeps fewer rows than a plain count() of a
+                    # source with unmerged parts (16 vs 14 on 2026-11-10). FINAL
+                    # counts what the table holds after merging.
+                    final=""
+                    case "$(ch -q "SELECT engine FROM system.tables WHERE database = '$db' AND name = '$t'")" in
+                      Replacing*|Aggregating*|Collapsing*|VersionedCollapsing*|Summing*|Coalescing*|Graphite*) final=FINAL ;;
+                    esac
+                    n=$(ch -q "SELECT count() FROM \`$db\`.\`$t\` $final")
                     ch -q "SELECT * FROM \`$db\`.\`$t\` FORMAT Native" | gzip -6 > "$work/$db.$t.native.gz"
                     printf '%s\t%s\t%s\n' "$db" "$t" "$n" >> "$work/counts.tsv"
                   fi

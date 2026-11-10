@@ -1036,7 +1036,12 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
     namespace = kubernetes_namespace.fire_planner.metadata[0].name
   }
   spec {
-    schedule                      = "0 4 * * 0"
+    schedule = "0 4 * * 0"
+    # Suspended 2026-11-10: the Reddit app key in Vault (secret/viktor
+    # trading_bot_reddit_client_id/_secret) returns 401 and every run since
+    # 2026-06-14 has failed with sub_runs_succ=0/12. Viktor chose not to fix
+    # it on 2026-10-11. Put a working key in Vault, then remove this line.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3

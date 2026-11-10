@@ -47,8 +47,11 @@ resource "helm_release" "sealed_secrets" {
         cpu    = "50m"
         memory = "192Mi"
       }
+      # 384Mi, 2x the 14-day peak of 191Mi (2026-11-10). After an apiserver
+      # blip the controller re-lists every Secret in the cluster, and that
+      # spike OOM-killed it at the old 192Mi limit on 2026-11-03 and 11-08.
       limits = {
-        memory = "192Mi"
+        memory = "384Mi"
       }
     }
   })]

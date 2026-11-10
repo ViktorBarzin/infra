@@ -4666,8 +4666,17 @@ serverFiles:
               notify: page
             annotations:
               summary: "CSI driver CrashLoopBackOff in {{ $labels.namespace }}/{{ $labels.pod }} — storage-layer failure risk"
+          # reason!="" picks the series KSM sets once the whole Job has failed
+          # (BackoffLimitExceeded, DeadlineExceeded); the reason-less series
+          # counts failed pods, so a run its retry rescued used to fire too.
+          # The 24h start-time bound stops a failed Job firing until someone
+          # deletes it: one 2026-11-02 broker-sync failure posted four times
+          # over a day. A backup that keeps failing is the *BackupStale rules'
+          # job.
           - alert: BackupCronJobFailed
-            expr: kube_job_status_failed{job_name=~".*backup.*"} > 0
+            expr: |
+              kube_job_status_failed{job_name=~".*backup.*", reason!=""} > 0
+                and on(namespace, job_name) (time() - kube_job_status_start_time) < 86400
             for: 15m
             labels:
               severity: warning
