@@ -149,8 +149,9 @@ sleep 20
 # TrueNAS (decommissioned 2026-04-13 — VM 9000 should already be stopped; skip if absent)
 qm shutdown 9000 2>/dev/null || true
 
-# pfSense (last — network gateway)
-qm shutdown 101; sleep 15
+# OPNsense edge firewall, last: it is the network gateway (pfSense VM 101 before
+# the 2026-11-10 cutover; VM 101 is the stopped rollback, leave it alone)
+qm shutdown 100; sleep 15
 
 # Verify all VMs stopped
 qm list

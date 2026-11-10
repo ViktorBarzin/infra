@@ -1,16 +1,16 @@
 # Mail Server Architecture
 
-Last updated: 2026-04-19 (code-yiu Phase 6: MetalLB LB retired; traffic now enters via pfSense HAProxy with PROXY v2)
+Last updated: 2026-11-10 (OPNsense replaced pfSense as the edge firewall on the same addresses; HAProxy and the mail NAT moved with it. Previously 2026-04-19, code-yiu Phase 6: MetalLB LB retired; traffic enters via the firewall's HAProxy with PROXY v2)
 
 ## Overview
 
-Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Brevo EU (`smtp-relay.brevo.com:587` — migrated from Mailgun on 2026-04-12; SPF record cut over on 2026-04-18). Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs: pfSense HAProxy injects the PROXY v2 header on each backend connection so the mailserver pod sees the true source IP despite kube-proxy SNAT. See [`runbooks/mailserver-pfsense-haproxy.md`](../runbooks/mailserver-pfsense-haproxy.md) for ops details.
+Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Brevo EU (`smtp-relay.brevo.com:587` — migrated from Mailgun on 2026-04-12; SPF record cut over on 2026-04-18). Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs: pfSense HAProxy injects the PROXY v2 header on each backend connection so the mailserver pod sees the true source IP despite kube-proxy SNAT. See [`runbooks/mailserver-opnsense-haproxy.md`](../runbooks/mailserver-opnsense-haproxy.md) for ops details.
 
 ## Architecture Diagram
 
 Two independent paths into the mailserver pod:
 
-- **External** (MX traffic, webmail clients over WAN): Internet → pfSense → HAProxy → NodePort → **alt container ports** (2525/4465/5587/10993) that **require** PROXY v2 framing.
+- **External** (MX traffic, webmail clients over WAN): Internet → OPNsense → HAProxy → NodePort → **alt container ports** (2525/4465/5587/10993) that **require** PROXY v2 framing.
 - **Intra-cluster** (Roundcube, E2E probe): same pod, **stock container ports** (25/465/587/993), **no** PROXY framing.
 
 One Deployment, one pod, two sets of Postfix `master.cf` services + Dovecot `inet_listener` blocks, two Kubernetes Services (`mailserver` ClusterIP + `mailserver-proxy` NodePort).
@@ -21,9 +21,9 @@ flowchart TB
     SENDER[Sending MTA<br/>arbitrary public IP] -->|MX lookup + SMTP<br/>:25| MX[mail.viktorbarzin.me<br/>A 176.12.22.76]
     SENDER -.->|primary unreachable →<br/>MX pri 20| MX2[mx2.viktorbarzin.me<br/>Oracle Always-Free<br/>92.5.132.215<br/>queue ≤30d — ADR-0019]
     MX2 -.->|drain: SMTP in WireGuard<br/>10.3.2.10 → 10.0.20.1:25<br/>UDP :51821| HAP
-    MX --> PF[pfSense WAN<br/>vtnet0 192.168.1.2]
+    MX --> PF[OPNsense WAN<br/>vtnet0 192.168.1.2]
     PF -->|NAT rdr<br/>WAN:25/465/587/993<br/>→ 10.0.20.1:same| HAP
-    HAP[pfSense HAProxy<br/>4 TCP frontends on 10.0.20.1<br/>send-proxy-v2 to backends]
+    HAP[OPNsense HAProxy<br/>4 TCP frontends on 10.0.20.1<br/>send-proxy-v2 to backends]
     HAP -->|round-robin<br/>tcp-check inter 120s| KN{k8s worker<br/>node1..6}
     KN -->|NodePort 30125-30128<br/>ETP: Cluster → kube-proxy SNAT| PODEXT
 
@@ -51,7 +51,7 @@ flowchart TB
 
     %% Webmail HTTP path
     USER[User browser] -->|HTTPS| CF[Cloudflare proxy<br/>mail.viktorbarzin.me]
-    CF --> TUNNEL[Cloudflared tunnel<br/>pfSense → Traefik]
+    CF --> TUNNEL[Cloudflared tunnel<br/>OPNsense → Traefik]
     TUNNEL --> TRAEFIK[Traefik Ingress<br/>Authentik-protected]
     TRAEFIK --> RC
 
@@ -82,8 +82,8 @@ Illustrates the wire-level sequence of a Brevo probe email arriving at our MX. S
 sequenceDiagram
     autonumber
     participant C as External MTA<br/>(e.g. Brevo 77.32.148.26)
-    participant PF as pfSense WAN<br/>192.168.1.2:25
-    participant HAP as pfSense HAProxy<br/>10.0.20.1:25
+    participant PF as OPNsense WAN<br/>192.168.1.2:25
+    participant HAP as OPNsense HAProxy<br/>10.0.20.1:25
     participant N as k8s-node:30125<br/>ETP: Cluster
     participant P as Postfix postscreen<br/>pod:2525
 
@@ -108,7 +108,7 @@ sequenceDiagram
 | docker-mailserver | 15.0.0 | `mailserver` namespace | Postfix MTA + Dovecot IMAP + Rspamd (single container) |
 | Roundcubemail | 1.6.13-apache | `mailserver` namespace | Webmail UI (MySQL-backed) |
 | Rspamd | Built into docker-mailserver | — | Spam filtering, DKIM signing, DMARC verification |
-| pfSense HAProxy | 2.9-dev6 (`pfSense-pkg-haproxy-devel`) | pfSense VM | TCP reverse proxy injecting PROXY v2 for external mail |
+| OPNsense HAProxy | 3.2.26 (plugin os-haproxy 5.1) | OPNsense VM 100, `playbooks/files/opnsense/haproxy.yml` | TCP reverse proxy injecting PROXY v2 for external mail |
 | Brevo EU (ex-Sendinblue) | SaaS | — | Outbound SMTP relay (300/day free) |
 
 Dovecot exporter was retired in code-1ik (2026-04-19) — `viktorbarzin/dovecot_exporter` speaks the pre-2.3 `old_stats` FIFO protocol which docker-mailserver 15.0.0's Dovecot 2.3.19 no longer emits.
@@ -123,7 +123,7 @@ The mailserver pod exposes **8 TCP listeners**: 4 stock + 4 alt. Two Kubernetes 
 | SMTPS (implicit TLS) | 465 | `mailserver` ClusterIP | 465   | —     | ❌ stock | Intra-cluster (Roundcube rarely uses this) |
 | Submission (STARTTLS) | 587 | `mailserver` ClusterIP | 587   | —     | ❌ stock | **Roundcube pod** → mailserver.svc:587 |
 | IMAPS | 993 | `mailserver` ClusterIP | 993   | —     | ❌ stock | **Roundcube pod** + E2E probe → mailserver.svc:993 |
-| SMTP | 25  | `mailserver-proxy` NodePort | 2525  | 30125 | ✅ required | External MX traffic via pfSense HAProxy |
+| SMTP | 25  | `mailserver-proxy` NodePort | 2525  | 30125 | ✅ required | External MX traffic via OPNsense HAProxy |
 | SMTPS | 465 | `mailserver-proxy` NodePort | 4465  | 30126 | ✅ required | External SMTPS submission |
 | Submission | 587 | `mailserver-proxy` NodePort | 5587  | 30127 | ✅ required | External STARTTLS submission (mail clients over WAN) |
 | IMAPS | 993 | `mailserver-proxy` NodePort | 10993 | 30128 | ✅ required | External IMAPS (mail clients over WAN) |
@@ -138,8 +138,8 @@ The alt listeners are set up by:
 ```
 Internet → MX: mail.viktorbarzin.me (priority 1)
          → A record: 176.12.22.76 (non-proxied Cloudflare DNS-only)
-         → pfSense NAT rdr: WAN:{25,465,587,993} → 10.0.20.1:{same}
-         → pfSense HAProxy (TCP mode, send-proxy-v2 on backend)
+         → OPNsense NAT rdr: WAN:{25,465,587,993} → 10.0.20.1:{same}
+         → OPNsense HAProxy (TCP mode, send-proxy-v2 on backend)
          → k8s-node:{30125..30128} NodePort (mailserver-proxy, ETP: Cluster)
          → kube-proxy → pod alt listener (2525/4465/5587/10993)
          → Postfix postscreen / smtpd / Dovecot parses PROXY v2 header
@@ -223,7 +223,7 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | MX | `viktorbarzin.me` | `mx2.viktorbarzin.me` (pri 20) | Backup MX (ADR-0019, since 2026-07-08) — senders fall to it when the primary is unreachable |
 | A | `mx2.viktorbarzin.me` | `92.5.132.215` (non-proxied) | Backup MX — OCI reserved public IP (stable across VM stop/start) |
 | A | `mail.viktorbarzin.me` | `176.12.22.76` (non-proxied) | Mail server IP |
-| AAAA | `mail.viktorbarzin.me` | `2001:470:5a7f:20::203` | IPv6: Traefik's VIP (webmail); pfSense forwards the mail ports on it to `mailserver-v6` `::204` (cluster dual-stack, 2026-11-03) |
+| AAAA | `mail.viktorbarzin.me` | `2001:470:5a7f:20::203` | IPv6: Traefik's VIP (webmail); OPNsense forwards the mail ports on it to `mailserver-v6` `::204` (cluster dual-stack, 2026-11-03) |
 | TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:spf.brevo.com ~all` | Authorize Brevo for outbound (soft-fail during cutover; was `include:mailgun.org -all` until 2026-04-18 Brevo migration) |
 | TXT (DKIM) | `s1._domainkey` | RSA 1024-bit key | Mailgun DKIM (roundtrip probe only — inbound testing still uses Mailgun API) |
 | TXT (DKIM) | `mail._domainkey` | RSA 2048-bit key | Rspamd self-hosted DKIM signing |
@@ -242,7 +242,7 @@ Reverse DNS for `176.12.22.76` returns `176-12-22-76.pon.spectrumnet.bg.` (ISP-a
 ### CrowdSec Integration
 - **Collections**: `crowdsecurity/postfix` + `crowdsecurity/dovecot` (installed)
 - **Log acquisition**: CrowdSec agents parse mailserver pod logs for brute-force patterns
-- **Real client IPs**: pfSense HAProxy injects PROXY v2 header on each backend connection; Postfix (`postscreen_upstream_proxy_protocol=haproxy` / `smtpd_upstream_proxy_protocol=haproxy` on alt ports) + Dovecot (`haproxy = yes` on alt IMAPS listener) parse it to recover the true source IP despite kube-proxy SNAT. Replaces the pre-2026-04-19 MetalLB `10.0.20.202` ETP:Local scheme (see code-yiu)
+- **Real client IPs**: OPNsense HAProxy injects PROXY v2 header on each backend connection; Postfix (`postscreen_upstream_proxy_protocol=haproxy` / `smtpd_upstream_proxy_protocol=haproxy` on alt ports) + Dovecot (`haproxy = yes` on alt IMAPS listener) parse it to recover the true source IP despite kube-proxy SNAT. Replaces the pre-2026-04-19 MetalLB `10.0.20.202` ETP:Local scheme (see code-yiu)
 - **Decisions**: CrowdSec bans/challenges attackers via firewall bouncer rules
 
 ### Fail2ban Disabled (CrowdSec is the Policy)
@@ -254,7 +254,7 @@ docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FA
 - DKIM signing (selector `mail`, 2048-bit RSA)
 - DMARC verification on inbound mail
 - Auto-learns from Junk folder movements (`RSPAMD_LEARN=1`)
-- DNS through an `unbound` sidecar (loopback `127.0.0.1:5335`, cluster DNS as fallback), set in `override.d/options.inc`. DNS blocklists (Spamhaus, URIBL, DNSWL, SURBL) refuse queries forwarded through public resolvers, and both CoreDNS and pfSense forward to 8.8.8.8/1.1.1.1. Before 2026-10-31 Spamhaus answered `127.255.255.254` and rspamd switched those lists off. Check: `rspamc stat` scans should show `RBL_*`/`URIBL_*` hits and no `*_BLOCKED*` symbols.
+- DNS through an `unbound` sidecar (loopback `127.0.0.1:5335`, cluster DNS as fallback), set in `override.d/options.inc`. DNS blocklists (Spamhaus, URIBL, DNSWL, SURBL) refuse queries forwarded through public resolvers, and both CoreDNS and OPNsense forward to public resolvers (CoreDNS to 8.8.8.8/1.1.1.1, OPNsense's Unbound to Cloudflare over DNS-over-TLS). Before 2026-10-31 Spamhaus answered `127.255.255.254` and rspamd switched those lists off. Check: `rspamc stat` scans should show `RBL_*`/`URIBL_*` hits and no `*_BLOCKED*` symbols.
 - State in the shared Redis, db 5 (`override.d/redis.conf`; `mailserver` is on the redis stack's client allowlist): Bayes, scan history, replies. Bayes autolearns from clear verdicts (`override.d/classifier-bayes.conf`) and from Junk moves, and starts scoring after 200 spam and 200 ham learns.
 - Greylisting, neural and reputation stay off (docker-mailserver defaults)
 - SRS **disabled** (2026-07-08, permanent): postsrsd 1.10 deterministically
@@ -279,7 +279,7 @@ anvil_rate_time_unit = 60s
 ### E2E Roundtrip Probe
 CronJob `email-roundtrip-monitor` (every 20 min, `*/20 * * * *`):
 1. Sends test email via **Brevo HTTP API** to `smoke-test@viktorbarzin.me` (Brevo delivers it to our MX over the public internet, exercising the full external-ingress path).
-2. Email hits WAN → pfSense HAProxy → k8s-node:30125 → pod :2525 postscreen (PROXY v2) → Postfix → catch-all delivers to `spam@` mailbox.
+2. Email hits WAN → OPNsense HAProxy → k8s-node:30125 → pod :2525 postscreen (PROXY v2) → Postfix → catch-all delivers to `spam@` mailbox.
 3. Verifies delivery via IMAP — connects to `mailserver.mailserver.svc.cluster.local:993` (intra-cluster path, no PROXY), searches by UUID marker.
 4. Deletes test email, pushes metrics to Pushgateway + Uptime Kuma.
 
@@ -303,9 +303,9 @@ the roundtrip probe's mail via mx2 — it then arrives minutes late through the
 drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 
 ### Uptime Kuma Monitors
-- TCP SMTP on `176.12.22.76:25` — full external path (DNS → WAN → pfSense HAProxy → mailserver)
+- TCP SMTP on `176.12.22.76:25` — full external path (DNS → WAN → OPNsense HAProxy → mailserver)
 - TCP `mailserver.svc:{587,993}` — intra-cluster ClusterIP path
-- TCP `10.0.20.1:{25,993}` — pfSense HAProxy health (post code-yiu Phase 6)
+- TCP `10.0.20.1:{25,993}`: OPNsense HAProxy health (post code-yiu Phase 6)
 - E2E Push monitor (receives push from `email-roundtrip-monitor` probe)
 
 ### Dovecot exporter — retired
@@ -366,12 +366,12 @@ drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 - **Decision**: Rspamd replaces both SpamAssassin and OpenDKIM in a single component
 - **Tradeoff**: Higher memory usage (~150-200MB) but simpler stack
 
-### Client-IP Preservation (pfSense HAProxy + PROXY v2)
-- **Current (2026-04-19, bd code-yiu)**: pfSense HAProxy listens on `10.0.20.1:{25,465,587,993}`, forwards to k8s NodePort 30125-30128 with `send-proxy-v2` on each backend connection. The mailserver pod exposes parallel listeners (2525/4465/5587/10993) that REQUIRE the PROXY v2 header, while the stock ports 25/465/587/993 stay PROXY-free for intra-cluster traffic (Roundcube, probe). The mailserver Service is ClusterIP-only; ETP is no longer a concern for external traffic.
+### Client-IP Preservation (OPNsense HAProxy + PROXY v2)
+- **Current (2026-04-19, bd code-yiu; on OPNsense since 2026-11-10)**: OPNsense HAProxy listens on `10.0.20.1:{25,465,587,993}`, forwards to k8s NodePort 30125-30128 with `send-proxy-v2` on each backend connection. The mailserver pod exposes parallel listeners (2525/4465/5587/10993) that REQUIRE the PROXY v2 header, while the stock ports 25/465/587/993 stay PROXY-free for intra-cluster traffic (Roundcube, probe). The mailserver Service is ClusterIP-only; ETP is no longer a concern for external traffic.
 - **Historical (2026-04-12 → 2026-04-19)**: Dedicated MetalLB IP `10.0.20.202` with `externalTrafficPolicy: Local` — required pod/speaker colocation; kube-proxy preserved client IP only when pod was on the same node as the advertising speaker.
 - **Why switched**: ETP:Local made the mailserver's single replica drop inbound mail silently during pod reschedule (30-60s GARP flip). HAProxy with `send-proxy-v2` lets the pod reschedule to any node and recover IP-preservation through the header.
-- **Tradeoff**: pfSense now runs HAProxy (one more service in the firewall's responsibility); alt container ports + extra Service are ~80 lines of Terraform. The win is HA without IP-preservation compromise.
-- **Runbook**: [`runbooks/mailserver-pfsense-haproxy.md`](../runbooks/mailserver-pfsense-haproxy.md).
+- **Tradeoff**: the firewall runs HAProxy, set up on pfSense and carried over to OPNsense (one more service in the firewall's responsibility); alt container ports + extra Service are ~80 lines of Terraform. The win is HA without IP-preservation compromise.
+- **Runbook**: [`runbooks/mailserver-opnsense-haproxy.md`](../runbooks/mailserver-opnsense-haproxy.md); OPNsense operations, including a HAProxy start gotcha after the cutover, in [`runbooks/opnsense.md`](../runbooks/opnsense.md).
 
 ## Troubleshooting
 
@@ -408,8 +408,8 @@ of the 1.10 spin still unpinned.
 ### Inbound mail not arriving
 1. **DNS/MX**: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
 2. **WAN reachability**: `nc -zw5 mail.viktorbarzin.me 25` from outside
-3. **pfSense NAT**: verify WAN:{25,465,587,993} rdr to `10.0.20.1` (HAProxy VIP). `ssh admin@10.0.20.1 'pfctl -sn' | grep '10.0.20.1'`
-4. **HAProxy health**: `ssh admin@10.0.20.1 "echo 'show servers state' | socat /tmp/haproxy.socket stdio"` — at least one backend in `srv_op_state=2` (UP) per pool
+3. **OPNsense NAT**: verify WAN:{25,465,587,993} rdr to `10.0.20.1` (HAProxy VIP). `ssh root@10.0.10.1 'pfctl -sn' | grep '10.0.20.1'`
+4. **HAProxy health**: `ssh root@10.0.10.1 "echo 'show servers state' | nc -U /var/run/haproxy.socket"`: at least one backend in `srv_op_state=2` (UP) per pool. OPNsense has no `socat`.
 5. **Container listener**: `kubectl exec -n mailserver -c docker-mailserver deployment/mailserver -- ss -ltn | grep -E ':(25|2525|465|4465|587|5587|993|10993)\b'` — 8 lines expected
 6. **Postfix queue + delivery**: `kubectl logs -n mailserver deploy/mailserver -c docker-mailserver | grep -E 'from=|reject|smtpd-proxy'`
 7. **CrowdSec decisions**: `kubectl exec -n crowdsec deploy/crowdsec-lapi -- cscli decisions list`
@@ -435,7 +435,7 @@ of the 1.10 spin still unpinned.
 
 - [Backup MX runbook](../runbooks/backup-mx.md) — mx2 as-built, one-command recreate, drain ops (ADR-0019)
 - [Monitoring Architecture](monitoring.md) — alert definitions, Uptime Kuma
-- [Networking Architecture](networking.md) — MetalLB, pfSense NAT, Cloudflare DNS
+- [Networking Architecture](networking.md) — MetalLB, OPNsense NAT, Cloudflare DNS
 - [VPN Architecture](vpn.md) — the WireGuard fabric the backup-MX drain rides
 - [Security Architecture](security.md) — CrowdSec deployment
 - [Secrets Management](secrets.md) — Vault paths for mail credentials

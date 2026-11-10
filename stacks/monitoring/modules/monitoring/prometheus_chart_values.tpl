@@ -2978,7 +2978,7 @@ serverFiles:
           # exist. Gauges come from the tailscale-subnet-router-probe CronJob
           # (headscale ns, every 6h), which joins the tailnet as an ephemeral
           # tag:probe node and pulls HTTP through the subnet routes.
-          # Runbook: docs/runbooks/pfsense-tailscale-subnet-router.md
+          # Runbook: docs/runbooks/opnsense-tailscale-subnet-router.md
           - alert: TailscaleSubnetRouterDown
             expr: tailscale_subnet_router_up{job="tailscale-subnet-router-probe"} == 0
             # 6h cadence: a single failed run must alert, so `for` only needs to
@@ -7766,7 +7766,7 @@ serverFiles:
       # internet-egress-dns (extraScrapeConfigs). Criticals route to
       # slack-critical via the severity=critical child route; WAN/egress-down
       # inhibits the downstream egress symptoms (see inhibit_rules).
-      # Runbook: docs/runbooks/pfsense-egress.md.
+      # Runbook: docs/runbooks/opnsense-egress.md.
       # Backup MX (mx2, Oracle relay; ADR-0019). Warnings, not criticals: a
       # down/stuck backup MX only matters during a PRIMARY outage, and the
       # queue is empty in normal operation. Runbook: docs/runbooks/backup-mx.md.
@@ -7928,7 +7928,7 @@ serverFiles:
               subsystem: pfsense
             annotations:
               summary: "pfSense WAN gateway 192.168.1.1 unreachable from the cluster (>3m)"
-              description: "In-cluster blackbox ICMP to the pfSense upstream gateway (192.168.1.1) has failed for >3m. pfSense egress/NAT or the WAN path is likely down (the 2026-06-27 incident class); internal VLAN routing may still work. Check pfSense System > Routing > Gateways + dpinger; on-box `clog /var/log/gateways.log`. Runbook: docs/runbooks/pfsense-egress.md."
+              description: "In-cluster blackbox ICMP to the pfSense upstream gateway (192.168.1.1) has failed for >3m. pfSense egress/NAT or the WAN path is likely down (the 2026-06-27 incident class); internal VLAN routing may still work. Check pfSense System > Routing > Gateways + dpinger; on-box `clog /var/log/gateways.log`. Runbook: docs/runbooks/opnsense-egress.md."
           - alert: InternetEgressDown
             # ICMP to BOTH Quad9 and Cloudflare from in-cluster (path crosses
             # pfSense NAT). max()==0 = NEITHER answered = a true egress
@@ -7941,7 +7941,7 @@ serverFiles:
               subsystem: pfsense
             annotations:
               summary: "Internet egress DOWN — in-cluster ICMP to both 9.9.9.9 and 1.1.1.1 failing (>2m)"
-              description: "Neither 9.9.9.9 nor 1.1.1.1 is reachable via ICMP from inside the cluster for >2m — internet egress through pfSense NAT is black-holed (the 2026-06-27 incident: egress died ~20min while internal stayed up). Check pfSense WAN/gateway/NAT; recovery per docs/runbooks/pfsense-egress.md (gateway re-eval / reboot is the known fix)."
+              description: "Neither 9.9.9.9 nor 1.1.1.1 is reachable via ICMP from inside the cluster for >2m — internet egress through pfSense NAT is black-holed (the 2026-06-27 incident: egress died ~20min while internal stayed up). Check pfSense WAN/gateway/NAT; recovery per docs/runbooks/opnsense-egress.md (gateway re-eval / reboot is the known fix)."
           - alert: ExternalDNSResolutionDown
             # UDP/53 DNS query to public resolvers — a distinct failure surface
             # from ICMP (catches DNS-only egress breakage).
@@ -7967,7 +7967,7 @@ serverFiles:
               subsystem: pfsense
             annotations:
               summary: "Egress-only failure: t3 cloudflare leg DOWN while internal leg UP (>3m)"
-              description: "The full-public-path (cloudflare) t3 probe leg is down but the internal (Traefik-only) leg is healthy — the exact 2026-06-27 egress-only signature (internet/NAT down, internal routing fine). A total outage would also drop the internal leg. Check pfSense WAN/egress; docs/runbooks/pfsense-egress.md."
+              description: "The full-public-path (cloudflare) t3 probe leg is down but the internal (Traefik-only) leg is healthy — the exact 2026-06-27 egress-only signature (internet/NAT down, internal routing fine). A total outage would also drop the internal leg. Check pfSense WAN/egress; docs/runbooks/opnsense-egress.md."
           - alert: EdgeFirewallVMDown
             # Edge firewall = OPNsense, Proxmox VMID 100 since the 2026-11-10
             # cutover (pfSense VM 101 before; proxmox-exporter pve_up). VM stopped

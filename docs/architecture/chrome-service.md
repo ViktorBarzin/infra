@@ -298,7 +298,7 @@ because neko reads ICE servers from env and env can't be computed at pod start.
 Nothing long-lived needs rotating by hand.
 
 > [!IMPORTANT]
-> The relay cannot currently reach an **off-LAN** viewer. pfSense's WAN is the
+> The relay cannot currently reach an **off-LAN** viewer. The firewall's WAN is the
 > private `192.168.1.2` behind an ISP router, and that router forwards UDP 3478
 > but not coturn's `49152-49252` relay range — measured 2026-08-11, pfSense's rdr
 > counter for the range does not move when an external host sends to a relayed

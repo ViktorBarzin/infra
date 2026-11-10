@@ -1,9 +1,9 @@
 # Bastion: SSH on port 443
 
 The Bastion is a jump-only sshd reachable at `ssh.viktorbarzin.me:443`, with SSH carried
-inside TLS. It lets a client reach devvm, pfSense and the Proxmox host from networks that
-only allow outbound HTTPS. It gives no shell; a client authenticates with its own key and then
-hops to a target with `ProxyJump`.
+inside TLS. It lets a client reach devvm, the OPNsense edge firewall and the Proxmox host
+from networks that only allow outbound HTTPS. It gives no shell; a client authenticates with
+its own key and then hops to a target with `ProxyJump`.
 
 - Stack: `stacks/bastion/`
 - Design: [2026-09-28-ssh-bastion-443-design.md](../plans/2026-09-28-ssh-bastion-443-design.md)
@@ -17,7 +17,7 @@ use [break-glass SSH](breakglass-ssh.md) (WAN 52222 to the Proxmox host) or Wire
 
 ```mermaid
 flowchart TD
-  C["client"] -->|"TLS :443, SNI ssh.viktorbarzin.me"| P["TP-Link, pfSense rdr"]
+  C["client"] -->|"TLS :443, SNI ssh.viktorbarzin.me"| P["TP-Link, OPNsense rdr"]
   P --> T["Traefik websecure: IngressRouteTCP bastion"]
   T --> B["bastion pod (namespace bastion)"]
   B --> G["10.0.10.10:22, 10.0.20.1:22, 192.168.1.127:22"]
@@ -45,9 +45,9 @@ Host devvm-443
   User <devvm user>
   ProxyJump bastion
 
-Host pfsense-443
+Host opnsense-443
   HostName 10.0.20.1
-  User admin
+  User root
   ProxyJump bastion
 
 Host pve-443
@@ -57,8 +57,10 @@ Host pve-443
 ```
 
 Then `ssh devvm-443`. The target authenticates the user exactly as it does on the LAN; the
-Bastion only relays the connection. Pin the Bastion's host key on first connect by checking
-the fingerprint above.
+Bastion only relays the connection. On OPNsense that is root with a key from
+`playbooks/files/opnsense/authorized_keys.yml`; root's shell there is csh. Until the 2026-11-10
+cutover this entry was `pfsense-443` with user `admin`. Pin the Bastion's host key on first
+connect by checking the fingerprint above.
 
 If `openssl` is missing on the client, either of these works as the ProxyCommand:
 

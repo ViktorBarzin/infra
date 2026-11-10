@@ -74,7 +74,7 @@ The homelab runs a 3-2-1 strategy with a **two-leg** path to Synology so every N
 ```
 sdc /srv/nfs/<svc>/   ──nfs-mirror daily 02:00──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/  [leg 1]
 sdc /srv/nfs/immich/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/immich/                          [leg 2]
-sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,pfsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
+sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,opnsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
 ```
 
 The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 T). **Not backed up at all**: `/srv/nfs/frigate/` (camera ring buffer), `/srv/nfs/temp/` (scratch). Everything else rides leg 1 via `nfs-mirror`.
@@ -150,7 +150,7 @@ graph TB
         subgraph Layer2b["Layer 2b: Daily PVC File Backup (daily-backup)"]
             PVCBackup["PVC File Copy<br/>Daily 05:00<br/>4 weekly versions via --link-dest<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
             SQLiteBackup["Auto SQLite Backup<br/>magic number check + ?mode=ro<br/>from PVC snapshots"]
-            PfsenseBackup["pfSense Backup<br/>config.xml + full tar<br/>4 weekly versions"]
+            PfsenseBackup["OPNsense Backup<br/>config.xml via scp<br/>newest 14 kept"]
             PVEConfig["PVE Config<br/>/etc/pve + scripts"]
         end
 
@@ -223,7 +223,7 @@ graph LR
         T0100["Sun 01:00 vzdump-vms (RETIRED 2026-09-15)<br/>timer disabled on purpose<br/>last image 2026-09-13<br/>floor no longer advances"]
         T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
         T0330["03:30 devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
-        T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + pfsense + pve-config"]
+        T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + opnsense + pve-config"]
         T0600["06:00 offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
         T1200["12:00 LVM thin snapshots (midday)<br/>second daily snapshot"]
     end
@@ -242,7 +242,7 @@ graph TB
     subgraph PVE["Proxmox Host (192.168.1.127)"]
         subgraph sda["sda: 1.1TB RAID1 SAS — 70% used (315 GB free)"]
             sda_vg["VG: backup<br/>LV: data (ext4)<br/>/mnt/backup"]
-            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/, pfsense/<YYYY-WW>/, pve-config/<br/>+ daily mirror of /srv/nfs/<svc>/ via nfs-mirror"]
+            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/, opnsense/, pve-config/<br/>+ daily mirror of /srv/nfs/<svc>/ via nfs-mirror"]
         end
 
         subgraph sdb["sdb: 931GB SSD"]
@@ -334,7 +334,7 @@ graph LR
 | Daily PVC Backup | Daily 05:00, 4 weeks | PVE host: `daily-backup` | File-level PVC copy to sda |
 | Auto SQLite Backup | Daily 05:00 + daily-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
-| pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
+| OPNsense Backup | Daily 05:00 + daily-backup | PVE host: `scp` over SSH | `/conf/config.xml`, newest 14 copies kept |
 | Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
@@ -411,10 +411,11 @@ A third case on 2026-10-15: the autonomous upgrade run wrote its pre-upgrade dum
 - Runs `.backup` to create a consistent copy
 - Covers all SQLite files across all PVC snapshots automatically
 
-**3. pfSense Backup** (`/mnt/backup/pfsense/<YYYY-WW>/`):
-- `config.xml` via API (base64 decode)
-- Full filesystem tar via SSH (`tar czf /tmp/pfsense-full.tar.gz /cf /var/db /boot/loader.conf`)
-- 4 weekly versions
+**3. OPNsense Backup** (`/mnt/backup/opnsense/`, ADR-0038):
+- `scp root@10.0.20.1:/conf/config.xml` to `config-<date>.xml`; root on the PVE host logs in with `/root/.ssh/id_rsa`, authorized by `playbooks/opnsense.yml --tags users`
+- The newest 14 copies are kept
+- The configuration source is also in git (`playbooks/files/opnsense/*.yml`), so this copy is for a fast restore of the exact running state
+- Replaced the pfSense step, which took config.xml via the API plus a weekly filesystem tar, at the 2026-11-10 cutover. `/mnt/backup/pfsense/` keeps the last pfSense backups, 4.7 GB on 2026-11-10, and nothing adds to or prunes it now
 
 **Site-router config backups** (`router-config-backup`, separate from daily-backup):
 - **Script**: `/usr/local/bin/router-config-backup` on the PVE host (source `infra/scripts/router-config-backup.sh`, unit + timer alongside). Deploy is CI, like the others (see "Deploying the PVE host scripts").
@@ -492,12 +493,12 @@ Two-step offsite sync:
 #### Step 1: sda to Synology pve-backup/
 
 **Method**: `rsync` from `/mnt/backup/` to `synology.viktorbarzin.lan:/Backup/Viki/pve-backup/`
-**Content**: PVC snapshots (`pvc-data/`), pfSense backups, PVE config, SQLite backups, **plus the nfs-mirror output** (anca-elements + ~30 critical NFS subtrees) — see Layer 3a. After consolidation, sda is the single source for the bulk of Synology's payload.
+**Content**: PVC snapshots (`pvc-data/`), OPNsense backups, PVE config, SQLite backups, **plus the nfs-mirror output** (anca-elements + ~30 critical NFS subtrees) — see Layer 3a. After consolidation, sda is the single source for the bulk of Synology's payload.
 
 **Destination**: `Synology/Backup/Viki/pve-backup/`:
 - `pvc-data/<YYYY-WW>/` — 4 weekly PVC file backups
 - `sqlite-backup/` — auto SQLite backups
-- `pfsense/<YYYY-WW>/` — 4 weekly pfSense backups
+- `opnsense/`: the newest 14 OPNsense `config.xml` copies; `pfsense/` holds the last pfSense backups
 - `pve-config/` — latest PVE config
 - `anca-elements/`, `mysql/`, `postgresql/`, `nextcloud/`, `health/`, `<other critical NFS dirs>/` — from nfs-mirror (Layer 3a)
 
@@ -672,7 +673,7 @@ Nothing in this set is deployed by hand any more.
 | Path | Purpose |
 |------|---------|
 | `/usr/local/bin/lvm-pvc-snapshot` | PVE host: LVM snapshot creation + restore |
-| `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
+| `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + OPNsense config |
 | `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
 | `/usr/local/bin/vzdump-vms` | PVE host: live `vzdump` image of devvm → `/mnt/backup/vzdump/`. **Retired 2026-09-15**, still deployed so reviving it is one `systemctl enable` |
 | `/usr/local/bin/devvm-home-backup` | PVE host: daily incremental `rsync --link-dest` of devvm `/home` → `/mnt/backup/devvm-home/`. ~29 GB per generation after the 2026-09-03 exclude fix (was 37 GB — virtualenvs and four SDK caches were slipping through) |
@@ -701,7 +702,7 @@ Nothing in this set is deployed by hand any more.
 | Path | Contents |
 |------|----------|
 | `secret/viktor/synology_ssh_key` | SSH key for Synology NAS SFTP access |
-| `secret/viktor/pfsense_api_key` | pfSense API key + secret for config backup |
+| `secret/viktor/pfsense_api_key` | pfSense API key + secret, used by the pfSense backup step until the 2026-11-10 cutover; the OPNsense step uses SSH |
 
 ### Terraform Stacks
 
@@ -880,25 +881,25 @@ kubectl exec -n vaultwarden deployment/vaultwarden -- sqlite3 /data/db.sqlite3 "
 3. Verify integrity on restored DB
 4. Scale back up: `kubectl scale deployment/vaultwarden --replicas=1 -n vaultwarden`
 
-### pfSense Backup Failing
+### OPNsense Backup Failing
 
-**Symptom**: `PfsenseBackupStale` alert (if implemented)
+**Symptom**: `OpnsenseBackupStale` alert: no successful copy for 9 days, job `opnsense-backup`
 
 **Diagnosis**:
 ```bash
 ssh root@192.168.1.127
-systemctl status daily-backup.service | grep -A5 pfsense
+journalctl -u daily-backup.service --since -2d | grep -i opnsense
 ```
 
 **Common causes**:
-- API key expired/invalid
-- SSH auth failed (password changed, key rejected)
-- pfSense unreachable
+- SSH key rejected: the PVE host's `/root/.ssh/id_rsa` is not in OPNsense root's authorized keys
+- Host key mismatch: the host's `known_hosts` entry for 10.0.20.1 must hold OPNsense's key, which replaced pfSense's at the cutover
+- OPNsense unreachable
 
 **Fix**:
-1. Verify API key: `curl -k https://pfsense.viktorbarzin.me/api/v1/system/config -H "Authorization: <key>"`
-2. Verify SSH: `ssh root@pfsense.viktorbarzin.me`
-3. Update credentials in Vault `secret/viktor/pfsense_api_key`
+1. From the PVE host: `ssh -o BatchMode=yes root@10.0.20.1 true`
+2. Re-apply the authorized keys: `playbooks/opnsense.yml --tags users`; the keys are in `playbooks/files/opnsense/authorized_keys.yml`
+3. Access and everyday commands: `docs/runbooks/opnsense.md`
 
 ### Backup Disk Full
 
@@ -910,13 +911,14 @@ ssh root@192.168.1.127
 
 # Check space usage by component
 du -sh /mnt/backup/pvc-data/*
-du -sh /mnt/backup/pfsense/*
+du -sh /mnt/backup/opnsense /mnt/backup/pfsense
 du -sh /mnt/backup/sqlite-backup
 
 # Clean up old weekly versions (keep latest 2)
 find /mnt/backup/pvc-data -maxdepth 1 -type d -name "????-??" | sort | head -n -2 | xargs rm -rf
-find /mnt/backup/pfsense -maxdepth 1 -type d -name "????-??" | sort | head -n -2 | xargs rm -rf
 ```
+
+Nothing prunes `/mnt/backup/pfsense/` any more: it holds the last pfSense backups, about 4.7 GB on 2026-11-10.
 
 ### Missing Backup for New Service
 
@@ -1011,7 +1013,7 @@ module "nfs_backup" {
 │  LVMThinPoolLow             < 15% free space in thin pool       │
 │  WeeklyBackupStale          > 8d  since last success            │
 │  WeeklyBackupFailing        backup script exited non-zero       │
-│  PfsenseBackupStale         > 8d  since last success            │
+│  OpnsenseBackupStale        > 9d  since last success            │
 │  OffsiteBackupSyncStale     > 8d  since last success            │
 │  BackupDiskFull             > 85% usage on /mnt/backup          │
 └────────────────────────────────────────────────────────────────┘
@@ -1021,7 +1023,7 @@ module "nfs_backup" {
 - Backup CronJobs: Push `backup_last_success_timestamp` to Pushgateway on completion
 - LVM snapshot script: Pushes `lvm_snapshot_last_run_timestamp`, `lvm_snapshot_last_status`, `lvm_snapshot_created_total`, `lvm_snapshot_failed_total`, `lvm_snapshot_pruned_total`, `lvm_snapshot_thinpool_free_pct` (job `lvm-pvc-snapshot`)
 - Daily backup script: Pushes `daily_backup_last_run_timestamp`, `daily_backup_last_status`, `daily_backup_bytes_synced` (job `daily-backup`). Disk-fullness alert (`BackupDiskFull`) does NOT use a script-pushed metric; it derives from node-exporter `node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"}`.
-- pfSense backup (step 3 of `daily-backup`): Pushes `backup_last_run_timestamp`, `backup_last_status`, and `backup_last_success_timestamp` (only on success) under job `pfsense-backup`. Pushed in BOTH success and failure paths so `PfsenseBackupStale` doesn't go silent when SSH-to-pfsense breaks.
+- OPNsense backup (step 3 of `daily-backup`): Pushes `backup_last_run_timestamp`, `backup_last_status`, and `backup_last_success_timestamp` (only on success) under job `opnsense-backup`. Pushed in BOTH success and failure paths so `OpnsenseBackupStale` doesn't go silent when SSH to OPNsense breaks. The pfSense step and its `pfsense-backup` job were removed at the cutover.
 - Offsite sync script: Pushes `backup_last_success_timestamp`, `offsite_sync_last_status` (job `offsite-backup-sync`)
 - Prometheus backup (sidecar in prometheus-server pod, monthly 1st-Sunday 04:00 UTC): Pushes `prometheus_backup_last_success_timestamp` (job `prometheus-backup`)
 - ~~CloudSync monitor~~: Removed (TrueNAS decommissioned)
@@ -1080,7 +1082,7 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 
 **Note**: All proxmox-lvm and proxmox-lvm-encrypted PVCs get LVM snapshots (except `dbaas` and `monitoring` namespaces, excluded for write-amplification reasons) + file-level backup. NFS-backed media syncs directly to Synology `nfs/` and `nfs-ssd/` via inotify change tracking.
 
-² **Hand-managed VMs** — **no VM is imaged since 2026-09-15**, when `vzdump-vms` was retired; devvm (102) was the only one, and its protection is now the devvm playbook plus `devvm-home-backup`. The k8s nodes are deliberately uncovered (reprovisioned from cloud-init; their data lives in the PVCs already backed up above). **home-assistant (103) and docker-registry (220) are a documented gap** — add their VMIDs to `VZDUMP_VMIDS` to image them (registry content is also re-pullable from upstreams; HA has its own add-on backups). pfSense (101) is covered separately by `daily-backup` (config.xml + weekly tar).
+² **Hand-managed VMs** — **no VM is imaged since 2026-09-15**, when `vzdump-vms` was retired; devvm (102) was the only one, and its protection is now the devvm playbook plus `devvm-home-backup`. The k8s nodes are deliberately uncovered (reprovisioned from cloud-init; their data lives in the PVCs already backed up above). **home-assistant (103) and docker-registry (220) are a documented gap** — add their VMIDs to `VZDUMP_VMIDS` to image them (registry content is also re-pullable from upstreams; HA has its own add-on backups). OPNsense (100) is covered separately by `daily-backup` (config.xml), and its configuration source is in git; pfSense (101) is stopped and kept as the rollback.
 
 ¹ **"Other apps not enumerated above"** — the table only enumerates services worth calling out. The default backup posture for any service using `proxmox-lvm` or `proxmox-lvm-encrypted` (outside `dbaas`/`monitoring`) is **automatic** Layer 1 (LVM thin snapshots, 7d retention) + Layer 2 (file backup, 4 weekly versions on sda) + Layer 3 (offsite to Synology). Auto-discovery is by LV name pattern (`vm-*-pvc-*`), so adding a new service to the cluster gets it covered without any explicit registration. Run `ssh root@192.168.1.127 lvs --noheadings -o lv_name pve | grep '^vm-.*-pvc-' | grep -v _snap_ | wc -l` to see the live count.
 

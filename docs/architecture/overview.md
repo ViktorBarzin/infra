@@ -16,7 +16,7 @@ graph TB
 
     subgraph Proxmox["Proxmox VE"]
         direction LR
-        PF["pfSense<br/>101"]
+        PF["OPNsense<br/>100"]
         DEV["devvm<br/>102"]
         HA["home-assistant<br/>103"]
         MASTER["k8s-master<br/>200"]
@@ -85,7 +85,8 @@ graph TB
 
 | VMID | Name | CPUs | RAM | Network | IP Address | Notes |
 |------|------|------|-----|---------|------------|-------|
-| 101 | pfsense | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | - | Gateway/firewall routing between VLANs |
+| 100 | opnsense | 8 | 8GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20, vmbr0:vlan30 | 10.0.20.1 | Gateway/firewall routing between VLANs; OPNsense 26.7.8 since 2026-11-10, `stacks/opnsense` (ADR-0038) |
+| 101 | pfsense | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | - | Stopped, NICs link-down, onboot 0: the rollback for OPNsense, no removal date |
 | 102 | devvm | 16 | 8GB | vmbr1:vlan10 | - | Development VM |
 | 103 | home-assistant | 8 | 8GB | vmbr0 | - | Home Assistant Sofia instance |
 | 200 | k8s-master | 8 | 16GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
@@ -127,7 +128,7 @@ The infrastructure runs on a single Dell R730 server with a Xeon E5-2699 v4 CPU 
 
 ### Network Layer
 
-pfSense (VMID 101) acts as the central gateway and firewall, routing traffic between:
+OPNsense (VMID 100) is the central gateway and firewall, routing traffic between:
 - Physical network (192.168.1.0/24) via vmbr0
 - Management VLAN 10 (10.0.10.0/24) via vmbr1:vlan10
 - Kubernetes VLAN 20 (10.0.20.0/24) via vmbr1:vlan20
@@ -217,7 +218,7 @@ Secrets are stored in HashiCorp Vault under `secret/`:
 - **Flexibility**: Easy to snapshot, clone, and roll back VMs during upgrades
 - **Isolation**: Management network (devvm) separated from Kubernetes
 - **GPU passthrough**: Can dedicate GPU to a single node without tainting the entire host
-- **Multi-purpose**: Same physical host can run non-K8s VMs (pfSense, Home Assistant)
+- **Multi-purpose**: Same physical host can run non-K8s VMs (OPNsense, Home Assistant)
 
 **Tradeoff**: Slight performance overhead from virtualization (acceptable for homelab).
 

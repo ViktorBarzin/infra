@@ -62,8 +62,9 @@ Script source: `stacks/claude-breakglass/files/breakglass-pve` (deploy via
 ## NAT quirks (why `from=` differs per host)
 
 Discovered during bring-up — both verified from a real in-cluster pod:
-- **pod → PVE (192.168.1.127):** pfSense SNATs inter-VLAN traffic to its
-  `192.168.1.2` interface, so PVE sees `192.168.1.2` for ALL cluster (and devvm)
+- **pod → PVE (192.168.1.127):** the edge firewall SNATs inter-VLAN traffic to its
+  `192.168.1.2` interface (pfSense at bring-up; OPNsense since 2026-11-10 has the
+  same automatic WAN outbound NAT for `10.0.10.0/24` and `10.0.20.0/24`), so PVE sees `192.168.1.2` for ALL cluster (and devvm)
   SSH. Hence the PVE key uses `from="192.168.1.2"`. The devvm itself is NOT a
   permitted source (it's the box being recovered).
 - **pod → devvm (10.0.10.10):** the devvm sees the Calico-SNAT **node IP**

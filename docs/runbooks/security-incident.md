@@ -147,7 +147,7 @@ sum by (user_username) (count_over_time({job="kubernetes-audit"} | json | verb =
 
 ### V5 — Auth failure spike
 
-**Action:** Identify the auth method and source. If CI token rotation, false positive. If unknown source brute-forcing, block the source IP at pfSense.
+**Action:** Identify the auth method and source. If CI token rotation, false positive. If unknown source brute-forcing, ban the source IP with `homelab crowdsec ban <ip> --reason "..."` ([crowdsec-manual-bans.md](crowdsec-manual-bans.md)); the OPNsense edge firewall's CrowdSec bouncer also enforces manual decisions inbound on WAN and the HE tunnel.
 
 ### V6 — Token with policies different from parent
 

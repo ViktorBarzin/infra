@@ -76,7 +76,7 @@ Three facts carry most of the weight:
 | `docs/architecture/networking.md` (IPv6 Ingress gotcha, 2026-11-02), commit `238198f9`, memories #16552 and #16799 | The WireGuard re-sync regenerated nginx "about an hour after boot" | It happened **during boot**. `kern.boottime` is `Fri Oct 23 09:18:26 2026` local time; the WireGuard config revisions are 09:18:43 to 09:19:07, `cert.crt` and the nginx config 09:18:59, the package HAProxy started 09:19:04. All within 41 seconds of kernel start. The "hour" came from reading the boot time in UTC and the file times in local time (EEST, UTC+3 on that date). [measured] |
 | `docs/research/2026-08-31-cluster-dual-stack-ipv6.md`, "0.34% of requests" | Non-crawler IPv6 is 0.34% of traffic | The query counted every IPv6 `ClientHost` in Traefik's log. Traefik logs the original client for Cloudflare-proxied hosts as well (today: `terminal`, `nextcloud` and `t3view`, whose AAAA are Cloudflare's, log `2a01:4b00:ab23:1200::/64` clients). So the figure describes IPv6 clients site-wide, not traffic over the bridge. The bridge-only figure is in [Traffic](#traffic-over-the-bridge). [measured] |
 | `docs/architecture/dns.md`, record table | 26 non-proxied AAAA (2026-09-04) | 28 names resolve AAAA `2001:470:6e:43d::2` today: 26 Ingresses annotated `non-proxied`, plus `ssh` and `terminal-api`. [measured] |
-| `docs/runbooks/mailserver-pfsense-haproxy.md`, bootstrap comments | Mail frontends listen on `10.0.20.1:{25,465,587,993}` | The package writes `bind :25` (and so on), which HAProxy documents as "all IPv4 addresses of the system". The bootstrap passes `'10.0.20.1'` as the `extaddr` key, which is not a key the package knows, so the address comes out empty. Harmless today, but it is why the IPv4 and IPv6 mail binds never collide. [measured, source] |
+| `docs/runbooks/mailserver-opnsense-haproxy.md`, bootstrap comments | Mail frontends listen on `10.0.20.1:{25,465,587,993}` | The package writes `bind :25` (and so on), which HAProxy documents as "all IPv4 addresses of the system". The bootstrap passes `'10.0.20.1'` as the `extaddr` key, which is not a key the package knows, so the address comes out empty. Harmless today, but it is why the IPv4 and IPv6 mail binds never collide. [measured, source] |
 | Standalone bridge config vs package pools | (not documented) | The standalone mail backends list nodes .101-.103 with no health checks. The package pools list .101-.104 with checks on the non-PROXY ports. The two have drifted. [measured] |
 
 ---
@@ -516,7 +516,7 @@ This repo:
 - `docs/research/2026-08-31-cluster-dual-stack-ipv6.md`
 - `docs/architecture/networking.md` → "IPv6 Ingress (HE Tunnel + HAProxy Bridge)"
 - `docs/architecture/dns.md` → "Which names stay grey, and why"
-- `docs/runbooks/mailserver-pfsense-haproxy.md`, `scripts/pfsense-haproxy-bootstrap.php`
+- `docs/runbooks/mailserver-opnsense-haproxy.md`, `scripts/pfsense-haproxy-bootstrap.php`
 - `scripts/pfsense-ipv6-proxy.sh`, `scripts/pfsense-ipv6-proxy-watchdog.sh`, `playbooks/pfsense-ipv6-bridge.yml`, `playbooks/files/pfsense-ipv6-bridge-config.php`
 - `stacks/backup-mx/main.tf`, `stacks/backup-mx/cloud-init.yaml.tftpl`
 - Memories #11214, #11833, #13777, #13783, #16552, #16799, #6608, #6715

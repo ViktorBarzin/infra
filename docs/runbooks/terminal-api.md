@@ -17,7 +17,7 @@ grant to `devvm-tailnet:8710` in `stacks/headscale/acl.hujson`) was retired on 2
 
 ```mermaid
 flowchart TD
-  C["client"] --> E["TP-Link, pfSense rdr (IPv4) or HAProxy PROXY v2 (IPv6)"]
+  C["client"] --> E["TP-Link, OPNsense rdr (IPv4) or routed to Traefik's IPv6 VIP (IPv6)"]
   E --> B["Traefik websecure: CrowdSec bouncer"]
   B --> H["identity headers removed, no proxy secret added"]
   H --> R["per-client rate limit 5/s burst 20, 10 concurrent"]

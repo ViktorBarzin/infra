@@ -46,8 +46,8 @@ options timeout:2 attempts:2
 
 | Field | Value | Purpose |
 |---|---|---|
-| Primary | `192.168.1.2` | pfSense LAN interface (dnsmasq forwarder → Technitium LB) — resolves `.viktorbarzin.lan` |
-| Fallback | `94.140.14.14` | AdGuard public DNS — recursive only, used if pfSense LAN IP unreachable |
+| Primary | `192.168.1.2` | OPNsense WAN address on the Sofia LAN (Unbound; `.viktorbarzin.lan` from its auth-zone copy of Technitium, see `opnsense-unbound.md`); resolves `.viktorbarzin.lan` |
+| Fallback | `94.140.14.14` | AdGuard public DNS, recursive only, used if the firewall's address is unreachable |
 | `search` | `viktorbarzin.lan` | Unqualified names (`technitium`, `idrac`, etc.) resolve against the internal zone |
 | `timeout:2 attempts:2` | — | Cap glibc resolver at 2s per server, 2 tries — reasonable fallback latency |
 

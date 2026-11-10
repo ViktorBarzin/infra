@@ -14,7 +14,7 @@
 # a PREVIOUS registration — that IP now belongs to a family laptop).
 #
 # Design : docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md
-# Runbook: docs/runbooks/pfsense-tailscale-subnet-router.md
+# Runbook: docs/runbooks/opnsense-tailscale-subnet-router.md
 #
 # The Headscale side (ACL, autoApprovers, split-DNS) is Terraform, NOT here:
 # stacks/headscale/acl.hujson (git-crypt) + secret/platform.headscale_config.

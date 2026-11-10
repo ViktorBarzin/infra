@@ -9,7 +9,7 @@ data "vault_kv_secret_v2" "secrets" {
 }
 
 # kea_ddns_tsig_secret lives with the other personal secrets
-# (docs/runbooks/pfsense-unbound.md, "Kea DHCP-DDNS TSIG").
+# (docs/runbooks/opnsense-unbound.md, "Kea DHCP-DDNS TSIG").
 data "vault_kv_secret_v2" "viktor" {
   mount = "secret"
   name  = "viktor"

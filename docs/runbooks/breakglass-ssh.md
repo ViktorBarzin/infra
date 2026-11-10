@@ -60,7 +60,7 @@ Then:
 
 ```bash
 ssh breakglass                              # shell on the Proxmox host
-ssh -J breakglass root@10.0.20.1            # jump to pfSense (or any LAN host)
+ssh -J breakglass root@10.0.20.1            # jump to OPNsense (or any LAN host)
 ssh -D 1080 breakglass                      # SOCKS5 → reach any internal IP
 ```
 
@@ -90,7 +90,7 @@ Two paths look equivalent and are not:
 | path | terminates | survives a cluster outage |
 |---|---|---|
 | break-glass `:52222` → Proxmox → devvm | Proxmox host | yes |
-| WireGuard `:51821` (site-to-site, pfSense) | pfSense | yes |
+| WireGuard `:51821` (site-to-site, OPNsense) | OPNsense | yes |
 | WireGuard `:51820` | a MetalLB LB in the cluster | no |
 
 If a phone or laptop is configured against `:51820`, it is not a break-glass
@@ -125,7 +125,7 @@ on a port that depends on nothing in the cluster.
 | Host | IP |
 |---|---|
 | Proxmox host | `192.168.1.127` |
-| pfSense | `10.0.20.1` (WAN `192.168.1.2`) |
+| OPNsense (edge firewall) | `10.0.20.1`, `10.0.10.1` (WAN `192.168.1.2`); GUI `https://10.0.10.1:8443` |
 | k8s API | `10.0.20.100` |
 | Synology NAS | `192.168.1.13` (reach via `ssh -J breakglass`) |
 | devvm (terminal lobby, tmux sessions) | `10.0.10.10` |
@@ -184,7 +184,8 @@ Forwarding. The break-glass rule:
   (e.g. `22 → 52222`) with *"External Port: This item conflicts with existed
   ones."* Hence ext==int 52222.
 - **Port 22:** on 2026-06-11 the firmware refused `22 → 22`. As of 2026-09-28 a working `22 → 22` forward
-  to pfSense exists (pfSense sends it to Forgejo git SSH on 10.0.20.200), so the refusal no longer holds;
+  to the edge firewall exists (it sends it to Forgejo git SSH on 10.0.20.200; pfSense then, OPNsense since
+  2026-11-10, `nat_port_forwards.yml`), so the refusal no longer holds;
   how that rule was added is not recorded. Break-glass stays on 52222.
 - **Row delete is immediate** (no confirm dialog) — clicking the trash icon
   removes the rule and toasts "Operation succeeded".

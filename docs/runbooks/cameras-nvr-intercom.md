@@ -35,7 +35,7 @@
 
 ```mermaid
 flowchart LR
-  D["devvm 10.0.10.10"] --> PF["pfSense<br/>маршрут през rpi_sofia, без NAT"]
+  D["devvm 10.0.10.10"] --> PF["OPNsense<br/>маршрут през rpi_sofia, без NAT"]
   PF -->|"източник = devvm"| PI["rpi-sofia eth1<br/>верига VERMONT_NETMAP"]
   V["VM 300 192.168.1.230"] --> PI
   PI -->|"NETMAP в guestns"| C["комплекс 192.168.1.x"]
@@ -43,8 +43,8 @@ flowchart LR
 
 | Къде | Какво | Кой го управлява |
 |---|---|---|
-| pfSense | gateway `rpi_sofia` = 192.168.1.10 на WAN, без мониторинг; маршрут `10.77.1.0/24` през него | `playbooks/pfsense-vermont-alias.yml` |
-| pfSense | outbound NAT: без NAT от `vermont_complex_clients` (само devvm от 19.10.2026) към `10.77.1.0/24`; floating block за всеки друг източник | същият |
+| OPNsense | gateway `rpi_sofia` = 192.168.1.10 на WAN, без мониторинг; маршрут `10.77.1.0/24` през него | `playbooks/files/opnsense/gateways.yml` и `routes.yml`, `playbooks/opnsense.yml --tags gateways,routes` |
+| OPNsense | outbound NAT: без NAT от `vermont_complex_clients` (само devvm от 19.10.2026) към `10.77.1.0/24`; floating block за всеки друг източник | `playbooks/files/opnsense/aliases.yml`, `nat_outbound.yml`, `filter.yml`, `--tags aliases,nat,filter` |
 | rpi-sofia, host | маршрут `10.77.1.0/24 via 10.200.1.2 dev veth-host`; `nat PREROUTING -d 10.77.1.0/24 -j ACCEPT` (първо правило) | `playbooks/rpi-sofia-netmap.yml` |
 | rpi-sofia, host | `FORWARD -i eth1 -o veth-host -d 10.77.1.0/24 -j VERMONT_NETMAP` (първо правило); веригата пуска изброените източници, останалите DROP | същият |
 | rpi-sofia, host | обратен маршрут за devvm през 192.168.1.2 | същият |
@@ -56,18 +56,25 @@ flowchart LR
   `camera-net.service` (After, Requires, PartOf). Не се редактира на Pi-то, а в
   `playbooks/files/rpi-sofia/`.
 - Списъкът с позволени източници е на две места, които трябва да съвпадат:
-  `$CLIENTS` в `playbooks/files/pfsense-vermont-alias-config.php` и
+  alias-ът `vermont_complex_clients` в `playbooks/files/opnsense/aliases.yml` и
   `vermont_allowed_sources` в `playbooks/rpi-sofia-netmap.yml`.
-- Без NAT, защото автоматичното правило на pfSense за собствения му WAN адрес
-  („let out anything from firewall host itself") праща трафика към TP-Link-а,
-  а не към Pi-то.
+- Защитната стена е OPNsense от 10.11.2026; преди това същото се настройваше
+  на pfSense с `playbooks/pfsense-vermont-alias.yml` и `$CLIENTS` в
+  `playbooks/files/pfsense-vermont-alias-config.php`, които вече не се ползват.
+  Промени се правят в YAML файловете и с
+  `ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags <област>`
+  (първо с `--check --diff`), никога през GUI-то.
+- Без NAT, защото на pfSense автоматичното правило за собствения му WAN адрес
+  („let out anything from firewall host itself") пращаше трафика към TP-Link-а,
+  а не към Pi-то. OPNsense запази правилото без NAT (`nat_outbound.yml`); дали
+  OPNsense би се държал по същия начин с NAT, не е проверявано.
 - Правилата на Pi-то трябва да са **първи**. Старите DNAT правила в
   `camera_net_setup2.sh` проверяват само порта, не и адреса, така че добавени
   след тях, `10.77.1.115:8000` би стигнал до NVR-а.
 - Резервни копия на правилата: `/home/pi/netbackup-20261017-netmap/` (преди
   първата промяна) и `/home/pi/netbackup-<дата>-ansible/` при всяко прилагане
   на playbook-а.
-- Disabled gateway-ят `4g_router` в pfSense сочеше 192.168.1.10 (сега Pi-то) и
+- Disabled gateway-ят `4g_router` в pfSense (преди OPNsense) сочеше 192.168.1.10 (сега Pi-то) и
   е изтрит заедно с маршрута си 34.117.118.44/32; 4G рутерът е на .7.
 - `.117` не слуша на порт 8000 и по директния път; в iVMS се добавя през ISAPI
   на порт 80. На своя адрес връща 301, на чужд `Host` отговаря 200; това е

@@ -398,7 +398,7 @@ What was actually run on 2026-09-13 and 2026-09-14, rather than assumed.
 | A headless Claude conversation persists across processes | `claude -p --session-id <uuid>` wrote a token, then `claude -p --resume <uuid>` in a separate invocation | Recalled correctly |
 | A machine-readable session directory exists | `claude agents --json` | 29 sessions with id, name, cwd, kind, status, waitingFor |
 | Background session management exists | `claude --help` on 2.1.270 | `--bg`, `attach`, `logs`, `stop`, `rm`, `respawn`, `--resume`, `--fork-session`. `stop` keeps the conversation |
-| Tailscale here is self-hosted | `infra/docs/runbooks/pfsense-tailscale-subnet-router.md`, `stacks/headscale/` | Headscale in-cluster, `100.64.0.0/24`, pfSense subnet router advertising the LAN and both VLANs |
+| Tailscale here is self-hosted | `infra/docs/runbooks/opnsense-tailscale-subnet-router.md`, `stacks/headscale/` | Headscale in-cluster, `100.64.0.0/24`, pfSense subnet router advertising the LAN and both VLANs |
 | Live tailnet membership | `headscale nodes list` | 9 nodes. `pfsense` at `100.64.0.9` online, `devvm-emo` at `100.64.0.61` online |
 | Wizard's devvm is not enrolled | `tailscale status` as wizard | No daemon socket, system unit disabled and inactive |
 | Userspace mode works unprivileged on this box | `ps` on the running `tailscaled` | emo runs `--tun=userspace-networking --socks5-server --outbound-http-proxy-listen`, unprivileged, since 2026-08-14 |

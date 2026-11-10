@@ -166,7 +166,7 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   only when the peer is inside `trustedProxyCIDRs` (`10.10.0.0/16`, where
   cloudflared runs); any other peer is judged on its own address and all of its
   forwarding headers are ignored. This matters because the origin is reachable
-  without transiting Cloudflare — pfSense NATs WAN :443 straight to Traefik — so
+  without transiting Cloudflare (OPNsense NATs WAN :443 straight to Traefik), so
   a banned client can connect directly and claim to be anyone. Verified live in
   both directions on 2026-08-18.
 - **Ban only.** `captcha` decisions are ignored, and `scope=Range` is handled as
@@ -772,7 +772,7 @@ Routed via **Loki ruler → Alertmanager → the `slack-security` receiver, whic
 
 **Documented exception — break-glass SSH (2026-06-11):** one deliberate carve-out. The Proxmox host's sshd listens on a WAN-exposed `:52222` (edge-router forward), **key-only**, trusting only a dedicated break-glass key (`Match LocalPort` → `authorized_keys.breakglass`), rate-limited (iptables hashlimit) + fail2ban. It is intentionally reachable from the public internet so it survives a cluster/tunnel outage with no dependency on the cluster — the one case the "must transit LAN/Headscale" rule cannot serve. Brute-force-proof (no password); the trade is Shodan-visibility. As-built: `docs/runbooks/breakglass-ssh.md`; rationale: `docs/plans/2026-06-11-breakglass-ssh-redesign-design.md`. (Replaced the 2026-05-30 port-knock variant, which was non-scannable but had a circular Vault dependency that caused a lockout.)
 
-**Two privileged footholds for the warm break-glass UI (2026-06-12):** the in-cluster `claude-breakglass` service (`breakglass.viktorbarzin.me`, warm case = devvm wedged, cluster healthy) holds one ed25519 key (Vault `secret/claude-breakglass/ssh_key`) authorising: (1) a `breakglass` user on the **devvm** with NOPASSWD sudo (`from="10.0.20.0/24"` — the Calico-SNAT node subnet); (2) a **PVE** `authorized_keys` entry pinned to `command="/usr/local/bin/breakglass-pve",restrict,from="192.168.1.2"` (pfSense's inter-VLAN SNAT IP) that only runs the verbs `status|forensics|reset|stop|start|cycle` against VM 102. The key is reachable ONLY by the breakglass pod (own namespace, no Vault role, ESO-synced); the shared `claude-agent` pod's `terraform-state` Vault policy is explicitly DENIED `secret/claude-breakglass/*`. Reset is autonomous (the agent may fire it), forensics-first. Reachable via Authentik or the basic-auth fallback — LAN-routed, not WAN-exposed. Runbook: `docs/runbooks/breakglass-ui.md`; ADR: `claude-agent-service/docs/adr/0001-breakglass-security-architecture.md`.
+**Two privileged footholds for the warm break-glass UI (2026-06-12):** the in-cluster `claude-breakglass` service (`breakglass.viktorbarzin.me`, warm case = devvm wedged, cluster healthy) holds one ed25519 key (Vault `secret/claude-breakglass/ssh_key`) authorising: (1) a `breakglass` user on the **devvm** with NOPASSWD sudo (`from="10.0.20.0/24"` — the Calico-SNAT node subnet); (2) a **PVE** `authorized_keys` entry pinned to `command="/usr/local/bin/breakglass-pve",restrict,from="192.168.1.2"` (the firewall's inter-VLAN SNAT address, OPNsense's since 2026-11-10) that only runs the verbs `status|forensics|reset|stop|start|cycle` against VM 102. The key is reachable ONLY by the breakglass pod (own namespace, no Vault role, ESO-synced); the shared `claude-agent` pod's `terraform-state` Vault policy is explicitly DENIED `secret/claude-breakglass/*`. Reset is autonomous (the agent may fire it), forensics-first. Reachable via Authentik or the basic-auth fallback — LAN-routed, not WAN-exposed. Runbook: `docs/runbooks/breakglass-ui.md`; ADR: `claude-agent-service/docs/adr/0001-breakglass-security-architecture.md`.
 
 #### Why no canary tokens
 
@@ -1017,8 +1017,8 @@ Each lobby service takes its user from an identity header (`TL_AUTH_HEADER`,
 sets that header is on another host. Measured 2026-09-11, with `TL_PROXY_SECRET`
 unset and no packet filter on the box, a request to any of those ports was
 treated as whichever user it named. Reaching them needed the LAN, one of the
-WireGuard tunnels, Headscale, or another account on the box. pfSense
-default-denies inbound IPv6 and passes only 80, 443, 25, 465, 587, 993 and 51821
+WireGuard tunnels, Headscale, or another account on the box. The firewall,
+pfSense then and OPNsense since 2026-11-10, default-denies inbound IPv6 and passes only 80, 443, 25, 465, 587, 993 and 51821
 to the tunnel endpoint, so the internet was never a path.
 
 Two controls now stand between the ports and an identity, split because the

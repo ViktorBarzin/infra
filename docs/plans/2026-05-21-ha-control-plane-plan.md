@@ -265,7 +265,7 @@ Reversible up to Phase 4. Phase 4+ reverse via the rollback section.
   - [ ] Update `.claude/reference/proxmox-inventory.md` — add VMIDs 205, 206
   - [ ] Add `docs/runbooks/control-plane-add-remove-master.md`
   - [ ] Update `docs/runbooks/restore-etcd.md` to cover 3-member quorum restore (was single-master only)
-  - [ ] Cross-link `docs/runbooks/mailserver-pfsense-haproxy.md` with the new apiserver_proxy_6443 pool
+  - [ ] Cross-link `docs/runbooks/mailserver-opnsense-haproxy.md` with the new apiserver_proxy_6443 pool
 
 ### Phase 7 — Extend k8s-version-upgrade chain to multi-master (~60 min)
 

@@ -179,7 +179,7 @@ procedures) are documented in `infra/docs/runbooks/`:
 | Rebuild after orphan-index incident | [registry-rebuild-image.md](../../docs/runbooks/registry-rebuild-image.md) |
 | PVE host operations (backups, LVM) | [proxmox-host.md](../../docs/runbooks/proxmox-host.md) |
 | NFS prerequisites and CSI mount options | [nfs-prerequisites.md](../../docs/runbooks/nfs-prerequisites.md) |
-| pfSense + Unbound DNS | [pfsense-unbound.md](../../docs/runbooks/pfsense-unbound.md) |
-| Mailserver PROXY-protocol / HAProxy | [mailserver-pfsense-haproxy.md](../../docs/runbooks/mailserver-pfsense-haproxy.md) |
+| pfSense + Unbound DNS | [opnsense-unbound.md](../../docs/runbooks/opnsense-unbound.md) |
+| Mailserver PROXY-protocol / HAProxy | [mailserver-opnsense-haproxy.md](../../docs/runbooks/mailserver-opnsense-haproxy.md) |
 | Technitium apply flow | [technitium-apply.md](../../docs/runbooks/technitium-apply.md) |
 | Goldmane flow trail (east-west who-talks-to-whom) | [goldmane-flow-trail.md](../../docs/runbooks/goldmane-flow-trail.md) |

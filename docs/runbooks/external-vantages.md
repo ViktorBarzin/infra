@@ -2,7 +2,7 @@
 
 The devvm cannot test a public path. It resolves `*.viktorbarzin.me` through
 Technitium's split horizon, and a request to the WAN IP comes back through
-pfSense NAT reflection, so both look like a real external round trip without
+OPNsense NAT reflection, so both look like a real external round trip without
 being one. To check what an outside client sees, run the test from one of the
 two machines below.
 

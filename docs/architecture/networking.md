@@ -1,16 +1,16 @@
 # Networking Architecture
 
-<!-- showcase: pfSense splits the network into separate segments for management, Kubernetes and cameras. Traefik is the ingress controller, and every request passes a middleware chain for bot blocking, rate limits and login. -->
+<!-- showcase: OPNsense splits the network into separate segments for management, Kubernetes and cameras. Traefik is the ingress controller, and every request passes a middleware chain for bot blocking, rate limits and login. -->
 
-Last updated: 2026-10-26 (R730 uplink on bond0 with eno2 as backup via the garage switch, vmbr2 removed, ADR-0017 rev 5 port map)
+Last updated: 2026-11-10 (OPNsense replaced pfSense as the edge firewall)
 
 ## Overview
 
-The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:5a7f:20::203`) directly: IPv4 via the TP-Link and pfSense port forwards on 80/443 to Traefik, IPv6 natively through the HE tunnel to Traefik's dual-stack VIP (see IPv6 Ingress). The same direct path carries SSH on 443 to the bastion (see below).
+The homelab network is built on three isolated segments behind OPNsense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment of ADR-0017), with OPNsense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik is the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:5a7f:20::203`) directly: IPv4 via the TP-Link and OPNsense port forwards on 80/443 to Traefik, IPv6 natively through the HE tunnel to Traefik's dual-stack VIP (see IPv6 Ingress). The same direct path carries SSH on 443 to the bastion (see below).
 
 ### Edge firewall: OPNsense since 2026-11-10
 
-OPNsense 26.7 replaced pfSense as the edge firewall on 2026-11-10 (ADR-0038). It runs as VM 100 on pfSense's addresses and MACs, so every address below is unchanged; where this page says pfSense, the same role is now OPNsense's (HAProxy, Kea, radvd, Unbound, the HE tunnel, the WireGuard hub, the Tailscale subnet router at 100.64.0.17). pfSense (VM 101) stays stopped with its NICs link-down as the rollback, with no removal date. OPNsense's configuration is declared in `playbooks/files/opnsense/` and applied by `playbooks/opnsense.yml`; operations and the cutover steps are in `docs/runbooks/opnsense.md`.
+OPNsense 26.7.8 is the edge firewall since 2026-11-10 (ADR-0038). It runs as Proxmox VM 100 on the addresses and MACs pfSense had, so no address changed at the cutover. pfSense (VM 101) stays stopped with its NICs link-down as the rollback, with no removal date. The VM is declared in `stacks/opnsense`, the configuration in `playbooks/files/opnsense/` (applied by `playbooks/opnsense.yml`); operations and the cutover steps are in `docs/runbooks/opnsense.md`.
 
 ## Architecture Diagram
 
@@ -45,7 +45,7 @@ graph TB
         end
 
         subgraph "VLAN 20 - Kubernetes<br/>10.0.20.0/24"
-            pfSense[pfSense<br/>10.0.20.1<br/>Gateway/NAT/DHCP]
+            OPNsense[OPNsense<br/>10.0.20.1<br/>Gateway/NAT/DHCP]
             Tech[Technitium DNS<br/>10.0.20.201 LB / 10.96.0.53 ClusterIP<br/>viktorbarzin.lan]
             MLB[MetalLB Pool<br/>10.0.20.200-10.0.20.220]
 
@@ -77,19 +77,19 @@ graph TB
     vmbr0 --> vmbr1
     vmbr1 -.VLAN 10.- Proxmox
     vmbr1 -.VLAN 10.- DevVM
-    vmbr1 -.VLAN 20.- pfSense
+    vmbr1 -.VLAN 20.- OPNsense
     vmbr1 -.VLAN 20.- Tech
     vmbr1 -.VLAN 20.- Master
     vmbr1 -.VLAN 20.- Node1
     Camera -.P4 → P1 → AX6000 → eno1, or P5 → eno2, tag 30.- vmbr0
-    vmbr0 -."pfSense net3 = dCCTV 10.0.30.1 (vmbr0 tag 30)".- pfSense
+    vmbr0 -."OPNsense net3 = dCCTV 10.0.30.1 (vmbr0 tag 30)".- OPNsense
 ```
 
 ## Components
 
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
-| pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for all subnets, Kea DDNS |
+| OPNsense | 26.7.8, Proxmox VM 100 | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for VLANs 10/20/30, Unbound, HAProxy, Suricata IDS, WireGuard hub, Tailscale subnet router |
 | phpIPAM | v1.8.3 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Bridge on bond0, uplink to LAN |
 | bond0 | Linux bond (active-backup) | eno1 + eno2 | eno1 primary (AX6000 port 1), eno2 backup (TL-SG105PE P5); ARP monitoring, see "R730 uplink" below |
@@ -130,11 +130,11 @@ Two consequences worth carrying:
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
-**Physical path (as-built 2026-10-26, ADR-0017 rev 5)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1** (VLAN 1 untagged + VLAN 30 tagged) → AX6000 port 2 → AX6000 port 1 → R730 `eno1` → `bond0` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. When `bond0` fails over to `eno2`, the camera path is P4 → **P5** (VLAN 30 tagged) → `eno2` and stays on the switch. Switch ports: **P1 = uplink to AX6000 port 2, P2 = MR200 `192.168.1.7`, P3 = UPS, P4 = camera, P5 = R730 `eno2`**. The iDRAC (`192.168.1.4`) is on MR200 port 2. 802.1Q (read live 2026-10-26): `tagMbrs [0x0,0x11]` (VLAN 30 tagged = P1 and P5), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]`. Because `eno1` now reaches the switch through the AX6000, VLAN 30 also crosses the AX6000; ADR-0017 rev 5 records the isolation question this raises. The rev 4 map (P1 = R730 eno1 trunk, P5 = apartment uplink) and the `eno2`/`vmbr2` fallback leg are superseded.
+**Physical path (as-built 2026-10-26, ADR-0017 rev 5)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1** (VLAN 1 untagged + VLAN 30 tagged) → AX6000 port 2 → AX6000 port 1 → R730 `eno1` → `bond0` → `vmbr0` (vlan-aware) → OPNsense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. When `bond0` fails over to `eno2`, the camera path is P4 → **P5** (VLAN 30 tagged) → `eno2` and stays on the switch. Switch ports: **P1 = uplink to AX6000 port 2, P2 = MR200 `192.168.1.7`, P3 = UPS, P4 = camera, P5 = R730 `eno2`**. The iDRAC (`192.168.1.4`) is on MR200 port 2. 802.1Q (read live 2026-10-26): `tagMbrs [0x0,0x11]` (VLAN 30 tagged = P1 and P5), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]`. Because `eno1` now reaches the switch through the AX6000, VLAN 30 also crosses the AX6000; ADR-0017 rev 5 records the isolation question this raises. The rev 4 map (P1 = R730 eno1 trunk, P5 = apartment uplink) and the `eno2`/`vmbr2` fallback leg are superseded.
 
-**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-import` records the leases in phpIPAM every 30 minutes.
+**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). OPNsense's Kea sends no DDNS updates (see "IPAM & DNS Auto-Registration"); `phpipam-import` records the leases in phpIPAM every 30 minutes.
 
-**Firewall** (all on pfSense):
+**Firewall** (all on OPNsense):
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
 - WAN in (home LAN side): pass `192.168.1.8` (ha-sofia) → `10.0.30.70:80` (ISAPI/hikvision_next) and `:554` (RTSP), reply-to disabled on both.
 - dKubernetes is allow-all, so cluster Frigate/go2rtc pulls RTSP with no extra rule (pod egress SNATs to node IPs).
@@ -157,20 +157,22 @@ The Vermont complex network is also `192.168.1.0/24`, reachable only from rpi-so
 
 ```mermaid
 flowchart LR
-  DV["devvm 10.0.10.10"] --> PF["pfSense<br/>route 10.77.1.0/24 via rpi_sofia 192.168.1.10<br/>no NAT for vermont_complex_clients<br/>floating block for other sources"]
+  DV["devvm 10.0.10.10"] --> PF["OPNsense<br/>route 10.77.1.0/24 via rpi_sofia 192.168.1.10<br/>no NAT for vermont_complex_clients<br/>floating block for other sources"]
   PF --> PI["rpi-sofia eth1<br/>VERMONT_NETMAP allowlist"]
   VM["VM 300 192.168.1.230"] --> PI
   PI -->|"NETMAP in guestns"| C["complex 192.168.1.x"]
 ```
 
-- **pfSense** (`playbooks/pfsense-vermont-alias.yml`): gateway `rpi_sofia` on WAN, monitoring off; static route; manual outbound-NAT rule `nonat` from alias `vermont_complex_clients` (only the devvm since 2026-10-19) to `vermont_complex_alias`; floating `block quick out on wan` from any other source. No NAT because the automatic `let out anything from firewall host itself` rule carries `route-to` the TP-Link for source 192.168.1.2, which would bypass the static route. The disabled `4g_router` gateway (it pointed at 192.168.1.10) was deleted with its disabled route.
+- **OPNsense** (`playbooks/files/opnsense/`, the entries marked `managed_by: pfsense-vermont-alias.yml`, which set them on pfSense): gateway `rpi_sofia` on WAN, monitoring off (`gateways.yml`); static route (`routes.yml`); manual outbound-NAT rule `nonat` from alias `vermont_complex_clients` (only the devvm since 2026-10-19) to `vermont_complex_alias` (`aliases.yml`, `nat_outbound.yml`); floating `block quick out on wan` from any other source (`filter.yml`). The no-NAT design comes from pfSense, whose automatic `let out anything from firewall host itself` rule carried `route-to` the TP-Link for source 192.168.1.2, which would have bypassed the static route; it was ported unchanged. The disabled `4g_router` gateway (it pointed at 192.168.1.10) was deleted with its disabled route before the cutover.
 - **rpi-sofia** (`playbooks/rpi-sofia-netmap.yml`): chain `VERMONT_NETMAP` on `-i eth1 -o veth-host -d 10.77.1.0/24` lets the same addresses (plus VM 300, `192.168.1.230`) through, and return routes for them go via 192.168.1.2.
-- **Cluster**: no access since 2026-10-19. The k8s node addresses were removed from both allowlists when the cluster iVMS was retired, together with its ClusterNetworkPolicy `complex-alias-ivms-only`. Giving a namespace access again means adding the node addresses back to both playbooks and a pod-level rule like that one.
-- The client list lives in both playbooks and must agree.
+- **Cluster**: no access since 2026-10-19. The k8s node addresses were removed from both allowlists when the cluster iVMS was retired, together with its ClusterNetworkPolicy `complex-alias-ivms-only`. Giving a namespace access again means adding the node addresses back to both lists and a pod-level rule like that one.
+- The client list lives in `playbooks/files/opnsense/aliases.yml` and `playbooks/rpi-sofia-netmap.yml`, and the two must agree.
 
 ## IPAM & DNS Auto-Registration
 
 Devices are automatically discovered, named, and registered in DNS without manual intervention.
+
+The DDNS step in the diagram has been off since 2026-07-18, when pfSense regenerated `kea-dhcp4.conf` without it (dns.md, "Dynamic updates"), and it is not configured on OPNsense either: `playbooks/files/opnsense/dhcp.yml` has no DDNS settings, and on the live box `kea-dhcp4.conf` has none and `kea-dhcp-ddns` does not run (checked 2026-11-10). The phpIPAM import still reads OPNsense's Kea leases.
 
 ```mermaid
 flowchart LR
@@ -178,14 +180,14 @@ flowchart LR
         Device[New Device<br/>joins WiFi/wired]
     end
 
-    subgraph pfSense["pfSense (10.0.20.1)"]
+    subgraph OPNsense["OPNsense (10.0.20.1)"]
         Kea[Kea DHCP4<br/>3 subnets<br/>42 reservations]
-        DDNS[Kea DHCP-DDNS]
+        DDNS[Kea DHCP-DDNS<br/>off since 2026-07-18, not configured on OPNsense]
         ARP[ARP Table]
     end
 
     subgraph K8s["Kubernetes"]
-        Import[CronJob<br/>pfsense-import<br/>hourly]
+        Import[CronJob<br/>phpipam-import<br/>every 30 min]
         Sync[CronJob<br/>dns-sync<br/>every 15min]
         IPAM[phpIPAM<br/>Web UI + API]
         MySQL[(MySQL<br/>InnoDB)]
@@ -203,7 +205,7 @@ flowchart LR
     DDNS -->|RFC 2136<br/>A + PTR| Reverse
     Device -.->|traffic| ARP
 
-    Import -->|SSH: Kea leases<br/>+ ARP table| pfSense
+    Import -->|SSH: Kea leases<br/>+ ARP table| OPNsense
     Import -->|insert/update<br/>IP + MAC + hostname| MySQL
     IPAM --- MySQL
     Sync -->|push named hosts| Forward
@@ -216,7 +218,7 @@ flowchart LR
 | Step | Trigger | Source | Destination | Data | Latency |
 |------|---------|--------|-------------|------|---------|
 | 1. DHCP lease | Device connects | Kea DHCP4 | Device | IP + gateway + DNS | Immediate |
-| 2. DNS registration | Lease granted | Kea DDNS | Technitium | A + PTR records | Immediate |
+| 2. DNS registration | Lease granted | Kea DDNS (off since 2026-07-18; not configured on OPNsense) | Technitium | A + PTR records | Immediate |
 | 3. Device import | CronJob (5min) | Kea leases + ARP | phpIPAM MySQL | IP + MAC + hostname | ≤5 min |
 | 4. DNS sync (push) | CronJob (15min) | phpIPAM MySQL | Technitium | A + PTR for named hosts | ≤15 min |
 | 5. DNS sync (pull) | CronJob (15min) | Technitium PTR | phpIPAM MySQL | Hostname for unnamed entries | ≤15 min |
@@ -225,9 +227,9 @@ flowchart LR
 
 | Subnet | DHCP Server | DNS option 6 | Reservations | DDNS | Notes |
 |--------|------------|--------------|--------------|------|-------|
-| 10.0.10.0/24 (Mgmt) | Kea on pfSense | `10.0.10.1, 94.140.14.14` | 3 (devvm, pxe, ha) | Yes (TSIG) | VMs with static MACs |
-| 10.0.20.0/24 (K8s) | Kea on pfSense | `10.0.20.1, 94.140.14.14` | 7 (master, nodes 1-5, registry) | Yes (TSIG) | K8s cluster nodes |
-| 192.168.1.0/24 (LAN) | **TP-Link AP** | `192.168.1.2, 94.140.14.14` | 42 (all home devices) | Yes | pfSense Kea WAN is disabled |
+| 10.0.10.0/24 (Mgmt) | Kea on OPNsense | `10.0.10.1, 94.140.14.14` | 3 (devvm, pxe, ha) | No (TSIG; off since 2026-07-18) | VMs with static MACs |
+| 10.0.20.0/24 (K8s) | Kea on OPNsense | `10.0.20.1, 94.140.14.14` | 7 (master, nodes 1-5, registry) | No (TSIG; off since 2026-07-18) | K8s cluster nodes |
+| 192.168.1.0/24 (LAN) | **TP-Link AP** | `192.168.1.2, 94.140.14.14` | 42 (all home devices) | Yes | OPNsense's Kea does not serve WAN |
 | 10.3.2.0/24 (VPN) | Static | — | — | No | WireGuard peers |
 | 192.168.0.0/24 (Valchedrym) | OpenWRT | — | — | No | Remote site |
 | 192.168.3.0/24 (Mladost 3) | OpenWRT | — | — | No | Remote site (since 2026-10) |
@@ -243,7 +245,7 @@ The Proxmox host uses a dual-bridge architecture:
   - **VLAN 10 (Management)**: 10.0.10.0/24 — Proxmox, DevVM
   - **VLAN 20 (Kubernetes)**: 10.0.20.0/24 — All K8s nodes, services, MetalLB IPs
 
-VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the upstream LAN via NAT.
+VMs tag traffic on vmbr1 to isolate workloads. OPNsense bridges VLAN 20 to the upstream LAN via NAT.
 
 ### DNS Resolution
 
@@ -255,8 +257,8 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - HA: primary + secondary + tertiary pods with anti-affinity, PDB minAvailable=2
 
 **LAN client DNS path (192.168.1.0/24)**:
-- TP-Link DHCP gives DNS=192.168.1.2 (pfSense WAN)
-- pfSense NAT redirect (`rdr`) forwards UDP 53 on WAN directly to Technitium (10.0.20.201)
+- TP-Link DHCP gives DNS=192.168.1.2 (OPNsense WAN)
+- OPNsense NAT redirect (`rdr`) forwards TCP and UDP 53 on WAN directly to Technitium (10.0.20.201)
 - Client source IPs are preserved (no SNAT on 192.168.1.x → 10.0.20.x path)
 - Technitium logs show real per-device IPs for analytics
 
@@ -265,19 +267,21 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - Technitium's Split Horizon `AddressTranslation` post-processor translates `176.12.22.76 → 10.0.20.203` (Traefik LB) in DNS responses for 192.168.1.0/24 clients (was `.200` until 2026-05-30 Traefik dedicated-IP move)
 - DNS Rebinding Protection has `viktorbarzin.me` in `privateDomains` to allow the translated private IP
 - Only affects non-proxied domains (ha-sofia, immich, headscale, etc.) — Cloudflare-proxied domains resolve to Cloudflare IPs and are unaffected
-- Other clients (10.0.x.x, K8s pods) are NOT translated — they reach the public IP via pfSense outbound NAT
+- Other clients (10.0.x.x, K8s pods) are NOT translated — they reach the public IP via OPNsense outbound NAT
 - Config synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h)
-- **Known mail-name collision**: the translation also sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203`, but Traefik does not listen on mail ports there. iOS Mail on Barzini WiFi silently hangs. Fix in flight: dedicated pfSense Virtual IP for the mail listener so DNS can point at a stable mail-only IP instead of relying on Traefik's LB IP.
+- **Known mail-name collision**: the translation also sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203`, but Traefik does not listen on mail ports there. iOS Mail on Barzini WiFi silently hangs. Fix in flight: dedicated OPNsense Virtual IP for the mail listener so DNS can point at a stable mail-only IP instead of relying on Traefik's LB IP.
 
 **K8s cluster DNS path**:
 - CoreDNS forwards `.viktorbarzin.lan` to Technitium ClusterIP (10.96.0.53)
-- CoreDNS forwards public queries to pfSense (10.0.20.1), 8.8.8.8, 1.1.1.1
+- CoreDNS forwards public queries to OPNsense (10.0.20.1), 8.8.8.8, 1.1.1.1
 - **In-cluster `forgejo.viktorbarzin.me` → Traefik ClusterIP**: a CoreDNS `rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local` (Corefile in `stacks/technitium/modules/technitium/main.tf`) keeps pod registry pulls/pushes/builds off the public-IP hairpin. The ETP=Local Traefik LB (`.203`) is not reliably hairpin-reachable from pods, and the public path (the bullet above) intermittently timed out **buildkit pushes** from Woodpecker build pods — which, unlike kubelet, do NOT use the per-node containerd Forgejo mirror. Resolving the Service by name auto-tracks the ClusterIP (no rot on a Traefik renumber); Traefik's `*.viktorbarzin.me` wildcard keeps SNI/TLS valid. Makes the per-pod woodpecker-server hostAlias belt-and-suspenders. (beads code-yh33)
 
-**pfSense dnsmasq (DNS Forwarder)**:
-- Listens on LAN (10.0.10.1), OPT1 (10.0.20.1), localhost only — NOT on WAN (192.168.1.2)
-- Forwards `.viktorbarzin.lan` to Technitium (10.0.20.201), public queries to 1.1.1.1
-- Serves K8s VLAN clients and pfSense's own DNS needs
+**OPNsense Unbound (DNS resolver, `playbooks/files/opnsense/unbound.yml`)**:
+- Listens on VLAN 10 (10.0.10.1), VLAN 20 (10.0.20.1), WAN (192.168.1.2) and localhost; DNS to the WAN address is redirected to Technitium before it reaches Unbound (see the LAN client path above)
+- Holds `viktorbarzin.lan` as an auth-zone secondary of Technitium (primary 10.0.20.201, NOTIFY accepted from it, `fallback-enabled` so lookups fall back to normal resolution when the zone cannot be loaded)
+- Forwards `viktorbarzin.me` to Technitium (10.0.20.201) for the split-horizon answers, and everything else to 1.1.1.1 and 1.0.0.1 over DNS-over-TLS
+- `viktorbarzin.me` and `viktorbarzin.lan` are private domains, and the DNS rebind check is off as it was on pfSense, so private answers for those names are not stripped
+- Serves the VLAN clients and OPNsense's own DNS needs
 - Aliases: `technitium_dns` (10.0.20.201), `k8s_shared_lb` (10.0.20.200), `coturn_lb` (10.0.20.205), `rustdesk_lb` (10.0.20.209)
 
 **External (Cloudflare)** — zone on the Free plan (200-record cap), ~87
@@ -541,24 +545,24 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 | **10.0.20.207** (dedicated) | Local | wireguard/wireguard→51820/UDP |
 | **10.0.20.208** (dedicated) | Cluster | monitoring/alloy-syslog→514 UDP+TCP (syslog from the London Flint; Helm-owned, see `london-site.md`) |
 
-**Mailserver does NOT use a LB IP** — inbound mail enters via pfSense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
+**Mailserver does NOT use a LB IP** — inbound mail enters via OPNsense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
 
-**pfSense aliases** map to these IPs: `k8s_shared_lb`→.200, `technitium_dns`→.201, `k8s_kms_lb`→.202, `traefik_lb`→.203, `k8s_wireguard_lb`→.207 (plus a legacy `nginx`→.200 duplicate — cruft). NAT rules reference aliases, so repointing an alias cascades to its paired filter rule.
+**OPNsense aliases** (`playbooks/files/opnsense/aliases.yml`) map to these IPs: `k8s_shared_lb`→.200, `technitium_dns`→.201, `k8s_kms_lb`→.202, `traefik_lb`→.203, `k8s_wireguard_lb`→.207 (plus a legacy `nginx`→.200 duplicate, cruft). NAT rules reference aliases, so repointing an alias cascades to its paired filter rule.
 
-¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_kms_lb` (.202) so any internet host can activate. The matching filter rule rate-limits per source (`max-src-conn 50`, `max-src-conn-rate 10/60`, `overload <virusprot>`). See `docs/runbooks/kms-public-exposure.md`.
+¹ **windows-kms is publicly WAN-exposed.** OPNsense forwards WAN TCP/1688 → `k8s_kms_lb` (.202) so any internet host can activate. The matching filter rule rate-limits per source (`max-src-conn 50`, `max-src-conn-rate 10/60`, `overload <virusprot>`). See `docs/runbooks/kms-public-exposure.md`.
 
 #### LB-IP renumber checklist
 
 These IPs are referenced by consumers that do **not** auto-follow when an IP moves — the 2026-05-30 Traefik `.200→.203` move broke five of them (cloudflared 502, woodpecker forge API, containerd pulls, the `.lan` + `.me` zones). **Before moving any LB IP, update every consumer below.** Bootstrap-critical literals (containerd mirror, PG state, node DNS) deliberately stay IP literals (DNS chicken-and-egg) — this list is their single source of truth.
 
-- **`.203` Traefik:** assigner `stacks/traefik/modules/traefik/main.tf` · split-horizon translation `stacks/technitium/modules/technitium/main.tf` (`externalToInternalTranslation`) · prometheus apex-alert summary `stacks/monitoring/.../prometheus_chart_values.tpl` · containerd Forgejo mirror `playbooks/k8s-node-tuning.yml` (declared since 2026-09-03, applied by hand, and checked hourly for drift by `scripts/k8s-node-drift-check` since 2026-09-05 — this entry said "reconciled hourly" in between, and nothing scheduled the playbook; previously the OOB per-node scripts `modules/create-template-vm/k8s-node-containerd-setup.sh` + `scripts/setup-forgejo-containerd-mirror.sh`, which never reconciled and left the six nodes with three different certs.d configurations) · cloudflared origin (already IP-independent → `traefik.traefik.svc`) · woodpecker forge alias (now reads the Traefik **ClusterIP** dynamically — no literal) · pfSense NAT 80/443 → `traefik_lb`.
-- **`.201` Technitium:** assigner `stacks/technitium/modules/technitium/main.tf` · DNS records `config.tfvars` (ns1/ns2/`viktorbarzin.lan`, dnscrypt forwarder) · `modules/create-template-vm/cloud_init.yaml` FallbackDNS · `scripts/provision-k8s-worker` · pfSense NAT 53 (**literal `10.0.20.201`**, not the `technitium_dns` alias — known inconsistency).
-- **`.202` KMS:** assigner `stacks/kms/main.tf` · pfSense NAT 1688 → `k8s_kms_lb` · Cloudflare `vlmcs` public A → WAN → `.202`.
+- **`.203` Traefik:** assigner `stacks/traefik/modules/traefik/main.tf` · split-horizon translation `stacks/technitium/modules/technitium/main.tf` (`externalToInternalTranslation`) · prometheus apex-alert summary `stacks/monitoring/.../prometheus_chart_values.tpl` · containerd Forgejo mirror `playbooks/k8s-node-tuning.yml` (declared since 2026-09-03, applied by hand, and checked hourly for drift by `scripts/k8s-node-drift-check` since 2026-09-05 — this entry said "reconciled hourly" in between, and nothing scheduled the playbook; previously the OOB per-node scripts `modules/create-template-vm/k8s-node-containerd-setup.sh` + `scripts/setup-forgejo-containerd-mirror.sh`, which never reconciled and left the six nodes with three different certs.d configurations) · cloudflared origin (already IP-independent → `traefik.traefik.svc`) · woodpecker forge alias (now reads the Traefik **ClusterIP** dynamically — no literal) · OPNsense NAT 80/443 → `traefik_lb`.
+- **`.201` Technitium:** assigner `stacks/technitium/modules/technitium/main.tf` · DNS records `config.tfvars` (ns1/ns2/`viktorbarzin.lan`, dnscrypt forwarder) · `modules/create-template-vm/cloud_init.yaml` FallbackDNS · `scripts/provision-k8s-worker` · OPNsense NAT 53 (**literal `10.0.20.201`**, not the `technitium_dns` alias — known inconsistency).
+- **`.202` KMS:** assigner `stacks/kms/main.tf` · OPNsense NAT 1688 → `k8s_kms_lb` · Cloudflare `vlmcs` public A → WAN → `.202`.
 - **`.204` Frigate go2rtc:** assigner `stacks/frigate/main.tf` · go2rtc WebRTC ICE candidate in Frigate `config.yml` (on the `frigate-config` PVC, OOB — `webrtc.candidates: [10.0.20.204:8555]`) · HA-sofia Frigate integration `rtsp_url_template` (OOB — `rtsp://10.0.20.204:8554/{{ name }}`). **No DNS indirection**: go2rtc inserts the literal into the ICE host candidate and won't resolve a hostname (verified in go2rtc source), so the Service annotation is the single source of truth for this IP.
-- **`.200` shared:** the 11 assigners above · HA London `Yiko camera` generic camera + `yiko_camera_ready` check (OOB in HA London config, `rtsp://…@10.0.20.200:8554/live`, `http://10.0.20.200:8080/snapshot.jpg`) · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (shadowsocks/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
-- **`.207` WireGuard:** assigner `stacks/wireguard/modules/wireguard/main.tf` · pfSense NAT UDP 51820 → `k8s_wireguard_lb` · client configs use the `vpn.viktorbarzin.me` A record, so roaming peers follow DNS and need no reissue. Moved off the shared `.200` on 2026-08-30, same reasoning as coturn: ETP=Cluster SNATed every peer to the node announcing `.200`, so the server saw `10.0.20.103:<random port>` (kube-proxy masquerades `--random-fully`) rather than the client, and the return path hung on a UDP conntrack entry on that node. Once it aged out the tunnel passed traffic one way only. Note pfSense's site-to-site WireGuard on **51821** is unrelated and shares the same server public key — do not repoint it.
-- **`.209` rustdesk:** pfSense NAT (21115-21117/tcp + 21116/udp) → `rustdesk_lb`, and the same forwards on the TP-Link · `stacks/technitium` internal `rustdesk.viktorbarzin.me` A record. Dedicated with ETP=Local so hbbs sees real peer addresses for hole punching.
-- **`.205` coturn:** pfSense NAT (TURN signaling 3478 tcp/udp + relay range 49152-49252/udp) → `coturn_lb` · `stacks/technitium` internal `turn.viktorbarzin.me` A record · `stacks/chrome-service` + `stacks/proxy` `COTURN_BACKEND_URL` (and the proxy's gluetun `FIREWALL_OUTBOUND_SUBNETS`). Moved off the shared `.200` on 2026-08-11: ETP=Cluster's SNAT made coturn see a node IP instead of the real peer, so it handed internal addresses out as STUN-derived candidates and no relay-based ICE pair could complete — both neko browsers sat at ICE `checking`. Same reasoning as Traefik's `.203`.
+- **`.200` shared:** the 11 assigners above · HA London `Yiko camera` generic camera + `yiko_camera_ready` check (OOB in HA London config, `rtsp://…@10.0.20.200:8554/live`, `http://10.0.20.200:8080/snapshot.jpg`) · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · OPNsense NAT (shadowsocks/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog target `.200:30514` (filter log, `syslog.yml`).
+- **`.207` WireGuard:** assigner `stacks/wireguard/modules/wireguard/main.tf` · OPNsense NAT UDP 51820 → `k8s_wireguard_lb` · client configs use the `vpn.viktorbarzin.me` A record, so roaming peers follow DNS and need no reissue. Moved off the shared `.200` on 2026-08-30, same reasoning as coturn: ETP=Cluster SNATed every peer to the node announcing `.200`, so the server saw `10.0.20.103:<random port>` (kube-proxy masquerades `--random-fully`) rather than the client, and the return path hung on a UDP conntrack entry on that node. Once it aged out the tunnel passed traffic one way only. Note OPNsense's site-to-site WireGuard on **51821** is unrelated and shares the same server public key, which it took over from pfSense. Do not repoint it.
+- **`.209` rustdesk:** OPNsense NAT (21115-21117/tcp + 21116/udp) → `rustdesk_lb`, and the same forwards on the TP-Link · `stacks/technitium` internal `rustdesk.viktorbarzin.me` A record. Dedicated with ETP=Local so hbbs sees real peer addresses for hole punching.
+- **`.205` coturn:** OPNsense NAT (TURN signaling 3478 tcp/udp + relay range 49152-49252/udp) → `coturn_lb` · `stacks/technitium` internal `turn.viktorbarzin.me` A record · `stacks/chrome-service` + `stacks/proxy` `COTURN_BACKEND_URL` (and the proxy's gluetun `FIREWALL_OUTBOUND_SUBNETS`). Moved off the shared `.200` on 2026-08-11: ETP=Cluster's SNAT made coturn see a node IP instead of the real peer, so it handed internal addresses out as STUN-derived candidates and no relay-based ICE pair could complete — both neko browsers sat at ICE `checking`. Same reasoning as Traefik's `.203`.
 
 Critical services are scaled to **3 replicas**:
 - Traefik (PDB: minAvailable=2)
@@ -571,20 +575,20 @@ PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance o
 
 ### IPv6 Ingress (native, cluster dual-stack)
 
-Since 2026-11-03 the cluster is dual-stack (`docs/plans/2026-11-02-cluster-dual-stack.md`). IPv6 still enters over the Hurricane Electric 6in4 tunnel on pfSense (`gif0`, MTU 1480, MSS clamp 1420), and pfSense now routes the HE /48 `2001:470:5a7f::/48` to VLAN 20 instead of proxying:
+Since 2026-11-03 the cluster is dual-stack (`docs/plans/2026-11-02-cluster-dual-stack.md`). IPv6 still enters over the Hurricane Electric 6in4 tunnel on OPNsense (`gif0`, MTU 1480, MSS clamp 1420), and OPNsense routes the HE /48 `2001:470:5a7f::/48` to VLAN 20 instead of proxying:
 
 | Piece | Address | Notes |
 |---|---|---|
-| VLAN 20 | `2001:470:5a7f:20::/64` | pfSense `::1`, nodes static `::100`-`::105` (`playbooks/k8s-node-ipv6.yml`), no RA |
+| VLAN 20 | `2001:470:5a7f:20::/64` | OPNsense `::1`, nodes static `::100`-`::105` (`playbooks/k8s-node-ipv6.yml`), no RA |
 | Traefik VIP | `2001:470:5a7f:20::203` | `svc/traefik` and `svc/traefik-udp`, `RequireDualStack`, ETP Local; TCP 80/443 and UDP 443 (HTTP/3) |
-| Mail VIP | `2001:470:5a7f:20::204` | `mailserver-v6`, IPv6-only, ETP Local, stock listeners 25/465/587/993; reached through a pfSense IPv6 port forward from `::203`, because `mail.viktorbarzin.me` is one name for MX and webmail |
+| Mail VIP | `2001:470:5a7f:20::204` | `mailserver-v6`, IPv6-only, ETP Local, stock listeners 25/465/587/993; reached through an OPNsense IPv6 port forward from `::203`, because `mail.viktorbarzin.me` is one name for MX and webmail |
 | Pods | `fd62:f088:7d06:100::/56` (ULA) | Calico pool `default-ipv6-ippool`, declared in `stacks/calico` |
 | Services | `fd62:f088:7d06:96::/112` (ULA) | kube-apiserver `--service-cluster-ip-range` |
 | MetalLB | `2001:470:5a7f:20::200`-`::220` | in the `default` pool with the IPv4 range |
 
-The 28 non-proxied AAAA records point at `::203` (`public_ipv6` in `config.tfvars` and the `ingress_factory` and reverse-proxy factory defaults). pfSense (`playbooks/pfsense-k8s-ipv6.yml`) passes only TCP 80/443 and UDP 443 to `::203` and the four mail ports to `::204` on the tunnel, rejects new outbound IPv6 from VLAN 20 (so node and pod traffic to the internet stays IPv4; Go binaries ignore `gai.conf`), and blocks ULA sources leaving on `gif0`. Traefik and Postfix/Dovecot see the real client IPv6 without PROXY protocol. Outbound mail stays IPv4.
+The 28 non-proxied AAAA records point at `::203` (`public_ipv6` in `config.tfvars` and the `ingress_factory` and reverse-proxy factory defaults). OPNsense (`filter.yml` and `nat_port_forwards.yml` in `playbooks/files/opnsense/`, the entries marked `managed_by: pfsense-k8s-ipv6.yml`, the playbook that set them on pfSense) passes only TCP 80/443 and UDP 443 to `::203` and the four mail ports to `::204` on the tunnel, rejects new outbound IPv6 from VLAN 20 (so node and pod traffic to the internet stays IPv4; Go binaries ignore `gai.conf`), and blocks ULA sources leaving on `gif0`. Traefik and Postfix/Dovecot see the real client IPv6 without PROXY protocol. Outbound mail stays IPv4.
 
-The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP payloads at minimum, which do not fit a 1280-byte tunnel. HE's side of the tunnel was already 1480; pfSense's `gif0` was 1280 until 2026-11-03.
+The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP payloads at minimum, which do not fit a 1280-byte tunnel. HE's side of the tunnel was already 1480; pfSense's `gif0` was 1280 until 2026-11-03, and OPNsense's is 1480 (`misc.yml`).
 
 **External checks** on mx2 (gatus `edge` group, Slack): `tcp://[2001:470:5a7f:20::203]:443`, `tcp://[2001:470:5a7f:20::203]:993`, and `ipv6 vip: http3 443`, an external endpoint fed every minute by `edge-h3-probe.timer` (`curl --http3-only` to `::203`), since gatus has no QUIC client.
 
@@ -592,29 +596,29 @@ The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP p
 
 | Layer | IPv4 | IPv6 |
 |---|---|---|
-| Perimeter | TP-Link forwards only the published ports to pfSense WAN | HE_IPv6 rules pass only 80/443 TCP, 443 UDP to `::203` and 25/465/587/993 to `::204`; everything else is dropped and logged |
+| Perimeter | TP-Link forwards only the published ports to OPNsense WAN | HE_IPv6 rules pass only 80/443 TCP, 443 UDP to `::203` and 25/465/587/993 to `::204`; everything else is dropped and logged |
 | Anti-spoofing | Nothing outside the home LAN arrives with an RFC 1918 source | The first HE_IPv6 rules drop sources in `fc00::/7`, `2001:470:5a7f::/48`, `2001:470:6f:43d::/64` and `ff00::/8` |
-| Snort (passive, alerts only) | WAN instance (`vtnet0`) | The same WAN instance: it decodes the 6in4 packets (IPv6 inside IPv4 protocol 41). Its `HOME_NET` must hold the VLAN 20 /64, so `playbooks/pfsense-k8s-ipv6.yml` reloads it when its `snort.conf` changes. A Snort instance on `gif0` cannot decode IPv6 (Snort 2 reads gif's DLT_NULL frames as IPv4) |
+| Suricata (IDS in pcap mode, alerts only; replaced pfSense's Snort) | on WAN (`vtnet0`), VLAN 10 and VLAN 20, ET Open plus the abuse.ch SSL Fingerprint Blacklist, Feodo Tracker and URLhaus lists; EVE alerts go to Loki through syslog (`tasks/opnsense/suricata.yml`) | The WAN instance carries the 6in4 packets (IPv6 inside IPv4 protocol 41). `HOME_NET` holds `2001:470:5a7f::/48`, `2001:470:6f:43d::/64` and the home LAN ULA. There is no instance on `gif0`; whether Suricata decodes the inner IPv6 of the 6in4 packets has not been checked here |
 | CrowdSec, node nftables bouncer | `ip crowdsec` table, single-address bans | `ip6 crowdsec6` table, single-address bans |
 | CrowdSec, Traefik plugin | address and range bans | address and range bans; local IPv6 bans are copied to their /64 every 2 minutes (`crowdsec-ipv6-ban-widen` CronJob) |
 | Rate limits | per client address | per client /64: `X-Client-Prefix` from the real-ip plugin, or `ipStrategy.ipv6Subnet = 64` where the limiter keys on the TCP peer |
 | Proxy trust (real-ip, CrowdSec plugin, Traefik forwarded headers) | pod CIDR `10.10.0.0/16`, `10.0.0.0/8` | adds the pod ULA `fd62:f088:7d06:100::/56` (`fd62:f088:7d06::/48` for forwarded headers) |
 | Source allowlists (`local-only`, `home-lans-only`) | `192.168.1.0/24`, `10.0.0.0/8` and the WG spoke LANs | `fc00::/7`, `fe80::/10` and the management VLAN's SLAAC prefix `2001:470:6f:43d::/64` (added 2026-11-09: the devvm reached `.lan` hosts over IPv6 from that prefix and got 403, which silenced its Loki shipping) |
-| Outbound | NAT through pfSense | new outbound IPv6 from VLAN 20 is rejected, so egress stays IPv4 |
+| Outbound | NAT through OPNsense | new outbound IPv6 from VLAN 20 is rejected, so egress stays IPv4 |
 
 Known gap, shared by both families: the nftables bouncer's sets have no `interval` flag, so a range decision lands as its first address only (`23.91.105.0/24` is stored as `23.91.105.0`). Range bans are enforced by the Traefik plugin, which covers web traffic but not mail.
 
 ### Retired: the pfSense HAProxy IPv6 bridge
 
-From 2026-03 to 2026-11-03 public IPv6 reached the cluster through HAProxy on pfSense, listening on the HE tunnel address `2001:470:6e:43d::2` and forwarding to the IPv4 cluster with PROXY protocol v2: first `socat` (until 2026-05-30, which masked every client as `10.0.20.1`), then a standalone HAProxy started by a boot `<shellcmd>` (down 2026-07-18 to 08-16 and 2026-10-23 to 11-02, both times because pfSense's nginx took `[::]:80`), and from 2026-11-02 six frontends in the HAProxy package. It was TCP only, so IPv6 clients were offered HTTP/3 (`alt-svc`) and could not use it. The six frontends, their `traefik_80` pool and the HE_IPv6 pass rules to the tunnel address were removed on 2026-11-03, once every AAAA record had moved to `::203`; `scripts/pfsense-haproxy-bootstrap.php` still lists their names so a run deletes them if they reappear. HAProxy keeps the IPv4 mail frontends and the SNI-routed internal `:443`, which is why Traefik still trusts PROXY v2 from `10.0.20.1`. `disablehttpredirect` stays set, so pfSense's nginx does not listen on port 80. Research and history: `docs/research/2026-11-02-reliable-ipv6-ingress.md`.
+From 2026-03 to 2026-11-03 public IPv6 reached the cluster through HAProxy on pfSense, listening on the HE tunnel address `2001:470:6e:43d::2` and forwarding to the IPv4 cluster with PROXY protocol v2: first `socat` (until 2026-05-30, which masked every client as `10.0.20.1`), then a standalone HAProxy started by a boot `<shellcmd>` (down 2026-07-18 to 08-16 and 2026-10-23 to 11-02, both times because pfSense's nginx took `[::]:80`), and from 2026-11-02 six frontends in the HAProxy package. It was TCP only, so IPv6 clients were offered HTTP/3 (`alt-svc`) and could not use it. The six frontends, their `traefik_80` pool and the HE_IPv6 pass rules to the tunnel address were removed on 2026-11-03, once every AAAA record had moved to `::203`, and were not ported to OPNsense. HAProxy on OPNsense (`playbooks/files/opnsense/haproxy.yml`) keeps the IPv4 mail frontends and the SNI-routed internal `:443`, which is why Traefik still trusts PROXY v2 from `10.0.20.1`. OPNsense's GUI web server (lighttpd) listens on 8443 and also on `*:80` and `[::]:80` (checked 2026-11-10). Research and history: `docs/research/2026-11-02-reliable-ipv6-ingress.md`.
 
-**Checking the native path:** `curl --resolve <host>:443:[2001:470:5a7f:20::203] https://<host>/` from outside, `curl --http3-only -6` for QUIC, and on pfSense `pfctl -sr | grep 'on gif0'` for the rules above. `ping6` is not a useful check of the services: pfSense answers ICMPv6 regardless.
+**Checking the native path:** `curl --resolve <host>:443:[2001:470:5a7f:20::203] https://<host>/` from outside, `curl --http3-only -6` for QUIC, and on OPNsense `pfctl -sr | grep 'on gif0'` for the rules above. `ping6` is not a useful check of the services: OPNsense answers ICMPv6 regardless.
 
 ### SSH on 443 (Bastion)
 
-`ssh.viktorbarzin.me` (non-proxied A/AAAA) is a jump-only sshd reachable on port 443 with SSH carried inside TLS, for networks that only allow outbound HTTPS. An `IngressRouteTCP` on the `websecure` entrypoint matches ``HostSNI(`ssh.viktorbarzin.me`)``, terminates TLS with the default wildcard certificate and forwards plain TCP to the `bastion` pod. Traefik tries TCP routers before HTTP routers on a shared entrypoint, and a specific `HostSNI` claims only that hostname, so every other request on 443 continues to the HTTP routers. No pfSense change was needed: the existing 443 `rdr` (IPv4) and the HE_IPv6 pass rule to Traefik's `::203` (IPv6) already deliver to Traefik.
+`ssh.viktorbarzin.me` (non-proxied A/AAAA) is a jump-only sshd reachable on port 443 with SSH carried inside TLS, for networks that only allow outbound HTTPS. An `IngressRouteTCP` on the `websecure` entrypoint matches ``HostSNI(`ssh.viktorbarzin.me`)``, terminates TLS with the default wildcard certificate and forwards plain TCP to the `bastion` pod. Traefik tries TCP routers before HTTP routers on a shared entrypoint, and a specific `HostSNI` claims only that hostname, so every other request on 443 continues to the HTTP routers. No firewall change was needed on pfSense, and OPNsense carries the same rules: the 443 `rdr` (IPv4) and the HE_IPv6 pass rule to Traefik's `::203` (IPv6) deliver to Traefik.
 
-From the bastion, clients `ProxyJump` to devvm (10.0.10.10), pfSense (10.0.20.1) or the Proxmox host (192.168.1.127) on 22 only, enforced by sshd `PermitOpen` and a Calico egress policy with an explicit Deny (a Kubernetes egress NetworkPolicy has no effect in tier 3-edge/4-aux namespaces while `wave1-egress-observe-tier34` allows all egress at order 2000). Keys only, no shell, one account per client from Vault `secret/bastion`, a Traefik `inFlightConn` cap of 4 per client IP, and a Slack post per login. sshd sees Traefik's pod IP rather than the client's. The entrypoint's `readTimeout` does not cut long sessions: Traefik clears that read deadline once a connection is routed, and `writeTimeout` is 0. Runbook: [bastion-ssh.md](../runbooks/bastion-ssh.md); design: [2026-09-28-ssh-bastion-443-design.md](../plans/2026-09-28-ssh-bastion-443-design.md).
+From the bastion, clients `ProxyJump` to devvm (10.0.10.10), OPNsense (10.0.20.1) or the Proxmox host (192.168.1.127) on 22 only, enforced by sshd `PermitOpen` and a Calico egress policy with an explicit Deny (a Kubernetes egress NetworkPolicy has no effect in tier 3-edge/4-aux namespaces while `wave1-egress-observe-tier34` allows all egress at order 2000). Keys only, no shell, one account per client from Vault `secret/bastion`, a Traefik `inFlightConn` cap of 4 per client IP, and a Slack post per login. sshd sees Traefik's pod IP rather than the client's. The entrypoint's `readTimeout` does not cut long sessions: Traefik clears that read deadline once a connection is routed, and `writeTimeout` is 0. Runbook: [bastion-ssh.md](../runbooks/bastion-ssh.md); design: [2026-09-28-ssh-bastion-443-design.md](../plans/2026-09-28-ssh-bastion-443-design.md).
 
 Since Calico 3.33 (2026-10-12) tigera-operator places every pod in `calico-system` behind its own `calico-system` policy tier (order 100, end-of-tier Deny, plus a `calico-system.default-deny` policy). The operator's allow rules admit the kube-controllers metrics port 9094 only from Tigera's own Prometheus namespace, so `stacks/calico` adds `calico-system.allow-prometheus-kube-controllers-metrics` in the same tier for our Prometheus server in `monitoring`. Any other new traffic into `calico-system` needs an allow in that tier too: a Kubernetes NetworkPolicy sits in the later `default` tier and is never reached. Edits to the operator's own policies are reverted on reconcile.
 
@@ -635,29 +639,30 @@ the LAN to be reachable from Home Assistant.
 | | |
 |---|---|
 | Prefix | `fdfe:e989:d3ce::/48`, an RFC 4193 ULA with a global ID generated 2026-09-23. Subnet `1` is the home LAN. |
-| Advertised by | pfSense radvd on WAN (`vtnet0`, static `fdfe:e989:d3ce:1::1/64`), from link-local `fe80::be24:11ff:fed7:3fba` (MAC `bc:24:11:d7:3f:ba`) |
-| RA contents | prefix on-link and autonomous (SLAAC), valid 86400 s, preferred 14400 s; router lifetime 0; M and O flags off; no RDNSS or DNSSL; `route ::/0` at low preference (see below); MTU 1500 |
-| RA interval | 10 to 30 s. At pfSense's default of 200 to 600 s the lock slept through the first RAs; it configured its address within 80 ms of the first RA that reached it awake. |
-| Declared in | `scripts/pfsense-sofia-lan-ula-ra.php`, idempotent; its header lists the GUI equivalent |
+| Advertised by | OPNsense radvd on WAN (`vtnet0`, static `fdfe:e989:d3ce:1::1/64`), from link-local `fe80::be24:11ff:fed7:3fba` (MAC `bc:24:11:d7:3f:ba`) |
+| RA contents | prefix on-link and autonomous (SLAAC), valid 86400 s, preferred 14400 s; router lifetime 0, default preference low; M and O flags off; no RDNSS or DNSSL; no `route ::/0` option since the cutover (see below); MTU 1500 |
+| RA interval | 10 to 30 s. At the default of 200 to 600 s, which pfSense used and OPNsense's playbook falls back to when no interval is set, the lock slept through the first RAs; it configured its address within 80 ms of the first RA that reached it awake. |
+| Declared in | `playbooks/files/opnsense/radvd.yml` (the `wan` entry), applied by `playbooks/opnsense.yml --tags radvd`. On pfSense it was `scripts/pfsense-sofia-lan-ula-ra.php` |
 
 The LAN still has no IPv6 internet, and hosts keep using IPv4 for anything off the LAN.
 A host whose only IPv6 source address is a ULA sorts IPv4 first for any name that has an
 A record (RFC 6724 rule 5), and Android does not count a ULA as IPv6 connectivity at all.
 Public IPv6 for the cluster still arrives over the HE tunnel described above.
 
-**The `route ::/0` option.** pfSense's RA generator (`services_radvd_configure()` in
-`/etc/inc/services.inc`) adds a default route information option (RFC 4191) to every RA
-and has no setting that leaves it out. Hosts that honour RFC 4191, including Linux
-kernels, Windows and NetworkManager (so ha-sofia), therefore install a low-preference IPv6
-default route via pfSense despite router lifetime 0. radvd logs
+**The `route ::/0` option, pfSense only.** pfSense's RA generator (`services_radvd_configure()` in
+`/etc/inc/services.inc`) added a default route information option (RFC 4191) to every RA
+and had no setting that left it out. Hosts that honour RFC 4191, including Linux
+kernels, Windows and NetworkManager (so ha-sofia), therefore installed a low-preference IPv6
+default route via pfSense despite router lifetime 0, and radvd logged
 `route 0::/0 lifetime (1800) conflicts with AdvDefaultLifetime (0), default routes will flap!`
-for it. Traffic that follows the route is dropped at pfSense's WAN, and the low preference
-means any real IPv6 router that appears on the LAN later wins over it.
+for it. OPNsense's radvd adds no route option unless asked (`radvd.yml`), and the live
+`/var/etc/radvd.conf` has no `route` block for `vtnet0` (checked 2026-11-10).
 
-**Saving the WAN tab of Services > Router Advertisement in the GUI changes the router
-lifetime.** Its Router lifetime input has `min=1`, so the browser refuses the configured 0,
-and clearing the field instead gives 1800 s, which makes pfSense a default router for the
-LAN. Re-run the script rather than saving that page.
+**Change the RA in `radvd.yml`, not in the GUI.** On pfSense, saving the WAN tab of
+Services > Router Advertisement changed the router lifetime: its Router lifetime input had
+`min=1`, so the browser refused the configured 0, and clearing the field gave 1800 s, which
+made pfSense a default router for the LAN. OPNsense's GUI has not been checked for the same
+behaviour; edit the YAML and run the playbook instead.
 
 **The AX6000 advertises a second prefix.** Its IPv6 switch has been off since 2026-06-26,
 yet on 2026-09-23 it was still advertising `2002::/64` (a 6to4 prefix with an embedded
@@ -676,7 +681,7 @@ next attempt. For this lock a reconnect can spend about 45 s on the link-local a
 before it uses the ULA.
 
 **Checking it**:
-- pfSense: `grep -A25 'interface vtnet0' /var/etc/radvd.conf`.
+- OPNsense: `grep -A25 'interface vtnet0' /var/etc/radvd.conf`.
 - PVE host: `tcpdump -i vmbr0 -nn -vv 'icmp6 and ip6[40]==134 and ether src bc:24:11:d7:3f:ba'`
   shows the RA every 10 to 30 s.
 - ha-sofia: `ip -6 addr show dev enp0s19` lists an `fdfe:e989:d3ce:1:` address, and
@@ -702,7 +707,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 | Stack | Path | Resources |
 |-------|------|-----------|
-| pfSense | `stacks/pfsense/` | VM + cloud-init config |
+| OPNsense | `stacks/opnsense/` | VM 100 (bpg/proxmox) with pfSense's MACs pinned; its configuration is `playbooks/opnsense.yml`, not Terraform |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
 | Traefik | `stacks/platform/` (sub-module) | Helm release, IngressRoute CRDs |
 | CrowdSec | `stacks/crowdsec/` (+ the Traefik plugin in `stacks/traefik/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts + non-HTTP) + the in-process `crowdsec` entrypoint middleware (all HTTP, incl. proxied) |
@@ -715,24 +720,24 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 ### Key Configuration Files
 
-**pfSense**:
-- Config: Not Terraform-managed (pfSense web UI / config.xml)
-- DHCP: Kea DHCP4 on the two internal VLANs (VLAN 10 = 10.0.10.0/24, VLAN 20 = 10.0.20.0/24). WAN/192.168.1.0/24 is served by the TP-Link dumb AP — pfSense's Kea WAN subnet is disabled.
+**OPNsense** (runbook: `docs/runbooks/opnsense.md`):
+- Config: the VM in Terraform (`stacks/opnsense`); the configuration in `playbooks/files/opnsense/*.yml`, applied over the OPNsense REST API by `playbooks/opnsense.yml`; interface assignment and addresses, which have no API, by `scripts/opnsense-production-config.py`
+- DHCP: Kea DHCP4 on the three internal segments (VLAN 10 = 10.0.10.0/24, VLAN 20 = 10.0.20.0/24, dCCTV = 10.0.30.0/24), declared in `dhcp.yml`; leases in `/var/db/kea/kea-leases4.csv`. WAN/192.168.1.0/24 is served by the TP-Link dumb AP, and OPNsense's Kea has no WAN subnet.
 - **DNS option 6** (per-subnet, WS E 2026-04-19):
   - 10.0.10.0/24 → `10.0.10.1, 94.140.14.14` (internal Unbound + AdGuard Home public fallback)
   - 10.0.20.0/24 → `10.0.20.1, 94.140.14.14`
   - 192.168.1.0/24 → `192.168.1.2, 94.140.14.14` (served by TP-Link, unchanged by WS E)
   - Rationale: clients survive an internal resolver outage by falling through to AdGuard (`94.140.14.14`) — confirmed via null-route drill on 2026-04-19.
 - 42 MAC→IP reservations for 192.168.1.0/24 (all known home devices)
-- DHCP DDNS: Kea DHCP-DDNS sends **TSIG-signed** RFC 2136 updates to Technitium (key `kea-ddns`, HMAC-SHA256; secret in Vault `secret/viktor/kea_ddns_tsig_secret`). Zone `viktorbarzin.lan` + reverse zones require both a pfSense-source IP AND a valid TSIG signature. Config: `/usr/local/etc/kea/kea-dhcp-ddns.conf` (hand-managed on pfSense; pre-WS-E backup at `kea-dhcp-ddns.conf.2026-04-19-pre-tsig`).
-- Firewall rules: Allow K8s egress, block inter-VLAN by default
+- DHCP DDNS: not configured on OPNsense (see "IPAM & DNS Auto-Registration"). On pfSense, Kea DHCP-DDNS sent **TSIG-signed** RFC 2136 updates to Technitium (key `kea-ddns`, HMAC-SHA256; secret in Vault `secret/viktor/kea_ddns_tsig_secret`) from a hand-managed `/usr/local/etc/kea/kea-dhcp-ddns.conf`, until pfSense dropped the settings on 2026-07-18. Zone `viktorbarzin.lan` + reverse zones require both a firewall-source IP AND a valid TSIG signature.
+- Firewall rules (`filter.yml`): Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:
 - Config: Stored on `proxmox-lvm-encrypted` PVCs (migrated from NFS 2026-04-14)
 - Zone file: `viktorbarzin.lan` (A records for all internal hosts)
 - Reverse zones: `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`, `2.3.10.in-addr.arpa`, `0.168.192.in-addr.arpa`
 - Stub zone: `emrsn.org` (returns NXDOMAIN locally for corporate domain queries, avoids upstream forwarding)
-- Dynamic updates: Enabled (UseSpecifiedNetworkACL) from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2)
+- Dynamic updates: Enabled (UseSpecifiedNetworkACL) from the firewall's IPs (10.0.20.1, 10.0.10.1, 192.168.1.2), which OPNsense holds since the cutover
 - Forwarders: Cloudflare DNS-over-HTTPS (1.1.1.1, 1.0.0.1)
 - Cache: 100K max entries, min TTL 60s, max TTL 7 days, serve stale enabled (3 days)
 - Query logging: PostgreSQL (`technitium` database on `pg-cluster-rw.dbaas.svc.cluster.local`)
@@ -744,11 +749,11 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
 - Database: MySQL standalone (`mysql.dbaas.svc.cluster.local`)
 - Role: an auto-filled address inventory (ADR-0032, `docs/plans/2026-10-13-phpipam-inventory.md`). Kea, Terraform and the site routers stay authoritative; nothing assigns addresses from phpIPAM.
-- Import: CronJob `phpipam-import` every 30 min — Kea leases and reservations, pfSense ARP after a ping sweep of 192.168.1.0/24 (the TP-Link DHCP server has no readable API), WireGuard peers, the London/Valchedrym/Mladost 3 routers' leases, static leases and ARP (all via the pfSense SSH hop), k8s nodes and LoadBalancer IPs, Headscale nodes. DHCP/ARP rows expire 24 h after their device was last seen; declared rows stay while their source lists them; hand rows (description not starting with `-- `) are never touched.
+- Import: CronJob `phpipam-import` every 30 min — Kea leases and reservations, OPNsense ARP after a ping sweep of 192.168.1.0/24 (the TP-Link DHCP server has no readable API), WireGuard peers, the London/Valchedrym/Mladost 3 routers' leases, static leases and ARP (all via the OPNsense SSH hop), k8s nodes and LoadBalancer IPs, Headscale nodes. DHCP/ARP rows expire 24 h after their device was last seen; declared rows stay while their source lists them; hand rows (description not starting with `-- `) are never touched.
 - DNS: publishes the OpenWrt sites' lease names and hand-row names to Technitium (dns.md, "London devices" and "DHCP → DNS Auto-Registration"); everything else is read from DNS.
 - Enrichment: each row also gets MAC, Vendor, Model and OS (custom fields), a state tag (DHCP / Reserved / Used / Offline) and, for infrastructure, a link to a phpIPAM Device declared in `stacks/phpipam/files/devices.yaml`. Sources: IEEE OUI registry, the Home Assistant device registries (Sofia, London), Proxmox, Kubernetes node info. Hand rows only get empty fields filled.
 - Subnets tracked, with Locations Sofia / London / Valchedrym / Mladost 3 and VLANs 10/20/30: 192.168.1.0/24, 10.0.10.0/24, 10.0.20.0/24, 10.0.30.0/24, 10.3.2.0/24, 192.168.8.0/24 (London LAN), 192.168.9.0/24 (London Guest), 192.168.0.0/24 (Valchedrym), 192.168.3.0/24 (Mladost 3), 100.64.0.0/10 (Headscale). phpIPAM's own scan agent is off.
-- Topology page: `phpipam.viktorbarzin.me/topology/`, a live diagram of sites, subnets and network devices (`stacks/phpipam/files/topology/`), drawn top down from the Internet through the TP-Link `main-router` and the 192.168.1.0/24 LAN to pfSense, with the WireGuard sites below pfSense. The page polls `data.php` every 30 s while open; `data.php` reads phpIPAM's database and pings every network device address through the blackbox exporter (`BLACKBOX_URL` on phpipam-web), so device status and tunnel round-trip times are seconds old, while subnets and address counts are as fresh as the last import. The files ship in the `phpipam-topology` ConfigMap, mounted into the web pod at `/phpipam/topology`.
+- Topology page: `phpipam.viktorbarzin.me/topology/`, a live diagram of sites, subnets and network devices (`stacks/phpipam/files/topology/`), drawn top down from the Internet through the TP-Link `main-router` and the 192.168.1.0/24 LAN to OPNsense, with the WireGuard sites below OPNsense. The page polls `data.php` every 30 s while open; `data.php` reads phpIPAM's database and pings every network device address through the blackbox exporter (`BLACKBOX_URL` on phpipam-web), so device status and tunnel round-trip times are seconds old, while subnets and address counts are as fresh as the last import. The files ship in the `phpipam-topology` ConfigMap, mounted into the web pod at `/phpipam/topology`.
 - Locations map: Tools → Locations shows the four sites; `phpipam-import` fills town-level coordinates where a Location has none.
 - API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access
 
@@ -904,7 +909,7 @@ chain — a CrowdSec/LAPI outage cannot cause 503s; it only stops new bans.) Che
 2. Cloudflared resource limits: `kubectl top pod -n cloudflared`
 3. Cloudflare tunnel status in dashboard
 
-**Fix**: If resource-limited, increase memory/CPU. If network-related, check pfSense logs for NAT table exhaustion or ISP issues.
+**Fix**: If resource-limited, increase memory/CPU. If network-related, check OPNsense logs (Loki `{job="syslog", host="opnsense"}`) for NAT table exhaustion or ISP issues.
 
 ### Rate Limiter Blocks Legitimate Traffic
 
