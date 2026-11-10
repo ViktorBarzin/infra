@@ -280,7 +280,14 @@ flowchart TD
   `netsec.tetragon` (ts, node, event_type, namespace, pod, container, binary,
   arguments, parent_binary, dst_ip, dst_port, payload), 30 days. The sink drops
   rather than blocks when full.
-- **Rollout**: `local.nodes` in `main.tf`; empty means every node.
+- **Rollout**: `local.nodes` in `main.tf`; empty means every node. Started on
+  k8s-node1, widened to all six nodes the same evening.
+- **Measured 2026-11-10** on k8s-node1 over 18 minutes: agent working set
+  162 MiB steady, 275 MiB peak at start, 13m CPU; export sidecar under 1 MiB;
+  operator 12-20 MiB. About 66 exec events a minute on that node, most of them
+  exec probes and sidecar loops in `vault`, `dbaas` (`pg_isready`) and
+  `frigate`; connects to the internet are rare (a few an hour). Vector writes
+  about 0.9 KB/s of rows from that node before compression.
 - **Alerts**: `NetsecTetragonStale` (no row for 30 minutes) and
   `TetragonNotReady` (DaemonSet short of ready pods for 15 minutes), lane
   `security`. Process-event alert rules follow a one-week baseline (plan, open

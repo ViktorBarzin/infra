@@ -14,9 +14,10 @@
 locals {
   namespace = "tetragon"
 
-  # Rollout stage. Empty means every node. Phase 4b started on k8s-node1 only,
-  # measured there, then widened (runbook, "Tetragon").
-  nodes = ["k8s-node1"]
+  # Rollout stage. Empty means every node. Phase 4b started on k8s-node1 only
+  # on 2026-11-10 (peak 275 MiB, 13m CPU, ~66 exec events a minute, measured
+  # over 18 minutes) and was then widened to every node.
+  nodes = []
 
   # Process starts in these namespaces are not exported: platform components
   # that exec constantly and run no third-party application code. "" is the
@@ -86,7 +87,8 @@ locals {
     }
     tetragon = {
       resources = {
-        requests = { cpu = "50m", memory = "384Mi" }
+        # 320Mi = node1 peak working set (275 MiB) x 1.1, rounded up to 64Mi.
+        requests = { cpu = "20m", memory = "320Mi" }
         limits   = { memory = "768Mi" }
       }
       exportAllowList = jsonencode({ event_set = ["PROCESS_EXEC", "PROCESS_KPROBE"] })
