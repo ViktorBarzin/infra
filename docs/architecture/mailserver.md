@@ -199,6 +199,20 @@ marks each processed message with the IMAP keyword `paperless`. Viktor's and
 Emo's Gmail are polled the same way. See
 [ADR-0029](../adr/0029-paperless-polls-mailboxes-directly.md).
 
+### UPS email filter (me@)
+
+Since 2026-11-10 `me@viktorbarzin.me` has its own per-user sieve
+(`extra/me-at-viktorbarzin.me.dovecot.sieve`, same ConfigMap-plus-`sub_path`
+mount as docs@). It files the Synology NAS_Barzini's "The UPS device connected
+to NAS_Barzini ..." emails straight into `Archive`, marked read, so a UPS
+transfer of a few seconds does not notify. Real outages reach the inbox from
+Alertmanager's `UPSOnBatteryEmail` (receiver `email-viktor`) after 1 minute on
+battery, then every 10 minutes. Emil's copy of the NAS mail goes to his Gmail
+and is not filtered. docker-mailserver copies the file to `~/.dovecot.sieve`
+at pod start, so a change needs the pod restart that Reloader does on a
+ConfigMap change. How this file interacts with filters made in Roundcube's
+filter editor for me@ has not been tested; keep me@'s rules in this file.
+
 ## DNS Records
 
 All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.tf`.
