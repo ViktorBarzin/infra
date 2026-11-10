@@ -171,7 +171,7 @@ These services are single-replica and incur ~30s-2min outages while their PVC re
 - **Mail**: `mailserver`, `roundcubemail` (Dovecot maildir locking — defer if mid-incident)
 - **Browser-trust services**: `nextcloud` (sessions reset), `vaultwarden` (active sessions blip)
 - **Observability**: `prometheus-server` (scrape data gap), `claude-memory`
-- **Self-hosted apps with SQLite**: hackmd, n8n, paperless-ngx, freshrss, navidrome, audiobookshelf
+- **Self-hosted apps with SQLite**: hackmd, paperless-ngx, freshrss, navidrome, audiobookshelf
 
 Coordinate the drain timing with users if any of these is on the node being drained. Single-pod Postgres/MySQL DBs are the most painful — schedule during low-traffic windows.
 
