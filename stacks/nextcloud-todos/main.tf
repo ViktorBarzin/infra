@@ -245,6 +245,41 @@ resource "kubernetes_deployment" "nextcloud_todos" {
             name  = "CALLBACK_BASE_URL"
             value = "https://nextcloud-todos.viktorbarzin.me"
           }
+          # Product events and errors (telemetry.tf, infra ADR-0041). Without
+          # TELEMETRY_WRITE_KEY the app sends nothing; optional=true so an image
+          # without telemetry, or the Secret not yet written, changes nothing.
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://event-pipeline.rybbit.svc.cluster.local"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name  = "TELEMETRY_PERSON_ID"
+            value = local.telemetry_person_id
+          }
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
 
           readiness_probe {
             http_get {
