@@ -82,38 +82,49 @@ The design proposed a new `ingress_factory` label for this. The existing annotat
 
 ## Alerts and the weekly digest
 
-Following the design, two kinds of finding post to Slack `#alerts` as they appear, and everything else goes into a weekly summary. Rules live in the `Trivy` group of `prometheus_chart_values.tpl`.
+Since 2026-11-10 the CVE alerts fire when the upgrade pipeline fails, not whenever a fixable CVE exists. Until then `TrivyFixableCVEInternetReachable` fired for every internet-reachable namespace with any fixable Critical/High CVE: 65 namespaces and 589 distinct CVEs on 2026-11-09, most of them in third-party images already on their newest upstream release, where "fixable" means a patched package exists but upstream has not shipped an image with it. Viktor chose to keep Renovate and the rails as the only fixer (no image patching, first-party images unchanged) and to alert on two conditions instead. Everything else goes into the weekly summary. Rules live in the `Trivy` group of `prometheus_chart_values.tpl`.
 
-| Alert | Fires when | Granularity |
-|---|---|---|
-| `TrivyFixableCVEInternetReachable` | an internet-reachable namespace has at least one fixable Critical or High CVE in an image it runs, for 1h | one alert per namespace |
-| `TrivyExposedSecretInImage` | an image holds at least one secret, for 1h | one alert per namespace and image repository |
-| `TrivyMetricsAbsent` | no `trivy_image_vulnerabilities` series for 2h | single alert |
+| Alert | Fires when | Granularity | Severity |
+|---|---|---|---|
+| `TrivyKnownExploitedCVE` | an image run by an internet-reachable namespace has a fixable Critical/High CVE that is on CISA's Known Exploited Vulnerabilities catalogue, for 1h | one alert per CVE; the value is the number of namespaces | critical |
+| `UpgradeFixNotLanded` | a newer version of an image (or a chart in `stacks/<ns>/`) that an internet-reachable namespace runs with fixable Critical/High CVEs has been available for 7 days and has not landed | one alert per namespace and package | warning |
+| `CisaKevFeedStale` | the catalogue has not refreshed for 3 days | single alert | warning |
+| `RenovateCveFixSignalStale` | the pending-fix signal has not refreshed for 2 days | single alert | warning |
+| `TrivyExposedSecretInImage` | an image holds at least one secret, for 1h | one alert per namespace and image repository | warning |
+| `TrivyMetricsAbsent` | no `trivy_image_vulnerabilities` series for 2h | single alert | warning |
 
-`TrivyFixableCVEInternetReachable` leaves out a Deployment's old ReplicaSets (since 2026-11-04). The operator keeps a report for the previous ReplicaSet after a rollout until the 72h TTL, so a bumped app kept alerting on the image it no longer runs: on 2026-11-04 tripit counted 1631 findings across 8 builds and 572 on the running one. A ReplicaSet finding counts only for the Deployment's current ReplicaSet, the one whose `deployment.kubernetes.io/revision` annotation equals the Deployment's (`kube_replicaset_annotations` and `kube_deployment_annotations`; kube-state-metrics exports that annotation through `metricAnnotationsAllowList`). This also holds for a Deployment scaled to 0, such as an app Sablier has parked, and after a revert, where the controller reuses an older ReplicaSet and gives it the new revision number. Findings on StatefulSets, DaemonSets, CronJobs, Jobs and bare pods count as before. The weekly digest still counts every report.
+Where the two signals come from:
 
-Both finding alerts use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 72h TTL and rescanned. They go through their own Alertmanager child route: grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
+- **Known exploited.** The `cisa-kev` CronJob (`stacks/monitoring/modules/monitoring/cisa_kev.tf`, daily 05:40 UTC) downloads CISA's catalogue (1,773 CVEs on 2026-11-10) and PUTs `cisa_kev_listed{vuln_id}` to the Pushgateway, valued at the date CISA added the CVE. A download that fails, or a catalogue under 1,000 entries, pushes nothing and leaves the previous one in place. On 2026-11-10 this matched 3 CVEs: Brotli `CVE-2026-111497` in 27 internet-reachable namespaces, HTTP/2 Rapid Reset `CVE-2023-44487` in frigate, and FreeType `CVE-2025-27363` in frigate. Only fixable findings reach Prometheus (the scrape filter below), so an exploited CVE with no fixed package anywhere does not alert.
+- **Fix not landed.** After each successful infra Renovate run, `stacks/renovate/files/cve-fix-pending.js` reads Renovate's report (`reportType=file`) and pushes `renovate_cve_fix_available_since_seconds{namespace,package,current,new,update_type,kind}` for every pending update of a running image with fixable CVEs. The match is by image repository and the exact running tag, so a bump of the same image in another stack does not count. Chart updates count for namespaces with CVEs when the chart is in `stacks/<ns>/`. The value is the release date, or for registries that publish none (GHCR, Quay) the first run that saw the update, carried from the previous push. The alert means the pipeline should have landed the update and has not: an ignore entry left by a revert, a queue backlog, or a schedule. A HELD (disabled) package never appears, because Renovate does not look it up; those stay with whoever holds them. Whether the new version clears the CVEs shows only after Trivy scans it.
+
+Both CVE alerts leave out a Deployment's old ReplicaSets (since 2026-11-04). The operator keeps a report for the previous ReplicaSet after a rollout until the 72h TTL, so a bumped app kept alerting on the image it no longer runs: on 2026-11-04 tripit counted 1631 findings across 8 builds and 572 on the running one. A ReplicaSet finding counts only for the Deployment's current ReplicaSet, the one whose `deployment.kubernetes.io/revision` annotation equals the Deployment's (`kube_replicaset_annotations` and `kube_deployment_annotations`; kube-state-metrics exports that annotation through `metricAnnotationsAllowList`). This also holds for a Deployment scaled to 0, such as an app Sablier has parked, and after a revert, where the controller reuses an older ReplicaSet and gives it the new revision number. Findings on StatefulSets, DaemonSets, CronJobs, Jobs and bare pods count as before. The weekly digest still counts every report.
+
+`TrivyKnownExploitedCVE` and `TrivyExposedSecretInImage` use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 72h TTL and rescanned. The finding alerts go through their own Alertmanager child routes (`TrivyKnownExploitedCVE` to `slack-critical`, `UpgradeFixNotLanded` and `TrivyExposedSecretInImage` to `slack-warning`): grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
 
 Trivy's secret scanner also matches keys that ship inside third-party images: Debian snakeoil keys, python-ldap test fixtures, a key in the lua-resty-rsa docs, the public Azurite key in Nextcloud's Azure SDK, a public AWS key ID in yt-dlp's `extractor/shahid.py`, and an expired SAS URL in the Playwright base image's npm cache. These are suppressed in Trivy's ignore file, not in Alertmanager: `trivy.ignoreFile` in `stacks/trivy-operator/main.tf` renders a `.trivyignore.yaml` that every scan Job mounts (`TRIVY_IGNOREFILE`). Each entry names a rule ID, the paths it covers (doublestar globs against the report target, which starts with `/`) and a statement saying why. A suppressed secret never reaches the `ExposedSecretReport`, so the alert, the metric and the weekly digest all stop counting it, while the same rule at any other path still reports. Entries were reviewed on 2026-10-19. An edit takes effect at each image's next scan.
 
 The weekly section is appended to the daily `alert-digest` post on Mondays (`TRIVY_WEEKDAY` in `alert_digest.tf`). It reads Prometheus only and shows:
 
 - Critical/High CVE findings (counted per workload container) and the change since last week, split into fixable and unfixable
-- fixable Critical/High on internet-reachable workloads (the part that also alerts)
+- fixable Critical/High on internet-reachable workloads (alerting only when known exploited or when a fix has not landed in 7 days)
 - the 10 images with the most distinct fixable Critical/High CVEs, marked when internet-reachable (an image shared by several workloads counts once)
 - how many images hold secrets
 - config-audit, RBAC and control-plane assessment counts, with the config-audit change since last week
 - failed controls per compliance spec (CIS 1.23, NSA, PSS baseline and restricted), which is where node-level CIS results show up, since per-node `ClusterInfraAssessmentReport`s have no metric
 
-The daily digest collapses more than five firing instances of one alertname into a single line, so the per-namespace Trivy alerts take one line there instead of one per namespace.
+The daily digest collapses more than five firing instances of one alertname into a single line, so the per-namespace alerts take one line there instead of one per namespace.
 
-There is no automatic link from a finding to an upgrade. Renovate (Phase 3 of the design) picks up a fixed version on its next run.
+Findings decide the order of upgrades but do not start them: Renovate (Phase 3 of the design) gives the pending updates of images with the most fixable CVEs the highest priority (`cve-priority.js`) and lands one bump per run.
 
 ## Upgrades
 
 Renovate owns the chart pin (Phase 3 of the design). Helm installs the chart's CRDs on first install and never updates them on upgrade. When a release changes a report CRD, apply the CRDs from the new chart's `crds/` directory before or alongside the bump; the chart's release notes say when that is needed.
 
 ## Open questions
+
+- Whether 7 days is the right grace period for `UpgradeFixNotLanded`. At one bump an hour the queue cleared within a day in early November; a longer queue would trip it for updates that are merely waiting.
+- Whether an exploited CVE in a LAN-only namespace should alert too. Today only internet-reachable namespaces count, as before.
 
 - Whether Critical/High is the right severity floor. Medium findings are not stored today.
 - Whether 72h is the right rescan cadence. With the server's layer cache warm, a rescan fetches only manifests and configs; the cost is mostly report writes to etcd.

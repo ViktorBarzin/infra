@@ -166,6 +166,9 @@ resource "kubernetes_config_map" "renovate" {
     "config.js"       = file("${path.module}/files/config.js")
     "run-renovate.sh" = file("${path.module}/files/run-renovate.sh")
     "cve-priority.js" = file("${path.module}/files/cve-priority.js")
+    # After each successful run: pending fixes for images with CVEs, read from
+    # Renovate's report, for the UpgradeFixNotLanded alert (2026-11-10).
+    "cve-fix-pending.js" = file("${path.module}/files/cve-fix-pending.js")
   }
 }
 
@@ -265,7 +268,9 @@ resource "kubernetes_cron_job_v1" "renovate" {
               }
               env {
                 # Order pending updates by fixable Critical/High CVE count
-                # from Trivy (files/cve-priority.js, 2026-11-04).
+                # from Trivy (files/cve-priority.js, 2026-11-04), and after a
+                # successful run push the pending fixes for images with CVEs
+                # (files/cve-fix-pending.js, 2026-11-10).
                 name  = "CVE_PRIORITY"
                 value = "1"
               }

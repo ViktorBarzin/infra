@@ -152,10 +152,10 @@ def _alert(name, summary, sev="warning"):
 
 
 def test_many_instances_of_one_alert_collapse_to_one_line():
-    alerts = [_alert("TrivyFixableCVEInternetReachable", "ns%d: 3 fixable" % i) for i in range(40)]
+    alerts = [_alert("UpgradeFixNotLanded", "ns%d: 3 fixable" % i) for i in range(40)]
     alerts.append(_alert("PayslipStale", "payslip late"))
     msg = ad.build_message(alerts, [])
-    assert msg.count("TrivyFixableCVEInternetReachable") == 1, msg
+    assert msg.count("UpgradeFixNotLanded") == 1, msg
     assert "\u00d740" in msg, msg
     assert "ns0: 3 fixable" in msg, msg
     assert "ns39" not in msg, msg

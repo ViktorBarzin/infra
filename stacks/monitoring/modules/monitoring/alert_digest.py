@@ -35,9 +35,10 @@ Weekly Trivy section (software-currency design, Phase 2): once a week the
 digest appends a summary of the Trivy Operator findings that do not alert on
 their own: Critical/High CVE totals with the fixable/unfixable split and the
 change since last week, the top fixable images, config-audit, RBAC and
-control-plane findings, and failed compliance controls. Fixable Critical/High
-CVEs on internet-reachable workloads and secrets in images alert separately
-(TrivyFixableCVEInternetReachable, TrivyExposedSecretInImage). Source:
+control-plane findings, and failed compliance controls. Known-exploited CVEs
+and fixes that did not land on internet-reachable workloads, and secrets in
+images, alert separately (TrivyKnownExploitedCVE, UpgradeFixNotLanded,
+TrivyExposedSecretInImage). Source:
 trivy_* metrics in Prometheus (docs/architecture/trivy.md).
 """
 import datetime
