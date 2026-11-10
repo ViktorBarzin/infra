@@ -215,7 +215,7 @@ kubeadm/kubelet/kubectl bumps (patch + minor) on all 5 K8s VMs.
 ### Architecture
 
 ```
-k8s-version-check CronJob   (23:00 UTC nightly, k8s-upgrade ns)
+k8s-version-check CronJob   (Sunday 21:00 UTC weekly, k8s-upgrade ns)
   │ probe apt-cache madison kubeadm (master) → latest available patch
   │ probe HEAD https://pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release → next minor?
   │ push k8s_upgrade_available metric to Pushgateway
@@ -265,9 +265,11 @@ each Job's pod and its drain target are always different nodes.
 - **Phase body**: `infra/stacks/k8s-version-upgrade/scripts/upgrade-step.sh`.
   Dispatches on `$PHASE` (preflight | master | worker | postflight). Computes
   `NEXT_PHASE` / `NEXT_TARGET_NODE` / `NEXT_RUN_ON` and spawns the next Job.
-  Includes a `predrain_unstick` helper that pre-deletes pods on the target
-  node whose PDB has `disruptionsAllowed=0` (otherwise drain loops forever on
-  single-replica deployments like Anubis instances).
+  `drain_node` cordons the target first, then a `predrain_unstick` helper
+  pre-deletes pods on it whose PDB has `disruptionsAllowed=0` (otherwise drain
+  loops forever on single-replica deployments like Anubis instances). CNPG
+  PDBs are skipped: CNPG switches its primary over once the node is
+  unschedulable, and deleting the primary forces a failover (2026-11-02).
 - **Job template**: `infra/stacks/k8s-version-upgrade/job-template.yaml`.
   envsubst-rendered at runtime. Mounts a `creds` Secret, a `scripts`
   ConfigMap, and a `template` ConfigMap into each Job pod.
@@ -318,7 +320,7 @@ The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply`
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
-- **PDB-blocked pods don't stall the chain**. `predrain_unstick` deletes PDB=0 pods on the target node directly (bypassing the eviction API), so the parent Deployment recreates them elsewhere. This was the workaround applied manually during the 2026-05-11 recovery for Anubis single-replica instances.
+- **PDB-blocked pods don't stall the chain**. After cordoning the node, `predrain_unstick` deletes PDB=0 pods on it directly (bypassing the eviction API), so the parent Deployment recreates them elsewhere. CNPG pods are left to CNPG's own switchover. This was the workaround applied manually during the 2026-05-11 recovery for Anubis single-replica instances.
 
 ### Secrets
 
