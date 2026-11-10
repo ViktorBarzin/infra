@@ -23,6 +23,8 @@ Inspect Sofia traffic for malicious flows, keep what the IDS sees queryable in C
 | 11 | Host agents | CrowdSec agent and bouncer on Linux servers and Windows VM 300; Tetragon on k8s nodes, watch-only. Nothing on personal devices; no osquery or Fleet |
 | 12 | Decryption | Squid SSL bump on OPNsense for an `opted_in` alias. URLs only, no virus scanning |
 | 13 | Sites | Sofia only |
+| 14 | Interfaces | Suricata inspects lan (VLAN 10) and opt1 (VLAN 20) only, not WAN, so each internet flow is seen once with its inside address. On 2026-11-10 the same alerts appeared on both `vtnet0` and `vtnet2` (7,034 alerts in 24h). VLAN 10 to 20 flows still appear twice and are merged by `community_id` at query time |
+| 15 | VLAN 30 | No Suricata: the camera may reach only NTP on the firewall, so its traffic is video. Instead a Slack alert fires on any firewall block of traffic from VLAN 30, the sign of a tampered camera |
 
 ## Pipeline
 
@@ -48,7 +50,9 @@ k8s nodes: Tetragon, JSON ------------------+
 
 | Path | Seen |
 |---|---|
-| Internet to direct (non-proxied) hosts, IPv4 and HE IPv6 | yes, on WAN and the HE tunnel |
+| Internet to direct (non-proxied) hosts, IPv4 and HE IPv6 | yes, on opt1 after the port forward, with the real source |
+| Mail (25, 465, 587, 993) | ends at HAProxy on the firewall, so Suricata sees the firewall as the source; CrowdSec's postfix and dovecot scenarios keep the real address |
+| The firewall's own traffic | no: WAN is not inspected |
 | Proxied hostnames | no: they arrive inside the cloudflared tunnel as TLS to Cloudflare. Traefik's CrowdSec plugin keeps covering them |
 | Homelab hosts to the internet, and between VLANs | yes, on lan and opt1, with the inside address |
 | Road-warrior WireGuard (ends in a pod) and node-to-node traffic | no: east-west. Tetragon covers k8s nodes |
@@ -69,6 +73,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: delete the stack; goflow2 returns to stdout.
 
 ### 2. Suricata metadata off the box
+- Suricata interfaces change from `wan,lan,opt1` to `lan,opt1` in `playbooks/tasks/opnsense/suricata.yml`.
 - A conf.d file that restates all four stock outputs (eve.json, syslog eve, stats, syslog) and adds `eve-meta.json`. A repeated `outputs:` key replaces the template's list, so the playbook asserts with `suricata --dump-config` that all five exist.
 - A `newsyslog.conf.d` entry rotates `eve-meta.json`.
 - A syslog-ng `conf.d` file tails it and sends raw JSON lines over TCP to Vector, avoiding the 8 KB syslog limit.
@@ -81,6 +86,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - `simulation: true` globally on the OPNsense agent, set by the playbook and checked after every reconfigure.
 - os-crowdsec agent on, with an `acquis.d` file for `eve.json` (`type: suricata-evelogs`) and the `crowdsecurity/suricata` collection.
 - Custom scenario for C2 destinations with its own origin; a new OPNsense alias fed only by that origin; an outbound pf rule on lan and opt1. The Traefik plugin, node bouncers and host bouncers filter that origin out; `ipv6-ban-widen.sh` skips it.
+- Loki ruler alert (`lane=security`) on any `filterlog` block with VLAN 30 (`vtnet3`) as the source interface. First check that the default-deny rule logs its blocks on OPNsense.
 - CrowdSec Slack plugin with a 10 minute group wait. Scheduled query job (CronJob in `stacks/netsec`) posts home-device malware alerts to Alertmanager every minute.
 - Verify: the test alert gives a simulated decision and a Slack message; nothing reaches pf.
 - Rollback: agent off in the playbook; decisions expire.
@@ -130,4 +136,3 @@ Docs: new `docs/architecture/network-security-monitoring.md` and `docs/runbooks/
 1. **Home LAN coverage.** Home devices sit behind the AX6000 and never cross OPNsense. Options: OPNsense as the edge router with the AX6000 as an access point; a separate inspected Wi-Fi VLAN; mirroring the internet link (no per-device attribution); DNS logging only. Viktor is discussing it with emo.
 2. **Opted-in machines.** Which machines trust the interception certificate. Mostly depends on question 1.
 3. **Tetragon retention** was not discussed; 30 days is a default.
-4. **Duplicate alerts.** Suricata runs on wan, lan and opt1, so a routed flow can alert twice. Collapse by `community_id` at query time; revisit if Slack shows duplicates.
