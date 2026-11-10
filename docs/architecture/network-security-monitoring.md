@@ -288,13 +288,16 @@ flowchart TD
   exec probes and sidecar loops in `vault`, `dbaas` (`pg_isready`) and
   `frigate`; connects to the internet are rare (a few an hour). Vector writes
   about 0.9 KB/s of rows from that node before compression.
-- **All six nodes, first 10 minutes (2026-11-10 19:37 UTC)**: about 29,000
-  events an hour (roughly 700,000 a day), about 7.6 KB/s of rows into
-  ClickHouse before compression. Agent peaks 207-271 MiB per node, under the
-  320 MiB request. Most connects are the tv Edge (`tv-edge`, Python, to 443
-  and stream ports) and tuya-bridge; k8s-master shows nothing, as it runs only
-  platform pods. qBittorrent's traffic is mostly UDP, which `tcp_connect` does
-  not see.
+- **All six nodes, steady state (2026-11-10 19:32-19:42 UTC, after the
+  start-up burst of events for already running processes)**: about 87,500
+  events an hour, roughly 2.1 million a day (exec 53,000/h, connect 34,700/h),
+  about 27 KB/s of rows into ClickHouse before compression. Busiest exec
+  sources are probe and sidecar loops (vault, `pg_isready`, frigate); most
+  connects are the tv Edge (Python, to 443 and stream ports) and tuya-bridge.
+  Agent working set 138-221 MiB per node, under the 320 MiB request.
+  k8s-master shows nothing, as it runs only platform pods. qBittorrent's
+  traffic is mostly UDP, which `tcp_connect` does not see. The netsec writer
+  quota (4 GB and 20,000 inserts an hour) has ample room.
 - **Alerts**: `NetsecTetragonStale` (no row for 30 minutes) and
   `TetragonNotReady` (DaemonSet short of ready pods for 15 minutes), lane
   `security`. Process-event alert rules follow a one-week baseline (plan, open
