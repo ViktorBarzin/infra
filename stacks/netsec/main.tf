@@ -130,6 +130,10 @@ resource "kubernetes_deployment" "vector" {
             container_port = 6000
           }
           port {
+            name           = "otlp-http"
+            container_port = 4318
+          }
+          port {
             name           = "metrics"
             container_port = 9598
           }
@@ -205,7 +209,8 @@ resource "kubernetes_deployment" "vector" {
   depends_on = [kubernetes_manifest.external_secret]
 }
 
-# In-cluster shippers (the goflow2 sidecar) send here.
+# In-cluster shippers (the goflow2 sidecar) send here, and Alloy sends the
+# node-local-dns query lines over OTLP/HTTP (port 4318, phase 4).
 resource "kubernetes_service" "vector" {
   metadata {
     name      = "netsec-vector"
@@ -222,6 +227,11 @@ resource "kubernetes_service" "vector" {
       name        = "shippers"
       port        = 6000
       target_port = 6000
+    }
+    port {
+      name        = "otlp-http"
+      port        = 4318
+      target_port = 4318
     }
   }
 }
@@ -301,6 +311,24 @@ resource "kubernetes_network_policy" "vector" {
       }
       ports {
         port     = "6000"
+        protocol = "TCP"
+      }
+    }
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "monitoring"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "app.kubernetes.io/name" = "alloy"
+          }
+        }
+      }
+      ports {
+        port     = "4318"
         protocol = "TCP"
       }
     }

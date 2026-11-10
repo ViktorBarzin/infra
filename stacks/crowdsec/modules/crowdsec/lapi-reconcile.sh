@@ -1,9 +1,11 @@
 # Runs inside a LAPI pod (sh -s, from the crowdsec-lapi-reconcile CronJob).
-# The CronJob prepends OPNSENSE_AGENT_PASSWORD=... on stdin, so the password
-# never appears in a command line the Kubernetes API records.
+# The CronJob prepends OPNSENSE_AGENT_PASSWORD=... and JOURNALS_AGENT_PASSWORD=...
+# on stdin, so the passwords never appear in a command line the Kubernetes API
+# records.
 # 1. Allowlist "trusted-infra" = exactly the values in /tmp/allowlist.txt
 #    (value<TAB>comment per line, written by the CronJob before this runs).
 # 2. The OPNsense edge firewall's agent is a registered machine.
+# 3. The server journals agent (crowdsec-journals Deployment) is a registered machine.
 set -eu
 LIST=trusted-infra
 WANT=/tmp/allowlist.txt
@@ -34,3 +36,5 @@ echo "allowlist $LIST: $(cut -f1 "$WANT" | grep -c .) wanted, $added added, $rem
 # writing credentials into this pod.
 cscli machines add opnsense-edge --password "$OPNSENSE_AGENT_PASSWORD" --force -f /dev/null >/dev/null
 echo "machine opnsense-edge registered"
+cscli machines add journals --password "$JOURNALS_AGENT_PASSWORD" --force -f /dev/null >/dev/null
+echo "machine journals registered"

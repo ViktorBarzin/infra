@@ -2098,6 +2098,12 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
                 secret_name = "crowdsec-opnsense-agent"
               }
             }
+            volume {
+              name = "journals-agent"
+              secret {
+                secret_name = "crowdsec-journals-agent"
+              }
+            }
 
             container {
               name    = "reconcile"
@@ -2112,6 +2118,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
                 # Password and list go in on stdin, never in the exec command.
                 {
                   printf "OPNSENSE_AGENT_PASSWORD='%s'\n" "$(cat /agent/password)"
+                  printf "JOURNALS_AGENT_PASSWORD='%s'\n" "$(cat /journals-agent/password)"
                   printf "cat > /tmp/allowlist.txt <<'ALLOWLIST'\n"
                   cat /config/allowlist.txt
                   printf "ALLOWLIST\n"
@@ -2131,6 +2138,11 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
                 mount_path = "/agent"
                 read_only  = true
               }
+              volume_mount {
+                name       = "journals-agent"
+                mount_path = "/journals-agent"
+                read_only  = true
+              }
 
               resources {
                 requests = {
@@ -2147,7 +2159,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
       }
     }
   }
-  depends_on = [kubernetes_manifest.crowdsec_opnsense_agent_secret]
+  depends_on = [kubernetes_manifest.crowdsec_opnsense_agent_secret, kubernetes_manifest.crowdsec_journals_agent_secret]
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]

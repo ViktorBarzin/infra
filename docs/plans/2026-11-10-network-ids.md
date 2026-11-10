@@ -94,12 +94,11 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: agent off in the playbook; decisions expire.
 
 ### 4. Server logs and pod DNS, no agents
-- The central CrowdSec gets a Loki acquisition (`source: loki`) for the server journals already shipped: `job="sshd-pve"`, `job="pve-journal"`, `job="devvm-journal"`, `job="systemd-journal", host="rpi-sofia"`, and the k8s node journals. Its sshd and linux collections parse them; decisions reach OPNsense like any other.
-- CoreDNS's ConfigMap is adopted into Terraform with an `import {}` block and gains the stock `dnstap` plugin, streaming over TCP to the netsec Vector's `dnstap` source (TCP mode: confirm against the Vector 0.61 docs before building). Vector writes `netsec.dns_queries` (30d) with the client pod IP, name and answer.
+- The central CrowdSec reads the server sshd journals already in Loki (`job="sshd-pve"`, `job="sshd-devvm"`, rpi-sofia's `ssh.service`, the k8s nodes' `ssh.service`) through `source: loki`. One dedicated agent Deployment (`crowdsec-journals`, stacks/crowdsec `journals.tf`) does it, because a Loki acquisition in the DaemonSet agents would count every event once per node. Its LogQL rebuilds syslog lines so the stock sshd parsers work; `simulation: true` until the phase 6 review.
+- Deviation from the approved text, found while building: pods resolve through NodeLocal DNSCache, which answers from its own cache and reaches CoreDNS with the node's address, and its build has no `dnstap` plugin. CoreDNS dnstap would therefore have named nodes, not pods. Instead node-local-dns's `.:53` block (names outside the cluster only) has the `log` plugin with a `netsec-dns` marker; Alloy, already tailing every pod log, sends those lines over OTLP to the netsec Vector and keeps them out of Loki. `netsec.dns_queries` gets the pod IP, name, type and rcode; the log line carries no answers. The CoreDNS Corefile and the kubeadm-upgrade check are unchanged, because node-local-dns is not managed by kubeadm.
 - Pod names come from Prometheus `kube_pod_info` (pod IP history) at query time; no custom mapping service.
-- `stacks/k8s-version-upgrade/scripts/upgrade-step.sh` checks after each kubeadm upgrade that the `dnstap` line survived.
-- Verify: an ssh brute force against the devvm from a test address gives a simulated decision; `dig` of a test name from a throwaway pod appears in `netsec.dns_queries` with that pod's name.
-- Rollback: remove the acquisition; restore the stock Corefile.
+- Verify: an sshd event from a server journal is parsed by the journals agent (`cs_parser_hits` for the Loki source); `dig` of a test name from a throwaway pod appears in `netsec.dns_queries` with that pod's IP and name.
+- Rollback: delete `journals.tf`; remove the `log` line and the Alloy branch.
 
 ### 4b. Tetragon, watch-only
 - New `stacks/tetragon`: the Cilium Tetragon Helm chart through Terraform, no enforcement policies. Two tracing policies: process starts outside system namespaces (`kube-system`, `calico-system`, `monitoring`), and TCP connects to addresses outside 10.0.0.0/8, 192.168.0.0/16 and our IPv6 prefixes. Pod, container, binary, arguments and parent on every event.
@@ -128,7 +127,7 @@ Prometheus alerts, routed to the security lane:
 - OPNsense: Suricata, Squid, os-crowdsec agent or bouncer down, via a node_exporter textfile collector; root filesystem above 80 percent
 - OPNsense agent not pushing to the LAPI; OPNsense bouncer not pulling
 - intermediate CA expiring within 30 days
-- claude-sessions ClickHouse disk above 80 percent; CoreDNS still has its `dnstap` line after a kubeadm upgrade; Tetragon DaemonSet not ready
+- claude-sessions ClickHouse disk above 80 percent; Tetragon DaemonSet not ready
 
 Docs: new `docs/architecture/network-security-monitoring.md` and `docs/runbooks/network-ids.md`; updates to `docs/architecture/networking.md`, `docs/agents/security.md`, `docs/runbooks/opnsense.md`, `.claude/reference/service-catalog.md`.
 
