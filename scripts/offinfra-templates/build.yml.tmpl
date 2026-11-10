@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0      # full history + tags so svu sees the last vX.Y.Z
+          fetch-depth: 0 # full history + tags so svu sees the last vX.Y.Z
           fetch-tags: true
       # Auto-semver (svu): tag-only, pushed to CANONICAL Forgejo (GitHub tags
       # would be wiped by the next mirror sync). Best-effort: never blocks the build.
@@ -113,9 +113,26 @@ jobs:
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Reads this workflow's earlier runs, so a failure streak posts once.
+    permissions:
+      actions: read
     steps:
       - name: Slack notify
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # Post only the first failure of a streak. Renovate keeps pushing onto
+          # a broken master, and each push used to post the same alert again
+          # (tasks: 21 posts for one Biome break, 2026-10-24..11-10). If the
+          # lookup fails, PREV is empty and the alert posts.
+          PREV=$(gh run list -R "${{ github.repository }}" --workflow "${{ github.workflow }}" \
+            --branch "${{ github.ref_name }}" --status completed --limit 20 \
+            --json databaseId,conclusion \
+            -q '[.[] | select(.databaseId < ${{ github.run_id }}) | select(.conclusion == "success" or .conclusion == "failure")][0].conclusion' || true)
+          if [ "$PREV" = "failure" ]; then
+            echo "The previous run failed too and was posted then; not posting again."
+            exit 0
+          fi
           curl -sf -X POST -H 'Content-Type: application/json' \
             -d "{\"text\":\":rotating_light: {{NAME}} off-infra build FAILED: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "${{ secrets.SLACK_WEBHOOK }}" || true
