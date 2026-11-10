@@ -415,6 +415,10 @@ yt-dlp and ffmpeg come from `playbooks/devvm.yml`, which also runs `yt-dlp -U`
 daily through the `yt-dlp-update` timer. YouTube still refuses some videos from
 our address at random (memory #13410), so a YouTube failure is reported with
 that hint rather than retried.
+The YouTube recipe passes visitor cookies, `--remote-components ejs:github` and
+node as the JS runtime, and deliberately pins **no** player client: the
+`web_safari` pin from memory #12269 stopped working in 2026-11 (infra#177),
+while the clients yt-dlp chooses itself kept working.
 
 ### v0.26 verbs — delegate (hand a task to Muse)
 

@@ -144,8 +144,12 @@ func videoPathFile(outDir string) string {
 // ytdlpArgs builds the yt-dlp command line. `after_move:filepath` records the
 // final merged file, never the video-only intermediate yt-dlp writes first.
 // The title alone names the file: X titles already start with the uploader. A cookies path switches on the YouTube recipe from memory
-// #12269: visitor cookies, the web_safari client, and the remote EJS solver,
-// without which only storyboard formats appear. The solver runs on node,
+// #12269: visitor cookies and the remote EJS solver, without which only
+// storyboard formats appear. The player client is left to yt-dlp: pinning
+// web_safari stopped working in 2026-11 (infra#177; YouTube answered it with
+// "Sign in to confirm you're not a bot" or images only), while the clients
+// yt-dlp picks itself (tv, visionos) still resolve formats, and the daily
+// `yt-dlp -U` keeps that choice current as YouTube moves. The solver runs on node,
 // which the playbook installs for every user; the defaults are cleared first
 // so a per-user deno cannot hide a node failure.
 func ytdlpArgs(videoURL, outDir, quality, cookiesPath string) []string {
@@ -166,7 +170,6 @@ func youtubeCookieArgs(cookiesPath string) []string {
 	}
 	return []string{
 		"--cookies", cookiesPath,
-		"--extractor-args", "youtube:player_client=web_safari",
 		"--remote-components", "ejs:github",
 		"--no-js-runtimes", "--js-runtimes", "node",
 	}
