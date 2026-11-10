@@ -15,12 +15,12 @@ Inspect Sofia traffic for malicious flows, keep what the IDS sees queryable in C
 | 3 | Inbound bans | Outside addresses that attack us, from TCP alerts only (`crowdsecurity/suricata` hub scenarios). No UDP-based bans: spoofed UDP could ban our WireGuard peers |
 | 4 | Destination bans | Only abuse.ch C2 hits (Feodo Tracker, SSL Blacklist) when one of our hosts is the source. They go into a separate list that only a new OPNsense outbound rule uses; Traefik, node and host bouncers never see them, and IPv6 widening skips them. Other malware hits alert without banning. Home devices are never banned |
 | 5 | Ban start | Every scenario on every agent runs in CrowdSec simulation for 2 weeks; Viktor reviews the would-be bans; then real bans |
-| 6 | Data | Alerts 365d, dns/tls/http 30d, NetFlow 14d, proxy URLs 30d, pod DNS queries 30d. No Suricata flow events |
+| 6 | Data | Alerts 365d, dns/tls/http 30d, NetFlow 14d, proxy URLs 30d, pod DNS queries 30d, Tetragon process and connection events 30d. No Suricata flow events |
 | 7 | Store | Database `netsec` on the existing `claude-sessions` ClickHouse (encrypted SAS). Not backed up: losing the disk loses history only, and no browsing data lands on NFS or offsite |
 | 8 | Access | Viktor only. No Grafana datasource, because every Authentik user is a Grafana Viewer and OSS Grafana cannot restrict a datasource. Queries through `homelab netsec sql` |
 | 9 | Notify | Slack #alerts for everything. Bans grouped into one message per 10 minutes by the CrowdSec Slack plugin; home-device malware alerts post at once from a scheduled query job through Alertmanager (`lane=security`) |
 | 10 | Shipper | Its own Vector Deployment in `stacks/netsec`, same image and config pattern as rybbit's `event-pipeline` (ADR-0041). Viktor first chose to share `event-pipeline`, then reversed after the review showed a netsec fault would stop app analytics |
-| 11 | No host agents | Nothing is installed on any server or personal device (Viktor, 2026-11-10). The central CrowdSec reads server journals that already reach Loki (Proxmox, devvm, rpi-sofia, k8s nodes); OPNsense does the blocking; CoreDNS query logs in ClickHouse show which pod looked up a name. Given up: the exact program per connection, blocking an attacker already inside, and Windows VM 300 (it ships no logs) |
+| 11 | No host agents | Nothing is installed on any server OS or personal device (Viktor, 2026-11-10). Tetragon is the one exception in the cluster: a watch-only Helm DaemonSet, like the CrowdSec node bouncer, added back because nothing else sees a compromise inside a pod before it reaches the network. The central CrowdSec reads server journals that already reach Loki (Proxmox, devvm, rpi-sofia, k8s nodes); OPNsense does the blocking; CoreDNS query logs in ClickHouse show which pod looked up a name. Given up: the exact program per connection, blocking an attacker already inside, and Windows VM 300 (it ships no logs) |
 | 12 | Decryption | Squid SSL bump on OPNsense for an `opted_in` alias. URLs only, no virus scanning |
 | 13 | Sites | Sofia only |
 | 14 | Interfaces | Suricata inspects lan (VLAN 10) and opt1 (VLAN 20) only, not WAN, so each internet flow is seen once with its inside address. On 2026-11-10 the same alerts appeared on both `vtnet0` and `vtnet2` (7,034 alerts in 24h). VLAN 10 to 20 flows still appear twice and are merged by `community_id` at query time |
@@ -39,6 +39,7 @@ OPNsense (production)
   Squid (opted_in only), JSON --------------+
   NetFlow v9 --> goflow2 + shipper sidecar -+
 CoreDNS dnstap (pod IP, name) -----------+
+k8s nodes: Tetragon, JSON ---------------+
                                             v
                          Vector (new, ns netsec) --> ClickHouse netsec.*
                                                         |
@@ -99,6 +100,14 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Verify: an ssh brute force against the devvm from a test address gives a simulated decision; `dig` of a test name from a throwaway pod appears in `netsec.dns_queries` with that pod's name.
 - Rollback: remove the acquisition; restore the stock Corefile.
 
+### 4b. Tetragon, watch-only
+- New `stacks/tetragon`: the Cilium Tetragon Helm chart through Terraform, no enforcement policies. Two tracing policies: process starts outside system namespaces (`kube-system`, `calico-system`, `monitoring`), and TCP connects to addresses outside 10.0.0.0/8, 192.168.0.0/16 and our IPv6 prefixes. Pod, container, binary, arguments and parent on every event.
+- JSON export tailed by a small Vector container in the DaemonSet pod, forwarded to the netsec Vector, `netsec.tetragon` (30d).
+- Measured on node1 first (memory, CPU, events per minute); rolled to all nodes only if workers keep their headroom.
+- One-week baseline, then alert rules through the scheduled query job.
+- Verify: `kubectl exec` into a throwaway pod, run `sh -c 'curl -s https://example.com'`; the exec and the connection appear with pod and binary.
+- Rollback: delete the stack.
+
 ### 5. Decryption for opted-in machines
 - os-squid in transparent mode, port forward of TCP 443 only from `opted_in`, UDP 443 blocked for that alias.
 - Root CA generated and kept off the cluster and off the firewall; the firewall holds a 1-year intermediate (path length 0). The no-bump list, not name constraints, keeps banking and pinned apps out.
@@ -113,12 +122,12 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 ## Production checks
 
 Prometheus alerts, routed to the security lane:
-- no rows per source for 30 minutes (eve, flows, proxy, dns_queries)
+- no rows per source for 30 minutes (eve, flows, proxy, dns_queries, tetragon)
 - netsec Vector sink errors and buffer fill
 - OPNsense: Suricata, Squid, os-crowdsec agent or bouncer down, via a node_exporter textfile collector; root filesystem above 80 percent
 - OPNsense agent not pushing to the LAPI; OPNsense bouncer not pulling
 - intermediate CA expiring within 30 days
-- claude-sessions ClickHouse disk above 80 percent; CoreDNS still has its `dnstap` line after a kubeadm upgrade
+- claude-sessions ClickHouse disk above 80 percent; CoreDNS still has its `dnstap` line after a kubeadm upgrade; Tetragon DaemonSet not ready
 
 Docs: new `docs/architecture/network-security-monitoring.md` and `docs/runbooks/network-ids.md`; updates to `docs/architecture/networking.md`, `docs/agents/security.md`, `docs/runbooks/opnsense.md`, `.claude/reference/service-catalog.md`.
 
@@ -138,4 +147,4 @@ Docs: new `docs/architecture/network-security-monitoring.md` and `docs/runbooks/
 
 1. **Home LAN coverage.** Home devices sit behind the AX6000 and never cross OPNsense. Options: OPNsense as the edge router with the AX6000 as an access point; a separate inspected Wi-Fi VLAN; mirroring the internet link (no per-device attribution); DNS logging only. Viktor is discussing it with emo.
 2. **Opted-in machines.** Which machines trust the interception certificate. Mostly depends on question 1.
-3. **Pod attribution for IP-only hits.** A malware IP reached without a DNS lookup shows only the node; Goldmane narrows it to workloads on that node talking to `pub` at that minute. Tetragon is the upgrade if that proves too coarse.
+3. **Tetragon alert rules.** Which process events page Slack (for example a shell started by a web server) is decided after a one-week baseline, so the rules match our workloads.
