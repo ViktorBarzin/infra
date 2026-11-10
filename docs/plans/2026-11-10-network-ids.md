@@ -73,12 +73,12 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: delete the stack; goflow2 returns to stdout.
 
 ### 2. Suricata metadata off the box
-- Suricata interfaces change from `wan,lan,opt1` to `lan,opt1` in `playbooks/tasks/opnsense/suricata.yml`.
+- Done 2026-11-10: Suricata inspects `lan,opt1` only, and 16 own-traffic signatures are off (runbook `docs/runbooks/opnsense.md`, "Suricata tuning").
 - A conf.d file that restates all four stock outputs (eve.json, syslog eve, stats, syslog) and adds `eve-meta.json`. A repeated `outputs:` key replaces the template's list, so the playbook asserts with `suricata --dump-config` that all five exist.
 - A `newsyslog.conf.d` entry rotates `eve-meta.json`.
 - A syslog-ng `conf.d` file tails it and sends raw JSON lines over TCP to Vector, avoiding the 8 KB syslog limit.
 - All in `playbooks/tasks/opnsense/`; `--check` must stay a no-op after apply.
-- Verify: `curl testmynids.org/uid/index.html` from VLAN 20 lands in `netsec.eve`; dns and tls rows arrive; Intrusion Detection > Alerts and Loki still show the alert.
+- Verify: `dig icanhazip.com @10.0.10.1` from the devvm (testmynids.org is parked) lands in `netsec.eve`; dns and tls rows arrive; Intrusion Detection > Alerts and Loki still show the alert.
 - Rollback: remove the two conf.d files and reconfigure the IDS.
 
 ### 3. Alerts into bans, in simulation

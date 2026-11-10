@@ -27,6 +27,31 @@ Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, 
 
 Monitoring: Prometheus job `opnsense-node` (10.0.20.1:9100, `ScrapeTargetDown`; `EdgeFirewallVMDown` on qemu/100), Loki `{job="syslog", host="opnsense"}` (filter log, Suricata EVE, system), daily `config.xml` copy by `scripts/daily-backup.sh` to `/mnt/backup/opnsense/`.
 
+## Suricata tuning
+
+Suricata runs in IDS mode on lan (VLAN 10, `vtnet1`) and opt1 (VLAN 20, `vtnet2`) only. WAN is not inspected (2026-11-10): every routed flow also crossed VLAN 10 or 20 and alerted twice, and on WAN it showed the firewall's address instead of the inside host. The HE tunnel's IPv6 is still seen as it enters VLAN 20.
+
+Signatures that fire only on our own services are turned off in `playbooks/tasks/opnsense/suricata.yml` (`opn_ids_disabled_sids`, each with its reason): STUN (coturn, Matrix, Headscale DERP, WebRTC), cloudflared, GitHub release downloads, pip, Tailscale control lookups, `pages.dev` (tv app sources) and BitTorrent (qBittorrent in servarr). The playbook asserts each listed SID is installed, so a renamed or retired rule fails the run. Add a SID only with its reason; never turn off a rule that names a threat (`ET COMPROMISED`, `ET DROP`, `ET CINS`, `ET SCAN`, abuse.ch).
+
+Effect, measured 2026-11-10: about 400 alerts per 5 minutes before, 16 after (plus two tests). What stays, on purpose:
+
+| Source | Signatures | Why it stays |
+|---|---|---|
+| `valchedrym.ddns.net` lookups, about one a minute through CoreDNS (one Uptime Kuma ping monitor plus pods not yet attributed) | `ET DYN_DNS *.ddns .net` | the rule is a real malware signal for other names |
+| qBittorrent tracker lookups (`*.pw`, `*.tk`, `*.to`, `farted.net`, `duckdns.org`) | `ET DNS ... Likely Hostile`, `ET DYN_DNS` | same |
+| tv app sources (`vavoo.to`, `*.top`) | `ET DNS Query for .to TLD`, `*.top` | same |
+| outside scanners and listed hosts | `ET DROP Dshield`, `ET DROP Spamhaus`, `ET CINS`, `ET COMPROMISED`, `SSH-2.0-Go` | real attacks; what CrowdSec will ban |
+
+Count by signature and interface:
+
+```
+homelab logs query 'sum by (sig, iface) (count_over_time({job="syslog", host="opnsense"} |= "event_type" |= "alert" | regexp `"in_iface":"(?P<iface>[^"]+)".*"signature":"(?P<sig>[^"]+)"` [1h]))' --since 1h
+```
+
+Test that detection works: `dig icanhazip.com @10.0.10.1` from the devvm raises `ET INFO External IP Lookup Domain in DNS Lookup (icanhazip .com)` on `vtnet1` within a minute. `testmynids.org` no longer works: the domain is parked.
+
+`ids/service/reconfigure` blocks while Suricata restarts with about 83,000 rules, longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
+
 ## Rebuild from nothing
 
 1. `cd stacks/opnsense && ../../scripts/tg apply`: uploads the nano image (signed checksum list, `scripts/opnsense-image-upload`) and creates VM 100 with every NIC disconnected (`local.nics`).
