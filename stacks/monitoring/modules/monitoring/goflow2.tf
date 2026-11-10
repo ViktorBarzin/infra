@@ -62,9 +62,10 @@ resource "kubernetes_config_map" "goflow2" {
       }
       sinks = {
         netsec = {
-          type    = "vector"
-          inputs  = ["tag"]
-          address = "netsec-vector.netsec.svc.cluster.local:6000"
+          type   = "vector"
+          inputs = ["tag"]
+          # The scheme is required: without it Vector 0.61 connects to nothing.
+          address = "http://netsec-vector.netsec.svc.cluster.local:6000"
           # Dropping here, not blocking: a blocked pipe would stall goflow2.
           buffer = { type = "memory", max_events = 20000, when_full = "drop_newest" }
         }
