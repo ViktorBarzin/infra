@@ -148,6 +148,18 @@ if [ "${CVE_PRIORITY:-0}" = 1 ]; then
   fi
 fi
 
+# Pending-fix signal (2026-11-10). With CVE_PRIORITY=1 Renovate also writes
+# its report (every dependency with its pending updates), and after a run
+# that exited 0, cve-fix-pending.js pushes the updates that would touch an
+# image with fixable CVEs to Pushgateway (job renovate-cve-fix) for the
+# UpgradeFixNotLanded alert. A failure there is logged and does not fail the
+# run; RenovateCveFixSignalStale fires if it keeps failing.
+REPORT_PATH=/tmp/renovate-report.json
+if [ "${CVE_PRIORITY:-0}" = 1 ]; then
+  rm -f "$REPORT_PATH"
+  export RENOVATE_REPORT_TYPE=file RENOVATE_REPORT_PATH="$REPORT_PATH"
+fi
+
 # Optional stop after the first automerge (RENOVATE_STOP_AFTER_AUTOMERGE=1).
 # Once a branch is automerged, Renovate logs "Restarting repository job after
 # automerge result" and runs the whole repository job again. With
@@ -201,6 +213,14 @@ rm -f "$fifo"
 if [ "$host_error" = 1 ] && [ "$rc" = 0 ]; then
   echo "run-renovate: a repository aborted with external-host-error; recording the run as failed"
   rc=1
+fi
+if [ "${CVE_PRIORITY:-0}" = 1 ] && [ "$rc" = 0 ] && [ "$stopped" = 0 ]; then
+  if [ -s "$REPORT_PATH" ]; then
+    node "$(dirname "$0")/cve-fix-pending.js" "$REPORT_PATH" "${PROMETHEUS_URL:-http://prometheus-server.monitoring}" "$PGW" ||
+      echo "WARN: cve-fix-pending failed; the pending-fix metrics keep their last values" >&2
+  else
+    echo "WARN: Renovate wrote no report at $REPORT_PATH; pending-fix metrics not updated" >&2
+  fi
 fi
 record "$rc"
 exit "$rc"

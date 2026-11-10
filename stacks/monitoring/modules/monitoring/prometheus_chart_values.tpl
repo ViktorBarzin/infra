@@ -105,13 +105,24 @@ alertmanager:
         # by one over about two hours, which under the root route's 5m
         # group_interval would post a fresh list every five minutes. Grouped by
         # alertname, so each post lists every affected namespace or image.
+        # TrivyKnownExploitedCVE (2026-11-10) is the one CVE alert that pages as
+        # critical: a CVE CISA lists as exploited in the wild, in an image an
+        # internet-reachable namespace runs. Same once-a-day grouping.
+        - receiver: slack-critical
+          group_by: ["alertname"]
+          group_wait: 30m
+          group_interval: 24h
+          repeat_interval: 8760h
+          matchers:
+            - alertname = "TrivyKnownExploitedCVE"
+          continue: false
         - receiver: slack-warning
           group_by: ["alertname"]
           group_wait: 30m
           group_interval: 24h
           repeat_interval: 8760h
           matchers:
-            - alertname =~ "TrivyFixableCVEInternetReachable|TrivyExposedSecretInImage"
+            - alertname =~ "UpgradeFixNotLanded|TrivyExposedSecretInImage"
           continue: false
         - receiver: slack-critical
           group_wait: 10s
@@ -501,7 +512,7 @@ kube-state-metrics:
   # tell internet-reachable workloads (proxied or non-proxied) from the rest.
   # The deployment.kubernetes.io/revision annotation on Deployments and
   # ReplicaSets (kube_deployment_annotations, kube_replicaset_annotations) tells
-  # TrivyFixableCVEInternetReachable which ReplicaSet is a Deployment's current
+  # TrivyKnownExploitedCVE and cve-priority.js which ReplicaSet is a Deployment's current
   # one, including for a Deployment scaled to 0 (2026-11-04).
   metricAnnotationsAllowList:
     - ingresses=[cloudflare.viktorbarzin.me/dns-type]
@@ -7171,52 +7182,101 @@ serverFiles:
         # namespaces one at a time over about two hours, posts once rather than
         # every five minutes, and later changes post at most once a day.
         rules:
-          - alert: TrivyFixableCVEInternetReachable
-            # One alert per namespace, so the alert count is bounded by the 103
-            # internet-reachable namespaces however many CVEs each image has.
-            # trivy_vulnerability_id holds only fixable Critical/High findings
-            # (filtered in the kubernetes-service-endpoints metric_relabel_configs).
-            # Reachability: any ingress in the namespace with the ingress_factory
-            # dns-type annotation proxied or non-proxied.
+          - alert: TrivyKnownExploitedCVE
+            # 2026-11-10: replaced TrivyFixableCVEInternetReachable, which fired
+            # for any fixable Critical/High CVE (65 namespaces, 589 CVEs on
+            # 2026-11-09, most of them waiting on upstream images nobody here
+            # can rebuild). Viktor chose to alert when the upgrade pipeline
+            # fails instead: this alert for CVEs exploited in the wild, and
+            # UpgradeFixNotLanded below for fixes that exist and did not land.
+            # Every other finding is in the weekly digest.
+            #
+            # One alert per CVE; the value is the number of internet-reachable
+            # namespaces running an image with it. cisa_kev_listed comes from
+            # the daily cisa-kev CronJob (cisa_kev.tf). The fixable-only filter
+            # on trivy_vulnerability_id (metric_relabel_configs above) applies:
+            # an exploited CVE with no fixed package anywhere is not seen here.
+            #
+            # Current ReplicaSets only (2026-11-04). The operator keeps the
+            # report of a Deployment's previous ReplicaSets, scaled to 0 after a
+            # rollout, until their 72h TTL, so a bumped app went on alerting on
+            # the image it no longer runs. A ReplicaSet finding counts only for
+            # the Deployment's current ReplicaSet: the one whose
+            # deployment.kubernetes.io/revision annotation equals the
+            # Deployment's (true while scaled to 0 and after a revert). Other
+            # kinds (StatefulSet, DaemonSet, CronJob, Job, Pod) always count.
+            # stacks/renovate/files/cve-priority.js uses the same selection.
             #
             # keep_firing_for bridges the rescan: a report is deleted at its 72h
-            # TTL and its series vanish until the new scan lands (up to about 40
-            # minutes when the whole cluster expires at once).
-            #
-            # Old ReplicaSets (2026-11-04). The operator keeps the report of a
-            # Deployment's previous ReplicaSets, scaled to 0 after a rollout, until
-            # their TTL, so a bumped app went on alerting for up to 3 days on the
-            # image it no longer runs (tripit counted 1631 findings across 8
-            # builds, 572 on the running one). A ReplicaSet finding counts only
-            # for the Deployment's current ReplicaSet: the one whose
-            # deployment.kubernetes.io/revision annotation equals the
-            # Deployment's. That holds while the Deployment is scaled to 0 (an
-            # app Sablier has parked), and after a revert, where the controller
-            # reuses an older ReplicaSet and gives it the new revision number.
-            # The Deployment name is the ReplicaSet name without its
-            # pod-template-hash suffix. Other kinds (StatefulSet, DaemonSet,
-            # CronJob, Job, Pod) count as before.
+            # TTL and its series vanish until the new scan lands.
             expr: |
-              count by (namespace) (
-                  trivy_vulnerability_id{severity=~"Critical|High", resource_kind!="ReplicaSet"}
-                or (
-                  trivy_vulnerability_id{severity=~"Critical|High", resource_kind="ReplicaSet"}
-                  and on (namespace, resource_name)
-                    label_replace(
-                      label_replace(kube_replicaset_annotations, "deployment", "$1", "replicaset", "(.+)-[a-z0-9]+")
-                      and on (namespace, deployment, annotation_deployment_kubernetes_io_revision)
-                        kube_deployment_annotations,
-                      "resource_name", "$1", "replicaset", "(.+)")
+              count by (vuln_id) (
+                count by (vuln_id, namespace) (
+                  (
+                      trivy_vulnerability_id{severity=~"Critical|High", resource_kind!="ReplicaSet"}
+                    or (
+                      trivy_vulnerability_id{severity=~"Critical|High", resource_kind="ReplicaSet"}
+                      and on (namespace, resource_name)
+                        label_replace(
+                          label_replace(kube_replicaset_annotations, "deployment", "$1", "replicaset", "(.+)-[a-z0-9]+")
+                          and on (namespace, deployment, annotation_deployment_kubernetes_io_revision)
+                            kube_deployment_annotations,
+                          "resource_name", "$1", "replicaset", "(.+)")
+                    )
+                  )
+                  and on (vuln_id) cisa_kev_listed
                 )
+                and on (namespace)
+                count by (namespace) (kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type=~"proxied|non-proxied"})
               )
-              and on (namespace)
-              count by (namespace) (kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type=~"proxied|non-proxied"})
             for: 1h
             keep_firing_for: 6h
             labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.vuln_id }} is on CISA's known-exploited list and is in images run by {{ $value | printf \"%.0f\" }} internet-reachable namespace(s). `kubectl get vulnerabilityreports -A -o json | jq -r '.items[] | select(any(.report.vulnerabilities[]; .vulnerabilityID==\"{{ $labels.vuln_id }}\")) | .metadata.namespace + \" \" + .report.artifact.repository + \":\" + .report.artifact.tag' | sort -u`; runbook docs/runbooks/trivy-operator.md"
+          - alert: UpgradeFixNotLanded
+            # 2026-11-10. A newer version of an image (or chart) that an
+            # internet-reachable namespace runs with fixable Critical/High CVEs
+            # has been available for 7 days, and the pipeline has not landed
+            # it. renovate_cve_fix_available_since_seconds is pushed after each
+            # successful infra Renovate run (stacks/renovate/files/
+            # cve-fix-pending.js): the release date, or for registries without
+            # one (GHCR, Quay) the first run that saw the update. Usual causes:
+            # an ignore entry the rails left after a revert, the update waiting
+            # behind a long queue, or a Renovate schedule. A HELD (disabled)
+            # package never shows up here, because Renovate does not look it up.
+            # Whether the new version clears the CVEs is known only after Trivy
+            # scans it.
+            expr: |
+              (time() - min by (namespace, package) (renovate_cve_fix_available_since_seconds)) > 7 * 86400
+              and on (namespace)
+              count by (namespace) (kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type=~"proxied|non-proxied"})
+            for: 1h
+            labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.namespace }}: {{ $value | printf \"%.0f\" }} fixable Critical/High CVE finding(s) in an internet-reachable namespace. `kubectl get vulnerabilityreports -n {{ $labels.namespace }} -o wide`, fixed versions per docs/runbooks/trivy-operator.md"
+              summary: "{{ $labels.namespace }}: a newer {{ $labels.package }} has been available for {{ $value | humanizeDuration }} while the running one has fixable CVEs, and Renovate has not landed it. Check renovate_cve_fix_available_since_seconds for the version, then the Renovate dashboard issue (viktor/infra #111) and renovate/ignored-versions.json; runbook docs/runbooks/trivy-operator.md"
+          - alert: CisaKevFeedStale
+            # The cisa-kev CronJob (cisa_kev.tf) has not refreshed the
+            # known-exploited catalogue, so TrivyKnownExploitedCVE misses CVEs
+            # CISA added since.
+            expr: (time() - cisa_kev_last_success_timestamp_seconds) > 3 * 86400 or absent(cisa_kev_last_success_timestamp_seconds)
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "The CISA known-exploited catalogue has not refreshed for 3 days. kubectl -n monitoring logs job/<latest cisa-kev job>"
+          - alert: RenovateCveFixSignalStale
+            # cve-fix-pending.js has not pushed for 2 days, so
+            # UpgradeFixNotLanded works from old data. Renovate itself
+            # succeeding is RenovateNotSucceeding's job.
+            expr: (time() - renovate_cve_fix_last_run_timestamp_seconds) > 2 * 86400 or absent(renovate_cve_fix_last_run_timestamp_seconds)
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "The pending-fix signal for UpgradeFixNotLanded has not refreshed for 2 days. Look for 'cve-fix-pending' lines in the logs of the latest kubectl -n renovate job"
           - alert: TrivyExposedSecretInImage
             # One alert per image repository per namespace. The count is the
             # largest number of secrets any one container of that image holds.
