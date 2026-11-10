@@ -91,6 +91,12 @@ goflow2 mapping copies fields 1 and 2 into extra fields `in_bytes` and
 externalTrafficPolicy Cluster, so `flows.exporter` is the node that forwarded
 the packet (10.0.20.100), not OPNsense.
 
+**Measured 2026-11-10** (15:45-15:59 UTC, after the fixes): about 203,000
+flow rows an hour, every one with a byte count; about 10 bytes a row
+compressed (92 uncompressed), so roughly 50 MB a day and 0.7 GB for the 14
+days kept. Memory: netsec-vector 54 MiB, goflow2 18 MiB, its sidecar 38 MiB;
+the ClickHouse pod 295 MiB.
+
 **Alerts** (lane `security`, `prometheus_chart_values.tpl`):
 `NetsecVectorDown`, `NetsecSinkErrors`, `NetsecFlowsStale` (no row written to
 `flows` for 30 minutes).
