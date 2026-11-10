@@ -624,6 +624,44 @@ floor_alerts() {
   pass "floor: no new firing alerts for ${window}s"
 }
 
+# floor_restarts: no pod created since VERIFY_SINCE has restarted twice or more
+# (one restart at startup, e.g. racing its database, is common on healthy
+# deploys; a crash loop restarts about 5 times in the 600 s window). Runs last,
+# after the alert window, because floor_rollout looks once right after
+# convergence and a pod without a readiness probe is Ready before it crashes
+# (immichframe v1.0.39 crash-looped 4 h on 2026-10-11 after passing). Pods
+# older than VERIFY_SINCE are not counted, so a workload that was already
+# flapping does not fail an unrelated change. Failures are named per workload
+# ("floor: restarted pod <ns>/<workload>") for the Renovate rails comparison.
+floor_restarts() {
+  local since=${VERIFY_SINCE:-0} ns out="" wl
+  if [ "$since" -le 0 ]; then
+    pass "floor: restart check skipped (no VERIFY_SINCE)"
+    return 0
+  fi
+  for ns in $VERIFY_NAMESPACES; do
+    out+=$(k get pods -n "$ns" -o json 2>/dev/null | jq -r --arg ns "$ns" --argjson since "$since" '
+      .items[] |
+      select(.metadata.labels["app.kubernetes.io/managed-by"] != "verify") |
+      select((.metadata.creationTimestamp | fromdateiso8601) >= $since) |
+      (.metadata.labels["pod-template-hash"] // "") as $h |
+      (.metadata.ownerReferences[0] // {}) as $o |
+      (if $o.kind == "ReplicaSet" and $h != "" then ($o.name | sub("-" + $h + "$"; "")) else ($o.name // .metadata.name) end) as $wl |
+      ((.status.containerStatuses // []) + (.status.initContainerStatuses // []))[]
+      | select((.restartCount // 0) >= 2)
+      | "\($ns)/\($wl) container \(.name): \(.restartCount) restarts since the change"')
+    out+=$'\n'
+  done
+  out=$(printf '%s' "$out" | sed '/^$/d')
+  if [ -z "$out" ]; then
+    pass "floor: no pod created by this change restarted twice"
+    return 0
+  fi
+  for wl in $(printf '%s\n' "$out" | cut -d' ' -f1 | sort -u); do
+    fail "floor: restarted pod $wl" "$(printf '%s\n' "$out" | grep "^$wl " | _oneline 600)"
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Helpers shared by several component scripts
 # ---------------------------------------------------------------------------

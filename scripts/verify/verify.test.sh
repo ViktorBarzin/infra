@@ -245,5 +245,52 @@ grep -q "FAIL  floor: ingress aiostreams/aiostreams" <<<"$out" && ok "ingress fa
 out=$(BAD_CALLS=1000 VERIFY_BASELINE=1 run_ingress)
 eq "ingress: a baseline run looks once" "passed=0 failed=1 calls=1" "$(tail -1 <<<"$out")"
 
+# --- floor_restarts -------------------------------------------------------------
+# A bumped image can pass the rollout check and crash minutes later (pods with
+# no readiness probe are Ready before they crash: immichframe v1.0.39,
+# 2026-10-11). floor_restarts runs after the alert window and fails any pod
+# created since VERIFY_SINCE that has restarted twice or more. Older pods are ignored so a
+# workload that was already flapping does not fail an unrelated change.
+run_restarts() { # <pods-json-items> -> prints the log, then "passed=N failed=M" and check names
+  (
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    log() { echo "$*"; }
+    k() {
+      case "$1 $2" in
+        "get pods") echo "{\"items\":[$PODS]}" ;;
+        *) return 1 ;;
+      esac
+    }
+    VERIFY_NAMESPACES=x
+    floor_restarts
+    echo "passed=$PASS_COUNT failed=$FAIL_COUNT"
+    printf 'check=%s\n' "${FAILED_CHECKS[@]}"
+  )
+}
+pod() { # <created> <restarts>
+  printf '{"metadata":{"name":"app-7d9f8c6b5-abcde","creationTimestamp":"%s","labels":{"pod-template-hash":"7d9f8c6b5"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-7d9f8c6b5"}]},"status":{"containerStatuses":[{"name":"app","restartCount":%s,"state":{"running":{}}}]}}' "$1" "$2"
+}
+SINCE=$(date -u -d 2026-10-11T18:44:00Z +%s)
+
+out=$(PODS="$(pod 2026-10-11T18:50:00Z 3)" VERIFY_SINCE=$SINCE run_restarts)
+grep -qx "passed=0 failed=1" <<<"$out" && ok "restarts: a new pod that restarted fails" || bad "restarts new pod: $out"
+grep -qx "check=floor: restarted pod x/app" <<<"$out" && ok "restarts: failure names the workload" || bad "restarts name: $out"
+
+out=$(PODS="$(pod 2026-10-01T00:00:00Z 40)" VERIFY_SINCE=$SINCE run_restarts)
+grep -qx "passed=1 failed=0" <<<"$out" && ok "restarts: a pod older than the change is ignored" || bad "restarts old pod: $out"
+
+out=$(PODS="$(pod 2026-10-11T18:50:00Z 0)" VERIFY_SINCE=$SINCE run_restarts)
+grep -qx "passed=1 failed=0" <<<"$out" && ok "restarts: a new pod with no restarts passes" || bad "restarts clean pod: $out"
+
+out=$(PODS="$(pod 2026-10-11T18:50:00Z 1)" VERIFY_SINCE=$SINCE run_restarts)
+grep -qx "passed=1 failed=0" <<<"$out" && ok "restarts: one restart at startup passes" || bad "restarts single restart: $out"
+
+out=$(PODS="$(pod 2026-10-11T18:50:00Z 2)" VERIFY_SINCE=$SINCE run_restarts)
+grep -qx "passed=0 failed=1" <<<"$out" && ok "restarts: two restarts fail" || bad "restarts two: $out"
+
+out=$(PODS="$(pod 2026-10-11T18:50:00Z 3)" VERIFY_SINCE=0 run_restarts)
+grep -qx "passed=1 failed=0" <<<"$out" && ok "restarts: no VERIFY_SINCE skips the check" || bad "restarts no since: $out"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi
