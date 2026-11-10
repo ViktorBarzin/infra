@@ -77,11 +77,23 @@ source workload, destination workload, destination service, port and action.
     / `network` (an address Calico does not know: `pub` or `pvt`) / `unknown`.
     This is what makes a node-to-internet flow distinguishable rather than merely
     unlabelled.
-  - `src_workload` / `dst_workload` are Goldmane's endpoint name with the
-    generated part removed, so one workload stays one row across redeploys:
-    `traefik-7cbc567497-*` → `traefik`, `fixer-tick-29804008-*` → `fixer-tick`.
-    StatefulSet ordinals (`pg-cluster-1`) and node names (`k8s-node1`) are kept
-    as-is. Exact rules: `edge.NormalizeWorkload` in the service repo.
+  - `src_workload` / `dst_workload` are the stable workload, so one workload
+    stays one row across redeploys, CronJob runs and pool pods. Exact rules:
+    `edge.ResolveWorkload` / `edge.NormalizeWorkload` in the service repo.
+    - Goldmane's pod-set name with the generated part removed:
+      `traefik-7cbc567497-*` → `traefik`, `fixer-tick-29804008-*` → `fixer-tick`.
+      A bare pod has no pod-set name and arrives under its full pod name, so the
+      same rules remove the ids its creator appended: `chrome-worker-042a1115` →
+      `chrome-worker`, `rails-dolt-backup-cd081ca-2019-*` → `rails-dolt-backup`,
+      `helper-pod-delete-pvc-<uuid>` → `helper-pod-delete-pvc`.
+    - A pod started by `scripts/verify/run` is named by its labels
+      (`app.kubernetes.io/managed-by=verify`, `verify/stack=<stack>`), because
+      its five-character run id cannot be told from a word by the name alone:
+      `verify-homepage-5ta31-*` and `verify-dbaas-p3wif-pg-dblist` →
+      `verify-homepage`, `verify-dbaas`. Goldmane's labels are read for this and
+      not stored.
+    - StatefulSet ordinals (`pg-cluster-1`) and node names (`k8s-node1`) are kept
+      as-is.
   - `dst_service_ns` / `dst_service` name the Kubernetes Service the flow was
     addressed to, when it used one.
   - A field that does not apply to an endpoint is stored as `-` — Goldmane's own
@@ -107,10 +119,26 @@ source workload, destination workload, destination service, port and action.
     were recorded as a bare namespace pair (`keel → -`) with no port, no workload
     and no endpoint type. Those three now land on every one of them.
   - A **"new edge"** = a row whose `first_seen` falls inside the digest window.
+  - **Per-workload identity for bare and verify pods, 2026-11-10** (service
+    commit `1fbb3b0`). Before it, every verify run and every chrome worker was
+    stored under its own pod name, so the digest listed 147-504 new edges a day
+    (about 37 messages in 14 days in `#alerts`, mostly verify and chrome-worker
+    pods). On start the aggregator merges such rows into their workload's row
+    (earliest `first_seen`, latest `last_seen`, summed `flow_count`), so a
+    workload on record for weeks does not read as new. The name-rule part re-runs
+    on every start, which also folds in rows an outgoing pod writes during a
+    rolling update; the verify part rebuilds stack names from history, runs once,
+    and is recorded in table `edge_migration` (id `0003_verify_runner_workload`).
+    On the live deploy it merged 10,109 rows into 769, leaving 5,736. Replaying
+    the previous 14 days under the new identity gives 1-161 new edges a day,
+    median 33; the first digest after the deploy covered 113. A baseline verify
+    of `homepage` run after the deploy landed on the existing `verify-homepage`
+    rows (first seen 2026-10-10) and added none.
   - Role `goldmane_edges` (Vault-rotated, 7-day) owns the DB. The `edge` table is
     created — and a pre-widening one upgraded in place — idempotently by the
     aggregator at startup (canonical DDL also in the repo at
-    `migrations/0001_edge.sql` + `migrations/0002_widen_edge.sql`).
+    `migrations/0001_edge.sql` + `migrations/0002_widen_edge.sql` +
+    `migrations/0003_edge_migration.sql`).
   - **Expect one unusually large digest the day the widening deploys.** The
     identity tuple is wider, so the first observation of a namespace pair after
     the upgrade inserts a new row; a "new edge" is one whose `first_seen` is in

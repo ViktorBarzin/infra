@@ -64,6 +64,17 @@ Implemented across infra issues #57–#63. **One material deviation from the dec
    instrumentation). The constraint is a reasonable prior rather than an
    observation, and it is worth measuring before it is cited again.
 
+**Workload identity for bare pods (2026-11-10).** "Per workload" held only for
+pods a controller names. Goldmane's pod-set name covers Deployments, DaemonSets
+and Jobs, but a bare pod arrives under its own name, so each verify run
+(`verify-homepage-5ta31`) and each chrome-service pool worker
+(`chrome-worker-042a1115`) was a new edge, and the daily digest listed 147-504
+new edges a day. The aggregator now names a verify runner pod by its
+`verify/stack` label and strips token, commit and UUID ids from bare pod names,
+and it merges the old per-pod rows into the workload's row on start so their
+history is kept and they do not read as new. Details and numbers:
+[`docs/runbooks/goldmane-flow-trail.md`](../runbooks/goldmane-flow-trail.md).
+
 The rejection of a service mesh, platform-wide mTLS and SPIFFE stands on its own
 measured grounds and is unaffected by either correction. Whisker UI is Authentik-gated at `whisker.viktorbarzin.me`. Health: Prometheus alerts `AggregatorDown` + `DigestFailing` and cluster-health check #48.
 

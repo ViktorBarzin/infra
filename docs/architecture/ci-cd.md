@@ -93,6 +93,16 @@ the Forgejo API over the internal Traefik LB
 (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`) since the devvm
 can't reach Forgejo's public hairpin.
 
+**Failure alerts**: the template's `notify-failure` job posts
+`<name> off-infra build FAILED` to `#alerts` only for the first failure of a
+streak. It reads the previous finished run of the same workflow on the same
+branch (`gh run list`, job permission `actions: read`) and stays quiet when
+that run failed too; a lookup error posts. Before 2026-11-10 every failed run
+posted, and Renovate's pushes onto one broken master posted tasks' alert 21
+times. Rendering happens only at onboarding, so a repo onboarded earlier keeps
+the old per-run step until its `build.yml` is edited or re-rendered; tasks got
+it by hand on 2026-11-10.
+
 ### ghcr package visibility
 
 | Visibility | Packages | Pull mechanism |
