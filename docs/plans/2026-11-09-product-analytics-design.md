@@ -62,16 +62,20 @@ Events use the [Segment spec](https://segment.com/docs/connections/spec/) and ar
 | `type` | `track`, `identify`, or `screen` (Android). Browser pageviews come from the Rybbit script, so the browser SDK does not send `page` |
 | `event` | `noun.past_verb`, lower case, matching `^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`, e.g. `recording.started`, `trip.created` |
 | `userId` | The Person's Authentik hashed user id (`uid`) once signed in, omitted before. It equals the OIDC `sub` under Authentik's default `hashed_user_id` mode (tv, every `tanstack_app`). tripit's provider issues the email as `sub`, so tripit sends `uid` |
-| `anonymousId` | The SDK's own id, sent on every event, so Rybbit can merge it into the Person at `identify` |
+| `anonymousId` | Browser and Android: the SDK's own id, sent on every event, so Rybbit can merge it into the Person at `identify`. In the browser it is the Rybbit script's visitor id (localStorage `rybbit-visitor-id`). Server events sent while handling a browser's request: that visitor id, read from the request's `X-Visitor-Id` header. Server events with neither: omitted when `userId` is set, otherwise a stable id (`server:<app>` by default). Never a new random id per event, which Rybbit would count as a new person |
+| `X-Visitor-Id` | Request header the browser sets on same-origin API calls to its Rybbit visitor id (`visitorHeaders()` in `@viktorbarzin/telemetry`). Rybbit derives its user id from site id and anonymous id, so a server event carrying this id lands on the browser's Rybbit user |
+| `context.ip`, `context.userAgent` | Server events sent during a request carry the person's IP (`X-Real-Ip`, else the first `X-Forwarded-For` entry, else the peer) and User-Agent, which Vector maps to Rybbit's `ip_address` and `user_agent` for country and device. Never the SDK's own agent, which Rybbit flags as a bot |
 | `properties` | snake_case keys, at most 2,048 characters as JSON (Rybbit's limit) |
 | `context.page.url` | Set by the browser SDK. Server and Android events set `context.app` instead |
-| write key | One per app, in Vault at `secret/rybbit` under `write_key_<app>`. Vector derives `app` from it and ignores any `app` the client sends |
+| write key | One per app, in Vault at `secret/rybbit` in the `write_keys` JSON, keyed by app. Vector derives `app` from it and ignores any `app` the client sends |
 
 Vector rejects an event, and sends it to Loki under `{job="event-pipeline", outcome="rejected"}` with the reason, when:
 - the write key is unknown;
 - the name or a property key breaks the pattern;
 - the properties are too long;
 - the browser host is not a production host (`*.viktorbarzin.me` and `viktorbarzin.me`).
+
+The client libraries implement the server side of this from telemetry 0.2.0 (Python `viktorbarzin-telemetry` 0.2.0, Go `go/v0.2.0`) and the next `@viktorbarzin/telemetry` release: Python `RequestContextMiddleware` (ASGI) or `request_context()`, Go `RequestMiddleware`, TypeScript `withRequestContext()`. Up to 0.1.0 the Python and Go libraries gave every event without an anonymousId a new uuid4, so anonymous backend events from offline-reader, learning, fire-planner and health each counted as a new person until those apps upgrade.
 
 ## Log standard
 
