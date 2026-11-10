@@ -1,6 +1,6 @@
 # OPNsense edge firewall
 
-OPNsense is the edge firewall since the cutover on 2026-11-10 (ADR-0038, plan `docs/plans/2026-11-03-opnsense-migration.md`), on pfSense's addresses and MACs (the **Production profile**). pfSense (VM 101) is stopped with its NICs link-down until 2026-11-24 as the rollback; see Cutover.
+OPNsense is the edge firewall since the cutover on 2026-11-10 (ADR-0038, plan `docs/plans/2026-11-03-opnsense-migration.md`), on pfSense's addresses and MACs (the **Production profile**). pfSense (VM 101) is kept stopped with its NICs link-down as the rollback, with no removal date (Viktor, 2026-11-10); see Cutover.
 
 | | |
 |---|---|
@@ -60,7 +60,7 @@ Kea leases were not copied: every lease pfSense held on 2026-11-10 belonged to a
 5. From a session that has come back: `opnsense-cutover extend 20` keeps the revert armed while the checks below run, then `opnsense-cutover confirm`. Confirm sets `link_down` on pfSense's NICs (it still has the same MACs) and deletes the copied `config.xml`.
 6. Boot order (`playbooks/reboot-boot-order.yml`: 100 order 1, 101 disabled), the dependents below, Terraform plan of `stacks/opnsense` (the MACs are pinned there), `scripts/opnsense-verify --host 10.0.10.1 --profile production`.
 
-Rollback, any time in the two weeks: `opnsense-cutover rollback` (runs as its own unit). It stops VM 100 by any means, brings pfSense back first (links up, onboot, start), then restores VM 100's `pre-cutover` snapshot (staging config, own MACs) and leaves it stopped. If the snapshot restore fails it keeps VM 100 off the network (`link_down`, onboot 0). pfSense itself is never changed.
+Rollback, for as long as VM 101 and the `pre-cutover` snapshot are kept: `opnsense-cutover rollback` (runs as its own unit). It stops VM 100 by any means, brings pfSense back first (links up, onboot, start), then restores VM 100's `pre-cutover` snapshot (staging config, own MACs) and leaves it stopped. If the snapshot restore fails it keeps VM 100 off the network (`link_down`, onboot 0). pfSense itself is never changed.
 
 Tested on throwaway VMs (2026-11-10): automatic revert, confirm, extend, and rollback after confirm. Two blind reviews of the script and of the production config found the issues fixed before the real run (rollback ordering, a manual rollback dying with its session, pfSense's duplicate MACs, the CrowdSec bouncer blocking both directions, NAT for the WireGuard site LANs, the KMS rate limits, DNS rebind protection).
 
@@ -91,3 +91,4 @@ Most kept working because OPNsense took pfSense's addresses and MACs: CoreDNS's 
 - On the first boot after the swap HAProxy did not start: the generated `haproxy.conf` on disk was most likely still the staging one, binding 10.0.20.2. `configctl haproxy start` fixed it, and `rc.syshook.d/start/99-haproxy-ensure` (`tasks/opnsense/haproxy.yml`) now starts it at the end of boot if the early start fails. A later reboot started it normally.
 - mx2 (Oracle) cannot test inbound SMTP: Oracle blocks outbound port 25. Use mladost3-openwrt: `(sleep 4; echo QUIT) | nc 176.12.22.76 25`.
 - The CrowdSec plugin's own rules block in and out on every interface; they are off, and `filter.yml` blocks the bouncer's tables inbound on WAN and the HE tunnel only, with the bouncer limited to `origins: [crowdsec, CAPI, cscli]` (`tasks/opnsense/crowdsec.yml`).
+- HTTP/3 from outside: mx2's curl has no HTTP/3 and the box has no pip, so download the `aioquic` wheels on the devvm (`pip download --only-binary=:all: --platform manylinux2014_x86_64 --python-version 3.12 aioquic`), unzip them into `/tmp` on mx2 and run a small aioquic client with `PYTHONPATH`. Traefik's access log shows `RequestProtocol` HTTP/3.0.
