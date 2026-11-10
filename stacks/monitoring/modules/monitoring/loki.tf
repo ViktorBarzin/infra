@@ -1355,9 +1355,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # nested objects but does NOT index arrays, so it never populates
             # `sourceIPs_0` (always empty -> matched every event). Use an
             # explicit array expression + a non-empty guard. (fixed 2026-07-06)
+            # One exempt pair: HA London switches the Yiko camera with the
+            # ecovacs-video-proxy/camera-switch token (get/patch on one
+            # Deployment), and its calls arrive from 10.3.2.6, the London
+            # Flint's WireGuard address (docs/runbooks/london-yiko.md). That
+            # fired 15 times in 2026-11-01..05. The same token from any other
+            # IP, or any other token from 10.3.2.6, still alerts.
             {
               alert  = "K8sSATokenFromUnexpectedIP"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" | user_username!=\"system:serviceaccount:ecovacs-video-proxy:camera-switch\" or sourceIPs_0!=\"10.3.2.6\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {

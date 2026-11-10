@@ -41,6 +41,8 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. It is **inlined
 {job="kubernetes-audit"} | json user_username="user.username", sourceIPs_0="sourceIPs[0]" | user_username =~ "system:serviceaccount:.*" | sourceIPs_0 != "" | sourceIPs_0 !~ "10\\.0\\.2[0-3]\\..*|192\\.168\\.1\\..*|10\\.0\\.10\\..*|10\\.10\\..*|10\\.(9[6-9]|1[01][0-9]|111)\\..*|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*"
 ```
 
+> **Exempt pair (2026-11-10):** the rule also drops `system:serviceaccount:ecovacs-video-proxy:camera-switch` from `10.3.2.6` (`| user_username != "..." or sourceIPs_0 != "10.3.2.6"`). That is HA London switching the Yiko camera over the London Flint's WireGuard address (`docs/runbooks/london-yiko.md`); it fired 15 times on 2026-11-01..05. The same token from another IP, or another token from 10.3.2.6, still alerts.
+
 > **Note (2026-07-06):** use **explicit** array extraction `| json sourceIPs_0="sourceIPs[0]"` — a bare `| json` does NOT populate `sourceIPs_0` (arrays aren't auto-indexed), so the old query matched every SA event. The `sourceIPs_0 != ""` guard is required.
 
 **Action:** Identify the SA. Rotate its token (`kubectl delete secret <sa-token-name>` if old-style, or recreate the SA if projected token). Audit the SA's permissions and tighten.
