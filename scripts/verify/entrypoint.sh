@@ -3,8 +3,9 @@
 # file, lib.sh and the stack's verify.sh from a ConfigMap at /verify.
 #
 # Order: floor scope (the namespaces exist), floor rollout (wait for convergence), floor ingress, the stack's own
-# checks, then the floor alert watch, which runs last so it covers the window
-# after everything else has settled.
+# checks, then the floor alert watch, so it covers the window after everything
+# else has settled, then the restart check, so a pod that crashes during that
+# window fails the run.
 set -uo pipefail
 
 # shellcheck source=lib.sh
@@ -36,5 +37,7 @@ section "component: $VERIFY_STACK"
 verify_component
 section "floor: alerts"
 floor_alerts
+section "floor: restarts"
+floor_restarts
 
 summary

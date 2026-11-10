@@ -6,7 +6,7 @@ Design: the "Verification contract" in `docs/plans/2026-10-09-software-currency-
 |---|---|
 | Runner (starts the Job, streams its log, returns pass/fail; Kubernetes cleans up) | `scripts/verify/run` |
 | Floor checks and helpers, shared by every stack | `scripts/verify/lib.sh` |
-| Job entrypoint (floor scope, floor rollout, floor ingress, component checks, floor alerts) | `scripts/verify/entrypoint.sh` |
+| Job entrypoint (floor scope, floor rollout, floor ingress, component checks, floor alerts, floor restarts) | `scripts/verify/entrypoint.sh` |
 | Namespaces of a stack without `verify.sh`, read from its `.tf` files | `scripts/verify/stack-namespaces` |
 | Tests for the floor scope (stubbed kubectl, no cluster) | `scripts/verify/verify.test.sh` |
 | A stack's own checks | `stacks/<stack>/verify.sh` |
@@ -41,7 +41,8 @@ flowchart TD
   F1 --> F2[floor: ingress<br/>every host via Traefik]
   F2 --> C[component checks<br/>stacks/stack/verify.sh]
   C --> F3[floor: alerts<br/>window, new since --since]
-  F3 --> V{all passed?}
+  F3 --> F4[floor: restarts<br/>new pods restarted 2+ times]
+  F4 --> V{all passed?}
   V -->|yes| P[Job Complete, exit 0]
   V -->|no| X[Job Failed, exit 1]
   P --> D[TTL controller deletes the Job 15 min later;<br/>GC removes pod, ConfigMap, probe pods]
@@ -54,6 +55,7 @@ The floor, implemented once in `lib.sh`:
 - **Rollout**: every Deployment, StatefulSet and DaemonSet in the stack's namespaces has observed its latest spec and has all replicas updated and ready, within `VERIFY_ROLLOUT_TIMEOUT` (600 s). Workloads scaled to 0 (Sablier) count as converged; `OnDelete` StatefulSets/DaemonSets skip the revision test. No pod there may be in `CrashLoopBackOff`, `ImagePullBackOff`/`ErrImagePull` or `CreateContainerConfigError`. Namespaces that hold no Deployment, StatefulSet, DaemonSet or CronJob fail the check, since the floor then verified nothing; a stack that is meant to be empty sets `VERIFY_EMPTY_OK=1` (`stacks/keel`, which is parked). CronJob-only namespaces pass with a note: the floor does not run CronJobs.
 - **Ingress**: the first host and path of every Ingress in those namespaces is requested through the in-cluster Traefik Service (`--resolve host:443:<traefik ClusterIP>`), so the check exercises the route and not Cloudflare or external DNS. Any status from 100 to 499 passes (Authentik redirects, 401, 404 on API-only roots); `000` and 5xx are retried every 10 s for up to `VERIFY_INGRESS_GRACE` seconds (180), then fail. The grace is for apps with no readiness probe, which count as rolled out before they listen: AIOStreams needed about 45 s on 2026-10-14, and the earlier three tries 5 s apart failed it and reverted a healthy upgrade. A 503 from a route whose backend Service has no ready endpoint counts as a parked app (Deployment at 0 replicas, by hand or by Sablier), because a crashed app still asks for replicas and fails the rollout check instead. Every HTTP probe sends the user agent `homelab-verify/1 (blackbox probe ...)`: Sablier ignores user agents matching `blackbox`, so a probe never wakes a parked app (a plain curl woke `affine` for its 3-hour session on the first run).
 - **Alerts**: Prometheus `/api/v1/alerts` is polled every 30 s for `VERIFY_ALERT_WINDOW` seconds. A firing alert fails the run when it became active at or after `--since` and its `namespace` (or `exported_namespace`) is one of the stack's namespaces, its Traefik `service` label starts with one of them, or its name matches the stack's `VERIFY_ALERTNAMES`. `Trivy*`, `Watchdog` and `InfoInhibitor` never count. Alerts with a `for:` longer than the window cannot fire inside it; the window catches the fast ones.
+- **Restarts**: after the alert window, any container in a pod created at or after `--since` that has restarted twice or more fails the run. `floor: rollout` looks once, right after convergence, and a pod with no readiness probe is Ready before it crashes: immichframe v1.0.39 passed on 2026-10-11 and crash-looped for 4 hours until a hand revert. One restart passes, since apps that race their database at startup restart once on healthy deploys; a crash loop restarts about 5 times in the 600 s window. Pods older than `--since` are not counted, so a workload that was already flapping does not fail an unrelated change. A `--baseline` run has no window and creates no pods, so it never fails this check.
 
 Helm release status is not read (Helm keeps it in Secrets, which the verify identity cannot read). The apply covers it: every `helm_release` is `atomic = true`, so a failed upgrade fails the apply.
 
@@ -164,7 +166,7 @@ Every stack also gets the floor. "Full only" checks are skipped with `--quick`.
 
 ## Baseline runs and check names
 
-`scripts/verify/run --baseline <stack>` looks once at the stack as it is: `--quick`, no alert window, `VERIFY_ROLLOUT_TIMEOUT` and `VERIFY_INGRESS_GRACE` default to 0. The Renovate rails run it before applying a bump and later compare failed check names, so a check that already failed before the bump does not revert it (`docs/runbooks/renovate.md`, "Rails"). That needs names that say what failed: floor failures carry the workload or route, as `floor: rollout <ns>/<Kind>/<name>`, `floor: unhealthy pod <ns>/<workload>` (the Deployment name for ReplicaSet pods, so it survives pod restarts) and `floor: ingress <ns>/<ingress>`. Component checks keep the name their `check` call gives; keep those stable too.
+`scripts/verify/run --baseline <stack>` looks once at the stack as it is: `--quick`, no alert window, `VERIFY_ROLLOUT_TIMEOUT` and `VERIFY_INGRESS_GRACE` default to 0. The Renovate rails run it before applying a bump and later compare failed check names, so a check that already failed before the bump does not revert it (`docs/runbooks/renovate.md`, "Rails"). That needs names that say what failed: floor failures carry the workload or route, as `floor: rollout <ns>/<Kind>/<name>`, `floor: unhealthy pod <ns>/<workload>` and `floor: restarted pod <ns>/<workload>` (the Deployment name for ReplicaSet pods, so it survives pod restarts) and `floor: ingress <ns>/<ingress>`. Component checks keep the name their `check` call gives; keep those stable too.
 
 ## When a run fails
 
