@@ -26,6 +26,7 @@ variable "pg_app_roles" {
     glitchtip       = { username = "glitchtip", rotation_schedule = "42 10 * * TUE", rotation_window = 3600 }
     learning        = { username = "learning", rotation_schedule = "43 10 * * TUE", rotation_window = 3600 }
     ntfy            = { username = "ntfy", rotation_schedule = "44 10 * * TUE", rotation_window = 3600 }
+    prowlarr        = { username = "prowlarr", rotation_schedule = "13 10 * * TUE", rotation_window = 3600 }
   }
 }
 
