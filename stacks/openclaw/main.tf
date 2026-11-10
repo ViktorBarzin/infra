@@ -411,8 +411,8 @@ resource "kubernetes_deployment" "openclaw" {
     # recruiter-responder, one of its consumers, has been at 0/0 replicas for
     # 111 days; and nextcloud-todos shows no approval-card dispatches.
     #
-    # Deliberately a park, not a removal. Five stacks still reference this
-    # namespace (nextcloud-todos, recruiter-responder, n8n,
+    # Deliberately a park, not a removal. Four stacks still reference this
+    # namespace (nextcloud-todos, recruiter-responder,
     # tuya-bridge/saksii_poller, monitoring's dashboard + walloff probe +
     # scrape), and unpicking those is the real work. If nothing misses it in a
     # week, that removal gets its own change. Reverting is this one line.

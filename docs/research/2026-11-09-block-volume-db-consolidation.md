@@ -96,6 +96,13 @@ Every claim carries one of three labels:
     (`plugins/enigma/lib/enigma_driver_gnupg.php:590-668`). Candidate 3's
     "enigma keys into MySQL" is withdrawn.
 
+- 2026-11-10, **n8n sunset**: unused (a week of traffic was Uptime Kuma and
+  bot probes; the one running workflow had failed all 14 runs). Archived a
+  `pg_dump` plus the encryption key file to `/srv/nfs/archive/n8n-2026-11-10/`
+  (mode 600), destroyed the stack, removed its outage-failover route, Kyverno
+  exclude entry, catalog rows and both Uptime Kuma monitors. The `n8n`
+  database stays in the shared Postgres by Viktor's choice. 1 slot freed.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
