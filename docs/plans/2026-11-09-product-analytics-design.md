@@ -164,7 +164,8 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 | fire-planner | live | wired, not seen signed-in | live | yes | 0002 |
 | wrongmove | live | live | live | yes | 0004 |
 | blog, kms, pages | n/a | live (pages: on each page's next publish) | n/a | n/a | n/a |
-| tasks, alexa-assistant, interview-prep, priority-pass, plotting-book, nextcloud-todos, vpn-portal | waiting for `@viktorbarzin/telemetry` on npm | | | | |
+| interview-prep, vpn-portal, plotting-book | waiting for `@viktorbarzin/telemetry` on npm (interview-prep has no server) | wired, not seen signed-in | browser live, server waits for the package | waits for the package | 2026-11-10-telemetry-in-the-browser (each repo) |
+| tasks, alexa-assistant, priority-pass, nextcloud-todos | waiting for `@viktorbarzin/telemetry` on npm | | | | |
 | Third-party apps (Forgejo, Immich, Home Assistant, Paperless, CyberChef and the rest) | n/a | pageviews through the injection plugin, `hosted` site | n/a | n/a | n/a |
 
 "Wired, not seen signed-in" means the app loads the script and calls `identify`, but the check ran without a signed-in browser. A signed-in visit settles it.
