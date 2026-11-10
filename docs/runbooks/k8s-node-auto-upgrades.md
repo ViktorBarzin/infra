@@ -137,8 +137,24 @@ Why cloud-init is disabled after the first boot: k8s-node4 and k8s-node5 were bo
 1. Identify the package(s) that broke things from `/var/log/apt/history.log` on the affected node.
 2. Hold them: `sudo apt-mark hold <pkg>`.
 3. Downgrade: `sudo apt-get install -y --allow-downgrades <pkg>=<previous-version>` (find versions via `apt-cache madison <pkg>`).
-4. Reboot the node manually if the package needs it.
+4. If the package needs a reboot, hand it to kured with `sudo touch /var/run/reboot-required` on the node; see "Rebooting a node by hand" below.
 5. Add the package to the `Unattended-Upgrade::Package-Blacklist` in `cloud_init.yaml` AND drop the holds via the SSH push above so future apt runs skip it.
+
+### Rebooting a node by hand
+
+Never `systemctl reboot` a node directly. A reboot without a drain kills
+every pod on it at once and they wait out the 1800 s NotReady toleration
+before moving: the 2026-10-19 k8s-node5 reboot put 115 workload episodes at
+zero ready, and with the 2026-10-24 node1 rehearsal and the 2026-10-18
+containerd restarts it cost about 1,018 workload-minutes, against 24 to 45
+workloads for a kured reboot.
+
+- **Not urgent:** `sudo touch /var/run/reboot-required` on the node. The
+  sentinel gate and kured take it from there in the 02:00-06:00 London window,
+  with the alert gate and the 24 h soak.
+- **Now:** claim presence, then `kubectl drain <node> --ignore-daemonsets
+  --delete-emptydir-data --grace-period=300`, reboot, wait for Ready,
+  `kubectl uncordon <node>`. Do not reboot a second node within 24 h.
 
 ### kured halted — investigate which alert is blocking
 ```bash

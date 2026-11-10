@@ -141,19 +141,6 @@ deschedulerPolicy:
         - name: RemovePodsViolatingNodeTaints
         - name: RemovePodsViolatingInterPodAntiAffinity
         - name: RemovePodsViolatingTopologySpreadConstraint
-        - name: PodLifeTime
-          args:
-            maxPodLifeTimeSeconds: 604800
-            namespaces:
-              exclude:
-                - "dbaas" # let's not meddle with the dbs
-                - "kube-system"
-                - "calico-system"
-                - "calico-apiserver"
-                - "metallb-system"
-                - "monitoring"
-                - "authentik"
-                - "wireguard" # evicting it drops every VPN tunnel and resets peer state
         - name: "RemoveFailedPods"
           args:
             reasons:
@@ -179,8 +166,39 @@ deschedulerPolicy:
             - RemovePodsViolatingNodeTaints
             - RemovePodsViolatingNodeAffinity
             - RemovePodsViolatingInterPodAntiAffinity
-            - PodLifeTime
             - RemoveFailedPods
+    # Weekly recycle of pods older than 7 days, in its own profile since
+    # 2026-11-10 so that minReplicas: 2 gates only this plugin. A single-replica pod evicted here is an outage of that app for
+    # its whole restart (1.5 to 6.5 min measured on the 2026-11-10 node3
+    # drain), so only workloads with a second pod are recycled. The
+    # crash-loop, failed-pod, taint and affinity cleanups in the default
+    # profile still act on single replicas. minReplicas counts the pods of the
+    # pod's owner (the ReplicaSet for a Deployment), descheduler v0.37.0
+    # pkg/framework/plugins/defaultevictor/constraints.go.
+    - name: pod-lifetime
+      pluginConfig:
+        - name: DefaultEvictor
+          args:
+            ignorePvcPods: true
+            evictLocalStoragePods: true
+            minReplicas: 2
+        - name: PodLifeTime
+          args:
+            maxPodLifeTimeSeconds: 604800
+            namespaces:
+              exclude:
+                - "dbaas" # let's not meddle with the dbs
+                - "kube-system"
+                - "calico-system"
+                - "calico-apiserver"
+                - "metallb-system"
+                - "monitoring"
+                - "authentik"
+                - "wireguard" # evicting it drops every VPN tunnel and resets peer state
+      plugins:
+        deschedule:
+          enabled:
+            - PodLifeTime
     # Balances on memory REQUESTS since 2026-09-23 (was actual usage via
     # metricsUtilization.metricsServer: true, which had no recorded reason).
     #
@@ -234,6 +252,12 @@ deschedulerPolicy:
             # tolerations, requests and pod anti-affinity are all checked.
             # It defaults to false.
             nodeFit: true
+            # No minReplicas here, deliberately (2026-11-10). This profile
+            # evicted 219 pods in 14 days, most of them single replicas, but
+            # the measured cost was about 100 workload-minutes in 30 days,
+            # and with 172 of 248 workloads at one replica minReplicas: 2
+            # would leave almost nothing to balance, bringing back the
+            # post-drain imbalance described above.
         - name: LowNodeUtilization
           args:
             # Same list PodLifeTime protects in the default profile. It used to

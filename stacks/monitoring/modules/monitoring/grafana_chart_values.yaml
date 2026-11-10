@@ -4,6 +4,19 @@ deploymentStrategy:
     maxSurge: 0
     maxUnavailable: 1
 replicas: 1
+# Liveness on /healthz, which answers without the database; readiness stays on
+# the chart's /api/health, which checks MySQL. With liveness on /api/health a
+# MySQL move killed grafana: on the 2026-11-10 node3 drain MySQL was gone for
+# ~3 min, grafana was restarted 6 times and came back 4m47s after MySQL
+# (zero ready 04:04-04:12). Now it stays up, goes unready while MySQL is away
+# and is ready again as soon as MySQL answers. Values match the chart default.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: grafana
+  initialDelaySeconds: 60
+  timeoutSeconds: 30
+  failureThreshold: 10
 # Chart 13 defaults to the -distroless image, which has no curl or shell.
 # null_resource.grafana_admin_only_folder_acl kubectl-execs curl in this
 # container, so keep the alpine-based tag. {{ }} is left alone by templatefile
