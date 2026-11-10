@@ -4,6 +4,7 @@
 #
 #   OPNsense syslog-ng, raw EVE JSON lines --TCP 5140--> opnsense --> eve
 #   goflow2 sidecar Vector ------------vector 6000----> shippers --> flows
+#   node Alloy, node-cache + tetragon lines --OTLP 4318--> otlp --> dns, tetragon
 #
 # Kept apart from rybbit's event-pipeline on purpose: a netsec fault or a
 # NetFlow burst must not stop app analytics (plan decision 10).
@@ -159,6 +160,58 @@ transforms:
         "answers": []
       }
 
+  # Phase 4b: Tetragon JSON export lines (stacks/tetragon), printed by its
+  # export-stdout sidecar; the node's Alloy keeps them out of Loki and sends
+  # them here. Process starts (exec) and tcp_connect to internet addresses
+  # (connect). Other lines on the OTLP input (node-cache) abort here.
+  tetragon:
+    type: remap
+    inputs: [otlp.logs]
+    drop_on_abort: true
+    source: |
+      line = string(.message) ?? ""
+      if !starts_with(line, "{") { abort }
+      e = object(parse_json(line) ?? null) ?? {}
+      kind = "exec"
+      ev = object(e.process_exec) ?? null
+      if ev == null {
+        kind = "connect"
+        ev = object(e.process_kprobe) ?? null
+      }
+      if ev == null { abort }
+      if kind == "connect" && (string(ev.function_name) ?? "") != "tcp_connect" { abort }
+      p = object(ev.process) ?? {}
+      sock = object(ev.args[0].sock_arg) ?? {}
+      ts = parse_timestamp(string(e.time) ?? "", "%+") ?? now()
+      . = {
+        "ts": ts,
+        "node": string(e.node_name) ?? "",
+        "event_type": kind,
+        "namespace": string(p.pod.namespace) ?? "",
+        "pod": string(p.pod.name) ?? "",
+        "container": string(p.pod.container.name) ?? "",
+        "binary": string(p.binary) ?? "",
+        "arguments": string(p.arguments) ?? "",
+        "parent_binary": string(ev.parent.binary) ?? "",
+        "dst_ip": string(sock.daddr) ?? "::",
+        "dst_port": int(sock.dport) ?? 0,
+        "payload": {
+          "exec_id": string(p.exec_id) ?? "",
+          "parent_exec_id": string(p.parent_exec_id) ?? "",
+          "pid": int(p.pid) ?? 0,
+          "uid": int(p.uid) ?? 0,
+          "cwd": string(p.cwd) ?? "",
+          "image": string(p.pod.container.image.name) ?? "",
+          "workload": string(p.pod.workload) ?? "",
+          "workload_kind": string(p.pod.workload_kind) ?? "",
+          "parent_arguments": string(ev.parent.arguments) ?? "",
+          "policy": string(ev.policy_name) ?? "",
+          "family": string(sock.family) ?? "",
+          "saddr": string(sock.saddr) ?? "",
+          "sport": int(sock.sport) ?? 0
+        }
+      }
+
 sinks:
   flows_ch:
     type: clickhouse
@@ -224,6 +277,28 @@ sinks:
       timeout_secs: 10
     # Full drops rather than blocks: a slow ClickHouse must not back up Alloy,
     # which also ships every pod log to Loki.
+    buffer:
+      type: memory
+      max_events: 20000
+      when_full: drop_newest
+
+  tetragon_ch:
+    type: clickhouse
+    inputs: [tetragon]
+    endpoint: http://clickhouse.claude-sessions.svc.cluster.local:8123
+    database: netsec
+    table: tetragon
+    auth:
+      strategy: basic
+      user: netsec_writer
+      password: "SECRET[k8s.netsec_writer_password]"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    compression: gzip
+    batch:
+      max_events: 10000
+      timeout_secs: 10
+    # Drops rather than blocks, like dns_ch: Alloy must not back up.
     buffer:
       type: memory
       max_events: 20000
@@ -369,3 +444,61 @@ tests:
         source: |
           . = {"message": "[INFO] netsec-dns 10.10.3.17 A clickhouse.claude-sessions.svc.cluster.local. NOERROR", "timestamp": t'2026-11-10T16:23:06Z'}
     no_outputs_from: [dns]
+
+  - name: a tetragon exec line maps to a tetragon row
+    inputs:
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "{\"process_exec\":{\"process\":{\"exec_id\":\"azhzOjE=\",\"pid\":4242,\"uid\":0,\"cwd\":\"/\",\"binary\":\"/usr/bin/curl\",\"arguments\":\"-s https://example.com\",\"pod\":{\"namespace\":\"matrix\",\"name\":\"tet-test\",\"container\":{\"name\":\"tet-test\",\"image\":{\"name\":\"docker.io/library/alpine:3.22\"}},\"workload\":\"tet-test\",\"workload_kind\":\"Pod\"},\"parent_exec_id\":\"azhzOjA=\"},\"parent\":{\"binary\":\"/bin/sh\",\"arguments\":\"-c curl\"}},\"node_name\":\"k8s-node1\",\"time\":\"2026-11-10T19:00:01.123456789Z\"}", "timestamp": t'2026-11-10T19:00:02Z'}
+    outputs:
+      - extract_from: tetragon
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.event_type, "exec")
+              assert_eq!(.node, "k8s-node1")
+              assert_eq!(.namespace, "matrix")
+              assert_eq!(.pod, "tet-test")
+              assert_eq!(.container, "tet-test")
+              assert_eq!(.binary, "/usr/bin/curl")
+              assert_eq!(.parent_binary, "/bin/sh")
+              assert_eq!(.dst_ip, "::")
+              assert_eq!(.dst_port, 0)
+              assert_eq!(.payload.image, "docker.io/library/alpine:3.22")
+              assert_eq!(.payload.pid, 4242)
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "microseconds"), 1794337201123456)
+
+  - name: a tetragon tcp_connect line keeps the destination
+    inputs:
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "{\"process_kprobe\":{\"process\":{\"binary\":\"/usr/bin/curl\",\"arguments\":\"-s https://example.com\",\"pod\":{\"namespace\":\"matrix\",\"name\":\"tet-test\",\"container\":{\"name\":\"tet-test\"}}},\"parent\":{\"binary\":\"/bin/sh\"},\"function_name\":\"tcp_connect\",\"args\":[{\"sock_arg\":{\"family\":\"AF_INET\",\"saddr\":\"10.10.108.9\",\"daddr\":\"93.184.215.14\",\"sport\":40112,\"dport\":443}}],\"policy_name\":\"netsec-external-connect\"},\"node_name\":\"k8s-node1\",\"time\":\"2026-11-10T19:00:01Z\"}"}
+    outputs:
+      - extract_from: tetragon
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.event_type, "connect")
+              assert_eq!(.dst_ip, "93.184.215.14")
+              assert_eq!(.dst_port, 443)
+              assert_eq!(.payload.saddr, "10.10.108.9")
+              assert_eq!(.payload.policy, "netsec-external-connect")
+
+  - name: node-cache lines and other kprobes are not tetragon rows
+    inputs:
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "[INFO] netsec-dns 10.10.3.17 A icanhazip.com. NOERROR"}
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "{\"process_kprobe\":{\"function_name\":\"fd_install\",\"process\":{}},\"node_name\":\"k8s-node1\"}"}
+      - insert_at: tetragon
+        type: vrl
+        source: |
+          . = {"message": "{\"process_exit\":{\"process\":{}},\"node_name\":\"k8s-node1\"}"}
+    no_outputs_from: [tetragon]
+

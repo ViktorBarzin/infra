@@ -13,7 +13,8 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
 | 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |
 | 4 | Server sshd journals into CrowdSec (simulated), pod DNS queries into `netsec.dns_queries` | live 2026-11-10, simulation until the phase 6 review |
-| 4b-5 | Tetragon, decryption | planned |
+| 4b | Tetragon process starts and outbound connects into `netsec.tetragon`, watch-only | live 2026-11-10 |
+| 5 | Decryption | planned |
 
 ## Phase 1: store and shipper
 
@@ -241,10 +242,52 @@ flowchart TD
 - **Alert**: `NetsecDnsStale` (no `dns_queries` row for 30 minutes, lane
   `security`).
 
+## Phase 4b: Tetragon
+
+```mermaid
+flowchart TD
+  K["kernel, every node<br/>exec + tcp_connect"] --> T["tetragon agent<br/>export file, filtered"]
+  T --> E["export-stdout sidecar"]
+  E --> AL["Alloy on the node"]
+  AL -->|OTLP/HTTP :4318| V["netsec Vector"]
+  V --> CH[("netsec.tetragon")]
+```
+
+- **What**: `stacks/tetragon`, the Cilium Tetragon chart 1.8.0 through
+  Terraform, a DaemonSet with host network, `SYS_ADMIN` and related
+  capabilities (the chart's defaults, not privileged). Watch-only: no policy
+  carries a `Sigkill`, `Signal`, `Override` or `NotifyEnforcer` action.
+- **Events exported** (`exportAllowList`/`exportDenyList` in `main.tf`):
+  - `exec`: every process start, except in platform namespaces
+    (`local.exec_quiet_namespaces`: kube-system, calico-system, monitoring,
+    kyverno, the CSI drivers, netsec, tetragon and similar) and on the host
+    itself. Kubernetes probe execs are dropped (`health_check`).
+  - `connect`: `tcp_connect` from any process, pods and host alike, to an
+    address outside 10/8, 172.16/12, 192.168/16, 100.64/10, link-local, ULA
+    and our HE prefixes (TracingPolicy `netsec-external-connect`). The kprobe
+    sees the socket in the pod's own network namespace, so the destination is
+    the real one; Calico NATs the source later. TCP only: UDP and QUIC are not
+    covered.
+- **Field and secret hygiene**: pod labels and annotations are excluded from
+  the export; arguments matching `--password`, `--token`, `--secret` and
+  similar are redacted by Tetragon before export.
+- **Path**: the export file (20 MB, 3 backups) is printed by the chart's
+  `export-stdout` sidecar; Alloy tails that container a second time
+  (`loki.process.netsec_tetragon`), sends it to `netsec-vector:4318` and the
+  pod-log pipeline drops it from Loki. Vector (`tetragon` transform) writes
+  `netsec.tetragon` (ts, node, event_type, namespace, pod, container, binary,
+  arguments, parent_binary, dst_ip, dst_port, payload), 30 days. The sink drops
+  rather than blocks when full.
+- **Rollout**: `local.nodes` in `main.tf`; empty means every node.
+- **Alerts**: `NetsecTetragonStale` (no row for 30 minutes) and
+  `TetragonNotReady` (DaemonSet short of ready pods for 15 minutes), lane
+  `security`. Process-event alert rules follow a one-week baseline (plan, open
+  question 3).
+
 ## Open questions
 
 - Pod traffic reaches the firewall with the node's address (Calico NAT), so
   `flows` attributes it to a node. Phase 4 names the pod behind a DNS lookup;
-  an IP reached without a lookup needs phase 4b (Tetragon).
+  an IP reached without a lookup is named by phase 4b (`netsec.tetragon`, `connect` rows).
 - The ClickHouse server is shared with the claude-sessions store (4 GiB
   limit). Measure after phase 2 and split if netsec load hurts it.

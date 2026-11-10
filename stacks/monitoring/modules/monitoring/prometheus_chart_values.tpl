@@ -6686,8 +6686,8 @@ serverFiles:
           - alert: NetsecDnsStale
             # Pods resolve external names all the time (~67 queries/s cluster
             # wide, a share of them outside cluster.local), so 30 minutes with no
-            # row in netsec.dns_queries means CoreDNS lost its dnstap line
-            # (stacks/technitium Corefile), the stream or the sink is stuck.
+            # row in netsec.dns_queries means node-local-dns lost its log line
+            # (stacks/nodelocal-dns), the Alloy route or the sink is stuck.
             expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="dns_ch"}[30m])) or on() vector(0)) == 0
             for: 5m
             labels:
@@ -6695,6 +6695,27 @@ serverFiles:
               lane: security
             annotations:
               summary: "No pod DNS queries written to netsec.dns_queries for 30m"
+          - alert: NetsecTetragonStale
+            # Pods start processes and reach the internet every minute, so 30
+            # minutes with no row in netsec.tetragon means Tetragon, its
+            # export-stdout sidecar, the Alloy route or the sink is stuck
+            # (stacks/tetragon, docs/runbooks/network-ids.md "Tetragon").
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="tetragon_ch"}[30m])) or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No Tetragon events written to netsec.tetragon for 30m"
+          - alert: TetragonNotReady
+            # A node without a ready Tetragon agent records nothing.
+            expr: kube_daemonset_status_number_ready{namespace="tetragon", daemonset="tetragon"} < kube_daemonset_status_desired_number_scheduled{namespace="tetragon", daemonset="tetragon"}
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "Tetragon has fewer ready agents than nodes scheduled for 15m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is
