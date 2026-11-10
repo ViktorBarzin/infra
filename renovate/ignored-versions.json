@@ -1,17 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": [
-    {
-      "description": "rails revert 2026-11-07 pipeline #3385: stack monitoring failed after this bump: its terragrunt apply failed (commit af7d26e3)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "ghcr.io/mrlhansen/idrac_exporter"
-      ],
-      "matchNewValue": "3.0.0",
-      "enabled": false
-    }
-  ]
+  "packageRules": []
 }
