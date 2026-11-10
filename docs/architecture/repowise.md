@@ -1,5 +1,12 @@
 # Repowise — as-built
 
+> **Sunset on 2026-11-10.** Viktor removed the parked app: the stack, the daily
+> `build-repowise.yml` image build, its `first-party-deploy.sh` entry and its
+> Kyverno ghcr allowlist entry are gone. The workspace volume (Corpus clones and
+> per-repo wikis, 2.5 GB) is archived at
+> `/srv/nfs/archive/repowise-2026-11-10/` on the Proxmox host. The rest of this
+> page is the record of what was built.
+
 > **MCP endpoint REMOVED on 2026-10-02.** Viktor asked for the repowise MCP to
 > be deleted while keeping the parked app. Gone: the `mcp` container and its
 > `mcp_serve.py` launcher, the `repowise-mcp` Service, the

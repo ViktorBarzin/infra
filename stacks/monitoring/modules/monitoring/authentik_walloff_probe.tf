@@ -57,9 +57,6 @@ locals {
     "insta2spotify-api-health" = "https://insta2spotify.viktorbarzin.me/api/health"
     # k8s-portal setup script (auth="none"): curl-ed by automation, no cookies.
     "k8s-portal-setup-script" = "https://k8s-portal.viktorbarzin.me/setup/script"
-    # instagram-poster image derivative endpoint (auth="none"): Meta's fetcher.
-    # /image 404s without a query param — non-redirect = OK.
-    "instagram-poster-image" = "https://instagram-poster.viktorbarzin.me/image"
     # trading-bot app root (auth="app"): WebAuthn/JWT in-app; was walled, now 200.
     "trading-bot-app" = "https://trading.viktorbarzin.me/"
     # t3-dispatch probe surface (auth="none" path carve-out on /probe, its own

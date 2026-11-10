@@ -194,7 +194,6 @@ reconciled — the workflows were added to the GitHub lineage via PR):
 | k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal`, deployed by `.woodpecker/first-party-deploy.yml` |
 | excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library`, deployed by `.woodpecker/first-party-deploy.yml` (DockerHub `:v4` frozen as rollback) |
 | pages-publish | `build-pages-publish.yml` | private `ghcr.io/viktorbarzin/pages-publish`, deployed by `.woodpecker/first-party-deploy.yml` |
-| repowise | `build-repowise.yml` | private `ghcr.io/viktorbarzin/repowise` (upstream PyPI release, built daily), deployed by `.woodpecker/first-party-deploy.yml` |
 
 The infra-built apps above, plus interview-prep-app, learning and trading-bot
 (whose repos have no Woodpecker registration of their own), deploy through one
