@@ -7,7 +7,7 @@ nodes (k8s-master + k8s-node1..6) are upgraded automatically by a weekly
 detection CronJob that seeds a chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
 drain target** — so no pod in the chain can preempt itself.
 
-The chain (weekly Sunday 23:00 UTC):
+The chain (weekly Sunday 21:00 UTC; moved from 23:00 on 2026-11-10 to finish before the host's 00:10 UTC nfs-mirror):
 
 ```
 detection CronJob → preflight Job → master Job → one worker Job per worker (enumerated live) → postflight Job
@@ -16,7 +16,7 @@ detection CronJob → preflight Job → master Job → one worker Job per worker
 This is **independent** of the OS-side `unattended-upgrades + kured`
 pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts.
 Schedules can overlap (kured runs daily 02:00-06:00 London; detection
-here runs weekly Sunday 23:00 UTC) — when a kured reboot lands within 24h of the
+here runs weekly Sunday 21:00 UTC) — when a kured reboot lands within 24h of the
 Sunday detection, the `RecentNodeReboot` alert in the Upgrade Gates
 group blocks the version-upgrade preflight, so the chain self-defers
 to the next Sunday rather than rolling on top of a half-fresh node.
@@ -24,7 +24,7 @@ to the next Sunday rather than rolling on top of a half-fresh node.
 ## Architecture
 
 ```
-k8s-version-check CronJob   (weekly Sunday 23:00 UTC, k8s-upgrade ns, SA: k8s-upgrade-job)
+k8s-version-check CronJob   (weekly Sunday 21:00 UTC, k8s-upgrade ns, SA: k8s-upgrade-job)
   │ kubectl get nodes  → running version
   │ ssh master 'apt-cache madison kubeadm'  → latest patch (within current minor)
   │ HEAD pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release  → next minor available?
@@ -52,7 +52,7 @@ Job 0 — preflight       (pinned: k8s-node1, +nvidia.com/gpu:NoSchedule tolerat
 
 Job 1 — master upgrade  (pinned: k8s-node1)
   ├── halt-on-alert recheck (no firing alerts)
-  ├── drain k8s-master (predrain_unstick deletes PDB-blocked pods)
+  ├── cordon, then drain k8s-master (predrain_unstick deletes PDB-blocked pods; CNPG pods left to switchover)
   ├── ssh wizard@k8s-master 'bash -s' < /scripts/update_k8s.sh -- --role master --release X.Y.Z
   ├── kubectl uncordon k8s-master; wait Ready + version match
   ├── verify control-plane pods Running
@@ -181,7 +181,7 @@ it current**; the gate reads it on every run. Gate logic:
 | **ConfigMap `k8s-upgrade-job-template`** | Mounts `/template/job-template.yaml` — universal Job manifest with envsubst placeholders. Rendered by upgrade-step.sh and the detection CronJob via `envsubst | kubectl apply`. |
 | **ServiceAccount `k8s-upgrade-job`** | Used by both the detection CronJob and every chain Job. ClusterRole binding grants: nodes get/list/patch, pods/eviction create, pods delete, batch/jobs CRUD, PDB list (for predrain_unstick), CronJob get (snapshot trigger), namespaces patch on `k8s-upgrade` only. Namespace-scoped Role binding grants secrets:get on `k8s-upgrade-creds`. |
 | **ExternalSecret `k8s-upgrade-creds`** | Syncs `secret/k8s-upgrade/{ssh_key, slack_webhook}` from Vault. Mounted into every Job at `/secrets/k8s-upgrade`. |
-| **CronJob `k8s-version-check`** | weekly Sunday 23:00 UTC. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
+| **CronJob `k8s-version-check`** | weekly Sunday 21:00 UTC. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
 
 ### Pushgateway metrics
 

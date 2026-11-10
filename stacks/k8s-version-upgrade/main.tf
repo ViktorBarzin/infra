@@ -27,15 +27,20 @@
 
 variable "schedule" {
   type = string
-  # Weekly Sunday 23:00 UTC (00:00 London) — overnight / low cluster usage, clear
-  # of the kured OS-reboot window (01:00-05:00 UTC = 02:00-06:00 London) so the
-  # two drain-pipelines never overlap. Cadence history: weekly Sunday until
+  # Weekly Sunday 21:00 UTC. The chain takes about 2 h (2026-11-02: first drain
+  # 23:02, last 00:36), so it finishes before the Proxmox host's nfs-mirror
+  # (00:10-00:35 UTC, then devvm-home, daily and offsite backups until ~04:15
+  # UTC) and before the kured OS-reboot window (02:00-06:00 Europe/London), so
+  # the two drain pipelines never overlap. Moved from 23:00 on 2026-11-10: the
+  # 11-02 node4/node5 drains ran inside nfs-mirror, host IO "full" PSI hit
+  # 17-31%, qemu-server hot-unplug timed out and leaked Proxmox CSI slots
+  # (Proxmox bug 8273), costing ~1,234 workload-minutes. Cadence history: weekly Sunday until
   # 2026-05-18 → daily noon → daily 23:00 (2026-06-17) → back to weekly Sunday
   # (2026-06-28). Rationale for weekly: the actionable-vs-held gate now quiets the
   # routine "held" churn (e.g. 1.36), so a daily check/attempt buys little; weekly
   # is enough and patch uptake lags ≤7d (an accepted trade-off). Concurrency
   # bounded by the CronJob's Forbid policy + retry-on-failure Job-name idempotency.
-  default = "0 23 * * 0"
+  default = "0 21 * * 0"
 }
 
 variable "enabled" {

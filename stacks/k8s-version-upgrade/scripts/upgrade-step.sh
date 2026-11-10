@@ -314,12 +314,17 @@ wait_for_node_ready() {
 # forever on single-replica deployments with `minAvailable: 1` — common
 # pattern on this cluster (e.g. Anubis instances default to replicas=1). A
 # direct delete bypasses eviction; the parent Deployment recreates the pod
-# elsewhere (the node is already cordoned by drain).
+# elsewhere, because drain_node cordons the node before the first call.
+# CNPG PDBs are skipped: CNPG switches the primary over by itself once its
+# node is unschedulable, and deleting the primary forces a failover instead
+# (2026-11-02: the primary was deleted 7 s before node5 was cordoned and every
+# Postgres app crash-looped).
 predrain_unstick() {
   local node="$1"
   $KUBECTL get pdb -A -o json | jq -r '
     .items[]
     | select(.status.disruptionsAllowed == 0)
+    | select((.spec.selector.matchLabels // {}) | has("cnpg.io/cluster") | not)
     | "\(.metadata.namespace) \(.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(","))"
   ' | while read -r ns selector; do
     [ -z "$selector" ] && continue
@@ -337,6 +342,8 @@ predrain_unstick() {
 # exits when the node has no non-daemonset workload.
 drain_node() {
   local node="$1"
+  # Cordon first, so pods predrain_unstick deletes cannot land back here.
+  $KUBECTL cordon "$node"
   predrain_unstick "$node"
   ( while kill -0 $$ 2>/dev/null; do sleep 60; predrain_unstick "$node"; done ) &
   local watcher=$!
