@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# daily-backup — 3-2-1 backup: PVC file copy + SQLite + pfsense + PVE config to sda
+# daily-backup — 3-2-1 backup: PVC file copy + SQLite + OPNsense + PVE config to sda
 # Deploy to PVE host at /usr/local/bin/daily-backup
 # Schedule: Daily 05:00 via systemd timer
 set -euo pipefail
@@ -385,75 +385,16 @@ else
 fi
 
 # ============================================================
-# STEP 3: pfsense backup (config.xml + full tar)
+# STEP 3: OPNsense backup (config.xml) — ADR-0038
 # ============================================================
-log "--- Step 3: pfsense backup ---"
-PFSENSE_DEST="${BACKUP_ROOT}/pfsense"
-DATE=$(date +%Y%m%d)
-PFSENSE_STATUS=0
-mkdir -p "${PFSENSE_DEST}"
-
-if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/dev/null; then
-    # config.xml — primary restore artifact
-    if scp -o ConnectTimeout=10 root@10.0.20.1:/cf/conf/config.xml "${PFSENSE_DEST}/config-${DATE}.xml" 2>/dev/null; then
-        log "  OK: config.xml"
-        echo "pfsense/config-${DATE}.xml" | manifest_append
-    else
-        warn "Failed to copy pfsense config.xml"
-        STATUS=1
-        PFSENSE_STATUS=1
-    fi
-
-    # Full filesystem tar — Sundays only (weekly).
-    # config.xml is the primary restore artifact and runs daily above; the
-    # full filesystem tar is for forensic / package-state recovery only and
-    # rarely-needed. Re-tarring 100M+ daily writes ~3G/month to sda + Synology
-    # for unchanged content. Keep one fresh tarball per week instead.
-    if [ "$(date +%u)" = "7" ]; then
-        if ssh -o ConnectTimeout=10 root@10.0.20.1 \
-            "tar czf - --exclude=/dev --exclude=/proc --exclude=/tmp --exclude=/var/run /" \
-            > "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" 2>/dev/null; then
-            log "  OK: weekly full tar ($(du -sh "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" | cut -f1))"
-            echo "pfsense/pfsense-full-${DATE}.tar.gz" | manifest_append
-        else
-            warn "Failed to tar pfsense filesystem"
-            STATUS=1
-            PFSENSE_STATUS=1
-        fi
-    else
-        log "  skip weekly full tar (only runs Sundays)"
-    fi
-
-    # Retention: keep 4 weekly copies
-    ls -t "${PFSENSE_DEST}"/config-*.xml 2>/dev/null | tail -n +5 | xargs rm -f 2>/dev/null || true
-    ls -t "${PFSENSE_DEST}"/pfsense-full-*.tar.gz 2>/dev/null | tail -n +5 | xargs rm -f 2>/dev/null || true
-else
-    warn "Cannot SSH to pfsense (10.0.20.1) — skipping"
-    STATUS=1
-    PFSENSE_STATUS=1
-fi
-
-# Push pfsense-backup metrics in BOTH success and failure paths so
-# PfsenseBackupStale + PfsenseBackupFailing alerts can fire instead of going
-# silent when ssh-to-pfsense is broken.
-{
-    echo "backup_last_run_timestamp $(date +%s)"
-    echo "backup_last_status ${PFSENSE_STATUS}"
-    [ "${PFSENSE_STATUS}" -eq 0 ] && echo "backup_last_success_timestamp $(date +%s)"
-} | curl -s --connect-timeout 5 --max-time 10 --data-binary @- \
-    "${PUSHGATEWAY}/metrics/job/pfsense-backup" 2>/dev/null || true
-
-# ============================================================
-# STEP 3b: OPNsense backup (config.xml) — ADR-0038
-# ============================================================
-# The edge firewall replacing pfSense. Staging address until cutover; at
-# cutover OPNSENSE_HOST becomes 10.0.20.1 and step 3 goes (docs/runbooks/opnsense.md).
+# The edge firewall (pfSense until the 2026-11-10 cutover; its step is gone).
 # Root on this host logs in with /root/.ssh/id_rsa (authorized by
-# playbooks/opnsense.yml --tags users). A failure is logged but does not fail
-# the run while the box is in staging.
-log "--- Step 3b: OPNsense backup ---"
-OPNSENSE_HOST="${OPNSENSE_HOST:-10.0.20.2}"
+# playbooks/opnsense.yml --tags users). Metrics go to the opnsense-backup job
+# in both paths, so OpnsenseBackupStale fires when the copy stops working.
+log "--- Step 3: OPNsense backup ---"
+OPNSENSE_HOST="${OPNSENSE_HOST:-10.0.20.1}"
 OPNSENSE_DEST="${BACKUP_ROOT}/opnsense"
+OPNSENSE_STATUS=0
 mkdir -p "${OPNSENSE_DEST}"
 if scp -o BatchMode=yes -o ConnectTimeout=10 "root@${OPNSENSE_HOST}:/conf/config.xml" \
     "${OPNSENSE_DEST}/config-${DATE}.xml" 2>/dev/null; then
@@ -462,7 +403,14 @@ if scp -o BatchMode=yes -o ConnectTimeout=10 "root@${OPNSENSE_HOST}:/conf/config
     ls -t "${OPNSENSE_DEST}"/config-*.xml 2>/dev/null | tail -n +15 | xargs rm -f 2>/dev/null || true
 else
     warn "Failed to copy OPNsense config.xml from ${OPNSENSE_HOST}"
+    OPNSENSE_STATUS=1
 fi
+{
+    echo "backup_last_run_timestamp $(date +%s)"
+    echo "backup_last_status ${OPNSENSE_STATUS}"
+    [ "${OPNSENSE_STATUS}" -eq 0 ] && echo "backup_last_success_timestamp $(date +%s)"
+} | curl -s --connect-timeout 5 --max-time 10 --data-binary @- \
+    "${PUSHGATEWAY}/metrics/job/opnsense-backup" 2>/dev/null || true
 
 # ============================================================
 # STEP 4: PVE host config backup

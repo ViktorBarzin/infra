@@ -10,8 +10,7 @@ locals {
 }
 
 module "reverse-proxy" {
-  source                 = "./modules/reverse_proxy"
-  tls_secret_name        = var.tls_secret_name
-  pfsense_homepage_token = local.homepage_credentials["reverse_proxy"]["pfsense_token"]
-  haos_homepage_token    = try(local.homepage_credentials["home_assistant"]["token"], "")
+  source              = "./modules/reverse_proxy"
+  tls_secret_name     = var.tls_secret_name
+  haos_homepage_token = try(local.homepage_credentials["home_assistant"]["token"], "")
 }

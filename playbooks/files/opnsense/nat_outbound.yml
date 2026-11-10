@@ -181,6 +181,24 @@ rules:
   nonat: false
   disabled: false
   profile: production
+# Not from pfSense's manual rules: its automatic outbound NAT also covered the
+# static-route networks behind WireGuard; OPNsense's covers interface subnets
+# only. Site LAN traffic that leaves through WAN (to the Sofia home LAN, whose
+# TP-Link routes only 10/8 back) needs it unless the site masquerades.
+- description: WireGuard site LANs NAT to WAN
+  interface: wan
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: wg_site_lans
+  destination:
+    any: true
+  target:
+    interface: wan
+  staticnatport: false
+  nonat: false
+  disabled: false
+  profile: production
 - description: Tailscale exit node NAT to WAN
   interface: wan
   ipprotocol: inet

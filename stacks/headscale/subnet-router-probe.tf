@@ -120,7 +120,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
 
                 if [ "$ENROLLED" = "1" ]; then
                   # Liveness of the subnet router itself over the tunnel.
-                  if tailscale ping --c 4 --timeout=5s 100.64.0.9 2>/dev/null | grep -q '^pong'; then
+                  if tailscale ping --c 4 --timeout=5s 100.64.0.17 2>/dev/null | grep -q '^pong'; then
                     ROUTER_UP=1
                   fi
 
@@ -161,7 +161,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                   echo "# HELP tailscale_subnet_router_probe_enrolled 1 if the probe joined the tailnet (a 0 makes all other series meaningless)."
                   echo "# TYPE tailscale_subnet_router_probe_enrolled gauge"
                   echo "tailscale_subnet_router_probe_enrolled $ENROLLED"
-                  echo "# HELP tailscale_subnet_router_up 1 if the pfSense subnet router answered a tailnet ping."
+                  echo "# HELP tailscale_subnet_router_up 1 if the OPNsense subnet router answered a tailnet ping."
                   echo "# TYPE tailscale_subnet_router_up gauge"
                   echo "tailscale_subnet_router_up $ROUTER_UP"
                   echo "# HELP tailscale_subnet_route_reachable 1 if an HTTP round trip through that advertised subnet route succeeded."

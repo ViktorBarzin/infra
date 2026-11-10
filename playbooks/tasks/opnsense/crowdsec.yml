@@ -7,6 +7,14 @@
 #
 # lapi_manual_configuration keeps the plugin's reconfigure from rewriting the
 # bouncer's api_url; the url and key below are what it then uses.
+#
+# The plugin's own rules block in and out on every interface. At cutover that
+# would cut every client off from what the cluster LAPI lists, including the
+# static Meta and proxy ASN lists that Traefik applies with webhook exemptions.
+# So the plugin rules are off, the bouncer takes only CAPI, local scenario and
+# manual (cscli) decisions, and filter.yml blocks them inbound on WAN and the
+# HE tunnel (aliases crowdsec_blocklists / crowdsec6_blocklists, the tables the
+# bouncer fills). The static lists stay at Traefik (origin cscli-import).
 - name: CrowdSec plugin settings (bouncer only)
   opnsense_mvc:
     mode: settings
@@ -17,7 +25,7 @@
       lapi_enabled: false
       firewall_bouncer_enabled: true
       lapi_manual_configuration: true
-      rules_enabled: true
+      rules_enabled: false
   register: opn_crowdsec_settings
 
 - name: Bouncer talks to the cluster LAPI
@@ -27,6 +35,7 @@
     line: "{{ item.key }}: {{ item.value }}"
   loop:
     - { key: api_url, value: "http://10.0.20.210:8080/" }
+    - { key: origins, value: "[crowdsec, CAPI, cscli]" }
     - { key: api_key, value: "{{ lookup('pipe', 'vault kv get -field=crowdsec_bouncer_key secret/opnsense') }}" }
   loop_control:
     label: "{{ item.key }}"

@@ -138,7 +138,7 @@ port_forwards:
     alias: k8s_kms_lb
   local_port: '1688'
   natreflection: null
-  associated_rule: linked
+  associated_rule: none  # the limited filter rule passes it (filter.yml)
   disabled: false
   linked_filter_tracker: '1621029035'
 - description: shadowsocks

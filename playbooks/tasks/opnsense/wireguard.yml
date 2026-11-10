@@ -1,0 +1,77 @@
+# WireGuard hub (wireguard.yml), production only: pfSense's tun_wg0 with its
+# private key from Vault (secret/opnsense, field named in the YAML), so the four
+# sites keep their configuration. The first instance is device wg0, which
+# scripts/opnsense-production-config.py assigns to opt2 with pfSense's
+# 10.3.2.1/24. Routes to the sites' LANs are static routes via their gateways
+# (routes.yml), as on pfSense, so the instance adds none of its own.
+- name: Read wireguard.yml
+  ansible.builtin.set_fact:
+    opn_wg: "{{ lookup('file', opn_dir + '/wireguard.yml') | from_yaml }}"
+
+- name: Note whether WireGuard runs in this profile
+  ansible.builtin.set_fact:
+    opn_wg_on: "{{ opnsense_profile == opn_wg.profile }}"
+
+- name: WireGuard peers
+  opnsense_mvc:
+    controller: wireguard/client
+    item: client
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for p in (opn_wg.peers if opn_wg_on else []) -%}
+      {%-   set _ = out.append({
+             'enabled': p.enabled,
+             'name': p.name | regex_replace('[^A-Za-z0-9_.-]+', '_') | truncate(64, true, ''),
+             'pubkey': p.public_key,
+             'tunneladdress': p.allowed_ips | join(','),
+             'keepalive': p.keepalive}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_wg_peers
+
+- name: WireGuard instance
+  opnsense_mvc:
+    controller: wireguard/server
+    item: server
+    match_key: name
+    items: >-
+      {%- set out = [] -%}
+      {%- for t in (opn_wg.tunnels if opn_wg_on else []) -%}
+      {%-   set _ = out.append({
+             'enabled': t.enabled,
+             'name': t.name,
+             'pubkey': t.public_key,
+             'privkey': lookup('pipe', 'vault kv get -field=' ~ t.private_key_vault_field ~ ' secret/opnsense'),
+             'port': t.listen_port,
+             'mtu': t.mtu,
+             'tunneladdress': t.addresses | join(','),
+             'disableroutes': true,
+             'peers': opn_wg.peers | selectattr('tunnel', 'equalto', t.name)
+                      | map(attribute='name') | map('regex_replace', '[^A-Za-z0-9_.-]+', '_')
+                      | map('truncate', 64, true, '') | map('extract', opn_wg_peers.uuids) | join(',')}) -%}
+      {%- endfor -%}
+      {{ out }}
+    prune: true
+  register: opn_wg_servers
+  no_log: true
+
+- name: WireGuard on or off
+  opnsense_mvc:
+    mode: settings
+    controller: wireguard/general
+    item_root: general
+    settings:
+      enabled: "{{ opn_wg_on }}"
+  register: opn_wg_general
+
+- name: Apply WireGuard
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/wireguard/service/reconfigure"
+    method: POST
+    body_format: json
+    body: {}
+  when: >-
+    not ansible_check_mode and
+    (opn_wg_peers is changed or opn_wg_servers is changed or opn_wg_general is changed)

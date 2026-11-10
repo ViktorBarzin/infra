@@ -2972,7 +2972,7 @@ serverFiles:
               summary: "Traefik pod {{ $labels.instance }} dropped UDP packets on its QUIC socket ({{ $value | printf \"%.0f\" }} in 15m) — HTTP/3 downloads will truncate silently. Check net.core.rmem_max on its node against playbooks/k8s-node-tuning.yml."
       - name: Tailscale subnet router
         rules:
-          # The pfSense subnet router (tailnet 100.64.0.9, tag:infra) is what
+          # The OPNsense subnet router (tailnet 100.64.0.17, tag:infra; pfSense's 100.64.0.9 before the cutover) is what
           # lets Tailscale clients reach the Sofia LAN. It sat `Logged out` from
           # ~2026-07-18 to 2026-08-03 with nobody noticing, which is why these
           # exist. Gauges come from the tailscale-subnet-router-probe CronJob
@@ -2989,7 +2989,7 @@ serverFiles:
               notify: page
               subsystem: vpn
             annotations:
-              summary: "Tailscale subnet router (pfSense 100.64.0.9) did not answer a tailnet ping — Tailscale clients cannot reach the Sofia LAN. Check `tailscale status` on pfSense; re-register with ansible-playbook playbooks/pfsense-tailscale.yml"
+              summary: "Tailscale subnet router (OPNsense 100.64.0.17) did not answer a tailnet ping — Tailscale clients cannot reach the Sofia LAN. Check `tailscale status` on OPNsense; settings come from ansible-playbook playbooks/opnsense.yml --tags tailscale"
           - alert: TailscaleLanUnreachableViaTailnet
             # Route-level: the router answers but traffic does not traverse a
             # subnet route (pf/NAT drift, route un-approved, remote WG leg down).
@@ -4782,14 +4782,14 @@ serverFiles:
               notify: page
             annotations:
               summary: "Daily backup completed with errors (status={{ $value }})"
-          - alert: PfsenseBackupStale
-            expr: (time() - backup_last_success_timestamp{job="pfsense-backup"}) > 777600
+          - alert: OpnsenseBackupStale
+            expr: (time() - backup_last_success_timestamp{job="opnsense-backup"}) > 777600
             for: 30m
             labels:
               severity: warning
               notify: page
             annotations:
-              summary: "pfsense backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
+              summary: "OPNsense config backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
           # Site-router config backups (scripts/router-config-backup.sh, weekly
           # Sunday 04:30 on the PVE host). One series per router (instance).
           - alert: RouterConfigBackupStale
@@ -7968,21 +7968,22 @@ serverFiles:
             annotations:
               summary: "Egress-only failure: t3 cloudflare leg DOWN while internal leg UP (>3m)"
               description: "The full-public-path (cloudflare) t3 probe leg is down but the internal (Traefik-only) leg is healthy — the exact 2026-06-27 egress-only signature (internet/NAT down, internal routing fine). A total outage would also drop the internal leg. Check pfSense WAN/egress; docs/runbooks/pfsense-egress.md."
-          - alert: PfSenseVMDown
-            # pfSense = Proxmox VMID 101 (proxmox-exporter pve_up). VM stopped
+          - alert: EdgeFirewallVMDown
+            # Edge firewall = OPNsense, Proxmox VMID 100 since the 2026-11-10
+            # cutover (pfSense VM 101 before; proxmox-exporter pve_up). VM stopped
             # while the host is up = total egress + inter-VLAN + DHCP + DNS loss
             # (single point of failure, no HA). CAVEAT: a GUEST-INTERNAL reboot
             # leaves pve_up==1 (it tracks the qemu process) — so this catches a
             # true VM stop/crash, NOT the in-guest reboot seen on 2026-06-27.
-            expr: pve_up{id="qemu/101"} == 0 and on() pve_up{id="node/pve"} == 1
+            expr: pve_up{id="qemu/100"} == 0 and on() pve_up{id="node/pve"} == 1
             for: 2m
             labels:
               severity: critical
               notify: page
               subsystem: pfsense
             annotations:
-              summary: "pfSense VM (Proxmox VMID 101) is DOWN while the host is up"
-              description: "The pfSense VM (qemu/101) reports down while the PVE host (node/pve) is up — the cluster has lost its single-point-of-failure gateway/NAT/DHCP/DNS (no HA). Start VM 101 from Proxmox immediately. Note: an in-guest reboot does NOT trip this (pve_up tracks the qemu process)."
+              summary: "OPNsense VM (Proxmox VMID 100) is DOWN while the host is up"
+              description: "The edge firewall VM (qemu/100, OPNsense) reports down while the PVE host (node/pve) is up — the cluster has lost its single-point-of-failure gateway/NAT/DHCP/DNS (no HA). Start VM 100 from Proxmox immediately (never VM 101 next to it: pfSense holds the same MACs; docs/runbooks/opnsense.md). Note: an in-guest reboot does NOT trip this (pve_up tracks the qemu process)."
       - name: MyProtein Watch
         rules:
           # This watcher's NORMAL state is silence: it posts to #alerts only when
@@ -9098,12 +9099,11 @@ extraScrapeConfigs: |
   # doesn't emit the old_stats protocol the exporter expected, so the
   # scrape only ever returned `dovecot_up{scope="user"} 0`. Re-add here
   # if a working exporter is introduced.
-  # OPNsense edge firewall (ADR-0038), node_exporter plugin. Staging address
-  # until cutover; the target moves to 10.0.20.1 then (plan, "Review changes").
-  # ScrapeTargetDown covers it.
+  # OPNsense edge firewall (ADR-0038), node_exporter plugin, on the address
+  # it took over from pfSense. ScrapeTargetDown covers it.
   - job_name: 'opnsense-node'
     static_configs:
-      - targets: ["10.0.20.2:9100"]
+      - targets: ["10.0.20.1:9100"]
         labels:
           node: 'opnsense'
     metrics_path: '/metrics'

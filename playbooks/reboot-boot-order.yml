@@ -31,12 +31,13 @@
     # Roster = single source of truth. Verified against live `qm list` 2026-07-19.
     # active   -> onboot=1 + startup=order,up,down ; disabled -> onboot=0.
     vm_roster:
-      - { vmid: 101,  name: pfsense,         state: active,   order: 1,  up: 90, down: 60 }
-      # OPNsense (ADR-0038), staging until cutover; it boots right after pfSense.
-      # At cutover: 100 -> order 1, 101 -> state disabled (plan "Review changes").
-      # Its onboot/startup are owned here, not by stacks/opnsense (PVE needs
-      # Sys.Modify on / to set startup, which that stack's token lacks).
-      - { vmid: 100,  name: opnsense,        state: active,   order: 2,  up: 90, down: 60 }
+      # OPNsense (ADR-0038), the edge firewall since the 2026-11-10 cutover; it
+      # boots first. Its onboot/startup are owned here, not by stacks/opnsense
+      # (PVE needs Sys.Modify on / to set startup, which that stack's token lacks).
+      - { vmid: 100,  name: opnsense,        state: active,   order: 1,  up: 90, down: 60 }
+      # pfSense, kept stopped with link_down NICs for two weeks as the rollback
+      # (scripts/opnsense-cutover). It has the same MACs as VM 100: never start both.
+      - { vmid: 101,  name: pfsense,         state: disabled }
       - { vmid: 220,  name: docker-registry, state: active,   order: 5,  up: 15, down: 60 }
       # k8s nodes use down=180 (not 120): kubelet graceful-node-shutdown drains
       # pods lowest-priority-tier first, and 180s gives it headroom to reach and

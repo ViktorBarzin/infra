@@ -20,7 +20,7 @@
 
 - name: "Safety: API answers from the controller"
   ansible.builtin.uri:
-    url: "{{ opn_api_url }}/core/system/status"
+    url: "{{ opn_controller_api_url | default(opn_api_url) }}/core/system/status"
   delegate_to: localhost
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"

@@ -35,3 +35,15 @@
     PHP
     php /tmp/opn-rootkeys.php; rm -f /tmp/opn-rootkeys.php
   when: opn_root_keys is changed and not ansible_check_mode
+
+# pfSense's own client key (Vault secret/opnsense outbound_ssh_private_key):
+# the OpenWrt site routers trust it, and phpIPAM's import logs in here and
+# hops to them (stacks/phpipam/files/fetch_sources.sh).
+- name: Root's outbound SSH key (pfSense's, trusted by the site routers)
+  ansible.builtin.copy:
+    dest: /root/.ssh/id_ed25519
+    content: "{{ lookup('pipe', 'vault kv get -field=outbound_ssh_private_key secret/opnsense') }}\n"
+    owner: root
+    group: wheel
+    mode: "0600"
+  no_log: true
