@@ -125,8 +125,11 @@ How to read it
                tls_sni, http_hostname ...; the whole event is in payload
                (payload.alert.metadata, payload.tls.ja4 ...).
                A flow crossing VLAN 10 and 20 appears twice; collapse by community_id.
-  proxy        Squid access log for opted-in machines, 30 days.
-  dns_queries  pod DNS lookups from CoreDNS dnstap, 30 days.
+  proxy        Squid access log for opted-in machines (alias opted_in), 30 days.
+               url has its query string stripped; sni and bump_mode (bump or
+               splice) show what was decrypted. Empty while nobody is opted in.
+  dns_queries  pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP,
+               30 days. client_ip is the pod; name it with kube_pod_info.
   tetragon     process starts and outbound connects from k8s nodes, 30 days.
   Addresses are IPv6 columns; IPv4 is stored mapped (::ffff:a.b.c.d).
   Use IPv4NumToString(toIPv4(src_ip)) or toString(src_ip) to print them.
