@@ -477,14 +477,17 @@ alertmanager:
 # (storm 2026-06-26 08:42). Burstable: low request (minimal reservation) + a 512Mi
 # limit to absorb the relist peak. No CPU limit (cluster-wide policy).
 kube-state-metrics:
-  # Recreate, not RollingUpdate: with a surge pod, Prometheus scrapes the old and
-  # new KSM pods together for 1-2 minutes. Their series differ only in instance
-  # and helm_sh_chart, so every one-to-one join on KSM series (DaemonSetMissingPods,
-  # CloudflaredDegraded, KubeQuotaAlmostFull, ...) fails with "found duplicate
-  # series" and PrometheusRuleEvaluationFailing fires. That reverted every
-  # prometheus chart bump past 29.42.0 (KSM 8.8.0 -> 9.0.0) ten times in
-  # 2026-11-03..09. Recreate leaves a ~20 s gap instead (the pod is Ready 14 s
-  # after start), well inside KubeStateMetricsDown's for: 5m.
+  # Recreate, not RollingUpdate, so two KSM pods never serve at once. When the
+  # pod changes, the old pod's series and the new pod's met as duplicates, every
+  # one-to-one join on KSM series (DaemonSetMissingPods, CloudflaredDegraded,
+  # KubeQuotaAlmostFull, ...) failed with "found duplicate series", and
+  # PrometheusRuleEvaluationFailing fired. That reverted every prometheus chart
+  # bump past 29.42.0 (KSM 8.8.0 -> 9.0.0) eleven times in 2026-11-03..10.
+  # The other half of the fix is in the kubernetes-service-endpoints job below:
+  # KSM target labels no longer depend on the pod, so the new pod continues the
+  # same series. With RollingUpdate those series would get two writers. The
+  # gap is ~20 s (the pod is Ready 14 s after start), inside
+  # KubeStateMetricsDown's for: 5m.
   updateStrategy: Recreate
   # Export the sablier.enable Deployment label on kube_deployment_labels so the
   # SablierWakeFailed alert can scope to scale-to-zero-enrolled workloads
@@ -921,6 +924,38 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_pod_node_name
             target_label: node
+          # kube-state-metrics: the same target labels whichever pod serves them.
+          # With a 2m scrape interval a gone pod's series stay queryable for up
+          # to 5 minutes, so when the pod changes (chart bump, OOM, drain) the
+          # old and new series met as duplicates: they differed in instance,
+          # node and the chart's service labels (helm_sh_chart,
+          # app_kubernetes_io_version), every one-to-one join on KSM series
+          # failed, and PrometheusRuleEvaluationFailing fired (2026-11-10, the
+          # prometheus 29.47.0 bump). With these labels fixed the new pod
+          # continues the old series. Pairs with updateStrategy: Recreate on
+          # kube-state-metrics, so two pods never write them at once. An empty
+          # replacement removes the target label; honor_labels keeps the node
+          # label KSM exports on kube_pod_info and friends.
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+            regex: monitoring;prometheus-kube-state-metrics
+            target_label: instance
+            replacement: kube-state-metrics
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+            regex: monitoring;prometheus-kube-state-metrics
+            target_label: node
+            replacement: ""
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+            regex: monitoring;prometheus-kube-state-metrics
+            target_label: helm_sh_chart
+            replacement: ""
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+            regex: monitoring;prometheus-kube-state-metrics
+            target_label: app_kubernetes_io_version
+            replacement: ""
         metric_relabel_configs:
           - source_labels: [__name__]
             regex: 'kube_replicaset_(?:created|labels|owner|metadata_.*|spec_.*|status_.*)|kube_pod_tolerations|kube_pod_status_scheduled|kube_deployment_status_condition|kube_pod_labels|kube_pod_created|kube_pod_owner|kube_pod_container_info|kube_pod_init_container_.*|kube_endpoint_.*|kube_service_.*|kube_configmap_.*|kube_secret_.*|kube_lease_.*|kube_ingress_(?:info|labels|created|metadata_resource_version|path|tls|status.*)|kube_networkpolicy_.*|kube_certificatesigningrequest_.*|kube_limitrange_.*|kube_mutatingwebhookconfiguration_.*|kube_validatingwebhookconfiguration_.*|kube_verticalpodautoscaler_.*|kube_clusterrole.*|kube_role.*|kube_poddisruptionbudget_.*|coredns_proxy_request_duration_seconds_bucket|node_filesystem_device_error|node_filesystem_readonly'
