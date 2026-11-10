@@ -15,7 +15,9 @@
         mode: pcap
         promisc: false
         interfaces: lan,opt1
-        homenet: 10.0.0.0/8,192.168.0.0/16,2001:470:5a7f::/48,2001:470:6f:43d::/64,fdfe:e989:d3ce:1::/64
+        # 100.64.0.0/10 and fd7a:115c:a1e0::/48: tailnet clients reach VLAN 20 through the
+        # firewall's Tailscale node and are ours, not EXTERNAL_NET (phase 3).
+        homenet: 10.0.0.0/8,192.168.0.0/16,100.64.0.0/10,2001:470:5a7f::/48,2001:470:6f:43d::/64,fdfe:e989:d3ce:1::/64,fd7a:115c:a1e0::/48
         syslog_eve: true
   register: opn_ids_settings
 

@@ -636,7 +636,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml) })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, C2MIRROR_CROWDSEC_API_KEY = var.c2mirror_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml) })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
@@ -1963,6 +1963,47 @@ locals {
     { value = "2001:470:6e:43d::/64", comment = "HE tunnel link" },
     { value = "fdfe:e989:d3ce::/48", comment = "home ULA" },
     { value = "fd7a:115c:a1e0::/48", comment = "tailnet ULA" },
+    # Network IDS phase 3 (docs/plans/2026-11-10-network-ids.md): addresses we
+    # depend on, so a Suricata alert on traffic to or from them can never ban
+    # them, inbound or as a C2 destination. Ranges as published on 2026-11-10;
+    # re-check https://www.cloudflare.com/ips/ and https://api.github.com/meta.
+    { value = "216.66.86.122", comment = "HE tunnel server (6in4 endpoint)" },
+    { value = "1.1.1.1", comment = "upstream resolver (Cloudflare DoT, OPNsense Unbound)" },
+    { value = "1.0.0.1", comment = "upstream resolver (Cloudflare DoT, OPNsense Unbound)" },
+    { value = "8.8.8.8", comment = "upstream resolver (Google)" },
+    { value = "8.8.4.4", comment = "upstream resolver (Google)" },
+    { value = "94.140.14.14", comment = "upstream resolver (AdGuard)" },
+    { value = "94.140.15.15", comment = "upstream resolver (AdGuard)" },
+    { value = "173.245.48.0/20", comment = "Cloudflare" },
+    { value = "103.21.244.0/22", comment = "Cloudflare" },
+    { value = "103.22.200.0/22", comment = "Cloudflare" },
+    { value = "103.31.4.0/22", comment = "Cloudflare" },
+    { value = "141.101.64.0/18", comment = "Cloudflare" },
+    { value = "108.162.192.0/18", comment = "Cloudflare" },
+    { value = "190.93.240.0/20", comment = "Cloudflare" },
+    { value = "188.114.96.0/20", comment = "Cloudflare" },
+    { value = "197.234.240.0/22", comment = "Cloudflare" },
+    { value = "198.41.128.0/17", comment = "Cloudflare" },
+    { value = "162.158.0.0/15", comment = "Cloudflare" },
+    { value = "104.16.0.0/13", comment = "Cloudflare" },
+    { value = "104.24.0.0/14", comment = "Cloudflare" },
+    { value = "172.64.0.0/13", comment = "Cloudflare" },
+    { value = "131.0.72.0/22", comment = "Cloudflare" },
+    { value = "2400:cb00::/32", comment = "Cloudflare" },
+    { value = "2606:4700::/32", comment = "Cloudflare" },
+    { value = "2803:f800::/32", comment = "Cloudflare" },
+    { value = "2405:b500::/32", comment = "Cloudflare" },
+    { value = "2405:8100::/32", comment = "Cloudflare" },
+    { value = "2a06:98c0::/29", comment = "Cloudflare" },
+    { value = "2c0f:f248::/32", comment = "Cloudflare" },
+    # GitHub's own address space (AS36459: web, git, api, ghcr.io and its
+    # blob CDN). The Azure-hosted /32s in api.github.com/meta rotate and are left out.
+    { value = "140.82.112.0/20", comment = "GitHub and ghcr.io" },
+    { value = "143.55.64.0/20", comment = "GitHub and ghcr.io" },
+    { value = "185.199.108.0/22", comment = "GitHub and ghcr.io" },
+    { value = "192.30.252.0/22", comment = "GitHub and ghcr.io" },
+    { value = "2606:50c0::/32", comment = "GitHub and ghcr.io" },
+    { value = "2a0a:a440::/29", comment = "GitHub and ghcr.io" },
   ]
 }
 

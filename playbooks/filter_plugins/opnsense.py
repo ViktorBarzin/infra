@@ -300,13 +300,17 @@ def opn_snat_rules(rules, ifmap):
 def opn_aliases(aliases):
     out = []
     for a in aliases or []:
-        out.append({
+        item = {
             "enabled": True,
             "name": a["name"],
             "type": a["type"],
             "content": "\n".join(str(c) for c in a.get("content") or []),
             "description": a.get("description") or "",
-        })
+        }
+        # URL tables: refresh interval in days (0.0035 is about five minutes).
+        if a.get("updatefreq") is not None:
+            item["updatefreq"] = str(a["updatefreq"])
+        out.append(item)
     return out
 
 

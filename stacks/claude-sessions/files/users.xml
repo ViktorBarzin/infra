@@ -76,5 +76,16 @@
                 <query>GRANT SELECT ON netsec.*</query>
             </grants>
         </netsec_reader>
+        <!-- The netsec alert job (stacks/netsec CronJob netsec-alerts) reads
+             alerts only, to post home-host malware hits to Alertmanager. -->
+        <netsec_alerts>
+            <password from_env="NETSEC_ALERTS_PASSWORD"/>
+            <profile>reader</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT SELECT ON netsec.eve</query>
+            </grants>
+        </netsec_alerts>
     </users>
 </clickhouse>

@@ -26,7 +26,7 @@
 | nvidia | GPU device plugin | nvidia |
 | metrics-server | K8s metrics | metrics-server |
 | uptime-kuma | Status monitoring | uptime-kuma |
-| crowdsec | Security/WAF (PostgreSQL backend); AppSec Deployment inspects requests for the Traefik bouncer (ADR-0027) | crowdsec |
+| crowdsec | Security/WAF (PostgreSQL backend); AppSec Deployment inspects requests for the Traefik bouncer (ADR-0027); `crowdsec-c2-mirror` (LB `10.0.20.212:41412`) serves `c2-block` decisions to OPNsense alias `crowdsec_c2` (network IDS phase 3) | crowdsec |
 | kyverno | Policy engine | kyverno |
 | sablier | Scale-to-zero wake layer (ADR-0022): scales enrolled Deployments (label `sablier.enable=true`) 0↔1 via a vendored Traefik plugin middleware; holds the first request, parks after idle session. `sablier.sablier.svc:10000` | sablier |
 

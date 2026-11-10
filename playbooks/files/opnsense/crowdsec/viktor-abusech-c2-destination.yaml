@@ -1,0 +1,21 @@
+# Managed by playbooks/tasks/opnsense/crowdsec.yml (network IDS plan, decision 4).
+# One abuse.ch C2 hit from any of our hosts blocks that C2 address. The LAPI
+# profile c2_destination_block turns it into decision type c2-block, which only
+# the C2 blocklist mirror serves (OPNsense alias crowdsec_c2, outbound rules on
+# lan and opt1); Traefik, the node bouncers and the inbound pf tables take
+# type ban only, so they never see it.
+type: trigger
+name: viktor/abusech-c2-destination
+description: "One of our hosts reached an abuse.ch-listed botnet C2"
+filter: "evt.Meta.log_type == 'suricata_c2_alert'"
+groupby: evt.Meta.source_ip
+blackhole: 5m
+labels:
+  service: suricata
+  remediation: true
+  confidence: 3
+  spoofable: 0
+  classification:
+    - attack.T1071
+  behavior: "generic:c2"
+  label: "Contact with an abuse.ch botnet C2"

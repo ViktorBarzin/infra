@@ -1,0 +1,5 @@
+# Managed by playbooks/tasks/opnsense/crowdsec.yml. Every scenario on this
+# agent is simulated: alerts reach the LAPI as would-be decisions that no
+# bouncer enforces, until Viktor reviews them (network IDS plan, phase 6;
+# docs/runbooks/network-ids.md "Turning bans on").
+simulation: true

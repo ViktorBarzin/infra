@@ -200,6 +200,29 @@ resource "kubernetes_config_map" "loki_alert_rules" {
     "rules.yaml" = yamlencode({
       groups = [
         {
+          # Network IDS plan decision 15 (docs/runbooks/network-ids.md). The one
+          # camera on VLAN 30 (vtnet3) may reach only NTP on the firewall, so
+          # any default-deny block of traffic it STARTS means it is trying to go
+          # somewhere new: tampering or new firmware phoning home. Its RTSP and
+          # HTTP replies to Frigate and ha-sofia (source port 554 or 80) are
+          # blocked too when they arrive after the firewall closed the state,
+          # which happens on every filter reload, so those are excluded.
+          name = "Network IDS"
+          rules = [
+            {
+              alert  = "CameraVlanBlockedTraffic"
+              expr   = "sum(count_over_time({job=\"syslog\", host=\"opnsense\", app=\"filterlog\"} |~ `,vtnet3,match,block,in,` !~ `,tcp,[0-9]+,10\\.0\\.30\\.[0-9]+,(10\\.0\\.20\\.[0-9]+|192\\.168\\.1\\.8),(80|554),` [10m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary     = "The firewall blocked traffic started by a device on the camera VLAN"
+                description = "OPNsense's default deny dropped a connection the VLAN 30 camera started. It may only reach NTP on 10.0.30.1. Blocked lines: {job=\"syslog\", host=\"opnsense\", app=\"filterlog\"} |= \",vtnet3,match,block,in,\"."
+                runbook     = "docs/runbooks/network-ids.md#camera-vlan-blocked-traffic"
+              }
+            },
+          ]
+        },
+        {
           name = "Node Health"
           rules = [
             {

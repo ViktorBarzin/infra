@@ -4995,6 +4995,45 @@ serverFiles:
                 `[crowdsec-bouncer] action=refresh-failed`, and that the plugin
                 loaded at all: one broken Traefik plugin disables ALL of them, so
                 confirm `Plugins loaded.` lists crowdsec.
+          # Network IDS phase 3 (docs/runbooks/network-ids.md). The OPNsense
+          # agent heartbeats every 30s and its bouncer pulls every 10s, so 15
+          # minutes with no request from either while LAPI is up means the box
+          # stopped reporting Suricata alerts, or stopped enforcing bans. The
+          # bouncer still registers under its staging name, opnsense-staging.
+          - alert: CrowdSecOpnsenseAgentSilent
+            expr: ((sum(increase(cs_lapi_machine_requests_total{machine="opnsense-edge"}[15m])) or on() vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "OPNsense's CrowdSec agent has not talked to LAPI for 15m: Suricata and firewall detections are not arriving"
+              description: >-
+                Check `service crowdsec status` and /var/log/crowdsec/crowdsec.log
+                on OPNsense (ssh root@10.0.10.1), and that 10.0.20.210:8080 answers.
+          - alert: CrowdSecOpnsenseBouncerNotPulling
+            expr: ((sum(increase(cs_lapi_bouncer_requests_total{bouncer=~"opnsense-staging.*"}[15m])) or on() vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "OPNsense's CrowdSec bouncer has not pulled decisions for 15m: new bans are not enforced at the edge"
+              description: >-
+                Check `service crowdsec_firewall status` on OPNsense and
+                /var/log/crowdsec/crowdsec-firewall-bouncer.log.
+          - alert: CrowdSecC2MirrorNotPulling
+            expr: ((sum(increase(cs_lapi_bouncer_requests_total{bouncer=~"c2mirror.*"}[15m])) or on() vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "The C2 blocklist mirror has not pulled decisions for 15m: OPNsense's outbound C2 alias is stale"
+              description: >-
+                Deployment crowdsec/crowdsec-c2-mirror (stacks/crowdsec
+                c2_mirror.tf). OPNsense refreshes alias crowdsec_c2 from it
+                about every 5 minutes.
           # CrowdSec AppSec (ADR-0027): the Traefik bouncer asks these pods about
           # each request before it reaches the backend. The plugin fails open
           # when they are down, so an outage here means inspection is OFF, not

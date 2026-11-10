@@ -1,0 +1,20 @@
+# Managed by playbooks/tasks/opnsense/crowdsec.yml (network IDS plan, decision 4).
+# Re-labels abuse.ch botnet C2 alerts so the decision lands on the C2 side,
+# never on our host, and so the hub's suricata-alerts scenarios skip them:
+# - Feodo Tracker rules match $HOME_NET -> C2, so the C2 is the destination.
+# - SSL Blacklist rules match the C2's certificate, $EXTERNAL_NET -> $HOME_NET,
+#   so the C2 is the source already.
+# CrowdSec takes an Ip decision's value from Meta.source_ip, hence the rewrite.
+name: viktor/abusech-c2
+description: "Point abuse.ch C2 alerts at the C2 address"
+filter: |
+  evt.Meta.log_type == 'suricata_alert' &&
+  (evt.Parsed.suricata_alert_signature startsWith 'Feodo Tracker:' ||
+   evt.Parsed.suricata_alert_signature startsWith 'SSLBL:')
+statics:
+  - meta: internal_host
+    expression: "evt.Parsed.suricata_alert_signature startsWith 'SSLBL:' ? evt.Parsed.dest_ip : evt.Meta.source_ip"
+  - meta: source_ip
+    expression: "evt.Parsed.suricata_alert_signature startsWith 'SSLBL:' ? evt.Meta.source_ip : evt.Parsed.dest_ip"
+  - meta: log_type
+    value: suricata_c2_alert

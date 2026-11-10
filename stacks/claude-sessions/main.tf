@@ -43,7 +43,7 @@ resource "kubernetes_namespace" "claude_sessions" {
 
 # Vault secret/claude-sessions: clickhouse_password (default/admin),
 # ingest_password, reader_password, netsec_writer_password,
-# netsec_reader_password. The devvm playbook reads the same keys
+# netsec_reader_password, netsec_alerts_password. The devvm playbook reads the same keys
 # into /etc/claude-sessions/{ingest,reader}.env.
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
@@ -226,6 +226,15 @@ resource "kubernetes_deployment" "clickhouse" {
               secret_key_ref {
                 name = "claude-sessions-secrets"
                 key  = "netsec_reader_password"
+              }
+            }
+          }
+          env {
+            name = "NETSEC_ALERTS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "claude-sessions-secrets"
+                key  = "netsec_alerts_password"
               }
             }
           }

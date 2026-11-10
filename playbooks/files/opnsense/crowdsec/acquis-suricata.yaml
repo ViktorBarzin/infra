@@ -1,0 +1,6 @@
+# Managed by playbooks/tasks/opnsense/crowdsec.yml. Suricata's stock EVE file;
+# the crowdsecurity/suricata parser keeps only event_type alert.
+filenames:
+  - /var/log/suricata/eve.json
+labels:
+  type: suricata-evelogs
