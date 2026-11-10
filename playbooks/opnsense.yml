@@ -194,6 +194,13 @@
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [suricata]
 
+    - name: Suricata protocol metadata to netsec
+      ansible.builtin.import_tasks: tasks/opnsense/netsec_eve.yml
+      tags: [netsec_eve]
+    - name: Safety checks after netsec_eve
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [netsec_eve]
+
     - name: HAProxy
       ansible.builtin.import_tasks: tasks/opnsense/haproxy.yml
       tags: [haproxy]

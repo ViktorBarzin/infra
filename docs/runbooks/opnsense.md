@@ -23,7 +23,7 @@ scripts/opnsense-verify --host 10.0.10.1 --profile production
 python3 -m pytest playbooks/filter_plugins/test_opnsense.py -q
 ```
 
-Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, radvd, netflow, syslog, node_exporter, suricata, haproxy, users, crowdsec, tailscale). After every area the playbook checks that SSH and the API answer, that no DHCP/RA daemon runs and that there is no gif or wg device in staging. The production profile refuses to run without `-e opnsense_allow_production=true`.
+Each area is tagged (aliases, gateways, routes, filter, nat, unbound, ntp, kea, radvd, netflow, syslog, node_exporter, suricata, netsec_eve, haproxy, users, crowdsec, tailscale). After every area the playbook checks that SSH and the API answer, that no DHCP/RA daemon runs and that there is no gif or wg device in staging. The production profile refuses to run without `-e opnsense_allow_production=true`.
 
 Monitoring: Prometheus job `opnsense-node` (10.0.20.1:9100, `ScrapeTargetDown`; `EdgeFirewallVMDown` on qemu/100), Loki `{job="syslog", host="opnsense"}` (filter log, Suricata EVE, system), daily `config.xml` copy by `scripts/daily-backup.sh` to `/mnt/backup/opnsense/`.
 
@@ -49,6 +49,8 @@ homelab logs query 'sum by (sig, iface) (count_over_time({job="syslog", host="op
 ```
 
 Test that detection works: `dig icanhazip.com @10.0.10.1` from the devvm raises `ET INFO External IP Lookup Domain in DNS Lookup (icanhazip .com)` on `vtnet1` within a minute. `testmynids.org` no longer works: the domain is parked.
+
+A second EVE file, `eve-meta.json` (alert, DNS responses, TLS, HTTP), feeds ClickHouse `netsec.eve`; it comes from a `conf.d` file that restates the stock outputs, area `netsec_eve` (`docs/architecture/network-security-monitoring.md`, phase 2). Suricata allows one `anomaly` logger only, so a second output with `anomaly` stops it from starting.
 
 `ids/service/reconfigure` blocks while Suricata restarts with about 83,000 rules, longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
 

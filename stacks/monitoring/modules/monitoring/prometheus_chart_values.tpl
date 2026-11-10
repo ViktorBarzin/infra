@@ -6632,6 +6632,18 @@ serverFiles:
               lane: security
             annotations:
               summary: "No NetFlow rows written to netsec.flows for 30m"
+          - alert: NetsecEveStale
+            # Suricata's eve-meta.json carries every DNS response crossing VLAN 10
+            # and 20, so 30 minutes with no row written to netsec.eve means
+            # Suricata, syslog-ng's tail on OPNsense (netsec-eve.conf) or the sink
+            # is stuck (docs/runbooks/network-ids.md).
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="eve_ch"}[30m])) or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No Suricata events written to netsec.eve for 30m"
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

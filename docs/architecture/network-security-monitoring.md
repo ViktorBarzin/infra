@@ -10,7 +10,8 @@ As-built record of the network IDS pipeline. Plan and decisions:
 |---|---|---|
 | 0 | Suricata tuning on OPNsense (VLAN 10 and 20 only, own-traffic signatures off) | live 2026-11-10 |
 | 1 | `netsec` database, its own Vector, NetFlow into ClickHouse, `homelab netsec sql` | live 2026-11-10 |
-| 2-5 | Suricata metadata, alerts into bans, server logs and pod DNS, Tetragon, decryption | planned |
+| 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
+| 3-5 | Alerts into bans, server logs and pod DNS, Tetragon, decryption | planned |
 
 ## Phase 1: store and shipper
 
@@ -59,7 +60,7 @@ and unit tests in `stacks/netsec/files/vector.yaml`. Sources:
 
 - `opnsense`: TCP 5140 on LoadBalancer `10.0.20.211`
   (`svc/netsec-opnsense`, externalTrafficPolicy Local, source ranges
-  `10.0.20.1/32` and `10.0.10.1/32`). Unused until phase 2.
+  `10.0.20.1/32` and `10.0.10.1/32`). Fed by syslog-ng on OPNsense (phase 2).
 - `shippers`: the vector protocol on `svc/netsec-vector:6000`, for in-cluster
   Vectors. Each sets `netsec_kind`; `flow` routes to `netsec.flows`.
 
@@ -99,7 +100,46 @@ the ClickHouse pod 295 MiB.
 
 **Alerts** (lane `security`, `prometheus_chart_values.tpl`):
 `NetsecVectorDown`, `NetsecSinkErrors`, `NetsecFlowsStale` (no row written to
-`flows` for 30 minutes).
+`flows` for 30 minutes), `NetsecEveStale` (the same for `eve`).
+
+## Phase 2: Suricata metadata
+
+```mermaid
+flowchart TD
+  SUR["Suricata 8, pcap IDS<br/>vtnet1 + vtnet2"] -->|conf.d/netsec-outputs.yaml| META["/var/log/suricata/eve-meta.json<br/>alert, dns responses, tls, http"]
+  META -->|syslog-ng file tail<br/>netsec-eve.conf| TCP["TCP 10.0.20.211:5140"]
+  TCP --> VEC["netsec-vector<br/>source opnsense, remap eve"]
+  VEC --> CH[("netsec.eve")]
+```
+
+All in `playbooks/tasks/opnsense/netsec_eve.yml` (tag `netsec_eve`), files in
+`playbooks/files/opnsense/`:
+
+- `suricata-netsec-outputs.yaml`, installed as
+  `/usr/local/etc/suricata/conf.d/netsec-outputs.yaml`. OPNsense's template
+  includes `conf.d/*.yaml`, and Suricata replaces a list key an include
+  repeats: an include holding only the new output removed eve.json and the
+  syslog EVE stream (tested on a scratch copy, 2026-11-10). So the file
+  restates the four stock outputs exactly as rendered (diffed against
+  `suricata --dump-config`: identical) and adds `eve-meta.json` with
+  `community-id` on. The playbook installs it only while the template's
+  outputs section has the recorded sha256 and `LogPayload`, `syslog`, `eveLog`
+  http/tls are off and `syslog_eve` on; afterwards it asserts that
+  `--dump-config` shows all five outputs.
+- `eve-meta.json` holds no `anomaly` (Suricata allows one anomaly logger, eve.json
+  has it; a second stopped Suricata from starting) and DNS responses only (they
+  carry the query).
+- `newsyslog-netsec-eve`: 100 MB per file, three kept, SIGHUP to Suricata.
+- `syslog-ng-netsec-eve.conf`: its own `file()` source (`flags(no-parse)`, so a
+  line is sent unchanged with `template("${MSG}\n")`) and TCP destination, no
+  flow-control, fifo of 100,000 lines. When Vector is down the oldest lines are
+  dropped and the Alloy and CrowdSec paths never wait. Reading the file avoids
+  the 8 KB limit of `syslog(3)`. The playbook syntax-checks the whole syslog-ng
+  config after copying and removes the file again if it fails.
+
+Traffic between VLAN 10 and VLAN 20 crosses both inspected interfaces, so it
+is logged twice with the same `community_id` (DNS from the devvm to Technitium,
+for example). Collapse with `LIMIT 1 BY community_id, event_type` (runbook).
 
 ## Open questions
 

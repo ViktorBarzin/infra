@@ -1,0 +1,6 @@
+# Installed as /etc/newsyslog.conf.d/netsec-eve by
+# playbooks/tasks/opnsense/netsec_eve.yml. eve-meta.json is ours, so OPNsense's
+# own /etc/newsyslog.conf.d/suricata does not rotate it. 100 MB per file, three
+# kept; SIGHUP makes Suricata reopen its EVE files, as for eve.json.
+# logfilename			[owner:group]	mode	count	size	when	flags	[/pid_file]		[sig_num]
+/var/log/suricata/eve-meta.json	root:wheel	640	3	102400	*	B	/var/run/suricata.pid	1
