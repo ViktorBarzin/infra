@@ -101,6 +101,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: delete `journals.tf`; remove the `log` line and the Alloy branch.
 
 ### 4b. Tetragon, watch-only
+- Done 2026-11-10 (as built: `docs/architecture/network-security-monitoring.md`, phase 4b). Deviation: events reach the netsec Vector through the chart's export-stdout sidecar and Alloy over OTLP, not a Vector sidecar, because the agent runs on the host network and the NetworkPolicy cannot tell its traffic from any node's. Process-event alert rules are due after the one-week baseline, on 2026-11-17.
 - New `stacks/tetragon`: the Cilium Tetragon Helm chart through Terraform, no enforcement policies. Two tracing policies: process starts outside system namespaces (`kube-system`, `calico-system`, `monitoring`), and TCP connects to addresses outside 10.0.0.0/8, 192.168.0.0/16 and our IPv6 prefixes. Pod, container, binary, arguments and parent on every event.
 - JSON export tailed by a small Vector container in the DaemonSet pod, forwarded to the netsec Vector, `netsec.tetragon` (30d).
 - Measured on node1 first (memory, CPU, events per minute); rolled to all nodes only if workers keep their headroom.
@@ -147,4 +148,4 @@ Docs: new `docs/architecture/network-security-monitoring.md` and `docs/runbooks/
 
 1. **Home LAN coverage.** Home devices sit behind the AX6000 and never cross OPNsense. Options: OPNsense as the edge router with the AX6000 as an access point; a separate inspected Wi-Fi VLAN; mirroring the internet link (no per-device attribution); DNS logging only. Viktor is discussing it with emo.
 2. **Opted-in machines.** Which machines trust the interception certificate. Mostly depends on question 1.
-3. **Tetragon alert rules.** Which process events page Slack (for example a shell started by a web server) is decided after a one-week baseline, so the rules match our workloads.
+3. **Tetragon alert rules.** Which process events page Slack (for example a shell started by a web server) is decided after a one-week baseline, on 2026-11-17, so the rules match our workloads.

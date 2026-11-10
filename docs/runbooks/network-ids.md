@@ -258,3 +258,44 @@ Rows cover names outside the cluster only. A pod IP that resolves to a
 2. Alloy sends: `kubectl -n monitoring logs ds/alloy | grep -i -E 'otlphttp|netsec'` for export errors.
 3. Vector receives: `vector_component_received_events_total{namespace="netsec", component_id="otlp"}`.
 
+## Tetragon (phase 4b)
+
+Which program in which pod connected to an address:
+
+```sh
+homelab netsec sql "SELECT ts, node, namespace, pod, binary, arguments, parent_binary, dst_port
+  FROM netsec.tetragon WHERE event_type = 'connect' AND dst_ip = toIPv6('203.0.113.7')
+  ORDER BY ts DESC LIMIT 50"
+```
+
+Shells started in application pods (the case Tetragon is for: a web app spawning `sh`):
+
+```sh
+homelab netsec sql "SELECT ts, namespace, pod, parent_binary, binary, arguments
+  FROM netsec.tetragon WHERE event_type = 'exec' AND ts > now() - INTERVAL 1 DAY
+  AND match(binary, '/(ba|da|a)?sh$') AND NOT match(parent_binary, '/(ba|da|a)?sh$|/containerd-shim|/runc')
+  ORDER BY ts DESC LIMIT 100"
+```
+
+The process tree of one event: `payload.exec_id` and `payload.parent_exec_id` link rows.
+
+Volume by namespace (find what to quiet):
+
+```sh
+homelab netsec sql "SELECT event_type, namespace, count() n FROM netsec.tetragon
+  WHERE ts > now() - INTERVAL 1 HOUR GROUP BY event_type, namespace ORDER BY n DESC LIMIT 30"
+```
+
+Quieting a noisy platform namespace: add it to `local.exec_quiet_namespaces` in
+`stacks/tetragon/main.tf` (exec only; its connects stay). Never add an
+enforcement action to the policy: the stack is watch-only by decision.
+
+### No rows in netsec.tetragon (`NetsecTetragonStale`)
+
+1. Agents ready: `kubectl -n tetragon get ds tetragon` (also `TetragonNotReady`).
+2. Events exported: `kubectl -n tetragon logs ds/tetragon -c export-stdout --tail=3`.
+   Empty: check `kubectl -n tetragon get tracingpolicies` and the agent log
+   (`-c tetragon`).
+3. Alloy sends: `kubectl -n monitoring logs ds/alloy | grep -i -E 'otlphttp|netsec'`.
+4. Vector writes: `vector_component_sent_events_total{namespace="netsec", component_id="tetragon_ch"}`.
+

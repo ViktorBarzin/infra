@@ -176,6 +176,33 @@ alloy:
         forward_to = [otelcol.receiver.loki.netsec.receiver]
       }
 
+      // Network IDS phase 4b: Tetragon's export-stdout sidecar prints one JSON
+      // event per line (process starts, outbound connects; stacks/tetragon).
+      // Same route as the netsec-dns lines: netsec Vector, then
+      // netsec.tetragon in ClickHouse; loki.process.pod_logs drops them.
+      discovery.relabel "netsec_tetragon" {
+        targets = discovery.relabel.pod_logs.output
+        rule {
+          source_labels = ["namespace", "container"]
+          regex         = "tetragon;export-stdout"
+          action        = "keep"
+        }
+      }
+
+      local.file_match "netsec_tetragon" {
+        path_targets = discovery.relabel.netsec_tetragon.output
+      }
+
+      loki.source.file "netsec_tetragon" {
+        targets    = local.file_match.netsec_tetragon.targets
+        forward_to = [loki.process.netsec_tetragon.receiver]
+      }
+
+      loki.process "netsec_tetragon" {
+        stage.cri { }
+        forward_to = [otelcol.receiver.loki.netsec.receiver]
+      }
+
       otelcol.receiver.loki "netsec" {
         output {
           logs = [otelcol.exporter.otlphttp.netsec.input]
@@ -233,6 +260,13 @@ alloy:
           selector            = `{container="node-cache"} |= "netsec-dns "`
           action              = "drop"
           drop_counter_reason = "netsec_dns_to_clickhouse"
+        }
+
+        // Tetragon events go to ClickHouse instead (loki.process.netsec_tetragon).
+        stage.match {
+          selector            = `{namespace="tetragon", container="export-stdout"}`
+          action              = "drop"
+          drop_counter_reason = "netsec_tetragon_to_clickhouse"
         }
 
         stage.static_labels {
