@@ -627,7 +627,7 @@ resource "kubernetes_cron_job_v1" "ingestion_freshness_monitor" {
             restart_policy = "OnFailure"
             container {
               name  = "ingestion-freshness-monitor"
-              image = "docker.io/library/postgres:16-alpine"
+              image = "docker.io/library/postgres:18.6-alpine"
               env {
                 name = "PGPASSWORD"
                 value_from {

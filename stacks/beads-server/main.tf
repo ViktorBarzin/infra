@@ -257,7 +257,7 @@ resource "kubernetes_job" "presence_schema_migrate" {
         restart_policy = "OnFailure"
         container {
           name    = "migrate"
-          image   = "mysql:8.4"
+          image   = "mysql:8.4.13"
           command = ["sh", "-c"]
           args = [
             "mysql -h dolt.beads-server.svc.cluster.local -P 3306 -u root < /sql/02-create-presence-table.sql"

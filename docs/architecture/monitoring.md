@@ -381,7 +381,7 @@ two-minute samples, 1 of them in the last 60 days. Wiring of the config:
 
 ### Database Version Pinning
 
-MySQL, PostgreSQL, and Redis images carry exact pins. Renovate lands patch and minor releases through the CI rails (backup, apply, verify, revert on failure) and holds MySQL and Postgres majors for a supervised upgrade.
+MySQL, PostgreSQL, and Redis images carry exact pins. Renovate lands patch and minor releases through the CI rails (backup, apply, verify, revert on failure) and holds MySQL and Postgres majors of the servers and their dump clients for a supervised upgrade. psql-only clients follow the server's major without a hold (2026-11-10).
 
 ## Configuration
 

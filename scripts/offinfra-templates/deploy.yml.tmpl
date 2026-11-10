@@ -11,7 +11,7 @@ steps:
   - name: check-vars
     image: alpine
     commands:
-      - "[ -n \"$IMAGE_TAG\" ] || (echo 'IMAGE_TAG not set — refusing to deploy'; exit 1)"
+      - '[ -n "$IMAGE_TAG" ] || (echo ''IMAGE_TAG not set — refusing to deploy''; exit 1)'
 
   - name: deploy
     image: bitnami/kubectl:latest
