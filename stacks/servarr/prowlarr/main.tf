@@ -1,40 +1,12 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 variable "homepage_credentials" {
   type      = map(any)
   sensitive = true
 }
 
-
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "servarr-prowlarr-data-proxmox"
-    namespace = "servarr"
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
-}
 
 module "nfs_downloads_host" {
   source             = "../../../modules/kubernetes/nfs_volume"
@@ -42,6 +14,68 @@ module "nfs_downloads_host" {
   namespace          = "servarr"
   nfs_server         = "192.168.1.127"
   nfs_path           = "/srv/nfs/servarr/downloads"
+  storage_class_name = "nfs-pve"
+}
+
+# Prowlarr keeps its indexers, apps and history in the shared Postgres since
+# 2026-11-10: databases prowlarr (main) and prowlarr_log, both owned by the
+# prowlarr role, whose password the Vault static role pg-prowlarr rotates
+# (Tuesday 10:13). Prowlarr reads Prowlarr:Postgres:* from the environment
+# (src/NzbDrone.Core/Datastore/PostgresOptions.cs). Reloader restarts it when
+# the Secret changes.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "prowlarr-db-creds"
+      namespace = "servarr"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "prowlarr-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            password = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-prowlarr"
+          property = "password"
+        }
+      }]
+    }
+  }
+}
+
+# /config after the move to Postgres: config.xml (API key, auth), asp/
+# DataProtection keys, indexer Definitions, Backups and text logs. No SQLite is
+# opened any more, so NFS is safe (Servarr wants /config on local disk only
+# because of SQLite). Moved off the block PVC servarr-prowlarr-data-proxmox on
+# 2026-11-10 to free a proxmox-csi slot.
+module "nfs_config_host" {
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-prowlarr-config-host"
+  namespace          = "servarr"
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/servarr/prowlarr-config"
+  storage            = "2Gi"
   storage_class_name = "nfs-pve"
 }
 
@@ -102,6 +136,35 @@ resource "kubernetes_deployment" "prowlarr" {
             name  = "TZ"
             value = "Etc/UTC"
           }
+          env {
+            name  = "Prowlarr__Postgres__Host"
+            value = var.postgresql_host
+          }
+          env {
+            name  = "Prowlarr__Postgres__Port"
+            value = "5432"
+          }
+          env {
+            name  = "Prowlarr__Postgres__User"
+            value = "prowlarr"
+          }
+          env {
+            name = "Prowlarr__Postgres__Password"
+            value_from {
+              secret_key_ref {
+                name = "prowlarr-db-creds"
+                key  = "password"
+              }
+            }
+          }
+          env {
+            name  = "Prowlarr__Postgres__MainDb"
+            value = "prowlarr"
+          }
+          env {
+            name  = "Prowlarr__Postgres__LogDb"
+            value = "prowlarr_log"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/config"
@@ -118,7 +181,7 @@ resource "kubernetes_deployment" "prowlarr" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_config_host.claim_name
           }
         }
         volume {

@@ -241,7 +241,7 @@ resource "helm_release" "kyverno" {
 # Uses namespaceSelector to match tiers — no API call needed.
 # One rule per tier so Kyverno resolves the tier value from its informer cache.
 resource "kubectl_manifest" "mutate_tier_from_namespace" {
-  yaml_body = templatefile("${path.module}/policies/sync-tier-label-from-namespace.yaml", { tiers = jsonencode(local.governance_tiers), exclude = jsonencode(["kube-system", "metallb-system", "n8n"]) })
+  yaml_body = templatefile("${path.module}/policies/sync-tier-label-from-namespace.yaml", { tiers = jsonencode(local.governance_tiers), exclude = jsonencode(["kube-system", "metallb-system"]) })
 
   # Kind changed from the kyverno.io ClusterPolicy types: create the CEL
   # policy before deleting the old one, so admission is never uncovered.

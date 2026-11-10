@@ -51,7 +51,6 @@ locals {
     # webhook payloads, notifications, documents, notes, recipes, SQL queries.
     "claude-memory.viktorbarzin.me",
     "matrix.viktorbarzin.me",
-    "n8n.viktorbarzin.me",
     "webhook.viktorbarzin.me",
     "ntfy.viktorbarzin.me",
     "novelapp.viktorbarzin.me",

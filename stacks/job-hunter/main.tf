@@ -306,7 +306,8 @@ resource "kubernetes_deployment" "job_hunter" {
 }
 
 # ClusterIP-only — job-hunter has no public UI. Webhook, digest, and refresh
-# endpoints are cluster-internal (n8n / CDIO / CronJob triggers).
+# endpoints are cluster-internal (CDIO / CronJob triggers; n8n, an earlier
+# caller, was removed 2026-11-10).
 resource "kubernetes_service" "job_hunter" {
   metadata {
     name      = "job-hunter"
