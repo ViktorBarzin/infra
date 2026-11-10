@@ -47,3 +47,74 @@
     group: wheel
     mode: "0600"
   no_log: true
+
+# Homepage's OPNsense widget (stacks/reverse-proxy, module "opnsense"): a
+# user with only the two pages the widget reads (Homepage docs), no usable
+# password, and one API key kept in Vault secret/opnsense homepage_api_key /
+# homepage_api_secret. The key is created once; OPNsense shows the secret
+# only at creation, so a rerun leaves an existing key alone.
+# scrambled_password is a create-time switch (it reads back as 0), so it is
+# sent only when the user does not exist yet.
+- name: Read the local users
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/auth/user/search"
+    method: POST
+    body_format: json
+    body: {current: 1, rowCount: -1, searchPhrase: ""}
+  register: opn_users
+  check_mode: false
+
+- name: Homepage widget user (read-only)
+  opnsense_mvc:
+    search: auth/user/search
+    get: auth/user/get
+    add: auth/user/add
+    set: auth/user/set
+    delete: auth/user/del
+    item_root: user
+    match_key: name
+    items:
+      - >-
+        {{ {'name': 'homepage', 'descr': 'Homepage dashboard widget (API only)',
+            'priv': 'page-diagnostics-system-activity,page-status-trafficgraph'}
+           | combine({} if 'homepage' in (opn_users.json.rows | map(attribute='name'))
+                     else {'scrambled_password': true}) }}
+    prune: false
+
+- name: Read the Homepage user's API keys
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/auth/user/search_api_key"
+    method: POST
+    body_format: json
+    body: {current: 1, rowCount: -1, searchPhrase: ""}
+  register: opn_hp_keys
+  check_mode: false
+
+- name: Create the Homepage API key and keep it in Vault
+  when: >-
+    not ansible_check_mode and
+    (opn_hp_keys.json.rows | selectattr('username', 'equalto', 'homepage') | list | length) == 0
+  block:
+    - name: Create the Homepage API key
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/auth/user/add_api_key/homepage"
+        method: POST
+        body_format: json
+        body: {}
+      register: opn_hp_newkey
+      failed_when: opn_hp_newkey.json.result != 'ok'
+      no_log: true
+
+    # Values go in on stdin, never in argv (the devvm is shared).
+    - name: Store the Homepage API key in Vault
+      ansible.builtin.command:
+        argv: [vault, kv, patch, secret/opnsense, "{{ item.field }}=-"]
+        stdin: "{{ item.value }}"
+        stdin_add_newline: false
+      loop:
+        - {field: homepage_api_key, value: "{{ opn_hp_newkey.json.key }}"}
+        - {field: homepage_api_secret, value: "{{ opn_hp_newkey.json.secret }}"}
+      delegate_to: localhost
+      vars:
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      no_log: true

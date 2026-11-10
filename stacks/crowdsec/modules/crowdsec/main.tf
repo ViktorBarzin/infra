@@ -1938,6 +1938,181 @@ resource "kubernetes_cron_job_v1" "crowdsec_ipv6_ban_widen" {
   }
 }
 
+# LAPI-side allowlist and the OPNsense agent's machine (docs/runbooks/opnsense.md).
+# The edge firewall's CrowdSec agent sends its alerts here, and a remote
+# agent's alerts never pass the cluster agents' parser whitelist
+# (crowdsec_whitelist_yaml above), so the LAPI itself must refuse to ban our
+# own space. A centralized allowlist ("trusted-infra") does that for every
+# agent and also filters our addresses out of the community blocklists. It is
+# the parser whitelist's ip/cidr entries plus our IPv6 prefixes, which a
+# firewall sees on its own blocked traffic. The CronJob below keeps the LAPI's
+# list equal to this one and registers the agent (password in Vault
+# secret/opnsense crowdsec_agent_password).
+locals {
+  lapi_allowlist = [
+    { value = "176.12.22.76", comment = "Sofia WAN (home egress)" },
+    { value = "2620:10d:c090::/44", comment = "Meta corporate egress, Viktor's work VPN (v6)" },
+    { value = "163.114.128.0/20", comment = "Meta corporate egress, v4" },
+    { value = "199.201.64.0/22", comment = "Meta corporate egress, v4" },
+    { value = "10.0.0.0/8", comment = "VLANs, k8s nodes, pods, services, WireGuard" },
+    { value = "172.16.0.0/12", comment = "RFC1918" },
+    { value = "192.168.0.0/16", comment = "home LAN and the WireGuard site LANs" },
+    { value = "100.64.0.0/10", comment = "Headscale tailnet" },
+    { value = "2001:470:5a7f::/48", comment = "routed HE /48 (VLAN 20 and services)" },
+    { value = "2001:470:6f:43d::/64", comment = "HE /64 on VLAN 10" },
+    { value = "2001:470:6e:43d::/64", comment = "HE tunnel link" },
+    { value = "fdfe:e989:d3ce::/48", comment = "home ULA" },
+    { value = "fd7a:115c:a1e0::/48", comment = "tailnet ULA" },
+  ]
+}
+
+resource "kubernetes_config_map" "crowdsec_lapi_reconcile" {
+  metadata {
+    name      = "crowdsec-lapi-reconcile"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+  data = {
+    "lapi-reconcile.sh" = file("${path.module}/lapi-reconcile.sh")
+    "allowlist.txt"     = join("", [for e in local.lapi_allowlist : "${e.value}\t${e.comment}\n"])
+  }
+}
+
+resource "kubernetes_manifest" "crowdsec_opnsense_agent_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "crowdsec-opnsense-agent"
+      namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "crowdsec-opnsense-agent"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "opnsense"
+          property = "crowdsec_agent_password"
+        }
+      }]
+    }
+  }
+}
+
+resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
+  metadata {
+    name      = "crowdsec-lapi-reconcile"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app  = "crowdsec-lapi-reconcile"
+      tier = var.tier
+    }
+  }
+
+  spec {
+    schedule                      = "*/15 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "crowdsec-lapi-reconcile"
+        }
+      }
+
+      spec {
+        backoff_limit           = 1
+        active_deadline_seconds = 240
+        template {
+          metadata {
+            labels = {
+              app = "crowdsec-lapi-reconcile"
+            }
+          }
+
+          spec {
+            service_account_name = kubernetes_service_account.blocklist_import.metadata[0].name
+            restart_policy       = "Never"
+
+            volume {
+              name = "config"
+              config_map {
+                name = kubernetes_config_map.crowdsec_lapi_reconcile.metadata[0].name
+              }
+            }
+            volume {
+              name = "agent"
+              secret {
+                secret_name = "crowdsec-opnsense-agent"
+              }
+            }
+
+            container {
+              name    = "reconcile"
+              image   = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
+              command = ["/bin/bash", "-c"]
+              args = [
+                <<-EOF
+                set -euo pipefail
+                LAPI_POD=$(kubectl get pods -n crowdsec -l k8s-app=crowdsec,type=lapi \
+                  --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+                [ -n "$LAPI_POD" ] || { echo "no running CrowdSec LAPI pod"; exit 1; }
+                # Password and list go in on stdin, never in the exec command.
+                {
+                  printf "OPNSENSE_AGENT_PASSWORD='%s'\n" "$(cat /agent/password)"
+                  printf "cat > /tmp/allowlist.txt <<'ALLOWLIST'\n"
+                  cat /config/allowlist.txt
+                  printf "ALLOWLIST\n"
+                  cat /config/lapi-reconcile.sh
+                  printf "rm -f /tmp/allowlist.txt\n"
+                } | kubectl exec -i -n crowdsec "$LAPI_POD" -c crowdsec-lapi -- sh -s
+                EOF
+              ]
+
+              volume_mount {
+                name       = "config"
+                mount_path = "/config"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "agent"
+                mount_path = "/agent"
+                read_only  = true
+              }
+
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_manifest.crowdsec_opnsense_agent_secret]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # Service account for the blocklist import job (needs kubectl exec permissions)
 resource "kubernetes_service_account" "blocklist_import" {
   metadata {
