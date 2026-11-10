@@ -899,7 +899,10 @@ refined by a `service-identity` label in the few multi-Service namespaces
    that appears once they are. The immediate gain is the other half — 1,116 of
    those 2,168 flows (51%) touch an external address and now carry a port, a
    workload and an endpoint type where they carried a bare namespace pair. Aggregation is per workload, not per
-   pod: pod names churn on every restart, and Whisker serves live per-pod detail. The mTLS
+   pod: pod names churn on every restart, and Whisker serves live per-pod detail.
+   Since 2026-11-10 that includes bare pods: a verify runner pod is named by its
+   `verify/stack` label and pool or one-off pods lose their generated ids
+   (`chrome-worker-042a1115` → `chrome-worker`), so a recurring job is one edge. The mTLS
    client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`**
    (Goldmane verifies CA-chain only, not identity) rather than copying the CA
    private key into TF state — **re-apply the stack if the operator rotates that
