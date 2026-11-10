@@ -132,6 +132,14 @@ slack() {
     "$SLACK_URL" >/dev/null || echo "warn: slack post failed"
 }
 
+# Progress and success lines go to the Job's log only (Loki keeps them).
+# Slack gets aborts, deferrals, the kill-switch halt, warnings and failures;
+# the weekly k8s-upgrade-nightly-report gives the outcome (Viktor, 2026-11-10:
+# success and info to logs, failures still post).
+log() {
+  echo "[k8s-upgrade-${PHASE}${TARGET_NODE:+:$TARGET_NODE}] $1"
+}
+
 # Abort with the reason on the Job's stdout as well as in Slack. Until
 # 2026-09-16 the alert-gated aborts Slacked and then `exit 1` silently, so a
 # refused run's pod log simply STOPPED after the last success line, and
@@ -464,7 +472,7 @@ spawn_next() {
 # ---------------------------------------------------------------------------
 
 phase_preflight() {
-  slack "Starting preflight (target v$TARGET_VERSION, kind=$KIND)"
+  log "Starting preflight (target v$TARGET_VERSION, kind=$KIND)"
 
   # 0. Auto-upgrade compat gate (compat-gate.py): refuse the upgrade if a critical
   #    addon, an in-use deprecated API, or a node's containerd is too old for the
@@ -580,8 +588,7 @@ phase_preflight() {
   local master_kubelet_v
   master_kubelet_v=$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
   if [ "$master_kubelet_v" = "$TARGET_VERSION" ]; then
-    slack "preflight — k8s-master already on v$TARGET_VERSION; skipping kubeadm-plan-target gate (workers still pending)"
-    echo "k8s-master already on v$TARGET_VERSION — skipping kubeadm-plan-target gate"
+    log "preflight — k8s-master already on v$TARGET_VERSION; skipping kubeadm-plan-target gate (workers still pending)"
   else
     # Pass the EXPLICIT target version. Without it, `kubeadm upgrade plan` (run by
     # the OLD kubeadm still on master) auto-proposes only the current minor's
@@ -677,13 +684,13 @@ phase_preflight() {
   done < <(worker_nodes)
   if [ "$(printf '%s\n%s' "$master_ctr" "$worker_max" | sort -V | head -1)" = "$master_ctr" ] \
      && [ "$master_ctr" != "$worker_max" ]; then
-    slack "Master containerd $master_ctr < workers $worker_max — bumping"
+    log "Master containerd $master_ctr < workers $worker_max — bumping"
     ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
       "sudo apt-mark unhold containerd.io && sudo apt-get install -y containerd.io='$worker_max-1' \
        && sudo apt-mark hold containerd.io && sudo systemctl restart containerd"
     wait_for_node_ready k8s-master "$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' | tr -d v)" \
       || { slack "ABORT — k8s-master not Ready after containerd bump"; exit 1; }
-    slack "Master containerd: $master_ctr → $worker_max. Master Ready."
+    log "Master containerd: $master_ctr → $worker_max. Master Ready."
   fi
 
   # 8. Apt repo URL rewrite (minor only)
@@ -697,10 +704,10 @@ phase_preflight() {
               | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --batch --yes \
          && sudo apt-get update"
     done < <(all_nodes)
-    slack "Apt repo rewritten to v$target_minor/deb on all nodes"
+    log "Apt repo rewritten to v$target_minor/deb on all nodes"
   fi
 
-  slack "Preflight clean. Snapshot at nfs://...$snap_file ($size bytes). Dispatching master Job."
+  log "Preflight clean. Snapshot at nfs://...$snap_file ($size bytes). Dispatching master Job."
 }
 
 phase_master() {
@@ -711,12 +718,11 @@ phase_master() {
   local current_v
   current_v=$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
   if [ "$current_v" = "$TARGET_VERSION" ]; then
-    slack "k8s-master already on v$TARGET_VERSION (kubelet=$current_v) — skipping master phase"
-    echo "k8s-master already on v$TARGET_VERSION — skipping"
+    log "k8s-master already on v$TARGET_VERSION (kubelet=$current_v) — skipping master phase"
     return 0
   fi
 
-  slack "Draining k8s-master"
+  log "Draining k8s-master"
 
   # Re-check halt-on-alert before drain. Always ignore RecentNodeReboot —
   # the chain itself causes node reboots, so this alert firing is expected
@@ -751,7 +757,7 @@ phase_master() {
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=0 2>&1 || true
   trap '$KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true' EXIT
 
-  slack "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
+  log "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
   ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role master --release "$TARGET_VERSION"
 
@@ -787,12 +793,12 @@ phase_master() {
   oidc_restore=$($KUBECTL -n kube-system get configmap apiserver-oidc-restore \
     -o jsonpath='{.data.restore\.sh}' 2>/dev/null || true)
   if [ -n "$oidc_restore" ]; then
-    slack "Re-applying apiserver OIDC after master upgrade"
+    log "Re-applying apiserver OIDC after master upgrade"
     printf '%s' "$oidc_restore" | ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
       || slack "WARN: apiserver OIDC re-apply exited non-zero — verify SSO"
     if ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
          'sudo grep -q -- "--authentication-config=" /etc/kubernetes/manifests/kube-apiserver.yaml'; then
-      slack "apiserver OIDC restored (--authentication-config present)"
+      log "apiserver OIDC restored (--authentication-config present)"
     else
       slack "WARN: --authentication-config absent after re-apply — SSO down; run the rbac apiserver_oidc_config apply"
     fi
@@ -805,7 +811,7 @@ phase_master() {
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 2>&1 || true
   trap - EXIT
 
-  slack "Master on v$TARGET_VERSION, control-plane Running. Dispatching worker chain."
+  log "Master on v$TARGET_VERSION, control-plane Running. Dispatching worker chain."
 }
 
 phase_worker() {
@@ -817,12 +823,11 @@ phase_worker() {
   local current_v
   current_v=$($KUBECTL get node "$TARGET_NODE" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
   if [ "$current_v" = "$TARGET_VERSION" ]; then
-    slack "$TARGET_NODE already on v$TARGET_VERSION (kubelet=$current_v) — skipping worker phase"
-    echo "$TARGET_NODE already on v$TARGET_VERSION — skipping"
+    log "$TARGET_NODE already on v$TARGET_VERSION (kubelet=$current_v) — skipping worker phase"
     return 0
   fi
 
-  slack "Draining $TARGET_NODE"
+  log "Draining $TARGET_NODE"
 
   # Halt-on-alert wait (up to 30 min). Ignore RecentNodeReboot — the chain
   # just rebooted a node, that's the cause and is expected.
@@ -837,7 +842,7 @@ phase_worker() {
 
   drain_node "$TARGET_NODE"
 
-  slack "Running update_k8s.sh on $TARGET_NODE (--role worker --release $TARGET_VERSION)"
+  log "Running update_k8s.sh on $TARGET_NODE (--role worker --release $TARGET_VERSION)"
   ssh "${SSH_OPTS[@]}" "$(ssh_target "$TARGET_NODE")" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role worker --release "$TARGET_VERSION"
 
@@ -864,11 +869,11 @@ phase_worker() {
     sleep 60
   done
 
-  slack "$TARGET_NODE on v$TARGET_VERSION. Soaked clean (10 min)."
+  log "$TARGET_NODE on v$TARGET_VERSION. Soaked clean (10 min)."
 }
 
 phase_postflight() {
-  slack "Running postflight"
+  log "Running postflight"
 
   # Belt-and-suspenders: ensure tigera-operator is back to 1 at chain end. The
   # master phase's EXIT trap already restores it, but a master phase that was
@@ -928,9 +933,9 @@ phase_postflight() {
     echo "$cd_out"
     cd_result=$(printf '%s\n' "$cd_out" | tail -1)
     case "$cd_result" in
-      result=upgraded*)                     slack "CoreDNS moved to kubeadm's version for v$TARGET_VERSION ($cd_result)" ;;
+      result=upgraded*)                     log "CoreDNS moved to kubeadm's version for v$TARGET_VERSION ($cd_result)" ;;
       result=unchanged*)                    echo "CoreDNS already on kubeadm's version for v$TARGET_VERSION" ;;
-      result=newer*|result=unknown*)        slack "CoreDNS left as is for v$TARGET_VERSION: $cd_result" ;;
+      result=newer*|result=unknown*)        log "CoreDNS left as is for v$TARGET_VERSION: $cd_result" ;;
       result=rolled-back*|result=dns-broken-before*)
                                             slack "WARN postflight: CoreDNS sync not applied: $cd_result" ;;
       *) smoke_failed=1
@@ -995,7 +1000,7 @@ phase_postflight() {
   push k8s_upgrade_held 0
   push k8s_upgrade_deferred 0
 
-  slack ":white_check_mark: K8s upgrade complete: cluster on v$TARGET_VERSION (pod-ready ratio $ratio)"
+  log ":white_check_mark: K8s upgrade complete: cluster on v$TARGET_VERSION (pod-ready ratio $ratio)"
 }
 
 # ---------------------------------------------------------------------------

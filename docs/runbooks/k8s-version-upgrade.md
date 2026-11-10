@@ -77,8 +77,16 @@ Job 6 — postflight       (no pinning)
   ├── CoreDNS to kubeadm's image for the target (coredns-sync.py, forward only)
   ├── Clear k8s-upgrade-* annotations on namespace
   ├── Push k8s_upgrade_in_flight=0, k8s_upgrade_snapshot_taken=0, k8s_upgrade_started_timestamp=0
-  └── Slack: ✅ K8s upgrade complete
+  └── Log: ✅ K8s upgrade complete (the Monday report shows it in Slack)
 ```
+
+**What reaches Slack** (since 2026-11-10, Viktor: success and info to logs,
+failures still post): only ABORT, DEFERRED, the kill-switch HALTED line, WARN
+and postflight FAIL lines. Progress and success lines ("Draining k8s-node2",
+"Running update_k8s.sh on ...", "Soaked clean (10 min)", "upgrade complete")
+go to the Job's log with the same `[k8s-upgrade-<phase>:<node>]` prefix; read
+them in Loki with `{namespace="k8s-upgrade"} |= "[k8s-upgrade-"`.
+`scripts/test_upgrade_step_slack.py` keeps it that way.
 
 **Pin choices summarised** (dynamic since 2026-06-17 — no hardcoded node list):
 - The **master-drain Job** runs on the first worker (the "runner"); since it
@@ -273,13 +281,13 @@ Postflight runs `scripts/coredns-sync.py`, which:
 5. on a failed rollout or check, runs `kubectl rollout undo` and checks again.
 
 The last line it prints is `result=<r> live=<image> kubeadm=<image>`, and
-postflight posts it to Slack:
+postflight logs it, and posts the WARN rows to Slack:
 
 | result | meaning | postflight |
 |---|---|---|
-| `upgraded` | moved to kubeadm's image, DNS answers from every pod | Slack note |
+| `upgraded` | moved to kubeadm's image, DNS answers from every pod | log only |
 | `unchanged` | already on kubeadm's image | log only |
-| `newer` / `unknown` | live tag is ahead of kubeadm's, or not `X.Y.Z` | Slack note, left as is |
+| `newer` / `unknown` | live tag is ahead of kubeadm's, or not `X.Y.Z` | log only, left as is |
 | `rolled-back` / `dns-broken-before` | change not applied, CoreDNS on its previous image | Slack WARN, chain continues |
 | `rollback-failed` or no result | DNS may be broken | postflight fails (smoke test) |
 
