@@ -74,7 +74,6 @@ module "nfs_data" {
   name               = "freshrss-data-host"
   namespace          = kubernetes_namespace.immich.metadata[0].name
   nfs_server         = var.nfs_server
-  # /srv/nfs/freshrss/data is a stale pre-2026-04 copy, left in place.
   nfs_path           = "/srv/nfs/freshrss/data-2026-11"
   storage            = "5Gi"
   storage_class_name = "nfs-pve"
