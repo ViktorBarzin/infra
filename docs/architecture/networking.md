@@ -544,6 +544,7 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 | **10.0.20.204** (dedicated) | Local | frigate/frigate-rtsp→8554 RTSP (TCP+UDP), 8555 WebRTC/go2rtc (TCP+UDP) |
 | **10.0.20.207** (dedicated) | Local | wireguard/wireguard→51820/UDP |
 | **10.0.20.208** (dedicated) | Cluster | monitoring/alloy-syslog→514 UDP+TCP (syslog from the London Flint; Helm-owned, see `london-site.md`) |
+| **10.0.20.211** (dedicated) | Local | netsec/netsec-opnsense→5140 TCP (raw Suricata EVE lines from OPNsense; source ranges 10.0.20.1/32, 10.0.10.1/32; see `network-security-monitoring.md`) |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via OPNsense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
 

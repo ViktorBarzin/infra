@@ -1,0 +1,261 @@
+# netsec Vector (docs/architecture/network-security-monitoring.md): receives
+# what the network IDS records and writes it to the netsec database on the
+# claude-sessions ClickHouse.
+#
+#   OPNsense syslog-ng, raw EVE JSON lines --TCP 5140--> opnsense --> eve
+#   goflow2 sidecar Vector ------------vector 6000----> shippers --> flows
+#
+# Kept apart from rybbit's event-pipeline on purpose: a netsec fault or a
+# NetFlow burst must not stop app analytics (plan decision 10).
+#
+# Unit tests at the bottom run with `vector test` (docs/runbooks/network-ids.md).
+
+data_dir: /var/lib/vector
+
+# Vector 0.61 does not interpolate environment variables unless started with
+# --dangerously-allow-env-var-interpolation; an unresolved reference is sent as
+# literal text. The writer password comes from a mounted file instead.
+secret:
+  k8s:
+    type: directory
+    path: /etc/vector/secrets
+
+api:
+  enabled: false
+
+sources:
+  # Phase 2: syslog-ng on OPNsense tails eve-meta.json and sends each line as is.
+  # Bytes, not the json codec: the socket source writes its own `timestamp`
+  # field, which would collide with EVE's.
+  opnsense:
+    type: socket
+    mode: tcp
+    address: 0.0.0.0:5140
+    decoding:
+      codec: bytes
+    framing:
+      method: newline_delimited
+      newline_delimited:
+        max_length: 1048576
+
+  # Other Vectors forward here: the goflow2 sidecar now; later shippers set
+  # netsec_kind to say which table they feed.
+  shippers:
+    type: vector
+    address: 0.0.0.0:6000
+
+  internal:
+    type: internal_metrics
+
+transforms:
+  route_shippers:
+    type: route
+    inputs: [shippers]
+    # A shipper with an unknown netsec_kind is a bug in that shipper; drop it.
+    reroute_unmatched: false
+    route:
+      flow: '.netsec_kind == "flow"'
+
+  # goflow2 JSON (with the in_bytes/in_packets mapping from
+  # stacks/monitoring goflow2-mapping.yaml) to netsec.flows.
+  flows:
+    type: remap
+    inputs: [route_shippers.flow]
+    drop_on_abort: true
+    source: |
+      d = object!(parse_json!(string!(.message)))
+      end_ns = int(d.time_flow_end_ns) ?? 0
+      start_ns = int(d.time_flow_start_ns) ?? end_ns
+      recv_ns = int(d.time_received_ns) ?? 0
+      if end_ns <= 0 { end_ns = recv_ns }
+      if end_ns <= 0 { abort }
+      . = {
+        "ts": from_unix_timestamp!(end_ns, unit: "nanoseconds"),
+        "ts_start": from_unix_timestamp!(start_ns, unit: "nanoseconds"),
+        "received": from_unix_timestamp!(recv_ns, unit: "nanoseconds"),
+        "exporter": string(d.sampler_address) ?? "",
+        "src_ip": string(d.src_addr) ?? "::",
+        "dst_ip": string(d.dst_addr) ?? "::",
+        "src_port": int(d.src_port) ?? 0,
+        "dst_port": int(d.dst_port) ?? 0,
+        "proto": string(d.proto) ?? "",
+        "etype": string(d.etype) ?? "",
+        "bytes": int(d.in_bytes) ?? int(d.bytes) ?? 0,
+        "packets": int(d.in_packets) ?? int(d.packets) ?? 0,
+        "tcp_flags": int(d.tcp_flags) ?? 0,
+        "in_if": int(d.in_if) ?? 0,
+        "out_if": int(d.out_if) ?? 0,
+        "next_hop": string(d.next_hop) ?? "",
+        "src_net": string(d.src_net) ?? "",
+        "dst_net": string(d.dst_net) ?? ""
+      }
+
+  # Suricata EVE (any event type) to netsec.eve: common fields typed, the whole
+  # event in payload.
+  eve:
+    type: remap
+    inputs: [opnsense]
+    drop_on_abort: true
+    source: |
+      e = object(parse_json(string!(.message)) ?? null) ?? {}
+      if !exists(e.event_type) { abort }
+      ts = parse_timestamp(string(e.timestamp) ?? "", "%Y-%m-%dT%H:%M:%S%.f%z") ?? now()
+      alert = object(e.alert) ?? {}
+      . = {
+        "ts": ts,
+        "event_type": string(e.event_type) ?? "",
+        "in_iface": string(e.in_iface) ?? "",
+        "src_ip": string(e.src_ip) ?? "::",
+        "dest_ip": string(e.dest_ip) ?? "::",
+        "src_port": int(e.src_port) ?? 0,
+        "dest_port": int(e.dest_port) ?? 0,
+        "proto": string(e.proto) ?? "",
+        "app_proto": string(e.app_proto) ?? "",
+        "flow_id": int(e.flow_id) ?? 0,
+        "community_id": string(e.community_id) ?? "",
+        "signature_id": int(alert.signature_id) ?? 0,
+        "signature": string(alert.signature) ?? "",
+        "category": string(alert.category) ?? "",
+        "severity": int(alert.severity) ?? 0,
+        "dns_rrname": string(e.dns.queries[0].rrname) ?? string(e.dns.rrname) ?? "",
+        "tls_sni": string(e.tls.sni) ?? "",
+        "http_hostname": string(e.http.hostname) ?? "",
+        "payload": e
+      }
+
+sinks:
+  flows_ch:
+    type: clickhouse
+    inputs: [flows]
+    endpoint: http://clickhouse.claude-sessions.svc.cluster.local:8123
+    database: netsec
+    table: flows
+    auth:
+      strategy: basic
+      user: netsec_writer
+      password: "SECRET[k8s.netsec_writer_password]"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    compression: gzip
+    batch:
+      max_events: 20000
+      timeout_secs: 10
+    # Memory buffers: a disk buffer held writes without the sink reading them
+    # on 0.61.0 (stacks/rybbit, 2026-11-09). Full means ClickHouse is down or
+    # slow; blocking pushes back on the goflow2 sidecar, which drops.
+    buffer:
+      type: memory
+      max_events: 50000
+      when_full: block
+
+  eve_ch:
+    type: clickhouse
+    inputs: [eve]
+    endpoint: http://clickhouse.claude-sessions.svc.cluster.local:8123
+    database: netsec
+    table: eve
+    auth:
+      strategy: basic
+      user: netsec_writer
+      password: "SECRET[k8s.netsec_writer_password]"
+    date_time_best_effort: true
+    skip_unknown_fields: true
+    compression: gzip
+    batch:
+      max_events: 10000
+      timeout_secs: 10
+    # Blocking holds the TCP connection, so syslog-ng on OPNsense queues.
+    buffer:
+      type: memory
+      max_events: 20000
+      when_full: block
+
+  metrics:
+    type: prometheus_exporter
+    inputs: [internal]
+    address: 0.0.0.0:9598
+
+tests:
+  - name: goflow2 record maps to a flows row with in_bytes
+    inputs:
+      - insert_at: route_shippers
+        type: log
+        log_fields:
+          netsec_kind: flow
+          message: '{"type":"NETFLOW_V9","time_received_ns":1794321988919615153,"sampler_address":"10.0.20.100","time_flow_start_ns":1794321972000000000,"time_flow_end_ns":1794321975000000000,"bytes":0,"packets":0,"in_bytes":1502,"in_packets":11,"src_addr":"10.0.20.101","dst_addr":"2001:470:5a7f:20::1","etype":"IPv4","proto":"TCP","src_port":30145,"dst_port":443,"in_if":3,"out_if":5,"tcp_flags":27,"next_hop":"192.168.1.1","src_net":"10.0.20.0/24","dst_net":"0.0.0.0/0"}'
+    outputs:
+      - extract_from: flows
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.bytes, 1502)
+              assert_eq!(.packets, 11)
+              assert_eq!(.src_ip, "10.0.20.101")
+              assert_eq!(.dst_ip, "2001:470:5a7f:20::1")
+              assert_eq!(.dst_port, 443)
+              assert_eq!(.proto, "TCP")
+              assert_eq!(.exporter, "10.0.20.100")
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "milliseconds"), 1794321975000)
+              assert_eq!(to_unix_timestamp(timestamp!(.ts_start), unit: "milliseconds"), 1794321972000)
+              assert!(!exists(.message))
+              assert!(!exists(.netsec_kind))
+
+  - name: a record without a flow end time falls back to the receive time
+    inputs:
+      - insert_at: route_shippers
+        type: log
+        log_fields:
+          netsec_kind: flow
+          message: '{"time_received_ns":1794321988919615153,"time_flow_end_ns":0,"src_addr":"10.0.20.1","dst_addr":"10.0.20.2"}'
+    outputs:
+      - extract_from: flows
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "milliseconds"), 1794321988919)
+              assert_eq!(.bytes, 0)
+
+  - name: Suricata alert maps typed columns and keeps the event in payload
+    inputs:
+      - insert_at: eve
+        type: log
+        log_fields:
+          message: '{"timestamp":"2026-11-10T16:23:06.123456+0200","flow_id":123,"in_iface":"vtnet1","event_type":"alert","src_ip":"10.0.10.10","src_port":40000,"dest_ip":"10.0.10.1","dest_port":53,"proto":"UDP","app_proto":"dns","community_id":"1:abc","alert":{"signature_id":2054169,"signature":"ET INFO External IP Lookup Domain in DNS Lookup (icanhazip .com)","category":"Device Retrieving External IP Address Detected","severity":2},"dns":{"version":3,"type":"request","queries":[{"rrname":"icanhazip.com","rrtype":"A"}]}}'
+    outputs:
+      - extract_from: eve
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.event_type, "alert")
+              assert_eq!(.signature_id, 2054169)
+              assert_eq!(.severity, 2)
+              assert_eq!(.in_iface, "vtnet1")
+              assert_eq!(.dns_rrname, "icanhazip.com")
+              assert_eq!(.src_ip, "10.0.10.10")
+              assert_eq!(to_unix_timestamp(timestamp!(.ts), unit: "microseconds"), 1794320586123456)
+              assert_eq!(.payload.alert.signature_id, 2054169)
+              assert!(!exists(.message))
+
+  - name: Suricata tls event fills tls_sni and leaves alert columns empty
+    inputs:
+      - insert_at: eve
+        type: log
+        log_fields:
+          message: '{"timestamp":"2026-11-10T16:23:06.000001+0200","event_type":"tls","src_ip":"10.0.20.103","dest_ip":"185.199.110.133","src_port":5,"dest_port":443,"proto":"TCP","tls":{"sni":"release-assets.githubusercontent.com","ja4":"t13d"}}'
+    outputs:
+      - extract_from: eve
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.tls_sni, "release-assets.githubusercontent.com")
+              assert_eq!(.signature_id, 0)
+              assert_eq!(.signature, "")
+              assert_eq!(.dns_rrname, "")
+
+  - name: a line that is not EVE JSON is dropped
+    inputs:
+      - insert_at: eve
+        type: log
+        log_fields:
+          message: 'not json'
+    no_outputs_from: [eve]
