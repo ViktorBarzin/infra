@@ -33,6 +33,14 @@ as the `claude` tables).
    (not in Loki, see the architecture doc).
 4. NetFlow arriving at all: `homelab metrics query 'sum(rate(goflow2_flow_process_nf_flowset_records_total[10m]))'`.
 
+After goflow2 restarts it decodes nothing until OPNsense resends its NetFlow
+templates (`template error` in its log); on 2026-11-10 rows resumed within
+about five minutes.
+
+The sidecar's sink address needs the `http://` scheme. Without it Vector 0.61
+starts, fails its healthcheck with `client error (Connect)` and delivers
+nothing, although the TCP port answers.
+
 ## Alerts
 
 | Alert | Meaning | First step |
