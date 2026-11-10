@@ -245,6 +245,34 @@ newest installed kernel because none is pinned (`proxmox-boot-tool
 kernel list`); kernel autoremoval is off, so the previous kernels stay
 in the boot menu as a fallback.
 
+### Rebooting the host
+
+A host reboot stops every VM at once, so it is the most expensive event
+this cluster has: the unplanned one on 2026-10-23 cost about 4,230
+workload-minutes after the nodes were already Ready, on top of the time
+everything was off.
+
+1. **Check the network first.** On 2026-10-23 the host was reset to fix an
+   uplink outage that was the AX6000 router (memories #16268, #16378). The
+   reset fixed nothing; the router reboot did. If the symptom is
+   connectivity, look at the `wan-gateway-icmp` and `internet-egress-icmp`
+   probes and the router before touching the host.
+2. **Pick the window.** Not Sunday 21:00-23:30 UTC (k8s-version-upgrade
+   chain) and not 00:10-04:15 UTC (nfs-mirror, devvm-home, daily and
+   offsite backups on this host).
+3. **Claim presence**: `presence claim host:proxmox-1 --purpose "<why>"`.
+4. **Stop the VMs cleanly before the reboot**, so databases shut down
+   cleanly and Prometheus keeps its last samples:
+   `pvesh create /nodes/pve/stopall`, wait until `qm list` shows every VM
+   `stopped`, then `systemctl reboot`. On 2026-10-23 the VMs were killed with
+   no shutdown, all six node journals stop within 6 s of each other, and
+   Prometheus lost 04:00-06:50.
+5. **Watch the return.** VMs start in the order set by
+   `playbooks/reboot-boot-order.yml`. Pods stay on their nodes because the
+   NotReady toleration is 1800 s (commit 863d23065), so they find their
+   images and volumes where they left them; recovery that runs past 30
+   minutes moves pods and needs image pulls, which need internet.
+
 ## Related docs
 
 - `docs/architecture/dns.md` — where each resolver IP lives and which
