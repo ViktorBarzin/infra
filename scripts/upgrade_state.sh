@@ -11,7 +11,7 @@
 #              on failure. Pushgateway holds renovate_* gauges.
 #   2. OS    — unattended-upgrades patches in-release per node; kured
 #              reboots within a daily 02:00-06:00 London window.
-#   3. K8s   — k8s-version-check CronJob (23:00 UTC nightly) detects new
+#   3. K8s   — k8s-version-check CronJob (Sunday 21:00 UTC weekly) detects new
 #              kubeadm patch/minor releases; Job-chain drains+upgrades
 #              node-by-node. Pushgateway holds k8s_upgrade_* gauges.
 #
@@ -446,15 +446,18 @@ collect_k8s() {
     fi
 }
 
-# Next daily 23:00 UTC — pure bash date math, no croniter. Schedule is
-# `0 23 * * *` in the k8s-version-upgrade stack (overnight; moved from 12:00 UTC
-# on 2026-06-17). If we're still before today's 23:00 UTC the next run is today;
-# otherwise tomorrow.
+# Next Sunday 21:00 UTC — pure bash date math, no croniter. Schedule is
+# `0 21 * * 0` in the k8s-version-upgrade stack (weekly since 2026-06-28,
+# moved from 23:00 on 2026-11-10 to finish before the host's nfs-mirror).
+# On a Sunday before 21:00 UTC the next run is today; otherwise the coming
+# Sunday.
 next_scheduled_run_utc() {
-    local hr days_ahead
+    local dow hr days_ahead
+    dow=$(date -u +%u)   # 1 = Monday .. 7 = Sunday
     hr=$(date -u +%H)
-    if [[ "$hr" -lt 23 ]]; then days_ahead=0; else days_ahead=1; fi
-    date -u -d "+$days_ahead days" +"%a %Y-%m-%d 23:00 UTC"
+    days_ahead=$(( (7 - dow) % 7 ))
+    if [[ "$days_ahead" -eq 0 && "$((10#$hr))" -ge 21 ]]; then days_ahead=7; fi
+    date -u -d "+$days_ahead days" +"%a %Y-%m-%d 21:00 UTC"
 }
 
 # --- Renderers ---
