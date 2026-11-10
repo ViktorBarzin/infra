@@ -265,8 +265,17 @@ case $cmd in
     (cd "$DIR" && sha256sum -c --quiet config.xml.sha256) || die "config.xml checksum mismatch"
     [[ $(status_of "$NEW") == running && $(status_of "$OLD") == running ]] || die "both VMs must be running"
     [[ $(macs_of "$NEW") == "$(cat "$DIR/new.macs")" ]] || die "VM $NEW MACs changed since prepare"
-    $WRAP scp -q -o BatchMode=yes -o UserKnownHostsFile="$DIR/known_hosts" -o HostKeyAlias=opnsense \
-      "$DIR/config.xml" "root@$NEW_STAGING:/conf/config.xml.production" || die "copy of config.xml to VM $NEW failed"
+    # The host reaches the staging box through pfSense while the box answers
+    # straight out of its WAN leg, so pfSense sees one direction only and
+    # stalls bulk uploads. Stage the file from VLAN 10 instead (runbook); the
+    # copy here is the fallback.
+    want=$(cut -d' ' -f1 "$DIR/config.xml.sha256")
+    have=$(echo "sha256 -q /conf/config.xml.production 2>/dev/null || true" | nssh "$NEW_STAGING" || true)
+    if [[ $have != "$want" ]]; then
+      timeout 120 $WRAP scp -q -o BatchMode=yes -o UserKnownHostsFile="$DIR/known_hosts" -o HostKeyAlias=opnsense \
+        "$DIR/config.xml" "root@$NEW_STAGING:/conf/config.xml.production" || die "copy of config.xml to VM $NEW failed"
+    fi
+    log "production config.xml staged on VM $NEW (sha256 ${want:0:16})"
     systemctl reset-failed "$SWAP_UNIT.service" "$ROLLBACK_UNIT.service" 2>/dev/null || true
     # Arm the revert first: from here on, doing nothing means going back to pfSense.
     arm "$minutes"

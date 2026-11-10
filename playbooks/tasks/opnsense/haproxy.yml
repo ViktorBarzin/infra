@@ -167,3 +167,22 @@
     body_format: json
     body: {}
   when: opn_hap_test is not skipped
+
+# At boot only the plain rc.d start runs, and on this box it fails (seen at the
+# 2026-11-10 cutover: no mail frontends until a manual start). The plugin's own
+# start (setup.sh deploy, then rc.d) works, so the last start hook runs that
+# when HAProxy is not up. No-op when it is.
+- name: Start HAProxy at the end of boot if the early start failed
+  ansible.builtin.copy:
+    dest: /usr/local/etc/rc.syshook.d/start/99-haproxy-ensure
+    owner: root
+    group: wheel
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by playbooks/tasks/opnsense/haproxy.yml
+      [ -f /etc/rc.conf.d/haproxy ] || exit 0
+      if ! pgrep -qx haproxy; then
+          logger -t haproxy-ensure "haproxy not running after boot; starting it"
+          /usr/local/sbin/configctl haproxy start
+      fi
