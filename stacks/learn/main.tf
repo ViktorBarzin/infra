@@ -395,7 +395,9 @@ resource "kubernetes_deployment" "learn" {
               memory = "32Mi"
             }
             limits = {
-              memory = "128Mi"
+              # 256Mi since 2026-11-10: a git fetch of viktor/pages reached 119 MB on
+              # its own and the 128Mi cgroup OOM-killed git and git-sync (KernelOOMKiller).
+              memory = "256Mi"
             }
           }
         }
