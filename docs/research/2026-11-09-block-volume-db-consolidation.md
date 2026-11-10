@@ -115,6 +115,15 @@ Every claim carries one of three labels:
   enabled; a search returns results. The old SQLite DB is archived at
   `/srv/nfs/archive/prowlarr-sqlite-2026-11-10/`. 1 slot freed.
 
+- 2026-11-10, **orphan cleanup** (Viktor approved each group): deleted 24
+  Released proxmox-csi PVs with their LVs and 57 snapshots (the 10 left by
+  this work, 13 older ones including the PG16 replicas pg-cluster-2/3/4, and the
+  ownerless storage-tempo-0). Two were parked as `unused13`/`unused20` in VM
+  201's config and were dropped with `qm set 201 --delete`. VG `pve` 364 -> 283
+  LVs, thin pool 71.91% -> 71.26%. The stale `/srv/nfs/freshrss/data` is gone.
+  The rollback copies pg-cluster-1 and data-mysql-standalone-0 stay (decision
+  2026-11-10).
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.
