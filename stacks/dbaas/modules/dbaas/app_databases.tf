@@ -2,7 +2,9 @@
 # "Provisioning"). One entry per app; the key is the database name and the
 # owner role (underscores). The role starts with a placeholder password that
 # the Vault static role pg-<app> (stacks/vault app_db_roles.tf, pg_app_roles)
-# rotates on its first run.
+# rotates on its first run. `{ owner = "<role>" }` makes the database owned by
+# another entry's role instead, for an app that needs two databases under one
+# user (prowlarr).
 #
 # Adding `<db> = {}` creates one null_resource on the next dbaas apply, which
 # runs the script below once. Provisioners run only on create, and a
@@ -32,6 +34,10 @@ locals {
     # one is ever enabled. ntfy creates its own schema on start (database-url,
     # v2.18+). Moved off SQLite on a block volume 2026-11-09 with ntfy's pgimport.
     ntfy = {}
+    # prowlarr (stacks/servarr/prowlarr) needs a main and a log database
+    # reachable by one user, so prowlarr_log is owned by the prowlarr role.
+    prowlarr     = {}
+    prowlarr_log = { owner = "prowlarr" }
   }
 }
 
@@ -43,7 +49,7 @@ resource "null_resource" "pg_app_db" {
   # the script.
   triggers = {
     db_name  = each.key
-    username = each.key
+    username = lookup(each.value, "owner", each.key)
   }
 
   lifecycle {
@@ -60,11 +66,11 @@ resource "null_resource" "pg_app_db" {
       PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas ${var.pg_active_cluster} -o jsonpath='{.status.currentPrimary}')
       kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'${each.key}'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE ROLE ${each.key} WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'${lookup(each.value, "owner", each.key)}'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE ${lookup(each.value, "owner", each.key)} WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'${each.key}'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE DATABASE ${each.key} OWNER ${each.key}"
-          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE ${each.key} TO ${each.key}"
+            psql -U postgres -c "CREATE DATABASE ${each.key} OWNER ${lookup(each.value, "owner", each.key)}"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE ${each.key} TO ${lookup(each.value, "owner", each.key)}"
         '
     EOT
   }
