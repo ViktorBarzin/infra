@@ -122,6 +122,13 @@ resource "kubernetes_deployment" "crowdsec_journals" {
             name  = "DISABLE_ONLINE_API"
             value = "true"
           }
+          # The image refuses to start without a volume on /var/lib/crowdsec/data
+          # unless this is set (the chart sets it for its agents too). The agent
+          # keeps no database; the emptyDir holds the hub's data files.
+          env {
+            name  = "CROWDSEC_BYPASS_DB_VOLUME_CHECK"
+            value = "true"
+          }
           env {
             name  = "LOCAL_API_URL"
             value = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
@@ -161,6 +168,10 @@ resource "kubernetes_deployment" "crowdsec_journals" {
             read_only  = true
           }
           volume_mount {
+            name       = "data"
+            mount_path = "/var/lib/crowdsec/data"
+          }
+          volume_mount {
             name       = "whitelist"
             mount_path = "/etc/crowdsec/parsers/s02-enrich/whitelist.yaml"
             sub_path   = "whitelist.yaml"
@@ -180,6 +191,12 @@ resource "kubernetes_deployment" "crowdsec_journals" {
           name = "config"
           config_map {
             name = kubernetes_config_map.crowdsec_journals.metadata[0].name
+          }
+        }
+        volume {
+          name = "data"
+          empty_dir {
+            size_limit = "256Mi"
           }
         }
         volume {
