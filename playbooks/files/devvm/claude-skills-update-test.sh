@@ -84,4 +84,22 @@ apply_patches u "$H4"
 check "an applied patch needs no reinstall" "$REINSTALLED" ""
 check "and reports nothing" "$PROBLEMS" ""
 
+# --- 5) an update with no problem logs only; a problem still posts --------
+# Viktor, 2026-11-10: success and info go to the log, failures still post.
+POSTED="$WORK/posted"
+slack() { printf '%s\n' "$1" >> "$POSTED"; }
+fetch_promoted() { echo grilling; }
+export CLAUDE_SKILLS_USERS="u"
+process_user() { note "u: content changed in grilling"; }
+: > "$POSTED"; PROBLEMS=""  # main runs in a subshell, so REPORT stays empty here
+out=$( (main) 2>&1 )
+check "a clean update does not post to Slack" "$(cat "$POSTED")" ""
+case "$out" in *"u: content changed in grilling"*) got=logged ;; *) got=missing ;; esac
+check "and the change is in the log" "$got" "logged"
+process_user() { problem "u: teach patch NO LONGER APPLIES"; }
+: > "$POSTED"; PROBLEMS=""  # main runs in a subshell, so REPORT stays empty here
+(main) >/dev/null 2>&1
+case "$(cat "$POSTED")" in *"needs a look"*"NO LONGER APPLIES"*) got=posted ;; *) got=quiet ;; esac
+check "a patch that no longer applies still posts" "$got" "posted"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
