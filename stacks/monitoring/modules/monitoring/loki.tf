@@ -31,7 +31,7 @@ resource "helm_release" "loki" {
   # manifests differ only in the chart label. 2026-11-10: chart 20.0.0 made
   # the values schema reject unknown top-level keys, so loki.yaml dropped the
   # inert minio and bloomCompactor keys (21.0.0 and 21.1.0 had failed on them).
-  version = "21.1.0"
+  version = "21.1.1"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
