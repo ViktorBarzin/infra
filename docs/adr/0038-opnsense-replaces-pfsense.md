@@ -34,3 +34,7 @@ OPNsense 26.7 replaces pfSense. It is built next to pfSense on spare addresses a
 
 - Upgrade pfSense CE to 2.9 and then 26.10: keeps today's automation working until the PHP layer is removed, then needs the same rewrite against an API not yet published. Version moves after 26.10 are free only by reinstalling.
 - A separate Suricata sensor VM fed by host-side mirroring: keeps the IDS out of the firewall's failure path, but adds a VM and host networking to maintain; with OPNsense the firewall's own Suricata is current.
+
+## Amendment, 2026-11-10: carried out
+
+The cutover ran on 2026-11-10 as a VM swap with pfSense's MACs and a dead-man revert (`scripts/opnsense-cutover`, runbook `docs/runbooks/opnsense.md`). Two changes to the decision as written: the CrowdSec bouncer blocks inbound on WAN and the HE tunnel only and takes CAPI, local and manual decisions, not the static ASN lists (the plugin's own rules blocked both directions for every client); and pfSense stays stopped with its NICs link-down until 2026-11-24 as the rollback.
