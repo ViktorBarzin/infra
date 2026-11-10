@@ -64,6 +64,19 @@ alertmanager:
         # to #alerts as usual. continue: true keeps the Slack route in play;
         # without the explicit Slack sibling the root receiver would not apply,
         # because a child route already matched.
+        # UPS on battery (2026-11-10): Viktor asked for an email every 10
+        # minutes for as long as the Sofia UPS runs on battery, plus one when
+        # mains is back. Only UPSOnBatteryEmail sets `email_viktor`; the Slack
+        # side of a power event stays with OnBattery and PowerOutage.
+        # repeat_interval is a multiple of group_interval, so it lands on 10m.
+        - receiver: email-viktor
+          group_by: ["alertname"]
+          group_wait: 0s
+          group_interval: 5m
+          repeat_interval: 10m
+          matchers:
+            - email_viktor = "true"
+          continue: false
         - receiver: email-emo
           group_by: ["alertname"]
           group_wait: 30s
@@ -422,6 +435,16 @@ alertmanager:
     receivers:
       # No notifier on purpose: the sink for alerts without notify=page.
       - name: silent
+      - name: email-viktor
+        email_configs:
+          - to: "me@viktorbarzin.me"
+            send_resolved: true
+            # Same certificate mismatch as email-emo below.
+            tls_config:
+              server_name: "mail.viktorbarzin.me"
+            headers:
+              Subject: '{{ if eq .Status "firing" }}[UPS on battery] {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}{{ else }}[UPS back on mains] {{ range .Alerts }}{{ .Annotations.resolved_summary }}{{ end }}{{ end }}'
+            html: '{{ range .Alerts }}{{ if eq .Status "resolved" }}<p><b>{{ .Annotations.resolved_summary }}</b></p><p>On battery from {{ .StartsAt.UTC.Format "2006-01-02 15:04:05" }} to {{ .EndsAt.UTC.Format "15:04:05" }} UTC.</p>{{ else }}<p><b>{{ .Annotations.summary }}</b></p><p>{{ .Annotations.description }}</p><p>On battery since {{ .StartsAt.UTC.Format "2006-01-02 15:04:05" }} UTC. This email repeats every 10 minutes until mains is back.</p>{{ end }}{{ end }}'
       - name: email-emo
         email_configs:
           - to: "emil.barzin@gmail.com"
@@ -2997,6 +3020,21 @@ serverFiles:
               notify: page
             annotations:
               summary: "UPS on battery: {{ $value | printf \"%.0f\" }}s"
+          # Email to Viktor every 10 minutes while on battery (route
+          # email-viktor). upsOutputSource 5 = battery; the seconds counter is
+          # the second signal. for: 1m needs three 30s scrapes, so a sub-minute
+          # transfer, which the NAS already emails about, sends nothing here.
+          # Not an OnBattery inhibit target, so it keeps going in a PowerOutage.
+          - alert: UPSOnBatteryEmail
+            expr: count by (instance) (ups_upsOutputSource == 5 or ups_upsSecondsOnBattery > 0)
+            for: 1m
+            labels:
+              severity: critical
+              email_viktor: "true"
+            annotations:
+              summary: '{{ with query "ups_upsEstimatedChargeRemaining" }}{{ . | first | value | printf "%.0f" }}{{ end }}% charge, {{ with query "ups_upsEstimatedMinutesRemaining" }}{{ . | first | value | printf "%.0f" }}{{ end }} min left'
+              description: 'Sofia UPS (ups.viktorbarzin.lan) is on battery. Input {{ with query "ups_upsInputVoltage" }}{{ . | first | value | printf "%.0f" }}{{ end }}V, load {{ with query "ups_upsOutputPercentLoad" }}{{ . | first | value | printf "%.0f" }}{{ end }}%, on battery for {{ with query "ups_upsSecondsOnBattery" }}{{ . | first | value | humanizeDuration }}{{ end }}. The NAS watchdog shuts the R730 down below 20 min left.'
+              resolved_summary: "Sofia UPS is back on mains power"
           - alert: LowUPSBattery
             expr: ups_upsEstimatedMinutesRemaining < 25 and on(instance) ups_upsInputVoltage < 150
             for: 3m  # bumped from 1m for global scrape_interval=2m; snmp-ups job pinned to 30s
