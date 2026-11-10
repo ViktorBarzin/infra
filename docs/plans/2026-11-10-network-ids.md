@@ -73,6 +73,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: delete the stack; goflow2 returns to stdout.
 
 ### 2. Suricata metadata off the box
+- **Done 2026-11-10.** As built: `docs/architecture/network-security-monitoring.md`, phase 2. Deviation: `eve-meta.json` has no `anomaly` (Suricata allows one anomaly logger) and logs DNS responses only.
 - Done 2026-11-10: Suricata inspects `lan,opt1` only, and 16 own-traffic signatures are off (runbook `docs/runbooks/opnsense.md`, "Suricata tuning").
 - A conf.d file that restates all four stock outputs (eve.json, syslog eve, stats, syslog) and adds `eve-meta.json`. A repeated `outputs:` key replaces the template's list, so the playbook asserts with `suricata --dump-config` that all five exist.
 - A `newsyslog.conf.d` entry rotates `eve-meta.json`.

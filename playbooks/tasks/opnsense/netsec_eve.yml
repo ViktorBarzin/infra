@@ -1,0 +1,140 @@
+# Suricata protocol metadata (alert, dns, tls, http) to the netsec
+# Vector and ClickHouse netsec.eve: phase 2 of docs/plans/2026-11-10-network-ids.md,
+# runbook docs/runbooks/network-ids.md.
+#
+#   Suricata conf.d/netsec-outputs.yaml -> /var/log/suricata/eve-meta.json
+#   syslog-ng conf.d/netsec-eve.conf tails it -> TCP 10.0.20.211:5140 (netsec Vector)
+#   newsyslog.conf.d/netsec-eve rotates it
+#
+# The Suricata file restates OPNsense's four stock outputs (an included list
+# replaces the template's), so it is only installed while the template's
+# outputs section and the settings it depends on are the ones it was written
+# against.
+- name: Fingerprint the template's outputs section
+  ansible.builtin.shell: >-
+    awk '/^outputs:/{f=1} /^logging:/{f=0} f'
+    /usr/local/opnsense/service/templates/OPNsense/IDS/suricata.yaml | sha256
+  check_mode: false
+  changed_when: false
+  register: opn_netsec_tpl
+
+- name: Read the IDS settings that shape the outputs
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/get"
+  check_mode: false
+  register: opn_netsec_ids
+
+- name: The restated outputs still match the template and the settings
+  vars:
+    g: "{{ opn_netsec_ids.json.ids.general }}"
+  ansible.builtin.assert:
+    that:
+      - opn_netsec_tpl.stdout | trim == 'f0cfa1fdd0d0ca512706a0eb6adac2b7c5ccc5ffd641ea5a91245e6d16ada11d'
+      - g.LogPayload == '0'
+      - g.syslog == '0'
+      - g.syslog_eve == '1'
+      - g.eveLog.http.enable == '0'
+      - g.eveLog.tls.enable == '0'
+    fail_msg: >-
+      OPNsense's Suricata outputs changed (template fingerprint {{ opn_netsec_tpl.stdout | trim }}).
+      Render them again, restate them in files/opnsense/suricata-netsec-outputs.yaml,
+      then update the fingerprint and settings checked here.
+
+- name: Suricata outputs file
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/suricata-netsec-outputs.yaml"
+    dest: /usr/local/etc/suricata/conf.d/netsec-outputs.yaml
+    owner: root
+    group: wheel
+    mode: "0600"
+  register: opn_netsec_suricata_file
+
+- name: Rotation for eve-meta.json
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/newsyslog-netsec-eve"
+    dest: /etc/newsyslog.conf.d/netsec-eve
+    owner: root
+    group: wheel
+    mode: "0644"
+
+- name: Reconfigure the IDS so the template includes the file and Suricata restarts
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/service/reconfigure"
+    # Blocks while Suricata restarts with ~83k rules (docs/runbooks/opnsense.md).
+    timeout: 600
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_netsec_suricata_file is changed and not ansible_check_mode
+  changed_when: true
+
+- name: Suricata runs
+  ansible.builtin.command: pgrep -f /usr/local/bin/suricata
+  check_mode: false
+  changed_when: false
+  register: opn_netsec_pgrep
+  until: opn_netsec_pgrep.rc == 0
+  retries: 30
+  delay: 10
+
+- name: Read the outputs Suricata loads
+  ansible.builtin.shell: >-
+    suricata --dump-config -c /usr/local/etc/suricata/suricata.yaml
+    | grep -E '^outputs\.[0-9]+\.(eve-log\.(filename|type)|stats\.filename|syslog\.facility) '
+  check_mode: false
+  changed_when: false
+  register: opn_netsec_dump
+
+- name: Suricata loads every stock output plus eve-meta.json
+  ansible.builtin.assert:
+    that:
+      - "'outputs.0.eve-log.filename = eve.json' in opn_netsec_dump.stdout"
+      - "'outputs.1.eve-log.type = syslog' in opn_netsec_dump.stdout"
+      - "'outputs.2.stats.filename = stats.log' in opn_netsec_dump.stdout"
+      - "'outputs.3.syslog.facility = local5' in opn_netsec_dump.stdout"
+      - "'outputs.4.eve-log.filename = eve-meta.json' in opn_netsec_dump.stdout"
+    fail_msg: "Suricata's outputs are not the expected five: {{ opn_netsec_dump.stdout_lines }}"
+  # A first --check run has not installed the file yet.
+  when: not ansible_check_mode or not (opn_netsec_suricata_file is changed)
+
+# A bad file here would stop every syslog-ng log path at the next restart, so
+# it is removed again when the syntax check fails.
+- name: syslog-ng tail of eve-meta.json
+  block:
+    - name: syslog-ng file
+      ansible.builtin.copy:
+        src: "{{ opn_dir }}/syslog-ng-netsec-eve.conf"
+        dest: /usr/local/etc/syslog-ng.conf.d/netsec-eve.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      register: opn_netsec_syslog_file
+
+    - name: syslog-ng accepts the configuration
+      ansible.builtin.command: syslog-ng --syntax-only -f /usr/local/etc/syslog-ng.conf
+      check_mode: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Restart syslog-ng
+      ansible.builtin.command: configctl syslog restart
+      when: opn_netsec_syslog_file is changed and not ansible_check_mode
+      changed_when: true
+  rescue:
+    - name: Remove the file syslog-ng rejected
+      ansible.builtin.file:
+        path: /usr/local/etc/syslog-ng.conf.d/netsec-eve.conf
+        state: absent
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: syslog-ng rejected netsec-eve.conf; removed it, syslog-ng was not restarted
+
+- name: syslog-ng runs
+  ansible.builtin.command: pgrep -x syslog-ng
+  check_mode: false
+  changed_when: false
+  register: opn_netsec_syslogng
+  until: opn_netsec_syslogng.rc == 0
+  retries: 12
+  delay: 5

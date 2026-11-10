@@ -1,0 +1,82 @@
+%YAML 1.1
+---
+# Installed as /usr/local/etc/suricata/conf.d/netsec-outputs.yaml by
+# playbooks/tasks/opnsense/netsec_eve.yml (docs/runbooks/network-ids.md).
+#
+# OPNsense's template includes conf.d/*.yaml after its own config, and Suricata
+# REPLACES a list key that an include repeats: an include with only the new
+# output left eve.json and the syslog EVE stream out (tested 2026-11-10). So
+# this file restates the template's four outputs exactly as rendered with our
+# settings (LogPayload, eveLog http/tls and plain syslog off, syslog_eve on),
+# then adds eve-meta.json. netsec_eve.yml refuses to install it when the
+# template's outputs section or those settings change.
+outputs:
+  # Stock 1: eve.json, read by Intrusion Detection > Alerts.
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      pcap-file: false
+      community-id: false
+      community-id-seed: 0
+      types:
+        - alert:
+             tagged-packets: yes
+        - anomaly:
+            enabled: yes
+        - drop:
+            alerts: yes
+            flows: start
+        - ssh
+  # Stock 2: alerts over syslog to Alloy/Loki (syslog_eve).
+  - eve-log:
+      enabled: yes
+      type: syslog
+      identity: "suricata"
+      facility: local5
+      level: Info
+      community-id: true
+      community-id-seed: 0
+      xff:
+        enabled: yes
+        mode: extra-data
+        deployment: reverse
+        header: X-Forwarded-For
+      types:
+        - alert:
+             metadata: yes
+             tagged-packets: yes
+  # Stock 3 and 4.
+  - stats:
+      enabled: yes
+      filename: stats.log
+      append: yes
+      totals: yes
+      threads: no
+  - syslog:
+      enabled: no
+      facility: local5
+      level: Notice
+  # Ours: the protocol metadata for netsec.eve, tailed by syslog-ng
+  # (syslog-ng-netsec-eve.conf) and sent to the netsec Vector. No flow events:
+  # flows come from NetFlow. DNS responses only: they carry the query too. No
+  # anomaly: Suricata allows one anomaly logger, and eve.json has it (a second
+  # one stopped Suricata from starting, 2026-11-10).
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve-meta.json
+      community-id: true
+      community-id-seed: 0
+      types:
+        - alert:
+            metadata: yes
+            tagged-packets: yes
+        - dns:
+            requests: no
+            responses: yes
+        - tls:
+            extended: yes
+            ja4: on
+        - http:
+            extended: yes

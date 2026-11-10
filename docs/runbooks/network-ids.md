@@ -9,6 +9,18 @@ firewall: `docs/runbooks/opnsense.md`, "Suricata tuning".
 ```sh
 homelab netsec schema                     # tables, retention, examples
 homelab netsec sql "SELECT count(), max(ts) FROM netsec.flows WHERE ts > now() - INTERVAL 1 HOUR"
+homelab netsec sql "SELECT event_type, count() FROM netsec.eve WHERE ts > now() - INTERVAL 30 MINUTE GROUP BY event_type"
+```
+
+Traffic between VLAN 10 and 20 is seen on both inspected interfaces and logged
+twice with one `community_id`. Collapse the copies in any count:
+
+```sql
+SELECT dns_rrname, count() FROM (
+  SELECT * FROM netsec.eve
+  WHERE event_type = 'dns' AND ts > now() - INTERVAL 1 DAY
+  LIMIT 1 BY community_id, event_type, dns_rrname
+) GROUP BY dns_rrname ORDER BY count() DESC LIMIT 20
 ```
 
 Viktor only (`/etc/netsec/reader.env`). Admin access for schema changes:
@@ -41,6 +53,23 @@ The sidecar's sink address needs the `http://` scheme. Without it Vector 0.61
 starts, fails its healthcheck with `client error (Connect)` and delivers
 nothing, although the TCP port answers.
 
+## Is Suricata metadata flowing? (netsec.eve)
+
+1. Test: `dig icanhazip.com @10.0.10.1` from the devvm, then
+   `homelab netsec sql "SELECT ts, in_iface, signature FROM netsec.eve WHERE signature_id = 2054169 ORDER BY ts DESC LIMIT 1"`.
+   It arrived in 16 seconds on 2026-11-10.
+2. On OPNsense (root shell is csh, so `ssh root@10.0.10.1 sh -s <<EOF`):
+   `ls -la /var/log/suricata/eve-meta.json` grows; `sockstat -4 -c | grep 5140`
+   shows syslog-ng connected to 10.0.20.211.
+3. Suricata running: `pgrep -fl suricata`; a refused config shows as `<Error>`
+   in `/var/log/suricata/latest.log`.
+4. After an OPNsense upgrade the `netsec_eve` area may refuse to install with
+   "OPNsense's Suricata outputs changed": render the template's outputs again,
+   restate them in `playbooks/files/opnsense/suricata-netsec-outputs.yaml`
+   (keep `eve-meta.json` last), diff `suricata --dump-config` output for
+   `outputs.0` to `outputs.3` before and after, then update the fingerprint in
+   `netsec_eve.yml`.
+
 ## Alerts
 
 | Alert | Meaning | First step |
@@ -48,6 +77,7 @@ nothing, although the TCP port answers.
 | `NetsecVectorDown` | the netsec Vector pod is not scraped for 10 minutes | `kubectl get pods -n netsec`, then its logs |
 | `NetsecSinkErrors` | a ClickHouse write failed | Vector logs; a 401/516 is the `netsec_writer` password (Vault `secret/claude-sessions` vs the pod's `netsec-secrets`), a quota error means a runaway source |
 | `NetsecFlowsStale` | no row written to `flows` for 30 minutes | the four checks above, in order |
+| `NetsecEveStale` | no row written to `eve` for 30 minutes | "Is Suricata metadata flowing?" above |
 
 ## Vector config tests
 
