@@ -96,6 +96,25 @@ Every claim carries one of three labels:
     (`plugins/enigma/lib/enigma_driver_gnupg.php:590-668`). Candidate 3's
     "enigma keys into MySQL" is withdrawn.
 
+- 2026-11-10, **n8n sunset**: unused (a week of traffic was Uptime Kuma and
+  bot probes; the one running workflow had failed all 14 runs). Archived a
+  `pg_dump` plus the encryption key file to `/srv/nfs/archive/n8n-2026-11-10/`
+  (mode 600), destroyed the stack, removed its outage-failover route, Kyverno
+  exclude entry, catalog rows and both Uptime Kuma monitors. The `n8n`
+  database stays in the shared Postgres by Viktor's choice. 1 slot freed.
+
+- 2026-11-10, **prowlarr**: on the shared Postgres (databases `prowlarr` and
+  `prowlarr_log`, both owned by role `prowlarr`; `app_databases` gained an
+  optional `owner` for this; Vault role `pg-prowlarr` at Tuesday 10:13), config
+  on NFS `/srv/nfs/servarr/prowlarr-config`. The config was exported through the
+  API and re-created; the API masks the qBittorrent password and app API keys,
+  so those came from the old SQLite file. `forceSave=true` does not skip a
+  failing connectivity test: the Lidarr link was dropped because Lidarr no
+  longer exists, and 52BT, ArenaBG, BT.etree and EBookBay were re-created
+  disabled because they fail their test today. 1337x and Internet Archive are
+  enabled; a search returns results. The old SQLite DB is archived at
+  `/srv/nfs/archive/prowlarr-sqlite-2026-11-10/`. 1 slot freed.
+
 ## Why there are so many
 
 - **The April wave and the default rule.** On 2026-04-04, 12 SQLite apps moved from NFS to `proxmox-lvm` after SQLite-on-NFS corruption hit vaultwarden and the calibre `queue.db`, and the storage rule then made block the default for every new service, encrypted for anything sensitive (`docs/agents/storage-backup.md:7-36`) [source]. Apps that already used the shared databases still got a block PVC for their files.

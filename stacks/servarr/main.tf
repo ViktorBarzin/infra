@@ -3,6 +3,7 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
@@ -79,6 +80,7 @@ module "prowlarr" {
   tier                 = local.tiers.aux
   nfs_server           = var.nfs_server
   homepage_credentials = local.homepage_credentials
+  postgresql_host      = var.postgresql_host
 }
 
 module "qbittorrent" {

@@ -81,7 +81,7 @@ The `ingress_factory` module auto-maps namespaces to dashboard groups:
 | frigate, home-assistant, reverse-proxy | Smart Home |
 | ollama | AI & Data |
 | nextcloud | Productivity |
-| n8n, changedetection | Automation |
+| changedetection | Automation |
 | finance | Finance & Personal |
 | homepage | Core Platform |
 | *(everything else)* | Other |

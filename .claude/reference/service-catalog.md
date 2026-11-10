@@ -109,7 +109,6 @@
 | linkwarden | Bookmark manager | linkwarden |
 | changedetection | Web change detection | changedetection |
 | tandoor | Recipe manager | tandoor |
-| n8n | Workflow automation | n8n |
 | real-estate-crawler | Property crawler | real-estate-crawler |
 | tor-proxy | Tor proxy | tor-proxy |
 | terminal-api | Public machine API for Terminal Lobby at `terminal-api.viktorbarzin.me` (no Authentik, no source-IP allowlist): CrowdSec 401 ban, rate limit, then Lobby bearer tokens (`devvm_external_agents`, Vault `secret/terminal-lobby`). No ttyd. Runbook `docs/runbooks/terminal-api.md` | terminal |
@@ -150,7 +149,7 @@
 ```
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
-changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
+changedetection, tandoor, stirling-pdf, dashy, city-guesser,
 travel, netbox, phpipam, tripit, t3, stem95su, tasks, agentmd,
 eurooffice, glitchtip
 ```

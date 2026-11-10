@@ -144,7 +144,7 @@ locals {
     "interview-prep", "json", "k8s-portal", "learn",
     "lesson-harvester", "listenarr", "london", "mail",
     "mbp14", "meshcentral", "mladost3", "music-assistant",
-    "music-emo", "music-viktor", "n8n", "nas",
+    "music-emo", "music-viktor", "nas",
     "navidrome", "netbox", "networking-toolbox", "nextcloud-todos",
     "novelapp", "ntfy", "offline-reader", "openclaw",
     "openlobster", "pages", "paperless-ai", "pb",
