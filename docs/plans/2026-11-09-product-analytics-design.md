@@ -75,7 +75,7 @@ Vector rejects an event, and sends it to Loki under `{job="event-pipeline", outc
 - the properties are too long;
 - the browser host is not a production host (`*.viktorbarzin.me` and `viktorbarzin.me`).
 
-The client libraries implement the server side of this from telemetry 0.2.0 (Python `viktorbarzin-telemetry` 0.2.0, Go `go/v0.2.0`) and the next `@viktorbarzin/telemetry` release: Python `RequestContextMiddleware` (ASGI) or `request_context()`, Go `RequestMiddleware`, TypeScript `withRequestContext()`. Up to 0.1.0 the Python and Go libraries gave every event without an anonymousId a new uuid4, so anonymous backend events from offline-reader, learning, fire-planner and health each counted as a new person until those apps upgrade.
+The client libraries implement the server side of this from telemetry 0.2.0 (Python `viktorbarzin-telemetry` 0.2.0, Go `go/v0.2.0`) and the next `@viktorbarzin/telemetry` release: Python `RequestContextMiddleware` (ASGI) or `request_context()`, Go `RequestMiddleware`, TypeScript `withRequestContext()`. Up to 0.1.0 the Python and Go libraries gave every event without an anonymousId a new uuid4, so each anonymous backend event counted as a new person. Every Python app moved to 0.2.0 on 2026-11-10 (tv, tripit, wrongmove, offline-reader, learning, health, fire-planner, priority-pass, nextcloud-todos); events recorded before that keep their per-event ids. terminal-lobby (Go) and the TypeScript apps follow with the 2026-11-11 npm publish.
 
 ## Log standard
 
