@@ -249,13 +249,18 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             check(False, "node_exporter answers on %s:9100 from this host" % fw["opt1"], str(e))
 
-    # CrowdSec: bouncer of the cluster LAPI only (plan review change), with
+    # CrowdSec: bouncer and agent of the cluster LAPI, no local LAPI, with
     # decisions loaded into pf tables.
     cs = ssh(host, "pgrep -lf 'crowdsec' ; grep -E '^api_url' /usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml;"
+                   " grep -E '^url' /usr/local/etc/crowdsec/local_api_credentials.yaml;"
+                   " echo lapi-listen:$(sockstat -4l -p 8080 | grep -c crowdsec);"
                    " pfctl -t crowdsec_blocklists -T show 2>/dev/null | wc -l").stdout
     procs = [l for l in cs.splitlines() if "/usr/local/bin/crowdsec" in l]
-    check(len(procs) == 1 and "crowdsec-firewall-bouncer" in procs[0], "CrowdSec: only the bouncer runs (no local agent or LAPI)")
+    check(any("crowdsec-firewall-bouncer" in p for p in procs), "CrowdSec bouncer runs")
     check("api_url: http://10.0.20.210:8080/" in cs, "CrowdSec bouncer uses the cluster LAPI (10.0.20.210)")
+    if prod:
+        check(any(p.split()[1:2] == ["/usr/local/bin/crowdsec"] for p in procs) and "url: http://10.0.20.210:8080/" in cs
+              and "lapi-listen:0" in cs, "CrowdSec agent pushes to the cluster LAPI (no local LAPI)")
     n = int((cs.strip().splitlines() or ["0"])[-1].strip() or 0)
     if args.isolated:
         print("SKIP  CrowdSec decisions loaded (isolated, no LAPI)")

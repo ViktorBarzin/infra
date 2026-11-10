@@ -2,6 +2,14 @@
 # outside of K8S but would be nice to use the Nginx-ingress
 
 variable "tls_secret_name" {}
+variable "opnsense_homepage_key" {
+  type      = string
+  sensitive = true
+}
+variable "opnsense_homepage_secret" {
+  type      = string
+  sensitive = true
+}
 variable "haos_homepage_token" {
   type      = string
   default   = ""
@@ -53,6 +61,12 @@ module "opnsense" {
     "gethomepage.dev/group" : "Identity & Security"
     "gethomepage.dev/icon" : "opnsense.png"
     "gethomepage.dev/name" : "OPNsense"
+    # Read-only API user "homepage" (System Activity, Traffic only).
+    "gethomepage.dev/widget.type" : "opnsense"
+    "gethomepage.dev/widget.url" : "https://10.0.20.1:8443"
+    "gethomepage.dev/widget.username" : var.opnsense_homepage_key
+    "gethomepage.dev/widget.password" : var.opnsense_homepage_secret
+    "gethomepage.dev/widget.fields" = "[\"cpu\", \"memory\", \"wanUpload\", \"wanDownload\"]"
   }
   depends_on = [kubernetes_namespace.reverse-proxy]
 }
