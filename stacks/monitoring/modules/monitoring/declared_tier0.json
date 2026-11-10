@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-15T23:25:50Z",
+  "generated_at": "2026-11-09T23:23:59Z",
   "generated_by": "scripts/gen-tier0-workload-inventory.py",
   "why": "Tier-0 stacks keep local state in the repo, which the stray-workload reconciler CronJob cannot read. Regenerate after changing a workload or helm_release in one of these stacks.",
   "stacks": [
@@ -22,6 +22,12 @@
       "dbaas",
       "postgresql-backup",
       "dbaas"
+    ],
+    [
+      "CronJob",
+      "vault",
+      "db-rotation-watcher",
+      "vault"
     ],
     [
       "CronJob",

@@ -52,7 +52,7 @@ resource "kubernetes_cron_job_v1" "technitium_blocking_sync" {
               name = "blocking-sync"
               # job-runtime has curl and jq baked in.
               image             = "ghcr.io/viktorbarzin/job-runtime:latest"
-              image_pull_policy = "IfNotPresent"
+              image_pull_policy = "Always"
               dynamic "env" {
                 for_each = toset(["TECH_USER", "TECH_PASS"])
                 content {

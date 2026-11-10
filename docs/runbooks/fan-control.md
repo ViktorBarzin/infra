@@ -342,7 +342,7 @@ applied). `HA command miss — holding 49%` = a transient HA blip being ridden o
 `HA command lost (...) — Dell auto` = sustained loss.
 
 The host journal is kept in memory (`Storage=volatile`) and on 2026-10-18 reached back
-about 27 hours. Loki keeps the same lines for 30 days:
+about 27 hours. Loki keeps the same lines for 26 weeks:
 ```bash
 homelab logs query '{job="pve-journal", identifier="fan-control"}' --since 7d --limit 2000
 ```

@@ -4,8 +4,9 @@ variable "nfs_server" { type = string }
 # (beads code-8ywc + code-146x). Original disable rationale was "operational
 # overhead vs benefit after node2 incident" — re-evaluated because the wave 1
 # detection layer (K8s audit, Vault audit, source-IP anomaly rules) needs Loki.
-# Resource budget: SingleBinary mode, 2-4Gi memory, 50Gi proxmox-lvm PVC,
-# 30-day retention, ruler enabled pointed at prometheus-alertmanager.
+# Resource budget: SingleBinary mode, 2-4Gi memory, proxmox-lvm PVC that
+# autoresizes from 50Gi to 200Gi, 26-week retention (30 days for Claude
+# telemetry), ruler enabled pointed at prometheus-alertmanager.
 resource "helm_release" "loki" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -37,6 +38,28 @@ resource "helm_release" "loki" {
   max_history     = 10 # see helm_release.prometheus for why history is capped
 
   depends_on = [kubernetes_config_map.loki_alert_rules]
+}
+
+# pvc-autoresizer annotations on Loki's data volume, set on the live PVC
+# rather than through singleBinary.persistence because StatefulSet
+# volumeClaimTemplates are immutable and a changed template fails the helm
+# upgrade (same pattern as audit_vault_autoresizer in stacks/vault).
+# Retention went from 30 days to 26 weeks on 2026-11-09: ~90-120 GB at
+# steady state, so 50Gi -> 100Gi -> 200Gi as it fills.
+resource "kubernetes_annotations" "loki_autoresizer" {
+  api_version = "v1"
+  kind        = "PersistentVolumeClaim"
+  metadata {
+    name      = "storage-loki-0"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  annotations = {
+    "resize.topolvm.io/threshold"     = "10%"
+    "resize.topolvm.io/increase"      = "100%"
+    "resize.topolvm.io/storage_limit" = "200Gi"
+  }
+  force      = true
+  depends_on = [helm_release.loki]
 }
 
 resource "helm_release" "alloy" {
@@ -2160,7 +2183,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
         {
           # Immich share-link analytics (recording rules → Prometheus
           # remote-write, 2026-07-06). Continuous per-slug counters that
-          # OUTLIVE Loki's 30d log retention (Prometheus keeps 26w): a shared
+          # OUTLIVE Loki's log retention (26w since 2026-11-09; Prometheus keeps 26w): a shared
           # album link lives up to a year, so ad-hoc log sweeps can't answer
           # "total visits" after week 4. Query totals with e.g.
           # sum_over_time(immich:share_link_opens:count1m{slug="x"}[90d]).
