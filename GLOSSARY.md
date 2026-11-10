@@ -30,10 +30,6 @@ _Avoid_: monitored traffic, all traffic
 The Sofia household network 192.168.1.0/24, run by the TP-Link AX6000. Its devices reach the internet without crossing the edge firewall.
 _Avoid_: LAN, client network
 
-**Host agent**:
-Security software installed on a server we run, reporting to the central stores. Never installed on personal devices.
-_Avoid_: endpoint agent, management agent
-
 **Opted-in machine**:
 A machine that trusts the homelab's interception certificate, so the firewall's proxy decrypts its HTTPS.
 _Avoid_: decrypted device, MITM target
