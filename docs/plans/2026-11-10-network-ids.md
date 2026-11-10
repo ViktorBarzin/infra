@@ -83,6 +83,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 - Rollback: remove the two conf.d files and reconfigure the IDS.
 
 ### 3. Alerts into bans, in simulation
+- Done 2026-11-10: live in simulation; as-built in `docs/architecture/network-security-monitoring.md` "Phase 3", operations and the phase 6 review in `docs/runbooks/network-ids.md`. Deviations: the separate C2 list is served by `crowdsec-c2-mirror` (crowdsecurity/blocklist-mirror) into an OPNsense URL-table alias refreshed about every 5 minutes, because the os-crowdsec bouncer fills only one pair of tables; C2 decisions are isolated by decision type `c2-block`, not by origin.
 - LAPI allowlist in Terraform, copied from the existing parser whitelist (`stacks/crowdsec/modules/crowdsec/main.tf:320-370`: private ranges, 100.64/10, 172.16/12, Sofia egress 176.12.22.76, Viktor's work ranges) plus `2001:470:6f:43d::/64`, `2001:470:6e:43d::/64`, the HE endpoint, Cloudflare, upstream resolvers, GitHub and ghcr. 100.64/10 joins Suricata's HOME_NET.
 - `simulation: true` globally on the OPNsense agent, set by the playbook and checked after every reconfigure.
 - os-crowdsec agent on, with an `acquis.d` file for `eve.json` (`type: suricata-evelogs`) and the `crowdsecurity/suricata` collection.

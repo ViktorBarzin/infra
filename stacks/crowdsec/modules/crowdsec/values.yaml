@@ -627,13 +627,14 @@ config:
       # One message per 10 minutes, listing every alert since the last one
       # (network IDS plan, decision 9); the format below already loops.
       group_wait: 10m
+      # Each item of the list is a models.Alert itself. The old template read
+      # .Alert.Scenario, which CrowdSec 1.8 cannot evaluate, so every Slack
+      # message failed to render ("can't evaluate field Alert", seen
+      # 2026-11-10). Pointer fields print their value.
       format: |
-        :rotating_light: *CrowdSec Alert*
+        :rotating_light: *CrowdSec*: {{len .}} alert(s)
         {{range .}}
-        *Scenario:* {{.Alert.Scenario}}
-        *Source IP:* {{.Alert.Source.IP}} ({{.Alert.Source.Cn}})
-        *Decisions:*
-        {{range .Alert.Decisions}}  - {{.Type}} for {{.Duration}} (scope: {{.Scope}}, value: {{.Value}})
-        {{end}}
-        {{end}}
+        *{{.Scenario}}* from {{.Source.Value}} ({{.Source.Cn}} {{.Source.AsName}}), simulated: {{.Simulated}}
+        {{range .Decisions}}  - {{.Type}} for {{.Duration}} ({{.Scope}}: {{.Value}})
+        {{end}}{{end}}
       webhook: ${SLACK_WEBHOOK_URL}

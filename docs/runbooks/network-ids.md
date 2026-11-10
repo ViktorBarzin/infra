@@ -78,6 +78,11 @@ nothing, although the TCP port answers.
 | `NetsecSinkErrors` | a ClickHouse write failed | Vector logs; a 401/516 is the `netsec_writer` password (Vault `secret/claude-sessions` vs the pod's `netsec-secrets`), a quota error means a runaway source |
 | `NetsecFlowsStale` | no row written to `flows` for 30 minutes | the four checks above, in order |
 | `NetsecEveStale` | no row written to `eve` for 30 minutes | "Is Suricata metadata flowing?" above |
+| `NetsecHomeHostMalware` | a malware or C2 alert involving one of our hosts (CronJob `netsec-alerts`) | "A home host hit a malware rule" below |
+| `CameraVlanBlockedTraffic` | the VLAN 30 camera started traffic the firewall blocked | "Camera VLAN blocked traffic" below |
+| `CrowdSecOpnsenseAgentSilent` | OPNsense's agent sent nothing to LAPI for 15 minutes | `ssh root@10.0.10.1 'service crowdsec status'`, `/var/log/crowdsec/crowdsec.log` |
+| `CrowdSecOpnsenseBouncerNotPulling` | OPNsense's bouncer pulled nothing for 15 minutes | `service crowdsec_firewall status`, `/var/log/crowdsec/crowdsec-firewall-bouncer.log` |
+| `CrowdSecC2MirrorNotPulling` | the C2 blocklist mirror pulled nothing for 15 minutes | `kubectl logs -n crowdsec deploy/crowdsec-c2-mirror` |
 
 ## Vector config tests
 
@@ -96,3 +101,117 @@ If `flows.bytes` is 0 for every row, check that goflow2 still runs with
 `-mapping /etc/goflow2/mapping.yaml` and that its JSON lines carry
 `in_bytes`. Without the mapping, OPNsense's OUT_BYTES=0 overwrites IN_BYTES
 (architecture doc, "Byte counts").
+
+## Alerts into bans (phase 3)
+
+Suricata's stock `eve.json` feeds OPNsense's CrowdSec agent (machine
+`opnsense-edge`). Every scenario on that agent is **simulated** until the
+phase 6 review: decisions are recorded with `simulated=true` and no bouncer,
+pf table or mirror receives them.
+
+```sh
+ssh root@10.0.10.1 'cscli simulation status'          # global simulation: enabled
+ssh root@10.0.10.1 'grep performed /var/log/crowdsec/crowdsec.log | tail'
+# On the LAPI: alerts and would-be decisions from the firewall
+L=$(kubectl get pods -n crowdsec -l type=lapi -o name | head -1)
+kubectl exec -n crowdsec $L -- cscli alerts list --since 24h -o raw
+kubectl exec -n crowdsec $L -- cscli decisions list --all -o raw   # last column but one: simulated
+```
+
+An alert whose source is in the `trusted-infra` allowlist (our ranges and
+what we depend on, `stacks/crowdsec` `lapi_allowlist`) never reaches the
+alerts list: the firewall agent has no parser whitelist of its own, so the
+LAPI allowlist is what keeps our hosts from being banned.
+
+### Reviewing the would-be bans (phase 6)
+
+Two weeks after phase 3 landed (2026-11-10, so from 2026-11-24), with Viktor:
+
+```sh
+kubectl exec -n crowdsec $L -- cscli decisions list --all -o raw \
+  | awk -F, 'NR > 1 && $10 == "true" {print $4}' | sort | uniq -c | sort -rn   # by scenario
+kubectl exec -n crowdsec $L -- cscli decisions list --all -o raw \
+  | awk -F, 'NR > 1 && $10 == "true" {print $3, $4, $6, $7}' | sort | uniq -c | sort -rn | head -50
+```
+
+Simulated decisions expire like real ones (4h bans, 24h C2 blocks), so also
+read the alerts list, which keeps 7 days (`flush.max_age`). For each address
+that would have been banned, decide: a real attacker (keep), something we use
+(add it to `lapi_allowlist`), or a noisy signature (turn it off in
+`opn_ids_disabled_sids`, `playbooks/tasks/opnsense/suricata.yml`).
+
+### Turning bans on
+
+1. Edit `playbooks/files/opnsense/crowdsec/simulation.yaml` to
+   `simulation: false` and the assert in `playbooks/tasks/opnsense/crowdsec.yml`
+   to `global simulation: disabled`.
+2. `ansible-playbook -i playbooks/inventory.ini playbooks/opnsense.yml -e opnsense_allow_production=true --tags crowdsec --check --diff`, then without `--check`.
+3. Watch `cscli decisions list` on the LAPI and the pf tables on OPNsense:
+   `pfctl -t crowdsec_blocklists -T show | wc -l`, `pfctl -t crowdsec_c2 -T show`.
+
+To keep one scenario simulated after that, add it under `exclusions:` in the
+same file (with `simulation: false`, exclusions are the simulated ones).
+
+### C2 blocks
+
+One hit of an abuse.ch rule (Feodo Tracker, SSL Blacklist) involving one of
+our hosts makes a 24h decision of type `c2-block` on the C2 address. Only
+`crowdsec-c2-mirror` (LB `10.0.20.212:41412`, source ranges OPNsense only)
+serves that type; OPNsense refreshes alias `crowdsec_c2` from it about every
+5 minutes and blocks it outbound on VLAN 10 and 20, logged.
+
+```sh
+ssh root@10.0.10.1 'pfctl -t crowdsec_c2 -T show'        # what is blocked now
+ssh root@10.0.10.1 'curl -s http://10.0.20.212:41412/security/blocklist'
+kubectl exec -n crowdsec $L -- cscli decisions delete --id <id>   # unblock one
+```
+
+With no decisions the mirror answers `404 no decisions available`; OPNsense
+then keeps the alias as it was (empty). A blocked connection shows in the
+filter log with the rule description "Block our hosts reaching CrowdSec C2
+blocks".
+
+### A home host hit a malware rule
+
+`NetsecHomeHostMalware` names the host and the signature. Look at what else
+the host did:
+
+```sh
+homelab netsec sql "SELECT ts, event_type, src_ip, dest_ip, signature, dns_rrname, tls_sni, http_hostname FROM netsec.eve WHERE (src_ip = toIPv6('<host>') OR dest_ip = toIPv6('<host>')) AND ts > now() - INTERVAL 1 HOUR ORDER BY ts DESC LIMIT 100"
+homelab netsec sql "SELECT dst_ip, sum(bytes) FROM netsec.flows WHERE src_ip = toIPv6('<host>') AND ts > now() - INTERVAL 1 HOUR GROUP BY dst_addr ORDER BY 2 DESC LIMIT 20"
+```
+
+A k8s node's address means a pod on that node (Calico NAT) until phase 4 adds
+pod DNS. The query and its test: `stacks/netsec/files/alerts.sql`,
+`sh stacks/netsec/files/alerts_test.sh` (read-only against the live
+ClickHouse with fixed rows).
+
+### Camera VLAN blocked traffic
+
+`CameraVlanBlockedTraffic` fires when OPNsense's default deny drops traffic
+the VLAN 30 camera started. Its late RTSP and HTTP replies to Frigate and
+ha-sofia (source port 554 or 80) are excluded: they are blocked after every
+filter reload, 64 in the 6 hours measured on 2026-11-10.
+
+```
+{job="syslog", host="opnsense", app="filterlog"} |= ",vtnet3,match,block,in,"
+```
+
+### Testing the whole path without touching a real C2
+
+Append fake alerts using TEST-NET addresses to the files the agent and the
+netsec pipeline read (OPNsense shell is csh, so run through `sh -s`):
+
+```sh
+ssh root@10.0.10.1 sh -s <<'EOS'
+ts=$(date +%Y-%m-%dT%H:%M:%S.000000%z)
+printf '%s\n' "{\"timestamp\":\"$ts\",\"flow_id\":1,\"in_iface\":\"vtnet2\",\"event_type\":\"alert\",\"src_ip\":\"10.0.20.104\",\"src_port\":51515,\"dest_ip\":\"192.0.2.1\",\"dest_port\":8080,\"proto\":\"TCP\",\"alert\":{\"signature_id\":99000001,\"rev\":1,\"signature\":\"Feodo Tracker: TEST\",\"category\":\"A Network Trojan was detected\",\"severity\":1}}" \
+  | tee -a /var/log/suricata/eve.json >> /var/log/suricata/eve-meta.json
+EOS
+```
+
+Expect within a minute: `Ip 192.0.2.1 performed 'viktor/abusech-c2-destination'`
+in the agent log, a simulated `c2-block` decision on the LAPI, and
+`NetsecHomeHostMalware` for 10.0.20.104 in Slack; within 10 minutes the
+grouped CrowdSec Slack message. Run 2026-11-10: all four seen, nothing reached
+pf.
