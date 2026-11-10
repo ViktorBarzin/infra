@@ -68,7 +68,7 @@ resource "kubernetes_cron_job_v1" "dns_digest" {
             container {
               name              = "dns-digest"
               image             = "ghcr.io/viktorbarzin/job-runtime:latest"
-              image_pull_policy = "IfNotPresent"
+              image_pull_policy = "Always"
               command           = ["python3", "/scripts/dns_digest.py"]
               env {
                 name = "SLACK_WEBHOOK_URL"

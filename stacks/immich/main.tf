@@ -179,6 +179,8 @@ resource "kubernetes_namespace" "immich" {
 # without OOM. Plus immich-machine-learning (3.5Gi) + immich-postgresql (3Gi) +
 # backup CronJobs ≈ 15.5Gi. 24Gi gives ~8Gi headroom (raised 2026-05-26 — was at
 # 88% with VPA bumps creeping up on immich-server burst behaviour).
+# limits.memory 40Gi -> 48Gi on 2026-11-09: 33,024Mi used sat at 81%, over the
+# health check's 80% warning, with nothing blocked; 48Gi puts it near 69%.
 resource "kubernetes_resource_quota" "immich" {
   metadata {
     name      = "tier-quota"
@@ -188,7 +190,7 @@ resource "kubernetes_resource_quota" "immich" {
     hard = {
       "requests.cpu"    = "8"
       "requests.memory" = "24Gi"
-      "limits.memory"   = "40Gi"
+      "limits.memory"   = "48Gi"
       pods              = "40"
     }
   }

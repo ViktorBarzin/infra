@@ -2905,7 +2905,10 @@ check_pve_thermals() {
     # labels (Xeon coretemp driver exposes both `Package id 0` and `Core N`).
     raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
         root@192.168.1.127 '
-        cd /sys/class/hwmon/hwmon0 2>/dev/null || exit 1
+        # Find coretemp by name: hwmon numbering follows driver load order and
+        # moved on 2026-11 (hwmon0 became power_meter, coretemp hwmon1).
+        dir=$(grep -lx coretemp /sys/class/hwmon/hwmon*/name 2>/dev/null | head -1)
+        cd "${dir%/name}" 2>/dev/null && [[ -n "$dir" ]] || exit 1
         for tfile in temp*_input; do
             [[ -e "$tfile" ]] || continue
             base=${tfile%_input}

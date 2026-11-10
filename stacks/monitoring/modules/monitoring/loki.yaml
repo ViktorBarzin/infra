@@ -47,19 +47,32 @@ loki:
   limits_config:
     allow_structured_metadata: true
     volume_enabled: true
-    retention_period: 720h
+    # 26 weeks (4368h) since 2026-11-09, matching Prometheus; was 720h (30d).
+    # At ~0.49 GB/day of stored chunks (7-day average that day) the full window
+    # is ~90 GB, ~120 GB with the growth seen since August. The PVC grows
+    # itself through pvc-autoresizer (kubernetes_annotations.loki_autoresizer
+    # in loki.tf). Loki is not backed up: the monitoring namespace is excluded
+    # from snapshots, file backups and offsite by policy.
+    retention_period: 4368h
+    # Lets one query span the whole retention window. Loki's default is 721h,
+    # which capped every query at 30d1h.
+    max_query_length: 4369h
     # Default 500. The London Flint's dnsmasq log blocks ~625 distinct
     # domains a day (19 clients, measured 2026-10-15), so london-dns-digest's
     # sum by (client, domain) and sum by (domain) queries hit the cap and the
     # digest failed every run from 2026-10-14.
     max_query_series: 5000
-    # Proxy visit logs (spec infra#83) are kept 90d — longer than the 30d global —
-    # so the "Proxy visits" dashboard has a full quarter of detail. Per-stream
-    # retention overrides the global period for the matching stream only.
+    # Claude Code session telemetry (service_name="claude-code", ADR-0025)
+    # carries full prompt text from every devvm user and is readable by anyone
+    # with Grafana access, so it keeps the 30 days ADR-0025 set while the rest
+    # moved to 26 weeks. The long-term copy of every session is the admin-only
+    # claude-sessions ClickHouse store (ADR-0039), which has no TTL.
+    # The proxy visit-collector override (90d, infra#83) was removed the same
+    # day: under a 26-week global it would have shortened those logs.
     retention_stream:
-      - selector: '{namespace="proxy", container="visit-collector"}'
+      - selector: '{service_name="claude-code"}'
         priority: 10
-        period: 2160h
+        period: 720h
   compactor:
     retention_enabled: true
     working_directory: /var/loki/compactor
@@ -85,7 +98,7 @@ loki:
     rule_path: /var/loki/scratch
     # Recording rules (e.g. the Immich share-link counters in loki.tf)
     # remote-write their samples to Prometheus (26w retention) so per-link
-    # analytics outlive Loki's 30d log retention. Requires the
+    # analytics are kept as metrics alongside Loki's own 26w retention. Requires the
     # web.enable-remote-write-receiver flag on prometheus-server (set in
     # prometheus_chart_values.tpl). WAL lives on the singleBinary PVC so
     # ruler restarts don't drop generated samples.
