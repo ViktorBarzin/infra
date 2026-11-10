@@ -10,7 +10,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 RAILS="$HERE/renovate-rails"
-# shellcheck source=renovate-rails
+# shellcheck source=/dev/null
 source "$RAILS"
 
 fails=0 passes=0
@@ -195,6 +195,7 @@ set_marker() { MARKED=$1; }
 gate_blocking() { echo "${STUB_GATE:-}"; }
 snapshot_targets() { :; }
 slack() { SLACKED=$1; }
+file_issue() { FILED="${FILED:-}${FILED:+|}$1"; FILED_BODY=$2; }
 push_metrics() { METRIC=$1; }
 tg_apply() { echo "stub apply $1"; APPLIED="${APPLIED:-} $1"; }
 # The rolled-back version runs unless a test says otherwise.
@@ -205,15 +206,19 @@ eq "catch-up: renovate commit from the cancelled pipeline is pending" "$R1" "$(c
 eq "catch-up: its stack is added to the apply list" "app" "$(cat .app_apply)"
 eq "catch-up: mode verify" "verify" "$(cat .rails_mode)"
 eq "catch-up: owned stacks" "app" "$(stage_owned)"
+FILED=""
 CI_COMMIT_SHA=$H1 STUB_VERIFY_RC=0 stage_finish >/dev/null
 eq "catch-up: verified -> marker moves to HEAD" "$H1" "$MARKED"
+eq "catch-up: verified -> no issue filed" "" "$FILED"
 eq "catch-up: verified -> outcome 0" "0" "$METRIC"
 eq "catch-up: verified -> no failure exit" "0" "$(stage_exit >/dev/null; echo $?)"
 
 # Same, but verify fails: revert + ignore entry, marker moves past it.
-MARKED="" SLACKED=""
+MARKED="" SLACKED="" FILED="" FILED_BODY=""
 CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
-CI_COMMIT_SHA=$H1 STUB_VERIFY_RC=1 stage_finish >/dev/null
+CI_COMMIT_SHA=$H1 STUB_VERIFY_RC=1 CI_PIPELINE_URL=https://ci.example/p/9 stage_finish >/dev/null
+eq "verify fail: one broken issue, titled after the bump" "Renovate rails reverted: app: bump ghcr.io/x/app v1.0.0 -> v1.1.0" "$FILED"
+case "$FILED_BODY" in *"verify checks failed"*"https://ci.example/p/9"*"renovate/ignored-versions.json"*) ok "verify fail: issue body has the reason, the pipeline and the ignore file" ;; *) bad "verify fail: issue body has the reason, the pipeline and the ignore file" "$FILED_BODY" ;; esac
 eq "verify fail: revert commit on top" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
 eq "verify fail: ignore entry for the exact version" "v1.1.0" "$(jq -r '.packageRules[0].matchNewValue' renovate/ignored-versions.json)"
 eq "verify fail: app back on the old tag" "tag: v1.0.0" "$(cat stacks/app/values.yaml)"
@@ -263,7 +268,7 @@ eq "apply fail: ignore entry" "v1.1.0" "$(jq -r '.packageRules[0].matchNewValue'
 # tried, so it is reverted like a hold, without an ignore entry.
 mkrepo; git reset -q --hard "$R1"; mkdir -p scripts/verify
 printf '#!/bin/bash\necho SHOULD-NOT-RUN; exit 0\n' >scripts/verify/run
-echo "$BASE" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; echo " app" >.app_failed; MARKER="" MARKED="" METRIC="" SLACKED=""
+echo "$BASE" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; echo " app" >.app_failed; MARKER="" MARKED="" METRIC="" SLACKED="" FILED=""
 CI_COMMIT_AUTHOR=renovate-bot CI_COMMIT_SHA=$R1 stage_prepare >/dev/null
 echo app >.apply_transient
 CI_COMMIT_SHA=$R1 stage_finish >"$T/finish.out"
@@ -272,6 +277,7 @@ case "$out" in *SHOULD-NOT-RUN*) bad "transient apply fail: verify skipped" ;; *
 eq "transient apply fail: reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
 eq "transient apply fail: no ignore entry" "0" "$(jq '.packageRules|length' renovate/ignored-versions.json)"
 case "$(git log -1 --format=%B)" in *"without an ignore entry"*) ok "transient apply fail: revert says no ignore entry" ;; *) bad "transient apply fail: revert says no ignore entry" "$(git log -1 --format=%B)" ;; esac
+eq "transient apply fail: no issue filed (Renovate offers it again)" "" "$FILED"
 case "$SLACKED" in *"ignored: docker"*) bad "transient apply fail: Slack names no ignored version" "$SLACKED" ;; *"not ignored"*) ok "transient apply fail: Slack names no ignored version" ;; *) bad "transient apply fail: Slack says not ignored" "$SLACKED" ;; esac
 eq "transient apply fail: outcome 2 (held)" "2" "$METRIC"
 eq "transient apply fail: marker moves" "$R1" "$MARKED"
@@ -354,7 +360,9 @@ mkrepo; git reset -q --hard "$H1"
 stub_verify_with_baseline 'VERIFY RESULT: PASS app\n' '00:10:01 failed: floor: ingress app/app\nVERIFY RESULT: FAIL app\n' 0 1
 echo "$R1" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=$BASE MARKED="" METRIC="" SLACKED="" APPLIED=""
 CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
+FILED=""
 CI_COMMIT_SHA=$H1 STUB_ROLLBACK_BROKEN="app/app container app: 3 restarts, CrashLoopBackOff" stage_finish >/dev/null
+eq "roll forward: one broken issue" "Renovate rails reverted: app: bump ghcr.io/x/app v1.0.0 -> v1.1.0" "$FILED"
 eq "roll forward: HEAD is the roll-forward commit" "Roll forward \"app: bump ghcr.io/x/app v1.0.0 -> v1.1.0\"" "$(git log -1 --format=%s)"
 eq "roll forward: the revert is underneath" "This reverts commit $R1." "$(git log -1 --skip=1 --format=%B | grep '^This reverts')"
 eq "roll forward: app on the new tag again" "tag: v1.1.0" "$(cat stacks/app/values.yaml)"
@@ -371,6 +379,34 @@ CI_COMMIT_AUTHOR=viktor CI_COMMIT_SHA=$H1 stage_prepare >/dev/null
 eq "idle: no commits" "" "$(cat .rails_commits)"
 CI_COMMIT_SHA=$H1 stage_finish >/dev/null
 eq "idle: marker moves" "$H1" "$MARKED"
+
+# --- file_issue: dedupe and token handling ----------------------------------
+# Re-source to get the real file_issue (the stage tests above stub it), with
+# forgejo_api stubbed: GET answers from STUB_*, POST is recorded.
+cd "$REPO" || exit 1
+# shellcheck source=/dev/null
+source "$RAILS"
+POSTFILE=$(mktemp)
+posted() { cat "$POSTFILE"; }
+forgejo_api() { # method path [body]; runs in a subshell, so POST goes to a file
+  case "$1 $2" in
+    "GET /issues"*) echo "${STUB_OPEN:-[]}" ;;
+    "GET /labels"*) echo '[{"id":7,"name":"change"},{"id":12,"name":"broken"}]' ;;
+    "POST /issues") printf '%s' "$3" >"$POSTFILE"; echo '{"number":321}' ;;
+  esac
+}
+FORGEJO_TOKEN=t STUB_OPEN='[{"number":5,"title":"Renovate rails reverted: x"}]' file_issue "Renovate rails reverted: x" "body" >/dev/null
+eq "file_issue: an open issue with the same title is not filed again" "" "$(posted)"
+: >"$POSTFILE"
+FORGEJO_TOKEN=t STUB_OPEN='[{"number":5,"title":"something else"}]' file_issue "Renovate rails reverted: y" "the body" >/dev/null
+eq "file_issue: new issue gets the broken label" "12" "$(posted | jq -r '.labels[0]')"
+eq "file_issue: new issue keeps title and body" "Renovate rails reverted: y|the body" "$(posted | jq -r '.title + "|" + .body')"
+: >"$POSTFILE"
+out=$(FORGEJO_TOKEN="" VAULT_ADDR="" file_issue "t" "b")
+eq "file_issue: without a token nothing is posted" "" "$(posted)"
+case "$out" in *"would file"*) ok "file_issue: without a token it logs instead" ;; *) bad "file_issue: without a token it logs instead" "$out" ;; esac
+eq "file_issue: never fails the rails" "0" "$(FORGEJO_TOKEN="" VAULT_ADDR="" file_issue t b >/dev/null; echo $?)"
+rm -f "$POSTFILE"
 
 # --- gate --------------------------------------------------------------------
 cd "$REPO" || exit 1

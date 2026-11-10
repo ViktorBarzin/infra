@@ -32,6 +32,7 @@ flowchart TD
   A --> V[scripts/verify/run per stack]
   V -->|pass| OK[marker moves on]
   V -->|fail| F[revert + ignore entry<br/>apply reverted tree<br/>Slack names the snapshot]
+  F --> I[broken issue on viktor/infra<br/>fixer agent fixes the cause<br/>and removes the ignore entry]
   T[Trivy Operator] -.->|CVE alerts, weekly digest| HUM[people]
   T -.->|fixable CVE counts order the queue| R
 ```
