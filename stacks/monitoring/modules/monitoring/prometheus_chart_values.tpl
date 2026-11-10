@@ -7242,10 +7242,12 @@ serverFiles:
             # it. renovate_cve_fix_available_since_seconds is pushed after each
             # successful infra Renovate run (stacks/renovate/files/
             # cve-fix-pending.js): the release date, or for registries without
-            # one (GHCR, Quay) the first run that saw the update. Usual causes:
-            # an ignore entry the rails left after a revert, the update waiting
-            # behind a long queue, or a Renovate schedule. A HELD (disabled)
-            # package never shows up here, because Renovate does not look it up.
+            # one (GHCR, Quay) the first run that saw the update. Patch, minor
+            # and digest updates only: nearly every HELD rule holds majors, and
+            # Renovate's report does not say which updates a rule holds. Usual
+            # causes: an ignore entry the rails left after a revert, the update
+            # waiting behind a long queue, a Renovate schedule, or a non-major
+            # HELD rule (Woodpecker).
             # Whether the new version clears the CVEs is known only after Trivy
             # scans it.
             expr: |
