@@ -137,7 +137,10 @@ resource "kubernetes_deployment" "goflow2" {
           name  = "goflow2"
           image = "netsampler/goflow2:v2.2.7"
           args = [
-            "-listen", "netflow://:2055",
+            # One decode worker: goflow2 writes each record and its newline as
+            # two writes, so two workers interleaved them and ~0.4% of lines
+            # held two records (2026-11-10). ~100 flows/s needs one worker.
+            "-listen", "netflow://:2055?workers=1",
             "-format", "json",
             "-mapping", "/etc/goflow2/mapping.yaml",
             "-transport", "file",

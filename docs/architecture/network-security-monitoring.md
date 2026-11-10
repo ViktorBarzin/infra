@@ -76,6 +76,11 @@ rather than blocks when its buffer is full. Its pod logs stay out of Loki
 (`alloy.yaml`), because a dead sidecar would make goflow2 log one error per
 flow.
 
+**One decode worker.** goflow2's file transport writes each record and its
+newline as two writes. With its default two workers they interleaved and
+about 0.4% of lines held two records, which the netsec Vector rejected. It
+runs with `-listen netflow://:2055?workers=1`.
+
 **Byte counts.** OPNsense's ng_netflow exports IN_BYTES/IN_PKTS and also
 OUT_BYTES/OUT_PKTS set to 0. goflow2 v2.2.7 decodes both pairs into
 `bytes`/`packets`, the zeros come last, and every record read 0 bytes. A
