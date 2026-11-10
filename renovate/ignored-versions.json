@@ -3,17 +3,6 @@
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
   "packageRules": [
     {
-      "description": "rails revert 2026-11-01 pipeline #3159: stack dbaas failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: mysql-backup Job) (commit 5f4efb2f)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "dpage/pgadmin4"
-      ],
-      "matchNewValue": "9.19",
-      "enabled": false
-    },
-    {
       "description": "rails revert 2026-11-07 pipeline #3385: stack monitoring failed after this bump: its terragrunt apply failed (commit af7d26e3)",
       "matchDatasources": [
         "docker"
