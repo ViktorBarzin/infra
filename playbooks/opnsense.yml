@@ -30,12 +30,15 @@
     opn_production: "{{ opnsense_profile == 'production' }}"
     fw: "{{ (lookup('file', opn_dir + '/addresses.yml') | from_yaml).profiles[opnsense_profile] }}"
     # pfSense interface or group names -> OPNsense interface keys. pfSense's WireGuard
-    # group is OPNsense's 'wireguard' group. Tailscale has no assigned interface on the
-    # box yet; set opnsense_tailscale_interface once one is assigned and the two
-    # tailnet rules get rendered.
+    # group is OPNsense's 'wireguard' group. Tailscale is assigned in production only
+    # (misc.yml, scripts/opnsense-production-config.py); in staging the name matches
+    # no interface, so the two tailnet rules are not rendered.
     opn_ifmap:
       WireGuard: wireguard
-      Tailscale: "{{ opnsense_tailscale_interface | default('tailscale') }}"
+      Tailscale: >-
+        {{ ((lookup('file', opn_dir + '/misc.yml') | from_yaml).interfaces
+            | selectattr('device', 'equalto', 'tailscale0') | first).key
+           if opnsense_profile == 'production' else 'tailscale' }}
   module_defaults:
     opnsense_mvc:
       base_url: "{{ opn_api_url }}"
@@ -92,6 +95,20 @@
     - name: Safety checks after aliases
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [aliases]
+
+    - name: HE tunnel device
+      ansible.builtin.import_tasks: tasks/opnsense/he_tunnel.yml
+      tags: [he_tunnel]
+    - name: Safety checks after the HE tunnel
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [he_tunnel]
+
+    - name: WireGuard
+      ansible.builtin.import_tasks: tasks/opnsense/wireguard.yml
+      tags: [wireguard]
+    - name: Safety checks after WireGuard
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [wireguard]
 
     - name: Gateways
       ansible.builtin.import_tasks: tasks/opnsense/gateways.yml

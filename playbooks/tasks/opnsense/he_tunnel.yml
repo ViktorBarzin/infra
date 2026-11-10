@@ -1,0 +1,23 @@
+# HE 6in4 tunnel device (misc.yml he_tunnel), production only. The opt3
+# interface that sits on gif0 is assigned in config.xml by
+# scripts/opnsense-production-config.py; this is the device itself.
+- name: Read the HE tunnel
+  ansible.builtin.set_fact:
+    opn_he: "{{ (lookup('file', opn_dir + '/misc.yml') | from_yaml).he_tunnel }}"
+
+- name: HE gif device
+  opnsense_mvc:
+    controller: interfaces/gif_settings
+    item: item
+    match_key: gifif
+    items: >-
+      {{ [] if opnsense_profile != opn_he.profile else [{
+           'gifif': opn_he.device,
+           'if': opn_he.parent_interface,
+           'remote-addr': opn_he.remote_address,
+           'tunnel-local-addr': opn_he.inner_local,
+           'tunnel-remote-addr': opn_he.inner_remote.split('/')[0],
+           'tunnel-remote-net': opn_he.inner_remote.split('/')[1],
+           'descr': opn_he.description}] }}
+    prune: true
+    reconfigure: interfaces/gif_settings/reconfigure

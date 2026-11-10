@@ -39,5 +39,6 @@ profiles:
   production:
     advertised_routes: as above
     advertise_exit_node: true
+    accept_dns: false
     tags:
     - tag:infra

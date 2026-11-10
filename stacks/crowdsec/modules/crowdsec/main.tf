@@ -708,7 +708,7 @@ resource "kubernetes_service" "crowdsec_lapi_edge" {
   }
   spec {
     type                        = "LoadBalancer"
-    load_balancer_source_ranges = ["10.0.20.1/32", "10.0.20.2/32"]
+    load_balancer_source_ranges = ["10.0.20.1/32"]
     selector = {
       "k8s-app" = "crowdsec"
       type      = "lapi"

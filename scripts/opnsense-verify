@@ -6,6 +6,12 @@ Reads the API key from Vault secret/opnsense and logs in over SSH as root with
 ~/.ssh/opnsense/id_ed25519. Read-only: it changes nothing on the box.
 
     scripts/opnsense-verify [--host 10.0.10.2] [--profile staging]
+    scripts/opnsense-verify --host 10.0.10.1 --profile production
+
+For a box this host cannot reach directly (the isolated cutover dry run),
+--api-base and --ssh-option point the API and SSH through a tunnel, and
+--isolated skips the checks that go to the box's own addresses from here or
+need the cluster (they would reach pfSense, which holds the same addresses).
 
 The expected objects are worked out with the same filters the playbook uses
 (playbooks/filter_plugins/opnsense.py), so counts compare like for like.
@@ -55,9 +61,12 @@ def vault(field: str) -> str:
                           check=True, capture_output=True, text=True).stdout.strip()
 
 
+SSH_OPTS: list[str] = []
+
+
 class Api:
-    def __init__(self, host: str):
-        self.base = "https://%s:8443/api/" % host
+    def __init__(self, host: str, base: str | None = None):
+        self.base = base or "https://%s:8443/api/" % host
         tok = base64.b64encode(("%s:%s" % (vault("api_key"), vault("api_secret"))).encode()).decode()
         self.headers = {"Authorization": "Basic " + tok, "Accept": "application/json"}
         self.ctx = ssl.create_default_context()
@@ -81,7 +90,8 @@ class Api:
 
 def ssh(host: str, cmd: str) -> subprocess.CompletedProcess:
     key = os.path.expanduser("~/.ssh/opnsense/id_ed25519")
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", key,
+    opts = [a for o in SSH_OPTS for a in ("-o", o)]
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", *opts, "-i", key,
                            "root@" + host, "/bin/sh", "-s"], input=cmd, capture_output=True, text=True)
 
 
@@ -105,12 +115,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="10.0.10.2")
     ap.add_argument("--profile", default="staging", choices=["staging", "production"])
+    ap.add_argument("--api-base", help="API base URL, e.g. https://127.0.0.1:18443/api/ through a tunnel")
+    ap.add_argument("--ssh-option", action="append", default=[], help="extra ssh -o option (repeatable)")
+    ap.add_argument("--isolated", action="store_true",
+                    help="box has no uplink: skip direct-address, cluster and Headscale checks")
     args = ap.parse_args()
     host, profile = args.host, args.profile
+    SSH_OPTS.extend(args.ssh_option)
+    prod = profile == "production"
     fw = load("addresses.yml")["profiles"][profile]
 
     try:
-        api = Api(host)
+        api = Api(host, args.api_base)
         info = api.get("core/firmware/info")
         check(True, "API reachable on %s:8443" % host)
     except Exception as e:  # noqa: BLE001
@@ -122,12 +138,13 @@ def main() -> int:
     netopts = api.get("firewall/filter/list_network_select_options")["networks"]["items"]
     groups = [g["ifname"] for g in api.get("firewall/group/search_item").get("rows", [])]
     present_ifs = [k for k in netopts if not k.endswith("ip") and k not in ("any", "(self)", "lo0")] + groups
-    ifmap = {"WireGuard": "wireguard", "Tailscale": "tailscale"}
+    ts_key = next(i["key"] for i in load("misc.yml")["interfaces"] if i["device"] == "tailscale0")
+    ifmap = {"WireGuard": "wireguard", "Tailscale": ts_key if prod else "tailscale"}
 
     # objects declared in the YAML for this profile
     aliases = opn.opn_aliases(opn.opn_active(load("aliases.yml")["aliases"], profile))
     compare("aliases", [a["name"] for a in aliases], [r["name"] for r in api.rows("firewall/alias/search_item")
-                                                      if r.get("type") in ("host", "network", "port", "networkgroup")])
+                                                      if r.get("type") in ("host", "network", "port", "networkgroup", "external")])
     gws = opn.opn_gateways(opn.opn_active(load("gateways.yml")["gateways"], profile), ifmap)
     compare("gateways", [g["name"] for g in gws], [r["name"] for r in api.get("routing/settings/search_gateway")["rows"]])
     routes = opn.opn_routes(opn.opn_active(load("routes.yml")["routes"], profile))
@@ -174,7 +191,7 @@ def main() -> int:
 
     # services and safety on the box
     out = ssh(host, """
-        for s in unbound ntpd suricata haproxy node_exporter; do
+        for s in unbound ntpd suricata haproxy node_exporter %s; do
           if pgrep -x $s >/dev/null || pgrep -f "/usr/local/bin/$s" >/dev/null; then echo "svc $s up"; else echo "svc $s down"; fi
         done
         echo "pgrep:$(pgrep -l 'dnsmasq|kea|radvd' | tr '\\n' ' ')"
@@ -184,19 +201,34 @@ def main() -> int:
         echo "suricata:$(grep -c 'rule reload complete' /var/log/suricata/latest.log /var/log/suricata/suricata_*.log 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
         echo "eve:$(grep -c 'eve-log' /usr/local/etc/suricata/suricata.yaml) syslog:$(grep -A3 'eve-log' /usr/local/etc/suricata/suricata.yaml | grep -c syslog)"
         echo "syslogdest:$(grep -h -o '"10\\.0\\.20\\.208"' /usr/local/etc/syslog-ng.conf.d/*.conf | head -1)"
+        echo "wg:$(wg show wg0 listen-port 2>/dev/null) $(wg show wg0 public-key 2>/dev/null) $(wg show wg0 peers 2>/dev/null | wc -l | tr -d ' ')"
+        echo "gif:$(ifconfig gif0 2>/dev/null | awk '/tunnel inet/ {print $3, $5} /inet6/ && $2 !~ /^fe80/ {print $2}' | tr '\\n' ' ')"
         echo "ssh:ok"
-    """)
+    """ % ("kea-dhcp4 radvd" if prod else ""))
     lines = dict(line.split(":", 1) for line in out.stdout.splitlines() if ":" in line and not line.startswith("svc"))
     check(lines.get("ssh") == "ok", "SSH as root reachable", out.stderr.strip()[:80])
     for line in out.stdout.splitlines():
         if line.startswith("svc "):
             _, name, state = line.split()
             check(state == "up", "%s running" % name)
-    check(lines.get("pgrep", "").strip() == "", "kea, radvd and dnsmasq not running", lines.get("pgrep", "").strip())
-    bad_if = [i for i in lines.get("ifs", "").split() if re.match(r"^(gif|wg)\d+", i)]
-    check(not bad_if, "no gif or wg device", " ".join(bad_if))
     v6 = lines.get("inet6", "").split()
-    check(profile == "production" or not v6, "no global IPv6 address on the LAN NICs", " ".join(v6))
+    if prod:
+        check("dnsmasq" not in lines.get("pgrep", ""), "dnsmasq not running", lines.get("pgrep", "").strip())
+        want_v6 = sorted(fw[k].split("/")[0] for k in ("wan_v6", "lan_v6", "opt1_v6"))
+        check(sorted(a for a in v6 if a in want_v6) == want_v6, "static IPv6 addresses on WAN, VLAN 10, VLAN 20", " ".join(v6))
+        tun = load("wireguard.yml")["tunnels"][0]
+        wg = lines.get("wg", "").split()
+        check(wg[:2] == [str(tun["listen_port"]), tun["public_key"]] and wg[2:] == [str(len(load("wireguard.yml")["peers"]))],
+              "WireGuard wg0 on %s with pfSense's key and %d peers" % (tun["listen_port"], len(load("wireguard.yml")["peers"])),
+              lines.get("wg", "").strip())
+        he = load("misc.yml")["he_tunnel"]
+        check(he["remote_address"] in lines.get("gif", "") and he["inner_local"] in lines.get("gif", ""),
+              "HE gif0 to %s with %s" % (he["remote_address"], he["inner_local"]), lines.get("gif", "").strip())
+    else:
+        check(lines.get("pgrep", "").strip() == "", "kea, radvd and dnsmasq not running", lines.get("pgrep", "").strip())
+        bad_if = [i for i in lines.get("ifs", "").split() if re.match(r"^(gif|wg)\d+", i)]
+        check(not bad_if, "no gif or wg device", " ".join(bad_if))
+        check(not v6, "no global IPv6 address on the LAN NICs", " ".join(v6))
     check("lighttpd" in lines.get("gui", ""), "GUI listening on 8443", lines.get("gui", "").strip())
 
     installed = api.get("ids/settings/search_installed_rules", {"current": 1, "rowCount": 1}).get("total", 0)
@@ -207,12 +239,15 @@ def main() -> int:
     check(ids_mode == ["pcap"], "Suricata in IDS mode (pcap, no drops)", ",".join(ids_mode))
     check(lines.get("syslogdest") == '"10.0.20.208"', "syslog destination 10.0.20.208 configured")
 
-    try:
-        with urllib.request.urlopen("http://%s:9100/metrics" % fw["opt1"], timeout=10) as r:
-            body = r.read().decode()
-        check("node_" in body, "node_exporter answers on %s:9100 from this host" % fw["opt1"])
-    except Exception as e:  # noqa: BLE001
-        check(False, "node_exporter answers on %s:9100 from this host" % fw["opt1"], str(e))
+    if args.isolated:
+        print("SKIP  node_exporter from this host (isolated)")
+    else:
+        try:
+            with urllib.request.urlopen("http://%s:9100/metrics" % fw["opt1"], timeout=10) as r:
+                body = r.read().decode()
+            check("node_" in body, "node_exporter answers on %s:9100 from this host" % fw["opt1"])
+        except Exception as e:  # noqa: BLE001
+            check(False, "node_exporter answers on %s:9100 from this host" % fw["opt1"], str(e))
 
     # CrowdSec: bouncer of the cluster LAPI only (plan review change), with
     # decisions loaded into pf tables.
@@ -222,7 +257,10 @@ def main() -> int:
     check(len(procs) == 1 and "crowdsec-firewall-bouncer" in procs[0], "CrowdSec: only the bouncer runs (no local agent or LAPI)")
     check("api_url: http://10.0.20.210:8080/" in cs, "CrowdSec bouncer uses the cluster LAPI (10.0.20.210)")
     n = int((cs.strip().splitlines() or ["0"])[-1].strip() or 0)
-    check(n > 1000, "CrowdSec decisions loaded into pf", "%d IPv4 entries" % n)
+    if args.isolated:
+        print("SKIP  CrowdSec decisions loaded (isolated, no LAPI)")
+    else:
+        check(n > 1000, "CrowdSec decisions loaded into pf", "%d IPv4 entries" % n)
 
     # Tailscale: joined, no routes, no exit node, accept-DNS off (plan decision 12).
     ts = ssh(host, "tailscale status --self --peers=false 2>&1 | head -1; tailscale debug prefs 2>/dev/null").stdout
@@ -230,21 +268,32 @@ def main() -> int:
         prefs = json.loads(ts[ts.index("{"):])
     except ValueError:
         prefs = {}
-    check(bool(prefs) and "Logged out" not in ts, "Tailscale logged in to Headscale")
-    if profile == "staging":
+    if args.isolated:
+        print("SKIP  Tailscale logged in (isolated, no Headscale)")
+    else:
+        check(bool(prefs) and "Logged out" not in ts, "Tailscale logged in to Headscale")
+    if prod:
+        want = sorted([r["route"] for r in load("tailscale.yml")["advertised_routes"]] + ["0.0.0.0/0", "::/0"])
+        check(sorted(prefs.get("AdvertiseRoutes") or []) == want, "Tailscale advertises pfSense's routes and the exit node",
+              "%d of %d" % (len(prefs.get("AdvertiseRoutes") or []), len(want)))
+    else:
         check(not prefs.get("AdvertiseRoutes") and not prefs.get("ExitNodeID") and not prefs.get("AdvertiseTags"),
               "Tailscale staging node advertises no routes, no exit node, no tags")
         check(prefs.get("CorpDNS") is False, "Tailscale does not take tailnet DNS")
 
     # Root SSH keys: the Proxmox host's backup login works.
-    pve = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "root@192.168.1.127",
-                          "ssh -o BatchMode=yes -o ConnectTimeout=6 root@%s true" % fw["opt1"]],
-                         capture_output=True, text=True)
-    check(pve.returncode == 0, "Proxmox host can log in for the daily config backup")
+    if args.isolated:
+        print("SKIP  Proxmox host login for the daily config backup (isolated)")
+    else:
+        pve = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "root@192.168.1.127",
+                              "ssh -o BatchMode=yes -o ConnectTimeout=6 root@%s true" % fw["opt1"]],
+                             capture_output=True, text=True)
+        check(pve.returncode == 0, "Proxmox host can log in for the daily config backup")
 
-    print("\nNot testable in staging (checked at cutover):")
-    for item in NOT_TESTABLE:
-        print("  - " + item)
+    if not prod:
+        print("\nNot testable in staging (checked at cutover):")
+        for item in NOT_TESTABLE:
+            print("  - " + item)
     failed = [w for ok, w in results if not ok]
     print("\n%d checks, %d failed" % (len(results), len(failed)))
     return 1 if failed else 0

@@ -41,14 +41,16 @@ locals {
   nano_bz2_sha256 = "28d5e2f37e40d87468a924e3006ef10e2ddc6de485b85333d9e3958c84d0cb9d"
   nano_volid      = "local:import/opnsense-${local.opnsense_version}-nano-amd64.raw"
 
-  # Plan decision 6 (staging) and the review change "NICs disconnected until
-  # the bootstrap import is verified". Flip one at a time, VLAN 20 first and
-  # the home LAN (wan) last: docs/runbooks/opnsense.md.
+  # NICs in pfSense's order with pfSense's MACs, which the 2026-11-10 cutover
+  # (scripts/opnsense-cutover) moved here so the TP-Link forwards and every
+  # neighbour cache kept working. A rebuild starts with disconnected = true and
+  # flips one at a time, VLAN 20 first and the home LAN (wan) last:
+  # docs/runbooks/opnsense.md.
   nics = [
-    { name = "wan", bridge = "vmbr0", vlan = null, disconnected = false },
-    { name = "lan", bridge = "vmbr1", vlan = 10, disconnected = false },
-    { name = "opt1", bridge = "vmbr1", vlan = 20, disconnected = false },
-    { name = "opt4", bridge = "vmbr0", vlan = 30, disconnected = false },
+    { name = "wan", bridge = "vmbr0", vlan = null, mac = "BC:24:11:D7:3F:BA", disconnected = false },
+    { name = "lan", bridge = "vmbr1", vlan = 10, mac = "BC:24:11:48:40:B9", disconnected = false },
+    { name = "opt1", bridge = "vmbr1", vlan = 20, mac = "BC:24:11:A9:F9:04", disconnected = false },
+    { name = "opt4", bridge = "vmbr0", vlan = 30, mac = "BC:24:11:86:D0:A7", disconnected = false },
   ]
 }
 
@@ -121,6 +123,7 @@ resource "proxmox_virtual_environment_vm" "opnsense" {
     content {
       bridge       = network_device.value.bridge
       vlan_id      = network_device.value.vlan
+      mac_address  = network_device.value.mac
       model        = "virtio"
       firewall     = true
       disconnected = network_device.value.disconnected

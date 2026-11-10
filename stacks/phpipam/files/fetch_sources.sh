@@ -1,14 +1,15 @@
 #!/bin/sh
 # Fetch the raw address data phpipam_import.py reads, one file per Source in
-# $1 (default /tmp/sources). Everything goes through pfSense, which is the only
-# host that can reach every site router; pfSense's own key is authorised on
-# them. A fetch that fails leaves its file without the ---SECTION--- markers,
+# $1 (default /tmp/sources). Everything goes through the edge firewall
+# (OPNsense since the 2026-11-10 cutover), the only host that can reach every
+# site router; its client key (pfSense's, carried over) is authorised on them.
+# A fetch that fails leaves its file without the ---SECTION--- markers,
 # and the importer then treats that Source as failed and leaves its rows alone.
 #
-# Usage: fetch_sources.sh [dir]   (PFSENSE=admin@10.0.20.1 by default)
+# Usage: fetch_sources.sh [dir]   (PFSENSE=root@10.0.20.1 by default)
 set -u
 dir=${1:-/tmp/sources}
-pf=${PFSENSE:-admin@10.0.20.1}
+pf=${PFSENSE:-root@10.0.20.1}
 mkdir -p "$dir"
 
 # The OpenWrt site routers, by their LAN address.
@@ -20,10 +21,10 @@ for pair in london=192.168.8.1 valchedrym=192.168.0.1 mladost3=192.168.3.1; do
 		>"$dir/$site.txt" 2>"$dir/$site.err" || echo "fetch $site failed: $(tail -1 "$dir/$site.err")"
 done
 
-# pfSense itself. The home LAN's DHCP server is the TP-Link router, which has
-# no readable API, so ping every address first: each probe makes pfSense ARP
+# The firewall itself. The home LAN's DHCP server is the TP-Link router, which has
+# no readable API, so ping every address first: each probe makes the firewall ARP
 # for it, and the ARP table then lists every device that is up. 64 at a time,
-# one second each, about 4 s in all. pfSense's admin shell is not sh, hence
+# one second each, about 4 s in all. OPNsense's root shell is csh, hence
 # the script on stdin.
 ssh -o ConnectTimeout=10 -o BatchMode=yes "$pf" sh -s >"$dir/sofia.txt" 2>"$dir/sofia.err" <<'EOF' || echo "fetch sofia failed: $(tail -1 "$dir/sofia.err")"
 i=1
@@ -34,12 +35,12 @@ while [ $i -le 254 ]; do
 done
 wait
 printf "\n---KEA_LEASES---\n"
-cat /var/lib/kea/dhcp4.leases.2 /var/lib/kea/dhcp4.leases 2>/dev/null
+cat /var/db/kea/kea-leases4.csv.2 /var/db/kea/kea-leases4.csv 2>/dev/null
 printf "\n---KEA_CONF---\n"
 cat /usr/local/etc/kea/kea-dhcp4.conf
 printf "\n---ARP---\n"
 arp -an
 printf "\n---WG---\n"
-wg show tun_wg0 allowed-ips
+wg show wg0 allowed-ips
 EOF
 exit 0

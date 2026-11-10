@@ -3,6 +3,26 @@
 # Firewall aliases, in pfSense order.
 
 aliases:
+# Not from pfSense: the pf tables os-crowdsec's bouncer fills (tasks/opnsense/crowdsec.yml).
+- name: crowdsec_blocklists
+  type: external
+  content: []
+  description: CrowdSec bans (IPv4), filled by the bouncer
+- name: crowdsec6_blocklists
+  type: external
+  content: []
+  description: CrowdSec bans (IPv6), filled by the bouncer
+# Not from pfSense: pfSense's automatic outbound NAT covered these static-route
+# networks; OPNsense's covers interface subnets only (nat_outbound.yml).
+- name: wg_site_lans
+  type: network
+  content:
+  - 192.168.0.0/24
+  - 192.168.3.0/24
+  - 192.168.8.0/24
+  - 192.168.9.0/24
+  - 192.168.10.0/24
+  description: WireGuard site LANs (valchedrym, mladost3, london)
 - name: nginx
   type: host
   content:

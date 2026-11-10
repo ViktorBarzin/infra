@@ -114,6 +114,17 @@ interfaces:
   mss: null
   block_private: false
   block_bogons: false
+# Not on pfSense, whose Tailscale package put tailscale0 in a dynamic interface
+# group. os-tailscale only registers the device, so production assigns it to
+# carry the two tailnet rules (filter.yml, interface Tailscale).
+- key: opt5
+  device: tailscale0
+  description: Tailscale
+  mtu: null
+  mss: null
+  block_private: false
+  block_bogons: false
+  profile: production
 interface_groups:
 - name: WireGuard
   members: []

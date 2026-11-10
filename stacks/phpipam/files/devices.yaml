@@ -26,12 +26,12 @@
   vendor: Dell
   model: iDRAC (PowerEdge R730)
   addresses: [192.168.1.4]
-- name: pfsense
+- name: opnsense
   type: Firewall
   location: Sofia
-  os: pfSense
-  description: Sofia gateway, DHCP (Kea) for VLANs 10/20/30, WireGuard hub; Proxmox VM 101
-  addresses: [192.168.1.2, 10.0.10.1, 10.0.20.1, 10.0.30.1, 10.3.2.1, 100.64.0.9]
+  os: OPNsense
+  description: Sofia gateway, DHCP (Kea) for VLANs 10/20/30, WireGuard hub; Proxmox VM 100 (pfSense VM 101 until the 2026-11-10 cutover)
+  addresses: [192.168.1.2, 10.0.10.1, 10.0.20.1, 10.0.30.1, 10.3.2.1, 100.64.0.17]
 - name: main-router
   type: Wireless
   location: Sofia

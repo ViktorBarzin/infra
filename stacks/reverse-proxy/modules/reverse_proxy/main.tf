@@ -2,7 +2,6 @@
 # outside of K8S but would be nice to use the Nginx-ingress
 
 variable "tls_secret_name" {}
-variable "pfsense_homepage_token" {}
 variable "haos_homepage_token" {
   type      = string
   default   = ""
@@ -33,7 +32,8 @@ module "tls_secret" {
 }
 
 # https://opnsense.viktorbarzin.me/ — the OPNsense edge firewall (ADR-0038),
-# on its staging address until cutover (then 10.0.20.1). Public behind
+# on the address it took over from pfSense at the 2026-11-10 cutover (which
+# also retired pfsense.viktorbarzin.me). Public behind
 # Authentik (protected), Viktor's choice in the migration plan; OPNsense's own
 # login sits behind it. The GUI listens on 8443, as pfSense's does, because
 # the internal SNI frontend takes 443. The box allows this host name
@@ -42,40 +42,17 @@ module "opnsense" {
   source           = "./factory"
   dns_type         = "proxied"
   name             = "opnsense"
-  backend_ip       = "10.0.20.2"
+  backend_ip       = "10.0.20.1"
   port             = 8443
   backend_protocol = "HTTPS"
   tls_secret_name  = var.tls_secret_name
   protected        = true
-  depends_on       = [kubernetes_namespace.reverse-proxy]
-}
-
-# https://pfsense.viktorbarzin.me/
-module "pfsense" {
-  source          = "./factory"
-  dns_type        = "proxied"
-  name            = "pfsense"
-  external_name   = "pfsense.viktorbarzin.lan"
-  tls_secret_name = var.tls_secret_name
-  # webGUI moved to :8443 on 2026-06-10 — :443 on pfSense is now the
-  # SNI-routed HAProxy frontend (hostname->Traefik, no-SNI->GUI). Direct
-  # backend port avoids a Traefik->HAProxy->GUI double hop.
-  port             = 8443
-  backend_protocol = "HTTPS"
-
   extra_annotations = {
     "gethomepage.dev/enabled" : "true"
     "gethomepage.dev/description" : "Cluster Firewall"
     "gethomepage.dev/group" : "Identity & Security"
-    "gethomepage.dev/icon" : "pfsense.png"
-    "gethomepage.dev/name" : "pFsense"
-    "gethomepage.dev/widget.type" : "pfsense"
-    "gethomepage.dev/widget.version" : "2"
-    "gethomepage.dev/widget.url" : "https://10.0.20.1"
-    "gethomepage.dev/widget.username" : "admin"
-    "gethomepage.dev/widget.password" : var.pfsense_homepage_token
-    "gethomepage.dev/widget.fields" = "[\"load\", \"memory\", \"temp\", \"disk\"]"
-    "gethomepage.dev/widget.wan"    = "vtnet0"
+    "gethomepage.dev/icon" : "opnsense.png"
+    "gethomepage.dev/name" : "OPNsense"
   }
   depends_on = [kubernetes_namespace.reverse-proxy]
 }

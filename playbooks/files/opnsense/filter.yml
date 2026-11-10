@@ -12,6 +12,36 @@
 #   the rule is not rendered in staging (opt2 WireGuard, opt3 HE gif)
 
 rules:
+# Not from pfSense: CrowdSec bans, inbound only (tasks/opnsense/crowdsec.yml).
+- description: CrowdSec bans in from WAN (IPv4)
+  interface: wan
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    alias: crowdsec_blocklists
+  destination:
+    any: true
+  log: false
+  disabled: false
+- description: CrowdSec bans in from the HE tunnel (IPv6)
+  interface: opt3
+  floating: false
+  direction: in
+  action: block
+  quick: true
+  ipprotocol: inet6
+  protocol: any
+  source:
+    alias: crowdsec6_blocklists
+  destination:
+    any: true
+  log: false
+  disabled: false
+  profile: production
 - pfsense_tracker: '1775639929'
   description: Allow DNS (UDP) from LAN to pfSense
   interface: wan
@@ -102,7 +132,9 @@ rules:
   max_src_conn: 50
   max_src_conn_rate: 10
   max_src_conn_rates: 60
-  linked_nat_rule: nat_609ef0abc7c380.15307332
+  # Linked to the KMS forward on pfSense. OPNsense's registered rule for a
+  # forward carries no limits, so the forward registers none
+  # (nat_port_forwards.yml) and this rule is created as is.
 - pfsense_tracker: '1668879390'
   description: NAT shadowsocks
   interface: wan
@@ -398,7 +430,9 @@ rules:
   direction: in
   action: pass
   quick: true
-  ipprotocol: inet46
+  # inet46 on pfSense, but the IPv4 source only ever matched IPv4; OPNsense
+  # refuses an IPv4 source on an inet46 rule.
+  ipprotocol: inet
   protocol: any
   source:
     address: 100.64.0.0/10

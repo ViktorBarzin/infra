@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# Swap the edge firewall from pfSense (VM 101) to OPNsense (VM 100) on the
+# Proxmox host, with a dead-man revert. docs/runbooks/opnsense.md, Cutover.
+#
+# Runs on the Proxmox host as root, never from a VM behind the firewall: the
+# swap cuts every VM off for a few minutes. Swap and rollback run as transient
+# systemd units, so they finish even when the SSH session that started them
+# dies (and a session through the firewall does die during either).
+#
+#   opnsense-cutover prepare            snapshot VM 100 offline (pre-cutover), pin its host key
+#   opnsense-cutover swap [MINUTES]     arm the revert (default 10 min), then swap in the background
+#   opnsense-cutover extend MINUTES     re-arm the revert from now, while checks run
+#   opnsense-cutover confirm            disarm the revert; OPNsense stays, pfSense's NICs get link_down
+#   opnsense-cutover rollback           back to pfSense (background unit; works after confirm too)
+#   opnsense-cutover status | health
+#
+# State and the production config.xml live in $DIR (default /root/opnsense-cutover).
+# The swap needs $DIR/config.xml (from the dry run) and $DIR/config.xml.sha256.
+#
+# NEW, OLD, NEW_STAGING, NEW_PROD, KEY_FROM, OLD_ADDR and WRAP let the same code
+# run against throwaway VMs on an isolated bridge; the defaults are production.
+set -euo pipefail
+
+NEW=${NEW:-100}                    # OPNsense
+OLD=${OLD:-101}                    # pfSense
+NEW_STAGING=${NEW_STAGING:-10.0.20.2}
+NEW_PROD=${NEW_PROD:-10.0.20.1}
+OLD_ADDR=${OLD_ADDR:-192.168.1.2}  # answers once pfSense is back
+WRAP=${WRAP:-}                     # e.g. "ip netns exec opndry" in a test
+KEY_FROM=${KEY_FROM:-$NEW_STAGING} # known_hosts entry that holds OPNsense's host key
+DIR=${DIR:-/root/opnsense-cutover}
+SNAP=pre-cutover
+REVERT_UNIT=opnsense-cutover-revert
+SWAP_UNIT=opnsense-cutover-swap
+ROLLBACK_UNIT=opnsense-cutover-rollback
+SELF=$(readlink -f "$0")
+ENV_ARGS=(--setenv=NEW="$NEW" --setenv=OLD="$OLD" --setenv=DIR="$DIR" --setenv=WRAP="$WRAP"
+  --setenv=NEW_STAGING="$NEW_STAGING" --setenv=NEW_PROD="$NEW_PROD" --setenv=OLD_ADDR="$OLD_ADDR")
+
+mkdir -p "$DIR"
+chmod 700 "$DIR"
+LOG=$DIR/log
+
+log() { printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG" >&2; }
+state() { echo "$1" > "$DIR/state"; log "state: $1"; }
+cur_state() { cat "$DIR/state" 2>/dev/null || echo none; }
+die() { log "ERROR: $*"; exit 1; }
+
+nssh() { # nssh ADDR < script: root on OPNsense, host key pinned in prepare
+  $WRAP ssh -o BatchMode=yes -o ConnectTimeout=6 -o UserKnownHostsFile="$DIR/known_hosts" \
+    -o HostKeyAlias=opnsense -o StrictHostKeyChecking=yes "root@$1" /bin/sh -s
+}
+
+status_of() { qm status "$1" | awk '{print $2}'; }
+
+has_snapshot() { qm listsnapshot "$NEW" | awk '{print $2}' | grep -x "$SNAP" >/dev/null; }
+
+wait_status() { # wait_status VMID STATUS SECONDS
+  local end=$((SECONDS + $3))
+  while ((SECONDS < end)); do
+    [[ $(status_of "$1") == "$2" ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+wait_ssh() { # wait_ssh ADDR SECONDS
+  local end=$((SECONDS + $2))
+  while ((SECONDS < end)); do
+    echo true | nssh "$1" >/dev/null 2>&1 && return 0
+    sleep 5
+  done
+  return 1
+}
+
+macs_of() { # macs_of VMID -> "net0=MAC ..." for net0..net3
+  local n
+  for n in 0 1 2 3; do
+    printf 'net%s=%s ' "$n" "$(qm config "$1" | sed -n "s/^net$n: virtio=\([0-9A-Fa-f:]*\),.*/\1/p")"
+  done
+}
+
+edit_nets() { # edit_nets VMID SED_FOR_net0 ... SED_FOR_net3, in one qm set
+  local vm=$1 n=0 line expr args=()
+  shift
+  for expr in "$@"; do
+    line=$(qm config "$vm" | sed -n "s/^net$n: //p")
+    [[ -n $line ]] || { log "no net$n on VM $vm"; return 1; }
+    args+=("--net$n" "$(sed "$expr" <<<"$line")")
+    n=$((n + 1))
+  done
+  qm set "$vm" "${args[@]}" >/dev/null
+}
+
+set_macs() { # set_macs VMID "net0=MAC ..."
+  local pair exprs=()
+  for pair in $2; do
+    exprs+=("s/^virtio=[0-9A-Fa-f:]*/virtio=${pair#*=}/")
+  done
+  edit_nets "$1" "${exprs[@]}"
+}
+
+link_down() { # link_down VMID 1|0
+  local strip='s/,link_down=[01]//g' exprs=() n
+  for n in 0 1 2 3; do
+    if [[ $2 == 1 ]]; then exprs+=("$strip; s/\$/,link_down=1/"); else exprs+=("$strip"); fi
+  done
+  edit_nets "$1" "${exprs[@]}"
+}
+
+arm() { # arm MINUTES: (re)start the revert timer
+  systemctl stop "$REVERT_UNIT.timer" 2>/dev/null || true
+  systemctl reset-failed "$REVERT_UNIT.timer" "$REVERT_UNIT.service" 2>/dev/null || true
+  systemd-run --quiet --unit "$REVERT_UNIT" --on-active="${1}m" --timer-property=AccuracySec=1s \
+    "${ENV_ARGS[@]}" "$SELF" _rollback
+  log "revert armed: rollback at $(date -d "+$1 min" +%T) unless confirmed"
+}
+
+prepare() {
+  [[ $(status_of "$NEW") == running && $(status_of "$OLD") == running ]] || die "both VMs must be running"
+  # Pin OPNsense's host key from the staging address (the daily backup's known_hosts entry).
+  { ssh-keygen -F "$KEY_FROM" || true; } | { grep -v '^#' || true; } | sed "s/^[^ ]*/opnsense/" > "$DIR/known_hosts"
+  [[ -s $DIR/known_hosts ]] || die "no known_hosts entry for $KEY_FROM"
+  wait_ssh "$NEW_STAGING" 10 || die "cannot log in to $NEW_STAGING"
+  if has_snapshot; then
+    log "snapshot $SNAP already exists on $NEW"
+  else
+    log "shutting VM $NEW down for an offline snapshot (pfSense keeps serving)"
+    qm shutdown "$NEW" --timeout 120 || die "VM $NEW did not shut down"
+    qm snapshot "$NEW" "$SNAP" --description "staging state before the pfSense to OPNsense cutover"
+    qm start "$NEW"
+    wait_ssh "$NEW_STAGING" 300 || die "VM $NEW did not come back on $NEW_STAGING"
+  fi
+  macs_of "$NEW" > "$DIR/new.macs"
+  macs_of "$OLD" > "$DIR/old.macs"
+  log "VM $NEW MACs: $(cat "$DIR/new.macs")"
+  log "VM $OLD MACs: $(cat "$DIR/old.macs")"
+  state prepared
+}
+
+swap_failed() {
+  local rc=$?
+  trap - EXIT
+  [[ $rc == 0 ]] && return 0
+  case $(cur_state) in
+    rolling-back | rolled-back | rollback-failed) ;; # a rollback stopped this unit; it owns the rest
+    *) IN_SWAP=1 _rollback_now ;;
+  esac
+  exit "$rc"
+}
+
+swap() { # runs in $SWAP_UNIT
+  local f=$DIR/config.xml
+  trap swap_failed EXIT
+  log "swap starting"
+  # From the cp on, VM 100's disk holds the production config, so any failure rolls back.
+  state installing
+  echo "cp /conf/config.xml.production /conf/config.xml && sync && sha256 -q /conf/config.xml" \
+    | nssh "$NEW_STAGING" > "$DIR/installed.sha256" || die "install of config.xml on VM $NEW failed"
+  [[ $(cat "$DIR/installed.sha256") == "$(cut -d' ' -f1 "$f.sha256")" ]] || die "installed config.xml checksum differs"
+  log "production config.xml in place on VM $NEW; powering it off and shutting pfSense (VM $OLD) down"
+  state stopping
+  echo "nohup /bin/sh -c 'sleep 1; /sbin/poweroff' >/dev/null 2>&1 &" | nssh "$NEW_STAGING" || true
+  qm shutdown "$OLD" --timeout 90 || { log "clean shutdown of VM $OLD timed out, stopping it"; qm stop "$OLD"; }
+  qm set "$OLD" --onboot 0 >/dev/null
+  wait_status "$NEW" stopped 60 || { log "VM $NEW still up, stopping it"; qm stop "$NEW"; }
+  state both-stopped
+
+  set_macs "$NEW" "$(cat "$DIR/old.macs")"
+  log "VM $NEW now has VM $OLD's MACs: $(macs_of "$NEW")"
+  qm start "$NEW" || die "VM $NEW did not start"
+  state new-started
+
+  if wait_ssh "$NEW_PROD" 360; then
+    state new-answering
+    sleep 60 # services finish starting after SSH
+    health
+  else
+    log "VM $NEW does not answer on $NEW_PROD after 6 minutes; the revert timer decides"
+  fi
+  trap - EXIT
+}
+
+health() {
+  log "health checks from VM $NEW:"
+  nssh "$NEW_PROD" <<'EOF' 2>&1 | tee -a "$LOG" >&2 || true
+echo "v4 internet: $(ping -c 3 -t 6 1.1.1.1 >/dev/null 2>&1 && echo ok || echo FAIL)"
+echo "v6 via HE:   $(ping6 -c 3 -X 6 2606:4700:4700::1111 >/dev/null 2>&1 && echo ok || echo FAIL)"
+echo "dns:         $(drill -Q example.com @127.0.0.1 2>/dev/null | head -1)"
+echo "services:    $(for s in unbound kea-dhcp4 radvd haproxy; do pgrep -x $s >/dev/null && printf '%s ' $s || printf '%s(DOWN) ' $s; done)"
+echo "wireguard:   $(wg show wg0 latest-handshakes 2>/dev/null | awk '$2 > 0' | wc -l | tr -d ' ') of $(wg show wg0 peers 2>/dev/null | wc -l | tr -d ' ') peers with a handshake"
+echo "tailscale:   $(tailscale status --self --peers=false 2>&1 | head -1)"
+EOF
+}
+
+_rollback_now() {
+  # No set -e here: every step is checked, and pfSense comes back before
+  # anything that could fail on VM 100's side.
+  set +e
+  exec 9>"$DIR/rollback.lock"
+  flock -n 9 || { log "another rollback is running"; return 0; }
+  local prev end
+  prev=$(cur_state)
+  state rolling-back
+  log "ROLLBACK to pfSense (was: $prev)"
+  [[ -n ${IN_SWAP:-} ]] || systemctl stop "$SWAP_UNIT.service" 2>/dev/null
+
+  # 1. VM 100 off, by any means: it may hold pfSense's MACs and addresses.
+  if [[ $(status_of "$NEW") != stopped ]]; then
+    qm stop "$NEW" --timeout 30 || qm stop "$NEW" --skiplock 1 --timeout 30
+  fi
+  if [[ $(status_of "$NEW") != stopped ]]; then
+    log "VM $NEW still running after qm stop; killing its qemu process"
+    kill -9 "$(cat "/var/run/qemu-server/$NEW.pid" 2>/dev/null)" 2>/dev/null
+    wait_status "$NEW" stopped 20
+  fi
+  if [[ $(status_of "$NEW") != stopped ]]; then
+    state rollback-failed
+    log "VM $NEW cannot be stopped; NOT starting pfSense next to it. Use break-glass."
+    return 1
+  fi
+
+  # 2. pfSense back, first.
+  qm unlock "$OLD" 2>/dev/null
+  if qm config "$OLD" | grep 'link_down=1' >/dev/null; then
+    link_down "$OLD" 0 && log "VM $OLD NICs linked up again"
+  fi
+  qm set "$OLD" --onboot 1 >/dev/null
+  if [[ $(status_of "$OLD") != running ]]; then
+    qm start "$OLD" || { qm unlock "$OLD"; qm start "$OLD"; }
+  fi
+  wait_status "$OLD" running 30 || log "VM $OLD not running after start"
+
+  # 3. VM 100 back to its staging snapshot (own MACs, staging config).
+  qm unlock "$NEW" 2>/dev/null
+  if has_snapshot && qm rollback "$NEW" "$SNAP"; then
+    log "VM $NEW back at snapshot $SNAP (staging config, own MACs)"
+  else
+    log "NO SNAPSHOT RESTORE on VM $NEW: it may still hold the production config. Keeping it off the network."
+    qm set "$NEW" --onboot 0 >/dev/null
+    link_down "$NEW" 1
+  fi
+  [[ -s $DIR/new.macs ]] && set_macs "$NEW" "$(cat "$DIR/new.macs")"
+
+  end=$((SECONDS + 180))
+  while ((SECONDS < end)); do
+    ping -c 1 -W 2 "$OLD_ADDR" >/dev/null 2>&1 && break
+    sleep 5
+  done
+  log "pfSense answers on $OLD_ADDR: $(ping -c 1 -W 2 "$OLD_ADDR" >/dev/null 2>&1 && echo yes || echo NO)"
+  log "VM $NEW left stopped: qm start $NEW brings staging back (after a snapshot restore)"
+  systemctl stop "$REVERT_UNIT.timer" 2>/dev/null
+  state rolled-back
+  return 0
+}
+
+cmd=${1:-status}
+case $cmd in
+  prepare) prepare ;;
+  swap)
+    minutes=${2:-10}
+    [[ $(cur_state) == prepared ]] || die "run prepare first (state: $(cur_state))"
+    has_snapshot || die "no snapshot $SNAP on VM $NEW; run prepare"
+    [[ -s $DIR/config.xml && -s $DIR/config.xml.sha256 ]] || die "no $DIR/config.xml(.sha256)"
+    (cd "$DIR" && sha256sum -c --quiet config.xml.sha256) || die "config.xml checksum mismatch"
+    [[ $(status_of "$NEW") == running && $(status_of "$OLD") == running ]] || die "both VMs must be running"
+    [[ $(macs_of "$NEW") == "$(cat "$DIR/new.macs")" ]] || die "VM $NEW MACs changed since prepare"
+    $WRAP scp -q -o BatchMode=yes -o UserKnownHostsFile="$DIR/known_hosts" -o HostKeyAlias=opnsense \
+      "$DIR/config.xml" "root@$NEW_STAGING:/conf/config.xml.production" || die "copy of config.xml to VM $NEW failed"
+    systemctl reset-failed "$SWAP_UNIT.service" "$ROLLBACK_UNIT.service" 2>/dev/null || true
+    # Arm the revert first: from here on, doing nothing means going back to pfSense.
+    arm "$minutes"
+    state swapping
+    systemd-run --quiet --unit "$SWAP_UNIT" "${ENV_ARGS[@]}" "$SELF" _swap
+    log "swap running as $SWAP_UNIT; follow it in $LOG"
+    ;;
+  _swap) swap ;;
+  extend)
+    [[ $(cur_state) == new-answering ]] || die "extend only after the swap answers (state: $(cur_state))"
+    if systemctl is-active --quiet "$REVERT_UNIT.service"; then die "the revert is already running"; fi
+    arm "${2:?minutes}"
+    ;;
+  confirm)
+    [[ $(cur_state) == new-answering ]] || die "nothing to confirm (state: $(cur_state))"
+    systemctl stop "$REVERT_UNIT.timer" 2>/dev/null || true
+    if systemctl is-active --quiet "$REVERT_UNIT.timer" || systemctl is-active --quiet "$REVERT_UNIT.service" \
+      || [[ $(cur_state) != new-answering ]]; then
+      die "the revert fired or is running; not confirming (state: $(cur_state))"
+    fi
+    # pfSense still has the same MACs; keep it off the wire while it waits out its two weeks.
+    link_down "$OLD" 1
+    rm -f "$DIR/config.xml"
+    state confirmed
+    ;;
+  rollback)
+    systemctl reset-failed "$ROLLBACK_UNIT.service" 2>/dev/null || true
+    systemd-run --quiet --unit "$ROLLBACK_UNIT" "${ENV_ARGS[@]}" "$SELF" _rollback
+    log "rollback running as $ROLLBACK_UNIT; follow it in $LOG"
+    ;;
+  _rollback) _rollback_now ;;
+  health) health ;;
+  status)
+    echo "state: $(cur_state)"
+    echo "VM $NEW: $(status_of "$NEW"), $(macs_of "$NEW")"
+    echo "VM $OLD: $(status_of "$OLD"), $(macs_of "$OLD")"
+    systemctl list-timers --all --no-pager "$REVERT_UNIT.timer" 2>/dev/null | sed -n 2p
+    tail -n 15 "$LOG" 2>/dev/null
+    ;;
+  *) die "unknown command $cmd" ;;
+esac
