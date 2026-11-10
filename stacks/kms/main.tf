@@ -207,7 +207,7 @@ resource "kubernetes_deployment" "kms_diag" {
           }
         }
         container {
-          image   = "library/python:3.15.0-alpine"
+          image   = "library/python:3.15.2-alpine"
           name    = "diag-collector"
           command = ["python3", "/app/diag-collector.py"]
           resources {
@@ -421,7 +421,7 @@ resource "kubernetes_deployment" "windows_kms" {
           }
         }
         container {
-          image   = "library/python:3.15.0-alpine"
+          image   = "library/python:3.15.2-alpine"
           name    = "slack-notifier"
           command = ["python3", "-u", "/scripts/notifier.py"]
           env {
