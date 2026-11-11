@@ -158,6 +158,7 @@ func capabilities() []capability {
 				"move a secret", "share a password", "on my phone"},
 			Detail: []string{
 				"Creates the login; --update changes one that exists (a name clash errors).",
+				"--update with no --from-kv/--password-stdin keeps the stored password.",
 				"--username U --uri URL --note TEXT --field N=V --totp SEED  the other fields",
 				"--field-from-kv N=<path>#<key>  keeps the value out of argv, unlike --field",
 				"The value is never printed, and never reaches argv on the password path.",
