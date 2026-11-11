@@ -1785,6 +1785,12 @@
       loop:
         - acd-demux.service
         - ac-spa.service
+      # A freshly built box never had them (the first stacks/devvm drill,
+      # 2026-11-11, stopped here with "Could not find the requested service").
+      register: devvm_eval_retire
+      failed_when:
+        - devvm_eval_retire is failed
+        - "'Could not find the requested service' not in (devvm_eval_retire.msg | default(''))"
 
     # Orca's AppImage is re-downloadable and nothing on the box uses it. Its
     # units have been stopped since 2026-09-13, so the stop is a no-op here,
@@ -1820,6 +1826,11 @@
         name: ac-relay@wizard.socket
         enabled: false
         state: stopped
+      # Absent on a freshly built box (first stacks/devvm drill, 2026-11-11).
+      register: devvm_ac_relay_retire
+      failed_when:
+        - devvm_ac_relay_retire is failed
+        - "'Could not find the requested service' not in (devvm_ac_relay_retire.msg | default(''))"
 
     # multipathd ships enabled by default and this VM presents no multipath
     # devices: `multipath -ll` returns nothing. It holds 18.8 MiB for that.
@@ -3007,6 +3018,16 @@
     # existed by hand for ~viktorbarzin.me only and was in no playbook; this task
     # adopts it (byte-identical but for the added ~viktorbarzin.lan) so a
     # committed change now reaches the box.
+    # The cloud image has no drop-in directory yet (first stacks/devvm drill,
+    # 2026-11-11).
+    - name: Create the resolved drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Route internal zones to Technitium (never the public DHCP fallback)
       ansible.builtin.copy:
         dest: /etc/systemd/resolved.conf.d/viktorbarzin.conf
@@ -3092,6 +3113,14 @@
         group: root
         mode: "0644"
       notify: [reload systemd, restart promtail]
+
+    - name: Create the promtail config directory
+      ansible.builtin.file:
+        path: /etc/promtail
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
     - name: Deploy the promtail config
       ansible.builtin.copy:
@@ -4177,6 +4206,13 @@
         # a restart is a ~1s API gap. ttyd is deliberately NOT here: restarting
         # it drops every attached terminal.
         - agent-api
+      # On a freshly built box the terminal-lobby package, which ships these
+      # units, is installed after this playbook (scripts/devvm-bootstrap), so
+      # there is nothing to restart yet (first stacks/devvm drill, 2026-11-11).
+      register: devvm_lobby_restart
+      failed_when:
+        - devvm_lobby_restart is failed
+        - "'Could not find the requested service' not in (devvm_lobby_restart.msg | default(''))"
 
     - name: reload nftables
       ansible.builtin.systemd_service:

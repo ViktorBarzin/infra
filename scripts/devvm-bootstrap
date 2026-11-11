@@ -12,7 +12,8 @@
 #   3. clone infra (public on Forgejo) at that ref;
 #   4. run playbooks/devvm.yml against this box with a local connection, the
 #      token in VAULT_TOKEN for the tasks that read Vault on the controller;
-#   5. run the roster provisioner (t3-provision-users) once from the clone;
+#   5. install terminal-lobby from its (public) apt registry, then run the
+#      roster provisioner (t3-provision-users) once from the clone;
 #   6. revoke the token.
 # Progress goes to stdout (cloud-init captures it in /var/log/cloud-init-output.log)
 # and the result to $STATE/status: "ok" or "failed: <step>".
@@ -121,6 +122,15 @@ status "running playbook"
 log "running playbooks/devvm.yml"
 (cd "$CLONE" && ansible-playbook -i localhost, -c local -e devvm_target=localhost \
   -e ansible_python_interpreter=/usr/bin/python3 playbooks/devvm.yml)
+
+# ---- 4b. terminal-lobby ---------------------------------------------------
+# The playbook declares the apt source; on the live box the lobby's deploy
+# pipeline installs the packages (tl-reconcile). The registry is public, so a
+# new box installs them here, as tl-reconcile would.
+step="installing terminal-lobby"
+status "installing terminal-lobby"
+DEBIAN_FRONTEND=noninteractive apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq terminal-lobby ttyd-devvm
 
 # ---- 5. roster provisioning -----------------------------------------------
 step="roster provisioning (t3-provision-users)"

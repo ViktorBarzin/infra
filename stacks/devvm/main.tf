@@ -50,9 +50,11 @@ locals {
   # RAM headroom; check `free -g` on the host first (runbook). Everything not
   # set here is the live devvm's shape (module defaults).
   drills = {
-    # First drill, 2026-11-11: proves the definition end to end. Removed again
-    # once checked (docs/runbooks/devvm-drill.md, "Tear it down").
-    "devvm-drill" = { vm_id = 9102, ipv4_cidr = "10.0.10.11/24", cores = 4, memory_mb = 8192, disk_gb = 80 }
+    # First drill, 2026-11-11. devvm-drill (9102) found five fresh-box bugs in
+    # playbooks/devvm.yml; this second VM rebuilds from the fixed master to
+    # prove cloud-init carries the whole build. Removed again once checked
+    # (docs/runbooks/devvm-drill.md, "Tear it down").
+    "devvm-drill2" = { vm_id = 9103, ipv4_cidr = "10.0.10.12/24", cores = 4, memory_mb = 8192, disk_gb = 80 }
   }
 }
 
