@@ -757,6 +757,12 @@ resource "kubernetes_deployment" "openclaw" {
         # marker-managed reinforce the same rule from different angles:
         # identity (SOUL), how (TOOLS), memory-search (memory note),
         # entry-point (skill).
+        #
+        # STALE since 2026-11-11: the notes below tell the agent to run
+        # `ssh devvm openclaw-task ...`, and playbooks/devvm.yml removed
+        # /usr/local/bin/openclaw-task from the devvm while OpenClaw ran no
+        # pods. Before scaling OpenClaw back up, install files/openclaw-task.sh
+        # on the devvm through that playbook, or drop these lines.
         init_container {
           name  = "seed-devvm-memory-note"
           image = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
