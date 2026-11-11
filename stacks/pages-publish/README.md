@@ -78,6 +78,11 @@ homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
 - `POST /preview` (Bearer): same body → `{"filename", "html", "assets"}`.
   Renders one page and hands back the bytes plus the `/assets/*` files that page
   links, keyed by the path it links them at. Nothing is committed or pushed.
+- Both take one page of at most 8 MiB of markdown (`MAX_PAGE_BYTES`, UTF-8
+  bytes). A bigger page gets a `413` whose `detail` names the limit and the
+  size sent: a middleware refuses a `Content-Length` over 16 MiB before the body
+  is read, and the route checks the parsed `content` exactly. On 2026-11-05 a
+  ~4.5 MB page OOM-killed the pod for everyone (viktor/infra#165).
 - `POST /publish-bundle` (Bearer, bundle token): body
   `{"files": [{"path", "content", "encoding"?}]}` →
   `{"url": "<base>/<slug>/", "path": "<user>/<slug>", "committed", "files"}`.
@@ -153,7 +158,7 @@ markdown doc, so it does not cover this case.
 
 ```bash
 pip install -r requirements.txt   # + pytest httpx for tests
-python3 -m pytest                  # 176 tests; git + render subprocess are stubbed
+python3 -m pytest                  # 185 tests; git + render subprocess are stubbed
 ```
 
 Build: `docker build -t pages-publish .` (context = this dir). Runs uvicorn on
