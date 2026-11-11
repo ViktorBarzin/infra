@@ -9,7 +9,8 @@
 #      infra ref to build from;
 #   2. unwrap the token. It is single use, so a failed unwrap means somebody
 #      else used it first: stop and say so;
-#   3. clone infra (public on Forgejo) at that ref;
+#   3. clone infra (public on Forgejo) at that ref, and install the vault CLI
+#      at the version its playbook pins;
 #   4. run playbooks/devvm.yml against this box with a local connection, the
 #      token in VAULT_TOKEN for the tasks that read Vault on the controller;
 #   5. install terminal-lobby from its (public) apt registry, copy the users'
@@ -27,6 +28,8 @@
 #   DEVVM_BOOTSTRAP_WAIT / _POLL  seconds to wait for the handoff, poll interval
 #   DEVVM_BOOTSTRAP_T3_DIR / _T3_HOLD / _T3_SOURCE  T3 snapshot directory, hold
 #                            file, and the host they are copied from
+#   DEVVM_BOOTSTRAP_HASHICORP_KEYRING / _LIST  where the HashiCorp apt key and
+#                            source go (/usr/share/keyrings, /etc/apt/sources.list.d)
 set -euo pipefail
 
 HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap/handoff.json}"
@@ -44,6 +47,8 @@ export HOME="${HOME:-/root}"
 T3_DIR="${DEVVM_BOOTSTRAP_T3_DIR:-/var/backups/t3-state}"
 T3_HOLD="${DEVVM_BOOTSTRAP_T3_HOLD:-/var/lib/t3-restore/awaiting-snapshots}"
 T3_SOURCE="${DEVVM_BOOTSTRAP_T3_SOURCE:-root@192.168.1.127}"
+HC_KEYRING="${DEVVM_BOOTSTRAP_HASHICORP_KEYRING:-/usr/share/keyrings/hashicorp-archive-keyring.asc}"
+HC_LIST="${DEVVM_BOOTSTRAP_HASHICORP_LIST:-/etc/apt/sources.list.d/hashicorp.list}"
 
 log() { echo "[devvm-bootstrap] $*"; }
 mkdir -p "$STATE"
@@ -106,25 +111,36 @@ export VAULT_TOKEN="$token"
 unset token reply
 log "Vault token unwrapped"
 
-# ---- 3. vault CLI and the infra clone -------------------------------------
-# The playbook's Vault reads call the vault CLI. The live devvm has it from the
-# HashiCorp apt repo the playbook declares, but the playbook does not install
-# it, so a blank box gets it here, from the same source.
-step="installing the vault CLI"
-if ! command -v vault >/dev/null 2>&1; then
-  status "installing vault"
-  curl -fsSL https://apt.releases.hashicorp.com/gpg -o /usr/share/keyrings/hashicorp-archive-keyring.asc
-  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc] https://apt.releases.hashicorp.com jammy main" \
-    >/etc/apt/sources.list.d/hashicorp.list
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq vault >/dev/null
-fi
-
+# ---- 3. the infra clone and the vault CLI ---------------------------------
 step="cloning infra at $ref"
 status "cloning infra"
 rm -rf "$CLONE"
 mkdir -p "$(dirname "$CLONE")"
 git clone --depth 1 --branch "$ref" "$INFRA_REMOTE" "$CLONE"
+
+# The playbook's Vault reads call the vault CLI, and its own install task
+# (section 1b) installs vault=devvm_vault_version, which apt refuses to
+# downgrade. So a blank box gets exactly that version here, read from the
+# clone's playbook, from the same HashiCorp source the playbook declares.
+# The newest vault would fail the playbook at 1b.
+step="reading devvm_vault_version from playbooks/devvm.yml"
+vault_version="$(python3 -I -c '
+import sys, yaml
+for play in yaml.safe_load(open(sys.argv[1])) or []:
+    v = (play.get("vars") or {}).get("devvm_vault_version")
+    if v:
+        print(v)
+        break
+' "$CLONE/playbooks/devvm.yml")"
+[[ "$vault_version" =~ ^[0-9][A-Za-z0-9.+~-]*$ ]] || exit 1
+step="installing the vault CLI ($vault_version)"
+if [[ "$(dpkg-query -W -f='${Version}' vault 2>/dev/null || true)" != "$vault_version" ]]; then
+  status "installing vault"
+  curl -fsSL https://apt.releases.hashicorp.com/gpg -o "$HC_KEYRING"
+  echo "deb [signed-by=$HC_KEYRING] https://apt.releases.hashicorp.com jammy main" >"$HC_LIST"
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "vault=$vault_version" >/dev/null
+fi
 
 # ---- 4. the playbook ------------------------------------------------------
 # --- t3-snapshot: hold (docs/architecture/backup-dr.md, "T3 snapshots") ---

@@ -92,15 +92,22 @@
     # Latest, not pinned: a tool, and nothing reads what it writes.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
     # The toolchain behind scripts/tg and `homelab tf`, pinned at the versions
-    # this box has applied every stack with (adopted 2026-11-11). They write
+    # installed system-wide on the live box (adopted 2026-11-11). They write
     # shared state, so a rebuilt box must not quietly come up on newer ones:
     # terraform refuses state written by a newer terraform, which would lock
     # out CI (ci/Dockerfile, 1.15.4) after one local apply, and terragrunt's
-    # latest is a 1.x major nobody here has run. sops matches CI, which
-    # decrypts the Tier-0 state this box encrypts. Bump deliberately, with
-    # ci/Dockerfile. terraform and vault are apt versions from the HashiCorp
-    # source below; the checksums are the terragrunt_linux_amd64 line of the
-    # release's SHA256SUMS and the linux.amd64 line of sops's checksums.txt.
+    # latest is a 1.x major nobody here has run. sops 3.9.4 is CI's, which
+    # decrypts the Tier-0 state this box encrypts. One exception on the live
+    # box: wizard's login PATH puts a hand-built ~/go/bin/sops 3.12.1 ahead of
+    # /usr/local/bin, so wizard's local applies encrypt with 3.12.1 (the
+    # stacks/infra state of 2026-10-19 is 3.12.1). The home backup skips ~/go,
+    # so a rebuilt box runs this pin for everyone. The vault version is also
+    # what scripts/devvm-bootstrap installs before this play: it reads it from
+    # here, since apt refuses the downgrade a newer vault would need. Bump
+    # deliberately, with ci/Dockerfile. terraform and vault are apt versions
+    # from the HashiCorp source below; the checksums are the
+    # terragrunt_linux_amd64 line of the release's SHA256SUMS and the
+    # linux.amd64 line of sops's checksums.txt.
     devvm_terraform_version: "1.15.4-1"
     devvm_vault_version: "2.0.1-1"
     devvm_terragrunt_version: "0.77.20"
