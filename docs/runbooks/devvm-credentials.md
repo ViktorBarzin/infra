@@ -237,6 +237,19 @@ sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec homelab 
 homelab claude-sessions mcp-secrets list --user emo           # entry names, no values
 ```
 
+Stored on 2026-11-11 at 23:10 (`mcp-secrets list <user>` shows the live
+set): wizard 5 entries, the `google_workspace` server of `~/.claude.json`
+(its env names two paths whose names read as secrets) and the Codex tables
+`claude_memory`, `ha`, `paperless-mcp` and `phpipam.env`; emo 3 entries, the
+`paperless` server and the Codex tables `claude_memory` and `ha`; ancamilea
+none (her files hold no MCP secret). Checked the same night: both users'
+files restored with `restore --path` into scratch homes and filled came
+back with `mcpServers` and every `[mcp_servers.*]` table identical to the
+live files, `claude mcp list` there showed every server `Connected`, and
+`claude` in a trusted folder (`~/code/infra`, `/home/emo/code`) opened
+straight to the prompt, with no onboarding and no trust question. A fill on
+the live homes printed nothing and changed nothing.
+
 ## Add or refresh a credential
 
 When a token is rotated or a new hand-made credential appears, store it
