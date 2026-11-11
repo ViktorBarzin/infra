@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_agent_api_keys`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`)
 
 ## What is kept where
 
@@ -43,7 +43,7 @@ never runs. wizard's also carries his name, email and signing key.
 ## Who can read these paths
 
 Only an admin token. `secret/data/workstation/+/files/*` and
-`secret/data/workstation/+/loose/*`, with their metadata paths, are denied in
+`secret/data/workstation/+/loose/*` and `secret/data/workstation/+/mcp`, with their metadata paths, are denied in
 the four policies that otherwise read all of `secret/data/*`:
 `terraform-state` (the shared claude-agent pod), `openclaw-k8s`, `eso-reader`
 (the `vault-kv` ClusterSecretStore, which serves any namespace) and `ci`
@@ -171,6 +171,28 @@ on linger for that user. The script must be idempotent and print nothing when
 everything is in place. Today only emo's `ebarzin/vermont-device-configs` ships
 one: it restores his `~/bin` links, the Hikvision SDK and the B4 intercom
 watchdog's user units (`docs/runbooks/cameras-nvr-intercom.md`).
+
+## MCP server secrets
+
+The session store keeps `~/.claude.json` (reduced to project trust, MCP
+servers and the onboarding flags) and `~/.codex/config.toml`, both redacted:
+header values, env keys and tokens inside a URL, such as the `ha` server's
+secret path, are blanked. Their kept place is one KV secret per user,
+`secret/workstation/<user>/mcp`, written by `homelab claude-sessions
+mcp-secrets capture` and read back by `mcp-secrets fill`
+(`docs/architecture/claude-session-store.md`). Provisioning step 4a2
+(`fill_mcp_secrets`) runs the fill for every roster user on a pass that holds
+an admin token, after their session-store restore; on the live box it changes
+nothing.
+
+Capture again after adding an MCP server with a secret or rotating one. It
+merges, and refuses a file that still holds `<redacted>`:
+
+```bash
+homelab claude-sessions mcp-secrets capture --user wizard     # your own files, your ~/.vault-token
+sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec homelab claude-sessions mcp-secrets capture --user emo'
+homelab claude-sessions mcp-secrets list --user emo           # entry names, no values
+```
 
 ## Add or refresh a credential
 

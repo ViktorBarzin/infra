@@ -785,6 +785,14 @@ resource "vault_policy" "ci" {
     path "secret/metadata/workstation/+/loose/*" {
       capabilities = ["deny"]
     }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
     path "transit/encrypt/sops-state-*" {
       capabilities = ["update"]
@@ -1016,6 +1024,14 @@ resource "vault_policy" "eso_reader" {
     path "secret/metadata/workstation/+/loose/*" {
       capabilities = ["deny"]
     }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
     path "database/static-creds/*" {
       capabilities = ["read"]
     }
@@ -1079,6 +1095,14 @@ resource "vault_policy" "openclaw_k8s" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
       capabilities = ["deny"]
     }
   EOT
@@ -1165,6 +1189,14 @@ resource "vault_policy" "terraform_state" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
       capabilities = ["deny"]
     }
   EOT

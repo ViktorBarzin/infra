@@ -7,6 +7,7 @@ package main
 //	sql      admins: run a read-only query
 //	schema   admins: tables, columns and example queries
 //	restore  admins: write a user's ~/.claude and ~/.codex back from the store
+//	mcp-secrets  admins: the MCP secrets the store leaves out, kept in Vault
 
 import (
 	"errors"
@@ -40,8 +41,11 @@ func claudeSessionsCommands() []Command {
 			Summary: "ship new transcript bytes and the rest of ~/.claude and ~/.codex into the session store (root; run by claude-sessions-ingest.timer): claude-sessions ingest [--user <name>] [--homes /home]",
 			Run:     claudeSessionsIngest},
 		{Path: []string{"claude-sessions", "restore"}, Tier: TierWrite,
-			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--force]",
+			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--path <rel>]... [--force]",
 			Run:     claudeSessionsRestore},
+		{Path: []string{"claude-sessions", "mcp-secrets"}, Tier: TierWrite,
+			Summary: "keep the MCP server secrets the store leaves out in Vault and put them back after a rebuild (admins): claude-sessions mcp-secrets (capture | fill | list) --user <name> [--home <dir>]",
+			Run:     claudeSessionsMCPSecrets},
 	}
 }
 
