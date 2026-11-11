@@ -25,6 +25,49 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Vault secret/meshcentral: session_key, MeshCentral's settings.sessionKey,
+# which the fix-config init container writes into config.json. Until
+# 2026-11-11 the key existed only in config.json on the volume and in a stray
+# copy in a devvm home. The match annotation lets Reloader restart the pod
+# when the key changes in Vault (the Deployment carries reloader search).
+resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "meshcentral-secrets"
+      namespace = kubernetes_namespace.meshcentral.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "meshcentral-secrets"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+        }
+      }
+      data = [{
+        secretKey = "session_key"
+        remoteRef = {
+          key      = "meshcentral"
+          property = "session_key"
+        }
+      }]
+    }
+  }
+}
+
 resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
@@ -64,6 +107,8 @@ module "nfs_backups_host" {
 }
 
 resource "kubernetes_deployment" "meshcentral" {
+  # The init container reads SESSION_KEY from the Secret this creates.
+  depends_on = [kubernetes_manifest.external_secret]
   metadata {
     name      = "meshcentral"
     namespace = kubernetes_namespace.meshcentral.metadata[0].name
@@ -99,70 +144,18 @@ resource "kubernetes_deployment" "meshcentral" {
           image             = "alpine:3.24.4"
           image_pull_policy = "IfNotPresent"
           command           = ["/bin/sh"]
-          args = ["-c", <<-EOT
-CONFIG=/opt/meshcentral/meshcentral-data/config.json
-if [ -f "$CONFIG" ]; then
-  # Disable certUrl when using Traefik reverse proxy with TLS offload
-  sed -i 's/"certUrl":/"_certUrl":/g' "$CONFIG"
-
-  # Fix WebRTC value from string to boolean
-  sed -i 's/"WebRTC": "[^"]*"/"WebRTC": false/g' "$CONFIG"
-
-  # Ensure TLSOffload is enabled (Traefik terminates TLS, MeshCentral serves HTTP on 443)
-  sed -i 's/"_TLSOffload":/"TLSOffload":/g' "$CONFIG"
-  sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' "$CONFIG"
-  sed -i 's/"TLSOffload": false/"TLSOffload": true/g' "$CONFIG"
-
-  # Keep self-service sign-up off. The image's generated config carried
-  # "NewAccounts": "true" (a string, which MeshCentral reads as on), and the
-  # first-run template below only applies to a fresh volume. Found live on
-  # 2026-10-09 while enrolling Milka's phone.
-  sed -i 's/"NewAccounts": *"true"/"NewAccounts": false/g; s/"NewAccounts": *true/"NewAccounts": false/g' "$CONFIG"
-
-  # ignoreAgentHashCheck: stop pinning the OUTER (Traefik) TLS cert hash on the
-  # agent handshake. With TLS offload, the agent sees Traefik's Let's Encrypt
-  # cert (which also differs between the internal .203 LB and the external
-  # Cloudflare path, and rotates ~monthly), not MeshCentral's own webserver
-  # cert — so the default cert-pin fails with "Agent bad web cert hash" and
-  # holds EVERY agent connection (the whole fleet went offline). With this set,
-  # MeshCentral echoes back whatever cert hash the agent reports, so the
-  # pin succeeds on any path/cert. The agent's separate mesh-certificate
-  # handshake (ServerID) still authenticates the server — this only drops the
-  # redundant outer-TLS pin, which is safe behind our trusted-network Traefik.
-  # Insert the key right after TLSOffload (guaranteed present post-patch) if not
-  # already there. MeshCentral lowercases settings keys, so casing is flexible.
-  if ! grep -qi '"ignoreAgentHashCheck"' "$CONFIG"; then
-    sed -i 's/"TLSOffload": true/"TLSOffload": true,\n    "ignoreAgentHashCheck": true/' "$CONFIG"
-  fi
-else
-  # First run: create config from template before MeshCentral starts, so the
-  # image's own template (no TLSOffload, NewAccounts on) is never used.
-  cat > "$CONFIG" <<'CONF'
-{
-  "$schema": "http://info.meshcentral.com/downloads/meshcentral-config-schema.json",
-  "settings": {
-    "cert": "meshcentral.viktorbarzin.me",
-    "_WANonly": true,
-    "_LANonly": true,
-    "port": 443,
-    "redirPort": 80,
-    "AgentPong": 300,
-    "TLSOffload": true,
-    "ignoreAgentHashCheck": true,
-    "SelfUpdate": false,
-    "AllowFraming": false,
-    "WebRTC": false
-  },
-  "domains": {
-    "": {
-      "NewAccounts": false
-    }
-  }
-}
-CONF
-fi
-EOT
-          ]
+          # The script, with its reasons, is files/fix-config.sh (test:
+          # files/fix-config_test.sh).
+          args = ["-c", file("${path.module}/files/fix-config.sh")]
+          env {
+            name = "SESSION_KEY"
+            value_from {
+              secret_key_ref {
+                name = "meshcentral-secrets"
+                key  = "session_key"
+              }
+            }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/opt/meshcentral/meshcentral-data"

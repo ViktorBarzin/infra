@@ -2096,6 +2096,32 @@ for u in $( { jq -r '.accounts[].os_user' "$desired_file"; for h in /home/*/; do
 done
 # --- end session-store ---
 
+# --- claude-state (disposable devvm, 2026-11-11) ---
+# 4a2) MCP server secrets from Vault. The store keeps ~/.claude.json and
+# ~/.codex/config.toml without their MCP secrets (header values, env keys,
+# the ha server's secret URL path); `mcp-secrets fill` puts them back from
+# secret/workstation/<user>/mcp into an entry that is exactly the store's
+# redacted copy of the Vault one, so the live box's files are never touched.
+# Admin token only (the hourly run skips this quietly); prints nothing when
+# there is nothing to fill. The token reaches homelab in its environment, and
+# homelab writes as the user with that environment emptied.
+fill_mcp_secrets() {  # fill_mcp_secrets USER
+  local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
+  [[ -x "$bin" ]] || return 0
+  agent_state_restored "$user" || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fill MCP server secrets from Vault -> $user"; return 0; fi
+  vault_admin token lookup >/dev/null 2>&1 || return 0
+  if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" "$bin" claude-sessions mcp-secrets fill --user "$user" 2>&1)"; then
+    [[ -z "$out" ]] || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+  else
+    log "WARN: MCP secret fill failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && fill_mcp_secrets "$u"
+done
+# --- end claude-state ---
+
 # --- emo-jobs (disposable devvm, 2026-11-11) ---
 # 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
 # at its root: the steps that put back what the user built around the clone by

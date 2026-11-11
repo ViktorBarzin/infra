@@ -351,6 +351,61 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 	return st, nil
 }
 
+// pathsSource restores only the named home files (--path): no transcripts,
+// no side files. The SQL source filters in the query too (sqlSource.paths),
+// so a one-file restore does not page through a whole home.
+type pathsSource struct {
+	restoreSource
+	paths map[string]bool
+}
+
+func onlyPaths(src restoreSource, paths []string) restoreSource {
+	m := map[string]bool{}
+	for _, p := range paths {
+		m[p] = true
+	}
+	if s, ok := src.(sqlSource); ok {
+		s.paths = paths
+		src = s
+	}
+	return pathsSource{restoreSource: src, paths: m}
+}
+
+func (p pathsSource) transcriptFiles(string, string) ([]storedRef, error) { return nil, nil }
+func (p pathsSource) sideFiles(string, string, string, int) ([]storedFile, error) {
+	return nil, nil
+}
+
+func (p pathsSource) homeFiles(user, session, after string, limit int) ([]storedFile, error) {
+	for {
+		rows, err := p.restoreSource.homeFiles(user, session, after, limit)
+		if err != nil || len(rows) == 0 {
+			return nil, err
+		}
+		var out []storedFile
+		for _, r := range rows {
+			if p.paths[r.Path] {
+				out = append(out, r)
+			}
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+		after = rows[len(rows)-1].Path
+	}
+}
+
+func (p pathsSource) homeLineFiles(user, session string) ([]storedRef, error) {
+	refs, err := p.restoreSource.homeLineFiles(user, session)
+	var out []storedRef
+	for _, r := range refs {
+		if p.paths[r.Path] {
+			out = append(out, r)
+		}
+	}
+	return out, err
+}
+
 // ---- sinks -----------------------------------------------------------------
 
 // dirSink writes into a home directory as the user running the command.
@@ -424,7 +479,23 @@ func (t *tarSink) Close() error { return t.tw.Close() }
 
 // ---- the ClickHouse source -------------------------------------------------
 
-type sqlSource struct{ db dbConn }
+type sqlSource struct {
+	db    dbConn
+	paths []string // only these home files (--path); empty means all
+}
+
+// pathFilter is the SQL condition and parameter for sqlSource.paths.
+func (s sqlSource) pathFilter(params map[string]string) string {
+	if len(s.paths) == 0 {
+		return ""
+	}
+	q := make([]string, len(s.paths))
+	for i, p := range s.paths {
+		q[i] = "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(p) + "'"
+	}
+	params["only"] = "[" + strings.Join(q, ",") + "]"
+	return " AND has({only:Array(String)}, path)"
+}
 
 func (s sqlSource) query(q string, params map[string]string, each func(line []byte) error) error {
 	v := url.Values{}
@@ -482,17 +553,19 @@ func (s sqlSource) sideFiles(user, session, after string, limit int) ([]storedFi
 }
 
 func (s sqlSource) homeFiles(user, session, after string, limit int) ([]storedFile, error) {
+	params := map[string]string{"u": user, "s": session, "a": after}
 	return queryRows[storedFile](s, `SELECT path, toUnixTimestamp64Milli(mtime) AS mtime_ms, mode, encoding, redacted, content
 		FROM claude.home_files FINAL
-		WHERE os_user = {u:String} AND path > {a:String} AND ({s:String} = '' OR position(path, concat('/', {s:String}, '/')) > 0)
-		ORDER BY path LIMIT `+strconv.Itoa(limit), map[string]string{"u": user, "s": session, "a": after})
+		WHERE os_user = {u:String} AND path > {a:String} AND ({s:String} = '' OR position(path, concat('/', {s:String}, '/')) > 0)`+s.pathFilter(params)+`
+		ORDER BY path LIMIT `+strconv.Itoa(limit), params)
 }
 
 func (s sqlSource) homeLineFiles(user, session string) ([]storedRef, error) {
+	params := map[string]string{"u": user, "s": session}
 	return queryRows[storedRef](s, `SELECT path, argMax(generation, ingested_at) AS generation,
 		toUnixTimestamp64Milli(argMax(mtime, ingested_at)) AS mtime_ms
-		FROM claude.home_lines WHERE os_user = {u:String} AND ({s:String} = '' OR position(path, {s:String}) > 0)
-		GROUP BY path ORDER BY path`, map[string]string{"u": user, "s": session})
+		FROM claude.home_lines WHERE os_user = {u:String} AND ({s:String} = '' OR position(path, {s:String}) > 0)`+s.pathFilter(params)+`
+		GROUP BY path ORDER BY path`, params)
 }
 
 func (s sqlSource) homeLines(user string, ref storedRef, from uint64, limit int) ([]storedLine, error) {
@@ -509,7 +582,7 @@ var (
 	restoreSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-]{4,80}$`)
 )
 
-const restoreUsage = `usage: homelab claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--force]
+const restoreUsage = `usage: homelab claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--path <rel>]... [--force]
   --to DIR     write into DIR/.claude and DIR/.codex as yourself; existing files are kept unless --force
   --tar FILE   write a tar stream instead ("-" for stdout); restore into another user's home with
                homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar -x --skip-old-files -C /home/emo
@@ -517,10 +590,12 @@ const restoreUsage = `usage: homelab claude-sessions restore --user <name> (--to
                whole state back into their home once, record it in the ingest state as already
                sent, and let the ingest start on that user; a no-op for a user this box already ingests.
                --home DIR and --state FILE replace the user's home and the ingest state, for a drill
-  --session    only that session: its transcript, subagents, tool results, workflows and file-history`
+  --session    only that session: its transcript, subagents, tool results, workflows and file-history
+  --path P     only the stored home file P (repeatable), such as .claude.json or .codex/config.toml`
 
 func claudeSessionsRestore(args []string) error {
 	var who, to, tarOut, session, rbHome, rbState string
+	var paths []string
 	force, rebuild := false, false
 	for i := 0; i < len(args); i++ {
 		need := func() (string, error) {
@@ -540,6 +615,14 @@ func claudeSessionsRestore(args []string) error {
 			tarOut, err = need()
 		case "--session":
 			session, err = need()
+		case "--path":
+			var p string
+			if p, err = need(); err == nil {
+				if !safeRel(p) {
+					return fmt.Errorf("--path takes a stored path relative to the home, such as .claude.json or .codex/config.toml")
+				}
+				paths = append(paths, p)
+			}
 		case "--force":
 			force = true
 		case "--rebuild":
@@ -567,7 +650,7 @@ func claudeSessionsRestore(args []string) error {
 		return fmt.Errorf("--user and --session take a plain name or id\n%s", restoreUsage)
 	}
 	if rebuild {
-		if to != "" || tarOut != "" || session != "" || force {
+		if to != "" || tarOut != "" || session != "" || force || len(paths) > 0 {
 			return fmt.Errorf("--rebuild takes only --user, --home and --state\n%s", restoreUsage)
 		}
 		return claudeSessionsRebuild(who, rbHome, rbState)
@@ -613,7 +696,11 @@ func claudeSessionsRestore(args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := runRestore(sqlSource{db: c}, who, session, sink, 500)
+	var src restoreSource = sqlSource{db: c}
+	if len(paths) > 0 {
+		src = onlyPaths(src, paths)
+	}
+	st, err := runRestore(src, who, session, sink, 500)
 	if closeSink != nil {
 		if cerr := closeSink(); err == nil {
 			err = cerr

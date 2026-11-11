@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`)
 
 ## What is kept where
 
@@ -43,7 +43,7 @@ never runs. wizard's also carries his name, email and signing key.
 ## Who can read these paths
 
 Only an admin token. `secret/data/workstation/+/files/*` and
-`secret/data/workstation/+/loose/*`, with their metadata paths, are denied in
+`secret/data/workstation/+/loose/*` and `secret/data/workstation/+/mcp`, with their metadata paths, are denied in
 the four policies that otherwise read all of `secret/data/*`:
 `terraform-state` (the shared claude-agent pod), `openclaw-k8s`, `eso-reader`
 (the `vault-kv` ClusterSecretStore, which serves any namespace) and `ci`
@@ -93,6 +93,7 @@ against Vault first and then deleted:
 | `~/code/infra-git-crypt-key` (the infra repo's git-crypt key; until then it was in no Vault path, only there, in the clone's `.git` and in three ConfigMaps: `woodpecker/git-crypt-key` and the `git_crypt_key` ones in `stacks/claude-agent-service` and `stacks/openclaw`) | `secret/infra`, field `git_crypt_key_b64` |
 | `~/meshcentral-data/*-private.key` (5 keys, byte-identical to the live meshcentral pod's) | `secret/workstation/wizard/loose/meshcentral`, one field per key. First stored at `secret/meshcentral`, which every `secret/data/*` reader above could read, and moved here the same day; the agent-server key would let its holder pose as the server to agents that run as root. Nothing reads it: the pod keeps its own copy on its volume. |
 | `~/code/tmp_id` (a single newline, no secret) | deleted |
+| The rest of `~/meshcentral-data` (a 2024 copy of the live server's data volume: `config.json` with the `sessionKey` that signs MeshCentral's web login cookie, `meshcentral.db` with the live login-cookie and invitation-link encryption keys, public certs and stale agent builds; mode 664 in a 755 folder until 2026-11-11, so every devvm user could read it) | Deleted 2026-11-11. The pod now reads its `sessionKey` from `secret/meshcentral` field `session_key` (ExternalSecret `meshcentral-secrets`, written into `config.json` by the `fix-config` init container), and that key was replaced with a new one the same day, so the copy in the devvm-home backups is dead. The database keys stay only in the pod's `meshcentral.db`; they were not rotated. |
 
 The nightly devvm-home backup on the Proxmox host still holds the deleted
 copies until its 14 generations roll over.
@@ -206,6 +207,28 @@ on linger for that user. The script must be idempotent and print nothing when
 everything is in place. Today only emo's `ebarzin/vermont-device-configs` ships
 one: it restores his `~/bin` links, the Hikvision SDK and the B4 intercom
 watchdog's user units (`docs/runbooks/cameras-nvr-intercom.md`).
+
+## MCP server secrets
+
+The session store keeps `~/.claude.json` (reduced to project trust, MCP
+servers and the onboarding flags) and `~/.codex/config.toml`, both redacted:
+header values, env keys and tokens inside a URL, such as the `ha` server's
+secret path, are blanked. Their kept place is one KV secret per user,
+`secret/workstation/<user>/mcp`, written by `homelab claude-sessions
+mcp-secrets capture` and read back by `mcp-secrets fill`
+(`docs/architecture/claude-session-store.md`). Provisioning step 4a2
+(`fill_mcp_secrets`) runs the fill for every roster user on a pass that holds
+an admin token, after their session-store restore; on the live box it changes
+nothing.
+
+Capture again after adding an MCP server with a secret or rotating one. It
+merges, and refuses a file that still holds `<redacted>`:
+
+```bash
+homelab claude-sessions mcp-secrets capture --user wizard     # your own files, your ~/.vault-token
+sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec homelab claude-sessions mcp-secrets capture --user emo'
+homelab claude-sessions mcp-secrets list --user emo           # entry names, no values
+```
 
 ## Add or refresh a credential
 

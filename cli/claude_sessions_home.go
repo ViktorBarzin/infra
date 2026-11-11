@@ -12,7 +12,8 @@ package main
 //	                   by line like transcripts: an append costs one line.
 //	claude.home_files  everything else, sent whole each time it changes.
 //
-// Also kept: ~/.agents/.skill-lock.json (homeExtraFiles).
+// Also kept: ~/.agents/.skill-lock.json and a reduced copy of ~/.claude.json
+// (homeExtraFiles; claude_sessions_claudejson.go says what the copy holds).
 //
 // Never sent: credentials (.credentials.json, auth.json, key files, anything
 // named token, secret or credential), caches, runtime state, symlinks and
@@ -43,8 +44,9 @@ var homeRoots = []string{".claude", ".codex"}
 // homeExtraFiles are single files outside homeRoots that the store keeps:
 // the skills CLI's lockfile, from which claude-skills-update reinstalls a
 // user's skills (and the ~/.claude/skills links into ~/.agents/skills) on a
-// rebuilt box.
-var homeExtraFiles = []string{".agents/.skill-lock.json"}
+// rebuilt box; and ~/.claude.json, sent reduced to project trust, MCP servers
+// and the onboarding flags (reduceClaudeJSON).
+var homeExtraFiles = []string{".agents/.skill-lock.json", claudeJSONRel}
 
 type homeClass int
 
@@ -217,7 +219,7 @@ func walkHome(home string, visit func(abs, rel string, d fs.DirEntry) error) (bo
 // ---- settings redaction --------------------------------------------------
 
 func isSettingsFile(base string) bool {
-	return (strings.HasPrefix(base, "settings") && strings.Contains(base, ".json")) ||
+	return base == claudeJSONRel || (strings.HasPrefix(base, "settings") && strings.Contains(base, ".json")) ||
 		strings.HasSuffix(base, ".toml") || base == "hooks.json" || strings.HasSuffix(base, "mcp.json")
 }
 
@@ -233,7 +235,7 @@ var (
 	// An environment variable's name that hints at a secret, wider than
 	// secretKeyRe because a bare MEMORY_KEY or DB_PASS is common there.
 	envSecretKeyRe = regexp.MustCompile(`(?i)(key|pass|pwd|token|secret|auth|cred|cookie|private)`)
-	tomlQuoted  = regexp.MustCompile(`("(?:[^"\\]|\\.)*"|'[^']*')`)
+	tomlQuoted     = regexp.MustCompile(`("(?:[^"\\]|\\.)*"|'[^']*')`)
 )
 
 // How the values of an object (JSON) or table (TOML) are treated.
@@ -278,7 +280,7 @@ func redactInline(s string) string {
 	s = bearerRe.ReplaceAllString(s, "${1}${2}"+redactedValue)
 	s = urlCredRe.ReplaceAllString(s, "${1}"+redactedValue+"@")
 	// A long run that mixes upper case, lower case and digits is a key, even
-	// with no key name beside it: an MCP URL like /api/mcp/private_284F0n...
+	// with no key name beside it: an MCP URL like /api/mcp/private_Ab3xY...
 	return randomRunRe.ReplaceAllStringFunc(s, func(m string) string {
 		if strings.ContainsAny(m, "0123456789") && strings.ToLower(m) != m && strings.ToUpper(m) != m {
 			return redactedValue
@@ -562,6 +564,7 @@ func ingestHomeWhole(cfg ingestConfig, state *ingestState, st *ingestStats, batc
 		return nil
 	}
 	st.FilesChanged++
+	sum := ""
 	row := homeFileRow{OsUser: user, Path: rel, Kind: homeKind(rel), Mtime: fi.ModTime().UTC().Format(time.RFC3339Nano),
 		Mode: uint32(fi.Mode().Perm()), Size: size}
 	content, err := io.ReadAll(io.LimitReader(f, maxHomeFileBytes+1))
@@ -573,8 +576,27 @@ func ingestHomeWhole(cfg ingestConfig, state *ingestState, st *ingestStats, batc
 	case len(content) > maxHomeFileBytes:
 		row.Encoding = "omitted"
 	default:
+		if rel == claudeJSONRel {
+			reduced, ok := reduceClaudeJSON(content)
+			if !ok {
+				st.FileErrors++ // caught mid-write; the next run reads it again
+				return nil
+			}
+			content = reduced
+		}
 		if isSettingsFile(path.Base(rel)) {
 			content, row.Redacted = redactSettings(path.Base(rel), content)
+		}
+		if rel == claudeJSONRel {
+			// Always a reduced copy, so restore takes the settings path
+			// (merge into a file that is there) even when nothing was blanked.
+			row.Redacted = true
+			sum = contentSum(content)
+			if prev := state.Files[abs]; prev != nil && prev.Stored == sum && prev.Rv >= redactVersion {
+				// Claude rewrote the file, but only what the copy leaves out.
+				state.Files[abs] = &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size, Rv: redactVersion, Stored: sum}
+				return nil
+			}
 		}
 		if utf8.Valid(content) {
 			row.Encoding, row.Content = "text", string(content)
@@ -588,7 +610,7 @@ func ingestHomeWhole(cfg ingestConfig, state *ingestState, st *ingestStats, batc
 	}
 	st.HomeFiles++
 	st.Bytes += int64(len(content))
-	fst := &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size}
+	fst := &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size, Stored: sum}
 	if isSettingsFile(path.Base(rel)) {
 		fst.Rv = redactVersion
 	}

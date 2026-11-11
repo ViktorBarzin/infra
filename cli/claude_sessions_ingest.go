@@ -53,6 +53,10 @@ type fileState struct {
 	// rewritten copy (a new inode) that starts with the same bytes goes on
 	// from Offset instead of being sent again from 0.
 	Sum string `json:"sum,omitempty"`
+	// Stored is the SHA-256 of the copy last sent for a file the store keeps
+	// reduced (~/.claude.json), so a rewrite that changed only what the copy
+	// leaves out sends nothing.
+	Stored string `json:"stored,omitempty"`
 }
 
 type ingestState struct {
