@@ -5,7 +5,7 @@ variable "name" {
 
 variable "vm_id" {
   type        = number
-  description = "Proxmox VMID. The live devvm is 102; drills use 91xx."
+  description = "Proxmox VMID. The live devvm is 102; drills use 9100-9109, the slots stacks/devvm's token is granted (playbooks/pve-host.yml)."
 }
 
 variable "ipv4_cidr" {
