@@ -31,6 +31,16 @@ ssh root@192.168.1.127 exportfs -v | grep '/srv/nfs\b'
 `/srv/nfs` is exported with the root entry. Subdirectories inherit the
 export automatically; they just have to exist on disk.
 
+A pod that runs as uid 10001 (every `tanstack_app` app) cannot write a
+root-owned 755 directory. For those, create it owned by the app's uid instead
+and set `fs_group_change_policy = "OnRootMismatch"` on the pod (the
+`tanstack_app` `volumes` variable does this), or the kubelet re-owns every file
+at each pod start:
+
+```sh
+ssh root@192.168.1.127 'mkdir -p /srv/nfs/<app> && chown 10001:10001 /srv/nfs/<app> && chmod 750 /srv/nfs/<app>'
+```
+
 ## Known consumers
 
 | Consumer                       | NFS path                        | Owning stack            |
@@ -42,6 +52,7 @@ export automatically; they just have to exist on disk.
 | `vaultwarden-backup`           | `/srv/nfs/vaultwarden-backup`   | `stacks/vaultwarden/`   |
 | `clickhouse-backup`            | `/srv/nfs/clickhouse-backup`    | `stacks/rybbit/`        |
 | `dolt-backup`                  | `/srv/nfs/dolt-backup`          | `stacks/beads-server/`  |
+| `reels-data` (renders, audio)  | `/srv/nfs/reels` (10001:10001, 750) | `stacks/reels/`     |
 
 Use `grep -rn 'nfs_volume' infra/stacks/` to find all active consumers.
 
