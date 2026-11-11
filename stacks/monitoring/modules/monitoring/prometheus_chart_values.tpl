@@ -4949,8 +4949,9 @@ serverFiles:
           # means at least one night's T3 threads exist only on the devvm.
           # ancamilea left the roster on 2026-08-17 and her last snapshot stays
           # on sda on purpose, so she is excluded by name. A user who leaves
-          # T3 later is added here; there is no age cut-off, which would let a
-          # missed page resolve itself after 30 days.
+          # T3 later is added here and in docs/architecture/backup-dr.md
+          # ("Freshness"); there is no age cut-off, which would let a missed
+          # page resolve itself after 30 days.
           - alert: T3SnapshotOffVmStale
             expr: |
               (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull", user!="ancamilea"}) > 259200
