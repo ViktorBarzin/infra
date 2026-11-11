@@ -3635,58 +3635,35 @@
     # never this playbook's. It was retired on 2026-11-11 (node devvm-emo
     # logged out, its user unit disabled, its state moved to
     # ~/.cache/retired-2026-11-11/), and since then nothing on the box runs
-    # /usr/sbin/tailscaled: the system tailscaled is disabled too. The package
-    # and its apt source below stay declared until the disposable-devvm plan's
-    # unused-package pass decides on them
-    # (docs/plans/2026-11-11-disposable-devvm.md, Machine).
-    - name: Install the Tailscale signing key
-      ansible.builtin.get_url:
-        url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc
-        dest: /usr/share/keyrings/tailscale-archive-keyring.asc
-        mode: "0644"
-        # Without these the key is re-fetched on every run and the task reports
-        # changed forever, which is the noise that teaches people to ignore a
-        # non-no-op check run. force: false alone is not enough: the server
-        # ignores If-Modified-Since, so a check run's HEAD request still
-        # reports changed. With the checksum, a matching file skips the
-        # request. A signing key does not rotate silently; replace it
-        # deliberately by updating the checksum and removing the file.
-        force: false
-        checksum: "sha256:53c6f7dfbd774839d9f37e6c5022ba952108aba9a0e556a56f292a9eb605d7cf"
+    # /usr/sbin/tailscaled: the system tailscaled is disabled too. The
+    # disposable-devvm plan's unused-package pass (same day) removed the
+    # package and its apt source: every `tailscale` call in the session store
+    # since then ran on another host over ssh (OPNsense, mx2), and the devvm is
+    # not a tailnet node. Making it one is a deliberate change, not a leftover.
+    - name: Remove tailscale and its apt source
+      block:
+        - name: Stop and disable the system tailscaled
+          ansible.builtin.systemd_service:
+            name: tailscaled
+            state: stopped
+            enabled: false
+          failed_when: false
 
-    # jammy, not noble, for the reason the HashiCorp source above gives: it is
-    # the suite the installed tailscale was resolved from, and moving it here
-    # would offer a different upgrade path as a side effect of a key change.
-    - name: Declare the Tailscale apt source
-      ansible.builtin.copy:
-        dest: /etc/apt/sources.list.d/tailscale.list
-        mode: "0644"
-        content: |
-          # Managed by playbooks/devvm.yml. Local edits are overwritten.
-          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.asc] https://pkgs.tailscale.com/stable/ubuntu jammy main
+        - name: Remove the tailscale package
+          ansible.builtin.apt:
+            name: tailscale
+            state: absent
+            purge: true
+            update_cache: false
 
-    # Same reasoning as the HashiCorp keyring: the source above no longer names
-    # the binary copy the hand install left behind, so it is dead weight that
-    # still looks authoritative.
-    - name: Drop the superseded Tailscale binary keyring
-      ansible.builtin.file:
-        path: /usr/share/keyrings/tailscale-archive-keyring.gpg
-        state: absent
-
-    # Already on the live box at 1.98.3 from a hand install; declared so a
-    # rebuilt machine has the binary emo's daemon runs. Not in packages.txt,
-    # which documents itself as a safe argument to `apt-get install` from the
-    # standard repos — this comes from Tailscale's own.
-    #
-    # No cache_valid_time here, unlike section 1: the source above was declared
-    # seconds ago, and section 1 has already refreshed the cache this run, so a
-    # validity window would let this task skip the update and then fail to find
-    # the package on the one machine that needs it — a fresh one.
-    - name: Install tailscale
-      ansible.builtin.apt:
-        name: tailscale
-        state: present
-        update_cache: true
+        - name: Remove the Tailscale apt source and keyrings
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/apt/sources.list.d/tailscale.list
+            - /usr/share/keyrings/tailscale-archive-keyring.asc
+            - /usr/share/keyrings/tailscale-archive-keyring.gpg
 
     # The retirement. Guarded on the unit file so a fresh machine, which never
     # had the unit, skips the stop rather than failing on a unit systemd has
