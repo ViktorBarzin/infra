@@ -85,10 +85,14 @@ infra clone exist (playbook), run it once with an admin token:
 
 ```bash
 export VAULT_ADDR=https://vault.viktorbarzin.me
-vault login -method=oidc            # or export VAULT_TOKEN=<an admin token>
-export VAULT_TOKEN="$(cat ~/.vault-token)"
-sudo --preserve-env=VAULT_TOKEN,VAULT_ADDR t3-provision-users
+vault login -method=oidc            # writes ~/.vault-token; skip if it holds an admin token
+sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec t3-provision-users'
 ```
+
+sudo writes every `VAR=value` on its command line, and every variable named
+in `--preserve-env=`, into `/var/log/auth.log` as `ENV=...`, and promtail ships
+that to Loki for 26 weeks. So root reads the token from the admin's
+`~/.vault-token` inside the command; the logged line holds only the path.
 
 Order inside that run: credentials for every existing account (step 3d: the
 admin kubeconfig is what the other users' kubeconfigs copy the cluster
@@ -152,7 +156,8 @@ again (each `put` is a new KV version):
 ```bash
 export VAULT_ADDR=https://vault.viktorbarzin.me VAULT_TOKEN="$(cat ~/.vault-token)"
 C=~/code/infra/scripts/workstation/workstation-creds.sh
-sudo --preserve-env=VAULT_TOKEN,VAULT_ADDR bash $C capture <user> .config/gh/hosts.yml
+sudo VAULT_ADDR=$VAULT_ADDR bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec bash "$@"' _ \
+  $C capture <user> .config/gh/hosts.yml    # token read inside sudo, never on its command line
 bash $C capture-ref <user> .ssh/some_key 'secret/<path>#<field>'   # already in Vault elsewhere
 bash $C list <user>                                                # paths and modes, no values
 ```

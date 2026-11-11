@@ -17,6 +17,13 @@ Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CL
 - **Backup CronJob**: `vault-raft-backup` uses manually-created `vault-root-token` K8s Secret (independent of automation).
 - **Bootstrap (fresh cluster)**: Comment out data source + OIDC → apply Helm → init+unseal → populate `secret/vault` → uncomment → re-apply.
 
+## A secret never goes on a sudo command line
+On the devvm, sudo writes its whole command line to `/var/log/auth.log` and the journal, which promtail ships to Loki (`{job="devvm-journal"}`, 26 weeks). That includes `ENV=VAR=value` for every `sudo VAR=value` **and for every variable named in `sudo --preserve-env=VAR`** (checked 2026-11-11: both forms log the value; `sudo -E` does not, but it hands root your `HOME`). wizard's admin Vault token reached Loki in 8 sudo lines between 2026-11-08 and 2026-11-11, one of them a `sudo grep <token>` check. Read the secret from its file inside the root command, so the logged line holds only the path:
+```sh
+sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec t3-provision-users'
+```
+The same goes for `sudo grep <secret> ...`: use `grep -F -f <file>`.
+
 ## Sealed Secrets (User-Managed Secrets)
 For secrets that users manage themselves (no SOPS/git-crypt access needed):
 1. **Create**: `kubectl create secret generic <name> --from-literal=key=value -n <ns> --dry-run=client -o yaml | kubeseal --controller-name sealed-secrets --controller-namespace sealed-secrets -o yaml > sealed-<name>.yaml`

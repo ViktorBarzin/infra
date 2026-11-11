@@ -92,9 +92,8 @@ If the scoped Vault token expired or drift protection rejected it, rerun the roo
 provisioner with an admin Vault token after confirming the matching policy exists:
 
 ```bash
-export VAULT_ADDR=https://vault.viktorbarzin.me
-export VAULT_TOKEN="$(cat /home/wizard/.vault-token)"
-sudo --preserve-env=VAULT_ADDR,VAULT_TOKEN /usr/local/bin/t3-provision-users
+# reads the admin's ~/.vault-token as root; a token on the sudo line is logged
+sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec /usr/local/bin/t3-provision-users'
 ```
 
 Never copy another user's `.credentials.json` or scoped Vault token. Never restore

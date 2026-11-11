@@ -50,9 +50,12 @@ policies; the hourly run has no Vault token, so on a new box run it once with
 one (see [devvm-credentials](devvm-credentials.md)):
 
 ```bash
-export VAULT_ADDR=https://vault.viktorbarzin.me VAULT_TOKEN=<an admin token>
-sudo --preserve-env=VAULT_TOKEN,VAULT_ADDR t3-provision-users
+# ~/.vault-token holds an admin token (vault login -method=oidc writes it)
+sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec t3-provision-users'
 ```
+
+Never `sudo VAULT_TOKEN=...` or `sudo --preserve-env=VAULT_TOKEN`: sudo logs
+both forms with the value to auth.log and Loki (devvm-credentials, "Rebuild").
 
 The provisioner keeps that admin token to its own vault calls; nothing it
 runs as a user sees it (devvm-credentials, "Rebuild").

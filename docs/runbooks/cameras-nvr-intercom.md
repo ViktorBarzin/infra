@@ -604,7 +604,9 @@ HC_SERIAL=Q13432772 HC_USER=... HC_PASS=... ~/bin/intercom-cloud.py
 `ieu.hik-connect.com` (на vbarzin).
 
 **Пазачът (devvm, systemd --user):** `intercom-watch.timer` на 5 мин →
-`~/bin/intercom-watch.py`. Три поредни офлайн проверки (~15 мин) → рестарт по
+`~/code/vermont-device-configs/bin/intercom-watch.py` (юнитът е
+`systemd/intercom-watch.service` в същото хранилище; `~/bin/intercom-watch.py` е
+връзка към него). Три поредни офлайн проверки (~15 мин) → рестарт по
 SDK; минимум 1 час между рестартите, максимум 4 на ден; при **недостъпен облак
 НЕ рестартира** (грешката е наша, не на устройството). Дневник —
 `~/.local/state/intercom/watch.log` (НЕ journald: emo не е в група `adm` и не би
