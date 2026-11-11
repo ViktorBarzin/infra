@@ -209,6 +209,10 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
   (checked 14 days). The runbooks now read the token inside sudo
   (`docs/agents/secrets.md`).
+- Round 2, log masking: the devvm's promtail masks secret-shaped values in
+  every job before shipping (`scripts/devvm-promtail.yaml`, live 22:57 UTC,
+  checked by logging a fake token: it reached Loki as `[REDACTED]`). The
+  older token lines are under Loki delete request `60b1d8a8`.
 - Round 2, provisioning: wizard's dotfiles brought up to the live home
   (tmux-resurrect and continuum, the memory MCP and old `~/.claude` copies
   gone; chezmoi keeps only links under `~/.claude` on the devvm); the
