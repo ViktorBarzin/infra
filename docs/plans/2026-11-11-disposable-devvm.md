@@ -82,6 +82,15 @@ remote). dot_files' 158 are stale history, not work.
   accepts the ISAPI reboot first.
 - Hand tools go into his vermont-device-configs repo, cloned by provisioning.
 
+Done 2026-11-11: the eight jobs above are stopped and archived in
+`retired/2026-11-11/` of ebarzin/vermont-device-configs (valia-backup-cleanup's
+last run did not report done, so its copy in ~/bin stays). His tools are in
+that repo's `bin/`, ~/bin links to them, and his roster row clones the repo to
+~/code/vermont-device-configs. intercom-watch stays on the devvm: the B4 has no
+HTTP service (ports 80 and 443 refuse, checked 2026-11-11 without a reboot), so
+a ha-sofia rest_command cannot send it the ISAPI reboot, and ha-sofia was not
+added to the Vermont allowlist. Its script and units are in the same repo.
+
 ## Also
 - HA London backs up through HA network storage to a new NFS export on the
   Proxmox host (/srv/nfs/ha-london-backup), covered by nfs-mirror and offsite.
@@ -95,9 +104,11 @@ remote). dot_files' 158 are stale history, not work.
 
 ## Open questions
 
-- The B4 intercom may not accept the ISAPI reboot the ha-sofia automation
-  would use (the current script uses the vendor SDK). Checked before
-  intercom-watch is retired; if it fails, the fallback is decided then.
+- The B4 intercom does not accept the ISAPI reboot over HTTP: it has no HTTP
+  listener, and ISAPI reaches it only tunnelled through the x86-only vendor
+  SDK on port 8000 (checked 2026-11-11). The fallback for intercom-watch is
+  still open: keep it on the devvm (today), or run the SDK reboot from an x86
+  host other than the devvm.
 - HA network storage over the tunnel to London has not been tried; a mount
   across the WAN can stall.
 - The ClickHouse store's size growth once file-history and remote/ are
