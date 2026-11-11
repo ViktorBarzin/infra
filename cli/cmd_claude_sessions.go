@@ -40,7 +40,7 @@ func claudeSessionsCommands() []Command {
 			Summary: "ship new transcript bytes and the rest of ~/.claude and ~/.codex into the session store (root; run by claude-sessions-ingest.timer): claude-sessions ingest [--user <name>] [--homes /home]",
 			Run:     claudeSessionsIngest},
 		{Path: []string{"claude-sessions", "restore"}, Tier: TierWrite,
-			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|->) [--session <id>] [--force]",
+			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--force]",
 			Run:     claudeSessionsRestore},
 	}
 }
@@ -229,7 +229,7 @@ func claudeSessionsSchema(args []string) error {
 }
 
 func claudeSessionsIngest(args []string) error {
-	cfg := ingestConfig{HomesRoot: "/home", StatePath: claudeSessionsState, Budget: 8 << 20}
+	cfg := ingestConfig{HomesRoot: "/home", StatePath: claudeSessionsState, Budget: 8 << 20, RequireRestore: true}
 	metrics := claudeSessionsMetrics
 	for i := 0; i < len(args); i++ {
 		need := func() (string, error) {
@@ -269,8 +269,8 @@ func claudeSessionsIngest(args []string) error {
 		status = "error"
 	}
 	// key=value so Loki can filter it by the unit label (devvm-io-guard.md).
-	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d duration_ms=%d\n",
-		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, dur.Milliseconds())
+	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d users_waiting_for_restore=%d duration_ms=%d\n",
+		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, st.UsersWaiting, dur.Milliseconds())
 	if metrics != "" {
 		writeIngestMetrics(metrics, st, runErr == nil, dur)
 	}
