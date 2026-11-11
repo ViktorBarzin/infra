@@ -2105,20 +2105,80 @@ done
 # Admin token only (the hourly run skips this quietly); prints nothing when
 # there is nothing to fill. The token reaches homelab in its environment, and
 # homelab writes as the user with that environment emptied.
+# Once per user per box: a marker in CLAUDE_SESSIONS_MCP_FILLED_DIR records a
+# fill that ran, so a later pass cannot put back a secret the user removed
+# since (dropping just an API key leaves the stripped form fill matches).
+# A failed fill leaves no marker and runs again on the next admin pass.
+CLAUDE_SESSIONS_MCP_FILLED_DIR="${CLAUDE_SESSIONS_MCP_FILLED_DIR:-/var/lib/claude-sessions-ingest/mcp-filled}"
 fill_mcp_secrets() {  # fill_mcp_secrets USER
   local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
   [[ -x "$bin" ]] || return 0
   agent_state_restored "$user" || return 0
+  [[ -e "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user" ]] && return 0
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fill MCP server secrets from Vault -> $user"; return 0; fi
   vault_admin token lookup >/dev/null 2>&1 || return 0
   if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" "$bin" claude-sessions mcp-secrets fill --user "$user" 2>&1)"; then
     [[ -z "$out" ]] || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+    mkdir -p -m 0700 "$CLAUDE_SESSIONS_MCP_FILLED_DIR" && date -u +%FT%TZ > "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user"
   else
     log "WARN: MCP secret fill failed for $user: $(tail -n 1 <<<"$out")"
   fi
 }
+# 4a3) The home-local programs a restored MCP config starts. The session
+# store brings back ~/.claude.json and ~/.codex/config.toml, but not the
+# programs they name under ~/.local: wizard's google_workspace server runs
+# ~/.local/bin/uvx, his Codex phpipam server a venv in
+# ~/.local/share/phpipam-mcp. Each is installed, as the user and pinned, only
+# when a config names it and it is absent, so a live home is never touched.
+# Their OAuth files come from Vault with the other credential files
+# (workstation-creds). No admin token needed; quiet when there is nothing to do.
+MCP_UV_VERSION="0.11.19"   # the version wizard's live ~/.local/bin/uv is, and the playbook's ios_rig_uv_version
+MCP_UV_SHA256="7035608168e106375b36d0c818d537a889c51a8625fe7f8f7cad5e62b947c368"
+MCP_PHPIPAM_VERSION="0.2.1"
+# The live venv's packages, exact: 0.2.1 pins mcp but not what mcp pulls in,
+# and a fresh resolve (Nov 2026) gets versions its import fails on.
+MCP_PHPIPAM_PINS="annotated-types==0.7.0 anyio==4.13.0 attrs==26.1.0 certifi==2026.2.25 charset-normalizer==3.4.7 click==8.3.2 h11==0.16.0 httpcore==1.0.9 httpx==0.28.1 httpx-sse==0.4.3 idna==3.11 jsonschema==4.26.0 jsonschema-specifications==2025.9.1 mcp==1.14.1 pydantic==2.12.5 pydantic-core==2.41.5 pydantic-settings==2.13.1 python-dotenv==1.2.2 python-multipart==0.0.25 referencing==0.37.0 requests==2.32.5 rpds-py==0.30.0 sse-starlette==3.3.4 starlette==1.0.0 typing-extensions==4.15.0 typing-inspection==0.4.2 urllib3==2.6.3 uvicorn==0.44.0"
+install_mcp_tools() {  # install_mcp_tools USER
+  local user="$1" home cfgs=() f uv ipam
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  agent_state_restored "$user" || return 0
+  for f in "$home/.claude.json" "$home/.codex/config.toml"; do [[ -f "$f" && ! -L "$f" ]] && cfgs+=("$f"); done
+  (( ${#cfgs[@]} )) || return 0
+  uv="$home/.local/bin/uvx" ipam="$home/.local/share/phpipam-mcp/bin/phpipam-mcp-server"
+  local sane=(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$home" LANG=C.UTF-8)
+  local need_uv=0
+  [[ ! -x "$uv" ]] && grep -qF '.local/bin/uv' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  # The phpipam venv is made with uv.
+  [[ ! -x "$ipam" && ! -x "$home/.local/bin/uv" ]] && grep -qF '.local/share/phpipam-mcp/' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  if (( need_uv )); then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install uv $MCP_UV_VERSION -> $user ~/.local/bin"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; umask 022; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT
+        curl -fsSL -o "$d/uv.tgz" "$1"; echo "$2  $d/uv.tgz" | sha256sum -c --quiet
+        tar -xzf "$d/uv.tgz" -C "$d" --strip-components=1; mkdir -p "$HOME/.local/bin"
+        for b in uv uvx; do [ -e "$HOME/.local/bin/$b" ] || cp "$d/$b" "$HOME/.local/bin/$b"; done' \
+        _ "https://github.com/astral-sh/uv/releases/download/$MCP_UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" "$MCP_UV_SHA256" \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed uv $MCP_UV_VERSION into ~/.local/bin for the restored MCP config"
+    else
+      log "WARN: could not install uv for $user (the MCP servers that run ~/.local/bin/uvx will not start)"
+    fi
+  fi
+  if [[ ! -x "$ipam" ]] && grep -qF '.local/share/phpipam-mcp/bin/phpipam-mcp-server' "${cfgs[@]}" 2>/dev/null; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install phpipam-mcp-server $MCP_PHPIPAM_VERSION -> $user ~/.local/share/phpipam-mcp"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; v="$HOME/.local/share/phpipam-mcp"
+        "$HOME/.local/bin/uv" venv --quiet --allow-existing --python /usr/bin/python3 "$v"
+        "$HOME/.local/bin/uv" pip install --quiet --python "$v/bin/python" "$@"' _ "phpipam-mcp-server==$MCP_PHPIPAM_VERSION" $MCP_PHPIPAM_PINS \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed phpipam-mcp-server $MCP_PHPIPAM_VERSION into ~/.local/share/phpipam-mcp for the restored MCP config"
+    else
+      log "WARN: could not install phpipam-mcp-server for $user (the Codex phpipam MCP server will not start)"
+    fi
+  fi
+  return 0
+}
 for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
-  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && fill_mcp_secrets "$u"
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && install_mcp_tools "$u" && fill_mcp_secrets "$u"
 done
 # --- end claude-state ---
 

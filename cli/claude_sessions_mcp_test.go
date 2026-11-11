@@ -210,3 +210,126 @@ func TestRestorePathsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// fill names, by label only, every entry Vault keeps that the file lacks:
+// a server lost to the ~/.claude.json clobber race comes back by hand.
+func TestFillReportWarnsAboutAbsentEntries(t *testing.T) {
+	var out strings.Builder
+	reportFill(&out, "emo", fillResult{
+		Filled: []string{".claude.json mcpServers.paperless"},
+		Differ: []string{".codex/config.toml [mcp_servers.ha]"},
+		Absent: []string{".claude.json mcpServers.tvdb"},
+	})
+	got := out.String()
+	for _, want := range []string{
+		"mcp-secrets fill user=emo: secrets put back: .claude.json mcpServers.paperless\n",
+		"mcp-secrets fill user=emo: WARN the restored entry differs from the Vault copy, fill by hand: .codex/config.toml [mcp_servers.ha]\n",
+		"mcp-secrets fill user=emo: WARN kept in Vault but not in the file, add it back by hand: .claude.json mcpServers.tvdb\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	kv := fakeKV{}
+	live := t.TempDir()
+	os.WriteFile(filepath.Join(live, ".claude.json"), []byte(liveClaudeJSON), 0o600)
+	if _, err := captureMCPSecrets(kv, "emo", live); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	lost := strings.Replace(liveClaudeJSON, `"ha": {"type": "http", "url": "http://192.168.1.8:9583/private_FakeHaPath0000000000aa"},`, "", 1)
+	os.WriteFile(filepath.Join(home, ".claude.json"), restoredCopy(t, claudeJSONRel, []byte(lost)), 0o600)
+	res, err := fillMCPSecrets(kv, "emo", home, directWriter{})
+	if err != nil || len(res.Absent) != 1 || res.Absent[0] != ".claude.json mcpServers.ha" {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// A claude session that rewrites ~/.claude.json while fill works on it does
+// not lose its change: fill sees the file moved, reads it again and fills
+// the new copy.
+func TestFillRereadsAFileThatChangedUnderIt(t *testing.T) {
+	kv := fakeKV{}
+	live := t.TempDir()
+	os.WriteFile(filepath.Join(live, ".claude.json"), []byte(liveClaudeJSON), 0o600)
+	if _, err := captureMCPSecrets(kv, "emo", live); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	p := filepath.Join(home, ".claude.json")
+	os.WriteFile(p, restoredCopy(t, claudeJSONRel, []byte(liveClaudeJSON)), 0o600)
+	calls := 0
+	mcpFillBeforeWrite = func(rel string) {
+		calls++
+		if calls == 1 {
+			b, _ := os.ReadFile(p)
+			var m map[string]any
+			json.Unmarshal(b, &m)
+			m["projects"].(map[string]any)["/home/emo/new"] = map[string]any{"hasTrustDialogAccepted": true}
+			nb, _ := json.Marshal(m)
+			os.WriteFile(p+".x", nb, 0o600)
+			os.Rename(p+".x", p) // a new inode, as claude's atomic write makes
+		}
+	}
+	defer func() { mcpFillBeforeWrite = func(string) {} }()
+	res, err := fillMCPSecrets(kv, "emo", home, directWriter{})
+	if err != nil || calls != 2 || len(res.Filled) != 3 {
+		t.Fatalf("calls %d %+v %v", calls, res, err)
+	}
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), "/home/emo/new") || !strings.Contains(string(b), "fake-paperless-key") {
+		t.Fatalf("lost a change:\n%s", b)
+	}
+}
+
+// capture records a digest of each secret-bearing entry it kept, in
+// ~/.claude/mcp-captured.json; the ingest compares the live entries with it
+// and names the ones that are new or changed since, so an admin knows to
+// capture again before a rebuild puts back a stale secret.
+func TestUncapturedMCPEntries(t *testing.T) {
+	kv := fakeKV{}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o700)
+	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(liveClaudeJSON), 0o600)
+	os.WriteFile(filepath.Join(home, ".codex/config.toml"), []byte(liveCodexTOML), 0o600)
+	got, err := uncapturedMCPEntries(home)
+	if err != nil || len(got) != 6 {
+		t.Fatalf("before any capture: %v %v", got, err)
+	}
+	if _, err := captureMCPSecrets(kv, "emo", home); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaptureDigests(home, directWriter{}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(home, ".claude", mcpCapturedName))
+	if strings.Contains(string(b), "fake-paperless-key") || strings.Contains(string(b), "private_") {
+		t.Fatalf("a value reached the digest file: %s", b)
+	}
+	if got, err := uncapturedMCPEntries(home); err != nil || len(got) != 0 {
+		t.Fatalf("after capture: %v %v", got, err)
+	}
+	rotated := strings.Replace(liveClaudeJSON, "fake-paperless-key", "fake-paperless-key-2", 1)
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(rotated), 0o600)
+	toml := strings.Replace(liveCodexTOML, "[tui]", "[mcp_servers.new]\nurl = \"https://x.example/mcp\"\nbearer_token = \"new-token-0123456789\"\n\n[tui]", 1)
+	os.WriteFile(filepath.Join(home, ".codex/config.toml"), []byte(toml), 0o600)
+	got, err = uncapturedMCPEntries(home)
+	want := []string{".claude.json mcpServers.paperless", ".codex/config.toml [mcp_servers.new]"}
+	if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v want %v (%v)", got, want, err)
+	}
+	// A home with no MCP secrets has nothing to report.
+	if got, err := uncapturedMCPEntries(t.TempDir()); err != nil || len(got) != 0 {
+		t.Fatalf("empty home: %v %v", got, err)
+	}
+}
+
+func TestIngestMetricsCountUncapturedMCPEntries(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "m.prom")
+	writeIngestMetrics(p, ingestStats{MCPUncaptured: 3}, true, 0)
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), "\nclaude_sessions_ingest_mcp_entries_uncaptured 3\n") {
+		t.Fatalf("%s", b)
+	}
+}

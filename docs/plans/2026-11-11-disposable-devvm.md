@@ -196,6 +196,25 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   have a kept place in Vault `secret/workstation/<user>/mcp`
   (`homelab claude-sessions mcp-secrets`), filled back by provisioning step
   4a2 (`docs/architecture/claude-session-store.md`).
+- Round 2, claude-state review fixes: fill runs once per user and box
+  (marker `mcp-filled/<user>`), re-reads a file that changed under it, and
+  names entries Vault keeps that the file lacks. The ingest warns when a
+  live MCP secret is new or changed since the last capture (alert
+  `ClaudeSessionsMCPSecretsUncaptured`). Provisioning step 4a3 installs uv
+  and the phpipam MCP venv the restored config starts. wizard's
+  `google_workspace` OAuth files are in `secret/workstation/wizard/files`.
+  A mount-namespace check with those programs and files hidden got
+  calendars back through the restored config.
+- Open, needs Viktor: the ha-sofia ha-mcp add-on's secret URL path was
+  committed in a round-1 test (c114c7f07, replaced by a fake value in
+  a81d0584a). That commit is on Forgejo and on the public GitHub mirror
+  `ViktorBarzin/infra`, so the value is exposed. The endpoint is a LAN
+  address (192.168.1.8:9583), so using it needs LAN access. Not rotated
+  yet: regenerating the path changes the add-on on ha-sofia. After a
+  rotation, update wizard's and emo's `~/.codex/config.toml` and
+  `secret/openclaw` `ha_sofia_mcp_url`, then run `mcp-secrets capture`
+  again for both users. Rewriting history does not help, because mirrors
+  and caches already hold the commit.
 - intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
   no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki

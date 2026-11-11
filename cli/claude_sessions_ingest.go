@@ -364,16 +364,17 @@ type ingestConfig struct {
 }
 
 type ingestStats struct {
-	Users        int
-	FilesSeen    int
-	FilesChanged int
-	Lines        int
-	Bytes        int64
-	SideFiles    int
-	HomeFiles    int // whole files sent to claude.home_files
-	HomeLines    int // lines sent to claude.home_lines
-	FileErrors   int
-	UsersWaiting int // users skipped until restore --rebuild has run for them
+	Users         int
+	FilesSeen     int
+	FilesChanged  int
+	Lines         int
+	Bytes         int64
+	SideFiles     int
+	HomeFiles     int // whole files sent to claude.home_files
+	HomeLines     int // lines sent to claude.home_lines
+	FileErrors    int
+	UsersWaiting  int // users skipped until restore --rebuild has run for them
+	MCPUncaptured int // live MCP server entries with secrets that are new or changed since the last capture (uncapturedMCPEntries)
 }
 
 type lineRow struct {
@@ -466,6 +467,15 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 		}
 		if found {
 			st.Users++
+		}
+		if err == nil {
+			// Read-only, names only: the ingest has no Vault access, so it
+			// can only point an admin at `mcp-secrets capture`.
+			if names, uerr := uncapturedMCPEntries(home); uerr == nil && len(names) > 0 {
+				st.MCPUncaptured += len(names)
+				fmt.Fprintf(os.Stderr, "claude-sessions-ingest WARN user=%s: %d MCP server entries with secrets are new or changed since the last capture, so a rebuild would not bring them back as they are; run `homelab claude-sessions mcp-secrets capture --user %s`: %s\n",
+					user, len(names), user, strings.Join(names, ", "))
+			}
 		}
 		if err != nil {
 			saveState(cfg.StatePath, state)
