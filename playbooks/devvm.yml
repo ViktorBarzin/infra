@@ -89,11 +89,25 @@
     devvm_helm_sha256: 98c363564d00afd0cc3088e8f830f2a0eeb5f28755b3d8c48df89866374a1ed0
     devvm_promtail_version: "3.5.1"
     devvm_promtail_sha256: b70d5a5e259a64f6f9b6805bd42d725e50978bcd520fb46113a86cd8b418bbca
-    # Latest, not pinned: nothing else in this pipeline pins versions either,
-    # and these are tools rather than build inputs.
+    # Latest, not pinned: a tool, and nothing reads what it writes.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
-    terragrunt_url: https://github.com/gruntwork-io/terragrunt/releases/latest/download/terragrunt_linux_amd64
-    # Pinned, unlike the tools above: the iOS rig service depends on
+    # The toolchain behind scripts/tg and `homelab tf`, pinned at the versions
+    # this box has applied every stack with (adopted 2026-11-11). They write
+    # shared state, so a rebuilt box must not quietly come up on newer ones:
+    # terraform refuses state written by a newer terraform, which would lock
+    # out CI (ci/Dockerfile, 1.15.4) after one local apply, and terragrunt's
+    # latest is a 1.x major nobody here has run. sops matches CI, which
+    # decrypts the Tier-0 state this box encrypts. Bump deliberately, with
+    # ci/Dockerfile. terraform and vault are apt versions from the HashiCorp
+    # source below; the checksums are the terragrunt_linux_amd64 line of the
+    # release's SHA256SUMS and the linux.amd64 line of sops's checksums.txt.
+    devvm_terraform_version: "1.15.4-1"
+    devvm_vault_version: "2.0.1-1"
+    devvm_terragrunt_version: "0.77.20"
+    devvm_terragrunt_sha256: 4e75bfdf7ab07c089ec3fae9b18ba4f0e7fecd35d0e3109f9abab3f4b345c01f
+    devvm_sops_version: "3.9.4"
+    devvm_sops_sha256: 5488e32bc471de7982ad895dd054bbab3ab91c417a118426134551e9626e4e85
+    # Pinned: the iOS rig service depends on
     # pymobiledevice3 internals (see the iOS rig tasks).
     ios_rig_uv_version: "0.11.19"
     ios_rig_pymobiledevice3_version: "11.28.2"
@@ -798,6 +812,7 @@
       register: devvm_hashicorp_key
 
     - name: Declare the HashiCorp apt source
+      register: devvm_hashicorp_source
       ansible.builtin.copy:
         dest: /etc/apt/sources.list.d/hashicorp.list
         mode: "0644"
@@ -873,8 +888,10 @@
         cache_valid_time: 3600
       tags: [packages]
 
-    # Docker (the containment for it is section 9) and kubectl, from the
-    # sources declared above.
+    # Docker (the containment for it is section 9), kubectl, and terraform and
+    # vault for scripts/tg, from the sources declared above. terraform and
+    # vault name exact versions (see devvm_terraform_version): an installed
+    # newer one fails this task on the downgrade instead of being kept.
     - name: Install the packages from the third-party sources
       ansible.builtin.apt:
         name:
@@ -884,12 +901,15 @@
           - docker-buildx-plugin
           - docker-compose-plugin
           - kubectl
+          - "terraform={{ devvm_terraform_version }}"
+          - "vault={{ devvm_vault_version }}"
         state: present
         # The install above refreshes the cache at most hourly, which on a
         # new box can predate these sources.
         update_cache: >-
           {{ (devvm_docker_source.changed | default(false))
-             or (devvm_kubernetes_source.changed | default(false)) }}
+             or (devvm_kubernetes_source.changed | default(false))
+             or (devvm_hashicorp_source.changed | default(false)) }}
       tags: [packages]
 
     # Google Chrome, which T3's headless browser and the agents' Playwright
@@ -1173,28 +1193,22 @@
         dest: /usr/local/bin/kubectl-oidc_login
         state: link
 
-    # sops names its asset after the release tag, so "latest/download" alone
-    # cannot address it -- the tag has to be resolved first.
-    - name: Resolve the latest sops release
-      when: "'sops' in missing_tools"
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/getsops/sops/releases/latest
-        return_content: true
-      register: sops_release
-      check_mode: false
-
+    # Pinned with checksums (see devvm_terragrunt_version). Only a missing
+    # binary is fetched: a bump replaces the file by hand or deletes it first.
     - name: Install sops
       when: "'sops' in missing_tools"
       ansible.builtin.get_url:
-        url: "https://github.com/getsops/sops/releases/download/{{ sops_release.json.tag_name }}/sops-{{ sops_release.json.tag_name }}.linux.amd64"
+        url: "https://github.com/getsops/sops/releases/download/v{{ devvm_sops_version }}/sops-v{{ devvm_sops_version }}.linux.amd64"
         dest: /usr/local/bin/sops
+        checksum: "sha256:{{ devvm_sops_sha256 }}"
         mode: "0755"
 
     - name: Install terragrunt
       when: "'terragrunt' in missing_tools"
       ansible.builtin.get_url:
-        url: "{{ terragrunt_url }}"
+        url: "https://github.com/gruntwork-io/terragrunt/releases/download/v{{ devvm_terragrunt_version }}/terragrunt_linux_amd64"
         dest: /usr/local/bin/terragrunt
+        checksum: "sha256:{{ devvm_terragrunt_sha256 }}"
         mode: "0755"
 
     # yt-dlp for `homelab video get`, added 2026-09-28. The release binary, not
