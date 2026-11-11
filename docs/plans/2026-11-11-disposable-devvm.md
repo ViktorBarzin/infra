@@ -171,6 +171,11 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   restored; MCP server secrets have no kept place; chezmoi applies before the
   `~/.claude` restore; the dotfiles repo is behind the live home; the
   MeshCentral sessionKey is still loose. Steps: `docs/runbooks/devvm-drill.md`.
+- Round 2, MeshCentral: the cluster server in `stacks/meshcentral` was the
+  live user of the loose `~/meshcentral-data` copy (same sessionKey, certs
+  and database keys). Its sessionKey now comes from Vault
+  `secret/meshcentral` through ESO and was replaced with a new key; the
+  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`).
 - intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
   no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki
