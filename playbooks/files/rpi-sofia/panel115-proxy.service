@@ -1,0 +1,18 @@
+[Unit]
+Description=TCP прокси до входен панел .115 (10.200.1.2:8115 -> 192.168.1.115:80)
+Documentation=man:socat(1)
+# Панелът „VTORI VHOD" е върнат на входа на 02.09.2026 след като беше свален
+# заради нередовно лицево разпознаване, без сервизът да намери дефект. Наблюдава
+# се от devvm (panel115-watch.timer), а мрежата на комплекса е достъпна само от
+# netns guestns — оттам този прокси плюс ssh тунел. Не пипаме iptables; socat е
+# достатъчен и е обратимо.
+After=camera-net.service
+Requires=camera-net.service
+
+[Service]
+ExecStart=/usr/bin/ip netns exec guestns /usr/bin/socat TCP-LISTEN:8115,bind=10.200.1.2,fork,reuseaddr,keepalive TCP:192.168.1.115:80,keepalive
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
