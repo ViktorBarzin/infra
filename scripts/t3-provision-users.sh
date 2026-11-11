@@ -1931,6 +1931,26 @@ while IFS=$'\t' read -r os_user repos_csv; do
 done < <(jq -r '.accounts[] | select(.tier != "admin" and .code_layout == "workspace") | [.os_user, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
 # --- end emo-jobs ---
 
+# --- t3-snapshot (disposable devvm, 2026-11-11) ---
+# t3_restore_before_serve USER: on a rebuilt devvm, put the user's newest T3
+# snapshot back before the serve first starts (scripts/t3-restore-state.sh).
+# --if-missing is a no-op for anyone who already has a database. Returns 1
+# when the restore says hold (exit 3: the first-boot build could not copy the
+# snapshots and this user has none yet), so the caller skips starting an empty
+# T3 for them; the next hourly run tries again. Tests:
+# scripts/t3-restore-state.test.sh.
+t3_restore_before_serve() {
+  local u="$1" bin="${T3_RESTORE_BIN:-/usr/local/bin/t3-restore-state}" rc=0
+  [[ -x "$bin" ]] || return 0
+  run "$bin" --if-missing "$u" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) log "t3-serve held for $u: waiting for the T3 snapshots (docs/architecture/backup-dr.md, T3 snapshots)"; return 1 ;;
+    *) log "WARN: t3-restore-state failed for $u (rc=$rc)"; return 0 ;;
+  esac
+}
+# --- end t3-snapshot ---
+
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
   envf="$ENVDIR/$os_user.env"
@@ -1952,11 +1972,7 @@ while IFS=$'\t' read -r os_user port; do
     continue
   fi
   # --- t3-snapshot (disposable devvm, 2026-11-11) ---
-  # A rebuilt devvm: put the user's newest T3 snapshot back before the serve
-  # first starts. --if-missing is a no-op for anyone who already has a database.
-  if id "$os_user" >/dev/null 2>&1 && [[ -x /usr/local/bin/t3-restore-state ]]; then
-    run /usr/local/bin/t3-restore-state --if-missing "$os_user" || log "WARN: t3-restore-state failed for $os_user"
-  fi
+  if id "$os_user" >/dev/null 2>&1 && ! t3_restore_before_serve "$os_user"; then continue; fi
   # --- end t3-snapshot ---
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")

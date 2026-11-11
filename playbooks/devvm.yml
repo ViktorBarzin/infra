@@ -39,7 +39,12 @@
 #
 # NOT ADOPTED, and why
 #   agent-conductor    stopped and disabled since 2026-09-13; its files stay
-#                      because their only archive is gone (see its tasks).
+#                      (see its tasks). Source: viktor/agent-conductor.
+#   root pip packages  cffi, h11, pycparser, sniffio, typing_extensions in
+#                      /usr/local/lib/python3.12, from a 2025 `sudo poetry
+#                      install`. The admin's ~/.local httpx and httpcore
+#                      import h11 and sniffio from there, so they stay while
+#                      those do; both are lost together on a rebuild.
 #   kernel packages    old linux-modules-extra and the like are apt's business.
 #   ntpsec             replaced systemd-timesyncd by hand long ago; a new box
 #                      keeps timesyncd, which does the same job.
@@ -409,7 +414,9 @@
     # in 30 days (no client connections, no mount requests in the devvm
     # journal). Removed 2026-11-11 as the first step of making the devvm
     # disposable (docs/plans/2026-11-11-disposable-devvm.md). The NFS client
-    # (nfs-common) stays: mounts from the Proxmox host need it.
+    # (nfs-common, in packages.txt) stays: the admin mounts NFS exports by hand
+    # and runs showmount against the Proxmox host. It brings rpcbind and
+    # rpc.statd, which listen on 111 and a random port; NFSv3 mounts need them.
     - name: Remove the hand-installed NFS server and its /home/wizard export
       tags: [nfs-server]
       block:
@@ -503,6 +510,19 @@
             path: "/home/{{ devvm_admin_user }}/.local/share/tl-fallback"
             state: absent
 
+        # 343 MB that nothing runs once the container is gone.
+        - name: List the paperless-mcp images
+          ansible.builtin.command: docker images -q ghcr.io/barryw/paperlessmcp
+          register: devvm_paperless_images
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        - name: Remove the paperless-mcp image
+          ansible.builtin.command: docker rmi ghcr.io/barryw/paperlessmcp:v0.1.19
+          when: (devvm_paperless_images.stdout | default('')) | length > 0
+          changed_when: true
+
     # Hand-installed packages with no use found. Each line says what it was.
     #   samba        nmbd ran, smbd had been disabled, and the one share was
     #                /home/wizard. Nothing connected; smbclient was never
@@ -527,11 +547,16 @@
     #                cluster's chrome-service and noVNC.
     #   python2      python-mysqldb and libssl1.1 kept a Python 2.7 around;
     #                no session ever ran python2.
+    #   apache2      already removed; its config (dpkg state rc) is purged.
     #   the rest     epiphany-browser, glmark2, mesa-utils, stockfish, nikto,
-    #                dns2tcp, httpie, graphviz, stress-ng, iperf3, sshfs,
-    #                cifs-utils, ntfs-3g, kubectx, scdaemon, debian-keyring and
-    #                virtualenvwrapper: no use in the session store, and none in
-    #                the shell histories since 2025 at the latest.
+    #                dns2tcp, httpie, graphviz, stress-ng, iperf3, cifs-utils,
+    #                ntfs-3g, kubectx, scdaemon, debian-keyring,
+    #                virtualenvwrapper, virtualenv, libsnmp-dev and the golang
+    #                metapackage (golang-go stays, in packages.txt): no use in
+    #                the session store, and none in the shell histories since
+    #                2025 at the latest. sshfs was removed here on 2026-11-11 on
+    #                a wrong reading of the histories (the admin ran it in
+    #                January 2026) and is back in packages.txt.
     - name: Retire the hand-installed packages nothing uses
       tags: [packages]
       block:
@@ -557,6 +582,7 @@
               - php-common
               - libapache2-mod-php7.4
               - apache2-bin
+              - apache2
               - et
               - certbot
               - python3-certbot
@@ -590,7 +616,6 @@
               - graphviz
               - stress-ng
               - iperf3
-              - sshfs
               - cifs-utils
               - ntfs-3g
               - kubectx
@@ -598,14 +623,18 @@
               - debian-keyring
               - python3-virtualenvwrapper
               - virtualenvwrapper
+              - virtualenv
+              - libsnmp-dev
+              - golang
             state: absent
             purge: true
             update_cache: false
 
         # What the purge leaves behind: state the packages wrote at run time,
         # and the apt sources that delivered three of them. The samba state
-        # includes its password database. /etc/letsencrypt itself stays,
-        # because ntpsec ships a renewal hook inside it.
+        # includes its password database. The certbot purge took
+        # /etc/letsencrypt with it, ntpsec's unused renewal hook included;
+        # without certbot nothing runs that hook.
         - name: Remove what the retired packages left behind
           ansible.builtin.file:
             path: "{{ item }}"
@@ -623,6 +652,7 @@
             - /etc/apt/sources.list.d/nvidia-container-toolkit.list
             - /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
             - /usr/local/lib/python2.7
+            - /etc/modprobe.d/blacklist-nvidia.conf
 
     # A Go 1.21.5 tarball install from 2023 (update-golang.sh). Its profile.d
     # file put /usr/local/go/bin FIRST on every login shell's PATH, so a login
@@ -645,11 +675,13 @@
     #                    writes them any more.
     #   tl-t3-*.prev     binaries of services that no longer exist.
     #   drone            the Drone CLI; CI here is Woodpecker.
-    #   age, age-keygen  no session or script ever ran them; sops carries its
-    #                    own age implementation.
+    #   age, age-keygen  hand-copied binaries; Ubuntu's age package
+    #                    (packages.txt) replaces them, for the age-keygen step
+    #                    in docs/agents/terraform.md.
     #   immich-go        a link to a 2023 binary in the admin's home.
     #   openclaw-task    OpenClaw runs no pods and the script was not called in
-    #                    30 days. Its source stays in stacks/openclaw/files.
+    #                    30 days. Its source stays in stacks/openclaw/files;
+    #                    re-enabling OpenClaw means installing it here again.
     #   tsc, tsserver    TypeScript 5.0.4 from 2023, installed globally. Every
     #                    project runs its own compiler through npx or bunx.
     #   virtualenvwrapper.sh  a 2023 pip copy of the package removed above.
@@ -676,6 +708,52 @@
         - /usr/local/bin/tsserver
         - /usr/local/lib/node_modules/typescript
         - /usr/local/bin/virtualenvwrapper.sh
+
+    # Leftovers in /etc of software that is gone.
+    #   *.prev, *.bak*, *.broken-*  hand-made copies from before the playbook
+    #                    and the terminal-lobby package owned these files.
+    #   /etc/tl-t3-sync  config of tl-t3-sync@, retired by terminal-lobby
+    #                    ADR-0029; its binary went in the list above.
+    #   debian.cnf       the maintenance login of the MySQL server removed
+    #                    2026-11-03 (root 0600, a password inside).
+    #   tokens.revoked   one comment line from an old agent-api-kill; the
+    #                    current one keeps revoked tokens in Vault, and only
+    #                    /etc/terminal-lobby-tokens is read.
+    - name: Remove the leftovers of retired software in /etc
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/session-events.service.prev
+        - /etc/claude-code/managed-settings.json.bak
+        - /etc/claude-code/managed-settings.json.bak-2026-06-26
+        - /etc/claude-code/managed-settings.json.bak-opus5-20260731T1321
+        - /etc/claude-code/managed-settings.json.broken-20260721T2036
+        - /etc/claude-code/managed-settings.json.prev
+        - /etc/ttyd-user-map.bak.20260606-181703
+        - /etc/tl-t3-sync
+        - /etc/mysql/debian.cnf
+        - /etc/terminal-lobby-tokens.revoked
+
+    # iSCSI node records for the TrueNAS targets at 10.0.10.15 (grafana,
+    # mailserver, dbaas and the rest), from before the cluster moved its
+    # storage to the Proxmox host. TrueNAS was decommissioned 2026-04-13, no
+    # session is logged in, and iscsid would retry them at every boot.
+    # open-iscsi itself stays: ubuntu-server recommends it.
+    - name: Find the stale iSCSI records
+      ansible.builtin.find:
+        paths: [/etc/iscsi/nodes, /etc/iscsi/send_targets]
+        file_type: any
+        patterns: ["*"]
+      register: devvm_iscsi_records
+
+    - name: Remove the stale iSCSI records
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ devvm_iscsi_records.files }}"
+      loop_control:
+        label: "{{ item.path }}"
 
     # depcheck, a global npm install nothing calls. The other global packages
     # (codex, pi, the Bitwarden CLI, t3) are declared further down.
@@ -1752,7 +1830,7 @@
     # and neither can restore what it does not know about.
     #
     # Measured before retiring. agent-conductor: under 5 MiB resident, 15 MB on
-    # disk, binaries dated 2026-07-16, source not present anywhere in ~/code.
+    # disk, binaries dated 2026-07-16 (its source was not in ~/code then).
     # Orca: 41 MiB resident and 748 MB on disk, a third-party AppImage from the
     # 2026-08-29 evaluation and re-downloadable. Both were archived to
     # /mnt/backup/devvm-retired-2026-09-13/agent-conductor-archive-2026-09-13.tar.gz
@@ -1765,10 +1843,14 @@
     # files are still in place (acd, acd-demux, acmux, ac-relay and ac-spa in
     # /usr/local/bin, /usr/local/share/agent-conductor, and the units).
     #
-    # They STAY, checked 2026-11-11: the archive named above is no longer on
-    # the Proxmox host (nothing under /mnt/backup matches agent-conductor), so
-    # the live files are the only copy. Re-archive them somewhere that is not
-    # mirrored with --delete before removing them.
+    # They stay, checked 2026-11-11. The archive named above is no longer on
+    # the Proxmox host (nothing under /mnt/backup matches agent-conductor), but
+    # the source is on Forgejo: viktor/agent-conductor, cloned at
+    # ~/code/agent-conductor (cbaee65, 2026-09-25, newer than the binaries),
+    # with acd, acmux and the web UI, so the binaries can be rebuilt. The one
+    # piece only this box holds is /etc/acd-gateway/gateway-secret, which
+    # nothing reads while the units are disabled. Deleting the files is a
+    # decision for whoever retires agent-conductor for good.
     #
     # NOT masked, and that is deliberate. Masking works by putting a symlink to
     # /dev/null at a higher-priority path than the unit file, and these unit
@@ -1885,6 +1967,69 @@
         owner: root
         group: root
       notify: reload systemd
+
+    # /tmp in RAM and the journal in RAM. Both were made by hand (2026-08-17 and
+    # 2026-06-30) and declared 2026-11-11: an Ubuntu cloud image keeps /tmp on
+    # disk and the journal persistent, so a rebuilt box would put both on the
+    # throttled disk whose IO budget etcd shares, with no 8G cap. The reasons
+    # are in each file. tmp.conf replaces systemd's own /usr/lib/tmpfiles.d
+    # copy (10 days rather than 30, and the tmux sockets kept).
+    #
+    # Started as well as enabled. On the live box /tmp is already this mount,
+    # so that is a no-op; on a new box nothing has used /tmp yet when this
+    # runs (the bootstrap clone is in /opt, ansible's own temp in ~/.ansible).
+    - name: Keep /tmp in RAM
+      tags: [tmpfs]
+      block:
+        - name: Install the /tmp tmpfs unit
+          ansible.builtin.copy:
+            src: files/devvm/tmp.mount
+            dest: /etc/systemd/system/tmp.mount
+            mode: "0644"
+            owner: root
+            group: root
+          register: devvm_tmp_mount_unit
+
+        - name: Mount /tmp as tmpfs, now and at boot
+          ansible.builtin.systemd_service:
+            name: tmp.mount
+            enabled: true
+            state: started
+            daemon_reload: "{{ devvm_tmp_mount_unit is changed }}"
+
+        - name: Age out /tmp after 10 days, sparing live sockets
+          ansible.builtin.copy:
+            src: files/devvm/tmpfiles-tmp.conf
+            dest: /etc/tmpfiles.d/tmp.conf
+            mode: "0644"
+            owner: root
+            group: root
+
+        # A copy of the unit from the day it was written, identical to it.
+        - name: Remove the hand-made backup of the tmpfs unit
+          ansible.builtin.file:
+            path: /etc/systemd/system/tmp.mount.bak-20260817
+            state: absent
+
+    - name: Keep the journal in RAM
+      tags: [journald]
+      block:
+        - name: Create the journald drop-in directory
+          ansible.builtin.file:
+            path: /etc/systemd/journald.conf.d
+            state: directory
+            mode: "0755"
+            owner: root
+            group: root
+
+        - name: Install the volatile journald drop-in
+          ansible.builtin.copy:
+            src: files/devvm/journald-volatile.conf
+            dest: /etc/systemd/journald.conf.d/90-oflt-volatile.conf
+            mode: "0644"
+            owner: root
+            group: root
+          notify: restart journald
 
     # ---- 7a1b) the Bitwarden CLI behind `homelab vault` ---------------------
     # System-wide (/usr/bin/bw under the NodeSource npm prefix) so every user's
@@ -2173,6 +2318,19 @@
     # Pull, not push: the host's key may read that one directory and nothing
     # else. Its text is in Vault like the admin's keys below, because this
     # repo is publicly mirrored. docs/architecture/backup-dr.md, "T3 snapshots".
+    # Root-owned and 0755: t3-backup-state writes each user's snapshot AS that
+    # user, into a per-user subdirectory it hands to them, so a 0700 parent (a
+    # restore that copied the host's root-only directory mode) stops every
+    # nightly and pre-bump snapshot.
+    - name: Make the T3 snapshot directory
+      ansible.builtin.file:
+        path: /var/backups/t3-state
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [t3-snapshot]
+
     - name: Install the T3 restore command
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/t3-restore-state.sh"
@@ -2475,6 +2633,13 @@
     # store here, but the package creates neither this directory nor a
     # StateDirectory=, and the service account cannot create it under
     # /var/lib. It was made by hand in July. The contents are scratch.
+    # BOUNDARY, found 2026-11-11: clipboard-upload runs as the admin and
+    # writes every user's images under <store>/<user> with UMask 0022, so emo's
+    # subdirectory and most of his images are readable by every account here.
+    # The admin's own subdirectory is 0700. The user directories cannot simply
+    # be 0700, because each user's agents read their images as that user; the
+    # fix (a group or ACL per user) belongs in terminal-lobby's clipboard-upload,
+    # not here.
     - name: Create the session image store
       ansible.builtin.file:
         path: /var/lib/clipboard-store
@@ -3881,6 +4046,45 @@
       no_log: true
       notify: restart lobby services
 
+    # tmux-api's Web Push keys (EnvironmentFile=-/etc/tmux-api/vapid.env in the
+    # package's unit). terminal-lobby's deploy.sh wrote this file from Vault
+    # until the Debian package replaced it in August, and nothing wrote it
+    # after that, so a rebuilt box started tmux-api cleanly with Web Push off:
+    # the leading '-' hides a missing file. Same three lines deploy.sh wrote.
+    - name: Read tmux-api's Web Push keys
+      ansible.builtin.command: vault kv get -format=json secret/terminal-lobby/vapid
+      delegate_to: localhost
+      become: false
+      register: devvm_tl_vapid
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Give tmux-api its Web Push keys
+      vars:
+        devvm_tl_vapid_keys: "{{ (devvm_tl_vapid.stdout | from_json).data.data }}"
+      block:
+        - name: Create the tmux-api config directory
+          ansible.builtin.file:
+            path: /etc/tmux-api
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Write the VAPID key file
+          ansible.builtin.copy:
+            dest: /etc/tmux-api/vapid.env
+            owner: root
+            group: root
+            mode: "0600"
+            content: |
+              VAPID_PUBLIC_KEY={{ devvm_tl_vapid_keys.public_key }}
+              VAPID_PRIVATE_KEY={{ devvm_tl_vapid_keys.private_key }}
+              VAPID_SUBJECT={{ devvm_tl_vapid_keys.subject }}
+          no_log: true
+          notify: restart lobby services
+
     # t3-dispatch is the third service Traefik reaches with an identity header
     # (each user's T3 host, stacks/t3code). Until 2026-11-01 it checked no
     # secret and listened on every interface, so anyone who reached
@@ -4295,6 +4499,11 @@
     - name: restart systemd-resolved
       ansible.builtin.systemd_service:
         name: systemd-resolved
+        state: restarted
+
+    - name: restart journald
+      ansible.builtin.systemd_service:
+        name: systemd-journald
         state: restarted
 
     # Restarting dockerd interrupts running containers, so it is a handler that
