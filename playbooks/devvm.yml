@@ -3298,6 +3298,18 @@
     # stack's ExternalSecret reads. ingest.env is root-only; reader.env is
     # readable by the sudo group, which makes `homelab claude-sessions sql`
     # admin-only (Viktor, 2026-11-07).
+    #
+    # Only the box at 10.0.10.10 ingests. The store has no column for the box
+    # a row came from, so a drill VM (stacks/devvm) that ingested would replace
+    # the live box's rows for the same paths, and restore would then hand back
+    # the drill's files. A drill gets reader.env, which its restore needs, and
+    # neither ingest.env nor a running timer. The real replacement takes the
+    # live address and ingests; the ingest still waits per user until
+    # t3-provision-users has restored them (claude_sessions_rebuild.go).
+    - name: Decide whether this box ships sessions to the store
+      ansible.builtin.set_fact:
+        devvm_claude_sessions_ingest: "{{ (ansible_default_ipv4.address | default('')) == '10.0.10.10' }}"
+
     - name: Read the claude-sessions passwords from Vault
       ansible.builtin.command: "vault kv get -field={{ item }}_password secret/claude-sessions"
       delegate_to: localhost
@@ -3339,7 +3351,14 @@
       loop: "{{ devvm_claude_sessions_pw.results }}"
       loop_control:
         label: "{{ item.item }}"
+      when: item.item != 'ingest' or devvm_claude_sessions_ingest
       no_log: true
+
+    - name: Remove the ingest credentials from a box that does not ingest
+      ansible.builtin.file:
+        path: /etc/claude-sessions/ingest.env
+        state: absent
+      when: not devvm_claude_sessions_ingest
 
     # `homelab netsec sql` reads the network IDS store (netsec database on the
     # same ClickHouse, docs/architecture/network-security-monitoring.md).
@@ -3399,6 +3418,15 @@
         enabled: true
         state: started
         daemon_reload: true
+      when: devvm_claude_sessions_ingest
+
+    - name: Keep the claude-sessions ingest timer off on a box that does not ingest
+      ansible.builtin.systemd_service:
+        name: claude-sessions-ingest.timer
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      when: not devvm_claude_sessions_ingest and not ansible_check_mode
 
     # ---- 9) docker containment ----------------------------------------------
     - name: Create the capped docker slice

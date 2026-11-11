@@ -66,6 +66,11 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   state from the session store, T3 threads from the nightly snapshot,
   credentials from Vault `workstation/<user>`. Vermont checks are out of scope
   for a drill.
+- Agent state: `sudo ls /var/lib/claude-sessions-ingest/restored/` lists each
+  user once provisioning step 4a has restored them, and `claude --resume` as
+  each user lists their sessions. The drill reads the store and never writes
+  to it: no `/etc/claude-sessions/ingest.env`, and
+  `claude-sessions-ingest.timer` is disabled.
 - The drill does not take over anything of the live devvm's: Traefik, DNS and
   the DHCP reservation all point at 10.0.10.10, so the lobby and T3 on the
   drill are reachable only on its own address.
@@ -139,7 +144,10 @@ Still open after this drill, for the final one:
   /home/wizard/code/infra/scripts/workstation"). The one-off run from the
   bootstrap clone works.
 - `claude-sessions-ingest.service` fails with 203/EXEC: the program it runs is
-  not installed by the playbook on a new box.
+  not installed by the playbook on a new box. Since 2026-11-11 a drill does not
+  run the ingest at all (only 10.0.10.10 does, `playbooks/devvm.yml` 8d), so
+  this matters only for the real replacement, where provisioning step 0b
+  builds `/usr/local/bin/homelab`.
 - Provisioning runs without an admin Vault token, so per-user Vault tokens,
   Claude-auth tokens, memory keys, browser-bridge tokens and the credential
   restore from `secret/workstation/<user>` are skipped with warnings. The

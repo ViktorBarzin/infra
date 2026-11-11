@@ -1801,6 +1801,31 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
 
+# --- session-store (disposable devvm, 2026-11-11) ---
+# 4a) agent state from the session store. On a rebuilt box, each user's
+# ~/.claude and ~/.codex come back from the claude-sessions ClickHouse once,
+# here, before step 5 starts their T3 serve and before the ingest takes the
+# user on (it waits for this step's marker). `restore --rebuild` writes as the
+# user through runuser and tar --skip-old-files, then records the restored
+# files in the ingest state as already sent. A user this box already ingests,
+# such as everyone on the live devvm, gets only the marker; every later pass is
+# a no-op that does not touch the database. A failure leaves no marker, so the
+# next pass tries again (docs/runbooks/restore-claude-sessions.md).
+restore_agent_state() {  # restore_agent_state USER
+  local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
+  [[ -x "$bin" ]] || { log "WARN: no $bin -> agent state restore skipped for $user"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] restore ~/.claude and ~/.codex from the session store -> $user"; return 0; fi
+  if out="$("$bin" claude-sessions restore --user "$user" --rebuild 2>&1)"; then
+    grep -q 'already restored' <<<"$out" || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+  else
+    log "WARN: agent state restore failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  id "$u" >/dev/null 2>&1 && restore_agent_state "$u"
+done
+# --- end session-store ---
+
 # --- emo-jobs (disposable devvm, 2026-11-11) ---
 # 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
 # at its root: the steps that put back what the user built around the clone by

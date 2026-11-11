@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // fileState is what the ingester remembers about one file between runs.
@@ -332,6 +334,10 @@ type ingestConfig struct {
 	DB        dbConn
 	Budget    int // bytes per INSERT body before compression
 	OnlyUser  string
+	// RequireRestore leaves a user alone until `restore --rebuild` has run
+	// for them on this box, unless the state already lists their files
+	// (claude_sessions_rebuild.go). The verb sets it; tests may not.
+	RequireRestore bool
 }
 
 type ingestStats struct {
@@ -344,6 +350,7 @@ type ingestStats struct {
 	HomeFiles    int // whole files sent to claude.home_files
 	HomeLines    int // lines sent to claude.home_lines
 	FileErrors   int
+	UsersWaiting int // users skipped until restore --rebuild has run for them
 }
 
 type lineRow struct {
@@ -372,6 +379,11 @@ type sideFileRow struct {
 // with one file is counted and the run moves on.
 func runIngest(cfg ingestConfig) (ingestStats, error) {
 	var st ingestStats
+	unlock, err := lockIngestState(cfg.StatePath)
+	if err != nil {
+		return st, err
+	}
+	defer unlock()
 	state, err := loadState(cfg.StatePath)
 	if err != nil {
 		return st, err
@@ -395,6 +407,18 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 		}
 		owner := hfi.Sys().(*syscall.Stat_t).Uid
 		user := h.Name()
+		if cfg.RequireRestore && !rebuildMarked(cfg.StatePath, user) {
+			if !stateTracksHome(state, home) {
+				if hasAgentDirs(home) {
+					st.UsersWaiting++
+				}
+				continue
+			}
+			// The live box: this user has been ingested all along.
+			if err := writeRebuildMarker(cfg.StatePath, user, "already ingesting"); err != nil {
+				return st, err
+			}
+		}
 		batch := &homeFileBatch{db: cfg.DB, budget: cfg.Budget, state: state}
 		found, err := walkHome(home, func(abs, rel string, d fs.DirEntry) error {
 			class, info := classifyHomeFile(home, abs, rel)
@@ -441,6 +465,15 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 	return st, saveState(cfg.StatePath, state)
 }
 
+func hasAgentDirs(home string) bool {
+	for _, r := range homeRoots {
+		if fi, err := os.Lstat(filepath.Join(home, r)); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // errDB marks a database failure, which stops the whole run.
 type errDB struct{ error }
 
@@ -481,6 +514,17 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		if err := cfg.DB.insert(insertFiles, "", append(row, '\n')); err != nil {
 			return errDB{err}
 		}
+		// claude.files holds text, and JSON turns bytes that are not UTF-8
+		// into U+FFFD, so a binary tool result (a fetched PDF) also goes to
+		// claude.home_files as base64, which restore prefers.
+		if rel := transcriptRel(user, path); rel != "" && !utf8.Valid(content) && fi.Size() <= maxSideFileBytes {
+			hrow, _ := json.Marshal(homeFileRow{OsUser: user, Path: rel, Kind: homeKind(rel), Mtime: fi.ModTime().UTC().Format(time.RFC3339Nano),
+				Mode: uint32(fi.Mode().Perm()), Size: size, Encoding: "base64", Content: base64.StdEncoding.EncodeToString(content)})
+			if err := cfg.DB.insert(insertHomeFiles, "", append(hrow, '\n')); err != nil {
+				return errDB{err}
+			}
+			st.HomeFiles++
+		}
 		st.SideFiles++
 		state.Files[path] = &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size}
 		return nil
@@ -508,7 +552,10 @@ func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path str
 		st.FileErrors++
 		return nil
 	}
-	tokenKey := path
+	// The token names the file version: a transcript Claude Code rewrote
+	// (a new inode) is read again from 0, and a token equal to the old
+	// file's would make ClickHouse drop that batch, new lines included.
+	tokenKey := path + "@" + strconv.FormatUint(inode, 10)
 	if gen != "" {
 		tokenKey = path + "#" + gen
 	}

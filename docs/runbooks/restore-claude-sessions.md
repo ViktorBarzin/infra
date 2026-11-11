@@ -74,6 +74,30 @@ homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar 
 homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
 ```
 
+On a rebuilt devvm this runs by itself: `t3-provision-users.sh` step 4a calls
+`homelab claude-sessions restore --user <name> --rebuild` as root for every
+roster user, before step 5 starts their T3 serve. It restores each user once,
+records the restored files in the ingest state as already sent, and leaves
+`/var/lib/claude-sessions-ingest/restored/<user>`; the ingest leaves a user
+alone until that marker exists. Check it after the first provisioning run:
+
+```sh
+sudo ls /var/lib/claude-sessions-ingest/restored/     # one file per user
+sudo journalctl -u t3-provision-users --since today | grep 'restore --rebuild'
+journalctl -u claude-sessions-ingest -n 3 | grep users_waiting_for_restore=0
+```
+
+Order matters for a manual restore into a home on a rebuilt box. Run it before
+the user first starts claude or codex there, and before the ingest takes the
+user on. Otherwise the new box's short `history.jsonl` is kept by
+`--skip-old-files`, and once ingested it becomes the newest copy in the store.
+`--rebuild` keeps that order for you. To restore a user again on purpose,
+remove their marker and the state entries under their home with the timer
+stopped.
+
+Only the devvm at 10.0.10.10 ingests. A drill VM restores from the store but
+never writes to it (`playbooks/devvm.yml` section 8d).
+
 A settings file whose secrets were redacted at ingest comes back as
 `<name>.from-store` (for example `.claude/settings.json.from-store`), never over
 the real name; the command lists them. Merge by hand, or let provisioning write
@@ -82,6 +106,8 @@ the real file. Files over 32 MiB were stored without content and are counted as
 
 Tested on 2026-11-11: one of wizard's sessions (1,248 lines and two subagents)
 came back byte for byte, and `claude --resume` in a temporary HOME listed it.
+A line file with lines missing from the store is written without them and named
+in a `WARN ... bytes missing` line.
 
 ## netsec rollups
 

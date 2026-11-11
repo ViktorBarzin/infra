@@ -81,6 +81,19 @@ type restoreStats struct {
 	Refused  int // a stored path outside .claude/ or .codex/
 	Bytes    int64
 	Redacted []string
+	// Gapped names line files with bytes missing between two stored lines:
+	// they are written as stored, with the missing lines left out.
+	Gapped []string
+	// Files is every file handed to the sink, for the rebuild's ingest state.
+	Files []restoredFile
+}
+
+// restoredFile is one file restore wrote, as the ingest state needs it.
+type restoredFile struct {
+	Rel   string
+	Size  int64
+	Mtime time.Time
+	Gen   string // the stored generation of a claude.home_lines file
 }
 
 // safeRel accepts only a clean relative path inside .claude/ or .codex/.
@@ -119,6 +132,10 @@ func msTime(ms int64) time.Time {
 }
 
 func (st *restoreStats) put(sink restoreSink, rel string, mode fs.FileMode, mtime time.Time, content []byte) error {
+	return st.putGen(sink, rel, "", mode, mtime, content)
+}
+
+func (st *restoreStats) putGen(sink restoreSink, rel, gen string, mode fs.FileMode, mtime time.Time, content []byte) error {
 	if !safeRel(rel) {
 		st.Refused++
 		return nil
@@ -130,29 +147,44 @@ func (st *restoreStats) put(sink restoreSink, rel string, mode fs.FileMode, mtim
 	if ok {
 		st.Written++
 		st.Bytes += int64(len(content))
+		st.Files = append(st.Files, restoredFile{Rel: rel, Size: int64(len(content)), Mtime: mtime, Gen: gen})
 	} else {
 		st.Skipped++
 	}
 	return nil
 }
 
-// collectLines pages through one line file and joins it back together.
-func collectLines(page func(from uint64) ([]storedLine, error)) ([]byte, error) {
+// collectLines pages through one line file and joins it back together. It
+// also returns how many bytes are missing: each stored line should start
+// where the one before it ended, and the ingest never skips a line that is
+// not blank, so a jump means lines the store does not hold.
+func collectLines(page func(from uint64) ([]storedLine, error)) ([]byte, int64, error) {
 	var buf bytes.Buffer
-	var from uint64
+	var from, next uint64
+	var missing int64
 	for {
 		rows, err := page(from)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(rows) == 0 {
-			return buf.Bytes(), nil
+			return buf.Bytes(), missing, nil
 		}
 		for _, r := range rows {
+			if r.Offset > next {
+				missing += int64(r.Offset - next)
+			}
 			buf.WriteString(r.Raw)
 			buf.WriteByte('\n')
 			from = r.Offset + 1
+			next = r.Offset + uint64(len(r.Raw)) + 1
 		}
+	}
+}
+
+func (st *restoreStats) noteGap(rel string, missing int64) {
+	if missing > 0 {
+		st.Gapped = append(st.Gapped, fmt.Sprintf("%s (%d bytes missing)", rel, missing))
 	}
 }
 
@@ -181,6 +213,9 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 	if pageRows <= 0 {
 		pageRows = 500
 	}
+	// Paths home_files holds, so a binary tool result's base64 copy there
+	// wins over its lossy text copy in claude.files.
+	inHomeFiles := map[string]bool{}
 	// Whole home files: plans, tasks, file-history, settings, ...
 	for after := ""; ; {
 		rows, err := src.homeFiles(user, session, after, pageRows)
@@ -192,6 +227,7 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 		}
 		for _, f := range rows {
 			after = f.Path
+			inHomeFiles[f.Path] = true
 			content, ok := decodeStored(f)
 			if !ok {
 				st.Omitted++
@@ -213,11 +249,12 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 		return st, err
 	}
 	for _, ref := range refs {
-		content, err := collectLines(func(from uint64) ([]storedLine, error) { return src.homeLines(user, ref, from, pageRows) })
+		content, missing, err := collectLines(func(from uint64) ([]storedLine, error) { return src.homeLines(user, ref, from, pageRows) })
 		if err != nil {
 			return st, err
 		}
-		if err := st.put(sink, ref.Path, 0o600, msTime(ref.MtimeMs), content); err != nil {
+		st.noteGap(ref.Path, missing)
+		if err := st.putGen(sink, ref.Path, ref.Generation, 0o600, msTime(ref.MtimeMs), content); err != nil {
 			return st, err
 		}
 	}
@@ -237,6 +274,9 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 				st.Refused++
 				continue
 			}
+			if inHomeFiles[rel] {
+				continue
+			}
 			if err := st.put(sink, rel, 0o600, msTime(f.MtimeMs), []byte(f.Content)); err != nil {
 				return st, err
 			}
@@ -253,10 +293,11 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 			st.Refused++
 			continue
 		}
-		content, err := collectLines(func(from uint64) ([]storedLine, error) { return src.transcriptLines(user, ref, from, pageRows) })
+		content, missing, err := collectLines(func(from uint64) ([]storedLine, error) { return src.transcriptLines(user, ref, from, pageRows) })
 		if err != nil {
 			return st, err
 		}
+		st.noteGap(rel, missing)
 		if err := st.put(sink, rel, 0o600, msTime(ref.MtimeMs), content); err != nil {
 			return st, err
 		}
@@ -416,17 +457,25 @@ func (s sqlSource) homeLines(user string, ref storedRef, from uint64, limit int)
 
 // ---- the verb --------------------------------------------------------------
 
-var restoreNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{4,80}$`)
+// A Linux user name (emo is three letters) and a session id.
+var (
+	restoreUserRe    = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+	restoreSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-]{4,80}$`)
+)
 
-const restoreUsage = `usage: homelab claude-sessions restore --user <name> (--to <home-dir> | --tar <file|->) [--session <id>] [--force]
+const restoreUsage = `usage: homelab claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--force]
   --to DIR     write into DIR/.claude and DIR/.codex as yourself; existing files are kept unless --force
   --tar FILE   write a tar stream instead ("-" for stdout); restore into another user's home with
                homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar -x --skip-old-files -C /home/emo
+  --rebuild    root, run by t3-provision-users on every pass: on a rebuilt devvm, put the user's
+               whole state back into their home once, record it in the ingest state as already
+               sent, and let the ingest start on that user; a no-op for a user this box already ingests.
+               --home DIR and --state FILE replace the user's home and the ingest state, for a drill
   --session    only that session: its transcript, subagents, tool results, workflows and file-history`
 
 func claudeSessionsRestore(args []string) error {
-	var who, to, tarOut, session string
-	force := false
+	var who, to, tarOut, session, rbHome, rbState string
+	force, rebuild := false, false
 	for i := 0; i < len(args); i++ {
 		need := func() (string, error) {
 			if i+1 >= len(args) {
@@ -447,6 +496,12 @@ func claudeSessionsRestore(args []string) error {
 			session, err = need()
 		case "--force":
 			force = true
+		case "--rebuild":
+			rebuild = true
+		case "--home":
+			rbHome, err = need()
+		case "--state":
+			rbState, err = need()
 		case "-h", "--help":
 			fmt.Println(restoreUsage)
 			return nil
@@ -462,8 +517,17 @@ func claudeSessionsRestore(args []string) error {
 			who = u.Username
 		}
 	}
-	if !restoreNameRe.MatchString(who) || (session != "" && !restoreNameRe.MatchString(session)) {
+	if !restoreUserRe.MatchString(who) || (session != "" && !restoreSessionRe.MatchString(session)) {
 		return fmt.Errorf("--user and --session take a plain name or id\n%s", restoreUsage)
+	}
+	if rebuild {
+		if to != "" || tarOut != "" || session != "" || force {
+			return fmt.Errorf("--rebuild takes only --user, --home and --state\n%s", restoreUsage)
+		}
+		return claudeSessionsRebuild(who, rbHome, rbState)
+	}
+	if rbHome != "" || rbState != "" {
+		return fmt.Errorf("--home and --state go with --rebuild\n%s", restoreUsage)
 	}
 	if (to == "") == (tarOut == "") {
 		return fmt.Errorf("give exactly one of --to and --tar\n%s", restoreUsage)
@@ -509,10 +573,17 @@ func claudeSessionsRestore(args []string) error {
 			err = cerr
 		}
 	}
-	fmt.Fprintf(os.Stderr, "claude-sessions restore user=%s session=%s written=%d kept_existing=%d omitted=%d refused=%d bytes=%d\n",
-		who, session, st.Written, st.Skipped, st.Omitted, st.Refused, st.Bytes)
+	fmt.Fprintf(os.Stderr, "claude-sessions restore user=%s session=%s written=%d kept_existing=%d omitted=%d refused=%d gapped=%d bytes=%d\n",
+		who, session, st.Written, st.Skipped, st.Omitted, st.Refused, len(st.Gapped), st.Bytes)
+	printRestoreNotes(st)
+	return err
+}
+
+func printRestoreNotes(st restoreStats) {
 	for _, r := range st.Redacted {
 		fmt.Fprintf(os.Stderr, "  redacted settings, merge by hand: %s\n", r)
 	}
-	return err
+	for _, g := range st.Gapped {
+		fmt.Fprintf(os.Stderr, "  WARN lines missing from the store, written without them: %s\n", g)
+	}
 }
