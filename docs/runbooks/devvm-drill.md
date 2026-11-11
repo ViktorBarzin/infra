@@ -73,7 +73,7 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
 ## Tear it down
 
 Remove the entry from `local.drills` and land it. CI stops and destroys the VM
-(`purge_on_destroy`) and, with no drills left, deletes the image from `local`.
+(without purge, so the VMID slot's ACL stays) and, with no drills left, deletes the image from `local`.
 Check: `ssh root@192.168.1.127 'qm list; pvesm list local --content import'`.
 
 ## When it goes wrong
@@ -93,7 +93,8 @@ Check: `ssh root@192.168.1.127 'qm list; pvesm list local --content import'`.
   pipeline; the next pipeline diffs from the killed push, so it does not
   re-apply this stack). The VM exists on the host but not in state, and the
   next apply fails on the taken VMID. Destroy the orphan
-  (`qm stop <vmid>; qm destroy <vmid> --purge` on the host, drill VMs only)
+  (`qm stop <vmid>; qm destroy <vmid>` on the host, drill VMs only; never
+  `--purge`, which also deletes the token's `/vms/<id>` slot ACL)
   and land any change under `stacks/devvm` to re-apply. An admin apply from
   the main checkout avoids the race.
 - **403 from Proxmox in the apply.** `TFDevvm` lacks a privilege for something
@@ -123,6 +124,10 @@ default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
   directories the cloud image lacks (`/etc/systemd/resolved.conf.d`,
   `/etc/promtail`). After the fixes the playbook ran clean on the drill and a
   second run reported 256 ok, 0 changed.
+- Destroying a VM with purge deletes the ACLs on its `/vms/<id>`, so the
+  slot grant went with it and the next apply got 403 refreshing the old VM.
+  The module now destroys without purge; rerun `pve-host.yml --tags
+  devvm-tf` if a slot ACL is missing.
 - terminal-lobby is installed by its deploy pipeline on the live box; the
   bootstrap now installs it from the public registry after the playbook. All
   seven lobby units came up.
