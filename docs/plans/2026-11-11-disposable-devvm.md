@@ -171,6 +171,12 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   restored; MCP server secrets have no kept place; chezmoi applies before the
   `~/.claude` restore; the dotfiles repo is behind the live home; the
   MeshCentral sessionKey is still loose. Steps: `docs/runbooks/devvm-drill.md`.
+- Round 2, claude-state: `~/.claude.json` is kept in the session store as a
+  reduced copy (project trust, user-scope MCP servers, the onboarding flags)
+  and restored, merged into one provisioning wrote first; MCP server secrets
+  have a kept place in Vault `secret/workstation/<user>/mcp`
+  (`homelab claude-sessions mcp-secrets`), filled back by provisioning step
+  4a2 (`docs/architecture/claude-session-store.md`).
 - intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
   no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki

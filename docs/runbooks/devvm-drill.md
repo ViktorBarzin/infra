@@ -118,7 +118,10 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   user once provisioning step 4a has restored them, and `claude --resume` as
   each user lists their sessions. `~/.claude/settings.json` is the user's own
   (statusLine, enabledPlugins, env flags) with the memory keys filled from
-  Vault, not a hooks-only skeleton. The drill must read the store and never
+  Vault, not a hooks-only skeleton. `jq '.mcpServers | keys' ~/.claude.json` lists the
+  user's MCP servers, `claude mcp list` shows them connected after the admin
+  run's `mcp-secrets fill`, and `claude` in a project the user trusted on the
+  live box starts without the trust prompt. The drill must read the store and never
   write to it: no `/etc/claude-sessions/ingest.env`,
   `claude-sessions-ingest.timer` disabled, and after the drill no rows from
   its time window that the live ingest's journal does not account for:
@@ -189,7 +192,8 @@ comes back:
 2. On the devvm: `sudo systemctl start t3-backup-state.service`, then
    `sudo systemctl start claude-sessions-ingest.service`; both journals end
    with a success line. Re-capture any credential rotated since its last
-   capture (`devvm-credentials.md`, "Add or refresh a credential").
+   capture (`devvm-credentials.md`, "Add or refresh a credential"), and each
+   user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets").
 3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
@@ -434,7 +438,12 @@ Gaps it found, none fixed in the drill itself:
 - **MAJOR, known: `~/.claude.json` is not restored.** wizard loses the
   `google_workspace` MCP server and 454 project entries, emo the
   `paperless` MCP server; the first `claude` shows the onboarding and the
-  folder trust prompt.
+  folder trust prompt. Fixed after this drill: the store keeps a reduced
+  `~/.claude.json` (project trust, user-scope MCP servers, the onboarding
+  flags), restore writes it back or merges it into one provisioning wrote
+  first, and the MCP secrets it leaves out come back from Vault
+  `secret/workstation/<user>/mcp` in provisioning step 4a2
+  (`claude-session-store.md`). Not yet drilled on a VM.
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
   group is root-equivalent.
