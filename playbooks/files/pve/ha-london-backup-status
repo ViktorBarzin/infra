@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ha-london-backup-status: report how fresh ha-london's network backups are.
+#
+# Home Assistant in London (the Pi 3, docs/architecture/london-site.md) writes
+# its automatic backups through Supervisor network storage to the NFS export
+# /srv/nfs/ha-london-backup on this host (scripts/pve-nfs-exports). Nothing on
+# this side writes there, so the age of the newest archive is the only signal
+# that the Pi's backups still leave the SD card. HaLondonBackupStale in
+# stacks/monitoring reads it.
+#
+# Counts the top-level *.tar files only. Supervisor writes one tar per backup;
+# anything else in the directory (a probe file, a stray partial with another
+# name) must not make the export look fresh.
+#
+# Installed by playbooks/pve-host.yml (tag ha-london-backup); hourly timer.
+# Tests: playbooks/files/pve/ha-london-backup-status.test.sh
+set -euo pipefail
+
+BACKUP_DIR=${BACKUP_DIR:-/srv/nfs/ha-london-backup}
+TEXTFILE_DIR=${TEXTFILE_DIR:-/var/lib/node_exporter/textfile}
+OUT="$TEXTFILE_DIR/ha_london_backup.prom"
+
+present=0 files=0 bytes=0 newest=0
+if [ -d "$BACKUP_DIR" ]; then
+  present=1
+  # %T@ is the mtime with a fraction, %s the size; one line per archive.
+  while IFS=' ' read -r mtime size; do
+    files=$((files + 1))
+    bytes=$((bytes + size))
+    mtime=${mtime%.*}
+    [ "$mtime" -gt "$newest" ] && newest=$mtime
+  done < <(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.tar' -printf '%T@ %s\n')
+fi
+
+tmp=$(mktemp "$TEXTFILE_DIR/.ha_london_backup.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<METRICS
+# HELP ha_london_backup_dir_present 1 if $BACKUP_DIR exists on the host.
+# TYPE ha_london_backup_dir_present gauge
+ha_london_backup_dir_present $present
+# HELP ha_london_backup_files Number of ha-london backup archives (*.tar) in the export.
+# TYPE ha_london_backup_files gauge
+ha_london_backup_files $files
+# HELP ha_london_backup_bytes Total size of those archives.
+# TYPE ha_london_backup_bytes gauge
+ha_london_backup_bytes $bytes
+# HELP ha_london_backup_newest_file_timestamp_seconds mtime of the newest archive, 0 if there is none.
+# TYPE ha_london_backup_newest_file_timestamp_seconds gauge
+ha_london_backup_newest_file_timestamp_seconds $newest
+# HELP ha_london_backup_status_last_run_timestamp_seconds When this script last ran.
+# TYPE ha_london_backup_status_last_run_timestamp_seconds gauge
+ha_london_backup_status_last_run_timestamp_seconds $(date +%s)
+METRICS
+chmod 0644 "$tmp"
+mv "$tmp" "$OUT"
+trap - EXIT

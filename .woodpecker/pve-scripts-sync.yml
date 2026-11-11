@@ -27,7 +27,7 @@
 # byte-identical between repo and host, and the script was run by hand against
 # the live host — three timers listed healthy, nothing changed.
 #
-# Trigger: push to master touching any of the eighteen files, or the sync script.
+# Trigger: push to master touching any of the listed files.
 #
 # Credentials:
 #   - pve_ssh_key: Woodpecker repo-secret, the same ed25519 keypair
@@ -64,6 +64,9 @@ when:
       - scripts/router-config-backup.sh
       - scripts/router-config-backup.service
       - scripts/router-config-backup.timer
+      - scripts/t3-state-pull.sh
+      - scripts/t3-state-pull.service
+      - scripts/t3-state-pull.timer
     # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
     # for another workflow would run this one too. Same guard the sibling
     # pipelines carry. An undefined variable compares as empty, so a bare

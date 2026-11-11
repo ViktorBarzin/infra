@@ -377,7 +377,8 @@ iVMS, е изтрита и от устройствата (`UserInfo/Delete`). С
 12.11.2026; ако дотогава всичко работи, отиват в кошчето. В кошчето на NAS-а
 (`#recycle/vermont-pochistvane-2026-10-29/`, със `SPISAK-premesteni.txt`) са четирите междинни
 версии на схемата, двата еднократни скрипта за нея и неизползваният пакет V1.20.10 за `.117`.
-Инструментите: `~/bin/vermont-mon/` (обновяване на монитори), `~/bin/vm300-ui/` (управление на
+Инструментите: `vermont-mon` (обновяване на монитори; спрян на 11.11.2026, архивиран в
+`retired/2026-11-11/vermont-mon/` на `ebarzin/vermont-device-configs`), `~/bin/vm300-ui/` (управление на
 iVMS на VM 300 от devvm: `srv.py` на devvm `10.0.10.10:18099`, `ui.ps1` в сесията на Emo през
 `schtasks /IT /RL HIGHEST`, `do.sh "<команди>"` връща снимка на екрана), `~/bin/hiksdk-log.py`
 (журнал на устройство през SDK). `mkpdf.py` за схемата е на NAS-а заедно с `render.html` и `cors.py`.
@@ -537,6 +538,41 @@ ssh -L 8080:10.0.30.70:80 emo@devvm.viktorbarzin.lan
 `10.0.20.100` и има пълен достъп до homelab мрежата. Това е остаряло — няма
 subnet router. Заслужава поправка в infra репото.
 
+## Инструментите на emo — къде са (от 11.11.2026)
+
+Ръчните инструменти на emo за устройствата в комплекса са в `bin/` на частното
+хранилище `ebarzin/vermont-device-configs`, клонирано на devvm в
+`~/code/vermont-device-configs`. `~/bin/<инструмент>` на devvm са връзки към
+същите файлове, затова пътищата `~/bin/...` в този документ работят. Причината е
+планът devvm да може да се изтрие и вдигне от код
+(`docs/plans/2026-11-11-disposable-devvm.md`), а `~/bin` вече не е източник.
+Hikvision SDK V6.1.9.48 за x86 е в `vendor/hikvision-sdk/lib` на хранилището
+(26M, копие байт по байт на `~/hikvision-sdk/lib`). Копие на NAS-а в
+`Claude shared/` няма: проверено на 11.11.2026.
+
+**Ново вдигане на devvm.** Нищо не се прави на ръка:
+
+1. provisioning-ът (`scripts/t3-provision-users.sh`, всеки час) връща от Vault
+   SSH ключовете и `~/.ssh/config` на emo (`secret/workstation/emo/files`, виж
+   `docs/runbooks/devvm-credentials.md`) и клонира хранилището (ред `repos` на emo
+   в `scripts/workstation/roster.yaml`);
+2. стъпка 4b пуска като emo `~/code/vermont-device-configs/devvm-setup.sh`, който
+   прави връзките `~/bin/<инструмент>`, копира SDK-то в `~/hikvision-sdk/lib`,
+   слага `intercom-watch.service` и `.timer` в `~/.config/systemd/user/` и
+   включва таймера при първото слагане; provisioning-ът включва и linger за emo,
+   за да тръгва таймерът без вход.
+
+Проверка след вдигането, като emo: `systemctl --user list-timers intercom-watch.timer`
+показва следващо пускане, а след 5 минути `~/.local/state/intercom/watch.log`
+има ред `ONLINE`. Старият път `~/vermont-device-configs` е връзка само на
+сегашния devvm; на нова машина пътят е `~/code/vermont-device-configs`.
+
+Спрени на 11.11.2026 и архивирани в `retired/2026-11-11/` на същото хранилище:
+`panel115-watch`, `camera-stream-watch`, `led-report`, `vermont-mon`, копие на
+`valia-backup-cleanup.sh`, наблюдателите за цените на принтера и за PAI issue
+#545 (crontab) и userspace Tailscale възелът `devvm-emo` (отписан с
+`tailscale logout`). Пазачът на В4 (`intercom-watch`) остава, виж по-долу.
+
 ## Наблюдение — какво следи какво (проверено 19.08.2026)
 
 ### Вътрешният монитор В4 (.134) — пазачът е върнат на 19.08.2026
@@ -574,6 +610,19 @@ SDK; минимум 1 час между рестартите, максимум 4
 `~/.local/state/intercom/watch.log` (НЕ journald: emo не е в група `adm` и не би
 могъл да го чете, а пазач, който пише където никой не гледа, е същият тих отказ).
 Състояние — `~/.local/state/intercom/watch.json`.
+
+**Към 11.11.2026 пазачът остава на devvm.** Планът за devvm предвиждаше да мине
+в ha-sofia като автоматизация с `rest_command` към ISAPI `PUT /ISAPI/System/reboot`.
+Проверено на 11.11.2026 без рестарт: мониторът (V2.2.124 build 260814) няма HTTP
+услуга. `10.77.1.134` порт 80 и 443 връщат „connection refused" (за сравнение
+`10.77.1.115:80` отговаря), макар `/ISAPI/Security/adminAccesses`, прочетено през
+SDK, да изброява HTTP на порт 80. `/ISAPI/System/capabilities` през SDK няма
+отделен флаг за рестарт, а `/ISAPI/System/reboot/capabilities` връща
+`methodNotAllowed`. ISAPI се приема само пренесено през SDK на порт 8000, а SDK-то
+е само за x86, тоест HTTP заявка от HA не стига до устройството. Затова ha-sofia
+не е добавен в списъка с източници за `10.77.1.0/24`. Скриптовете на пазача са в
+`bin/` на `ebarzin/vermont-device-configs`, unit файловете в `systemd/` там; на
+нова машина ги слага `devvm-setup.sh` (виж „Инструментите на emo“ по-горе).
 
 Всичко е на devvm нарочно: рестартът минава през Hikvision SDK, който е само за
 x86. Ако devvm е долу, няма лечение независимо къде се взима решението — старото
@@ -1245,7 +1294,8 @@ V2.2.124.
 След това `.101`-`.107`, `.109`, `.110` (А1-А7, А9, А10), 10:53-13:32, без разлики; копията в
 `3. vazstanoviavane/vermont-2026-10-kopiya-firmware/vermont-2026-10-29-a1`...`-a10-firmware/`. Веригата спря веднъж на `.104` преди качването
 (`unzip НЕУСПЕШНО`): цялата папка с пакетите в scratchpad беше изчезнала. Оттогава пакетите
-и скриптовете са в `~/bin/vermont-mon/` (`run.sh`, `chain.sh`, `st.sh`, `arch.sh`). Пакетите
+и скриптовете бяха в `~/bin/vermont-mon/` (`run.sh`, `chain.sh`, `st.sh`, `arch.sh`); от
+11.11.2026 скриптовете са в `retired/2026-11-11/vermont-mon/` на `ebarzin/vermont-device-configs`. Пакетите
 `run.sh` тегли сам от NAS-а (`2. spravochnici/vermont-firmware/DS-KH6320-WTE1/`) в `~/.cache/vermont-fw/`, там са и
 работните копия на всеки монитор; `sadpraw.py` е в `/home/pi/bin/` на Pi-то. Копията на всеки
 монитор се качват на NAS-а веднага след него (`arch.sh <октет> <етикет>`, на NAS-а като
@@ -1315,7 +1365,11 @@ NVR 159 ms; `.51`, `.54`, `.57`, `.62`, `.77`, `.78` 155–217 ms;
 `systemctl --user disable --now camera-stream-watch.timer`.
 
 Състояние: изключен (disable) на 26.10.2026 в 17:48 по решение на Emil, вижте
-раздела за шестте офлайн канала. Пуска се само след негово потвърждение.
+раздела за шестте офлайн канала. На 11.11.2026 скриптът и unit файловете са
+махнати от devvm (планът за devvm, който се вдига от код) и са в
+`retired/2026-11-11/camera-stream-watch/` на `ebarzin/vermont-device-configs`,
+заедно с указанието как се връщат. Данните в `~/.local/state/camera-stream-watch/`
+са оставени на devvm.
 
 ### Паузите следобед на 26.10.2026 и пробите на `.51`
 
@@ -1507,7 +1561,7 @@ H.265 и показват грешка за неподдържан поток. �
 
 След всяка редакция на канал в NVR-а проверявайте кодирането на канала в самия
 NVR, не само в камерата. Сравнението със снимката е най-бързият начин:
-`~/vermont-device-configs/192.168.1.150/Streaming_channels.xml`.
+`~/code/vermont-device-configs/192.168.1.150/Streaming_channels.xml`.
 
 Мониторите на съседите, прегледани само с четене на 23.10.2026: само `.103`
 (апартамент А3 според картата на инвентара) има добавени камери на комплекса:

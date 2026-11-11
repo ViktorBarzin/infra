@@ -2,7 +2,7 @@
 
 **Host:** `devvm` (10.0.10.10), users `wizard` + `emo` (one deployment per user)
 **Source of truth:** `infra/scripts/vault-token-renew.{sh,service,timer}`
-**Live paths (per user):** `~/.local/bin/vault-token-renew`, `~/.config/systemd/user/vault-token-renew.{service,timer}`
+**Live paths (per user):** `~/.local/bin/vault-token-renew`, `~/.config/systemd/user/vault-token-renew.{service,timer}`, installed by `t3-provision-users` since 2026-11-11
 
 ## What this is
 
@@ -38,26 +38,24 @@ periodic + renewer over a never-expiring root token).
 
 ## Deploy on a fresh devvm
 
-The renewer is a host-side script + user systemd units, deployed manually (same
-model as the other `infra/scripts/` host scripts). Run these **as the target
-user on devvm** (self, or `sudo -u <user> ... XDG_RUNTIME_DIR=/run/user/<uid>`
-for another user):
+Since 2026-11-11 the provisioner does this (`install_vault_token_renew` in
+`scripts/t3-provision-users.sh`, run hourly). For every roster user that
+`vtr_resolve_config` has a case for, it installs `vault-token-renew.sh` as
+`~/.local/bin/vault-token-renew` and the two units into
+`~/.config/systemd/user/` (from infra `origin/master`, rewritten only when
+they differ), turns on linger, and enables the timer. A user without a case
+arm gets nothing and a log line. When `~/.vault-token` is absent and the run
+holds an admin Vault token, it also mints the token below with that user's
+policies; the hourly run has no Vault token, so on a new box run it once with
+one (see [devvm-credentials](devvm-credentials.md)):
 
 ```bash
-cd ~/code/infra/scripts
-install -m 0755 vault-token-renew.sh ~/.local/bin/vault-token-renew   # strip .sh
-install -m 0644 vault-token-renew.service vault-token-renew.timer ~/.config/systemd/user/
-
-# user manager must survive logout, so the daily timer fires headless
-loginctl enable-linger "$USER"
-
-systemctl --user daemon-reload
-systemctl --user enable --now vault-token-renew.timer
+export VAULT_ADDR=https://vault.viktorbarzin.me VAULT_TOKEN=<an admin token>
+sudo --preserve-env=VAULT_TOKEN,VAULT_ADDR t3-provision-users
 ```
 
-The user must already have a `case` arm in `vtr_resolve_config` (else the
-renewer fails loud). Then mint the token (one-time — see below). The script and
-units carry no secret; only the token itself is sensitive and stays out of git.
+The script and units carry no secret; only the token itself is sensitive and
+stays out of git. To onboard a user, add the `case` arm (+ a test case) first.
 
 ## Mint / re-mint the token
 

@@ -202,6 +202,37 @@ def test_agents_repo_is_carried_into_the_desired_state_json():
     assert d["accounts"]["wizard"]["agents_repo"] is None
 
 
+# --------------------------------------------------------------------------
+# dotfiles: the Forgejo repo chezmoi applies on a new box
+# --------------------------------------------------------------------------
+
+
+def test_dotfiles_defaults_to_none():
+    r = _roster("users: {wizard: {authentik_user: v, k8s_user: wizard, tier: admin}}")
+    assert r.users["wizard"].dotfiles is None
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["wizard"]["dotfiles"] is None
+
+
+def test_dotfiles_is_carried_into_the_desired_state_json():
+    r = _roster(
+        "users: {wizard: {authentik_user: v, k8s_user: wizard, tier: admin, "
+        "dotfiles: viktor/dot_files}}"
+    )
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["wizard"]["dotfiles"] == "viktor/dot_files"
+
+
+@pytest.mark.parametrize("bad", ["dot_files", "../x/d", "a/b/c", "-o/a", 7])
+def test_rejects_unsafe_dotfiles(bad):
+    # It becomes a clone URL that runs as the user, so owner/name only.
+    with pytest.raises(eng.RosterError, match="dotfiles"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            f"dotfiles: {json.dumps(bad)}" "}}"
+        )
+
+
 @pytest.mark.parametrize("bad", ["agents", "../x/agents", "a/b/c", "o/.git", "-o/a", 7])
 def test_rejects_unsafe_agents_repo(bad):
     # The value becomes a fetch URL and a file under root's state directory,
