@@ -108,6 +108,8 @@ sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backu
 
 The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 T). **Not backed up at all**: `/srv/nfs/frigate/` (camera ring buffer), `/srv/nfs/temp/` (scratch). Everything else rides leg 1 via `nfs-mirror`.
 
+`/srv/nfs/ha-london-backup/` (since 2026-11-11) holds ha-london's own encrypted Home Assistant backups, which the Pi in London writes through Supervisor network storage over the WireGuard tunnel (`docs/architecture/london-site.md`, "Backups"). It has no exclude in `scripts/nfs-mirror.sh`, so it rides leg 1 like any service directory; `HomeAssistantLondonBackupStale` pages when its newest archive is over 8 days old.
+
 **3-2-1 Breakdown**:
 - **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
 - **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — **46% used** post-2026-05-26 (was 87% before anca-elements cleanup; bypass-list pruning added ~260 G of *-backup + ollama + audiblez + ebook2audiobook)
