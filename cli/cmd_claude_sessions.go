@@ -269,8 +269,8 @@ func claudeSessionsIngest(args []string) error {
 		status = "error"
 	}
 	// key=value so Loki can filter it by the unit label (devvm-io-guard.md).
-	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d file_errors=%d duration_ms=%d\n",
-		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.FileErrors, dur.Milliseconds())
+	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d duration_ms=%d\n",
+		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, dur.Milliseconds())
 	if metrics != "" {
 		writeIngestMetrics(metrics, st, runErr == nil, dur)
 	}
