@@ -77,6 +77,25 @@ logs every outcome (`paired user=.. endpoint=.. fallback=..`, plus `mint/pairing
 `T3AutoUpdateRolledBack` / `T3AutoUpdateRollbackFailed` / `T3AutoUpdateFrozen` →
 Alertmanager → Slack.
 
+The three `T3AutoUpdate*` rules count only lines whose Loki `unit` label is
+`agent-update`, `t3-autoupdate`, `t3-migrate-idle` or `t3-watchdog` `.service`.
+Inside a unit every line is logged twice: once by `logger`, which often loses
+its `unit` label because it exits before journald reads its cgroup, and once
+as the unit's stdout, which always has it. A run typed in a shell does not
+alert, because the person running it reads its output. To get the alerts on a
+manual run, start it as a unit (`systemctl start t3-autoupdate.service`,
+below).
+
+**Scratch runs.** A `T3_LINK` other than `/usr/bin/t3` is a scratch install,
+and the lib (`scratch_link`) keeps it away from what the live serves run: the
+version is read from `T3_LINK`, not from `t3` on PATH; a rollback never falls
+back to `npm i -g`; and the canary restarts no `t3-serve@` unit. On 2026-11-11 a
+first-install rehearsal on the live box with a scratch `T3_LINK` read the live
+0.1.8 as its own version, "rolled back" its scratch 0.1.9, tried `npm i -g`,
+and paged `T3AutoUpdateRollbackFailed` and held `T3AutoUpdateRolledBack` for a
+box that was fine. To exercise the script, run `bash scripts/t3-autoupdate.test.sh`
+rather than the installed script with overrides.
+
 ## Idle migrator — draining deferrals  (`scripts/t3-migrate-idle.sh`)
 
 Step 5 DEFERS any instance with an active agent, recording `/var/lib/t3-autoupdate/deferred/<user>` (= the target version). Without a drainer, a user busy at every 04:00 window never migrates and their client shows *"Client and server versions differ"* for days. `t3-migrate-idle.timer` (overnight, every 20 min 01:00–05:40) drains those markers:
