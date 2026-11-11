@@ -16,10 +16,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"net"
@@ -44,6 +47,12 @@ type fileState struct {
 	// Gen names the version of an append-only home file (claude.home_lines);
 	// it changes whenever the file is read again from the start.
 	Gen string `json:"gen,omitempty"`
+	// Rv is the redaction rule a settings file was sent under (redactVersion).
+	Rv int `json:"rv,omitempty"`
+	// Sum is the SHA-256 state over the transcript's first Offset bytes, so a
+	// rewritten copy (a new inode) that starts with the same bytes goes on
+	// from Offset instead of being sent again from 0.
+	Sum string `json:"sum,omitempty"`
 }
 
 type ingestState struct {
@@ -105,6 +114,13 @@ func planFile(prev *fileState, inode uint64, size, mtimeNs int64) (skip bool, of
 // file. A final line with no newline yet is left for the next run. It returns
 // the offset just past the last complete line and the latest timestamp.
 func readNewLines(r io.Reader, start int64, hint string, emit func(offset int64, line []byte, hint string) error) (int64, string, error) {
+	return readNewLinesSum(r, start, hint, nil, emit)
+}
+
+// readNewLinesSum is readNewLines that also writes every complete line, blank
+// ones included, to sum: afterwards sum has seen exactly the bytes up to the
+// returned offset.
+func readNewLinesSum(r io.Reader, start int64, hint string, sum io.Writer, emit func(offset int64, line []byte, hint string) error) (int64, string, error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	off := start
 	for {
@@ -117,6 +133,9 @@ func readNewLines(r io.Reader, start int64, hint string, emit func(offset int64,
 		}
 		lineOff := off
 		off += int64(len(line))
+		if sum != nil {
+			sum.Write(line)
+		}
 		body := bytes.TrimRight(line, "\r\n")
 		if len(bytes.TrimSpace(body)) == 0 {
 			continue
@@ -433,7 +452,7 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 			case homeAppend:
 				return ingestHomeAppend(cfg, state, &st, user, owner, abs, rel)
 			}
-			if unchangedSinceLastRun(state.Files[abs], d) {
+			if unchangedSinceLastRun(state.Files[abs], d) && !needsRedactRefresh(rel, state.Files[abs]) {
 				return nil
 			}
 			return ingestHomeWhole(cfg, state, &st, batch, user, owner, abs, rel)
@@ -503,11 +522,21 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		return nil
 	}
 	size, mtime := fi.Size(), fi.ModTime().UnixNano()
-	skip, offset, hint := planFile(state.Files[path], sys.Ino, size, mtime)
+	prev := state.Files[path]
+	skip, offset, hint := planFile(prev, sys.Ino, size, mtime)
 	if skip {
 		return nil
 	}
 	st.FilesChanged++
+	// A transcript Claude Code rewrote (a new inode) that starts with the
+	// bytes already sent goes on from where the old copy stopped, so its
+	// lines are not stored twice (claude.lines is a plain MergeTree, and the
+	// session cost and turn figures would count them twice).
+	if info.Kind == kindTranscript && offset == 0 && prev != nil && prev.Inode != sys.Ino && prev.Sum != "" && prev.Offset > 0 && size >= prev.Offset {
+		if h, err := prefixSum(f, prev.Offset); err == nil && sumState(h) == prev.Sum {
+			offset, hint = prev.Offset, prev.TsHint
+		}
+	}
 
 	if info.Kind != kindTranscript {
 		content, err := io.ReadAll(io.LimitReader(f, maxSideFileBytes))
@@ -554,6 +583,23 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 // after every accepted batch.
 func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path string, f *os.File, inode uint64, size, mtime, offset int64, hint, gen, query string,
 	mkRow func(off int64, line []byte, hint string) ([]byte, error)) error {
+	// A transcript's running SHA-256 (fileState.Sum), carried on from the
+	// last run or, for a state written before it existed or a run that died
+	// mid-file, read again from the file's first offset bytes.
+	var sum hash.Hash
+	if gen == "" {
+		if prev := state.Files[path]; offset == 0 {
+			sum = sha256.New()
+		} else if prev != nil && prev.Sum != "" && prev.Offset == offset {
+			sum = sha256.New()
+			if b, err := base64.StdEncoding.DecodeString(prev.Sum); err != nil || sum.(encoding.BinaryUnmarshaler).UnmarshalBinary(b) != nil {
+				sum = nil
+			}
+		}
+		if sum == nil && offset > 0 {
+			sum, _ = prefixSum(f, offset)
+		}
+	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		st.FileErrors++
 		return nil
@@ -579,7 +625,11 @@ func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path str
 		state.Files[path] = &fileState{Inode: inode, Size: -1, MtimeNs: mtime, Offset: end, TsHint: h, Gen: gen}
 		saveState(cfg.StatePath, state)
 	}
-	end, lastHint, err := readNewLines(io.LimitReader(f, size-offset), offset, hint, func(off int64, line []byte, h string) error {
+	var sumW io.Writer
+	if sum != nil {
+		sumW = sum
+	}
+	end, lastHint, err := readNewLinesSum(io.LimitReader(f, size-offset), offset, hint, sumW, func(off int64, line []byte, h string) error {
 		b, err := mkRow(off, line, h)
 		if err != nil {
 			return err
@@ -602,8 +652,32 @@ func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path str
 		st.FileErrors++
 		return nil
 	}
-	state.Files[path] = &fileState{Inode: inode, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint, Gen: gen}
+	state.Files[path] = &fileState{Inode: inode, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint, Gen: gen, Sum: sumState(sum)}
 	return nil
+}
+
+// prefixSum hashes the first n bytes of f.
+func prefixSum(f *os.File, n int64) (hash.Hash, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	if _, err := io.CopyN(h, f, n); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// sumState is the hash's running state, base64, or "" for none.
+func sumState(h hash.Hash) string {
+	if h == nil {
+		return ""
+	}
+	b, err := h.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // parseEnvFile reads KEY=VALUE lines (the systemd EnvironmentFile shape).

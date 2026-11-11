@@ -7,8 +7,10 @@ package main
 // It writes transcripts and subagent transcripts (claude.lines), their side
 // files (claude.files), and the rest of the two directories (claude.home_files
 // and claude.home_lines). Files that already exist are left alone unless
-// --force. Settings files the ingest redacted are written as
-// <name>.from-store, never over the real name.
+// --force. A settings file the ingest redacted is written under its real name
+// without the redacted keys (provisioning fills the secrets back in from
+// Vault). When the real file is already there, the stored copy goes beside it
+// as <name>.from-store; --rebuild merges it in instead.
 //
 // It reads with the reader account, whose results are capped (100,000 rows,
 // 200 MB, cut silently). Every query here is a keyset page well under the
@@ -74,13 +76,24 @@ type restoreSink interface {
 	put(rel string, mode fs.FileMode, mtime time.Time, content []byte) (bool, error)
 }
 
+// settingsKeeper is a sink that takes a redacted settings file whose real
+// name already exists itself (the rebuild merges it in), instead of restore
+// writing it beside as <name>.from-store.
+type settingsKeeper interface {
+	keepSettings(rel string, mode fs.FileMode, content []byte)
+}
+
 type restoreStats struct {
-	Written  int
-	Skipped  int // already there
-	Omitted  int // over the ingest size cap, stored without content
-	Refused  int // a stored path outside .claude/ or .codex/
-	Bytes    int64
+	Written int
+	Skipped int // already there
+	Omitted int // over the ingest size cap, stored without content
+	Refused int // a stored path outside .claude/ or .codex/
+	Bytes   int64
+	// Redacted names settings files written without their secret keys.
 	Redacted []string
+	// Beside names stored settings files written as <name>.from-store,
+	// because the real file was there already: merge by hand.
+	Beside []string
 	// Gapped names line files with bytes missing between two stored lines:
 	// they are written as stored, with the missing lines left out.
 	Gapped []string
@@ -104,6 +117,11 @@ func safeRel(rel string) bool {
 	for _, p := range strings.Split(rel, "/") {
 		if p == ".." || p == "." || p == "" {
 			return false
+		}
+	}
+	for _, x := range homeExtraFiles {
+		if rel == x {
+			return true
 		}
 	}
 	return strings.HasPrefix(rel, ".claude/") || strings.HasPrefix(rel, ".codex/")
@@ -133,6 +151,33 @@ func msTime(ms int64) time.Time {
 
 func (st *restoreStats) put(sink restoreSink, rel string, mode fs.FileMode, mtime time.Time, content []byte) error {
 	return st.putGen(sink, rel, "", mode, mtime, content)
+}
+
+// putSettings writes a redacted settings file under its real name with the
+// redacted keys left out. If the real file is there already, a
+// settingsKeeper sink takes it; any other sink gets it as <name>.from-store.
+func (st *restoreStats) putSettings(sink restoreSink, f storedFile, content []byte) error {
+	clean := withoutRedacted(path.Base(f.Path), content)
+	before := st.Written
+	if err := st.put(sink, f.Path, fileMode(f.Mode), msTime(f.MtimeMs), clean); err != nil {
+		return err
+	}
+	if st.Written > before || !safeRel(f.Path) {
+		st.Redacted = append(st.Redacted, f.Path)
+		return nil
+	}
+	if k, ok := sink.(settingsKeeper); ok {
+		k.keepSettings(f.Path, fileMode(f.Mode), clean)
+		return nil
+	}
+	if d, ok := sink.(*dirSink); ok {
+		if b, err := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(f.Path))); err == nil && bytes.Equal(b, clean) {
+			return nil // restored by an earlier run
+		}
+	}
+	beside := f.Path + ".from-store"
+	st.Beside = append(st.Beside, beside)
+	return st.put(sink, beside, fileMode(f.Mode), msTime(f.MtimeMs), clean)
 }
 
 func (st *restoreStats) putGen(sink restoreSink, rel, gen string, mode fs.FileMode, mtime time.Time, content []byte) error {
@@ -233,12 +278,13 @@ func runRestore(src restoreSource, user, session string, sink restoreSink, pageR
 				st.Omitted++
 				continue
 			}
-			rel := f.Path
 			if f.Redacted {
-				rel += ".from-store"
-				st.Redacted = append(st.Redacted, rel)
+				if err := st.putSettings(sink, f, content); err != nil {
+					return st, err
+				}
+				continue
 			}
-			if err := st.put(sink, rel, fileMode(f.Mode), msTime(f.MtimeMs), content); err != nil {
+			if err := st.put(sink, f.Path, fileMode(f.Mode), msTime(f.MtimeMs), content); err != nil {
 				return st, err
 			}
 		}
@@ -581,7 +627,10 @@ func claudeSessionsRestore(args []string) error {
 
 func printRestoreNotes(st restoreStats) {
 	for _, r := range st.Redacted {
-		fmt.Fprintf(os.Stderr, "  redacted settings, merge by hand: %s\n", r)
+		fmt.Fprintf(os.Stderr, "  settings written without their secret keys, provisioning fills them from Vault: %s\n", r)
+	}
+	for _, r := range st.Beside {
+		fmt.Fprintf(os.Stderr, "  the real file was there, stored copy written beside it, merge by hand: %s\n", r)
 	}
 	for _, g := range st.Gapped {
 		fmt.Fprintf(os.Stderr, "  WARN lines missing from the store, written without them: %s\n", g)

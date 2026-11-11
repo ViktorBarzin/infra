@@ -20,12 +20,16 @@ package main
 // generation, transcripts inserted a second time.
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -39,7 +43,13 @@ type rebuildConfig struct {
 	Src       restoreSource
 	// Extract unpacks the tar stream into Home as the user, keeping files
 	// that are already there.
-	Extract  func(io.Reader) error
+	Extract func(io.Reader) error
+	// Overwrite unpacks a tar stream into Home as the user, replacing files
+	// that are there: the merged settings files.
+	Overwrite func(io.Reader) error
+	// Remove deletes files (relative to Home) as the user: what a failed
+	// attempt wrote, so the retry does not keep a cut copy.
+	Remove   func(rels []string) error
 	PageRows int
 }
 
@@ -48,6 +58,137 @@ type rebuildResult struct {
 	Stats         restoreStats
 	Seeded        int      // restored files recorded in the ingest state
 	KeptLineFiles []string // .jsonl files that were there first and were kept
+	Merged        []string // settings files that were there first, stored keys merged in
+	Beside        []string // settings files that were there first and could not be merged: <name>.from-store
+}
+
+// rebuildSink hands the tar stream only the files that are not in the home
+// yet, remembers which ones it handed over (to remove them if the attempt
+// fails), and keeps redacted settings files that are already there for the
+// merge.
+type rebuildSink struct {
+	tar       *tarSink
+	home      string
+	attempted []string
+	keptLines []string
+	kept      []keptSettings
+}
+
+type keptSettings struct {
+	rel     string
+	mode    fs.FileMode
+	content []byte
+}
+
+func (r *rebuildSink) put(rel string, mode fs.FileMode, mtime time.Time, content []byte) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(r.home, filepath.FromSlash(rel))); err == nil {
+		if strings.HasSuffix(rel, ".jsonl") {
+			r.keptLines = append(r.keptLines, rel)
+		}
+		return false, nil
+	}
+	r.attempted = append(r.attempted, rel)
+	return r.tar.put(rel, mode, mtime, content)
+}
+
+func (r *rebuildSink) keepSettings(rel string, mode fs.FileMode, content []byte) {
+	r.kept = append(r.kept, keptSettings{rel: rel, mode: mode, content: content})
+}
+
+// mergeIfAbsent adds what stored has and have lacks: objects key by key,
+// arrays element by element (permission rules, hook entries), and never
+// changes a value have already holds.
+func mergeIfAbsent(have, stored any) any {
+	switch h := have.(type) {
+	case map[string]any:
+		s, ok := stored.(map[string]any)
+		if !ok {
+			return have
+		}
+		for k, sv := range s {
+			if hv, ok := h[k]; ok {
+				h[k] = mergeIfAbsent(hv, sv)
+			} else {
+				h[k] = sv
+			}
+		}
+		return h
+	case []any:
+		s, ok := stored.([]any)
+		if !ok {
+			return have
+		}
+		seen := map[string]bool{}
+		for _, e := range h {
+			b, _ := json.Marshal(e)
+			seen[string(b)] = true
+		}
+		for _, e := range s {
+			if b, _ := json.Marshal(e); !seen[string(b)] {
+				h = append(h, e)
+			}
+		}
+		return h
+	}
+	return have
+}
+
+// mergeKept writes the stored keys into each settings file that was there
+// first, such as the skeleton the memory hooks wiring makes on a pass whose
+// restore failed. A file that is not JSON, or that will not parse, gets the
+// stored copy beside it instead.
+func mergeKept(cfg rebuildConfig, kept []keptSettings, res *rebuildResult) error {
+	if len(kept) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	ts := newTarSink(&buf)
+	now := time.Now()
+	for _, k := range kept {
+		abs := filepath.Join(cfg.Home, filepath.FromSlash(k.rel))
+		var have, stored any
+		b, err := readRegular(abs)
+		if err == nil && strings.Contains(path.Base(k.rel), ".json") && json.Unmarshal(b, &have) == nil && json.Unmarshal(k.content, &stored) == nil {
+			if _, isObj := have.(map[string]any); isObj {
+				out, err := encodeSettingsJSON(mergeIfAbsent(have, stored))
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(out, b) {
+					mode := k.mode
+					if fi, err := os.Lstat(abs); err == nil {
+						mode = fi.Mode().Perm()
+					}
+					if _, err := ts.put(k.rel, mode, now, out); err != nil {
+						return err
+					}
+				}
+				res.Merged = append(res.Merged, k.rel)
+				continue
+			}
+		}
+		if _, err := ts.put(k.rel+".from-store", k.mode, now, k.content); err != nil {
+			return err
+		}
+		res.Beside = append(res.Beside, k.rel+".from-store")
+	}
+	if err := ts.Close(); err != nil {
+		return err
+	}
+	return cfg.Overwrite(&buf)
+}
+
+// readRegular reads a file that is a regular file itself, not a link.
+func readRegular(p string) ([]byte, error) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: not a regular file", p)
+	}
+	return io.ReadAll(io.LimitReader(f, maxHomeFileBytes))
 }
 
 // rebuildMarker is the file that says restore is done for user on this box.
@@ -125,19 +266,35 @@ func runRebuildRestore(cfg rebuildConfig) (rebuildResult, error) {
 		pr.CloseWithError(errors.Join(err, errors.New("extract stopped")))
 		extracted <- err
 	}()
-	sink := newTarSink(pw)
+	sink := &rebuildSink{tar: newTarSink(pw), home: cfg.Home}
 	st, rerr := runRestore(cfg.Src, cfg.User, "", sink, cfg.PageRows)
 	if rerr == nil {
-		rerr = sink.Close()
+		rerr = sink.tar.Close()
 	}
 	pw.CloseWithError(rerr)
 	xerr := <-extracted
 	res.Stats = st
+	res.KeptLineFiles = sink.keptLines
+	// On a failure, take back what this attempt wrote: a file cut off
+	// mid-stream would otherwise be kept by the retry's --skip-old-files and
+	// then sent by the ingest as the newest copy.
+	fail := func(err error) (rebuildResult, error) {
+		if cfg.Remove == nil {
+			return res, err
+		}
+		if rmErr := cfg.Remove(sink.attempted); rmErr != nil {
+			err = errors.Join(err, fmt.Errorf("removing this attempt's files: %w", rmErr))
+		}
+		return res, err
+	}
 	if xerr != nil { // first: a failed extract also fails the writes into the pipe
-		return res, fmt.Errorf("extract: %w", xerr)
+		return fail(fmt.Errorf("extract: %w", xerr))
 	}
 	if rerr != nil {
-		return res, rerr
+		return fail(rerr)
+	}
+	if err := mergeKept(cfg, sink.kept, &res); err != nil {
+		return fail(fmt.Errorf("merging settings: %w", err))
 	}
 
 	unlock, err = lockIngestState(cfg.StatePath)
@@ -153,11 +310,13 @@ func runRebuildRestore(cfg rebuildConfig) (rebuildResult, error) {
 		abs := filepath.Join(cfg.Home, filepath.FromSlash(f.Rel))
 		fi, err := os.Lstat(abs)
 		if err == nil && fi.Mode().IsRegular() && fi.Size() == f.Size && fi.ModTime().UnixMilli() == f.Mtime.UnixMilli() {
-			state.Files[abs] = &fileState{Inode: fi.Sys().(*syscall.Stat_t).Ino, Size: fi.Size(),
+			fst := &fileState{Inode: fi.Sys().(*syscall.Stat_t).Ino, Size: fi.Size(),
 				MtimeNs: fi.ModTime().UnixNano(), Offset: fi.Size(), Gen: f.Gen}
+			if isSettingsFile(path.Base(f.Rel)) {
+				fst.Rv = redactVersion
+			}
+			state.Files[abs] = fst
 			res.Seeded++
-		} else if strings.HasSuffix(f.Rel, ".jsonl") {
-			res.KeptLineFiles = append(res.KeptLineFiles, f.Rel)
 		}
 	}
 	if err := saveState(cfg.StatePath, state); err != nil {
@@ -165,6 +324,18 @@ func runRebuildRestore(cfg rebuildConfig) (rebuildResult, error) {
 	}
 	res.Outcome = "restored"
 	return res, writeRebuildMarker(cfg.StatePath, cfg.User, "restored")
+}
+
+// runAsUser runs a command as user through runuser, with stdin from r.
+func runAsUser(user string, r io.Reader, name string, args ...string) error {
+	cmd := exec.Command("runuser", append([]string{"-u", user, "--", name}, args...)...)
+	cmd.Stdin = r
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func claudeSessionsRebuild(who, home, statePath string) error {
@@ -189,14 +360,21 @@ func claudeSessionsRebuild(who, home, statePath string) error {
 		Extract: func(r io.Reader) error {
 			// As the user, so root never writes into a directory the user
 			// controls; --skip-old-files keeps whatever is there already.
-			cmd := exec.Command("runuser", "-u", who, "--", "tar", "-x", "--skip-old-files", "-C", home)
-			cmd.Stdin = r
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			return runAsUser(who, r, "tar", "-x", "--skip-old-files", "-C", home)
+		},
+		Overwrite: func(r io.Reader) error {
+			return runAsUser(who, r, "tar", "-x", "--no-overwrite-dir", "-C", home)
+		},
+		Remove: func(rels []string) error {
+			if len(rels) == 0 {
+				return nil
 			}
-			return nil
+			var list bytes.Buffer
+			for _, rel := range rels {
+				list.WriteString(filepath.Join(home, filepath.FromSlash(rel)))
+				list.WriteByte(0)
+			}
+			return runAsUser(who, &list, "xargs", "-0", "-r", "rm", "-f", "--")
 		}}
 	if rebuildMarked(cfg.StatePath, who) {
 		fmt.Fprintf(os.Stderr, "claude-sessions restore --rebuild user=%s: already restored\n", who)
@@ -213,9 +391,15 @@ func claudeSessionsRebuild(who, home, statePath string) error {
 		res.Outcome = "failed"
 	}
 	st := res.Stats
-	fmt.Fprintf(os.Stderr, "claude-sessions restore --rebuild user=%s outcome=%s written=%d seeded=%d kept_existing_jsonl=%d omitted=%d refused=%d gapped=%d bytes=%d duration_s=%d\n",
-		who, res.Outcome, st.Written, res.Seeded, len(res.KeptLineFiles), st.Omitted, st.Refused, len(st.Gapped), st.Bytes, int(time.Since(start).Seconds()))
+	fmt.Fprintf(os.Stderr, "claude-sessions restore --rebuild user=%s outcome=%s written=%d seeded=%d kept_existing_jsonl=%d merged_settings=%d omitted=%d refused=%d gapped=%d bytes=%d duration_s=%d\n",
+		who, res.Outcome, st.Written, res.Seeded, len(res.KeptLineFiles), len(res.Merged), st.Omitted, st.Refused, len(st.Gapped), st.Bytes, int(time.Since(start).Seconds()))
 	printRestoreNotes(st)
+	for _, m := range res.Merged {
+		fmt.Fprintf(os.Stderr, "  the file was there first, stored keys merged in: %s\n", m)
+	}
+	for _, b := range res.Beside {
+		fmt.Fprintf(os.Stderr, "  the file was there first, stored copy written beside it, merge by hand: %s\n", b)
+	}
 	for _, k := range res.KeptLineFiles {
 		fmt.Fprintf(os.Stderr, "  WARN kept the file already there, the stored copy was not written: %s\n", k)
 	}

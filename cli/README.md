@@ -566,8 +566,9 @@ never credentials or caches.
 
 `homelab claude-sessions restore --user <name> (--to <home> | --tar -)
 [--session <id>] [--force]` writes it all back, so `claude --resume` works on a
-rebuilt devvm. Existing files are kept unless `--force`; redacted settings land
-as `<name>.from-store`. As root into another user's home, pipe `--tar -` into
+rebuilt devvm. Existing files are kept unless `--force`; redacted settings come
+back under the real name without the redacted keys (or as `<name>.from-store`
+when the real file is there). As root into another user's home, pipe `--tar -` into
 `runuser -u <user> -- tar -x --skip-old-files -C /home/<user>`. Admin-only, like
 `sql`. `restore --user <name> --rebuild` is the root form t3-provision-users
 runs for every user on a rebuilt box: once per box it restores the user, records

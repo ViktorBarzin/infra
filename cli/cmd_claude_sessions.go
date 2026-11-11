@@ -307,6 +307,10 @@ func writeIngestMetrics(path string, st ingestStats, ok bool, dur time.Duration)
 	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_last_run_file_errors gauge\nclaude_sessions_ingest_last_run_file_errors %d\n", st.FileErrors)
 	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_last_run_files_seen gauge\nclaude_sessions_ingest_last_run_files_seen %d\n", st.FilesSeen)
 	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_last_run_duration_seconds gauge\nclaude_sessions_ingest_last_run_duration_seconds %.3f\n", dur.Seconds())
+	// Users the ingest skips until `restore --rebuild` has run for them. A
+	// user stuck here has new sessions that never reach the store.
+	fmt.Fprintf(&b, "# HELP claude_sessions_ingest_users_waiting_for_restore Users with agent state that the ingest skips until restore --rebuild has run for them.\n")
+	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_users_waiting_for_restore gauge\nclaude_sessions_ingest_users_waiting_for_restore %d\n", st.UsersWaiting)
 	tmp := path + ".tmp"
 	if os.WriteFile(tmp, []byte(b.String()), 0o644) == nil {
 		os.Rename(tmp, path)

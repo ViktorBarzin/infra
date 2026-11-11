@@ -1917,6 +1917,14 @@ restore_agent_state() {  # restore_agent_state USER
     log "WARN: agent state restore failed for $user: $(tail -n 1 <<<"$out")"
   fi
 }
+# agent_state_restored USER: step 4a has finished for USER on this box (its
+# marker exists). Step 5 starts a user's T3 serve only then: a user who ran
+# claude before the restore would make a new history.jsonl, which restore
+# keeps (--skip-old-files) and the ingest then stores as the newest copy.
+CLAUDE_SESSIONS_RESTORED_DIR="${CLAUDE_SESSIONS_RESTORED_DIR:-/var/lib/claude-sessions-ingest/restored}"
+agent_state_restored() {  # agent_state_restored USER
+  [[ "$DRY_RUN" == 1 || -e "$CLAUDE_SESSIONS_RESTORED_DIR/$1" ]]
+}
 # Every account with a home under /home, not only the roster's: the ingest
 # reads every home (breakglass too), and waits for each one's marker.
 for u in $( { jq -r '.accounts[].os_user' "$desired_file"; for h in /home/*/; do basename "$h"; done; } | sort -u); do
@@ -1998,6 +2006,12 @@ while IFS=$'\t' read -r os_user port; do
     log "t3-serve DISABLED for $os_user (roster parked: true)"
     continue
   fi
+  # --- session-store (disposable devvm, 2026-11-11) ---
+  if id "$os_user" >/dev/null 2>&1 && ! agent_state_restored "$os_user"; then
+    log "t3-serve held for $os_user: ~/.claude not restored from the session store yet (docs/runbooks/restore-claude-sessions.md)"
+    continue
+  fi
+  # --- end session-store ---
   # --- t3-snapshot (disposable devvm, 2026-11-11) ---
   if id "$os_user" >/dev/null 2>&1 && ! t3_restore_before_serve "$os_user"; then continue; fi
   # --- end t3-snapshot ---
