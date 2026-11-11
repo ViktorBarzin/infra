@@ -84,12 +84,33 @@ dump_list() {
 }
 
 # job_state <ns> <job> -> complete | failed | running
+# job_state <ns> <job> <cronjob> <started-epoch> -> complete | failed | running
+# Many backup CronJobs set ttlSecondsAfterFinished: 10, so a finished Job is
+# often deleted before the next poll sees it (2026-11-11: mysql, drone-logbook
+# and mailserver succeeded, and the first live run waited on them for an hour
+# because a missing Job read as running). A Job that is gone counts as
+# complete when its CronJob's lastSuccessfulTime is at or after the dump
+# started, which a Job created from the CronJob updates, and as failed
+# otherwise.
 job_state() {
-  $KUBECTL get job -n "$1" "$2" -o json 2>/dev/null | jq -r '
-    [.status.conditions[]? | select(.status == "True") | .type] as $c
-    | if ($c | index("Complete")) then "complete"
-      elif ($c | index("Failed")) then "failed"
-      else "running" end' 2>/dev/null || echo running
+  local ns=$1 job=$2 cj=$3 started=$4 json last
+  if json=$($KUBECTL get job -n "$ns" "$job" -o json 2>/dev/null); then
+    jq -r '
+      [.status.conditions[]? | select(.status == "True") | .type] as $c
+      | if ($c | index("Complete")) then "complete"
+        elif ($c | index("Failed")) then "failed"
+        else "running" end' <<<"$json" 2>/dev/null || echo running
+    return 0
+  fi
+  last=$($KUBECTL get cronjob -n "$ns" "$cj" -o json 2>/dev/null |
+    jq -r '.status.lastSuccessfulTime // "" | if . == "" then 0 else fromdateiso8601 end' 2>/dev/null) || last=""
+  if [ -z "$last" ]; then
+    echo running   # API hiccup: look again next poll, the dump timeout still applies
+  elif [ "$last" -ge "$started" ]; then
+    echo complete
+  else
+    echo failed
+  fi
 }
 
 # run_dumps -> 0 when every dump completed
@@ -120,7 +141,7 @@ run_dumps() {
     local still=() still_started=()
     for i in "${!running[@]}"; do
       read -r ns cj job <<<"${running[$i]}"
-      state=$(job_state "$ns" "$job")
+      state=$(job_state "$ns" "$job" "$cj" "${started[$i]}")
       if [ "$state" = running ] && [ $(($(date +%s) - ${started[$i]})) -ge "$DUMP_TIMEOUT" ]; then
         state=timeout
       fi

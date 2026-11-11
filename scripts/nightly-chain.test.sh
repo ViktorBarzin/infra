@@ -31,8 +31,13 @@ case "$*" in
   "get --raw /readyz") [ "${API_DOWN:-0}" = 1 ] && exit 1; echo ok ;;
   "get cronjobs -A -o json") cat "$CRONJOBS_FILE" ;;
   create\ job*) exit 0 ;;
+  get\ cronjob\ -n*)
+    # lastSuccessfulTime after (GONE_OK=1) or before the dump started
+    if [ "${GONE_OK:-0}" = 1 ]; then t=2099-01-01T00:00:00Z; else t=2000-01-01T00:00:00Z; fi
+    echo "{\"status\":{\"lastSuccessfulTime\":\"$t\"}}" ;;
   get\ job*)
     case "$*" in
+      *"${GONE_JOB:-none}"*) echo 'Error from server (NotFound): jobs.batch not found' >&2; exit 1 ;;
       *"${FAIL_JOB:-none}"*) echo '{"status":{"conditions":[{"type":"Failed","status":"True"}]}}' ;;
       *) echo '{"status":{"conditions":[{"type":"Complete","status":"True"}]}}' ;;
     esac ;;
@@ -117,6 +122,16 @@ grep -q 'postgresql-backup' "$CALLS" && bad "--only ran another dump" || ok "--o
 steps=$(grep -o 'systemctl start --wait [a-z.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
 [ "$steps" = "daily-backup.service " ] && ok "--only limits the host steps" || bad "--only steps: [$steps]"
 grep -q 'nightly_chain_last_success_timestamp' "$WORK_METRICS" && bad "--only recorded a full-night success" || ok "--only does not record a full-night success"
+
+# Many backup CronJobs set ttlSecondsAfterFinished: 10, so the Job is deleted
+# before the next 30 s poll sees it finish (2026-11-11: mysql, drone-logbook
+# and mailserver succeeded and the first live run waited on them for an hour).
+# A Job that is gone counts as done when its CronJob's lastSuccessfulTime is
+# after the dump started, and as failed otherwise.
+out=$(NIGHTLY_CHAIN_DOW=3 GONE_JOB=backup-etcd GONE_OK=1 run_chain)
+grep -q 'nightly_chain_step_ok{step="default/backup-etcd"} 1' "$WORK_METRICS" && ok "a Job deleted by its TTL after succeeding counts as done" || bad "gone ok: $(cat "$WORK_METRICS") $out"
+out=$(NIGHTLY_CHAIN_DOW=3 GONE_JOB=backup-etcd GONE_OK=0 run_chain)
+grep -q 'nightly_chain_step_ok{step="default/backup-etcd"} 0' "$WORK_METRICS" && ok "a Job that vanished without a success counts as failed" || bad "gone failed: $(cat "$WORK_METRICS") $out"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi
