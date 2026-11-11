@@ -45,6 +45,25 @@ flowchart TD
 - The AX6000 switches to its built-in **Access Point mode**: Wi-Fi only, same network names and passwords, so phones and laptops reconnect on their own.
 - OPNsense takes over handing out addresses (the 51 reservations move across unchanged), the port forwards (one layer instead of two), and checks every device's traffic for attacks.
 
+## Alternative: keep the AX6000 as the router, copy its traffic
+
+If running the house through the garage server feels too risky, a copy of the internet traffic can go to the firewall instead, and the AX6000 stays exactly as it is.
+
+```mermaid
+flowchart TD
+  NET["Internet<br/>A1 fibre"] --> ONT["Fibre box"]
+  ONT --> SW["Small switch<br/>copies traffic"]
+  SW --> AX["AX6000<br/>router + Wi-Fi"]
+  SW -. copy .-> OPN["OPNsense<br/>watches"]
+  AX --> HOME["Home<br/>devices"]
+```
+
+- A small managed switch with a mirror port goes between the fibre box and the AX6000 (they sit next to each other). The copy reaches the server over the cable that today runs from the AX6000 to the server's first port; the server keeps its second path.
+- If the server is down, nothing changes for the house: the AX6000 still routes everything.
+- The copy is taken after the AX6000's address translation, so an alert says "the house talked to a malware server", not which device. The home devices already ask OPNsense for names (the AX6000 hands out 192.168.1.2 for DNS), so matching the DNS log by time usually names the device.
+- It watches but cannot block a home device. Blocking still needs the front-door setup.
+- Cost: one small managed switch with port mirroring, roughly 25 to 40 EUR (needs Viktor's OK; everything else is free).
+
 ## What the household would notice
 
 | | Stays the same | Changes |
@@ -55,8 +74,8 @@ flowchart TD
 | TP-Link app | Wi-Fi settings | no internet or device settings any more |
 | Speed rules (QoS, now set to 300/180) | | move to OPNsense |
 | Parental controls | none are set up today | not available on the AX6000 |
-| Guest Wi-Fi | still exists | no longer kept apart from the home network by the AX6000; OPNsense can do that instead |
-| Port forwards | | changed in OPNsense instead of the TP-Link page |
+| Guest Wi-Fi | still exists | in access point mode the AX6000 puts guests on the same network as the house, and OPNsense cannot tell them apart. Keeping guests apart (needed) means the garage MR200's Wi-Fi on its own network, or a Wi-Fi access point that supports VLANs (paid) |
+| Port forwards | emo can still change them | in OPNsense, with emo's own login, instead of the TP-Link page |
 
 ## If something breaks
 
@@ -68,7 +87,7 @@ flowchart TD
 | OPNsense update or restart | 1 to 2 minutes | nothing, it comes back |
 | Server restart | about 5 to 10 minutes (to be measured) | nothing |
 | Server broken | until the fallback, about 5 minutes of work | move the fibre cable back to the AX6000 and load its saved settings file |
-| Power cut | the UPS and inverter carry the server; when the battery runs low it shuts down cleanly | the same fallback if it lasts long |
+| Power cut | the fibre box and the AX6000 are on battery, so today the internet survives a cut. With the front door, internet lasts until the server's UPS shuts it down cleanly (at about 20 minutes of battery left) | the same fallback if it lasts long |
 
 The fallback gets tested once on the night of the switch, so we know the AX6000 returns to normal from its saved settings. The existing watcher on the Raspberry Pi keeps emailing emo when the internet or the server drops.
 
@@ -80,16 +99,22 @@ The fallback gets tested once on the night of the switch, so we know the AX6000 
 | Copy the internet traffic to the firewall | sees everything | can't tell which device, can't block anything |
 | DNS only | free, nothing moves | sees names, not traffic; encrypted DNS slips past it |
 
-## Questions for emo
+## Answered (Viktor, 2026-11-11)
 
-1. Where is the A1 fibre box, and can its cable reach one of the two cables to the garage?
-2. Are the fibre box and the AX6000 on battery backup?
-3. Does anyone rely on guest Wi-Fi being kept apart from the home network, or on the speed rules?
-4. Do you want to keep changing port forwards yourself (you would get an OPNsense login)?
-5. Does the MR200 in the garage broadcast Wi-Fi?
-6. Which night suits a 15-minute switch, with you near the router?
+- The A1 fibre box sits next to the AX6000; the cables to the garage start there.
+- The fibre box and the AX6000 are on battery backup.
+- emo keeps changing port forwards himself, with an OPNsense login.
+- Guests must stay apart from the home network.
+- The MR200 in the garage broadcasts Wi-Fi.
+- The switch-over date is decided later, with emo.
+
+## Still open
+
+1. Front door (blocks and checks every device, house depends on the server) or the copy (watches only, the house is unaffected if the server fails)?
+2. With the front door: guest Wi-Fi on the MR200's garage Wi-Fi, or a VLAN-capable access point?
+3. With the copy: OK to buy the small switch?
 
 ## Open questions for Viktor
 
-- OPNsense currently lets everything in from the home-network side (a rule carried over from pfSense). The proposal replaces it; until then any home device can reach every homelab network.
+- OPNsense currently lets everything in from the home-network side (a rule carried over from pfSense); any home device can reach every homelab network. Viktor's call on 2026-11-11: leave it as is for now.
 - Does A1 tie the address to the router's network card (MAC)? The AX6000 already uses a copied one, which OPNsense would copy again.
