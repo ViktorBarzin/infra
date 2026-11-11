@@ -1715,6 +1715,41 @@
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
         - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
 
+    # ---- T3 snapshots off the VM (disposable devvm, 2026-11-11) -------------
+    # t3-backup-state's nightly copies in /var/backups/t3-state are on this
+    # disk, so the PVE host's nightly-chain pulls them to sda (t3-state-pull)
+    # and a rebuilt box gets them back with t3-restore-state, which
+    # t3-provision-users calls before it first starts a user's serve.
+    # Pull, not push: the host's key may read that one directory and nothing
+    # else. Its text is in Vault like the admin's keys below, because this
+    # repo is publicly mirrored. docs/architecture/backup-dr.md, "T3 snapshots".
+    - name: Install the T3 restore command
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/t3-restore-state.sh"
+        dest: /usr/local/bin/t3-restore-state
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [t3-snapshot]
+
+    - name: Read the PVE host's T3 snapshot pull key
+      ansible.builtin.command: vault kv get -field=root-t3-state-pull secret/devvm-authorized-keys
+      delegate_to: localhost
+      become: false
+      register: t3_state_pull_key
+      changed_when: false
+      check_mode: false
+      no_log: true
+      tags: [t3-snapshot]
+
+    - name: Let the PVE host read /var/backups/t3-state and nothing else
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ t3_state_pull_key.stdout }}"
+        key_options: 'command="/usr/bin/rrsync -ro /var/backups/t3-state",restrict'
+        state: present
+      tags: [t3-snapshot]
+
     # One hub per person (2026-11-08, docs/architecture/chrome-service.md "One hub
     # per person"): each person signs in once and every browser their agents use
     # is signed in too. On the devvm that is the hourly snapshot refresh (now per

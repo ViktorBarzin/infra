@@ -34,6 +34,10 @@ ADR-0025's statement that the on-disk path has no retention limit is superseded:
 - Storage grows with use: about 7.6 GB of raw transcripts a month box-wide, about 4x smaller once stored. The PVC autoresizes to 200 GiB.
 - Cluster agents (for example claude-agent-service) write transcripts inside pods and are not covered.
 
+## Update 2026-11-11: the rest of ~/.claude and ~/.codex
+
+For the disposable devvm (`docs/plans/2026-11-11-disposable-devvm.md`) the ingester now also reads each user's `~/.claude` and `~/.codex` outside `projects/`, into `claude.home_files` and `claude.home_lines`, and `homelab claude-sessions restore` writes them back. The same root, `O_NOFOLLOW` and owner rules apply. Point 6 above changes for these files only: credentials and caches are never read into the store, and settings files are stored with their secret values redacted, because unlike transcripts they hold standing keys rather than incidental tool output.
+
 ## Open questions
 
 - How large the text indexes get relative to the data at full scale. The trial load was one session.
