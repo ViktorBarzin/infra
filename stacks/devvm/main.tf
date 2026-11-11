@@ -52,11 +52,7 @@ locals {
   # (.100-.254). Smaller than the live devvm by default so it fits the host's
   # RAM headroom; check `free -g` on the host first (runbook). Everything not
   # set here is the live devvm's shape (module defaults).
-  drills = {
-    # Third drill, 2026-11-11: the first meant to go green from cloud-init
-    # alone, with no manual step. Removed again once checked.
-    "devvm-drill3" = { vm_id = 9103, ipv4_cidr = "10.0.10.12/24", cores = 4, memory_mb = 8192, disk_gb = 80 }
-  }
+  drills = {}
 }
 
 provider "proxmoxbpg" {

@@ -214,14 +214,35 @@ log in, sudo works, emo's `~/.claude` came back from the session store, every
 user's T3 database from the Proxmox host copy, and six of the seven lobby
 units are active. Both drill VMs were then removed.
 
-Still open after this drill, for the final one:
+**2026-11-11, third drill** (devvm-drill3, VM 9103, 10.0.10.12, 4 cores,
+8 GiB, 80 GiB), built by CI from master with no manual step, in the slot
+the second drill's teardown had emptied (re-granted by the new timer):
+
+- 16:09 apply, 16:13 handoff unwrapped, 16:14-16:35 playbook (314 ok,
+  0 failed), 16:37 terminal-lobby, 16:57 bootstrap status `ok`.
+  `cloud-init status --long`: `done`, `errors: []`; the `degraded` flag is
+  only the deprecated `user` key in the user data Proxmox generates.
+- wizard logs in with the usual key and `sudo -n true` works; emo exists.
+  Both restore markers are there, `history.jsonl` came back (wizard 13,154
+  lines, emo 4,273), 184 and 4 project folders against 181 and 4 projects
+  in the store, and both T3 databases came from the host copy.
+- Lobby units ttyd, clipboard-upload, tmux-api, session-events, file-api and
+  skills-api active; agent-api restarting, as expected off 10.0.10.10.
+- The session store got nothing from it: no `ingest.env`, the timer off,
+  and no `home_files` rows after 16:20 while the live ingest sent none.
+  Its journal reached Loki as `host="devvm-drill3"`.
+- Failed units: `claude-auth-sync@wizard` and `@emo` (no Claude auth
+  tokens without an admin Vault token, below), and one hourly
+  `t3-provision-users.service` run at 16:32 that fired during the playbook,
+  before the bootstrap had cloned wizard's infra; a manual start after the
+  build succeeded.
+- promtail had no `/var/lib/promtail` for its positions file; the playbook
+  now creates it.
+
+Still open after these drills, for the final one:
 
 - `agent-api` binds 10.0.10.10 and exits on any other address, so it fails on
   a drill by design of its config; a rebuild at 10.0.10.10 is unaffected.
-- cloud-init's own run on drill2 is marked failed (`cloud-final`), from the
-  pre-fix HOME failure; the clean result came from a rerun of the same
-  bootstrap under a service with no HOME. The next drill should be the first
-  that goes green from cloud-init alone.
 
 - wizard's unlocked `~/code/infra` is not cloned on a new box, so the hourly
   `t3-provision-users.service` fails ("roster/engine not under
