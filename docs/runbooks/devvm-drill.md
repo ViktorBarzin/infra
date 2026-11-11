@@ -89,6 +89,13 @@ Check: `ssh root@192.168.1.127 'qm list; pvesm list local --content import'`.
   Vault audit log for `sys/wrapping/unwrap` around the time.
 - **`failed: playbook`.** A playbook bug on a fresh box, which is what the
   drill is for. Fix it in `playbooks/devvm.yml` and rebuild.
+- **A CI apply was killed mid-create** (a later push supersedes the
+  pipeline; the next pipeline diffs from the killed push, so it does not
+  re-apply this stack). The VM exists on the host but not in state, and the
+  next apply fails on the taken VMID. Destroy the orphan
+  (`qm stop <vmid>; qm destroy <vmid> --purge` on the host, drill VMs only)
+  and land any change under `stacks/devvm` to re-apply. An admin apply from
+  the main checkout avoids the race.
 - **403 from Proxmox in the apply.** `TFDevvm` lacks a privilege for something
   new; add it to the list in `pve-host.yml` and rerun `--tags devvm-tf`.
 
