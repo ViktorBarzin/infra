@@ -186,3 +186,47 @@
           logger -t haproxy-ensure "haproxy not running after boot; starting it"
           /usr/local/sbin/configctl haproxy start
       fi
+
+# The mail frontends' JSON connection log goes to netsec.haproxy in ClickHouse
+# (docs/architecture/network-security-monitoring.md, "HAProxy connections").
+# A bad file here would stop every syslog-ng log path at the next restart, so
+# it is removed again when the syntax check fails (as in squid.yml).
+- name: syslog-ng path for the HAProxy netsec log
+  block:
+    - name: syslog-ng file
+      ansible.builtin.copy:
+        src: "{{ opn_dir }}/syslog-ng-netsec-haproxy.conf"
+        dest: /usr/local/etc/syslog-ng.conf.d/netsec-haproxy.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      register: opn_hap_syslog_file
+
+    - name: syslog-ng accepts the configuration
+      ansible.builtin.command: syslog-ng --syntax-only -f /usr/local/etc/syslog-ng.conf
+      check_mode: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Restart syslog-ng
+      ansible.builtin.command: configctl syslog restart
+      when: opn_hap_syslog_file is changed and not ansible_check_mode
+      changed_when: true
+  rescue:
+    - name: Remove the file syslog-ng rejected
+      ansible.builtin.file:
+        path: /usr/local/etc/syslog-ng.conf.d/netsec-haproxy.conf
+        state: absent
+
+    - name: Stop here
+      ansible.builtin.fail:
+        msg: syslog-ng rejected netsec-haproxy.conf; removed it, syslog-ng was not restarted
+
+- name: syslog-ng runs
+  ansible.builtin.command: pgrep -x syslog-ng
+  check_mode: false
+  changed_when: false
+  register: opn_hap_syslogng
+  until: opn_hap_syslogng.rc == 0
+  retries: 12
+  delay: 5

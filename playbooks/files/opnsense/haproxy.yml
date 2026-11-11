@@ -16,7 +16,10 @@ frontends:
   default_backend: mailserver_nodes_smtp
   acls: []
   actions: []
-  advanced: null
+  # One JSON line per connection, shipped to netsec.haproxy (ClickHouse) by
+  # syslog-ng-netsec-haproxy.conf; the clients' real addresses are only here.
+  advanced: &netsec_log |-
+    log-format "%{+json}o %(netsec_kind)[str(haproxy)] %(ts)[date(0,ms)] %(client_ip)ci %(client_port)cp %(frontend_ip)fi %(frontend_port)fp %(frontend)f %(backend)b %(server)s %(connect_ms)Tc %(duration_ms)Tt %(bytes_in)U %(bytes_out)B %(termination)ts"
 - name: mailserver_proxy_465
   description: code-yiu Phase 4/5 - external SMTPS (:465) via PROXY v2 -> pod :4465 smtpd
   enabled: true
@@ -27,7 +30,7 @@ frontends:
   default_backend: mailserver_nodes_smtps
   acls: []
   actions: []
-  advanced: null
+  advanced: *netsec_log
 - name: mailserver_proxy_587
   description: code-yiu Phase 4/5 - external submission (:587) via PROXY v2 -> pod :5587 smtpd
   enabled: true
@@ -38,7 +41,7 @@ frontends:
   default_backend: mailserver_nodes_sub
   acls: []
   actions: []
-  advanced: null
+  advanced: *netsec_log
 - name: mailserver_proxy_993
   description: code-yiu Phase 4/5 - external IMAPS (:993) via PROXY v2 -> pod :10993 Dovecot
   enabled: true
@@ -49,7 +52,7 @@ frontends:
   default_backend: mailserver_nodes_imaps
   acls: []
   actions: []
-  advanced: null
+  advanced: *netsec_log
 - name: internal_https_443
   description: 'SNI-routed internal 443: hostname->Traefik (proxy-v2), no-SNI/pfsense.*->webgui:8443'
   enabled: true

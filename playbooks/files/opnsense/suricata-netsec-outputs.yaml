@@ -80,3 +80,4 @@ outputs:
             ja4: on
         - http:
             extended: yes
+        - ssh

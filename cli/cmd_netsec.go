@@ -118,19 +118,24 @@ func netsecSQL(args []string) error {
 
 const netsecGuide = `
 How to read it
-  flows        one row per NetFlow record from OPNsense (VLAN 10 and 20), 14 days.
+  Every table keeps 365 days.
+  flows        one row per NetFlow record from OPNsense (VLAN 10 and 20).
                Pod traffic shows the node's address: Calico NATs it.
-  eve          Suricata EVE events: alert (365 days), dns, tls, http (30 days).
+               Mail clients show as OPNsense (10.0.20.1): use haproxy.
+  eve          Suricata EVE events: alert, dns, tls, http, ssh.
                Typed columns: signature_id, signature, severity, dns_rrname,
                tls_sni, http_hostname ...; the whole event is in payload
-               (payload.alert.metadata, payload.tls.ja4 ...).
+               (payload.alert.metadata, payload.tls.ja4, payload.ssh.client ...).
                A flow crossing VLAN 10 and 20 appears twice; collapse by community_id.
-  proxy        Squid access log for opted-in machines (alias opted_in), 30 days.
+  haproxy      one row per connection to the internet-facing mail ports
+               (25, 465, 587, 993) with the real client_ip, bytes, duration and
+               termination (HAProxy's two-letter state, e.g. CD = client hung up).
+  proxy        Squid access log for opted-in machines (alias opted_in).
                url has its query string stripped; sni and bump_mode (bump or
                splice) show what was decrypted. Empty while nobody is opted in.
-  dns_queries  pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP,
-               30 days. client_ip is the pod; name it with kube_pod_info.
-  tetragon     process starts and outbound connects from k8s nodes, 30 days.
+  dns_queries  pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP.
+               client_ip is the pod; name it with kube_pod_info.
+  tetragon     process starts and outbound connects from k8s nodes.
   Addresses are IPv6 columns; IPv4 is stored mapped (::ffff:a.b.c.d).
   Use IPv4NumToString(toIPv4(src_ip)) or toString(src_ip) to print them.
 

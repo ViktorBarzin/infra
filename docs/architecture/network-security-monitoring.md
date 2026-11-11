@@ -16,6 +16,7 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 4 | Server sshd journals into CrowdSec (simulated), pod DNS queries into `netsec.dns_queries` | live 2026-11-10, simulation until the phase 6 review |
 | 4b | Tetragon process starts and outbound connects into `netsec.tetragon`, watch-only | live 2026-11-10 |
 | 5 | Squid decryption for machines in alias `opted_in` (empty), JSON log into `netsec.proxy` | live 2026-11-10, nobody opted in |
+| 7 | Every table kept 365 days; Suricata `ssh` events into `netsec.eve`; mail-port connections with the real client address into `netsec.haproxy` | live 2026-11-11 |
 
 ## Phase 1: store and shipper
 
@@ -34,14 +35,24 @@ flowchart TD
 
 | Table | Rows | Kept | Fed by |
 |---|---|---|---|
-| `flows` | one NetFlow record | 14 days | goflow2 (phase 1) |
-| `eve` | one Suricata EVE event; typed columns plus the whole event in `payload` | alerts 365 days, everything else 30 | OPNsense (phase 2) |
-| `proxy` | one Squid request from an opted-in machine | 30 days | Squid on OPNsense (phase 5) |
-| `dns_queries` | one pod DNS lookup | 30 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
-| `tetragon` | one process start or outbound connect | 30 days | phase 4b |
+| `flows` | one NetFlow record | 365 days | goflow2 (phase 1) |
+| `eve` | one Suricata EVE event (alert, dns, tls, http, ssh); typed columns plus the whole event in `payload` | 365 days | OPNsense (phase 2, ssh phase 7) |
+| `proxy` | one Squid request from an opted-in machine | 365 days | Squid on OPNsense (phase 5) |
+| `dns_queries` | one pod DNS lookup | 365 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
+| `tetragon` | one process start or outbound connect | 365 days | phase 4b |
+| `haproxy` | one connection to a mail port (25, 465, 587, 993) through HAProxy on OPNsense | 365 days | phase 7 |
 
 Addresses are `IPv6` columns; IPv4 is stored mapped (`::ffff:10.0.20.101`).
 Tables are partitioned by day, so TTL drops whole parts.
+
+**Retention and size.** Viktor set every table to 365 days on 2026-11-11, replacing
+the plan's 14 and 30 days. Measured that day from `system.parts`: `eve` about
+112 MB a day compressed, `flows` 46, `tetragon` 32, `dns_queries` 11, so about
+200 MB a day and about 75 GB for a year at that traffic. The PVC starts at
+20 Gi and pvc-autoresizer grows it by 50% when under 10% is free, up to its
+200 Gi `storage_limit` (`stacks/claude-sessions/main.tf`); the SAS thin pool
+had 470 GB free. TTLs were changed live with `ALTER TABLE ... MODIFY TTL`
+and copied into `schema.sql`.
 
 **Users.** `netsec_writer` (INSERT on `netsec.*`, quota 4 GB written and
 20,000 inserts per hour, about ten times the measured rate) and
@@ -110,7 +121,7 @@ the ClickHouse pod 295 MiB.
 
 ```mermaid
 flowchart TD
-  SUR["Suricata 8, pcap IDS<br/>vtnet1 + vtnet2"] -->|conf.d/netsec-outputs.yaml| META["/var/log/suricata/eve-meta.json<br/>alert, dns responses, tls, http"]
+  SUR["Suricata 8, pcap IDS<br/>vtnet1 + vtnet2"] -->|conf.d/netsec-outputs.yaml| META["/var/log/suricata/eve-meta.json<br/>alert, dns responses, tls, http, ssh"]
   META -->|syslog-ng file tail<br/>netsec-eve.conf| TCP["TCP 10.0.20.211:5140"]
   TCP --> VEC["netsec-vector<br/>source opnsense, remap eve"]
   VEC --> CH[("netsec.eve")]
@@ -352,7 +363,7 @@ flowchart TD
   status, server address, user agent. No Referer, no cookies. The plugin's
   own access log is off. syslog-ng tails the file to the netsec Vector on the
   same port as EVE; lines starting `{"netsec_kind":"proxy"` are routed to the
-  `proxy` transform and `netsec.proxy` (30 days).
+  `proxy` transform and `netsec.proxy` (365 days).
 - **Metrics and alerts**: cron `netsec-squid-metrics` on OPNsense writes
   `netsec_squid_ca_not_after_seconds`, `netsec_squid_up` and
   `netsec_opted_in_members` for node_exporter's textfile collector.
@@ -367,6 +378,46 @@ flowchart TD
   IPv6 off or a fixed address in the alias.
 - **Tested 2026-11-10** from a throwaway network namespace on VLAN 20
   (runbook, "Testing the whole path"); nothing real was opted in.
+
+## Phase 7: internet-facing coverage
+
+Everything a client on the internet can reach gets a row with that client's
+address. Port forwards (`playbooks/files/opnsense/nat_port_forwards.yml`) land
+on VLAN 20, where Suricata and NetFlow see the original source, with one
+exception: the mail ports 25, 465, 587 and 993 are forwarded to OPNsense's own
+VLAN 20 address, where HAProxy passes them to the mailserver pods with PROXY
+v2. Suricata and NetFlow see only the HAProxy-to-node leg, with 10.0.20.1 as
+the source.
+
+```mermaid
+flowchart TD
+  NET["internet client"] -->|WAN :25 :465 :587 :993| HAP["HAProxy on OPNsense<br/>log-format JSON"]
+  HAP -->|PROXY v2| MAIL["mailserver pods"]
+  HAP -->|syslog| SNG["syslog-ng<br/>netsec-haproxy.conf"]
+  SNG -->|TCP 10.0.20.211:5140| VEC["netsec-vector<br/>route haproxy"]
+  VEC --> CH[("netsec.haproxy")]
+```
+
+- **HAProxy log**: the four mail frontends in `playbooks/files/opnsense/haproxy.yml`
+  carry a `log-format` with HAProxy's `json` encoding: marker `netsec_kind`,
+  time in ms, client and frontend address and port, frontend, backend, server,
+  connect and total time, bytes each way and the termination state. HAProxy 3.2
+  writes a space after every colon, so the Vector route matches
+  `{"netsec_kind": "haproxy"`. One line per connection, about 2,600 a day.
+  The same lines still land in `/var/log/haproxy/`.
+- **Shipper**: `syslog-ng-netsec-haproxy.conf`, installed by
+  `playbooks/tasks/opnsense/haproxy.yml`, filters `program("haproxy")` lines
+  that start with the marker from syslog-ng's `s_all` source and sends them to
+  the netsec Vector without flow-control.
+- **Suricata ssh**: `eve-meta.json` gains the `ssh` type, so every SSH session
+  (Forgejo's 10.0.20.200:22 is open to the internet) records the client and
+  server version strings in `payload.ssh`.
+- **Not covered**: Suricata `anomaly` events stay in `eve.json` on OPNsense
+  only, because Suricata allows one anomaly logger. Inbound IPv4 to ports
+  without a forward is dropped by the ISP router before OPNsense. CrowdSec
+  alerts and decisions stay in the LAPI database (`cscli`). Traffic that ends
+  on OPNsense itself (WireGuard hub, the GUI) is on WAN, which Suricata does
+  not inspect; firewall blocks are in Loki (`app="filterlog"`).
 
 ## Open questions
 
