@@ -360,3 +360,25 @@ func TestMapPhrasingsFindTheMapVerb(t *testing.T) {
 		}
 	}
 }
+
+// ClickHouse netsec is the source of truth for questions about what devices
+// looked up or connected to (Viktor, 2026-11-11), so `homelab how` must send
+// those questions there first, ahead of Technitium's Postgres or Loki.
+func TestHowRoutesTrafficAndDNSHistoryToNetsec(t *testing.T) {
+	for _, task := range []string{
+		"which device looked up a domain last month",
+		"dns lookups from the home lan",
+		"technitium query log history",
+		"traffic patterns over the last year",
+		"was this domain blocked for a client",
+	} {
+		got := matchCapabilities(capabilities(), task)
+		if len(got) == 0 || !strings.Contains(got[0].Use, "homelab netsec") {
+			first := "nothing"
+			if len(got) > 0 {
+				first = got[0].Use
+			}
+			t.Errorf("homelab how %q: first match is %s, want homelab netsec", task, first)
+		}
+	}
+}

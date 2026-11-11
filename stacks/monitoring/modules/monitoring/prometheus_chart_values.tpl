@@ -6763,6 +6763,19 @@ serverFiles:
               lane: security
             annotations:
               summary: "No NetFlow rows written to netsec.flows for 30m"
+          - alert: NetsecTechnitiumStale
+            # netsec-technitium (stacks/netsec) copies Technitium's Postgres query
+            # log every 5 minutes and pushes the newest copied row's time. Sofia
+            # makes hundreds of lookups a minute, so 30 minutes without a newer
+            # row means the job, Postgres logging or ClickHouse is stuck
+            # (docs/runbooks/network-ids.md, "Technitium query log").
+            expr: (time() - max(netsec_technitium_newest_row_timestamp)) > 1800 or absent(netsec_technitium_newest_row_timestamp)
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No new Technitium lookups copied to netsec.technitium for 30m"
           - alert: NetsecEveStale
             # Suricata's eve-meta.json carries every DNS response crossing VLAN 10
             # and 20, so 30 minutes with no row written to netsec.eve means
