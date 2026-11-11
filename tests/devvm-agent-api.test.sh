@@ -151,9 +151,10 @@ absent="$(walk absent-paths)"
 ok grep -qx '/etc/systemd/system/tailscaled-agent.service' <<<"$absent"
 # The node's state (node key, serve config) goes, under the ADMIN account.
 ok grep -qE '^/home/(\{\{ *devvm_admin_user *\}\}|wizard)/\.tailscale-us$' <<<"$absent"
-# emo's userspace tailscaled lives in /home/emo/.tailscale-us and is not this
-# playbook's to remove; no removed path may name emo or a templated user that
-# could resolve to anyone else.
+# emo's userspace tailscaled (/home/emo/.tailscale-us, retired 2026-11-11, its
+# state moved to his ~/.cache/retired-2026-11-11/) was never this playbook's to
+# remove; no removed path may name emo or a templated user that could resolve
+# to anyone else.
 notok grep -qE 'emo|devvm_users|item' <<<"$(grep 'tailscale' <<<"$absent")"
 
 cmds="$(walk commands)"
@@ -165,12 +166,14 @@ notok grep -qE 'tailscale .* up( |$)' <<<"$cmds"
 notok grep -q 'devvm_tailscale_ip' "$PLAYBOOK"
 notok grep -qE 'tailscale .* ip -4' <<<"$cmds"
 
-# The package stays: emo's daemon runs /usr/sbin/tailscaled from it.
+# The package is still declared. Its one user, emo's userspace daemon, was
+# retired on 2026-11-11; dropping the package is for the disposable-devvm
+# plan's unused-package pass, as a deliberate edit to this assertion too.
 if PKG="$(task_json 'Install tailscale')"; then
   ok test "$(jqf "$PKG" '.["ansible.builtin.apt"].name // ""')" = "tailscale"
   ok test "$(jqf "$PKG" '.["ansible.builtin.apt"].state // ""')" = "present"
 else
-  bad "the tailscale package task is gone; emo's userspace daemon needs the binary"
+  bad "the tailscale package task is gone; update this check if that was deliberate"
 fi
 
 # The node's credentials are retired too (2026-10-02): Headscale pre-auth key

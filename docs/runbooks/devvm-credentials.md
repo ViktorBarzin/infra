@@ -92,6 +92,16 @@ wizard's user units live in the dotfiles since 2026-11-11, with the
 and the link for the existing `agents-sync.timer`. `tmux.service` was left
 out: it was retired on 2026-11-02 and is disabled.
 
+## A repo's own setup (step 4b)
+
+After the clones, the provisioner runs `devvm-setup.sh` from the root of each
+roster repo that has one, as the user, with an emptied environment (so the
+admin `VAULT_TOKEN` of a rebuild run never reaches the user's code), and turns
+on linger for that user. The script must be idempotent and print nothing when
+everything is in place. Today only emo's `ebarzin/vermont-device-configs` ships
+one: it restores his `~/bin` links, the Hikvision SDK and the B4 intercom
+watchdog's user units (`docs/runbooks/cameras-nvr-intercom.md`).
+
 ## Add or refresh a credential
 
 When a token is rotated or a new hand-made credential appears, store it

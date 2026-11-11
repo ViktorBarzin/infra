@@ -2998,9 +2998,14 @@
     # that built it are in git history (3b4aaf55 and its follow-ups).
     #
     # emo's userspace tailscaled out of /home/emo/.tailscale-us (ports 1055 and
-    # 1056, started by hand, declared in no repository) is a separate daemon
-    # and is left exactly as it is. It runs /usr/sbin/tailscaled, which is why
-    # the package and its apt source stay declared here.
+    # 1056, started by hand, declared in no repository) was a separate daemon,
+    # never this playbook's. It was retired on 2026-11-11 (node devvm-emo
+    # logged out, its user unit disabled, its state moved to
+    # ~/.cache/retired-2026-11-11/), and since then nothing on the box runs
+    # /usr/sbin/tailscaled: the system tailscaled is disabled too. The package
+    # and its apt source below stay declared until the disposable-devvm plan's
+    # unused-package pass decides on them
+    # (docs/plans/2026-11-11-disposable-devvm.md, Machine).
     - name: Install the Tailscale signing key
       ansible.builtin.get_url:
         url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc
