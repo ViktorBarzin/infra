@@ -1949,6 +1949,17 @@ resource "vault_policy" "projects_emo" {
     path "secret/data/ci/tv-release" {
       capabilities = ["read"]
     }
+    # Read the app onboarding credential for scripts/offinfra-onboard
+    # (2026-11-11): copies of Viktor's GitHub PAT, the Woodpecker API token
+    # and the CI Slack webhook, so emo's agent can create the GitHub mirror
+    # and wire CI for a new app he owns. Viktor chose to hand emo the tokens
+    # over running the step for him; the GitHub PAT acts as Viktor on every
+    # repo of his GitHub account. Seeded by hand outside secret/ci/, which
+    # woodpecker-sync copies into Woodpecker. Re-seed it when either source
+    # rotates (docs/agents/new-app.md, "An app owned by a non-admin").
+    path "secret/data/workstation/shared/app-onboarding" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
