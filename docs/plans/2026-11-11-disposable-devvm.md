@@ -99,7 +99,9 @@ remote). dot_files' 158 are stale history, not work.
   would use (the current script uses the vendor SDK). Checked before
   intercom-watch is retired; if it fails, the fallback is decided then.
 - HA network storage over the tunnel to London has not been tried; a mount
-  across the WAN can stall.
+  across the WAN can stall. Tried 2026-11-11: an NFS mount over the tunnel wrote a 257 MB
+  backup in about 75 s with matching checksums (`docs/architecture/london-site.md`,
+  "Backups").
 - The ClickHouse store's size growth once file-history and remote/ are
   ingested is not measured yet.
 - Which local SSH keys already match the copies in Vault was not checked.
