@@ -45,8 +45,19 @@
 #   dotfiles: owner/name - the user's chezmoi source on Forgejo. On a box where
 #                          ~/.local/share/chezmoi does not exist yet, the
 #                          provisioner installs chezmoi and runs
-#                          `chezmoi init --apply --exclude=encrypted` from it,
-#                          once. An existing source is never touched.
+#                          `chezmoi init` from it and applies it, once. An
+#                          existing source is never touched. Encrypted entries
+#                          and the regular files under ~/.claude and ~/.codex
+#                          are never applied: Vault and the session store
+#                          restore those.
+#
+# Optional per-user extra groups (all tiers, 2026-11-11):
+#   extra_groups: [docker] - groups on top of the tier's. Only the ones in
+#                            roster_engine.EXTRA_GROUPS_ALLOWED (docker), since
+#                            sudo and the admin tree come with tier: admin
+#                            alone. docker is root-equivalent, so it is granted
+#                            per person here, in a reviewed diff. Additive like
+#                            every group: removing it does not take it away.
 #
 # Credentials are not a roster field: whatever is stored for a user under
 # Vault secret/workstation/<user>/files is restored for them when the
@@ -108,7 +119,7 @@
 # 2026-08-17, which its deploy installed over the generated one.
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin, t3_port: 3773, t3_host: t3, dotfiles: viktor/dot_files}                                          # base config author + cluster-admin
-  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, code_layout: workspace, repos: [tv, ebarzin/agents, app-kit, ebarzin/vermont-device-configs], agents_repo: ebarzin/agents, t3_port: 3774, t3_host: t3-emo}  # NET-NEW k8s_users entry (add as power-user before provisioning)
+  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, code_layout: workspace, repos: [tv, ebarzin/agents, app-kit, ebarzin/vermont-device-configs], agents_repo: ebarzin/agents, dotfiles: ebarzin/dotfiles, extra_groups: [docker], t3_port: 3774, t3_host: t3-emo}  # NET-NEW k8s_users entry (add as power-user before provisioning)
   #  tv (then f1-stream) added 2026-10-18 (Viktor: emo maintains it with him); the
   #  entry follows the 2026-11-01 rename to viktor/tv. He is an admin collaborator
   #  on Forgejo viktor/tv, granted through the API like his infra write access; the
@@ -122,6 +133,10 @@ users:
   #  hand tools for the Vermont devices moved from ~/bin into its bin/, so a
   #  rebuilt devvm gets them back. On the current box the clone was moved from
   #  ~/vermont-device-configs to ~/code/ (the old path is a symlink to it).
+  #  dotfiles ebarzin/dotfiles and extra_groups [docker] added 2026-11-11
+  #  (disposable-devvm plan, round 2): his shell and tmux setup had no kept
+  #  place, and docker was his by hand, which a rebuild dropped. Viktor decided
+  #  he keeps docker.
 # ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit, anca/agents], agents_repo: anca/agents, parked: true}
   #  REMOVED 2026-08-17 (Viktor: "remove anca from t3 users") -- the reversible
   #  cut from docs/runbooks/offboard-user.md part A1, one step past the parking of

@@ -118,7 +118,10 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   user once provisioning step 4a has restored them, and `claude --resume` as
   each user lists their sessions. `~/.claude/settings.json` is the user's own
   (statusLine, enabledPlugins, env flags) with the memory keys filled from
-  Vault, not a hooks-only skeleton. The drill must read the store and never
+  Vault, not a hooks-only skeleton. `jq '.mcpServers | keys' ~/.claude.json` lists the
+  user's MCP servers, `claude mcp list` shows them connected after the admin
+  run's `mcp-secrets fill`, and `claude` in a project the user trusted on the
+  live box starts without the trust prompt. The drill must read the store and never
   write to it: no `/etc/claude-sessions/ingest.env`,
   `claude-sessions-ingest.timer` disabled, and after the drill no rows from
   its time window that the live ingest's journal does not account for:
@@ -189,7 +192,8 @@ comes back:
 2. On the devvm: `sudo systemctl start t3-backup-state.service`, then
    `sudo systemctl start claude-sessions-ingest.service`; both journals end
    with a success line. Re-capture any credential rotated since its last
-   capture (`devvm-credentials.md`, "Add or refresh a credential").
+   capture (`devvm-credentials.md`, "Add or refresh a credential"), and each
+   user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets").
 3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
@@ -444,32 +448,47 @@ Gaps it found, none fixed in the drill itself:
   as wizard, gets `Permission denied` on `FETCH_HEAD`, and logs `fetch of
   ebarzin/agents failed` every hour. `~emo/.agents/AGENTS.md` (62 KB on the
   live box, the target of his `~/.claude/CLAUDE.md`) stays missing.
+  Fixed after the drill: the fetches belong to the first admin when the
+  run's clone is root's (`resolve_agents_owner`), and a fetch owned by
+  anyone else is made again.
 - **MAJOR: emo's shell setup has no kept place.** His roster row has no
   dotfiles repo, so `.zshrc`, `.zshenv`, `.zprofile`, `.tmux.conf.local`
   and `.tmux` are lost. Without his `.zshrc`, `~/.local/bin` is not on his
   zsh PATH, `claude` resolves to `/usr/local/bin/claude`, a link into
   wizard's home, and that home is 0750 on a new box (0751 on the live one),
   so his shell prints `permission denied: claude`. T3 is unaffected: its
-  unit's PATH falls through to `~/.local/bin`.
+  unit's PATH falls through to `~/.local/bin`. Fixed after the drill: his
+  row has `dotfiles: ebarzin/dotfiles` (`devvm-credentials.md`, "Dotfiles").
 - **MAJOR, known: `~/.claude.json` is not restored.** wizard loses the
   `google_workspace` MCP server and 454 project entries, emo the
   `paperless` MCP server; the first `claude` shows the onboarding and the
-  folder trust prompt.
+  folder trust prompt. Fixed after this drill: the store keeps a reduced
+  `~/.claude.json` (project trust, user-scope MCP servers, the onboarding
+  flags), restore writes it back or merges it into one provisioning wrote
+  first, and the MCP secrets it leaves out come back from Vault
+  `secret/workstation/<user>/mcp` in provisioning step 4a2
+  (`claude-session-store.md`). Not yet drilled on a VM.
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
-  group is root-equivalent.
+  group is root-equivalent. Viktor decided he keeps it: his row has
+  `extra_groups: [docker]`.
 - MINOR: skills come back only when `claude-skills-update.timer` fires
   (05:45 daily); provisioning does not start it. After a manual run wizard
   still lacks `unslop` and emo `cluster-health` and his 20
-  `~/.agents/skills` folders.
+  `~/.agents/skills` folders. Since the drill provisioning starts it once
+  per box, when every user's `~/.claude` is back; the missing skills are a
+  separate gap.
 - MINOR: wizard's `ios-rig-doctor.timer`, `ios-rig-tunnel.service` and
   `ios-rig-wifi.service` come back only through `homelab ios bootstrap
-  --units-only` (`ios-test-rig.md`), which no rebuild step runs.
+  --units-only` (`ios-test-rig.md`), which no rebuild step runs. Since the
+  drill provisioning runs it for an admin whose token reads
+  `secret/ios-rig`, on the live box's address only, so a drill never does.
 - MINOR: no known_hosts entry for Forgejo on a new box, so wizard's first
-  `git` over SSH asks to trust `git.viktorbarzin.me`.
+  `git` over SSH asks to trust `git.viktorbarzin.me`. Since the drill
+  provisioning writes Forgejo's pinned host key for every user.
 - MINOR, as in drill 3: the hourly `t3-provision-users.service` fires
   during the playbook and fails once before the infra clone exists; the
-  next run succeeds.
+  next run succeeds. Since the drill that run exits 0 and logs why.
 - ancamilea gets no account (her roster row is parked). Her state is
   kept: 200 `home_files` and 2 sessions in the store, 7 credential files in
   Vault, her T3 copy on the host.

@@ -179,12 +179,23 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   live user of the loose `~/meshcentral-data` copy (same sessionKey, certs
   and database keys). Its sessionKey now comes from Vault
   `secret/meshcentral` through ESO and was replaced with a new key; the
-  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`).
+  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`). Review
+  then showed the copy's `meshcentral.db` login-cookie key still opened an
+  admin session, so the init container now rotates the database keys once
+  per `DB_KEY_GENERATION` label, first run 2026-11-11, and
+  `devvm-home-backup` keeps its generations root-only. The certificate
+  private keys are not re-keyed.
 - Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
   at the live system-wide versions (terraform 1.15.4-1, vault 2.0.1-1,
   terragrunt 0.77.20, sops 3.9.4), and `scripts/devvm-bootstrap` installs
   the same vault version, read from the playbook, so the playbook does not
   fail on a downgrade; not yet drilled.
+- Round 2, claude-state: `~/.claude.json` is kept in the session store as a
+  reduced copy (project trust, user-scope MCP servers, the onboarding flags)
+  and restored, merged into one provisioning wrote first; MCP server secrets
+  have a kept place in Vault `secret/workstation/<user>/mcp`
+  (`homelab claude-sessions mcp-secrets`), filled back by provisioning step
+  4a2 (`docs/architecture/claude-session-store.md`).
 - intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
   no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki
@@ -192,4 +203,12 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
   (checked 14 days). The runbooks now read the token inside sudo
   (`docs/agents/secrets.md`).
-
+- Round 2, provisioning: wizard's dotfiles brought up to the live home
+  (tmux-resurrect and continuum, the memory MCP and old `~/.claude` copies
+  gone; chezmoi keeps only links under `~/.claude` on the devvm); the
+  dotfiles apply never writes a regular file under `~/.claude` or `~/.codex`,
+  so the session store's copies win; emo has `ebarzin/dotfiles` and keeps
+  `docker` (`extra_groups`); his agent-instruction fetch no longer ends up
+  owned by root; and a rebuilt box gets Forgejo's host key, the iOS rig units
+  (live address only), one early skills update, and no failed hourly run
+  before the infra clone (`docs/runbooks/devvm-credentials.md`).

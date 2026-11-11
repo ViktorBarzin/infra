@@ -106,7 +106,7 @@ func TestRedactSettingsTOML(t *testing.T) {
 		`[mcp_servers.mem]`,
 		`url = "https://mem/x"`,
 		`[mcp_servers.ha]`,
-		`url = "https://ha.example/api/mcp/private_284F0n3kywV5Wq-qXZOj8Q"`,
+		`url = "https://ha.example/api/mcp/private_Fak3HaPathXq-zz0000000"`,
 		`http_headers = { "Authorization" = "Bearer abcdefgh123", "X-Id" = "7" }`,
 		`[mcp_servers.mem.env]`,
 		`MEMORY_KEY = "sekrit"`,
@@ -119,7 +119,7 @@ func TestRedactSettingsTOML(t *testing.T) {
 	if !red {
 		t.Fatal("want redacted")
 	}
-	for _, leak := range []string{"abcdefgh123", "sekrit", "tok-999", "284F0n3kywV5Wq"} {
+	for _, leak := range []string{"abcdefgh123", "sekrit", "tok-999", "Fak3HaPathXq"} {
 		if strings.Contains(s, leak) {
 			t.Errorf("%q survived:\n%s", leak, s)
 		}

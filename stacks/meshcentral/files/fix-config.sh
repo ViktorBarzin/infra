@@ -18,6 +18,37 @@ case "$SESSION_KEY" in
     ;;
 esac
 
+# DB_KEY_GENERATION (a plain label in main.tf, not a secret) rotates the keys
+# MeshCentral keeps in meshcentral.db rather than in config.json:
+# LoginCookieEncryptionKey (whoever holds it can forge a login cookie for any
+# user, admin included, and /control.ashx sits on the auth=none ingress),
+# InvitationLinkEncryptionKey (invitation, agent download and guest sharing
+# links) and dbconfig's amtWsEventSecret (Intel AMT event passwords). When
+# the label differs from the one in db-key-generation on the volume, those
+# records are dropped before the server starts, and MeshCentral writes fresh
+# random ones on start. Logins and links made with the old keys stop working.
+# Agents are not affected: they use the mesh certificates. Rollback is
+# MeshCentral's nightly autobackup zip on the backups volume.
+case "${DB_KEY_GENERATION:-}" in
+  *[!A-Za-z0-9.-]*)
+    echo "fix-config: DB_KEY_GENERATION holds characters other than letters, digits, dot and dash" >&2
+    exit 1
+    ;;
+esac
+DATA_DIR=$(dirname "$CONFIG")
+DB="$DATA_DIR/meshcentral.db"
+MARKER="$DATA_DIR/db-key-generation"
+if [ -n "${DB_KEY_GENERATION:-}" ] && [ "$(cat "$MARKER" 2>/dev/null || true)" != "$DB_KEY_GENERATION" ]; then
+  if [ -f "$DB" ]; then
+    grep -v -e '"_id":"LoginCookieEncryptionKey"' -e '"_id":"InvitationLinkEncryptionKey"' "$DB" |
+      sed '/"_id":"dbconfig"/{s/,"amtWsEventSecret":"[0-9A-Fa-f]*"//;s/"amtWsEventSecret":"[0-9A-Fa-f]*",//;}' > "$DB.new"
+    cat "$DB.new" > "$DB"
+    rm -f "$DB.new"
+    echo "fix-config: dropped the meshcentral.db keys for generation $DB_KEY_GENERATION; MeshCentral generates new ones"
+  fi
+  echo "$DB_KEY_GENERATION" > "$MARKER"
+fi
+
 if [ -f "$CONFIG" ]; then
   # Disable certUrl when using Traefik reverse proxy with TLS offload
   sed -i 's/"certUrl":/"_certUrl":/g' "$CONFIG"

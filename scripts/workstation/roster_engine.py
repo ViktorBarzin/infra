@@ -66,6 +66,11 @@ TIER_GROUPS: dict[str, tuple[str, ...]] = {
     "power-user": ("codex-shared",),
     "namespace-owner": (),
 }
+# Groups a roster row may add beyond its tier's (`extra_groups`). docker is
+# root-equivalent, so it is granted per person in a reviewed diff rather than
+# by tier; emo keeps it (Viktor, 2026-11-11). sudo and code-shared stay
+# tier: admin's alone.
+EXTRA_GROUPS_ALLOWED: tuple[str, ...] = ("docker",)
 DEFAULT_SHELL = "/bin/zsh"
 # The FLOOR a membership-driven provision lands on: the least privilege that
 # still makes the box useful, and the same default provision-user.yml already
@@ -128,6 +133,8 @@ class User:
     # Forgejo `owner/name` of the user's chezmoi source, which the provisioner
     # applies once on a new box (`chezmoi init --apply`).
     dotfiles: str | None = None
+    # Groups from EXTRA_GROUPS_ALLOWED this user gets on top of the tier's.
+    extra_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,6 +239,14 @@ def _parse_user(os_user: str, spec: dict) -> User:
         raise RosterError(
             f"user {os_user!r}: dotfiles must be a Forgejo owner/name, got {dotfiles!r}"
         )
+    extra_groups = spec.get("extra_groups") or []
+    if not isinstance(extra_groups, list) or any(
+        g not in EXTRA_GROUPS_ALLOWED for g in extra_groups
+    ):
+        raise RosterError(
+            f"user {os_user!r}: extra_groups must be a list of "
+            f"{list(EXTRA_GROUPS_ALLOWED)}, got {extra_groups!r}"
+        )
     claude_auth = spec.get("claude_auth", True)
     if not isinstance(claude_auth, bool):
         raise RosterError(
@@ -276,6 +291,7 @@ def _parse_user(os_user: str, spec: dict) -> User:
         t3_host,
         agents_repo,
         dotfiles,
+        tuple(sorted(set(extra_groups))),
     )
 
 
@@ -506,7 +522,7 @@ def derive_desired_state(
             tier=u.tier,
             shell=DEFAULT_SHELL,
             login_locked=True,
-            groups=TIER_GROUPS[u.tier],
+            groups=tuple(sorted(set(TIER_GROUPS[u.tier]) | set(u.extra_groups))),
             code_layout=u.code_layout,
             repos=u.repos,
             claude_auth=u.claude_auth and not u.parked,
