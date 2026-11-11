@@ -9,6 +9,7 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | Phase | What | State |
 |---|---|---|
 | 0 | Suricata tuning on OPNsense (VLAN 10 and 20 only, own-traffic signatures off) | live 2026-11-10 |
+| 0b | Suricata capture fix: 32 MB capture buffer, stream bypass after 1 MB, 13 ET Open categories off (63,816 to 43,082 active rules), `SuricataCaptureDrops` alert | live 2026-11-11 |
 | 1 | `netsec` database, its own Vector, NetFlow into ClickHouse, `homelab netsec sql` | live 2026-11-10 |
 | 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
 | 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |

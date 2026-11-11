@@ -1,0 +1,43 @@
+%YAML 1.1
+---
+# Installed as /usr/local/etc/suricata/conf.d/netsec-capture.yaml by
+# playbooks/tasks/opnsense/suricata.yml (runbook docs/runbooks/opnsense.md,
+# "Suricata tuning").
+#
+# Suricata missed 4.4% of packets on 2026-11-10, in bursts of up to 26% per
+# 5 minutes while its worker averaged 16% CPU: the capture buffer (FreeBSD's
+# net.bpf.maxbufsize, 512 KB, about 40 ms at 100 Mbps) overflowed during
+# bursts of camera and tv video. Two changes:
+#
+# 1. pcap: a 32 MB capture buffer per inspected interface. OPNsense starts
+#    Suricata with --pcap=vtnet1 --pcap=vtnet2 and its template has no pcap
+#    section, so this list adds the settings rather than replacing any. The
+#    tunable net.bpf.maxbufsize (suricata.yml) must allow the size, or the
+#    kernel caps it.
+# 2. stream: OPNsense's stream section restated as rendered for pcap mode
+#    (an included key replaces the template's), plus bypass: once a flow
+#    passes the 1 MB reassembly depth, the rest of it skips detection. Each
+#    connection's start (handshake, TLS name, HTTP headers, first 1 MB) is
+#    still inspected; the long tail of video and NFS transfers is not.
+#    suricata.yml refuses to install this file when the template's stream
+#    section changes.
+pcap:
+  - interface: vtnet1
+    buffer-size: 33554432
+  - interface: vtnet2
+    buffer-size: 33554432
+  - interface: default
+
+stream:
+  memcap: 64mb
+  checksum-validation: yes
+  inline: auto
+  bypass: yes
+
+  midstream-policy: ignore
+  reassembly:
+    memcap: 256mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: yes
