@@ -2141,6 +2141,19 @@
     # Pull, not push: the host's key may read that one directory and nothing
     # else. Its text is in Vault like the admin's keys below, because this
     # repo is publicly mirrored. docs/architecture/backup-dr.md, "T3 snapshots".
+    # Root-owned and 0755: t3-backup-state writes each user's snapshot AS that
+    # user, into a per-user subdirectory it hands to them, so a 0700 parent (a
+    # restore that copied the host's root-only directory mode) stops every
+    # nightly and pre-bump snapshot.
+    - name: Make the T3 snapshot directory
+      ansible.builtin.file:
+        path: /var/backups/t3-state
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [t3-snapshot]
+
     - name: Install the T3 restore command
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/t3-restore-state.sh"
