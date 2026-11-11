@@ -386,6 +386,37 @@
             - /usr/share/keyrings/caddy-stable-archive-keyring.gpg
           register: caddy_repo_removed
 
+    # A hand-installed NFS server exported /home/wizard read-write to every
+    # address (`*(rw,insecure,all_squash,anonuid=1000)`), so anything that
+    # could reach port 2049 on the devvm could read and write the admin's
+    # home, SSH keys and tokens included, as the admin. Nothing had mounted it
+    # in 30 days (no client connections, no mount requests in the devvm
+    # journal). Removed 2026-11-11 as the first step of making the devvm
+    # disposable (docs/plans/2026-11-11-disposable-devvm.md). The NFS client
+    # (nfs-common) stays: mounts from the Proxmox host need it.
+    - name: Remove the hand-installed NFS server and its /home/wizard export
+      tags: [nfs-server]
+      block:
+        - name: Stop and disable the NFS server
+          ansible.builtin.systemd_service:
+            name: nfs-server
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove the /home/wizard export
+          ansible.builtin.lineinfile:
+            path: /etc/exports
+            regexp: '^/home/wizard\s'
+            state: absent
+
+        - name: Remove the NFS server package
+          ansible.builtin.apt:
+            name: nfs-kernel-server
+            state: absent
+            purge: true
+            update_cache: false
+
     # The HashiCorp repo is where terraform and vault on this box came from, and
     # it existed only as hand-made files in /etc/apt until now, which is how its
     # keyring went stale unnoticed: HashiCorp rotated their package signing key
