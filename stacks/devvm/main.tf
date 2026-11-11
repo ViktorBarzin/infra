@@ -5,8 +5,9 @@
 # The live devvm (VMID 102, 10.0.10.10) is NOT in this stack, not imported, and
 # outside the reach of its token: the token (Vault secret/devvm pve_api_token,
 # user terraform-devvm@pve, privilege-separated, declared by
-# playbooks/pve-host.yml tag devvm-tf) holds the TFDevvm role on /pool/devvm
-# and the storage, network and node paths only, and 102 is not in that pool.
+# playbooks/pve-host.yml tag devvm-tf) holds the TFDevvm role on /pool/devvm,
+# the VMID slots 9100-9109 and the storage, network and node paths only, and
+# 102 is neither in that pool nor a slot.
 # The module also refuses the live name, VMID, address and MAC.
 #
 # A drill: add an entry to local.drills, land it, let CI apply, check the box,
@@ -45,7 +46,9 @@ locals {
   ]
 
   # Drills: a VM with its own name, a VMID in 9100-9109 (the slots the token is
-  # granted; anything else gets 403 at create) and an address below VLAN 10's DHCP pool
+  # granted; anything else gets 403 at create; a slot is re-granted within a
+  # minute of a destroy, so wait that long before reusing one in a new
+  # apply) and an address below VLAN 10's DHCP pool
   # (.100-.254). Smaller than the live devvm by default so it fits the host's
   # RAM headroom; check `free -g` on the host first (runbook). Everything not
   # set here is the live devvm's shape (module defaults).

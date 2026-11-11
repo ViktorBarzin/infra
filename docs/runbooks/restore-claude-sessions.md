@@ -106,7 +106,12 @@ remove their marker and the state entries under their home with the timer
 stopped.
 
 Only the devvm at 10.0.10.10 ingests. A drill VM restores from the store but
-never writes to it (`playbooks/devvm.yml` section 8d).
+never writes to it: `playbooks/devvm.yml` section 8d keeps `ingest.env` and the
+timer off there, and the unit's `ExecCondition` skips any run on another
+address. A drill built before that gate did write once (2026-11-11, see
+`claude-session-store.md`); if rows ever come from a box that is not the live
+one, find them by `ingested_at` against the live ingest's journal and delete
+them with `ALTER TABLE ... DELETE` as `default`.
 
 A settings file whose secrets were redacted at ingest comes back under its real
 name without the redacted keys; the command lists them. Provisioning step 5d

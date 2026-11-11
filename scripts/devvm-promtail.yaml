@@ -52,6 +52,14 @@ scrape_configs:
         host: devvm
         job: devvm-journal
     relabel_configs:
+      # host is the box's own hostname, which on the live devvm is "devvm",
+      # the static label above. A drill VM built from stacks/devvm
+      # (docs/runbooks/devvm-drill.md) is named devvm-drill or similar, so its
+      # journal does not land in the live box's streams and alerts. This rule
+      # overrides the static label (checked with promtail 3.5.1 -dry-run).
+      - source_labels: ['__journal__hostname']
+        regex: '(.+)'
+        target_label: host
       - source_labels: ['__journal__systemd_unit']
         target_label: unit
       # identifier ONLY for the allowlisted tags that Loki rules/forensics key on.

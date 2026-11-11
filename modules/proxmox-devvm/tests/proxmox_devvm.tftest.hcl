@@ -34,7 +34,7 @@ run "drill_has_the_live_shape" {
   }
   assert {
     condition     = proxmox_virtual_environment_vm.devvm.purge_on_destroy == false
-    error_message = "a purge deletes the token's /vms/<id> slot ACL"
+    error_message = "drills have nothing for a purge to clean up; keep destroys plain"
   }
   assert {
     condition     = proxmox_virtual_environment_vm.devvm.pool_id == "devvm"
