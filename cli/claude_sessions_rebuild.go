@@ -98,7 +98,15 @@ func (r *rebuildSink) keepSettings(rel string, mode fs.FileMode, content []byte)
 // mergeIfAbsent adds what stored has and have lacks: objects key by key,
 // arrays element by element (permission rules, hook entries), and never
 // changes a value have already holds.
-func mergeIfAbsent(have, stored any) any {
+func mergeIfAbsent(have, stored any) any { return mergeInto(have, stored, false) }
+
+// mergeFlags is mergeIfAbsent for ~/.claude.json, whose flags all say "done
+// once": a false that the new file holds (Claude writes
+// hasTrustDialogAccepted false for a folder it has only opened) takes the
+// stored true.
+func mergeFlags(have, stored any) any { return mergeInto(have, stored, true) }
+
+func mergeInto(have, stored any, upgradeFalse bool) any {
 	switch h := have.(type) {
 	case map[string]any:
 		s, ok := stored.(map[string]any)
@@ -107,7 +115,11 @@ func mergeIfAbsent(have, stored any) any {
 		}
 		for k, sv := range s {
 			if hv, ok := h[k]; ok {
-				h[k] = mergeIfAbsent(hv, sv)
+				if hb, ok := hv.(bool); ok && upgradeFalse && !hb && sv == true {
+					h[k] = true
+					continue
+				}
+				h[k] = mergeInto(hv, sv, upgradeFalse)
 			} else {
 				h[k] = sv
 			}
@@ -150,7 +162,11 @@ func mergeKept(cfg rebuildConfig, kept []keptSettings, res *rebuildResult) error
 		b, err := readRegular(abs)
 		if err == nil && strings.Contains(path.Base(k.rel), ".json") && json.Unmarshal(b, &have) == nil && json.Unmarshal(k.content, &stored) == nil {
 			if _, isObj := have.(map[string]any); isObj {
-				out, err := encodeSettingsJSON(mergeIfAbsent(have, stored))
+				merge := mergeIfAbsent
+				if k.rel == claudeJSONRel {
+					merge = mergeFlags
+				}
+				out, err := encodeSettingsJSON(merge(have, stored))
 				if err != nil {
 					return err
 				}
