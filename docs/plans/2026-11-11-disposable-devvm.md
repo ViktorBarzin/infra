@@ -184,7 +184,13 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   admin session, so the init container now rotates the database keys once
   per `DB_KEY_GENERATION` label, first run 2026-11-11, and
   `devvm-home-backup` keeps its generations root-only. The certificate
-  private keys are not re-keyed.
+  private keys are not re-keyed. A second review found MeshCentral's own
+  nightly zips were plain and readable by the host's uid 1000 (emo), so the
+  rotated keys would have flowed back into a readable store that night:
+  since 2026-11-12 the zips are AES-encrypted with a Vault password, and
+  `pve-host.yml --tags backup-perms` makes `/srv/nfs/meshcentral`,
+  `/mnt/backup/meshcentral` and `/mnt/backup/vzdump` root-only. The `/srv/nfs`
+  export still admits any LAN client as root; that is outside this plan.
 - Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
   at the live system-wide versions (terraform 1.15.4-1, vault 2.0.1-1,
   terragrunt 0.77.20, sops 3.9.4), and `scripts/devvm-bootstrap` installs
