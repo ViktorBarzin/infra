@@ -8,6 +8,12 @@ Wants=network-online.target
 Type=oneshot
 # Root, because it reads every user's ~/.claude/projects (ADR-0039 accepts
 # this); read-only everywhere except its own state and the textfile metric.
+# Only the box at 10.0.10.10 ingests: the store has no column for the box a row
+# came from, so a drill VM's files would replace the live box's (it happened
+# once, 2026-11-11, from a drill built before playbooks/devvm.yml 8d gated the
+# timer). The playbook keeps the timer off elsewhere; this skips the run even
+# where the timer is on. A failed condition is a skip, not a unit failure.
+ExecCondition=/bin/sh -c 'ip -4 -o addr show scope global | grep -qF " 10.0.10.10/"'
 ExecStart=/usr/local/bin/homelab claude-sessions ingest
 EnvironmentFile=/etc/claude-sessions/ingest.env
 StateDirectory=claude-sessions-ingest

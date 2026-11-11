@@ -25,6 +25,11 @@
   hosts: pve
   gather_facts: true
 
+  vars:
+    # VMIDs stacks/devvm may create (devvm-tf tasks below). 102 joins this list
+    # only for the real replacement, after VM 102 is destroyed.
+    pve_devvm_tf_vmids: "{{ range(9100, 9110) | list }}"
+
   tasks:
     # ---- per-VM disk I/O caps ------------------------------------------------
     # The values and the reasoning for each one live in the script itself, which
@@ -624,14 +629,22 @@
       tags: [t3-snapshot]
 
     # What stacks/devvm's token may touch: VMs in the pool `devvm` and the
-    # VMID slots 9100-9109, plus the storage, network and node rights to create
-    # one. The slots are needed as well as the pool because PVE checks
-    # /vms/<id> during create, before the new VM joins the pool (the first
-    # drill failed with "403 Permission check failed (/vms/9102,
+    # VMID slots in pve_devvm_tf_vmids, plus the storage, network and node
+    # rights to create one. The slots are needed as well as the pool because
+    # PVE checks /vms/<id> during create, before the new VM joins the pool (the
+    # first drill failed with "403 Permission check failed (/vms/9102,
     # VM.Config.Options)"). The live devvm (102) is neither in the pool nor a
     # slot, so this token cannot reach it. The same scoping as
     # stacks/opnsense (ADR-0038); the token secret is Vault secret/devvm
     # pve_api_token, written by the token task below.
+    #
+    # Every VM destroy deletes the ACLs on its /vms/<id>, with or without
+    # purge (PVE::API2::Qemu calls remove_vm_access unconditionally), so a
+    # drill's teardown takes its slot grant with it. scripts/pve-devvm-tf-acl
+    # puts slot grants back, every minute from a timer, and never grants a
+    # slot that holds a guest outside the pool. For the real replacement, add
+    # 102 to pve_devvm_tf_vmids once VM 102 is destroyed
+    # (docs/runbooks/devvm-drill.md, "Building the real replacement").
     - name: Read the PVE pools, roles and users
       ansible.builtin.command: "pvesh get {{ item }} --output-format json"
       loop: [/pools, /access/roles, /access/users]
@@ -729,14 +742,70 @@
       ansible.builtin.command: >-
         pveum acl modify {{ item.0 }} --roles TFDevvm
         {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
-      loop: "{{ (['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
-                 + range(9100, 9110) | map('regex_replace', '^', '/vms/') | list)
+      loop: "{{ ['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
                 | product(['terraform-devvm@pve', 'terraform-devvm@pve!tf']) | list }}"
       when: >-
         (pve_acl.stdout | from_json
          | selectattr('path', 'equalto', item.0)
          | selectattr('ugid', 'equalto', item.1)
          | selectattr('roleid', 'equalto', 'TFDevvm') | list | length) == 0
+      tags: devvm-tf
+
+    - name: Install the VMID slot grant script
+      ansible.builtin.copy:
+        src: ../scripts/pve-devvm-tf-acl
+        dest: /usr/local/sbin/pve-devvm-tf-acl
+        mode: "0755"
+        owner: root
+        group: root
+      tags: devvm-tf
+
+    - name: Say which VMIDs are slots
+      ansible.builtin.copy:
+        dest: /etc/default/pve-devvm-tf-acl
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/pve-host.yml (pve_devvm_tf_vmids).
+          DEVVM_TF_VMIDS="{{ pve_devvm_tf_vmids | join(' ') }}"
+      tags: devvm-tf
+
+    - name: Install the VMID slot grant units
+      ansible.builtin.copy:
+        src: "../scripts/pve-devvm-tf-acl.{{ item }}"
+        dest: "/etc/systemd/system/pve-devvm-tf-acl.{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop: [service, timer]
+      notify: reload systemd
+      tags: devvm-tf
+
+    - name: Enable the VMID slot grant timer
+      ansible.builtin.systemd_service:
+        name: pve-devvm-tf-acl.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      tags: devvm-tf
+
+    - name: Check whether the slot grant script is installed
+      ansible.builtin.stat:
+        path: /usr/local/sbin/pve-devvm-tf-acl
+      register: pve_devvm_tf_acl_script
+      tags: devvm-tf
+
+    # In check mode this is the script's --dry-run, so a missing slot grant
+    # shows as a change, as the fixed paths above do.
+    - name: Grant TFDevvm on the VMID slots where it is missing
+      ansible.builtin.command: "/usr/local/sbin/pve-devvm-tf-acl{{ ' --dry-run' if ansible_check_mode else '' }}"
+      environment:
+        DEVVM_TF_VMIDS: "{{ pve_devvm_tf_vmids | join(' ') }}"
+      register: pve_devvm_tf_acl_run
+      changed_when: "'grant ' in pve_devvm_tf_acl_run.stdout"
+      check_mode: false
+      when: pve_devvm_tf_acl_script.stat.exists
       tags: devvm-tf
 
     # ---- storage content types --------------------------------------------

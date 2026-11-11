@@ -1,0 +1,14 @@
+[Unit]
+Description=Re-grant stacks/devvm's VMID slots every minute
+
+[Timer]
+# Every destroy of a drill VM deletes the token's ACL on /vms/<id>, and the
+# next drill in that slot gets 403 at create. A minute is the longest a slot
+# stays without its grant. The run reads /etc/pve/user.cfg and calls pveum only
+# when a grant is missing.
+OnBootSec=2min
+OnCalendar=minutely
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

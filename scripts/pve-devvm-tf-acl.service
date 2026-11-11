@@ -1,0 +1,11 @@
+[Unit]
+Description=Re-grant stacks/devvm's token its VMID slots (a VM destroy deletes them)
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/runbooks/devvm-drill.md
+After=pve-cluster.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/pve-devvm-tf-acl
+ExecStart=/usr/local/sbin/pve-devvm-tf-acl
+SyslogIdentifier=pve-devvm-tf-acl
