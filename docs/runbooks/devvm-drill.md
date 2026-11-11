@@ -327,6 +327,16 @@ Found in review of drill 3, fixed afterwards:
   installed t3 and the bootstrap does not run it. The databases were
   restored but nothing served them. `t3-autoupdate` now does a first install
   on a box with no t3, and `playbooks/devvm.yml` runs it once.
+- Rehearsing that first install on the live box set off a false page. The
+  run used a scratch `T3_LINK` but read the live `/usr/bin/t3` as its own
+  version, so at 17:11 it logged `rolling back` and `ROLLBACK FAILED` into
+  the live journal: `T3AutoUpdateRollbackFailed` paged and
+  `T3AutoUpdateRolledBack` would have stayed firing through the 0.1.9 bump the
+  next morning. The live state was untouched (`last-good` 0.1.8,
+  `/usr/bin/t3` on 0.1.8, no freeze file, no 0.1.9 pre-bump backups). A
+  scratch link now reads its own version and never runs `npm -g` or restarts
+  a serve, and the three rules count only lines from the t3 systemd units
+  (`docs/runbooks/t3-version-bump.md`).
 - Its journal still drove live alerts: the host label was its own, but every
   rule selects on `job`. `WorkstationClaudeAuthInvalid` fired for wizard and
   emo from drill FAIL lines (drill 2 at 14:22, 15:02 and 15:43 as
@@ -421,7 +431,11 @@ Gaps it found, none fixed in the drill itself:
 - **MAJOR: no terraform.** The playbook declares the HashiCorp apt source
   but installs only Docker and kubectl from the third-party sources; the
   live box's terraform 1.15.4 was installed by hand. `homelab tf` and
-  `scripts/tg` cannot run on a rebuilt box.
+  `scripts/tg` cannot run on a rebuilt box. Fixed 2026-11-11 after the
+  drill: the playbook installs terraform 1.15.4-1 and vault 2.0.1-1 from
+  that source and fetches terragrunt 0.77.20 and sops 3.9.4 by checksum,
+  the versions the live box runs (`devvm_terraform_version` and the lines
+  after it). Not yet drilled.
 - **MAJOR: emo's agent instructions never come back.** The bootstrap's
   provisioning run creates `/var/lib/t3-provision/agent-repos/emo.git`
   before the admin infra clone exists, so as root; every later fetch runs

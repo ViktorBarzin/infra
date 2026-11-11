@@ -1007,8 +1007,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Measured 2026-08-10: 7 fire/resolve pairs in 7 days = 14 Slack
               # posts, every firing duration 15-20m. A 12h window keeps one
               # alert per nightly cycle instead of one per rollback event.
+              # unit=~ (this and the next two rules, 2026-11-11): only runs
+              # inside the t3 systemd units count. A scratch run typed in a
+              # shell on the live box logged "rolling back" and "ROLLBACK
+              # FAILED" into this journal, paged, and held this alert for 12h
+              # over the next real bump. Every in-unit line also arrives as
+              # the unit's stdout, which always carries the unit label.
+              # Scratch runs: see "Scratch runs" in docs/runbooks/t3-version-bump.md.
               alert  = "T3AutoUpdateRolledBack"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [12h])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"rolling back|rolled back\" [12h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
@@ -1021,7 +1028,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Rollback itself failed (npm couldn't reinstall the previous build):
               # the box may be left on a broken t3. Manual fix needed.
               alert  = "T3AutoUpdateRollbackFailed"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
               for    = "0m"
               labels = { severity = "critical", notify = "page" }
               annotations = {
@@ -1035,7 +1042,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # /etc/t3-autoupdate.freeze switch is set). Surfaces a stuck-on-purpose
               # tracker so it isn't silently frozen forever.
               alert  = "T3AutoUpdateFrozen"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"FROZEN\" [25h])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"FROZEN\" [25h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
