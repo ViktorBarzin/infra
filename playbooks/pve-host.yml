@@ -782,18 +782,21 @@
       notify: reload systemd
       tags: devvm-tf
 
+    # A check run on a host without them yet cannot enable the timer or run
+    # the script; the copies above already show as changes then.
+    - name: Check whether the slot grant script is installed
+      ansible.builtin.stat:
+        path: /usr/local/sbin/pve-devvm-tf-acl
+      register: pve_devvm_tf_acl_script
+      tags: devvm-tf
+
     - name: Enable the VMID slot grant timer
       ansible.builtin.systemd_service:
         name: pve-devvm-tf-acl.timer
         enabled: true
         state: started
         daemon_reload: true
-      tags: devvm-tf
-
-    - name: Check whether the slot grant script is installed
-      ansible.builtin.stat:
-        path: /usr/local/sbin/pve-devvm-tf-acl
-      register: pve_devvm_tf_acl_script
+      when: not ansible_check_mode or pve_devvm_tf_acl_script.stat.exists
       tags: devvm-tf
 
     # In check mode this is the script's --dry-run, so a missing slot grant
