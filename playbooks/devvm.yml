@@ -3327,6 +3327,7 @@
       notify: [reload systemd, restart promtail]
 
     - name: Create the promtail config directory
+      tags: [promtail]
       ansible.builtin.file:
         path: /etc/promtail
         state: directory
@@ -3338,6 +3339,7 @@
     # logs "error writing positions file" and re-ships the last 12 h of the
     # journal on every restart (seen on the 2026-11-11 drill).
     - name: Create the promtail positions directory
+      tags: [promtail]
       ansible.builtin.file:
         path: /var/lib/promtail
         state: directory
@@ -3345,16 +3347,22 @@
         group: root
         mode: "0755"
 
+    # The config carries the secret masking (2026-11-11), so a file promtail
+    # rejects must not replace a working one: promtail would stop shipping
+    # and the masking would go with it on the next start.
     - name: Deploy the promtail config
+      tags: [promtail]
       ansible.builtin.copy:
         src: ../scripts/devvm-promtail.yaml
         dest: /etc/promtail/config.yml
         owner: root
         group: root
         mode: "0644"
+        validate: /usr/local/bin/promtail -check-syntax -config.file=%s
       notify: restart promtail
 
     - name: Enable promtail
+      tags: [promtail]
       ansible.builtin.systemd_service:
         name: promtail
         enabled: true

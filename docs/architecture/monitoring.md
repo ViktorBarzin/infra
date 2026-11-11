@@ -183,6 +183,10 @@ Query examples (Grafana → Loki): `{host="pve"}`, `{job="pve-journal", identifi
 
 > Not Terraform. Since 2026-09-24 `playbooks/pve-host.yml` deploys the promtail config (validated with `promtail -check-syntax`, restarted on change) and the fan-control daemon. The promtail binary and unit and the snoopy enable (`/etc/ld.so.preload`) are still set up by hand on the host (Loki resolves via the Technitium CNAME — no `/etc/hosts` pin). Source-of-truth files: `scripts/pve-promtail.{yaml,service}` + `scripts/pve-snoopy.ini`; first-install steps are in the `pve-promtail.yaml` header.
 
+### External host: devvm (10.0.10.10)
+
+`promtail` v3.5.1, config `scripts/devvm-promtail.yaml`, unit `scripts/devvm-promtail.service`, both installed by `playbooks/devvm.yml`. Streams: `{job="devvm-journal"}` (the whole journal), `{job="sshd-devvm"}` (sshd), `{job="devvm-drill-journal"}` (a rebuild drill VM, `docs/runbooks/devvm-drill.md`) and `{job="agent-api-trace"}` (a metadata projection of agent-api's trace file). The journal carries command lines: sudo logs each one, with `ENV=NAME=value` for `sudo NAME=value`, and systemd logs every agent shell command as `Started run-<id>.scope - /bin/zsh -c ...`. Since 2026-11-11 every job ends with the `*mask_secrets` stage, which replaces Vault, GitHub and AWS tokens, JWTs, private key blocks, `Authorization`/`Bearer` values, URL passwords and the values of secret-looking names with `[REDACTED]` before shipping (`tests/devvm-promtail-redact.test.sh`). The local journal (RAM only) keeps the full line. Lines shipped before that date were cleaned with a Loki delete request.
+
 ### Dell R730 iDRAC: SNMP-primary + Redfish remnant (migrated 2026-06-05)
 
 The R730 iDRAC (`192.168.1.4` / `idrac.viktorbarzin.lan`) is monitored by **two** Prometheus jobs, both relabeled to the `r730_idrac_*` prefix (which historically hid which source served what). Design/plan: `docs/plans/2026-06-05-idrac-snmp-migration-{design,plan}.md`.
