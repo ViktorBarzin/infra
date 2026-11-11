@@ -398,15 +398,23 @@ SETTINGS ttl_only_drop_parts = 1;
 -- a merge: always aggregate with sum() and GROUP BY, never read n directly.
 --
 -- Each materialized view fills its table on insert into the raw table. The
--- views count only rows with ts >= 2026-11-11 11:45:00 UTC, the moment they
+-- views count only rows with ts >= 2026-11-11 12:05:00 UTC, the moment they
 -- went live; older rows were backfilled once with the same SELECT and
 -- ts < that moment, so nothing is counted twice.
+--
+-- DEFINER = default SQL SECURITY DEFINER, as on claude.blocks_mv: netsec_writer
+-- holds INSERT only, and a view running with its rights fails every raw
+-- insert after writing the raw rows (Vector then logs the batch as dropped).
+-- That happened for 21 minutes on 2026-11-11.
 --
 -- A flow crossing VLAN 10 and 20 is logged on both interfaces, so counts in
 -- the eve_* rollups include both copies, as in netsec.eve.
 
 -- NetFlow, per hour and pair. port is the lower of the two ports: the service
 -- port for client-server traffic, so both directions of one connection share it.
+-- Its view cuts on received (arrival), not ts, from 2026-11-11 12:13:00 UTC:
+-- OPNsense exports a long flow only at its active timeout, so a record can
+-- arrive about 5 minutes after its ts (313 s seen), and a ts cutoff misses it.
 CREATE TABLE IF NOT EXISTS netsec.flows_hourly
 (
     hour    DateTime('UTC'),
@@ -422,11 +430,13 @@ ENGINE = SummingMergeTree((flows, bytes, packets))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, src_ip, dst_ip, port, proto);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.flows_hourly_mv TO netsec.flows_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.flows_hourly_mv TO netsec.flows_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, src_ip, dst_ip, least(src_port, dst_port) AS port, proto,
        count() AS flows, sum(bytes) AS bytes, sum(packets) AS packets
 FROM netsec.flows
-WHERE ts >= toDateTime64('2026-11-11 11:45:00', 3, 'UTC')
+WHERE received >= toDateTime64('2026-11-11 12:13:00', 3, 'UTC')
 GROUP BY hour, src_ip, dst_ip, port, proto;
 
 -- Suricata alerts, per hour, signature and pair.
@@ -447,11 +457,13 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, signature_id, src_ip, dest_ip, dest_port, proto, signature, category, severity);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_alert_hourly_mv TO netsec.eve_alert_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_alert_hourly_mv TO netsec.eve_alert_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, signature_id, signature, category, severity,
        src_ip, dest_ip, dest_port, proto, count() AS n
 FROM netsec.eve
-WHERE event_type = 'alert' AND ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE event_type = 'alert' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- Suricata DNS answers, per hour, client and name. EVE logs a response from
@@ -470,12 +482,14 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, client_ip, rrname, server_ip, rrtype, rcode);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_dns_hourly_mv TO netsec.eve_dns_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_dns_hourly_mv TO netsec.eve_dns_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, dest_ip AS client_ip, src_ip AS server_ip, dns_rrname AS rrname,
        JSONExtractString(toString(arrayElement(payload.dns.queries.:`Array(JSON)`, 1)), 'rrtype') AS rrtype,
        coalesce(payload.dns.rcode.:String, '') AS rcode, count() AS n
 FROM netsec.eve
-WHERE event_type = 'dns' AND ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE event_type = 'dns' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- Suricata TLS handshakes, per hour, pair, SNI and client fingerprint.
@@ -494,12 +508,14 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, src_ip, sni, dest_ip, dest_port, ja4, version);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_tls_hourly_mv TO netsec.eve_tls_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_tls_hourly_mv TO netsec.eve_tls_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port, tls_sni AS sni,
        coalesce(payload.tls.ja4.:String, '') AS ja4, coalesce(payload.tls.version.:String, '') AS version,
        count() AS n
 FROM netsec.eve
-WHERE event_type = 'tls' AND ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE event_type = 'tls' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- Suricata plaintext HTTP requests, per hour, pair, host and user agent.
@@ -517,11 +533,13 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, src_ip, hostname, dest_ip, dest_port, user_agent);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_http_hourly_mv TO netsec.eve_http_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_http_hourly_mv TO netsec.eve_http_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port, http_hostname AS hostname,
        coalesce(payload.http.http_user_agent.:String, '') AS user_agent, count() AS n
 FROM netsec.eve
-WHERE event_type = 'http' AND ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE event_type = 'http' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- Suricata SSH sessions, per hour, pair and software versions.
@@ -539,13 +557,15 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, src_ip, dest_ip, dest_port, client_software, server_software);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_ssh_hourly_mv TO netsec.eve_ssh_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_ssh_hourly_mv TO netsec.eve_ssh_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port,
        coalesce(payload.ssh.client.software_version.:String, '') AS client_software,
        coalesce(payload.ssh.server.software_version.:String, '') AS server_software,
        count() AS n
 FROM netsec.eve
-WHERE event_type = 'ssh' AND ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE event_type = 'ssh' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- HAProxy mail connections, per hour, client, port and termination state.
@@ -563,11 +583,13 @@ ENGINE = SummingMergeTree((connections, bytes_in, bytes_out))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, client_ip, frontend_port, termination);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.haproxy_hourly_mv TO netsec.haproxy_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.haproxy_hourly_mv TO netsec.haproxy_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, client_ip, frontend_port, termination,
        count() AS connections, sum(bytes_in) AS bytes_in, sum(bytes_out) AS bytes_out
 FROM netsec.haproxy
-WHERE ts >= toDateTime64('2026-11-11 11:45:00', 3, 'UTC')
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 3, 'UTC')
 GROUP BY ALL;
 
 -- Squid requests from opted-in machines, per hour, client and host.
@@ -584,10 +606,12 @@ ENGINE = SummingMergeTree((requests, bytes))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, client_ip, host, bump_mode);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.proxy_hourly_mv TO netsec.proxy_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.proxy_hourly_mv TO netsec.proxy_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, client_ip, host, bump_mode, count() AS requests, sum(bytes) AS bytes
 FROM netsec.proxy
-WHERE ts >= toDateTime64('2026-11-11 11:45:00', 3, 'UTC')
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 3, 'UTC')
 GROUP BY ALL;
 
 -- Pod DNS lookups, per hour, pod address and name.
@@ -604,10 +628,12 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, client_ip, qname, qtype, rcode);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.dns_queries_hourly_mv TO netsec.dns_queries_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.dns_queries_hourly_mv TO netsec.dns_queries_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, client_ip, qname, qtype, rcode, count() AS n
 FROM netsec.dns_queries
-WHERE ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
 
 -- Tetragon, per hour, namespace, binary and destination (pod names change, so
@@ -627,8 +653,10 @@ ENGINE = SummingMergeTree((n))
 PARTITION BY toYYYYMM(hour)
 ORDER BY (hour, event_type, namespace, binary, dst_ip, dst_port, node);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.tetragon_hourly_mv TO netsec.tetragon_hourly AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.tetragon_hourly_mv TO netsec.tetragon_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
 SELECT toStartOfHour(ts) AS hour, node, event_type, namespace, binary, dst_ip, dst_port, count() AS n
 FROM netsec.tetragon
-WHERE ts >= toDateTime64('2026-11-11 11:45:00', 6, 'UTC')
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
