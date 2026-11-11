@@ -10,7 +10,7 @@ namespace, the event store for Rybbit analytics.
 | Location | Written by | Retention |
 |---|---|---|
 | `/srv/nfs/clickhouse-backup/<yyyymmdd-hhmm>/` on the PVE host, PVC `rybbit-clickhouse-backup-host` in the cluster | CronJob `rybbit/clickhouse-backup`, daily 01:10 UTC | 14 days |
-| `/mnt/backup/clickhouse-backup/` on the PVE host | `nfs-mirror`, daily 02:00 | mirror |
+| `/mnt/backup/clickhouse-backup/` on the PVE host | `nfs-mirror`, nightly chain (after the dump) | mirror |
 | Synology `Backup/Viki/pve-backup/clickhouse-backup/` | `offsite-sync-backup` | offsite |
 
 Each run directory holds, per user table:

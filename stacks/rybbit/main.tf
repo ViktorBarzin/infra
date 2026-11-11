@@ -391,10 +391,21 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
   metadata {
     name      = "clickhouse-backup"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
-    concurrency_policy            = "Forbid"
-    schedule                      = "10 1 * * *"
+    concurrency_policy = "Forbid"
+    schedule           = "10 1 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     starting_deadline_seconds     = 600
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3

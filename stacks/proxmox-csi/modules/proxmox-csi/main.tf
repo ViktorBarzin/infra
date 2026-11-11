@@ -306,6 +306,31 @@ resource "kubernetes_cluster_role" "pve_snapshot_admin" {
     resources  = ["deployments/scale", "statefulsets/scale"]
     verbs      = ["get", "update", "patch"]
   }
+
+  # nightly-chain on the host (scripts/nightly-chain.sh, since 2026-11-10)
+  # starts the night's backup Jobs from their suspended CronJobs
+  # (`kubectl create job --from=cronjob/...`) and waits for them.
+  rule {
+    api_groups = ["batch"]
+    resources  = ["cronjobs"]
+    verbs      = ["get", "list"]
+  }
+
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["get", "list", "create"]
+  }
+
+  # ...and holds kured's node lock (the weave.works/kured-node-lock
+  # annotation on the kured DaemonSet, scripts/kured-lock.sh) for the night,
+  # so no reboot or upgrade drain overlaps the backups. Only that DaemonSet.
+  rule {
+    api_groups     = ["apps"]
+    resources      = ["daemonsets"]
+    resource_names = ["kured"]
+    verbs          = ["get", "patch"]
+  }
 }
 
 resource "kubernetes_cluster_role_binding" "pve_snapshot_admin" {

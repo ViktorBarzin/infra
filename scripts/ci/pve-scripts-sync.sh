@@ -1,7 +1,8 @@
 #!/bin/sh
 # Sync the PVE host backup scripts and their systemd units from this repo.
 #
-# Covers all seven: lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
+# Covers eight: nightly-chain (since 2026-11-10, with its helper kured-lock),
+# lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
 # devvm-home-backup, vzdump-vms, nfs-mirror and router-config-backup (joined
 # 2026-10-05, the weekly site-router config backup). The first three were here from
 # the start; devvm-home-backup and vzdump-vms joined on 2026-09-03, the former
@@ -23,7 +24,11 @@
 set -eu
 
 PVE_HOST="${PVE_HOST:-192.168.1.127}"
-NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror router-config-backup}"
+NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror router-config-backup nightly-chain}"
+# Scripts with no units of their own, copied to /usr/local/bin/<name>.
+# kured-lock is sourced by nightly-chain (and by the k8s upgrade chain, which
+# gets it from its ConfigMap instead).
+HELPERS="${HELPERS:-kured-lock}"
 
 # Timers that are deployed but must stay off. Their script and units keep
 # arriving with everyone else's, so re-enabling one is a single systemctl
@@ -42,7 +47,12 @@ NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-bac
 # Disabled rather than masked on purpose: these unit files live in
 # /etc/systemd/system, and a mask puts its symlink at that same path, so it
 # never takes and every run reports a change that no apply can settle.
-DISABLED_TIMERS="${DISABLED_TIMERS:-vzdump-vms}"
+# The five nightly backup steps, since 2026-11-10: nightly-chain starts them
+# in dependency order (dumps, nfs-mirror, lvm-pvc-snapshot, daily-backup,
+# devvm-home-backup, offsite-sync-backup), so their own timers must stay off
+# or each would also run at its old time. Their timer files still ship, so
+# running one step on its own schedule again is one systemctl away.
+DISABLED_TIMERS="${DISABLED_TIMERS:-vzdump-vms nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup offsite-sync-backup}"
 SSH="ssh -o BatchMode=yes root@$PVE_HOST"
 
 echo "---diff---"
@@ -64,6 +74,11 @@ for n in $NAMES; do
 done
 
 echo "---applying---"
+for n in $HELPERS; do
+    scp -o BatchMode=yes "scripts/$n.sh" "root@$PVE_HOST:/usr/local/bin/$n"
+    $SSH "chmod 755 /usr/local/bin/$n && bash -n /usr/local/bin/$n"
+    echo "$n: deployed (helper)"
+done
 for n in $NAMES; do
     scp -o BatchMode=yes "scripts/$n.sh" "root@$PVE_HOST:/usr/local/bin/$n"
     $SSH "chmod 755 /usr/local/bin/$n && bash -n /usr/local/bin/$n"

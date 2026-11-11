@@ -383,9 +383,20 @@ resource "kubernetes_cron_job_v1" "config_backup" {
   metadata {
     name      = "aiostreams-config-backup"
     namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "sunday" means every night that is a Sunday (UTC).
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "sunday"
+    }
   }
   spec {
-    schedule                      = "0 3 * * 0" # Sunday 03:00 weekly
+    schedule = "0 3 * * 0" # Sunday 03:00 weekly
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
@@ -501,9 +512,20 @@ resource "kubernetes_cron_job_v1" "stremio_account_backup" {
   metadata {
     name      = "stremio-account-backup"
     namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "sunday" means every night that is a Sunday (UTC).
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "sunday"
+    }
   }
   spec {
-    schedule                      = "0 4 * * 0" # Sunday 04:00 weekly (1h after config-backup)
+    schedule = "0 4 * * 0" # Sunday 04:00 weekly (1h after config-backup)
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3

@@ -2,6 +2,9 @@
 Description=Daily backup: PVC snapshots + SQLite + pfsense to sda
 
 [Timer]
+# DISABLED since 2026-11-10 (DISABLED_TIMERS in scripts/ci/pve-scripts-sync.sh):
+# nightly-chain starts this unit in order after the step before it. The
+# schedule below is the old fixed time, kept so re-enabling is one command.
 OnCalendar=*-*-* 05:00:00
 Persistent=true
 RandomizedDelaySec=300

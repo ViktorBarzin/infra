@@ -131,6 +131,20 @@ eq "namespaces: no verify.sh, no namespace in source -> stack name" "app" "$(sta
 printf 'resource "kubernetes_namespace" "a" {\n  metadata {\n    name = "aiostreams"\n  }\n}\n' >stacks/app/aio.tf
 printf 'resource "kubernetes_namespace" "s" {\n  metadata {\n    name = "servarr"\n  }\n}\n' >stacks/app/main.tf
 eq "namespaces: no verify.sh -> namespaces read from the source, like the verify runner" "aiostreams servarr" "$(stack_namespaces app)"
+
+# Backups the Proxmox host's nightly-chain runs are suspended CronJobs carrying
+# backup.viktorbarzin.me/nightly-chain. They are still live backups, so the
+# pre-apply snapshot must keep running them; other suspended ones are retired.
+got=$(
+  kc() { echo '{"items":[
+    {"metadata":{"namespace":"dbaas","name":"postgresql-backup","annotations":{"backup.viktorbarzin.me/nightly-chain":"daily"}},"spec":{"suspend":true}},
+    {"metadata":{"namespace":"dbaas","name":"retired-backup"},"spec":{"suspend":true}},
+    {"metadata":{"namespace":"dbaas","name":"live-backup"},"spec":{"suspend":false}},
+    {"metadata":{"namespace":"dbaas","name":"cleanup"},"spec":{}}]}'; }
+  stack_namespaces() { echo dbaas; }
+  snapshot_targets 0 dbaas | tr '\n' ' '
+)
+eq "snapshots: nightly-chain backups count though suspended, retired ones do not" "dbaas/live-backup dbaas/postgresql-backup " "$got"
 printf 'VERIFY_NAMESPACES="traefik"\n' >stacks/app/verify.sh
 eq "namespaces: verify.sh wins" "traefik" "$(stack_namespaces app)"
 

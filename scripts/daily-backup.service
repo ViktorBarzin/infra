@@ -12,3 +12,10 @@ SyslogIdentifier=daily-backup
 # scales with the number of PVCs (118 today). Hit the 1h ceiling around week
 # 18 of 2026 and silently SIGTERM'd for 10 days. Bumped to 4h with margin.
 TimeoutStartSec=14400
+# Idle IO class (2026-11-10). At best-effort this ran against etcd on the
+# shared sdc spindle and stalled it 13 of 14 nights (memory #17075, measured
+# 2026-11-04). mq-deadline honours IO priority for reads on this kernel, so
+# idle reads yield to etcd and the VMs. nfs-mirror and devvm-home-backup were
+# already idle.
+Nice=10
+IOSchedulingClass=idle

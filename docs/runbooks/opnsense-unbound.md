@@ -208,7 +208,7 @@ scale those down (optional, not part of the routine drill).
 ### Backups
 
 - **Source**: `unbound.yml` and the auth-zone template in git.
-- **Daily**: `scripts/daily-backup.sh` (step 3, on the Proxmox host at 05:00)
+- **Daily**: `scripts/daily-backup.sh` (step 3, on the Proxmox host, run by the nightly chain)
   copies `/conf/config.xml` to `/mnt/backup/opnsense/config-YYYYMMDD.xml`;
   alert `OpnsenseBackupStale`.
 - **Offsite**: Synology `pve-backup/`, synced from `/mnt/backup` daily by

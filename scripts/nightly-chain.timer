@@ -1,0 +1,16 @@
+[Unit]
+Description=Start the nightly backup chain
+
+[Timer]
+# 00:00 UTC, written in UTC because the host clock is EET. The steps run in
+# order, each when the previous one ends, so their old individual times
+# (nfs-mirror 02:00, lvm-pvc-snapshot 03:00, devvm-home 03:30, daily-backup
+# 05:00, offsite 06:00 EET) are gone. Starts after the weekly
+# k8s-version-upgrade chain (Sunday 21:00 UTC, ~2 h) and before the kured
+# window (02:00-06:00 Europe/London); kured waits while the chain holds its
+# lock.
+OnCalendar=*-*-* 00:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

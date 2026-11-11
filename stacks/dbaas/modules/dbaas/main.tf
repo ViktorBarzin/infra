@@ -917,11 +917,22 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
   metadata {
     name      = "mysql-backup"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
     schedule                  = "30 0 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend = true
     # schedule                      = "* * * * *"
     starting_deadline_seconds     = 600
     successful_jobs_history_limit = 10
@@ -2603,11 +2614,22 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
   metadata {
     name      = "postgresql-backup"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
     schedule                  = "0 0 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend = true
     # schedule                      = "* * * * *"
     # 600s (was 10s): a 10s deadline silently DROPPED the 2026-06-13 00:00 run
     # when the CronJob controller was late at the midnight backup/IO-storm tick,

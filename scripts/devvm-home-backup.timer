@@ -2,6 +2,9 @@
 Description=Daily file-level incremental backup of devvm /home to sda
 
 [Timer]
+# DISABLED since 2026-11-10 (DISABLED_TIMERS in scripts/ci/pve-scripts-sync.sh):
+# nightly-chain starts this unit in order after the step before it. The
+# schedule below is the old fixed time, kept so re-enabling is one command.
 # 03:30 — after nfs-mirror (02:00) and lvm-pvc-snapshot (03:00), before
 # daily-backup (05:00) and offsite-sync (06:00), so a fresh generation is on
 # sda before the monthly full offsite pass mirrors /mnt/backup to Synology.

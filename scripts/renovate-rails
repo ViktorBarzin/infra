@@ -435,9 +435,12 @@ run_baselines() {
   done
 }
 
-# Backup CronJobs to run before applying: every unsuspended "*-backup" CronJob
-# in the stack's namespaces, the extra map above, and the etcd snapshot when a
-# chart (and so possibly a CRD) changes.
+# Backup CronJobs to run before applying: every "*-backup" CronJob in the
+# stack's namespaces that is live, the extra map above, and the etcd snapshot
+# when a chart (and so possibly a CRD) changes. Live means unsuspended, or
+# suspended because the Proxmox host's nightly-chain runs it (annotation
+# backup.viktorbarzin.me/nightly-chain, since 2026-11-10); any other
+# suspended backup is retired.
 snapshot_targets() { # helm(0|1) stacks...
   local helm=$1 s n e
   shift
@@ -445,7 +448,7 @@ snapshot_targets() { # helm(0|1) stacks...
     for s in "$@"; do
       for n in $(stack_namespaces "$s"); do
         kc get cronjob -n "$n" -o json 2>/dev/null |
-          jq -r '.items[] | select(.spec.suspend != true) | select(.metadata.name | test("(^|-)backup$")) | "\(.metadata.namespace)/\(.metadata.name)"'
+          jq -r '.items[] | select(.spec.suspend != true or (.metadata.annotations["backup.viktorbarzin.me/nightly-chain"] // "") != "") | select(.metadata.name | test("(^|-)backup$")) | "\(.metadata.namespace)/\(.metadata.name)"'
       done
       for e in $EXTRA_SNAPSHOTS; do [ "${e%%=*}" = "$s" ] && echo "${e#*=}"; done
     done

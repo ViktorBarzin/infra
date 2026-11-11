@@ -2,7 +2,35 @@
 
 <!-- showcase: Data is snapshotted on the host, mirrored to a second disk and copied offsite to a Synology. Data that can be regenerated stays out of the offsite copy. -->
 
-Last updated: 2026-06-01
+Last updated: 2026-11-10
+
+> **2026-11-10 — the night runs as one ordered chain.** `nightly-chain` on the
+> PVE host (`scripts/nightly-chain.sh`, `nightly-chain.timer` at 00:00 UTC) is
+> now the only thing that starts the night's backups, each when the previous
+> one ends, instead of at hand-staggered times that collided (2026-11-02:
+> upgrade-chain drains during nfs-mirror leaked Proxmox CSI slots):
+>
+> 1. take kured's node lock (`scripts/kured-lock.sh`, the
+>    `weave.works/kured-node-lock` annotation on `kured/kured`), waiting up to
+>    2 h, so no kured reboot or k8s-version-upgrade drain overlaps the night;
+> 2. the DB and app dumps: every CronJob annotated
+>    `backup.viktorbarzin.me/nightly-chain=daily` (or `=sunday`, on Sundays),
+>    3 at a time, via `kubectl create job --from=cronjob/...`. The 18 CronJobs
+>    are suspended; a Job created from a CronJob still moves its
+>    `lastSuccessfulTime`, so the `*BackupStale` alerts are unchanged;
+> 3. nfs-mirror, 4. lvm-pvc-snapshot, 5. daily-backup, 6. devvm-home-backup,
+>    7. offsite-sync-backup, each its own unit, started with
+>    `systemctl start --wait`; a failed step is reported and the rest still run;
+> 8. release the lock.
+>
+> The five step timers are disabled (`DISABLED_TIMERS` in
+> `scripts/ci/pve-scripts-sync.sh`). daily-backup, offsite-sync-backup and
+> lvm-pvc-snapshot moved to the idle IO class like nfs-mirror and
+> devvm-home-backup. If the cluster API is down the dumps are skipped and the
+> host steps still run. Alerts: `NightlyChainNotSucceeding` (30 h),
+> `NightlyChainStepFailed`, `NightlyChainRanWithoutLock` (info). Test one
+> piece by hand with `nightly-chain --only backup-etcd,devvm-home-backup`.
+> The times in the older sections below are the pre-chain schedule.
 
 > **2026-06-01 — regenerable services carved back out** (offsite Synology hit
 > 97%; the `Backup` share had grown +670 G in a week, traced to the 2026-05-26
@@ -72,7 +100,7 @@ Last updated: 2026-06-01
 The homelab runs a 3-2-1 strategy with a **two-leg** path to Synology so every NFS byte takes exactly one route to offsite (no duplication, no gaps):
 
 ```
-sdc /srv/nfs/<svc>/   ──nfs-mirror daily 02:00──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/  [leg 1]
+sdc /srv/nfs/<svc>/   ──nfs-mirror (nightly chain)──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/  [leg 1]
 sdc /srv/nfs/immich/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/immich/                          [leg 2]
 sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,opnsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
 ```
@@ -120,9 +148,9 @@ flowchart LR
     SYN_SSD[("Synology<br/>/Viki/nfs-ssd/")]:::syn
     NOPE([NOT BACKED UP]):::none
 
-    APP -- "nfs-mirror daily 02:00" --> SDA
-    SDA -- "offsite-sync Step 1<br/>daily 06:00" --> SYN_PVE
-    IMM -- "Step 2 inotify direct<br/>daily 06:00" --> SYN_NFS
+    APP -- "nfs-mirror (nightly chain)" --> SDA
+    SDA -- "offsite-sync Step 1<br/>nightly chain, last" --> SYN_PVE
+    IMM -- "Step 2 inotify direct<br/>nightly chain, last" --> SYN_NFS
     IMM_ML --> SYN_SSD
     OLL_S --> SYN_SSD
     LLA --> SYN_SSD
@@ -140,15 +168,15 @@ graph TB
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
 
         subgraph Layer1["Layer 1: LVM Thin Snapshots"]
-            Snap["Twice daily 00:00, 12:00<br/>7-day retention<br/>62 PVCs (excludes dbaas+monitoring)"]
+            Snap["Nightly chain step 4<br/>3-day retention<br/>excludes dbaas+monitoring"]
         end
 
         subgraph Layer2a["Layer 2a: Daily NFS Mirror (nfs-mirror)"]
-            NFSMirror["Daily 02:00<br/>/srv/nfs/* → /mnt/backup/<svc>/<br/>excludes: immich, frigate, temp, anca-elements"]
+            NFSMirror["Nightly chain step 3<br/>/srv/nfs/* → /mnt/backup/<svc>/<br/>excludes: immich, frigate, temp, anca-elements"]
         end
 
         subgraph Layer2b["Layer 2b: Daily PVC File Backup (daily-backup)"]
-            PVCBackup["PVC File Copy<br/>Daily 05:00<br/>4 weekly versions via --link-dest<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
+            PVCBackup["PVC File Copy<br/>Nightly chain step 5<br/>4 weekly versions via --link-dest<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
             SQLiteBackup["Auto SQLite Backup<br/>magic number check + ?mode=ro<br/>from PVC snapshots"]
             PfsenseBackup["OPNsense Backup<br/>config.xml via scp<br/>newest 14 kept"]
             PVEConfig["PVE Config<br/>/etc/pve + scripts"]
@@ -168,7 +196,7 @@ graph TB
         NFS_Backup["NFS *-backup dirs<br/>(populated by in-cluster CronJobs)"]
 
         subgraph AppBackups["App-Level Backup CronJobs"]
-            CronDaily["Daily 00:00-00:30<br/>PostgreSQL, MySQL<br/>14d retention"]
+            CronDaily["Nightly chain step 2<br/>PostgreSQL, MySQL and other dumps<br/>14d retention"]
             CronWeekly["Weekly Sunday<br/>etcd, Vault, Redis<br/>Vaultwarden 6h<br/>30d retention"]
         end
 
@@ -177,7 +205,7 @@ graph TB
         NFS_Backup --> NFSMirror
     end
 
-    subgraph Layer3["Layer 3: Offsite Sync (offsite-sync-backup, daily 06:00)"]
+    subgraph Layer3["Layer 3: Offsite Sync (offsite-sync-backup, nightly chain)"]
         PVEOffsite["Step 1: sda → Synology<br/>/Viki/pve-backup/<br/>incremental via manifest"]
         NFSOffsite["Step 2: sdc/immich + nfs-ssd → Synology<br/>/Viki/nfs/ + /Viki/nfs-ssd/<br/>inotify change-tracked"]
     end
@@ -216,19 +244,18 @@ graph LR
         INO["nfs-change-tracker<br/>inotify on /srv/nfs[-ssd]<br/>writes /mnt/backup/.nfs-changes.log"]
     end
 
-    subgraph Nightly["Nightly Timeline"]
-        T0000["00:00 LVM thin snapshots<br/>(lvm-pvc-snapshot)<br/>sdc PVCs CoW"]
-        T0015["00:15 PostgreSQL per-DB dumps<br/>(CronJob)"]
-        T0045["00:45 MySQL per-DB dumps<br/>(CronJob)"]
-        T0100["Sun 01:00 vzdump-vms (RETIRED 2026-09-15)<br/>timer disabled on purpose<br/>last image 2026-09-13<br/>floor no longer advances"]
-        T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
-        T0330["03:30 devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
-        T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + opnsense + pve-config"]
-        T0600["06:00 offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
-        T1200["12:00 LVM thin snapshots (midday)<br/>second daily snapshot"]
+    subgraph Nightly["Nightly chain (00:00 UTC, each step starts when the previous ends)"]
+        T0000["00:00 UTC take kured's node lock<br/>(waits up to 2 h for a reboot or upgrade drain)"]
+        T0015["DB and app dumps, 3 at a time<br/>18 suspended CronJobs annotated nightly-chain=daily|sunday"]
+        T0200["nfs-mirror<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>now includes tonight's dumps"]
+        T0300["lvm-pvc-snapshot<br/>thin snapshots of Proxmox CSI PVCs"]
+        T0500["daily-backup<br/>mount the snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + opnsense + pve-config"]
+        T0330["devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
+        T0600["offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
+        T0700["release the lock"]
     end
 
-    T0000 --> T0015 --> T0045 --> T0100 --> T0200 --> T0330 --> T0500 --> T0600 --> T1200
+    T0000 --> T0015 --> T0200 --> T0300 --> T0500 --> T0330 --> T0600 --> T0700
     INO -.->|change events feed Step 2| T0600
 
     style Nightly fill:#ffe0b2
@@ -257,8 +284,8 @@ graph TB
     end
 
     sdc -. "daily snapshot ro + nfs-mirror" .-> sda
-    sdc -. "immich only<br/>(inotify, daily 06:00)" .-> Synology
-    sda -. "daily 06:00<br/>incremental rsync" .-> Synology
+    sdc -. "immich only<br/>(inotify, nightly chain)" .-> Synology
+    sda -. "nightly chain<br/>incremental rsync" .-> Synology
 
     Synology["Synology NAS 192.168.1.13<br/>91% used / 520 GB free<br/>/Backup/Viki/{pve-backup, nfs (immich), nfs-ssd}"]
 
@@ -330,17 +357,17 @@ graph LR
 
 | Component | Version/Schedule | Location | Purpose |
 |-----------|-----------------|----------|---------|
-| LVM Thin Snapshots | Daily 03:00, 7d retention | PVE host: `lvm-pvc-snapshot` | CoW snapshots of 62 proxmox-lvm PVCs |
-| Daily PVC Backup | Daily 05:00, 4 weeks | PVE host: `daily-backup` | File-level PVC copy to sda |
-| Auto SQLite Backup | Daily 05:00 + daily-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
+| LVM Thin Snapshots | Nightly chain step 4, 3d retention | PVE host: `lvm-pvc-snapshot` | CoW snapshots of 62 proxmox-lvm PVCs |
+| Daily PVC Backup | Nightly chain step 5, 4 weeks | PVE host: `daily-backup` | File-level PVC copy to sda |
+| Auto SQLite Backup | Nightly chain step 5 (daily-backup) | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
-| OPNsense Backup | Daily 05:00 + daily-backup | PVE host: `scp` over SSH | `/conf/config.xml`, newest 14 copies kept |
+| OPNsense Backup | Nightly chain step 5 (daily-backup) | PVE host: `scp` over SSH | `/conf/config.xml`, newest 14 copies kept |
 | Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
-| Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
+| Offsite Sync | Nightly chain step 7, last | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
-| devvm /home (incremental) | Daily 03:30, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
-| PostgreSQL Backup (full) | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
-| PostgreSQL Backup (per-db) | Daily 00:15, 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
+| devvm /home (incremental) | Nightly chain step 6, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
+| PostgreSQL Backup (full) | Nightly chain dumps, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
+| PostgreSQL Backup (per-db) | Nightly chain dumps (same Job as the full dump), 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
 | MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
 | MySQL Backup (per-db) | Daily 00:45, 14d retention | CronJob in `dbaas` namespace | mysqldump per database → `/backup/per-db/<db>/` |
 | etcd Backup | Weekly Sunday 01:00, 30d | CronJob in `kube-system` | etcdctl snapshot |
@@ -419,7 +446,7 @@ A third case on 2026-10-15: the autonomous upgrade run wrote its pre-upgrade dum
 
 **Site-router config backups** (`router-config-backup`, separate from daily-backup):
 - **Script**: `/usr/local/bin/router-config-backup` on the PVE host (source `infra/scripts/router-config-backup.sh`, unit + timer alongside). Deploy is CI, like the others (see "Deploying the PVE host scripts").
-- **Schedule**: weekly, Sunday 04:30 (after devvm-home-backup, before daily-backup and offsite-sync), `Persistent=true`.
+- **Schedule**: weekly, Sunday 04:30 EET, on its own timer, `Persistent=true`. It is light (one small archive per router) and not part of the nightly chain; if it lands after that night's offsite-sync, the next night ships it.
 - **What**: each router in `ROUTERS` (today `mladost3-openwrt=root@10.3.2.7`, over the site-to-site tunnel) streams `sysupgrade -b -`, the standard OpenWrt config backup, into `/mnt/backup/routers/<name>/backup-<name>-<YYYYMMDD>.tar.gz` (mode 0600: the archives hold WireGuard private keys and root password hashes). An archive is kept only if it is valid gzip and contains `etc/config/network`.
 - **Offsite**: each new archive is appended to `/mnt/backup/.changed-files`, so the next daily offsite-sync copies just that file to `Synology:/Backup/Viki/pve-backup/routers/`; the monthly full pass mirrors the folder too.
 - **Retention**: 8 per router on sda (about two months), plus the Synology's daily snapshots of the Backup share.
@@ -486,7 +513,7 @@ This provides both frequent backups (every 6h) AND continuous integrity monitori
 ### Layer 3: Offsite Sync to Synology NAS
 
 **Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup.sh`, unit + timer alongside it). **Deploy is CI** — see "Deploying the PVE host scripts" below.
-**Schedule**: Daily 06:00 via systemd timer (After=daily-backup.service)
+**Schedule**: last step of the nightly chain (see the 2026-11-10 note at the top); its own timer is disabled
 
 Two-step offsite sync:
 
@@ -682,14 +709,16 @@ Nothing in this set is deployed by hand any more.
 | `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14), mirrored offsite monthly (`-H` preserves the link farm) |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
-| `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
-| `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
-| `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
-| `/etc/systemd/system/devvm-home-backup.timer` | Daily 03:30 (devvm /home incremental) |
+| `/usr/local/bin/nightly-chain` | PVE host: runs the night's dumps and the five host steps in order, holding kured's node lock (source `infra/scripts/nightly-chain.{sh,service,timer}`, helper `kured-lock.sh`) |
+| `/etc/systemd/system/nightly-chain.timer` | 00:00 UTC daily, the only nightly backup timer |
+| `/etc/systemd/system/lvm-pvc-snapshot.timer` | **Disabled since 2026-11-10**: nightly-chain step 4 |
+| `/etc/systemd/system/daily-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 5 |
+| `/etc/systemd/system/offsite-sync-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 7 |
+| `/etc/systemd/system/devvm-home-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 6 |
 | `/etc/systemd/system/vzdump-vms.timer` | **Disabled since 2026-09-15** on purpose (`DISABLED_TIMERS` in `scripts/ci/pve-scripts-sync.sh`) |
 | `/etc/systemd/system/vzdump-vms.service` | oneshot: `vzdump-vms` (source `infra/scripts/vzdump-vms.{sh,service,timer}`) |
-| `/usr/local/bin/nfs-mirror` | PVE host: daily 02:00 mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
-| `/etc/systemd/system/nfs-mirror.timer` | Daily 02:00 (NFS local mirror to sda) |
+| `/usr/local/bin/nfs-mirror` | PVE host: nightly-chain step 3, mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
+| `/etc/systemd/system/nfs-mirror.timer` | **Disabled since 2026-11-10**: nightly-chain step 3 |
 | `stacks/dbaas/` | Terraform: PostgreSQL/MySQL backup CronJobs |
 | `stacks/vault/` | Terraform: Vault backup CronJob |
 | `stacks/vaultwarden/` | Terraform: Vaultwarden backup + integrity CronJobs |

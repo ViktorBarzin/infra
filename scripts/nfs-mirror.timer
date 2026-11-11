@@ -2,6 +2,9 @@
 Description=Daily local NFS mirror to /mnt/backup
 
 [Timer]
+# DISABLED since 2026-11-10 (DISABLED_TIMERS in scripts/ci/pve-scripts-sync.sh):
+# nightly-chain starts this unit in order after the step before it. The
+# schedule below is the old fixed time, kept so re-enabling is one command.
 # Daily 02:00 — runs 3h before daily-backup (05:00) so the .changed-files
 # manifest is populated and offsite-sync (06:00) ships both legs' deltas.
 # Switched from weekly Mon 04:00 → daily 2026-05-26: steady-state delta is

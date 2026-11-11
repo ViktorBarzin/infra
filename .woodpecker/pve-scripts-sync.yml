@@ -39,6 +39,10 @@ when:
     branch: master
     path:
       - scripts/ci/pve-scripts-sync.sh
+      - scripts/kured-lock.sh
+      - scripts/nightly-chain.sh
+      - scripts/nightly-chain.service
+      - scripts/nightly-chain.timer
       - scripts/lvm-pvc-snapshot.sh
       - scripts/lvm-pvc-snapshot.service
       - scripts/lvm-pvc-snapshot.timer
