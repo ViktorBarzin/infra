@@ -175,7 +175,12 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   live user of the loose `~/meshcentral-data` copy (same sessionKey, certs
   and database keys). Its sessionKey now comes from Vault
   `secret/meshcentral` through ESO and was replaced with a new key; the
-  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`).
+  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`). Review
+  then showed the copy's `meshcentral.db` login-cookie key still opened an
+  admin session, so the init container now rotates the database keys once
+  per `DB_KEY_GENERATION` label, first run 2026-11-11, and
+  `devvm-home-backup` keeps its generations root-only. The certificate
+  private keys are not re-keyed.
 - Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
   at the live versions (terraform 1.15.4-1, vault 2.0.1-1, terragrunt
   0.77.20, sops 3.9.4); not yet drilled.
