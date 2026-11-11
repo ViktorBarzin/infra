@@ -184,7 +184,13 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   admin session, so the init container now rotates the database keys once
   per `DB_KEY_GENERATION` label, first run 2026-11-11, and
   `devvm-home-backup` keeps its generations root-only. The certificate
-  private keys are not re-keyed.
+  private keys are not re-keyed. A second review found MeshCentral's own
+  nightly zips were plain and readable by the host's uid 1000 (emo), so the
+  rotated keys would have flowed back into a readable store that night:
+  since 2026-11-12 the zips are AES-encrypted with a Vault password, and
+  `pve-host.yml --tags backup-perms` makes `/srv/nfs/meshcentral`,
+  `/mnt/backup/meshcentral` and `/mnt/backup/vzdump` root-only. The `/srv/nfs`
+  export still admits any LAN client as root; that is outside this plan.
 - Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
   at the live system-wide versions (terraform 1.15.4-1, vault 2.0.1-1,
   terragrunt 0.77.20, sops 3.9.4), and `scripts/devvm-bootstrap` installs
@@ -222,6 +228,10 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
   (checked 14 days). The runbooks now read the token inside sudo
   (`docs/agents/secrets.md`).
+- Round 2, log masking: the devvm's promtail masks secret-shaped values in
+  every job before shipping (`scripts/devvm-promtail.yaml`, live 22:57 UTC,
+  checked by logging a fake token: it reached Loki as `[REDACTED]`). The
+  older token lines are under Loki delete request `60b1d8a8`.
 - Round 2, provisioning: wizard's dotfiles brought up to the live home
   (tmux-resurrect and continuum, the memory MCP and old `~/.claude` copies
   gone; chezmoi keeps only links under `~/.claude` on the devvm); the

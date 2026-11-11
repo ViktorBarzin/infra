@@ -1,8 +1,8 @@
 #!/bin/sh
 # Test for files/fix-config.sh, the meshcentral init container. Runs it in the
 # init container's own image against throwaway config and database files and
-# checks the result: valid JSON with the expected settings, and the database
-# keys dropped once per DB_KEY_GENERATION.
+# checks the result: valid JSON with the expected settings, the autobackup zip
+# password set, and the database keys dropped once per DB_KEY_GENERATION.
 #
 #   sh stacks/meshcentral/files/fix-config_test.sh
 #
@@ -18,13 +18,15 @@ image=$(sed -n 's/^ *image *= *"\(alpine:[^"]*\)".*/\1/p' "$here/../main.tf" | h
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 key=FakeTestSessionKey
+zip=FakeTestZipPassword
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-# run <dir> <session key> [db key generation]: the script sees <dir> as its
-# data volume.
+# run <dir> <session key> [db key generation] [zip password]: the script sees
+# <dir> as its data volume. The zip password defaults to $zip.
 run() {
   docker run --rm -e SESSION_KEY="$2" -e DB_KEY_GENERATION="${3-}" \
+    -e BACKUP_ZIP_PASSWORD="${4-$zip}" \
     -e CONFIG=/data/config.json \
     -v "$1:/data" -v "$here/fix-config.sh:/fix-config.sh:ro" \
     "$image" /bin/sh /fix-config.sh
@@ -61,6 +63,8 @@ c="$work/old/config.json"
 [ "$(field "$c" 'd["settings"]["ignoreAgentHashCheck"]')" = True ] || fail "ignoreAgentHashCheck missing"
 [ "$(field "$c" 'd["domains"][""]["NewAccounts"]')" = False ] || fail "NewAccounts not forced off"
 [ "$(field "$c" '"certUrl" in d["domains"][""]')" = False ] || fail "certUrl not disabled"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["zippassword"]')" = "$zip" ] || fail "no AutoBackup block with the zip password added"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["backupPath"]')" = /opt/meshcentral/meshcentral-backups ] || fail "added AutoBackup block lacks backupPath"
 
 # 2. A second start changes nothing.
 cp "$c" "$work/first.json"
@@ -80,6 +84,8 @@ c="$work/fresh/config.json"
 [ "$(field "$c" 'd["settings"]["sessionKey"]')" = "$key" ] || fail "fresh config lacks the sessionKey"
 [ "$(field "$c" 'd["settings"]["TLSOffload"]')" = True ] || fail "fresh config lacks TLSOffload"
 [ "$(field "$c" 'd["domains"][""]["NewAccounts"]')" = False ] || fail "fresh config allows sign-up"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["zippassword"]')" = "$zip" ] || fail "fresh config lacks the zip password"
+[ "$(grep -ci zippassword "$c")" -eq 1 ] || fail "fresh config has the zip password more than once"
 
 # 5. A missing or unsafe key stops the pod before MeshCentral starts, and
 # leaves the config alone.
@@ -135,5 +141,73 @@ mkdir "$work/freshdb"
 run "$work/freshdb" "$key" gen-1
 [ ! -e "$work/freshdb/meshcentral.db" ] || fail "rotation created a database"
 [ "$(cat "$work/freshdb/db-key-generation")" = gen-1 ] || fail "fresh volume lacks the marker"
+
+# 11. The live volume's shape: an AutoBackup block with an empty zippassword,
+# which MeshCentral treats as no password and writes plain zips. The value is
+# replaced in place and the block's other settings stay.
+mkdir "$work/zip"
+python3 -I - "$work/first.json" "$work/zip/config.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+del d["settings"]["AutoBackup"]
+d["settings"]["AutoBackup"] = {"backupPath": "/opt/meshcentral/meshcentral-backups",
+    "backupInvervalHours": 24, "keepLastDaysBackup": "", "zippassword": ""}
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+run "$work/zip" "$key"
+c="$work/zip/config.json"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["zippassword"]')" = "$zip" ] || fail "empty zippassword not replaced"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["backupInvervalHours"]')" = 24 ] || fail "AutoBackup lost its other settings"
+[ "$(grep -ci zippassword "$c")" -eq 1 ] || fail "zippassword appears more than once"
+# A new password from Vault replaces the old one.
+run "$work/zip" "$key" "" NewerZipPassword9
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["zippassword"]')" = NewerZipPassword9 ] || fail "zip password not updated"
+[ "$(field "$c" 'd["settings"]["sessionKey"]')" = "$key" ] || fail "zip password run lost the sessionKey"
+
+# 12. An AutoBackup block without a zippassword gets one.
+mkdir "$work/zipnokey"
+python3 -I - "$work/zip/config.json" "$work/zipnokey/config.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+del d["settings"]["AutoBackup"]["zippassword"]
+d["settings"]["AutoBackup"]["keepLastDaysBackup"] = 10
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+run "$work/zipnokey" "$key"
+c="$work/zipnokey/config.json"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["zippassword"]')" = "$zip" ] || fail "zippassword not inserted into AutoBackup"
+[ "$(field "$c" 'd["settings"]["AutoBackup"]["keepLastDaysBackup"]')" = 10 ] || fail "AutoBackup lost keepLastDaysBackup"
+
+# 13. A missing or unsafe zip password stops the pod with the config untouched:
+# MeshCentral would write unencrypted backups without one.
+cp "$work/zip/config.json" "$work/zip.before"
+for bad in "" 'abc"def' 'has space' 'a\b'; do
+  if run "$work/zip" "$key" "" "$bad" 2>/dev/null; then fail "accepted zip password [$bad]"; fi
+  cmp -s "$work/zip/config.json" "$work/zip.before" || fail "bad zip password [$bad] changed the config"
+done
+
+# 14. AutoBackup set to something other than an object opened on its own line
+# (false turns backups off, a one-line object cannot be edited safely): the pod
+# stops with the config untouched instead of writing a second AutoBackup key.
+for odd in false '{"backupPath": "/x"}'; do
+  rm -rf "$work/zipodd"; mkdir "$work/zipodd"
+  python3 -I - "$work/zip/config.json" "$work/zipodd/config.json" "$odd" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["settings"]["AutoBackup"] = "@ODD@"
+open(sys.argv[2], "w").write(json.dumps(d, indent=2).replace('"@ODD@"', sys.argv[3]))
+PY
+  cp "$work/zipodd/config.json" "$work/zipodd.before"
+  if run "$work/zipodd" "$key" 2>/dev/null; then fail "accepted AutoBackup: $odd"; fi
+  cmp -s "$work/zipodd/config.json" "$work/zipodd.before" || fail "AutoBackup: $odd changed the config"
+done
+
+# 15. A zippassword that is not a string (MeshCentral would encrypt with its
+# text form, a password nobody holds) stops the pod with the config untouched.
+mkdir "$work/zipnum"
+sed 's/"zippassword": "[^"]*"/"zippassword": 123/' "$work/zip/config.json" > "$work/zipnum/config.json"
+cp "$work/zipnum/config.json" "$work/zipnum.before"
+if run "$work/zipnum" "$key" 2>/dev/null; then fail "accepted a numeric zippassword"; fi
+cmp -s "$work/zipnum/config.json" "$work/zipnum.before" || fail "numeric zippassword changed the config"
 
 echo "PASS"
