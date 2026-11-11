@@ -28,6 +28,7 @@ variable "pg_app_roles" {
     ntfy            = { username = "ntfy", rotation_schedule = "44 10 * * TUE", rotation_window = 3600 }
     prowlarr        = { username = "prowlarr", rotation_schedule = "13 10 * * TUE", rotation_window = 3600 }
     reels           = { username = "reels", rotation_schedule = "15 10 * * TUE", rotation_window = 3600 }
+    vermont-access  = { username = "vermont_access", rotation_schedule = "17 10 * * TUE", rotation_window = 3600 }
   }
 }
 

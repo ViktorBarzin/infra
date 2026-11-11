@@ -18,6 +18,20 @@ rules:
   nonat: true
   disabled: false
   managed_by: pfsense-vermont-alias.yml
+# infra#176: the Pi admits real node addresses only, so no NAT for the pollers either.
+- description: no NAT from k8s nodes to Vermont access devices (infra#176)
+  interface: wan
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: vermont_acs_pollers
+  destination:
+    alias: vermont_acs_devices
+    port: '80'
+  target: null
+  staticnatport: false
+  nonat: true
+  disabled: false
 - description: null
   interface: opt1
   ipprotocol: inet

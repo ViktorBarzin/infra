@@ -94,6 +94,7 @@
 | send | Firefox Send | send |
 | ytdlp | MeTube video downloader (yt.viktorbarzin.me, replaced youtubedl-material 2026-10-19) and yt-highlights | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
+| vermont-access | Weekly CronJob (Mon 00:00 Sofia) copying the Vermont complex access-control events (panels 10.77.1.111-116, terminal .117) into the `vermont_access` database, kept 2 years (infra#176; runbook cameras-nvr-intercom.md, "Архив на влизанията") | vermont-access |
 | audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
 | paperless-ngx | Document management. Mail ingest: forward document emails to `docs@viktorbarzin.me` — sender maps 1:1 to a paperless account (runbook `paperless-mail-ingest.md`). Native AI (since 2026-10-12): suggestions from llama-swap `qwen3-8b` (openai-like backend, env in the stack). A Document Added workflow (id 3, configured in the app, not Terraform) applies document type and tags only; titles and correspondents are left as they arrive (Viktor, 2026-10-12, after the model picked the recipient as correspondent on 7 of 20 test documents) | paperless-ngx |
 | jsoncrack | JSON visualizer | jsoncrack |

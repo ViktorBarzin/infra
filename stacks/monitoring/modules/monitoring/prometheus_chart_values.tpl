@@ -8165,6 +8165,49 @@ serverFiles:
             annotations:
               summary: "Reels {{ $labels.lane }} jobs have waited over 15 minutes"
               description: "The oldest queued job in the {{ $labels.lane }} lane is over 15 minutes old while the worker is up. A long import or render may be hogging the slow lane, or the worker is failing every claim; check the worker logs (homelab logs query '{namespace=\"reels\", container=\"worker\"}') and the job table (status running, heartbeat_at)."
+      - name: Vermont access archive
+        # stacks/vermont-access (infra#176): every Monday 00:00 Sofia the
+        # acs-archive CronJob copies the Vermont complex access-control events
+        # into the vermont_access database and pushes per-device gauges to the
+        # Pushgateway (job vermont-acs-archive), so a gap pages even when the
+        # job itself exits 0.
+        rules:
+          - alert: VermontAcsArchiveFailed
+            # Same shape as BackupCronJobFailed: reason!="" is the whole-Job
+            # failure, and the 24h bound stops it firing until someone deletes
+            # the Job. The job exits 1 when any device did not answer.
+            expr: |
+              kube_job_status_failed{namespace="vermont-access", reason!=""} > 0
+                and on(namespace, job_name) (time() - kube_job_status_start_time) < 86400
+            for: 15m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Vermont access archive run failed: {{ $labels.job_name }}"
+              description: "The weekly copy of the Vermont entrance panels' and back-door terminal's event log did not finish. vermont_acs_device_up shows which device did not answer. The busiest panel keeps about two weeks, so one missed run loses nothing; rerun with kubectl -n vermont-access create job --from=cronjob/acs-archive acs-archive-manual. Logs: homelab logs query '{namespace=\"vermont-access\"}'. Runbook: docs/runbooks/cameras-nvr-intercom.md, Архив на влизанията."
+          - alert: VermontAcsArchiveGap
+            # The pull starts 3 days before the newest archived event; if the
+            # device no longer holds that event, it overwrote events the
+            # archive never saw. The Pushgateway keeps the value until the
+            # next run.
+            expr: max by (device) (vermont_acs_gap{job="vermont-acs-archive"}) == 1
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Vermont access archive has a gap on device .{{ $labels.device }}"
+              description: "10.77.1.{{ $labels.device }} had already overwritten events the archive had not copied, so some access events between the previous run and this one are lost. Usually the previous run failed or did not run for over a week. Check the CronJob history (kubectl -n vermont-access get jobs) and the device's event rate."
+          - alert: VermontAcsArchiveStale
+            # Weekly schedule, so 9 days allows one late run.
+            expr: (time() - vermont_acs_last_run_timestamp_seconds{job="vermont-acs-archive"}) > 777600
+            for: 30m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Vermont access archive has not run for {{ $value | humanizeDuration }}"
+              description: "The acs-archive CronJob in vermont-access normally runs every Monday 00:00 Europe/Sofia. The busiest panel (.116) keeps about two weeks, so a second missed week starts losing events. Check kubectl -n vermont-access get cronjob,jobs."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
