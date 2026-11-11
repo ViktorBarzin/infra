@@ -242,7 +242,7 @@ WHERE type = 'system' AND subtype = 'turn_duration';
 -- Addresses are IPv6 columns; IPv4 arrives as text and is stored mapped.
 CREATE DATABASE IF NOT EXISTS netsec;
 
--- One row per NetFlow record from OPNsense (lan, opt1) via goflow2. 14 days.
+-- One row per NetFlow record from OPNsense (lan, opt1) via goflow2. 365 days.
 CREATE TABLE IF NOT EXISTS netsec.flows
 (
     ts        DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
@@ -267,10 +267,10 @@ CREATE TABLE IF NOT EXISTS netsec.flows
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
 ORDER BY (toStartOfHour(ts), src_ip, dst_ip, ts)
-TTL toDateTime(ts) + INTERVAL 14 DAY DELETE
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
--- Suricata EVE events. Alerts 365 days, dns/tls/http and anything else 30 days.
+-- Suricata EVE events (alert, dns, tls, http, ssh). 365 days.
 -- Common fields are typed; the whole event is kept in payload.
 CREATE TABLE IF NOT EXISTS netsec.eve
 (
@@ -299,10 +299,9 @@ CREATE TABLE IF NOT EXISTS netsec.eve
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
 ORDER BY (event_type, toStartOfHour(ts), src_ip, ts)
-TTL toDateTime(ts) + INTERVAL 30 DAY DELETE WHERE event_type != 'alert',
-    toDateTime(ts) + INTERVAL 365 DAY DELETE;
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE;
 
--- Squid access log for opted-in machines (phase 5). 30 days.
+-- Squid access log for opted-in machines (phase 5). 365 days.
 CREATE TABLE IF NOT EXISTS netsec.proxy
 (
     ts         DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
@@ -322,10 +321,10 @@ CREATE TABLE IF NOT EXISTS netsec.proxy
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
 ORDER BY (toStartOfHour(ts), client_ip, ts)
-TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
--- Pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP (phase 4). 30 days.
+-- Pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP (phase 4). 365 days.
 CREATE TABLE IF NOT EXISTS netsec.dns_queries
 (
     ts        DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
@@ -338,10 +337,10 @@ CREATE TABLE IF NOT EXISTS netsec.dns_queries
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
 ORDER BY (toStartOfHour(ts), client_ip, ts)
-TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
--- Tetragon process and connect events from k8s nodes (phase 4b). 30 days.
+-- Tetragon process and connect events from k8s nodes (phase 4b). 365 days.
 CREATE TABLE IF NOT EXISTS netsec.tetragon
 (
     ts            DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
@@ -360,5 +359,31 @@ CREATE TABLE IF NOT EXISTS netsec.tetragon
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(ts)
 ORDER BY (event_type, toStartOfHour(ts), namespace, ts)
-TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- OPNsense HAProxy connection log for the internet-facing mail frontends
+-- (25, 465, 587, 993). Their clients reach the mailserver through HAProxy on
+-- OPNsense, so flows and eve show OPNsense as the source; this table keeps
+-- the real client address. 365 days.
+CREATE TABLE IF NOT EXISTS netsec.haproxy
+(
+    ts            DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
+    client_ip     IPv6,
+    client_port   UInt16,
+    frontend_ip   IPv6,
+    frontend_port UInt16,
+    frontend      LowCardinality(String),
+    backend       LowCardinality(String),
+    server        LowCardinality(String),
+    connect_ms    Int32,
+    duration_ms   Int64,
+    bytes_in      UInt64,
+    bytes_out     UInt64,
+    termination   LowCardinality(String)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (frontend, toStartOfHour(ts), client_ip, ts)
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;

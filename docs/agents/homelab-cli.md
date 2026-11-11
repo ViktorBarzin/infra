@@ -26,7 +26,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 
 `homelab claude-sessions schema` and `homelab claude-sessions sql "<SELECT ...>"` query every Claude Code session on the devvm, all users, in ClickHouse (admins only). Run `schema` first: it lists the tables (`lines`, `blocks`, `files`, `sessions`, `turns`) and example queries for cost, tool failures, slow turns and full-text search. Reach for it before reading transcripts with grep or `claude-usage` when the question spans many sessions. `claude-sessions ingest` is the root timer's half. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
-`homelab netsec schema` and `homelab netsec sql "<SELECT ...>"` query what the network IDS recorded, in the `netsec` database on the claude-sessions ClickHouse (Viktor only): NetFlow records from OPNsense (`flows`, 14 days), and as later phases land Suricata EVE events (`eve`), proxy, pod DNS and Tetragon rows. Reach for it to answer "who talked to this address" or "top talkers" before scraping goflow2 metrics or the OPNsense GUI. Design: `docs/architecture/network-security-monitoring.md`.
+`homelab netsec schema` and `homelab netsec sql "<SELECT ...>"` query what the network IDS recorded, in the `netsec` database on the claude-sessions ClickHouse (Viktor only): NetFlow records (`flows`), Suricata EVE events (`eve`: alert, dns, tls, http, ssh), mail-port connections with the real client address (`haproxy`), Squid (`proxy`), pod DNS (`dns_queries`) and Tetragon rows, all kept 365 days. Reach for it to answer "who talked to this address" or "top talkers" before scraping goflow2 metrics or the OPNsense GUI. Design: `docs/architecture/network-security-monitoring.md`.
 
 ## Browser hubs (2026-11-08)
 
