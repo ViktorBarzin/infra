@@ -18,6 +18,31 @@ case "$SESSION_KEY" in
     ;;
 esac
 
+# BACKUP_ZIP_PASSWORD encrypts MeshCentral's nightly autobackup zips (AES-256).
+# Each zip holds meshcentral.db and config.json, so the login-cookie key, the
+# sessionKey, every user's password hash and the certificate private keys.
+# The zips land on the PVE host's NFS export (/srv/nfs/meshcentral, then
+# /mnt/backup and the Synology), which more than this pod can read. Until
+# 2026-11-12 zippassword was "", which MeshCentral treats as no password, so
+# the zips were plain. The password comes from Vault secret/meshcentral (field
+# backup_zip_password) through the same ExternalSecret, and is needed to open a
+# zip for a restore (7z x; Info-ZIP unzip cannot read AES). Missing or odd:
+# the pod stops, because starting would write another plain zip.
+case "${BACKUP_ZIP_PASSWORD:-}" in
+  "" | *[!A-Za-z0-9]*)
+    echo "fix-config: BACKUP_ZIP_PASSWORD is empty or holds characters other than letters and digits" >&2
+    exit 1
+    ;;
+esac
+# The password is written into settings.AutoBackup, which has to be an object
+# opened on its own line (the shape MeshCentral and the template below write).
+# Anything else, such as "AutoBackup": false, stops the pod before any edit.
+if [ -f "$CONFIG" ] && grep -qi '"autobackup"' "$CONFIG" &&
+  ! grep -qi '"autobackup"[ ]*:[ ]*{[ ]*$' "$CONFIG"; then
+  echo "fix-config: settings.AutoBackup in $CONFIG is not an object opened on its own line; not editing it" >&2
+  exit 1
+fi
+
 # DB_KEY_GENERATION (a plain label in main.tf, not a secret) rotates the keys
 # MeshCentral keeps in meshcentral.db rather than in config.json:
 # LoginCookieEncryptionKey (whoever holds it can forge a login cookie for any
@@ -28,7 +53,11 @@ esac
 # records are dropped before the server starts, and MeshCentral writes fresh
 # random ones on start. Logins and links made with the old keys stop working.
 # Agents are not affected: they use the mesh certificates. Rollback is
-# MeshCentral's nightly autobackup zip on the backups volume.
+# MeshCentral's nightly autobackup zip on the backups volume. A zip made
+# before the last rotation brings the old keys back, and the marker on the
+# volume still matches, so nothing rotates them: after such a restore, change
+# DB_KEY_GENERATION in main.tf. Zips before 2026-11-11 23:10 UTC hold the
+# keys that leaked.
 case "${DB_KEY_GENERATION:-}" in
   *[!A-Za-z0-9.-]*)
     echo "fix-config: DB_KEY_GENERATION holds characters other than letters, digits, dot and dash" >&2
@@ -123,5 +152,38 @@ awk '
   { print }
   !done && !has && /"settings"[ ]*:[ ]*\{[ ]*$/ { print "    \"sessionKey\": \"" key "\","; done = 1 }
 ' has="$(grep -c '"sessionKey"' "$CONFIG" || true)" "$CONFIG" > "$CONFIG.new"
+cat "$CONFIG.new" > "$CONFIG"
+rm -f "$CONFIG.new"
+
+# Write the autobackup zip password: replace zippassword's value in place, add
+# it to the AutoBackup object, or add an AutoBackup object as the first
+# setting. Same rules as the sessionKey above: the value comes from awk's
+# environment, and the file is written back through itself. MeshCentral reads
+# settings keys in any case, so the match is case-insensitive.
+awk '
+  BEGIN { pw = ENVIRON["BACKUP_ZIP_PASSWORD"]; done = 0 }
+  !done && tolower($0) ~ /"zippassword"[ ]*:/ {
+    if (!sub(/"[zZ][iI][pP][pP][aA][sS][sS][wW][oO][rR][dD]"[ ]*:[ ]*"[^"]*"/, "\"zippassword\": \"" pw "\"")) {
+      print "fix-config: zippassword in config.json is not a string; not editing it" > "/dev/stderr"
+      bad = 1
+      exit 1
+    }
+    done = 1
+  }
+  { print }
+  !done && !has && tolower($0) ~ /"autobackup"[ ]*:[ ]*\{[ ]*$/ {
+    print "      \"zippassword\": \"" pw "\","
+    done = 1
+  }
+  !done && !has && !hasab && /"settings"[ ]*:[ ]*\{[ ]*$/ {
+    print "    \"AutoBackup\": {"
+    print "      \"backupPath\": \"/opt/meshcentral/meshcentral-backups\","
+    print "      \"backupIntervalHours\": 24,"
+    print "      \"zippassword\": \"" pw "\""
+    print "    },"
+    done = 1
+  }
+  END { if (!bad && !done) { print "fix-config: found no place for zippassword in config.json" > "/dev/stderr"; exit 1 } }
+' has="$(grep -ci '"zippassword"' "$CONFIG" || true)" hasab="$(grep -ci '"autobackup"' "$CONFIG" || true)" "$CONFIG" > "$CONFIG.new"
 cat "$CONFIG.new" > "$CONFIG"
 rm -f "$CONFIG.new"

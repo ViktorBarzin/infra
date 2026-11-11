@@ -26,9 +26,11 @@ module "tls_secret" {
 }
 
 # Vault secret/meshcentral: session_key, MeshCentral's settings.sessionKey,
-# which the fix-config init container writes into config.json. Until
-# 2026-11-11 the key existed only in config.json on the volume and in a stray
-# copy in a devvm home. The match annotation lets Reloader restart the pod
+# and backup_zip_password, the AES password for the nightly autobackup zips.
+# The fix-config init container writes both into config.json. Until
+# 2026-11-11 the session key existed only in config.json on the volume and in
+# a stray copy in a devvm home; until 2026-11-12 the zips were unencrypted on
+# the host's NFS export. The match annotation lets Reloader restart the pod
 # when the key changes in Vault (the Deployment carries reloader search).
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
@@ -62,6 +64,12 @@ resource "kubernetes_manifest" "external_secret" {
         remoteRef = {
           key      = "meshcentral"
           property = "session_key"
+        }
+        }, {
+        secretKey = "backup_zip_password"
+        remoteRef = {
+          key      = "meshcentral"
+          property = "backup_zip_password"
         }
       }]
     }
@@ -153,6 +161,15 @@ resource "kubernetes_deployment" "meshcentral" {
               secret_key_ref {
                 name = "meshcentral-secrets"
                 key  = "session_key"
+              }
+            }
+          }
+          env {
+            name = "BACKUP_ZIP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "meshcentral-secrets"
+                key  = "backup_zip_password"
               }
             }
           }
