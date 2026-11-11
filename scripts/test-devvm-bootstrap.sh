@@ -46,9 +46,23 @@ bootstrap_stubs() {
 case "$*" in
   *sys/wrapping/unwrap*) printf "%s" "${UNWRAP_REPLY-{\"auth\":{\"client_token\":\"hvs.inner\"}}}" ;;
 esac'
-  stub vault 'echo "VAULT_TOKEN=$VAULT_TOKEN VAULT_ADDR=$VAULT_ADDR" >>"$LOG.env"'
-  stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
-  stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN cwd=$PWD" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
+  stub vault 'echo "VAULT_TOKEN=$VAULT_TOKEN VAULT_ADDR=$VAULT_ADDR" >>"$LOG.env"
+case "$*" in
+  "kv get -format=json secret/devvm-t3-seed")
+    [ -z "${SEED_VAULT_FAIL:-}" ] || exit 2
+    printf "{\"data\":{\"data\":{\"private_key\":\"PRIVKEY-SECRET\",\"known_hosts\":\"192.168.1.127 ssh-ed25519 AAAAhostkey\"}}}" ;;
+esac'
+  stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n[ -e \"\$DEVVM_BOOTSTRAP_T3_HOLD\" ] && echo provisioner-held >>\"$LOG\"\nexit 0\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
+  stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN cwd=$PWD" >>"$LOG.env"; [ -e "$DEVVM_BOOTSTRAP_T3_HOLD" ] && echo "hold present at playbook" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
+  # rsync records the key and known_hosts files its ssh was given, then
+  # "copies" one snapshot into a destination that arrives root-only, as the
+  # host'"'"'s 0700 /mnt/backup/t3-state would make it.
+  stub rsync 'for a in "$@"; do case "$a" in "ssh "*)
+    k=$(sed -E "s/.* -i ([^ ]+).*/\1/" <<<"$a"); kh=$(sed -E "s/.*UserKnownHostsFile=([^ ]+).*/\1/" <<<"$a")
+    echo "$k" >"$LOG.seedkeypath"; cat "$k" >"$LOG.seedkey"; stat -c %a "$k" >"$LOG.seedkeymode"; cat "$kh" >"$LOG.seedkh" ;;
+  esac; done
+d="${@: -1}"; mkdir -p "$d/wizard"; chmod 0700 "$d"; echo snap >"$d/wizard/state-20261111-034710.sqlite.gz"
+exit "${RSYNC_RC:-0}"'
   stub install 'cp "${@: -2:1}" "${@: -1}" && chmod +x "${@: -1}"'
   stub apt-get 'exit 0'
 }
@@ -59,6 +73,8 @@ run_bootstrap() {
     DEVVM_BOOTSTRAP_STATE="$SB/state" \
     DEVVM_BOOTSTRAP_CLONE="$SB/clone" \
     DEVVM_BOOTSTRAP_PROVISIONER="$SB/t3-provision-users" \
+    DEVVM_BOOTSTRAP_T3_DIR="$SB/t3" \
+    DEVVM_BOOTSTRAP_T3_HOLD="$SB/hold/awaiting-snapshots" \
     DEVVM_BOOTSTRAP_WAIT="${WAIT:-2}" \
     DEVVM_BOOTSTRAP_POLL=1 \
     bash "$BOOTSTRAP" >"$SB/log/out" 2>&1
@@ -82,6 +98,45 @@ has "installs the lobby packages after the playbook" "$LOG" 'apt-get install -y 
 if [[ "$(grep -nE '^ansible-playbook' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "lobby install comes after the playbook"; fi
 has "token revoked at the end" "$LOG" 'vault token revoke -self'
 [[ -e "$SB/handoff.json" ]] && bad "handoff file removed after reading" || ok
+
+# 1a. T3 snapshots: copied from the PVE host after the playbook, before
+# provisioning, with the read-only key from Vault, so provisioning's
+# t3-restore-state --if-missing finds them. The hold is up from before the
+# playbook (whose provisioning timer could fire early) until the copy is in.
+has "reads the seed key from Vault with the bootstrap token" "$LOG.env" 'VAULT_TOKEN=hvs\.inner'
+has "reads the seed key from Vault" "$LOG" '^vault kv get -format=json secret/devvm-t3-seed'
+has "pulls from the PVE host's snapshot directory" "$LOG" "^rsync .* root@192\.168\.1\.127:\./ $SB/t3/\$"
+has "skips the host's staging directory" "$LOG" '^rsync .*--exclude=\.incoming'
+has "pins the host key, no first-use trust" "$LOG" '^rsync .*StrictHostKeyChecking=yes'
+has "uses only the seed key" "$LOG" '^rsync .*IdentitiesOnly=yes'
+eq "ssh gets the key from Vault" "PRIVKEY-SECRET" "$(cat "$LOG.seedkey" 2>/dev/null)"
+eq "the key file is 600" "600" "$(cat "$LOG.seedkeymode" 2>/dev/null)"
+eq "ssh gets the host key from Vault" "192.168.1.127 ssh-ed25519 AAAAhostkey" "$(cat "$LOG.seedkh" 2>/dev/null)"
+[[ -n "$(cat "$LOG.seedkeypath" 2>/dev/null)" && ! -e "$(cat "$LOG.seedkeypath")" ]] && ok || bad "seed key file removed after the copy"
+hasnt "seed key never in argv" "$LOG" 'PRIVKEY-SECRET'
+hasnt "seed key never printed" "$SB/log/out" 'PRIVKEY-SECRET'
+has "hold is up while the playbook runs" "$LOG.env" 'hold present at playbook'
+[[ -e "$SB/hold/awaiting-snapshots" ]] && bad "hold removed after a good copy" || ok
+hasnt "provisioning is not held after a good copy" "$LOG" 'provisioner-held'
+eq "snapshot directory stays 755 for the users' own nightly copies" "755" "$(stat -c %a "$SB/t3" 2>/dev/null)"
+eq "snapshots arrived" "snap" "$(cat "$SB/t3/wizard/state-20261111-034710.sqlite.gz" 2>/dev/null)"
+if [[ "$(grep -nE '^rsync' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^provisioner' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "the copy comes before provisioning"; fi
+if [[ "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^rsync' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "the copy comes after the playbook and the lobby"; fi
+
+# 1c. A copy that fails does not stop the build: users still get their
+# accounts, the hold stays so no empty T3 starts, and the status says so.
+for fail_how in RSYNC_RC=23 SEED_VAULT_FAIL=1; do
+  new_sandbox; bootstrap_stubs
+  printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master"}' >"$SB/handoff.json"
+  ( export "${fail_how?}"; run_bootstrap ); rc=$?
+  eq "$fail_how: build still exits 0" 0 "$rc"
+  has "$fail_how: status is ok and names the T3 hold" "$SB/state/status" '^ok .*T3'
+  has "$fail_how: provisioning runs, under the hold" "$LOG" 'provisioner-held'
+  [[ -e "$SB/hold/awaiting-snapshots" ]] && ok || bad "$fail_how: hold left in place"
+  has "$fail_how: the build log warns" "$SB/log/out" 'WARN.*T3'
+  k="$(cat "$LOG.seedkeypath" 2>/dev/null)"; [[ -z "$k" || ! -e "$k" ]] && ok || bad "$fail_how: seed key removed"
+  hasnt "$fail_how: seed key never printed" "$SB/log/out" 'PRIVKEY-SECRET'
+done
 
 # 1b. The guest agent creates the file 0666, so the bootstrap refuses a
 # handoff directory anyone but root can enter.

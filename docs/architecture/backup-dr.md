@@ -435,6 +435,7 @@ own disk. Three pieces carry it:
 | `t3-backup-state` | devvm, own timer, ~03:30 UTC + up to 20 min jitter | `VACUUM INTO` copy per user → `/var/backups/t3-state/<user>/state-<YYYYMMDD-HHMMSS>.sqlite`, keep 6. `devvm-cleanup` (04:00 UTC) gzips all but the newest. Unchanged by this work |
 | `t3-state-pull` | PVE host, nightly chain step 7 | pulls the newest 3 daily snapshots per user to `/mnt/backup/t3-state/<user>/`, always stored as `.sqlite.gz` |
 | `t3-restore-state` | devvm, `/usr/local/bin` | puts the newest snapshot back as the user's live database |
+| `devvm-bootstrap` step 4c | a Terraform-built devvm's first boot | copies `/mnt/backup/t3-state` from the host back into `/var/backups/t3-state` before provisioning |
 
 **What the pull takes.** Only daily `state-<ts>.sqlite[.gz]` files. Pre-bump copies
 (`state-prebump-*`) are taken minutes after the daily one and serve version rollback on
@@ -463,8 +464,9 @@ The snapshots hold live T3 session tokens, so the host keeps them root-only (070
 **Freshness.** The chain pulls the snapshot the devvm wrote ~23 h earlier, so the newest
 copy off the VM is ~23 h old after a pull and ~47 h just before the next. A rebuild loses
 at most that much T3 history. Alerts: `T3SnapshotOffVmStale` (newest snapshot of a user
-older than 72 h, page; users whose newest is over 30 days old are ignored, which is how
-ancamilea's frozen 2026-08-17 copy stays quiet) and `T3SnapshotPullNeverReported`
+older than 72 h, page; ancamilea is excluded by name because her copy is frozen on
+purpose since she left the roster on 2026-08-17; there is no age cut-off, so a missed page
+keeps firing) and `T3SnapshotPullNeverReported`
 (no metric for 48 h, page). A failed run also shows as `NightlyChainStepFailed`.
 Pushgateway job `t3-state-pull`.
 
@@ -473,30 +475,79 @@ asset-signing key), `attachments/`, `settings.json` and `keybindings.json` are n
 snapshot. On a rebuild T3 generates new keys and the user re-links T3 Cloud if they used it.
 `devvm-home-backup` still copies all of `~/.t3` while it runs.
 
-**Restore on a rebuilt devvm.** The new box has no key to the host, so the snapshots are
-copied over from a machine that holds the admin's SSH key (the old devvm in a drill, a
-laptop with the key from Vault otherwise), then restored:
+**Restore on a rebuilt devvm.** Automatic for a devvm built from `stacks/devvm`:
+
+1. `scripts/devvm-bootstrap` puts up a hold file, `/var/lib/t3-restore/awaiting-snapshots`,
+   before the playbook. The playbook enables the hourly provisioning timer, which could
+   otherwise start an empty T3 for each user before the snapshots are in.
+2. After the playbook (step 4c) it reads Vault `secret/devvm-t3-seed` with its bootstrap
+   token and copies `/mnt/backup/t3-state/` from the host into `/var/backups/t3-state/`.
+   The fields are `private_key`, `public_key` and `known_hosts` (the host's key, so ssh
+   checks it on first contact). On the host the key is pinned in root's
+   `authorized_keys` to
+   `command="/usr/bin/rrsync -ro /mnt/backup/t3-state",restrict,from="192.168.1.2"`,
+   declared in `playbooks/pve-host.yml` (tag `t3-snapshot`). It can read that one
+   directory and nothing else, and only from the firewall's inter-VLAN SNAT address.
+   The key file lives in a root-only temp directory for the copy and is deleted after.
+   `/var/backups/t3-state` is left root 0755. The per-user directories stay root 0700
+   until that user's first nightly `t3-backup-state` takes them over.
+3. On success it removes the hold. Provisioning (step 5) calls
+   `t3-restore-state --if-missing <user>` before `systemctl enable --now t3-serve@<user>`,
+   so each user's newest snapshot is their database from the first start.
+4. If the copy fails, the build carries on and the status reads
+   `ok (T3 held: snapshots not copied from the Proxmox host)`. While the hold is up,
+   `--if-missing` exits 3 for a user with no snapshot and no database, and provisioning
+   leaves that user's T3 stopped. Nobody gets an empty T3 that a later restore would have
+   to move aside.
+
+Copy by hand, after a failed step 4c or onto a box not built by `stacks/devvm`, from a
+machine that holds the admin's SSH key. Archive the user directories, not `.`: the host's
+`/mnt/backup/t3-state` is root 0700, and extracting `.` as root gives the target that mode,
+which stops every nightly and pre-bump snapshot on the new box.
 
 ```bash
 # 1. host -> new devvm, into the directory t3-restore-state reads
-ssh root@192.168.1.127 'tar -C /mnt/backup/t3-state -cf - --exclude=.incoming .' \
-  | ssh wizard@<new-devvm> 'sudo mkdir -p /var/backups/t3-state && sudo tar -C /var/backups/t3-state -xf - --no-same-owner'
-# 2a. if provisioning has not started anyone's T3 yet, its own call does it:
-#     t3-provision-users runs `t3-restore-state --if-missing <user>` before
-#     `systemctl enable --now t3-serve@<user>`
-# 2b. otherwise (a serve already made an empty database), restore explicitly;
-#     the empty database is kept beside it as statev2.sqlite.before-restore-<ts>
+ssh root@192.168.1.127 'cd /mnt/backup/t3-state && tar -cf - --exclude=.incoming */' \
+  | ssh wizard@<new-devvm> 'sudo install -d -m 0755 /var/backups/t3-state && sudo tar -C /var/backups/t3-state -xf - --no-same-owner'
+# 2. release the hold; the next hourly provisioning run restores and starts each serve
+sudo rm -f /var/lib/t3-restore/awaiting-snapshots
+sudo systemctl start t3-provision-users.service   # or wait for the timer
+# 2b. a user whose serve already made an empty database: restore explicitly; the
+#     empty database is kept beside it as statev2.sqlite.before-restore-<ts>
 sudo t3-restore-state --dry-run --all
 sudo t3-restore-state --all            # or: sudo t3-restore-state <user>
 ```
 
 `t3-restore-state` picks the newest `state-<ts>.sqlite[.gz]` in `/var/backups/t3-state/<user>/`
-(`--snapshot FILE` names another), checks it with `PRAGMA quick_check` before touching
-anything, stops a running `t3-serve@<user>`, moves the live database and its WAL aside,
-installs the snapshot as `statev2.sqlite` (owner the user, mode 0600) and starts the serve
+(`--snapshot FILE` names another). Root decompresses it in `/var/lib/t3-restore` (root
+0700) and checks it with `PRAGMA quick_check` before touching anything. Every step inside
+the user's home runs as the user, so a symlink the user planted there reaches only what
+they could write anyway. It stops a running `t3-serve@<user>`, moves the live database and
+its WAL aside, installs the snapshot as `statev2.sqlite` (mode 0600) and starts the serve
 again. `--if-missing` does nothing for a user who has any T3 database. If the box ran a
 night before the restore, its own nightly snapshot of the empty database is now the newest
-file there: pass `--snapshot` with the pulled one.
+file there: pass `--snapshot` with the pulled one, one user at a time (`--all` takes no
+`--snapshot`).
+
+**After a rebuild, on the host.** The new devvm has new SSH host keys, and the host's
+`/root/.ssh/known_hosts` still pins the old ones for 10.0.10.10, so the next night's
+`t3-state-pull` and `devvm-home-backup` both fail (`NightlyChainStepFailed` pages). Once
+the new box answers on 10.0.10.10:
+
+```bash
+ssh root@192.168.1.127 'ssh-keygen -R 10.0.10.10 && ssh-keyscan -t ed25519 10.0.10.10 >>/root/.ssh/known_hosts'
+```
+
+Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
+new devvm before trusting it.
+
+**ancamilea.** Her snapshots are pulled and kept, but she left the roster on 2026-08-17,
+so a rebuilt box has no account for her: provisioning and `--all` skip her. Her data is the
+pre-0.1.0 `state.sqlite` schema (migration 40); `t3-restore-state` installs every snapshot
+as `statev2.sqlite`, and whether T3 0.1.x accepts an old-schema file under that name has not
+been tested. If she is added back, restore her with `sudo t3-restore-state ancamilea` and
+check her threads; if T3 refuses the file, put it back as `~/.t3/userdata/state.sqlite`
+instead so T3 runs its own import.
 
 ### Layer 2: Weekly File-Level Backup (sda Backup Disk)
 

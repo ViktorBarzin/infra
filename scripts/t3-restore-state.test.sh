@@ -1,7 +1,9 @@
 #!/bin/bash
-# Tests for scripts/t3-restore-state.sh. The home base, snapshot directory and
-# user map are temp dirs, the target user is whoever runs the test (so the
-# ownership calls work without root), and systemctl is a stub that logs.
+# Tests for scripts/t3-restore-state.sh, and for the t3-provision-users step
+# that calls it (t3_restore_before_serve). The home base, snapshot directory,
+# work directory and user map are temp dirs, the target user is whoever runs
+# the test (so the ownership calls work without root), and systemctl and
+# runuser are stubs that log.
 # Run: bash scripts/t3-restore-state.test.sh
 set -uo pipefail
 
@@ -27,6 +29,14 @@ echo "systemctl $*" >>"$CALLS"
 exit 0
 STUB
 chmod +x "$WORK/bin/systemctl"
+cat >"$WORK/bin/runuser" <<'STUB'
+#!/bin/bash
+echo "runuser $*" >>"$CALLS"
+[ "$1" = -u ] && shift 2
+[ "$1" = -- ] && shift
+exec "$@"
+STUB
+chmod +x "$WORK/bin/runuser"
 
 # db <path> <marker>: a real SQLite database holding one row, <marker>.
 db() { rm -f "$1"; sqlite3 "$1" "create table t(v text); insert into t values('$2');"; }
@@ -37,6 +47,7 @@ run_restore() { # [args...] -> log, then rc=<n>
   (
     export PATH="$WORK/bin:$PATH" CALLS
     export T3_HOME_BASE="$HOMES" T3_RESTORE_FROM="$SNAPS" T3_USER_MAP="$WORK/map"
+    export T3_RESTORE_WORK="$WORK/work" T3_RESTORE_HOLD="$WORK/hold"
     bash "$HERE/t3-restore-state.sh" "$@"
     echo "rc=$?"
   ) 2>&1
@@ -55,6 +66,11 @@ out=$(run_restore --if-missing "$ME")
 [ "$(stat -c %a "$HOMES/$ME/.t3/userdata")" = 700 ] && ok "a missing ~/.t3/userdata is created 700" || bad "dir mode"
 [ "$(tail -1 <<<"$out")" = rc=0 ] && ok "a restore exits 0" || bad "rc: $out"
 grep -q 'systemctl start' "$CALLS" && bad "started a serve that was not running" || ok "a serve that was not running stays stopped"
+# Root never writes inside the user's home: the user controls every name there.
+grep -q "^runuser -u $ME -- .*statev2.sqlite" "$CALLS" && ok "the database is put in place as the user, not as root" \
+  || bad "placement not as the user: $(cat "$CALLS")"
+grep -q "^runuser -u $ME -- install -d" "$CALLS" && ok "~/.t3/userdata is created as the user" || bad "mkdir not as the user"
+[ -z "$(ls -A "$WORK/work" 2>/dev/null)" ] && ok "the root work directory is left empty" || bad "work dir: $(ls -A "$WORK/work")"
 
 # --- --if-missing never touches a database that is there ------------------------
 db "$LIVE" "live work"
@@ -96,6 +112,7 @@ out=$(run_restore "$ME")
   && ok "a snapshot that fails quick_check is refused and the live database kept" || bad "damaged: $out"
 grep -q 'stop' "$CALLS" && bad "stopped the serve for a refused snapshot" || ok "a refused snapshot never stops the serve"
 compgen -G "$HOMES/$ME/.t3/userdata/.restore*" >/dev/null && bad "left a temp file" || ok "no temp file is left behind"
+[ -z "$(ls -A "$WORK/work" 2>/dev/null)" ] && ok "a refused snapshot leaves nothing in the work directory" || bad "work dir after refusal"
 rm "$SNAPS/$ME/state-20261112-034000.sqlite"
 
 # --- nothing to restore ---------------------------------------------------------------
@@ -106,6 +123,22 @@ out=$(run_restore --if-missing "$ME")
 out=$(run_restore "$ME")
 [ "$(tail -1 <<<"$out")" = rc=1 ] && ok "an explicit restore with no snapshot fails" || bad "no snap explicit: $out"
 
+# --- the hold: a rebuilt box whose snapshots did not arrive ------------------------------
+# devvm-bootstrap leaves the hold file when it could not copy the snapshots
+# from the PVE host. Then a user with no snapshot and no database is held
+# (rc 3), so provisioning does not start an empty T3 for them.
+echo "seed failed" >"$WORK/hold"
+out=$(run_restore --if-missing "$ME")
+[ "$(tail -1 <<<"$out")" = rc=3 ] && [ ! -e "$LIVE" ] && grep -q "$WORK/hold" <<<"$out" \
+  && ok "--if-missing under the hold, no snapshot: rc 3 and the hold file named" || bad "hold: $out"
+mkdir -p "$SNAPS/$ME"; db "$SNAPS/$ME/state-20261111-034710.sqlite" "newest"
+out=$(run_restore --if-missing "$ME")
+[ "$(tail -1 <<<"$out")" = rc=0 ] && [ "$(marker "$LIVE")" = newest ] \
+  && ok "under the hold, a snapshot that arrived is restored" || bad "hold+snap: $out"
+out=$(run_restore --if-missing "$ME")
+[ "$(tail -1 <<<"$out")" = rc=0 ] && ok "under the hold, a user with a database is not held" || bad "hold+db: $out"
+rm -f "$WORK/hold" "$LIVE"; rm -rf "${SNAPS:?}/$ME"
+
 # --- --all walks the user map -----------------------------------------------------------
 mkdir -p "$SNAPS/$ME"; db "$SNAPS/$ME/state-20261111-034710.sqlite" "newest"
 out=$(run_restore --all --if-missing)
@@ -113,6 +146,26 @@ out=$(run_restore --all --if-missing)
 
 out=$(run_restore nosuchuser-xyz)
 [ "$(tail -1 <<<"$out")" = rc=1 ] && ok "an unknown user fails" || bad "unknown: $out"
+
+# --- t3-provision-users: t3_restore_before_serve ------------------------------------------
+eval "$(awk '/^t3_restore_before_serve\(\) \{/ {on=1} on {print} on && /^}/ {exit}' "$HERE/t3-provision-users.sh")"
+if declare -F t3_restore_before_serve >/dev/null; then
+  log() { echo "log: $*" >>"$WORK/plog"; }
+  run() { "$@"; }
+  printf '#!/bin/bash\necho "restore $*" >>"%s/plog"\nexit "${FAKE_RC:-0}"\n' "$WORK" >"$WORK/bin/fake-restore"
+  chmod +x "$WORK/bin/fake-restore"
+  gate() { : >"$WORK/plog"; FAKE_RC=$1 T3_RESTORE_BIN=$WORK/bin/fake-restore t3_restore_before_serve "$ME"; echo $?; }
+  [ "$(gate 0)" = 0 ] && grep -q "restore --if-missing $ME" "$WORK/plog" \
+    && ok "provisioning restores --if-missing, then starts the serve" || bad "gate 0: $(cat "$WORK/plog")"
+  [ "$(gate 3)" = 1 ] && grep -q "held" "$WORK/plog" \
+    && ok "provisioning holds the serve when the restore says hold" || bad "gate 3: $(cat "$WORK/plog")"
+  [ "$(gate 1)" = 0 ] && grep -q "WARN" "$WORK/plog" \
+    && ok "a failed restore is a warning and the serve still starts" || bad "gate 1: $(cat "$WORK/plog")"
+  [ "$(: >"$WORK/plog"; T3_RESTORE_BIN=$WORK/nonexistent t3_restore_before_serve "$ME"; echo $?)" = 0 ] \
+    && ok "no restore command installed: the serve starts as before" || bad "gate missing bin"
+else
+  bad "t3_restore_before_serve not found in t3-provision-users.sh"
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi
