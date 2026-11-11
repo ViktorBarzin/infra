@@ -80,6 +80,18 @@ has "provisioner runs from the bootstrap clone" "$LOG" "provisioner $SB/clone/sc
 has "token revoked at the end" "$LOG" 'vault token revoke -self'
 [[ -e "$SB/handoff.json" ]] && bad "handoff file removed after reading" || ok
 
+# 1b. The guest agent creates the file 0666, so the bootstrap refuses a
+# handoff directory anyone but root can enter.
+new_sandbox; bootstrap_stubs
+mkdir -p "$SB/hd"; chmod 0755 "$SB/hd"
+printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master"}' >"$SB/hd/handoff.json"
+PATH="$SB/bin:$PATH" DEVVM_BOOTSTRAP_HANDOFF="$SB/hd/handoff.json" DEVVM_BOOTSTRAP_STATE="$SB/state" \
+  DEVVM_BOOTSTRAP_CLONE="$SB/clone" DEVVM_BOOTSTRAP_PROVISIONER="$SB/t3-provision-users" \
+  DEVVM_BOOTSTRAP_WAIT=2 DEVVM_BOOTSTRAP_POLL=1 bash "$BOOTSTRAP" >"$SB/log/out" 2>&1; rc=$?
+eq "open handoff dir exits non-zero" 1 "$rc"
+has "status names the handoff dir" "$SB/state/status" 'handoff directory'
+hasnt "open handoff dir never unwraps" "$LOG" 'unwrap'
+
 # 2. No handoff within the wait: fail, say why, run nothing.
 new_sandbox; bootstrap_stubs
 WAIT=1 run_bootstrap; rc=$?
@@ -143,7 +155,7 @@ eq "handoff exits 0" 0 "$rc"
 eq "pinged until the agent answered" 2 "$(cat "$LOG.pings")"
 has "mints through the bootstrap role, wrapped" "$LOG" 'vault token create -role=devvm-bootstrap -policy=devvm-bootstrap -wrap-ttl=1h -field=wrapping_token'
 has "writes through the guest agent of the right VM" "$LOG" 'curl .*https://pve\.test:8006/api2/json/nodes/pve/qemu/9102/agent/file-write'
-has "writes the bootstrap's handoff path" "$LOG" 'file=/run/devvm-bootstrap-handoff\.json'
+has "writes into the root-only handoff dir" "$LOG" 'file=/run/devvm-bootstrap/handoff\.json'
 has "handoff carries the wrapped token" "$LOG.content" '"wrapped_token": *"hvs\.wrappedtoken"'
 has "handoff carries the ref" "$LOG.content" '"infra_ref": *"master"'
 has "PVE token sent as a header on stdin" "$LOG.stdin" 'Authorization: PVEAPIToken=terraform-devvm@pve!tf=secret-uuid'

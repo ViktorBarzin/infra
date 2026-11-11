@@ -18,14 +18,14 @@
 # and the result to $STATE/status: "ok" or "failed: <step>".
 #
 # Overrides, used by scripts/test-devvm-bootstrap.sh:
-#   DEVVM_BOOTSTRAP_HANDOFF  handoff file      (/run/devvm-bootstrap-handoff.json)
+#   DEVVM_BOOTSTRAP_HANDOFF  handoff file      (/run/devvm-bootstrap/handoff.json)
 #   DEVVM_BOOTSTRAP_STATE    status directory  (/var/lib/devvm-bootstrap)
 #   DEVVM_BOOTSTRAP_CLONE    infra clone       (/opt/devvm-bootstrap/infra)
 #   DEVVM_BOOTSTRAP_PROVISIONER  installed provisioner (/usr/local/bin/t3-provision-users)
 #   DEVVM_BOOTSTRAP_WAIT / _POLL  seconds to wait for the handoff, poll interval
 set -euo pipefail
 
-HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap-handoff.json}"
+HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap/handoff.json}"
 STATE="${DEVVM_BOOTSTRAP_STATE:-/var/lib/devvm-bootstrap}"
 CLONE="${DEVVM_BOOTSTRAP_CLONE:-/opt/devvm-bootstrap/infra}"
 PROVISIONER="${DEVVM_BOOTSTRAP_PROVISIONER:-/usr/local/bin/t3-provision-users}"
@@ -65,6 +65,12 @@ until [[ -s "$HANDOFF" ]]; do
   # A poll of 0 (tests) still has to end.
   (( POLL > 0 )) || waited=$((waited + 1))
 done
+# qemu-ga creates the file 0666, so what keeps other local accounts away from
+# it is the directory: cloud-init's bootcmd makes it root-only before the
+# agent is even installed. Refuse to trust a handoff anyone else could reach.
+hdir="$(dirname "$HANDOFF")"
+step="handoff directory $hdir is not mode 700 and owned by $(id -un)"
+[[ "$(stat -c '%u %a' "$hdir")" == "$(id -u) 700" ]] || exit 1
 chmod 600 "$HANDOFF"
 wrapped="$(jq -r '.wrapped_token // empty' "$HANDOFF")"
 ref="$(jq -r '.infra_ref // "master"' "$HANDOFF")"
