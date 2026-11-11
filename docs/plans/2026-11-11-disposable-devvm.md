@@ -1,6 +1,8 @@
 # Disposable devvm
 
-Status: approved 2026-11-11, from a grilling session with Viktor. Nothing built yet.
+Status: executing. Approved 2026-11-11 from a grilling session with Viktor;
+built the same day by a workflow of eight workstreams with adversarial live
+review (results below, under "Progress").
 
 The devvm (10.0.10.10) should be deletable and rebuildable from code in about
 an hour, losing only scratch. Today a rebuild means the playbook plus a
@@ -152,3 +154,28 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
 - The ClickHouse store's size growth once file-history and remote/ are
   ingested is not measured yet.
 - Which local SSH keys already match the copies in Vault was not checked.
+
+## Progress (2026-11-11)
+
+- All eight workstreams landed: session store, T3 snapshot, credentials and
+  dotfiles, machine drift (playbook `--check` on the live box is a no-op),
+  emo's jobs, HA London backup, the Terraform VM module, the unpushed-work
+  review.
+- Rebuild drill (devvm-drill5, VM 9105): rebuilt from code in 56 minutes.
+  Credentials, repos, dotfiles, `settings.json`, `history.jsonl`, `claude
+  --resume`, T3 threads (wizard 2,342 of 2,342 before the snapshot, emo 7 of 7)
+  and user units came back. It did not pass cleanly, so the devvm-home backup
+  stays. Open MAJOR gaps: terraform is not installed by the playbook; emo's
+  agent-repo clone is owned by root on first boot; emo's shell dotfiles have no
+  kept place; `~/.claude.json` (project trust, user-scope MCP servers) is not
+  restored; MCP server secrets have no kept place; chezmoi applies before the
+  `~/.claude` restore; the dotfiles repo is behind the live home; the
+  MeshCentral sessionKey is still loose. Steps: `docs/runbooks/devvm-drill.md`.
+- intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
+  no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
+- Incident during the run: wizard's admin Vault token reached auth.log and Loki
+  through `sudo VAULT_TOKEN=...` and `--preserve-env` lines that snoopy logs.
+  Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
+  (checked 14 days). The runbooks now read the token inside sudo
+  (`docs/agents/secrets.md`).
+
