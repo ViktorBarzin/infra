@@ -596,9 +596,13 @@
         backup: true
       tags: [snippets, devvm-tf]
 
-    # What stacks/devvm's token may touch: VMs in the pool `devvm`, plus the
-    # storage, network and node rights to create one. The live devvm (102) is
-    # not in the pool, so this token cannot reach it. The same scoping as
+    # What stacks/devvm's token may touch: VMs in the pool `devvm` and the
+    # VMID slots 9100-9109, plus the storage, network and node rights to create
+    # one. The slots are needed as well as the pool because PVE checks
+    # /vms/<id> during create, before the new VM joins the pool (the first
+    # drill failed with "403 Permission check failed (/vms/9102,
+    # VM.Config.Options)"). The live devvm (102) is neither in the pool nor a
+    # slot, so this token cannot reach it. The same scoping as
     # stacks/opnsense (ADR-0038); the token secret is Vault secret/devvm
     # pve_api_token, written by the token task below.
     - name: Read the PVE pools, roles and users
@@ -698,7 +702,8 @@
       ansible.builtin.command: >-
         pveum acl modify {{ item.0 }} --roles TFDevvm
         {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
-      loop: "{{ ['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
+      loop: "{{ (['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
+                 + range(9100, 9110) | map('regex_replace', '^', '/vms/') | list)
                 | product(['terraform-devvm@pve', 'terraform-devvm@pve!tf']) | list }}"
       when: >-
         (pve_acl.stdout | from_json

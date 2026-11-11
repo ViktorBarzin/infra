@@ -11,7 +11,7 @@ back, delete it. This runbook is how.
 |---|---|---|
 | VM definition | `modules/proxmox-devvm` | One VM with the live devvm's shape (32 cores, 32 GiB, 228 GiB scsi0 capped 60/60 MB/s, vmbr1 VLAN 10, guest agent), a static address and the admin's keys on the cloud-init drive. Refuses the live name, VMID 102, 10.0.10.10 and its MAC unless `allow_live_identity = true`. |
 | Stack | `stacks/devvm` | `local.drills` lists the drill VMs. Empty means the stack holds nothing on the host, not even the Ubuntu image. Standalone terragrunt (bpg/proxmox as `proxmoxbpg`, like `stacks/opnsense`). |
-| Token | Vault `secret/devvm` `pve_api_token` | `terraform-devvm@pve!tf`, role `TFDevvm` on `/pool/devvm` plus storage, network and node paths. VM 102 is not in the pool, so the token gets 403 on it. Declared by `playbooks/pve-host.yml --tags devvm-tf`. |
+| Token | Vault `secret/devvm` `pve_api_token` | `terraform-devvm@pve!tf`, role `TFDevvm` on `/pool/devvm`, the VMID slots `/vms/9100`-`/vms/9109`, and storage, network and node paths. PVE checks `/vms/<id>` during create, before the VM joins the pool, so a drill needs a slot. VM 102 is neither, so the token gets 403 on it. Declared by `playbooks/pve-host.yml --tags devvm-tf`. |
 | Snippet | `/var/lib/vz/snippets/devvm_bootstrap.yaml` | Vendor data for every Terraform devvm. Rendered by `pve-host.yml --tags snippets` from `playbooks/files/pve/snippets/devvm_bootstrap.yaml.j2`, embedding `scripts/devvm-bootstrap`. |
 | Handoff | `scripts/devvm-drill-handoff` | Runs on the applier after the VM is up: mints a wrapped token through Vault token role `devvm-bootstrap` and writes it into the guest through the guest agent. |
 | First boot | `scripts/devvm-bootstrap` | In the guest: unwraps the token, clones infra at `infra_ref`, runs `playbooks/devvm.yml` locally, runs `t3-provision-users` once, revokes the token, writes `/var/lib/devvm-bootstrap/status`. |
@@ -29,7 +29,7 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
    2026-11-11 with swap in use. Size the drill to fit:
    `ssh root@192.168.1.127 free -g`. 4 cores, 8 GiB and 80 GiB build fine;
    the playbook scales its memory caps to the box.
-2. Pick a VMID (91xx) and an address below VLAN 10's DHCP pool (.100-.254)
+2. Pick a free VMID in 9100-9109 (other IDs get 403 at create) and an address below VLAN 10's DHCP pool (.100-.254)
    that nothing answers on: `ping -c1 10.0.10.11`. Not 10.0.10.10.
 3. If `scripts/devvm-bootstrap` or the snippet template changed since the last
    run, re-render the snippet (claim `host:pve` first):

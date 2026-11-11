@@ -114,7 +114,11 @@ that repo's `bin/`, ~/bin links to them, and his roster row clones the repo to
 ~/code/vermont-device-configs. intercom-watch stays on the devvm: the B4 has no
 HTTP service (ports 80 and 443 refuse, checked 2026-11-11 without a reboot), so
 a ha-sofia rest_command cannot send it the ISAPI reboot, and ha-sofia was not
-added to the Vermont allowlist. Its script and units are in the same repo.
+added to the Vermont allowlist. Its script and units are in the same repo,
+and so is the x86 Hikvision SDK it needs (vendor/hikvision-sdk/lib; the NAS
+copy the docs named does not exist). On a rebuilt box provisioning step 4b runs
+the repo's devvm-setup.sh as emo, which puts back the ~/bin links, the SDK and
+the watchdog's user units and enables its timer; linger is turned on for him.
 
 ## Also
 - HA London backs up through HA network storage to a new NFS export on the

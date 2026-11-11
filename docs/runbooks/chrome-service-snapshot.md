@@ -28,7 +28,8 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
 - **System-level template units** (NOT `systemd --user`, so no linger needed):
   `playwright-mcp@.service` + `playwright-snapshot-refresh@.{service,timer}`,
   sourced from `infra/scripts/workstation/playwright/`, installed to
-  `/etc/systemd/system/` by `setup-devvm.sh` (§9e). `User=%i`; per-user
+  `/etc/systemd/system/` by `playbooks/devvm.yml` (section 7a5, since
+  2026-11-11; `setup-devvm.sh` §9e installs the same files). `User=%i`; per-user
   `PLAYWRIGHT_PORT` from `/etc/t3-serve/playwright-<user>.env`.
 - **Port allocation**: `roster_engine.py` (`PLAYWRIGHT_BASE_PORT=8931`, sticky)
   — emitted in the derive JSON, written per-user by `t3-provision-users.sh` (§5c).
