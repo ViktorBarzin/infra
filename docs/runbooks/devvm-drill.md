@@ -100,3 +100,37 @@ Only once VM 102 is gone: add an instance with the live identity
 neighbour cache still match, `allow_live_identity = true`) and the full size.
 `stacks/devvm` drills pass `on_boot = false`; the replacement wants the module
 default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
+
+## Drill log
+
+**2026-11-11, first drill** (devvm-drill, VM 9102, then devvm-drill2, VM
+9103). Found and fixed on the way:
+
+- A pool ACL alone gets 403 at create (`/vms/9102, VM.Config.Options`): PVE
+  checks the VM's own path before the VM joins the pool. The token now also
+  holds the VMID slots 9100-9109.
+- The guest agent creates the handoff file 0666; it now lands in the
+  root-only `/run/devvm-bootstrap`.
+- `playbooks/devvm.yml` failed on a blank box five times: three
+  retire/restart tasks for units a new box never had, and two copies into
+  directories the cloud image lacks (`/etc/systemd/resolved.conf.d`,
+  `/etc/promtail`). After the fixes the playbook ran clean on the drill and a
+  second run reported 256 ok, 0 changed.
+- terminal-lobby is installed by its deploy pipeline on the live box; the
+  bootstrap now installs it from the public registry after the playbook. All
+  seven lobby units came up.
+
+Still open after this drill, for the final one:
+
+- wizard's unlocked `~/code/infra` is not cloned on a new box, so the hourly
+  `t3-provision-users.service` fails ("roster/engine not under
+  /home/wizard/code/infra/scripts/workstation"). The one-off run from the
+  bootstrap clone works.
+- `claude-sessions-ingest.service` fails with 203/EXEC: the program it runs is
+  not installed by the playbook on a new box.
+- Provisioning runs without an admin Vault token, so per-user Vault tokens,
+  Claude-auth tokens, memory keys, browser-bridge tokens and the credential
+  restore from `secret/workstation/<user>` are skipped with warnings. The
+  bootstrap policy covers only the playbook's reads; the final drill needs
+  either a wider policy or an admin re-running provisioning after
+  `vault login`.

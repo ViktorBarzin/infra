@@ -50,6 +50,7 @@ esac'
   stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
   stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN cwd=$PWD" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
   stub install 'cp "${@: -2:1}" "${@: -1}" && chmod +x "${@: -1}"'
+  stub apt-get 'exit 0'
 }
 
 run_bootstrap() {
@@ -77,6 +78,8 @@ has "clones the handed-over ref" "$LOG" 'git clone --depth 1 --branch wizard/dri
 has "playbook runs locally against this box" "$LOG" 'ansible-playbook -i localhost, -c local -e devvm_target=localhost .*playbooks/devvm\.yml'
 has "playbook sees the unwrapped token" "$LOG.env" 'playbook VAULT_TOKEN=hvs\.inner'
 has "provisioner runs from the bootstrap clone" "$LOG" "provisioner $SB/clone/scripts/workstation"
+has "installs the lobby packages after the playbook" "$LOG" 'apt-get install -y -qq terminal-lobby ttyd-devvm'
+if [[ "$(grep -nE '^ansible-playbook' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "lobby install comes after the playbook"; fi
 has "token revoked at the end" "$LOG" 'vault token revoke -self'
 [[ -e "$SB/handoff.json" ]] && bad "handoff file removed after reading" || ok
 
