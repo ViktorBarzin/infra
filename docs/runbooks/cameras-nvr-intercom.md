@@ -542,14 +542,30 @@ subnet router. Заслужава поправка в infra репото.
 
 Ръчните инструменти на emo за устройствата в комплекса са в `bin/` на частното
 хранилище `ebarzin/vermont-device-configs`, клонирано на devvm в
-`~/code/vermont-device-configs` (старият път `~/vermont-device-configs` е връзка
-към него). `~/bin/<инструмент>` на devvm са връзки към същите файлове, затова
-пътищата `~/bin/...` в този документ продължават да работят. Причината е планът
-devvm да може да се изтрие и вдигне от код
-(`docs/plans/2026-11-11-disposable-devvm.md`): при ново вдигане provisioning-ът
-клонира хранилището (ред `repos` на emo в `scripts/workstation/roster.yaml`), а
-`~/bin` вече не е източник. Hikvision SDK-то (`~/hikvision-sdk/lib`) не е в
-хранилището; копието му е на NAS-а в `Claude shared/`.
+`~/code/vermont-device-configs`. `~/bin/<инструмент>` на devvm са връзки към
+същите файлове, затова пътищата `~/bin/...` в този документ работят. Причината е
+планът devvm да може да се изтрие и вдигне от код
+(`docs/plans/2026-11-11-disposable-devvm.md`), а `~/bin` вече не е източник.
+Hikvision SDK V6.1.9.48 за x86 е в `vendor/hikvision-sdk/lib` на хранилището
+(26M, копие байт по байт на `~/hikvision-sdk/lib`). Копие на NAS-а в
+`Claude shared/` няма: проверено на 11.11.2026.
+
+**Ново вдигане на devvm.** Нищо не се прави на ръка:
+
+1. provisioning-ът (`scripts/t3-provision-users.sh`, всеки час) връща от Vault
+   SSH ключовете и `~/.ssh/config` на emo (`secret/workstation/emo/files`, виж
+   `docs/runbooks/devvm-credentials.md`) и клонира хранилището (ред `repos` на emo
+   в `scripts/workstation/roster.yaml`);
+2. стъпка 4b пуска като emo `~/code/vermont-device-configs/devvm-setup.sh`, който
+   прави връзките `~/bin/<инструмент>`, копира SDK-то в `~/hikvision-sdk/lib`,
+   слага `intercom-watch.service` и `.timer` в `~/.config/systemd/user/` и
+   включва таймера при първото слагане; provisioning-ът включва и linger за emo,
+   за да тръгва таймерът без вход.
+
+Проверка след вдигането, като emo: `systemctl --user list-timers intercom-watch.timer`
+показва следващо пускане, а след 5 минути `~/.local/state/intercom/watch.log`
+има ред `ONLINE`. Старият път `~/vermont-device-configs` е връзка само на
+сегашния devvm; на нова машина пътят е `~/code/vermont-device-configs`.
 
 Спрени на 11.11.2026 и архивирани в `retired/2026-11-11/` на същото хранилище:
 `panel115-watch`, `camera-stream-watch`, `led-report`, `vermont-mon`, копие на
@@ -605,7 +621,8 @@ SDK, да изброява HTTP на порт 80. `/ISAPI/System/capabilities` �
 `methodNotAllowed`. ISAPI се приема само пренесено през SDK на порт 8000, а SDK-то
 е само за x86, тоест HTTP заявка от HA не стига до устройството. Затова ha-sofia
 не е добавен в списъка с източници за `10.77.1.0/24`. Скриптовете на пазача са в
-`bin/` на `ebarzin/vermont-device-configs`, unit файловете в `systemd/` там.
+`bin/` на `ebarzin/vermont-device-configs`, unit файловете в `systemd/` там; на
+нова машина ги слага `devvm-setup.sh` (виж „Инструментите на emo“ по-горе).
 
 Всичко е на devvm нарочно: рестартът минава през Hikvision SDK, който е само за
 x86. Ако devvm е долу, няма лечение независимо къде се взима решението — старото
@@ -1544,7 +1561,7 @@ H.265 и показват грешка за неподдържан поток. �
 
 След всяка редакция на канал в NVR-а проверявайте кодирането на канала в самия
 NVR, не само в камерата. Сравнението със снимката е най-бързият начин:
-`~/vermont-device-configs/192.168.1.150/Streaming_channels.xml`.
+`~/code/vermont-device-configs/192.168.1.150/Streaming_channels.xml`.
 
 Мониторите на съседите, прегледани само с четене на 23.10.2026: само `.103`
 (апартамент А3 според картата на инвентара) има добавени камери на комплекса:

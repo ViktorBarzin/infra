@@ -160,7 +160,7 @@ forbidden shared token, and it never crosses OS users.
    the file already carries the token.
 
    **Interactive shells** load the token too, via `/etc/profile.d/25-claude-oauth-token.sh`
-   (installed by `setup-devvm.sh`). Note: Debian's `/etc/zsh/zprofile` does **not**
+   (installed by `playbooks/devvm.yml` since 2026-11-11, `setup-devvm.sh` before). Note: Debian's `/etc/zsh/zprofile` does **not**
    source `/etc/profile`, so that snippet is also sourced from `/etc/zsh/zshenv`
    (read on every zsh invocation) — otherwise a plain interactive `claude` in a zsh
    terminal would miss the token and print `Not logged in · Please run /login` even
