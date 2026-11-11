@@ -3649,9 +3649,10 @@
             enabled: false
           failed_when: false
 
+        # tailscale-archive-keyring came in with it and owns the .gpg below.
         - name: Remove the tailscale package
           ansible.builtin.apt:
-            name: tailscale
+            name: [tailscale, tailscale-archive-keyring]
             state: absent
             purge: true
             update_cache: false
