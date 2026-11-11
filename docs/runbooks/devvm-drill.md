@@ -137,7 +137,9 @@ Still open after this drill, for the final one:
 - wizard's unlocked `~/code/infra` is not cloned on a new box, so the hourly
   `t3-provision-users.service` fails ("roster/engine not under
   /home/wizard/code/infra/scripts/workstation"). The one-off run from the
-  bootstrap clone works.
+  bootstrap clone works. Fixed after this drill: that run now clones it,
+  locked, from Forgejo (`install_admin_infra_clone`); unlocking it is in
+  `devvm-credentials.md`.
 - `claude-sessions-ingest.service` fails with 203/EXEC: the program it runs is
   not installed by the playbook on a new box.
 - Provisioning runs without an admin Vault token, so per-user Vault tokens,

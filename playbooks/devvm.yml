@@ -29,8 +29,10 @@
 #   1. Per-user provisioning: accounts, groups, clones, kubeconfigs. That is
 #      t3-provision-users.sh from roster.yaml (infra#88), which this playbook
 #      seeds and enables but does not replace.
-#   2. The Vault-sourced staging in setup-devvm.sh section 8: /opt/codex-shared
-#      and the per-person chrome hub configs. Root here has no Vault token.
+#   2. The Vault-sourced staging in setup-devvm.sh section 8: the shared Codex
+#      login and the per-person chrome hub configs. Root here has no Vault
+#      token; t3-provision-users stages both on a run that holds an admin one
+#      (stage_shared_auth). The group, directory and wrapper are declared below.
 #   3. The MeshCentral agent (/usr/local/mesh_services). Its installer is
 #      issued per device group by the MeshCentral server; this playbook only
 #      tunes the installed agent.
@@ -1639,7 +1641,8 @@
     # adb for a session and stops it afterwards; milka-adb finds and connects the
     # phone. Viktor and emo both use them. Each user needs the key her phone
     # trusts at ~/.android/milka-adbkey (a copy of wizard's adbkey), which is a
-    # secret and is not managed here.
+    # secret: it is stored in Vault and restored by t3-provision-users
+    # (docs/runbooks/devvm-credentials.md), not managed here.
     # Design: docs/plans/2026-10-09-milka-remote-phone-help-design.md
     - name: Install the Milka phone helpers
       ansible.builtin.copy:
@@ -1922,6 +1925,35 @@
       ansible.builtin.copy:
         src: files/devvm/codex-update
         dest: /usr/local/bin/codex-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    # The shared ChatGPT login (adopted 2026-11-11, disposable-devvm plan). Every
+    # roster user's ~/.codex/auth.json is a link to /opt/codex-shared/auth.json,
+    # which the wrapper below sets up on each run; npm's codex is /usr/bin/codex,
+    # and /usr/local/bin comes first on PATH. Until now the wrapper, the group and
+    # the directory were hand-made, so a rebuilt box had none of them. The login
+    # itself is a secret: t3-provision-users writes it from Vault on a run with an
+    # admin token (stage_shared_auth), and codex-auth-backup keeps Vault current.
+    # Membership comes from the roster (TIER_GROUPS in roster_engine.py).
+    - name: Create the shared Codex login group
+      ansible.builtin.group:
+        name: codex-shared
+        state: present
+
+    - name: Create the shared Codex login directory
+      ansible.builtin.file:
+        path: /opt/codex-shared
+        state: directory
+        owner: root
+        group: codex-shared
+        mode: "2770"
+
+    - name: Install the codex wrapper that links each user to the shared login
+      ansible.builtin.copy:
+        src: files/devvm/codex-wrapper
+        dest: /usr/local/bin/codex
         mode: "0755"
         owner: root
         group: root
@@ -2307,10 +2339,10 @@
     # Until now only setup-devvm.sh section 9 installed these, by hand, so a
     # machine built from this playbook had no roster provisioner, no T3 timers
     # and no tmux-persist units. Every file below was byte-identical to its
-    # repo copy when adopted, so on the live box this is a no-op. Still in
-    # setup-devvm.sh and not here: the Vault-sourced staging in its section 8
-    # (/opt/codex-shared, the chrome hub configs), which needs an admin token
-    # that root on this box does not hold.
+    # repo copy when adopted, so on the live box this is a no-op. Not here: the
+    # Vault-sourced staging of setup-devvm.sh section 8 (the shared Codex login,
+    # the chrome hub configs), which needs an admin token that root on this box
+    # does not hold; t3-provision-users does it on a run that has one.
     - name: Install the t3 helper scripts
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/{{ item.src }}"

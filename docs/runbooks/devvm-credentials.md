@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `install_vault_token_renew`, `install_user_dotfiles`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`)
 
 ## What is kept where
 
@@ -19,9 +19,21 @@ live set):
 
 | User | Files | What they are |
 |---|---|---|
-| wizard | 37 | SSH keys and config (two as refs to `secret/viktor` and `secret/opnsense`), both GPG keys with keyring, trust DB, agent config and revocation certificates, `.gitconfig`, `.git-credentials`, gh, gcloud, docker, the OCI CLI config and API key, the admin `.kube/config`, the zsh secrets file (mode 0600 since 2026-11-11; it was 0664), `~/.venvs/claude/secrets.env`, the lobby-local env file, chezmoi's config |
-| emo | 14 | SSH keys, config and authorized_keys, `.gitconfig`, `.git-credentials`, three service token files under `.config/` |
+| wizard | 44 | SSH keys and config (two as refs to `secret/viktor` and `secret/opnsense`), both GPG keys with keyring, trust DB, agent config and revocation certificates, `.gitconfig`, `.git-credentials`, gh, gcloud, docker, the OCI CLI config and API key, the admin `.kube/config`, the zsh secrets file (mode 0600 since 2026-11-11; it was 0664), `~/.venvs/claude/secrets.env`, the lobby-local env file, chezmoi's config, the ADB key `~/.android/adbkey` with its `.pub`, the iOS rig's isideload signing key and anisette state under `~/.local/state/ios-rig/isideload/`, `~/.config/tripit/config.json`, and the SOPS age key (a ref to `secret/viktor#sops_age_key_devvm`) |
+| emo | 19 | SSH keys, config and authorized_keys, `.gitconfig`, `.git-credentials`, three service token files under `.config/`, the Bambu printer config beside its token, his own ADB key and `milka-adbkey`, each with its `.pub` |
 | ancamilea | 7 | SSH key and authorized_keys, `.gitconfig`, `.git-credentials`, gh |
+
+Notes on single entries:
+
+- emo's `~/.android/milka-adbkey` and wizard's `~/.android/adbkey` are the
+  same key, the one Milka's phone trusts (the Milka phone helpers in
+  `playbooks/devvm.yml`). Without it the phone has to be paired again in
+  person. It is stored as two entries, one per home.
+- The isideload state is what Apple trusts after one 2FA code
+  (`docs/runbooks/ios-test-rig.md`); without it the next signing asks for a
+  code again.
+- The SOPS key is restored as the bare key line. The live file also has
+  `# created` and `# public key` comment lines, which sops does not need.
 
 `.gitconfig` is stored because it is what says `credential.helper=store`:
 without it the restored `.git-credentials` is never read, a user's private
@@ -53,12 +65,20 @@ Not stored here, because something else already brings them back:
 - wizard's `~/.ssh/authorized_keys`: the playbook writes it from `secret/devvm-authorized-keys`.
 - The Bitwarden CLI login in `~/.config/Bitwarden CLI/data.json`: its server, account and API key are the `vaultwarden_*` keys in `secret/workstation/claude-users/wizard`, which `homelab vault` logs in with on its own. The 1.9 MB file is the CLI's encrypted cache. emo's copy holds no account.
 - rclone: no config exists on the box and the binary is not installed.
+- The shared ChatGPT login for codex, `/opt/codex-shared/auth.json`: every
+  user's `~/.codex/auth.json` is a link to it, made by the `codex` wrapper.
+  `codex-auth-backup` copies it to `secret/workstation`
+  `codex_shared_auth_json` whenever it changes, so the Vault copy follows the
+  rotating refresh token. `stage_shared_auth` (step 3e) writes it back when
+  it is absent, on a run with an admin token; the wrapper, the
+  `codex-shared` group and the directory are in `playbooks/devvm.yml`, and
+  the roster puts admins and power users in the group.
+- Each person's chrome hub config, `/etc/t3-serve/chrome-hub-<user>.json`:
+  `stage_shared_auth` runs `stage-chrome-hubs.sh` when one is missing, and
+  `install_chrome_hub` copies it to `~/.config/chrome-hub/hub.json`.
 
 Not brought back at all, by choice:
 
-- Codex's `~/.codex/auth.json` (all three users). Its OAuth refresh token
-  rotates, so a stored copy goes stale; after a rebuild each user runs
-  `codex login` once.
 - wizard's other agent-tool tokens: `~/.pi/agent/auth.json`,
   `~/.mcporter/credentials.json`, `~/.agent-conductor` grid-token,
   `~/.config/orca/*` and `~/.config/homelab/agent-api-token`. Capture any
@@ -71,7 +91,7 @@ against Vault first and then deleted:
 |---|---|
 | `~/code/keys.txt` (61 `sk-` API keys, none already in Vault) | `secret/workstation/wizard/loose/keys-txt`, field `content_b64` |
 | `~/code/infra-git-crypt-key` (the infra repo's git-crypt key; until then it was in no Vault path, only there, in the clone's `.git` and in three ConfigMaps: `woodpecker/git-crypt-key` and the `git_crypt_key` ones in `stacks/claude-agent-service` and `stacks/openclaw`) | `secret/infra`, field `git_crypt_key_b64` |
-| `~/meshcentral-data/*-private.key` (5 keys, byte-identical to the live meshcentral pod's) | `secret/meshcentral`, one field per key |
+| `~/meshcentral-data/*-private.key` (5 keys, byte-identical to the live meshcentral pod's) | `secret/workstation/wizard/loose/meshcentral`, one field per key. First stored at `secret/meshcentral`, which every `secret/data/*` reader above could read, and moved here the same day; the agent-server key would let its holder pose as the server to agents that run as root. Nothing reads it: the pod keeps its own copy on its volume. |
 | `~/code/tmp_id` (a single newline, no secret) | deleted |
 
 The nightly devvm-home backup on the Proxmox host still holds the deleted
@@ -80,8 +100,10 @@ copies until its 14 generations roll over.
 ## Rebuild: put a user's credentials back
 
 The hourly provisioner run has no Vault token, so it only logs
-`credential restore skipped`. On a new box, once the admin account and the
-infra clone exist (playbook), run it once with an admin token:
+`credential restore skipped`. On a new box the bootstrap's own provisioner run
+(`scripts/devvm-bootstrap`, step 5) clones the admin's `~/code/infra` from
+Forgejo (`install_admin_infra_clone`), which is what the hourly run and the
+command below read. After that, run it once with an admin token:
 
 ```bash
 export VAULT_ADDR=https://vault.viktorbarzin.me
@@ -96,7 +118,8 @@ that to Loki for 26 weeks. So root reads the token from the admin's
 
 Order inside that run: credentials for every existing account (step 3d: the
 admin kubeconfig is what the other users' kubeconfigs copy the cluster
-address from), then per account: dotfiles, clones, kubeconfigs, and
+address from), the shared Codex login and chrome hub configs (step 3e), then
+per account: dotfiles, the admin's infra clone, clones, kubeconfigs, and
 `vault-token-renew` with a first `~/.vault-token`, and later the agent-tool
 keys in `settings.json`. A file or key that is already there is never
 replaced, so a second run writes only what has gone missing.
@@ -121,9 +144,10 @@ k=$(mktemp); vault kv get -field=git_crypt_key_b64 secret/infra | base64 -d > "$
 
 A roster row with `dotfiles: owner/name` (wizard: `viktor/dot_files`) gets
 `chezmoi init --apply --force --no-tty --keep-going --exclude=encrypted`
-from that Forgejo repo, once, when `~/.local/share/chezmoi` does not exist;
-chezmoi itself is installed into `~/.local/bin` at `CHEZMOI_VERSION` when
-missing. An existing source is never touched, because the live home has
+from that Forgejo repo, once, when `~/.local/share/chezmoi` does not exist
+or is empty (a failed first init leaves it empty, and the next hourly run
+retries); chezmoi itself is installed into `~/.local/bin` at
+`CHEZMOI_VERSION` when missing. An existing source is never touched, because the live home has
 drifted from the repo and a whole-tree apply would overwrite work there.
 
 The two GPG-encrypted entries in the dotfiles (`.kube/config` and
@@ -164,7 +188,11 @@ bash $C list <user>                                                # paths and m
 
 `.git-credentials` and `.docker/config.json` hold copies of tokens that also
 live in `secret/viktor` (`github_pat`) and other paths, so a rotation of
-those needs a `capture` of the file too.
+those needs a `capture` of the file too. So does wizard's `.kube/config`: its
+`kubernetes-admin` client certificate expires on 2027-04-17, and a kubeadm
+certificate renewal or a re-issue leaves the stored copy with a dead
+certificate that a rebuild would restore. After either, run
+`bash $C capture wizard .kube/config`.
 
 ## Check a restore without touching a home
 
@@ -175,11 +203,12 @@ bash $C restore <user> --into "$d"
 rm -rf "$d"                                             # it holds the secrets
 ```
 
-On 2026-11-11 this restored 33, 13 and 6 files for wizard, emo and
-ancamilea, each with the live home's names and modes and byte-identical
-content; the restored GPG home listed both secret keys, the SSH keys had
-the live fingerprints, and `kubectl get nodes` worked with the restored
-kubeconfig.
+On 2026-11-11 at 14:40 this restored 44, 19 and 7 files for wizard, emo and
+ancamilea, each with the live home's names and modes. Contents were
+byte-identical except wizard's SOPS key, which comes back without its two
+comment lines (above). An earlier run that day had shown the restored GPG
+home with both secret keys, the SSH keys with the live fingerprints, and
+`kubectl get nodes` working with the restored kubeconfig.
 
 ## The main checkout no longer follows master
 
@@ -195,7 +224,9 @@ nothing from it.
 ## Open questions
 
 - ancamilea is not in `roster.yaml` (commented out 2026-08-17), so the
-  provisioner restores nothing for her; her files are stored and
-  `workstation-creds restore ancamilea` puts them back by hand. The plan
-  puts all three users in scope; whether an offboarded user's rebuild path
-  is that manual restore is for Viktor to confirm.
+  provisioner restores nothing for her and installs no `vault-token-renew`
+  (that covers roster users that `vtr_resolve_config` has a case for, today
+  wizard and emo). Her files are stored and `workstation-creds restore
+  ancamilea` puts them back by hand. The plan puts all three users in scope;
+  whether an offboarded user's rebuild path is that manual restore is for
+  Viktor to confirm.
