@@ -54,6 +54,9 @@ export VAULT_ADDR=https://vault.viktorbarzin.me VAULT_TOKEN=<an admin token>
 sudo --preserve-env=VAULT_TOKEN,VAULT_ADDR t3-provision-users
 ```
 
+The provisioner keeps that admin token to its own vault calls; nothing it
+runs as a user sees it (devvm-credentials, "Rebuild").
+
 The script and units carry no secret; only the token itself is sensitive and
 stays out of git. To onboard a user, add the `case` arm (+ a test case) first.
 

@@ -11,6 +11,8 @@
 #
 # DRY_RUN=1 prints actions without mutating. WORKSTATION_DIR overrides the roster/engine location.
 set -euo pipefail
+# The admin Vault token, if any, is taken out of the environment at the top
+# (take_admin_vault_token, below the helpers).
 
 WORKSTATION_DIR="${WORKSTATION_DIR:-/home/wizard/code/infra/scripts/workstation}"
 ENGINE="$WORKSTATION_DIR/roster_engine.py"
@@ -63,7 +65,23 @@ PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
 CHEZMOI_VERSION="${CHEZMOI_VERSION:-v2.69.3}"
 
 log() { echo "[t3-provision] $*"; }
+# A rebuild runs this script with an admin VAULT_TOKEN
+# (docs/runbooks/devvm-credentials.md). runuser hands the caller's environment
+# to the user's command, and a user can read the environment of any process
+# running as them, so the token must not stay in this script's environment:
+# every `runuser -u <user>` below would carry it into code that user controls
+# (their ~/.profile, git config, claude). take_admin_vault_token moves it into
+# a variable that is never exported, before anything runs as a user, and
+# vault_admin hands it to the vault CLI alone, which runs as root.
+take_admin_vault_token() {
+  ADMIN_VAULT_TOKEN="${VAULT_TOKEN:-}"
+  unset VAULT_TOKEN
+}
+vault_admin() {
+  VAULT_TOKEN="$ADMIN_VAULT_TOKEN" vault "$@"
+}
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
+take_admin_vault_token
 
 # ---- writing inside a user's home -------------------------------------------
 # Root never creates, writes, chowns or chmods a path inside a user's home. The
@@ -496,8 +514,8 @@ install_claude_auth_sync() {
   if [[ ! -s "$token_file" ]]; then
     if [[ "$DRY_RUN" == 1 ]]; then
       echo "[dry-run] mint scoped Claude-auth Vault token -> $user"
-    elif vault token lookup >/dev/null 2>&1 && \
-      token="$(vault token create -orphan -period=768h -policy="$policy" \
+    elif vault_admin token lookup >/dev/null 2>&1 && \
+      token="$(vault_admin token create -orphan -period=768h -policy="$policy" \
         -display-name="devvm-claude-auth-$user" -field=token 2>/dev/null)"; then
       if mkdir_as "$user" 0700 "$cfg" && write_as "$user" 0600 "$token_file" <<<"$token"; then
         log "minted isolated Claude-auth Vault token -> $user"
@@ -528,13 +546,13 @@ restore_user_credentials() {  # restore_user_credentials USER
   [[ -s "$CREDS_SRC" ]] || { log "WARN: $CREDS_SRC missing -> credential restore skipped for $user"; return 0; }
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] restore Vault-held credential files -> $user"; return 0; fi
   export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
-  if ! vault token lookup >/dev/null 2>&1; then
+  if ! vault_admin token lookup >/dev/null 2>&1; then
     [[ -n "${CREDS_NO_VAULT_LOGGED:-}" ]] || log "credential restore skipped: no admin Vault token (expected on the hourly run)"
     CREDS_NO_VAULT_LOGGED=1
     return 0
   fi
   local out
-  if out="$(bash "$CREDS_SRC" restore "$user" 2>&1)"; then
+  if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" bash "$CREDS_SRC" restore "$user" 2>&1)"; then
     log "$(tail -n 1 <<<"$out")"
   else
     log "WARN: credential restore failed for $user: $(tail -n 1 <<<"$out")"
@@ -581,8 +599,8 @@ install_vault_token_renew() {  # install_vault_token_renew USER
   [[ -s "$home/.vault-token" ]] && return 0
   for p in $policies; do flags+=("-policy=$p"); done
   export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
-  if vault token lookup >/dev/null 2>&1 && \
-     token="$(vault token create -orphan -period=768h "${flags[@]}" -display-name="devvm-$user" -field=token 2>/dev/null)" && \
+  if vault_admin token lookup >/dev/null 2>&1 && \
+     token="$(vault_admin token create -orphan -period=768h "${flags[@]}" -display-name="devvm-$user" -field=token 2>/dev/null)" && \
      [[ -n "$token" ]] && write_as "$user" 0600 "$home/.vault-token" <<<"$token"; then
     log "minted periodic Vault token -> $user:~/.vault-token"
   else
@@ -970,12 +988,12 @@ install_browser_bridge_token() {
 
   local token=""
   # 1) A token this box (or its predecessor) already minted for this user.
-  token="$(vault kv get -field="$user" secret/browser-bridge/tokens 2>/dev/null || true)"
+  token="$(vault_admin kv get -field="$user" secret/browser-bridge/tokens 2>/dev/null || true)"
 
   # 2) Otherwise mint one, and keep the copy.
   if [[ -z "$token" ]]; then
     local provision_token
-    provision_token="$(vault kv get -field=provision_token secret/browser-bridge 2>/dev/null || true)"
+    provision_token="$(vault_admin kv get -field=provision_token secret/browser-bridge 2>/dev/null || true)"
     [[ -n "$provision_token" ]] || {
       log "WARN: secret/browser-bridge has no provision_token -> no browser-bridge token for $user"; return 0; }
 
@@ -991,8 +1009,8 @@ install_browser_bridge_token() {
       return 0; }
 
     # patch, never put: the path is one secret holding every user's token.
-    vault kv patch "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
-      || vault kv put "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+    vault_admin kv patch "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+      || vault_admin kv put "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
       || log "WARN: minted a browser-bridge token for $user but could not store it in Vault"
   fi
 
@@ -1004,6 +1022,55 @@ install_browser_bridge_token() {
     log "WARN: could not write the browser-bridge CLI token for $user"
   fi
   return 0  # best-effort tail must never return non-zero under set -euo pipefail
+}
+
+# The agent-tool keys a user's ~/.claude/settings.json carries in env:
+# MEMORY_API_KEY and CLAUDE_MEMORY_API_KEY for homelab memory, PAGES_API_KEY
+# for page publishing. Each is that user's entry in the map its service checks,
+# secret/claude-memory api_keys and secret/pages-publish api_keys, so a rebuilt
+# box takes them from there: nothing else brings them back, since chezmoi
+# leaves settings.json alone on the devvm and the session store does not keep
+# env values. Fills only keys that are absent, never replacing one, and only
+# when this run holds an admin Vault token. The values reach the user's python
+# on stdin, never in argv or the log.
+install_agent_api_keys() {  # install_agent_api_keys USER
+  local user="$1" home settings mem pages want added
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home/.claude" ]] || return 0
+  settings="$home/.claude/settings.json"
+  if [[ -f "$settings" ]] && jq -e '.env // {} | has("MEMORY_API_KEY") and has("CLAUDE_MEMORY_API_KEY") and has("PAGES_API_KEY")' \
+       "$settings" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] agent API keys from Vault -> $user"; return 0; fi
+  vault_admin token lookup >/dev/null 2>&1 || return 0
+  mem="$(vault_admin kv get -field=api_keys secret/claude-memory 2>/dev/null | jq -r --arg u "$user" '.[$u] // empty' 2>/dev/null)" || mem=""
+  pages="$(vault_admin kv get -field=api_keys secret/pages-publish 2>/dev/null | jq -r --arg u "$user" '.[$u] // empty' 2>/dev/null)" || pages=""
+  want="$(jq -cn --arg m "$mem" --arg p "$pages" --arg url https://claude-memory.viktorbarzin.me \
+    '(if $m != "" then {MEMORY_API_KEY: $m, CLAUDE_MEMORY_API_KEY: $m, MEMORY_API_URL: $url, CLAUDE_MEMORY_API_URL: $url} else {} end)
+     + (if $p != "" then {PAGES_API_KEY: $p} else {} end)')"
+  [[ "$want" != "{}" ]] || return 0
+  added="$(printf '%s' "$want" | runuser -u "$user" -- sh -c 'umask 077 && exec python3 -c "$1" "$2"' _ '
+import json, os, sys
+path, want = sys.argv[1], json.load(sys.stdin)
+data = {}
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path) as fh:
+        data = json.load(fh)
+env = data.setdefault("env", {})
+added = sorted(k for k in want if k not in env)
+if added:
+    env.update({k: want[k] for k in added})
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+print(" ".join(added))
+' "$settings" 2>/dev/null)" || { log "WARN: could not write the agent API keys for $user"; return 0; }
+  [[ -n "$added" ]] && log "agent API keys from Vault -> $user ($added)"
+  return 0
 }
 
 install_memory() {
@@ -1035,6 +1102,9 @@ install_memory() {
     log "WARN: memory hook wiring failed for $user (retries next reconcile)"
   fi
   [[ -f "$settings" ]] && runuser -u "$user" -- chmod 600 "$settings" || true
+
+  # (2a) on a rebuilt box, the user's keys come back from Vault (admin token only).
+  install_agent_api_keys "$user"
 
   # (2b) reuse the user's existing key; warn (do NOT mint — needs an admin vault write) if absent.
   if [[ -f "$settings" ]] && ! grep -q 'MEMORY_API_KEY' "$settings"; then
@@ -1439,20 +1509,6 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
-    # The rest of what this script deploys, so nothing it installs depends on
-    # the admin's working tree being current. That tree was kept current by an
-    # hourly `git pull` in wizard's crontab until 2026-11-11, when the
-    # disposable-devvm plan dropped it.
-    committed scripts/workstation/workstation-creds.sh "$STATEDIR/workstation-creds.committed.sh" || true
-    committed scripts/vault-token-renew.sh "$STATEDIR/vault-token-renew.committed.sh" || true
-    committed scripts/vault-token-renew.service "$STATEDIR/vault-token-renew.committed.service" || true
-    committed scripts/vault-token-renew.timer "$STATEDIR/vault-token-renew.committed.timer" || true
-    committed scripts/tmux-persist.sh "$STATEDIR/tmux-persist.committed.sh" || true
-    committed scripts/workstation/skel/start-claude.sh "$STATEDIR/start-claude.committed.sh" || true
-    [[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
-    for f in metadata.json config.yaml gitignore README.md; do
-      committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
-    done
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
        python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
          "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
@@ -1465,10 +1521,25 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
     log "WARN: git fetch failed — running from the working tree at $WORKSTATION_DIR"
   fi
 fi
-# cli/ is extracted on both passes: the pass that self-deploys a new copy of
-# this script skips the fetch above, and that copy would otherwise build from
-# the working tree until the next hourly run. origin/master is whatever the
-# last fetch brought, which is committed content either way.
+# The rest of what this script deploys comes from origin/master too, so
+# nothing it installs depends on the admin's working tree being current. That
+# tree was kept current by an hourly `git pull` in wizard's crontab until
+# 2026-11-11, when the disposable-devvm plan dropped it. Like cli/ below, these
+# are extracted on both passes: the pass that self-deploys a new copy of this
+# script skips the fetch above, and a file only the new copy knows about would
+# otherwise come from the working tree until the next hourly run.
+# origin/master is whatever the last fetch brought, which is committed content
+# either way.
+committed scripts/workstation/workstation-creds.sh "$STATEDIR/workstation-creds.committed.sh" || true
+committed scripts/vault-token-renew.sh "$STATEDIR/vault-token-renew.committed.sh" || true
+committed scripts/vault-token-renew.service "$STATEDIR/vault-token-renew.committed.service" || true
+committed scripts/vault-token-renew.timer "$STATEDIR/vault-token-renew.committed.timer" || true
+committed scripts/tmux-persist.sh "$STATEDIR/tmux-persist.committed.sh" || true
+committed scripts/workstation/skel/start-claude.sh "$STATEDIR/start-claude.committed.sh" || true
+[[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
+for f in metadata.json config.yaml gitignore README.md; do
+  committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
+done
 if [[ "$DRY_RUN" != 1 ]]; then
   committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"
   committed_tree scripts/workstation/claude-hooks "$STATEDIR/claude-hooks.committed" \
@@ -1525,6 +1596,9 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SE
   elif bash -n "$SELF_SRC" 2>/dev/null; then
     install -m 0755 "$SELF_SRC" "$SELF_DST"
     log "self-deployed $SELF_DST from repo (changed) — re-exec"
+    # The fresh copy takes the admin token again at its top. Exported here,
+    # into root's own exec, rather than as an env argument, which ps shows.
+    [[ -z "$ADMIN_VAULT_TOKEN" ]] || export VAULT_TOKEN="$ADMIN_VAULT_TOKEN"
     exec env T3_PROVISION_SELF_DEPLOYED=1 "$SELF_DST" "$@"
   else
     log "WARN: repo t3-provision-users.sh fails 'bash -n' — keeping deployed copy"
@@ -1644,7 +1718,7 @@ trap 'rm -f "$ports_file" "$pw_ports_file" "${desired_file:-}"' EXIT
 # 2) tier validation vs live k8s_users (best-effort; aborts only on a real conflict)
 if command -v vault >/dev/null; then
   export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
-  if k8s_raw="$(vault kv get -field=k8s_users secret/platform 2>/dev/null)"; then
+  if k8s_raw="$(vault_admin kv get -field=k8s_users secret/platform 2>/dev/null)"; then
     k8s_file="$(mktemp)"; echo "$k8s_raw" | jq -c 'map_values(.role)' > "$k8s_file"
     if ! python3 "$ENGINE" validate --roster "$ROSTER" --k8s-users-json "$k8s_file"; then
       rm -f "$k8s_file"; echo "[t3-provision] ABORT: roster tier conflicts with k8s_users" >&2; exit 1
