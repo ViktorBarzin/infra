@@ -122,6 +122,9 @@ class User:
     # provisioner installs as ~/.agents/AGENTS.md. Each user's file is in a
     # private repo of their own, so one user cannot read another's.
     agents_repo: str | None = None
+    # Forgejo `owner/name` of the user's chezmoi source, which the provisioner
+    # applies once on a new box (`chezmoi init --apply`).
+    dotfiles: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,7 @@ class Account:
     # caller constructing Account positionally keeps working.
     authentik_user: str = ""
     agents_repo: str | None = None
+    dotfiles: str | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +224,11 @@ def _parse_user(os_user: str, spec: dict) -> User:
             f"user {os_user!r}: agents_repo must be a Forgejo owner/name, "
             f"got {agents_repo!r}"
         )
+    dotfiles = spec.get("dotfiles")
+    if dotfiles is not None and not _is_owned_repo(dotfiles):
+        raise RosterError(
+            f"user {os_user!r}: dotfiles must be a Forgejo owner/name, got {dotfiles!r}"
+        )
     claude_auth = spec.get("claude_auth", True)
     if not isinstance(claude_auth, bool):
         raise RosterError(
@@ -263,6 +272,7 @@ def _parse_user(os_user: str, spec: dict) -> User:
         t3_port,
         t3_host,
         agents_repo,
+        dotfiles,
     )
 
 
@@ -500,6 +510,7 @@ def derive_desired_state(
             parked=u.parked,
             authentik_user=u.authentik_user,
             agents_repo=u.agents_repo,
+            dotfiles=u.dotfiles,
         )
         for u in roster.users.values()
     }
@@ -751,6 +762,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "parked": a.parked,
                 "authentik_user": a.authentik_user,
                 "agents_repo": a.agents_repo,
+                "dotfiles": a.dotfiles,
             }
             for name, a in ds.accounts.items()
         },

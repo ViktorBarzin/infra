@@ -58,6 +58,9 @@ ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 # terminal-lobby's extension for pi, which the terminal-lobby package installs.
 # Step 5d-quinquies links it into every roster user's ~/.pi/agent/extensions.
 PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
+# chezmoi release install_user_dotfiles installs when a user with `dotfiles`
+# has none; the one the live devvm runs.
+CHEZMOI_VERSION="${CHEZMOI_VERSION:-v2.69.3}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -239,7 +242,7 @@ sync_managed_config() {
 # ever installed by a manual setup-devvm.sh run, so a committed edit could sit
 # undeployed. bash -n gates a broken script; cmp avoids needless churn.
 sync_tmux_persist() {
-  local src="$WORKSTATION_DIR/../tmux-persist.sh" dst=/usr/local/bin/tmux-persist
+  local src="${TMUX_PERSIST_SRC:-$WORKSTATION_DIR/../tmux-persist.sh}" dst=/usr/local/bin/tmux-persist
   [[ -r "$src" ]] || return 0
   bash -n "$src" 2>/dev/null || { log "WARN: $src has a syntax error — tmux-persist sync skipped"; return 0; }
   cmp -s "$src" "$dst" 2>/dev/null && return 0
@@ -508,6 +511,115 @@ install_claude_auth_sync() {
   run systemctl enable --now "claude-auth-sync@$user.timer" >/dev/null 2>&1 || true
 }
 
+# ---- a rebuilt box gets each user's own state back (2026-11-11) --------------
+# docs/plans/2026-11-11-disposable-devvm.md: the devvm is rebuilt from code, and
+# what a user made by hand comes back from a kept place. These three steps are
+# that half for credentials, the Vault renewer and dotfiles. Each writes only
+# what is absent, so on the live box they are no-ops.
+
+# The user's hand-made credential files (SSH and GPG keys, Git PATs, gh, gcloud,
+# docker, the admin kubeconfig) from Vault, secret/workstation/<user>/files,
+# via workstation-creds. Reading those needs an admin Vault token, which the
+# hourly run does not have, so this restores only when the provisioner is run
+# with one: on a rebuild, `sudo --preserve-env=VAULT_TOKEN t3-provision-users`
+# (docs/runbooks/devvm-credentials.md). A file already there is never replaced.
+restore_user_credentials() {  # restore_user_credentials USER
+  local user="$1"
+  [[ -s "$CREDS_SRC" ]] || { log "WARN: $CREDS_SRC missing -> credential restore skipped for $user"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] restore Vault-held credential files -> $user"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault token lookup >/dev/null 2>&1; then
+    [[ -n "${CREDS_NO_VAULT_LOGGED:-}" ]] || log "credential restore skipped: no admin Vault token (expected on the hourly run)"
+    CREDS_NO_VAULT_LOGGED=1
+    return 0
+  fi
+  local out
+  if out="$(bash "$CREDS_SRC" restore "$user" 2>&1)"; then
+    log "$(tail -n 1 <<<"$out")"
+  else
+    log "WARN: credential restore failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+
+# vault-token-renew for every user it has a token scope for (vtr_resolve_config
+# in the script itself decides that, so the two cannot disagree): the script in
+# ~/.local/bin, its user units, linger so the timer fires logged out, and a
+# first periodic token when ~/.vault-token is absent and this run holds admin
+# Vault access. Installed by hand before 2026-11-11
+# (docs/runbooks/vault-token-renew-devvm.md).
+install_vault_token_renew() {  # install_vault_token_renew USER
+  local user="$1" home uid policies flags=() p token changed=0 f
+  [[ -s "$VTR_SRC" && -s "$VTR_SERVICE" && -s "$VTR_TIMER" ]] || return 0
+  if ! policies="$(bash -c 'source "$1"; vtr_resolve_config "$2" && echo "${VTR_MINT_POLICIES[*]}"' _ "$VTR_SRC" "$user" 2>/dev/null)"; then
+    log "vault-token-renew: no token scope for $user in vault-token-renew.sh -> skipped"
+    return 0
+  fi
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  [[ -n "$home" && -d "$home" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] vault-token-renew script + units + timer -> $user"; return 0; fi
+  for f in "$home/.local/bin" "$home/.config/systemd/user"; do
+    [[ -d "$f" ]] || mkdir_as "$user" 0755 "$f" || { log "WARN: could not create $f"; return 0; }
+  done
+  if ! cmp -s "$VTR_SRC" "$home/.local/bin/vault-token-renew"; then
+    write_as "$user" 0755 "$home/.local/bin/vault-token-renew" < "$VTR_SRC" && changed=1
+  fi
+  for f in service timer; do
+    p="VTR_${f^^}"
+    if ! cmp -s "${!p}" "$home/.config/systemd/user/vault-token-renew.$f"; then
+      write_as "$user" 0644 "$home/.config/systemd/user/vault-token-renew.$f" < "${!p}" && changed=1
+    fi
+  done
+  [[ "$(loginctl show-user "$user" -p Linger 2>/dev/null)" == "Linger=yes" ]] || loginctl enable-linger "$user" >/dev/null 2>&1 || true
+  local sysu=(runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user)
+  if (( changed )) || ! "${sysu[@]}" is-enabled --quiet vault-token-renew.timer 2>/dev/null; then
+    "${sysu[@]}" daemon-reload >/dev/null 2>&1 || true
+    "${sysu[@]}" enable --now vault-token-renew.timer >/dev/null 2>&1 \
+      || log "WARN: could not enable vault-token-renew.timer for $user (user manager not up?)"
+    log "installed vault-token-renew -> $user"
+  fi
+  [[ -s "$home/.vault-token" ]] && return 0
+  for p in $policies; do flags+=("-policy=$p"); done
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if vault token lookup >/dev/null 2>&1 && \
+     token="$(vault token create -orphan -period=768h "${flags[@]}" -display-name="devvm-$user" -field=token 2>/dev/null)" && \
+     [[ -n "$token" ]] && write_as "$user" 0600 "$home/.vault-token" <<<"$token"; then
+    log "minted periodic Vault token -> $user:~/.vault-token"
+  else
+    log "WARN: no ~/.vault-token for $user (run the provisioner with an admin VAULT_TOKEN to mint one)"
+  fi
+}
+
+# The user's dotfiles: `chezmoi init --apply` from the roster row's `dotfiles`
+# Forgejo repo (wizard: viktor/dot_files), ONCE per box: an existing
+# ~/.local/share/chezmoi is the user's live source and is never touched, since
+# a whole-tree apply over a home that drifted from the repo would overwrite
+# work. --exclude=encrypted skips the GPG-encrypted entries, which need a
+# passphrase; on the devvm the files they hold (the admin kubeconfig among
+# them) come from Vault through restore_user_credentials, which runs first.
+# chezmoi itself is installed into ~/.local/bin, pinned, when absent.
+install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
+  local user="$1" repo="$2" home uid bin
+  [[ -n "$repo" && "$repo" != "-" ]] || return 0
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  [[ -e "$home/.local/share/chezmoi" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] chezmoi init --apply $repo -> $user"; return 0; fi
+  bin="$home/.local/bin/chezmoi"
+  if [[ ! -x "$bin" ]]; then
+    runuser -u "$user" -- sh -c 'cd "$1" && curl -fsSL https://get.chezmoi.io | sh -s -- -b "$1/.local/bin" -t "$2"' \
+      _ "$home" "$CHEZMOI_VERSION" >/dev/null 2>&1 || { log "WARN: could not install chezmoi for $user"; return 0; }
+  fi
+  if runuser -u "$user" -- env HOME="$home" "$bin" init --apply --force --no-tty --keep-going --exclude=encrypted \
+       "$(repo_url "$repo")" >/dev/null 2>&1; then
+    log "applied dotfiles $repo -> $user"
+  else
+    log "WARN: chezmoi init --apply $repo for $user finished with errors (some entries may be missing)"
+  fi
+  uid="$(id -u "$user" 2>/dev/null)" && \
+    runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
 # Re-deploy the managed per-user Claude launcher to ~/start-claude.sh. /etc/skel only
 # seeds it at account creation (setup-devvm.sh), so without this a launcher edit never
 # reaches EXISTING users — they keep running a stale copy. Copy-if-changed from the repo's
@@ -515,7 +627,7 @@ install_claude_auth_sync() {
 # appends a managed persistence section to each user's ~/.tmux.conf that a re-copy would clobber.)
 deploy_user_launcher() {
   local user="$1" home src dst
-  src="$WORKSTATION_DIR/skel/start-claude.sh"
+  src="${LAUNCHER_SRC:-$WORKSTATION_DIR/skel/start-claude.sh}"
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" && -f "$src" ]] || return 0
   dst="$home/start-claude.sh"
@@ -898,7 +1010,7 @@ install_memory() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
-  local src="$WORKSTATION_DIR/claude-hooks" hooks_dst="$home/.claude/hooks" settings="$home/.claude/settings.json"
+  local src="${HOOKS_SRC:-$WORKSTATION_DIR/claude-hooks}" hooks_dst="$home/.claude/hooks" settings="$home/.claude/settings.json"
   [[ -d "$src" ]] || { log "WARN: $src missing -> skip memory setup for $user"; return 0; }
 
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
@@ -1311,12 +1423,32 @@ committed_cli() {  # committed_cli <dest>; 0 when dest now holds origin/master's
   fi
   rm -rf "$tmp"; return 1
 }
+# Any other directory of the repo, the same way: claude-hooks/ for install_memory.
+committed_tree() {  # committed_tree <repo-dir> <dest>; 0 when dest now holds origin/master's copy
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp -d "$dst.XXXXXX")" || return 1
+  if runuser -u "$clone_owner" -- git -C "$clone_root" "${gitc[@]}" archive --format=tar origin/master "$src" 2>/dev/null \
+       | tar -x -C "$tmp" 2>/dev/null && [[ -d "$tmp/$src" ]] && [[ -n "$(ls -A "$tmp/$src")" ]]; then
+    rm -rf "$dst" && mv "$tmp/$src" "$dst" && rm -rf "$tmp" && return 0
+  fi
+  rm -rf "$tmp"; return 1
+}
 if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
   if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
        fetch --quiet origin master 2>/dev/null; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
+    # The rest of what this script deploys, so nothing it installs depends on
+    # the admin's working tree being current. That tree was kept current by an
+    # hourly `git pull` in wizard's crontab until 2026-11-11, when the
+    # disposable-devvm plan dropped it.
+    committed scripts/workstation/workstation-creds.sh "$STATEDIR/workstation-creds.committed.sh" || true
+    committed scripts/vault-token-renew.sh "$STATEDIR/vault-token-renew.committed.sh" || true
+    committed scripts/vault-token-renew.service "$STATEDIR/vault-token-renew.committed.service" || true
+    committed scripts/vault-token-renew.timer "$STATEDIR/vault-token-renew.committed.timer" || true
+    committed scripts/tmux-persist.sh "$STATEDIR/tmux-persist.committed.sh" || true
+    committed scripts/workstation/skel/start-claude.sh "$STATEDIR/start-claude.committed.sh" || true
     [[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
     for f in metadata.json config.yaml gitignore README.md; do
       committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
@@ -1339,6 +1471,8 @@ fi
 # last fetch brought, which is committed content either way.
 if [[ "$DRY_RUN" != 1 ]]; then
   committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"
+  committed_tree scripts/workstation/claude-hooks "$STATEDIR/claude-hooks.committed" \
+    || log "WARN: could not extract claude-hooks/ from origin/master"
 fi
 # Point the three inputs at whatever we managed to materialise; each falls back
 # independently, so a partial failure still runs with the rest committed.
@@ -1361,6 +1495,16 @@ AGENTS_FETCH_DIR="$STATEDIR/agent-repos"
 # the four files falls back to the working tree independently of the others.
 BEADS_SRC="$WORKSTATION_DIR/beads"
 [[ -s "$STATEDIR/beads.committed/metadata.json" ]] && BEADS_SRC="$STATEDIR/beads.committed"
+# The deployed files, each falling back to the working tree on its own.
+pick() { if [[ -s "$STATEDIR/$1" ]]; then echo "$STATEDIR/$1"; else echo "$2"; fi; }
+CREDS_SRC="$(pick workstation-creds.committed.sh "$WORKSTATION_DIR/workstation-creds.sh")"
+VTR_SRC="$(pick vault-token-renew.committed.sh "$WORKSTATION_DIR/../vault-token-renew.sh")"
+VTR_SERVICE="$(pick vault-token-renew.committed.service "$WORKSTATION_DIR/../vault-token-renew.service")"
+VTR_TIMER="$(pick vault-token-renew.committed.timer "$WORKSTATION_DIR/../vault-token-renew.timer")"
+TMUX_PERSIST_SRC="$(pick tmux-persist.committed.sh "$WORKSTATION_DIR/../tmux-persist.sh")"
+LAUNCHER_SRC="$(pick start-claude.committed.sh "$WORKSTATION_DIR/skel/start-claude.sh")"
+HOOKS_SRC="$WORKSTATION_DIR/claude-hooks"
+[[ -d "$STATEDIR/claude-hooks.committed" ]] && HOOKS_SRC="$STATEDIR/claude-hooks.committed"
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
@@ -1523,10 +1667,19 @@ sync_pi_org_policy
 # 3c) machine-wide tmux-persist binary (repo -> /usr/local/bin; units enabled in step 5b)
 sync_tmux_persist
 
+# 3d) credentials from Vault for every account that already exists, before the
+#     loop below: the admin's restored kubeconfig is what step 4 copies the
+#     cluster address into every other user's from, and the restored Git PATs
+#     are what their clones authenticate with. Only with an admin Vault token;
+#     the hourly run logs one skip line.
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  id "$u" >/dev/null 2>&1 && restore_user_credentials "$u"
+done
+
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
 # the jq below emits "-" for empty groups/repos and we map it back here.
-while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth; do
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth dotfiles; do
   [[ "$groups_csv" == "-" ]] && groups_csv=""
   [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
@@ -1534,7 +1687,9 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     run useradd -m -s "$shell" "$os_user"
     run passwd -l "$os_user"           # SSO/t3 only — no local password
     run chmod 700 "/home/$os_user"
+    restore_user_credentials "$os_user"    # an existing account was done in 3d
   fi
+  install_user_dotfiles "$os_user" "$dotfiles"
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
     IFS=',' read -ra want <<< "$groups_csv"
@@ -1568,7 +1723,8 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   fi
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
   install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring)] | @tsv' "$desired_file")
+  install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
