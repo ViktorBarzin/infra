@@ -3319,6 +3319,17 @@
         group: root
         mode: "0755"
 
+    # The positions file lives here. A new box lacks it, and promtail then
+    # logs "error writing positions file" and re-ships the last 12 h of the
+    # journal on every restart (seen on the 2026-11-11 drill).
+    - name: Create the promtail positions directory
+      ansible.builtin.file:
+        path: /var/lib/promtail
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Deploy the promtail config
       ansible.builtin.copy:
         src: ../scripts/devvm-promtail.yaml
