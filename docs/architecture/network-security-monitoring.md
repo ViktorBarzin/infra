@@ -147,6 +147,7 @@ the ClickHouse pod 295 MiB.
 **Alerts** (lane `security`, `prometheus_chart_values.tpl`):
 `NetsecVectorDown`, `NetsecSinkErrors`, `NetsecFlowsStale` (no row written to
 `flows` for 30 minutes), `NetsecEveStale` (the same for `eve`),
+`NetsecHaproxyStale` (no mail connection row for an hour),
 `NetsecTechnitiumStale` (no new Technitium row copied for 30 minutes).
 
 ## Phase 2: Suricata metadata
@@ -457,6 +458,12 @@ flowchart TD
   213 MB against 8.1 GB in Postgres. Postgres logging stays as is for Grafana
   and `dns-digest`. Viktor agreed to keep the home LAN's lookups for 365 days
   and the rollup forever (2026-11-11). Alert `NetsecTechnitiumStale`.
+- **Inbound coverage, checked 2026-11-11** (one hour of `flows`): 40,963 IPv4
+  and 3,748 IPv6 flows from the internet into VLAN 20 with the client's own
+  address, site-to-site WireGuard as its 10.3.x addresses, mail through
+  `haproxy`. Tailscale clients appear as 10.0.20.1, because OPNsense rewrites
+  their source on the way in. Alerts: `NetsecFlowsStale`, `NetsecEveStale`,
+  `NetsecHaproxyStale`, `NetsecTechnitiumStale`.
 - **Not covered**: Suricata `anomaly` events stay in `eve.json` on OPNsense
   only, because Suricata allows one anomaly logger. Inbound IPv4 to ports
   without a forward is dropped by the ISP router before OPNsense. CrowdSec

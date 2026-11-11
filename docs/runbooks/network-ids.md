@@ -80,6 +80,7 @@ nothing, although the TCP port answers.
 | `NetsecSinkErrors` | a ClickHouse write failed | Vector logs; a 401/516 is the `netsec_writer` password (Vault `secret/claude-sessions` vs the pod's `netsec-secrets`), a quota error means a runaway source |
 | `NetsecFlowsStale` | no row written to `flows` for 30 minutes | the four checks above, in order |
 | `NetsecEveStale` | no row written to `eve` for 30 minutes | "Is Suricata metadata flowing?" above |
+| `NetsecHaproxyStale` | no mail connection written to `haproxy` for an hour | `ssh root@10.0.10.1 'tail -n 2 /var/log/haproxy/latest.log'` shows JSON lines; then `syslog-ng-ctl stats \| grep netsec_vector_haproxy` and the Vector logs |
 | `NetsecTechnitiumStale` | CronJob `netsec-technitium` copied no newer Technitium lookup for 30 minutes | "Technitium query log" below |
 | `SuricataCaptureDrops` | Suricata missed more than 1% of the packets it should inspect over an hour (blind spots, not dropped traffic) | `docs/runbooks/opnsense.md`, "Suricata tuning", capture section |
 | `NetsecHomeHostMalware` | a malware or C2 alert involving one of our hosts (CronJob `netsec-alerts`) | "A home host hit a malware rule" below |
