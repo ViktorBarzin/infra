@@ -53,8 +53,9 @@ python3-venv         # the /opt/poetry venv behind /usr/local/bin/poetry (devvm.
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)
 # gh (GitHub CLI)             -> GitHub's own apt repo (cli.github.com), NOT in the default Ubuntu repos
 # @anthropic-ai/claude-code   -> npm install -g
-# kubectl                     -> k8s apt repo OR pinned binary (already present on devvm)
-# vault                       -> HashiCorp apt repo OR pinned binary (already present on devvm)
+# kubectl                     -> k8s apt repo, declared in playbooks/devvm.yml
+# terraform, vault            -> HashiCorp apt repo, pinned in playbooks/devvm.yml (devvm_terraform_version)
+# terragrunt, sops            -> pinned release binaries, playbooks/devvm.yml (devvm_terragrunt_version)
 # kubelogin (kubectl oidc-login) -> `kubectl krew install oidc-login` or int128/kubelogin release.
 #                                NOTE: the apt package literally named "kubelogin" is the AZURE
 #                                tool, NOT the OIDC one we need -- do not apt-install it.
