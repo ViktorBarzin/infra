@@ -126,13 +126,29 @@ func TestParsePutArgsRequiresName(t *testing.T) {
 	}
 }
 
-func TestParsePutArgsRequiresExactlyOnePasswordSource(t *testing.T) {
+func TestParsePutArgsCreateRequiresExactlyOnePasswordSource(t *testing.T) {
 	if _, err := parsePutArgs([]string{"X"}); err == nil {
-		t.Error("want an error with no password source, got nil")
+		t.Error("want an error with no password source on a create, got nil")
 	}
 	_, err := parsePutArgs([]string{"X", "--password-stdin", "--from-kv", "secret/a/b#k"})
 	if err == nil {
 		t.Error("want an error with two password sources, got nil")
+	}
+}
+
+// infra#147: an update may leave the password alone, so the source is
+// optional there, but two sources are still one too many.
+func TestParsePutArgsUpdatePasswordSourceIsOptional(t *testing.T) {
+	o, err := parsePutArgs([]string{"X", "--update", "--note", "changed"})
+	if err != nil {
+		t.Fatalf("update with no password source: unexpected error: %v", err)
+	}
+	if o.hasPasswordSource() {
+		t.Error("hasPasswordSource() = true with neither --from-kv nor --password-stdin")
+	}
+	_, err = parsePutArgs([]string{"X", "--update", "--password-stdin", "--from-kv", "secret/a/b#k"})
+	if err == nil {
+		t.Error("want an error with two password sources on an update, got nil")
 	}
 }
 
@@ -292,6 +308,27 @@ func TestResolvePutValuesPasswordStdin(t *testing.T) {
 	}
 }
 
+func TestResolvePutValuesWithoutAPasswordSourceReadsNothing(t *testing.T) {
+	r := &putFakeRunner{out: map[string]string{}}
+	o, err := parsePutArgs([]string{"X", "--update", "--note", "changed"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	v, err := resolvePutValues(r.run, o, func(string) (string, error) {
+		t.Error("stdin was read although no --password-stdin was passed")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if v.Password != "" {
+		t.Errorf("password = %q, want empty", v.Password)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("no vault call expected, got %v", r.calls)
+	}
+}
+
 func TestResolvePutValuesRejectsEmptyStdin(t *testing.T) {
 	o, _ := parsePutArgs([]string{"X", "--password-stdin"})
 	if _, err := resolvePutValues(nil, o, func(string) (string, error) { return "", nil }); err == nil {
@@ -436,6 +473,31 @@ func TestMergeLoginItemKeepsWhatWasNotAsked(t *testing.T) {
 	}
 }
 
+func TestMergeLoginItemWithoutAPasswordSourceKeepsThePassword(t *testing.T) {
+	o, err := parsePutArgs([]string{"Вермонт панели (admin)", "--update", "--note", "changed"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	raw, err := mergeLoginItem(existingItemJSON, o, putValues{})
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["notes"] != "changed" {
+		t.Errorf("notes = %v, want %q", m["notes"], "changed")
+	}
+	login := m["login"].(map[string]interface{})
+	if login["password"] != "OLD_PASSWORD" {
+		t.Errorf("password = %v, want the existing OLD_PASSWORD kept", login["password"])
+	}
+	if login["username"] != "admin" || login["totp"] != "OLD_SEED" {
+		t.Errorf("login changed beyond the note: %v", login)
+	}
+}
+
 func TestMergeLoginItemReplacesNamedFieldAndKeepsOthers(t *testing.T) {
 	o, _ := parsePutArgs([]string{"X", "--password-stdin", "--update",
 		"--field", "pin=NEW_PIN", "--field", "extra=NEW_EXTRA",
@@ -574,6 +636,49 @@ func TestPutItemUpdatesWithTheFlag(t *testing.T) {
 	}
 	if item["folderId"] != "FOLDER-1" {
 		t.Errorf("the update dropped folderId: %v", item["folderId"])
+	}
+}
+
+func TestPutItemUpdateWithoutAPasswordSourceKeepsThePassword(t *testing.T) {
+	r := newPutRunner(`[{"id":"ID-1","name":"New Item"}]`)
+	o, err := parsePutArgs([]string{"New Item", "--update", "--note", "changed"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	action, err := putItem(r.run, r.runStdin, nil, o, putValues{})
+	if err != nil {
+		t.Fatalf("putItem: %v", err)
+	}
+	if action != "updated" {
+		t.Errorf("action = %q, want updated", action)
+	}
+	item := lastStdinJSON(t, r)
+	if item["notes"] != "changed" {
+		t.Errorf("notes = %v, want %q", item["notes"], "changed")
+	}
+	if item["login"].(map[string]interface{})["password"] != "OLD_PASSWORD" {
+		t.Errorf("password = %v, want OLD_PASSWORD kept", item["login"])
+	}
+}
+
+// --update on a name that does not exist falls through to a create, and a
+// create with no password source must still be refused rather than write a
+// login with an empty password.
+func TestPutItemUpdateOfAMissingNameWithoutAPasswordSourceRefuses(t *testing.T) {
+	r := newPutRunner(`[]`)
+	o, err := parsePutArgs([]string{"New Item", "--update", "--note", "changed"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := putItem(r.run, r.runStdin, nil, o, putValues{}); err == nil {
+		t.Fatal("want a refusal, got nil")
+	} else if !strings.Contains(err.Error(), "--password-stdin") {
+		t.Errorf("the error must name a password source, got: %v", err)
+	}
+	for _, c := range r.calls {
+		if j := strings.Join(c, " "); strings.HasPrefix(j, "bw create") || strings.HasPrefix(j, "bw edit") {
+			t.Errorf("a refused put still wrote: %v", c)
+		}
 	}
 }
 

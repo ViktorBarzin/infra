@@ -30,7 +30,9 @@ homelab vault put <name> --from-kv <path>#<key>   create a login whose password
 homelab vault put <name> --password-stdin         same, password piped in
                                 --username U --uri URL --note TEXT
                                 --field N=V --totp SEED   the other fields
-                                --update    change an item that already exists
+                                --update    change an item that already exists;
+                                            without a password source the
+                                            stored password is kept
 homelab vault lock              lock / log out the local bw session
 
 # HashiCorp Vault / OpenBao (infra secrets; uses your own OIDC token)
@@ -148,6 +150,9 @@ printf '%s' "$PW" | homelab vault put "Some Login" --password-stdin
 # rotate the password of an item that already exists
 homelab vault put "Вермонт панели (admin)" --update \
   --from-kv secret/emo/vermont-panels#password
+
+# change only the note; no password source, so the password stays as it is
+homelab vault put "Вермонт панели (admin)" --update --note "Нова бележка."
 ```
 
 `<path>#<key>` and `<path>/<key>` both address one KV key, matching
@@ -160,7 +165,12 @@ Behaviour worth knowing:
   are refused either way — rename one in the web UI first.
 - **`--update` changes only what you pass.** Fields you leave out keep their
   current values, and the item's folder, favourite flag, collections and
-  password history survive the round trip.
+  password history survive the round trip. That includes the password: an
+  update with neither `--from-kv` nor `--password-stdin` leaves it alone
+  ([infra#147](https://forgejo.viktorbarzin.me/viktor/infra/issues/147), CLI
+  v0.37.3; before that every update had to rewrite it). A create still needs
+  exactly one password source, and so does `--update` on a name that does not
+  exist yet, since that creates the item.
 - **Custom fields are written hidden**, so the web UI masks them the way it
   masks a password. `--field NAME=VALUE` puts the value in `argv`, where any
   process of the same UID can read it while the command runs; the command says

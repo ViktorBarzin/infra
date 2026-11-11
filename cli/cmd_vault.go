@@ -69,7 +69,8 @@ func vaultHelp() string {
                                   --username U --uri URL --note TEXT --field N=V
                                   --totp SEED   set the other fields
                                   --update      change an item that exists
-                                                (without it, a name clash errors)
+                                                (without it, a name clash errors);
+                                                no password source keeps the password
   homelab vault lock              lock / log out the local bw session
 
 Moving a value the OTHER way — password manager into the infra KV store — needs

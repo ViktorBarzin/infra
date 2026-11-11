@@ -355,6 +355,13 @@ handlers set `VAULT_ADDR` but never inject the scoped token (which would 403 off
 its own path). Access is whatever your policy grants. Writes are merge-only;
 `put` (replace) / `delete` are out of scope — use the raw `vault` CLI.
 
+`vault put <name>` writes one Vaultwarden login (create, or `--update` an
+existing one); usage and behaviour are in
+`docs/runbooks/homelab-vault-onboarding.md`. Since v0.37.3 (infra#147) an
+`--update` with no password source keeps the stored password and changes only
+the note, username, URIs or fields passed; a create still needs exactly one of
+`--from-kv` / `--password-stdin`.
+
 ### v0.13 — memory links + the 1,400-char bound (ADR-0007)
 
 Memories gain typed Memory→Memory **links** — a closed enum of four, each with
