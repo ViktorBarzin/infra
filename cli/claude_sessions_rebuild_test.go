@@ -326,3 +326,16 @@ func TestBinaryToolResultsComeBackByteForByte(t *testing.T) {
 		t.Fatalf("the text copy of the binary file must not count as kept: %+v", st)
 	}
 }
+
+// An empty ~/.claude (breakglass on the live box) is not counted as waiting.
+func TestIngestDoesNotCountAnEmptyAgentDirAsWaiting(t *testing.T) {
+	_, url, done := startFake(t)
+	defer done()
+	homes := t.TempDir()
+	os.MkdirAll(filepath.Join(homes, "breakglass", ".claude"), 0o755)
+	st, err := runIngest(ingestConfig{HomesRoot: homes, StatePath: filepath.Join(t.TempDir(), "state.json"), RequireRestore: true,
+		DB: dbConn{URL: url, User: "ingest", Password: "pw"}})
+	if err != nil || st.UsersWaiting != 0 {
+		t.Fatalf("%+v %v", st, err)
+	}
+}

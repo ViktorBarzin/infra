@@ -76,7 +76,9 @@ homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
 
 On a rebuilt devvm this runs by itself: `t3-provision-users.sh` step 4a calls
 `homelab claude-sessions restore --user <name> --rebuild` as root for every
-roster user, before step 5 starts their T3 serve. It restores each user once,
+account with a home under `/home`, before step 5 starts their T3 serve. A user
+outside the roster (ancamilea since she was parked) gets no account on a
+rebuilt box, so nothing is restored for her until her roster row comes back. It restores each user once,
 records the restored files in the ingest state as already sent, and leaves
 `/var/lib/claude-sessions-ingest/restored/<user>`; the ingest leaves a user
 alone until that marker exists. Check it after the first provisioning run:
@@ -86,6 +88,13 @@ sudo ls /var/lib/claude-sessions-ingest/restored/     # one file per user
 sudo journalctl -u t3-provision-users --since today | grep 'restore --rebuild'
 journalctl -u claude-sessions-ingest -n 3 | grep users_waiting_for_restore=0
 ```
+
+Checked on the live devvm on 2026-11-11: the first pass with this step logged
+`outcome=already ingesting` for emo and wizard, and the ingest wrote the
+marker for ancamilea itself. A rebuild of ancamilea into a scratch home with
+`--home` and `--state` wrote 202 files, all 201 that still exist on her live
+home byte-identical, seeded 202 state entries, and the ingest that followed
+had nothing to send (`files_changed=0`).
 
 Order matters for a manual restore into a home on a rebuilt box. Run it before
 the user first starts claude or codex there, and before the ingest takes the
