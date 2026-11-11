@@ -49,9 +49,12 @@ locals {
   # granted; anything else gets 403 at create; a slot is re-granted within a
   # minute of a destroy, so wait that long before reusing one in a new
   # apply) and an address below VLAN 10's DHCP pool
-  # (.100-.254). Smaller than the live devvm by default so it fits the host's
-  # RAM headroom; check `free -g` on the host first (runbook). Everything not
-  # set here is the live devvm's shape (module defaults).
+  # (.100-.254). An entry that leaves out cores, memory_mb or disk_gb gets
+  # 4 cores, 8 GiB and 80 GiB, which build fine and fit the host (267 GiB,
+  # 40 GiB available on 2026-11-11; the live devvm's 32 GiB would leave about
+  # 8). Check `free -g` on the host first (runbook). The replacement sets the
+  # full size explicitly. Everything else is the live devvm's shape (module
+  # defaults).
   drills = {}
 }
 
@@ -87,15 +90,17 @@ module "drill" {
   name        = each.key
   vm_id       = each.value.vm_id
   ipv4_cidr   = each.value.ipv4_cidr
-  cores       = try(each.value.cores, 32)
-  memory_mb   = try(each.value.memory_mb, 32768)
-  disk_gb     = try(each.value.disk_gb, 228)
+  cores       = try(each.value.cores, 4)
+  memory_mb   = try(each.value.memory_mb, 8192)
+  disk_gb     = try(each.value.disk_gb, 80)
   infra_ref   = try(each.value.infra_ref, "master")
   on_boot     = try(each.value.on_boot, false)
   mac_address = try(each.value.mac_address, null)
   # Only for the replacement once VM 102 is gone (runbook, last section).
   allow_live_identity = try(each.value.allow_live_identity, false)
-  description         = "Throwaway devvm drill (docs/runbooks/devvm-drill.md). Delete by removing it from stacks/devvm local.drills."
+  description = (try(each.value.allow_live_identity, false)
+    ? "The devvm workstation, rebuilt from stacks/devvm. Protected: PVE refuses to destroy it until root clears the flag (docs/runbooks/devvm-drill.md, replacement)."
+  : "Throwaway devvm drill (docs/runbooks/devvm-drill.md). Delete by removing it from stacks/devvm local.drills.")
 
   image_file_id  = proxmox_download_file.ubuntu.id
   admin_ssh_keys = local.admin_ssh_keys

@@ -45,9 +45,11 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
 1. Add the drill to `local.drills` in `stacks/devvm/main.tf`:
    ```hcl
    drills = {
-     "devvm-drill" = { vm_id = 9102, ipv4_cidr = "10.0.10.11/24", cores = 4, memory_mb = 8192, disk_gb = 80 }
+     "devvm-drill" = { vm_id = 9102, ipv4_cidr = "10.0.10.11/24" }
    }
    ```
+   Left out, `cores`, `memory_mb` and `disk_gb` are 4, 8192 and 80 in a
+   drill entry, not the live box's 32, 32768 and 228.
    `infra_ref = "<branch>"` builds from a branch instead of master.
 2. Land it. CI applies the stack: it downloads the pinned Ubuntu image, creates
    the VM in pool `devvm`, waits for the guest agent and hands over the token.
@@ -67,6 +69,22 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
 ## What to check
 
 - `ssh wizard@<address>` works with your usual key, and `sudo -n true` works.
+- Each roster user's T3 serves: `systemctl is-active t3-serve@wizard
+  t3-serve@emo` prints `active` twice, and `ls -l /usr/bin/t3` points into
+  `/usr/local/lib/t3/<ver>`. The playbook puts the first build in through
+  `t3-autoupdate`; before 2026-11-11 it did not, and every serve died with
+  `203/EXEC`.
+- Run provisioning once with an admin token, as in `devvm-credentials.md`,
+  "Rebuild: put a user's credentials back". The bootstrap's own run has only
+  the bootstrap token, which cannot read `secret/workstation/*`, so it skips
+  every credential and every clone that needs one. Then check, as root:
+  `ls /home/wizard/.vault-token /home/emo/.vault-token`; `ls /home/emo/code`
+  lists `tv`, `agents`, `app-kit` and `vermont-device-configs`; and
+  `sudo -u emo XDG_RUNTIME_DIR=/run/user/$(id -u emo) systemctl --user
+  is-enabled intercom-watch.timer` prints `enabled` (his repo's
+  `devvm-setup.sh` ran). On a drill this means handing the drill an admin
+  token; skip it there unless the drill is the final one, and record that
+  you did.
 - The playbook converged: rerun it on the drill from the main checkout,
   check mode, with an inventory line for the drill address. Expect no
   changes beyond the ones the live box also shows.
@@ -94,9 +112,15 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   2 HOUR GROUP BY m, os_user ORDER BY m"` against `journalctl -u
   claude-sessions-ingest` on 10.0.10.10. The 2026-11-11 drill failed this
   (drill log).
-- The drill's journal reaches Loki as `{job="devvm-journal",
-  host="<drill name>"}`, not `host="devvm"`, so it stays out of the live box's
-  alerts.
+- The drill's journal reaches Loki as `{job="devvm-drill-journal",
+  host="<drill name>"}`, sshd lines included. Every devvm alert, the TLEVENT
+  dashboard and the crowdsec sshd source select on `job="devvm-journal"` or
+  `job="sshd-devvm"`, so nothing from the drill reaches them:
+  `homelab logs query '{job="devvm-journal", host!="devvm"}' --since 1h`
+  returns nothing. Until 2026-11-11 a drill shipped as `job="devvm-journal"`;
+  drill 3's `claude-auth-sync` FAIL lines fired
+  `WorkstationClaudeAuthInvalid` for wizard and emo for the rule's 7 h window
+  while the live box logged OK.
 - The drill does not take over anything of the live devvm's: Traefik, DNS and
   the DHCP reservation all point at 10.0.10.10, so the lobby and T3 on the
   drill are reachable only on its own address.
@@ -142,10 +166,37 @@ granted).
 
 ## Building the real replacement
 
-The token cannot create VMID 102 until it holds the slot, and PVE deletes any
-`/vms/102` ACL when 102 is destroyed, so the grant has to come after:
+Before touching VM 102, take everything the rebuild restores from as late as
+possible. Each of these runs on its own schedule, and the newest copy is what
+comes back:
 
-1. Destroy the old VM 102 as root on the host.
+1. Tell the users, and wait until nobody has a session running.
+2. On the devvm: `sudo systemctl start t3-backup-state.service`, then
+   `sudo systemctl start claude-sessions-ingest.service`; both journals end
+   with a success line. Re-capture any credential rotated since its last
+   capture (`devvm-credentials.md`, "Add or refresh a credential").
+3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
+   `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
+   user.
+4. Push work: for every user's clone under `/home/*/code`, `git status
+   --porcelain` is empty and `git log @{u}..` prints nothing, or the owner has
+   said what can go.
+
+The token cannot create VMID 102 until it holds the slot, and PVE deletes any
+`/vms/102` ACL when 102 is destroyed, so the grant has to come after. Keep the
+old disk until the new box passes "What to check":
+
+1. As root on the host: `qm shutdown 102`, then park its disk on a holding VM
+   outside every slot and pool, and only then destroy 102:
+   ```sh
+   qm create 9190 --name devvm-old --memory 512 --description "VM 102's disk, kept until the replacement passes its checks"
+   qm disk move 102 scsi0 --target-vmid 9190 --target-disk scsi0
+   qm config 9190 | grep scsi0    # vm-9190-disk-0, 228G
+   qm destroy 102
+   ```
+   If the new box fails, `qm disk move 9190 scsi0 --target-vmid <a new 102>`
+   puts the old disk back. Destroy 9190 only once the replacement is
+   accepted.
 2. Add 102 to `pve_devvm_tf_vmids` in `playbooks/pve-host.yml`, land it, and
    run `pve-host.yml --tags devvm-tf` (claim `host:pve`, `--check --diff`
    first). The timer then keeps the grant. While a VM 102 outside pool
@@ -157,7 +208,15 @@ The token cannot create VMID 102 until it holds the slot, and PVE deletes any
 Then add an instance with the live identity
 (`name = "devvm"`, `vm_id = 102`, `ipv4_cidr = "10.0.10.10/24"`,
 `mac_address = "00:0c:29:c0:89:ec"` so the DHCP reservation and every
-neighbour cache still match, `allow_live_identity = true`) and the full size.
+neighbour cache still match, `allow_live_identity = true`) and the full size
+(`cores = 32, memory_mb = 32768, disk_gb = 228`; a drill entry defaults to
+4, 8192 and 80). With `allow_live_identity` the VM carries PVE's protection
+flag, so an apply that drops the entry or forces a replacement fails instead
+of destroying the box. To take it down on purpose, root runs `qm set 102
+--protection 0` first.
+Once the bootstrap says `ok`, run provisioning with an admin token
+(`devvm-credentials.md`, "Rebuild: put a user's credentials back") and go
+through "What to check" above, including the T3 and emo items.
 The new box has new SSH host keys, so the host's nightly pulls from 10.0.10.10
 (`t3-state-pull`, `devvm-home-backup`) fail until the host trusts the new key:
 `ssh-keygen -R 10.0.10.10` on the host, then the `ssh-keyscan` step in
@@ -211,7 +270,8 @@ default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
 
 Result on devvm-drill2 after the fixes: bootstrap status `ok`; wizard and emo
 log in, sudo works, emo's `~/.claude` came back from the session store, every
-user's T3 database from the Proxmox host copy, and six of the seven lobby
+user's T3 database from the Proxmox host copy (restored to disk; no T3
+served them, see the review of drill 3 below), and six of the seven lobby
 units are active. Both drill VMs were then removed.
 
 **2026-11-11, third drill** (devvm-drill3, VM 9103, 10.0.10.12, 4 cores,
@@ -222,10 +282,12 @@ the second drill's teardown had emptied (re-granted by the new timer):
   0 failed), 16:37 terminal-lobby, 16:57 bootstrap status `ok`.
   `cloud-init status --long`: `done`, `errors: []`; the `degraded` flag is
   only the deprecated `user` key in the user data Proxmox generates.
-- wizard logs in with the usual key and `sudo -n true` works; emo exists.
+- wizard logs in with the usual key and `sudo -n true` works; emo's
+  account exists, without his repos or credentials (below).
   Both restore markers are there, `history.jsonl` came back (wizard 13,154
   lines, emo 4,273), 184 and 4 project folders against 181 and 4 projects
-  in the store, and both T3 databases came from the host copy.
+  in the store, and both T3 databases came from the host copy, but no
+  `t3-serve@` ever started (below).
 - Lobby units ttyd, clipboard-upload, tmux-api, session-events, file-api and
   skills-api active; agent-api restarting, as expected off 10.0.10.10.
 - The session store got nothing from it: no `ingest.env`, the timer off,
@@ -238,6 +300,25 @@ the second drill's teardown had emptied (re-granted by the new timer):
   build succeeded.
 - promtail had no `/var/lib/promtail` for its positions file; the playbook
   now creates it.
+
+Found in review of drill 3, fixed afterwards:
+
+- No T3 served on it. `t3-serve@wizard` and `@emo` exited `203/EXEC` 30
+  times: `/usr/bin/t3` did not exist, because only `setup-devvm.sh` ever
+  installed t3 and the bootstrap does not run it. The databases were
+  restored but nothing served them. `t3-autoupdate` now does a first install
+  on a box with no t3, and `playbooks/devvm.yml` runs it once.
+- Its journal still drove live alerts: the host label was its own, but every
+  rule selects on `job`. `WorkstationClaudeAuthInvalid` fired for wizard and
+  emo from drill FAIL lines (drill 2 at 14:22, 15:02 and 15:43 as
+  `host="devvm"`, drill 3 at 17:03) while the live box logged OK. Drills now
+  ship as `job="devvm-drill-journal"`.
+- emo's three repos were not cloned (`clone of ebarzin/vermont-device-configs
+  failed for emo`, the same for `ebarzin/agents` and `tv`), so his `~/bin`,
+  the Hikvision SDK and the intercom watchdog did not come back, and no user
+  got a `~/.vault-token` or a kubeconfig. All of it waits on credentials from
+  `secret/workstation/*`, which the bootstrap token cannot read. "What to
+  check" and the replacement now include the admin re-run.
 
 Still open after these drills, for the final one:
 

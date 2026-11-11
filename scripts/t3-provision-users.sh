@@ -2092,7 +2092,7 @@ done < <(jq -r '.accounts[].os_user' "$desired_file")
 #     NEVER --now: the tracker installs a NEW build + migrates DBs + restarts serves, so firing
 #     a missed run mid-day with users active is exactly the 2026-06-09 shape. `enable` (no --now)
 #     just arms the 04:00 schedule (the timer also dropped Persistent=true so a boot can't fire a
-#     missed bump). Fresh boxes get t3 from setup-devvm.sh's nightly install, not here.
+#     missed bump). A new box gets its first t3 from playbooks/devvm.yml (t3-autoupdate first install), not here.
 run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 #     tmux session persistence: periodic snapshot + boot-time restore (reboot
 #     survival for users' named claude sessions). Safe to --now: save is a

@@ -52,6 +52,10 @@ run "drill_has_the_live_shape" {
     condition     = proxmox_virtual_environment_vm.devvm.initialization[0].user_account[0].username == "wizard"
     error_message = "admin account"
   }
+  assert {
+    condition     = proxmox_virtual_environment_vm.devvm.protection == false
+    error_message = "a drill must stay destroyable by its teardown apply"
+  }
 }
 
 run "live_address_refused" {
@@ -86,5 +90,9 @@ run "live_identity_allowed_when_asked" {
     ipv4_cidr           = "10.0.10.10/24"
     mac_address         = "00:0c:29:c0:89:ec"
     allow_live_identity = true
+  }
+  assert {
+    condition     = proxmox_virtual_environment_vm.devvm.protection == true
+    error_message = "the real devvm must carry PVE's protection flag, so a dropped entry or a forced replacement cannot destroy it"
   }
 }
