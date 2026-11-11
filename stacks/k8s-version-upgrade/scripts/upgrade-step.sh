@@ -100,6 +100,17 @@ KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
 
+# kured's node lock (scripts/kured-lock.sh, mounted from the scripts
+# ConfigMap). Each master and worker phase holds it as "k8s-upgrade-chain"
+# from before its drain until it exits after the soak. While it is held kured
+# does not reboot a node, and the Proxmox host's nightly backup chain does
+# not start (it waits for the lock); while either of them holds it, this
+# phase waits. TTL 3 h, so a phase that dies leaves a lock that expires.
+KURED_LOCK_LIB=${KURED_LOCK_LIB:-/scripts/kured-lock.sh}
+# shellcheck source=../../../scripts/kured-lock.sh
+[ -r "$KURED_LOCK_LIB" ] && . "$KURED_LOCK_LIB"
+KURED_LOCK_HOLDER=k8s-upgrade-chain
+
 # Set to 1 by record_blocked/record_held when the compat-gate refuses the
 # target. spawn_next() then declines to advance the chain — but the Job still
 # exits 0, because a gate refusal is a DECISION, not a failure (no Failed Job,
@@ -149,7 +160,20 @@ log() {
 abort() {
   echo "ABORT $1" >&2
   slack "ABORT $1"
+  release_node_lock
   exit 1
+}
+
+# take_node_lock <what> — wait up to 3 h for kured's node lock, abort if it
+# never frees. release_node_lock is idempotent and only removes our own lock.
+take_node_lock() {
+  local out rc=0
+  log "Taking kured's node lock for $1"
+  out=$(kured_lock_acquire "$KURED_LOCK_HOLDER" 10800 10800) || rc=$?
+  [ "$rc" -eq 0 ] || abort "$1 — kured's node lock not free after 3 h: $out"
+}
+release_node_lock() {
+  kured_lock_release "$KURED_LOCK_HOLDER" >/dev/null 2>&1 || true
 }
 
 # Kill-switch — checked before every phase. If the ConfigMap
@@ -347,10 +371,11 @@ drain_node() {
   predrain_unstick "$node"
   ( while kill -0 $$ 2>/dev/null; do sleep 60; predrain_unstick "$node"; done ) &
   local watcher=$!
-  trap "kill $watcher 2>/dev/null || true" EXIT
+  trap "kill $watcher 2>/dev/null || true; release_node_lock" EXIT
   $KUBECTL drain "$node" --ignore-daemonsets --delete-emptydir-data --force --grace-period=300
   kill $watcher 2>/dev/null || true
-  trap - EXIT
+  # Leave the node-lock release armed: the phase holds the lock until it exits.
+  trap 'release_node_lock' EXIT
 }
 
 # ---------------------------------------------------------------------------
@@ -750,6 +775,7 @@ phase_master() {
   #
   # Long-term fix: HA control plane (3 masters) so apiserver never goes down
   # — see docs/plans/2026-05-21-ha-control-plane-{design,plan}.md (beads code-n0ow).
+  take_node_lock k8s-master
   drain_node k8s-master
 
   # Quiesce tigera-operator ONLY for the kubeadm window. Drain happens FIRST (it
@@ -762,7 +788,7 @@ phase_master() {
   # (background predrain-watcher cleanup) can't clobber it.
   echo "Quiescing tigera-operator for the kubeadm window (it crashes on apiserver outage)"
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=0 2>&1 || true
-  trap '$KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true' EXIT
+  trap '$KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true; release_node_lock' EXIT
 
   log "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
   ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
@@ -847,6 +873,7 @@ phase_worker() {
   done
   [ -n "$alerts" ] && abort "$TARGET_NODE — alerts firing after 30min: $alerts"
 
+  take_node_lock "$TARGET_NODE"
   drain_node "$TARGET_NODE"
 
   log "Running update_k8s.sh on $TARGET_NODE (--role worker --release $TARGET_VERSION)"

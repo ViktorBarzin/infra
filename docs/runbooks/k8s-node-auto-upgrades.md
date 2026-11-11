@@ -98,6 +98,32 @@ for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4 k8s-node5; do
 done
 ```
 
+### Who holds kured's node lock
+
+kured's lock is the `weave.works/kured-node-lock` annotation on the
+`kured/kured` DaemonSet. Since 2026-11-10 three writers share it, so a
+reboot, an upgrade drain and the night's backups never overlap:
+
+| holder (`nodeID`) | who | TTL |
+|---|---|---|
+| `k8s-node<N>` / `k8s-master` | kured, from drain until the node is back | none |
+| `k8s-upgrade-chain` | each k8s-version-upgrade master/worker phase | 3 h |
+| `pve-nightly-chain` | the Proxmox host's nightly backup chain, 00:00 UTC | 8 h |
+
+kured waits for the next period while someone else holds it. The other two
+write with `scripts/kured-lock.sh`, which uses a resourceVersion check so two
+writers cannot both win, and only ever removes its own lock.
+
+```bash
+kubectl get ds -n kured kured -o jsonpath='{.metadata.annotations.weave\.works/kured-node-lock}'; echo
+```
+
+A stale lock from a dead writer expires on its own after its TTL. To clear
+one sooner, first check the holder is not running (`systemctl status
+nightly-chain` on the host, `kubectl get jobs -n k8s-upgrade`), then run
+`kured-lock release <holder>` on the host. The annotation is runtime state
+that kured itself writes, not configuration, so this is not Terraform drift.
+
 ### Halt rollout in an emergency
 ```bash
 # Option 1: scale kured to 0 (most decisive)

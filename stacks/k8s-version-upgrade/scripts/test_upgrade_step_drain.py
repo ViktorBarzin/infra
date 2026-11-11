@@ -64,7 +64,9 @@ def run_drain(tmp_path: pathlib.Path) -> list[str]:
     (tmp_path / "pdb.json").write_text(json.dumps(PDBS))
     calls = tmp_path / "calls"
     calls.touch()
-    body = function("predrain_unstick") + function("drain_node") + 'drain_node k8s-node5\n'
+    body = ('release_node_lock() { echo "release-lock" >> "$CALLS"; }\n'
+            + function("predrain_unstick") + function("drain_node")
+            + 'drain_node k8s-node5\necho "after-drain" >> "$CALLS"\n')
     subprocess.run(
         ["bash", "-c", body],
         check=True,
@@ -98,3 +100,19 @@ def test_cnpg_pods_are_left_to_cnpg_switchover(tmp_path):
 def test_drain_still_runs(tmp_path):
     calls = run_drain(tmp_path)
     assert any(c.startswith("drain k8s-node5 ") for c in calls), calls
+
+
+def test_node_lock_is_released_when_the_phase_exits(tmp_path):
+    # The phase holds kured's node lock from before the drain until it exits.
+    # drain_node swaps the EXIT trap for its watcher; it must leave the lock
+    # release armed, not clear the trap.
+    calls = run_drain(tmp_path)
+    assert "release-lock" in calls, calls
+    assert calls.index("release-lock") > calls.index("after-drain"), calls
+
+
+def test_phases_take_the_node_lock_before_draining():
+    for phase in ("phase_master", "phase_worker"):
+        body = function(phase)
+        assert "take_node_lock" in body, phase
+        assert body.index("take_node_lock") < body.index("drain_node"), phase
