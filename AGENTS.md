@@ -36,7 +36,9 @@ has not been applied.
 
 Routed elsewhere by design: accounts, groups, clones and kubeconfigs come from
 `roster.yaml` via `t3-provision-users.sh` (hourly; infra#88 ports that half),
-and Terminal Lobby's own files ship in its Debian package.
+which also restores each user's credential files from Vault and applies
+dotfiles on a rebuilt box (`docs/runbooks/devvm-credentials.md`), and
+Terminal Lobby's own files ship in its Debian package.
 
 ## Execution
 - **Apply**: Authenticate via `vault login -method=oidc`, then **`homelab tf plan|validate|apply <stack>`** (always the full form — bare `homelab tf` prints `unknown command: "tf"`, which reads as "the verb does not exist"). It wraps `scripts/tg`, which handles state decrypt/encrypt. **Do not run bare `terragrunt`/`terraform`.** On a Tier-1 stack a bare terragrunt dies in "Initializing the backend" with `pq: password authentication failed for user "<your-os-user>"`, because `PG_CONN_STR` is set only by `scripts/tg`. **That error is not a permission-tier limit** — reading it as one led to abandoning local verification for CI and hand-rolling the offline check with plain `terraform init`, 15 times over a month. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
