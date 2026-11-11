@@ -1,0 +1,8 @@
+[Unit]
+Description=Export the age of ha-london's newest network backup to node_exporter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ha-london-backup-status
+Nice=10
+IOSchedulingClass=idle
