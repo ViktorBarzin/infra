@@ -253,7 +253,7 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
           # was verified to carry BOTH the http proxy and socks5, end to end.
           # Same pattern as NEKO_IMAGE in main.tf. If you bump this, re-verify
           # `socks5` appears in the gluetun startup log before trusting :1080.
-          image = "ghcr.io/qdm12/gluetun@sha256:82a7424216cda785a9056ae9e06a38bf13aa994a287d31f506320ad885c1554c"
+          image = "ghcr.io/qdm12/gluetun@sha256:75df789dea20551fa973f808133a712700bf198518f9d49ed581287777508556"
           security_context {
             capabilities {
               # Kernelspace WireGuard needs no /dev/net/tun, no privileged and
