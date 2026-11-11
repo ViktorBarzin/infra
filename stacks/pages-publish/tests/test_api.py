@@ -197,6 +197,78 @@ def test_preview_bad_status_400(client):
     assert r.status_code == 400
 
 
+# ---- page size cap: an oversized page is a 413, never an OOM-killed pod ----
+
+
+@pytest.mark.parametrize("path", ["/publish", "/preview"])
+def test_page_at_the_cap_is_accepted(client, preview_calls, path):
+    from app import publisher
+
+    content = "a" * publisher.MAX_PAGE_BYTES
+    r = client.post(path, headers=AUTH_V, json={"content": content, "filename": "x.md"})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/publish", "/preview"])
+def test_page_over_the_cap_is_413_with_limit_and_size(client, preview_calls, path):
+    # Under the request-body cap, so this is the parsed-content backstop.
+    from app import publisher
+
+    content = "a" * (publisher.MAX_PAGE_BYTES + 1)
+    r = client.post(path, headers=AUTH_V, json={"content": content, "filename": "x.md"})
+    assert r.status_code == 413
+    detail = r.json()["detail"]
+    assert str(publisher.MAX_PAGE_BYTES) in detail
+    assert str(publisher.MAX_PAGE_BYTES + 1) in detail
+    assert "render" not in client.calls
+    assert preview_calls == {}
+
+
+def test_page_cap_counts_utf8_bytes_not_characters(client, preview_calls):
+    from app import publisher
+
+    content = "\u00e9" * (publisher.MAX_PAGE_BYTES // 2 + 1)  # 2 bytes each
+    r = client.post("/preview", headers=AUTH_V, json={"content": content, "filename": "x.md"})
+    assert r.status_code == 413
+    assert preview_calls == {}
+
+
+@pytest.mark.parametrize("path", ["/publish", "/preview"])
+def test_body_over_the_request_cap_is_413_before_parsing(client, preview_calls, path):
+    # The body is not JSON: had it been read and parsed this would be a 422.
+    from app import publisher
+
+    size = publisher.MAX_PAGE_REQUEST_BYTES + 1
+    r = client.post(
+        path,
+        headers={**AUTH_V, "Content-Type": "application/json"},
+        content=b"x" * size,
+    )
+    assert r.status_code == 413
+    detail = r.json()["detail"]
+    assert str(publisher.MAX_PAGE_BYTES) in detail
+    assert str(size) in detail
+    assert preview_calls == {}
+
+
+def test_request_cap_leaves_room_for_json_escaping():
+    from app import publisher
+
+    assert publisher.MAX_PAGE_REQUEST_BYTES >= 2 * publisher.MAX_PAGE_BYTES
+
+
+def test_bundle_is_not_held_to_the_page_cap(client):
+    from app import publisher
+
+    big = "a" * (publisher.MAX_PAGE_BYTES + 1)
+    r = client.post(
+        "/publish-bundle",
+        headers={"Authorization": "Bearer tok-bundle"},
+        json={"files": [{"path": "index.html", "content": big}]},
+    )
+    assert r.status_code == 200
+
+
 # ---- /publish-bundle: a separate token map, raw files, no render ----------
 
 AUTH_B = {"Authorization": "Bearer tok-bundle"}  # -> ("showcase", "homelab")

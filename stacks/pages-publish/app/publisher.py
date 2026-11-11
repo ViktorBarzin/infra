@@ -47,6 +47,17 @@ _ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
 MAX_ASSET_BYTES = 8 * 1024 * 1024
 
 
+# /publish and /preview limits for one page. Rendering holds several copies of
+# the markdown in memory, so on 2026-11-05 a ~4.5 MB page OOM-killed the pod
+# and took the service down for every user (viktor/infra#165). The cap is on
+# the markdown's UTF-8 bytes. The request-body cap is checked from
+# Content-Length before the body is read; it is looser because JSON escaping
+# grows the body (a newline is 2 bytes, Go's encoder writes '<' as 6), and the
+# exact check on the parsed content is the backstop.
+MAX_PAGE_BYTES = 8 * 1024 * 1024
+MAX_PAGE_REQUEST_BYTES = 2 * MAX_PAGE_BYTES
+
+
 # /publish-bundle limits. The showcase site is a handful of text files plus one
 # OpenGraph PNG; these leave room for growth while bounding one request.
 MAX_BUNDLE_FILES = 200
