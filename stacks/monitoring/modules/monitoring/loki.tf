@@ -1013,7 +1013,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # FAILED" into this journal, paged, and held this alert for 12h
               # over the next real bump. Every in-unit line also arrives as
               # the unit's stdout, which always carries the unit label.
-              # Scratch runs: docs/runbooks/t3-version-bump.md, "Scratch runs".
+              # Scratch runs: see "Scratch runs" in docs/runbooks/t3-version-bump.md.
               alert  = "T3AutoUpdateRolledBack"
               expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"rolling back|rolled back\" [12h])) > 0"
               for    = "0m"
