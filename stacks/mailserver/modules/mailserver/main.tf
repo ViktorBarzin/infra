@@ -1361,11 +1361,22 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
   metadata {
     name      = "mailserver-backup"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
-    concurrency_policy            = "Replace"
-    failed_jobs_history_limit     = 5
-    schedule                      = "0 3 * * *"
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 3 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
     job_template {
@@ -1521,12 +1532,23 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
   metadata {
     name      = "roundcube-backup"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
     # +10 min offset vs mailserver-backup (03:00) to avoid NFS contention.
-    schedule                      = "10 3 * * *"
+    schedule = "10 3 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
     job_template {

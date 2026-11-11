@@ -1511,11 +1511,22 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
   metadata {
     name      = "postgresql-backup"
     namespace = kubernetes_namespace.immich.metadata[0].name
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
     schedule                  = "0 0 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend = true
     # schedule                      = "* * * * *"
     # 600s (was 10s), as on the dbaas backup CronJobs: a 10s deadline dropped
     # the dbaas 00:00 run on 2026-06-13 when the CronJob controller was late

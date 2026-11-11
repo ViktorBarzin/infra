@@ -275,8 +275,9 @@ credential in the UI means updating Vault too, and forgetting shows up as
 ## Backups
 
 The actual-server PVCs (`actualbudget-{viktor,anca}-data-encrypted`) are covered
-by the host-level 3-2-1 system — `lvm-pvc-snapshot` (daily 03:00, 3-day
-retention) and `daily-backup` (daily 05:00, 4-week file-level history); neither
+by the host-level 3-2-1 system — `lvm-pvc-snapshot` (nightly, 3-day
+retention) and `daily-backup` (nightly, 4-week file-level history), both steps
+of the host's nightly-chain; neither
 is in the skip-list. There is no in-cluster snapshot mechanism (no Velero, no
 VolumeSnapshots). Before any destructive data operation, take a point-in-time
 copy anyway — the scheduled cadence can be up to a day stale:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Nightly backup chain: dumps, then nfs-mirror, snapshot, daily, devvm-home, offsite
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/architecture/backup-dr.md
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nightly-chain
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nightly-chain
+# The chain only waits on Jobs and on the step units, which carry their own
+# IO class and timeouts. 12 h covers a 2 h lock wait plus the slowest night
+# seen (dumps up to ~80 min each, nfs-mirror, daily and offsite).
+TimeoutStartSec=12h

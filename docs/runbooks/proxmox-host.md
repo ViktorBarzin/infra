@@ -257,9 +257,12 @@ everything was off.
    reset fixed nothing; the router reboot did. If the symptom is
    connectivity, look at the `wan-gateway-icmp` and `internet-egress-icmp`
    probes and the router before touching the host.
-2. **Pick the window.** Not Sunday 21:00-23:30 UTC (k8s-version-upgrade
-   chain) and not 00:10-04:15 UTC (nfs-mirror, devvm-home, daily and
-   offsite backups on this host).
+2. **Pick the window.** Not while kured's node lock is held
+   (`kured-lock holder` on the host, or the
+   `weave.works/kured-node-lock` annotation on `kured/kured`): that means a
+   kured reboot, a k8s-version-upgrade drain (Sunday from 21:00 UTC) or the
+   nightly backup chain (from 00:00 UTC, usually 2-3 h;
+   `systemctl status nightly-chain`) is running.
 3. **Claim presence**: `presence claim host:proxmox-1 --purpose "<why>"`.
 4. **Stop the VMs cleanly before the reboot**, so databases shut down
    cleanly and Prometheus keeps its last samples:

@@ -95,9 +95,20 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
   metadata {
     name      = "backup-etcd"
     namespace = "default"
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
-    schedule                      = "0 1 * * *"
+    schedule = "0 1 * * *"
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"

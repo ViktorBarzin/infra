@@ -791,9 +791,20 @@ resource "kubernetes_cron_job_v1" "backup" {
     name      = "broker-sync-backup"
     namespace = kubernetes_namespace.broker_sync.metadata[0].name
     labels    = { app = "broker-sync", component = "backup" }
+    # Run by the Proxmox host's nightly-chain (scripts/nightly-chain.sh), not by
+    # this schedule: "daily" means every night.
+    annotations = {
+      "backup.viktorbarzin.me/nightly-chain" = "daily"
+    }
   }
   spec {
-    schedule                      = "15 4 * * *" # 04:15 UK — after all syncs
+    schedule = "15 4 * * *" # 04:15 UK — after all syncs
+    # Suspended since 2026-11-10: nightly-chain starts this with
+    # `kubectl create job --from=cronjob/...` after the night's drains and
+    # before nfs-mirror copies /srv/nfs, which still updates
+    # lastSuccessfulTime for the *BackupStale alerts. The schedule is kept
+    # only as documentation of the old time.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 5
