@@ -3,7 +3,7 @@
 # other, instead of at hand-staggered times.
 #
 # Deploy to PVE host at /usr/local/bin/nightly-chain (scripts/ci/pve-scripts-sync.sh).
-# Schedule: daily 00:00 UTC via nightly-chain.timer. The five host backup
+# Schedule: daily 00:00 UTC via nightly-chain.timer. The six host backup
 # timers are disabled; this is the only thing that starts them.
 #
 # Order, and why:
@@ -26,12 +26,13 @@
 #   3. lvm-pvc-snapshot    thin snapshots of the Proxmox CSI PVCs
 #   4. daily-backup        copies from the snapshots in step 3 to sda
 #   5. devvm-home-backup   devvm /home to sda
-#   6. offsite-sync-backup sda + immich to the Synology, after 2-5 wrote sda
+#   6. t3-state-pull       the devvm's nightly T3 snapshots to sda (2026-11-11)
+#   7. offsite-sync-backup sda + immich to the Synology, after 2-6 wrote sda
 #   Each host step is its own systemd unit with its own IO class, timeout and
 #   metrics; this script only starts it and waits. A failed step is reported
 #   and the chain carries on, because the later steps do not lose anything by
 #   running on yesterday's copy of an earlier one.
-#   7. Release the lock.
+#   8. Release the lock.
 #
 # If the cluster API does not answer, the dumps cannot run, but the host
 # steps still do: they are the recovery copies for exactly that situation.
@@ -47,7 +48,7 @@ DUMP_PARALLEL=${NIGHTLY_CHAIN_DUMP_PARALLEL:-3}
 DUMP_TIMEOUT=${NIGHTLY_CHAIN_DUMP_TIMEOUT:-7200}
 POLL=${NIGHTLY_CHAIN_POLL:-30}
 ANNOTATION=backup.viktorbarzin.me/nightly-chain
-HOST_STEPS="nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup offsite-sync-backup"
+HOST_STEPS="nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup t3-state-pull offsite-sync-backup"
 PUSHGATEWAY="${NIGHTLY_CHAIN_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB=nightly-chain
 LOCK_LIB=${NIGHTLY_CHAIN_LOCK_LIB:-/usr/local/bin/kured-lock}

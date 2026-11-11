@@ -1590,6 +1590,13 @@ while IFS=$'\t' read -r os_user port; do
     log "t3-serve DISABLED for $os_user (roster parked: true)"
     continue
   fi
+  # --- t3-snapshot (disposable devvm, 2026-11-11) ---
+  # A rebuilt devvm: put the user's newest T3 snapshot back before the serve
+  # first starts. --if-missing is a no-op for anyone who already has a database.
+  if id "$os_user" >/dev/null 2>&1 && [[ -x /usr/local/bin/t3-restore-state ]]; then
+    run /usr/local/bin/t3-restore-state --if-missing "$os_user" || log "WARN: t3-restore-state failed for $os_user"
+  fi
+  # --- end t3-snapshot ---
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
