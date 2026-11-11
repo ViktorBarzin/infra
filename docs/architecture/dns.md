@@ -292,7 +292,7 @@ Until 2026-11-04 only the primary blocked. `DNS_SERVER_ENABLE_BLOCKING=true` tur
 | MySQL (`technitium` DB) | Disabled | — | Legacy, disabled by password-sync CronJob |
 | PostgreSQL (`technitium` DB on CNPG) | Enabled on all three instances | 90 days | Query log store (`dns_logs`), read by Grafana and the daily `dns-digest` |
 
-All three instances write to the same `dns_logs` table. The `server` column holds each instance's server name, which is the pod name it first started with (`technitium-658c8944b9-lmd52` for the primary); strip the two pod suffixes to get the deployment name.
+All three instances write to the same `dns_logs` table. Since 2026-11-11 CronJob `netsec-technitium` (`stacks/netsec`) copies it every 5 minutes into ClickHouse `netsec.technitium` (365 days, plus `technitium_hourly` kept forever), which is where to query lookup history beyond 90 days or together with the other network data (`homelab netsec sql`, `docs/architecture/network-security-monitoring.md`). The `server` column holds each instance's server name, which is the pod name it first started with (`technitium-658c8944b9-lmd52` for the primary); strip the two pod suffixes to get the deployment name.
 
 - The primary runs a side-loaded build named **Query Logs (Postgres)** 1.0 (installed from a zip on 2026-04-12). It owns retention: it deletes rows older than 90 days by timestamp.
 - Secondary and tertiary run the store app **Query Logs (PostgreSQL)** (installed by `technitium-blocking-sync`, configured by `technitium-password-sync`) with `maxLogDays=0`. The store app trims by counting old rows and then deleting that many of the lowest `dlid`s, which removes rows inside the window when several instances run it at once, so it does no retention here.
