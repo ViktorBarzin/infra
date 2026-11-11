@@ -467,7 +467,8 @@ Gaps it found, none fixed in the drill itself:
   flags), restore writes it back or merges it into one provisioning wrote
   first, and the MCP secrets it leaves out come back from Vault
   `secret/workstation/<user>/mcp` in provisioning step 4a2
-  (`claude-session-store.md`). Not yet drilled on a VM.
+  (`claude-session-store.md`). Checked on the live box into scratch homes
+  (`devvm-credentials.md`, "MCP server secrets"); not yet drilled on a VM.
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
   group is root-equivalent. Viktor decided he keeps it: his row has
