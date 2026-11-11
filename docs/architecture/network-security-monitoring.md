@@ -74,7 +74,7 @@ fail after the raw rows are written. That ran for 21 minutes on 2026-11-11
 (11:27-11:48 UTC): the raw tables kept every row, but Vector logged about
 159,000 events as dropped. Test a new or changed view with an insert as
 `netsec_writer` on scratch tables, then watch `netsec-vector` for errors
-right after creating it. Not backed up, like the raw tables (Viktor, 2026-11-11).
+right after creating it. Backed up nightly with the `claude` database (below).
 
 **Users.** `netsec_writer` (INSERT on `netsec.*`, quota 4 GB written and
 20,000 inserts per hour, about ten times the measured rate) and
@@ -84,8 +84,16 @@ read-only, 120 s, 2 GB, 100,000 rows). Passwords in Vault
 The reader credential is on the devvm at `/etc/netsec/reader.env`,
 `root:sudo 0640`; Viktor is the only member of `sudo`.
 
-**Not backed up.** `backup.sh` saves `DATABASE claude` only, so browsing data
-stays off NFS and the offsite copy (plan decision 7). Losing the PVC loses
+**Backup: rollups only.** `backup.sh` (CronJob `clickhouse-backup`, 01:40)
+saves `DATABASE claude` plus every `netsec` table named `*_hourly`, listed at
+run time, to `/srv/nfs/claude-sessions-backup/`, which reaches the sda mirror
+and Synology like the claude backups. Viktor chose this on 2026-11-11 because
+the rollups are kept forever and cannot be rebuilt; the full raw tables (about
+75 GB at steady state) would not fit Synology, which runs 91-98% full. The
+rollups still hold which address looked up which name each hour, so that much
+browsing data is now on NFS and offsite, relaxing plan decision 7. The raw
+tables stay off both. Restore: `docs/runbooks/restore-claude-sessions.md`,
+"netsec rollups". Losing the PVC loses
 history, not protection.
 
 **Not in Grafana.** Every Authentik user is a Grafana Viewer, and OSS Grafana

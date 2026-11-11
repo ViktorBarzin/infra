@@ -55,6 +55,25 @@ Tested on 2026-11-08 against a full plus an incremental: the restored counts mat
    Side files (`claude.files`) are replaced by path, so re-sending them is harmless; they are absent from the rebuilt state and get sent again.
 4. Start the timer again: `sudo systemctl start claude-sessions-ingest.timer`. Lines written after the backup are recovered as long as the local transcripts still hold them (kept 180 days).
 
+## netsec rollups
+
+Since 2026-11-11 each backup also holds the `netsec` hourly rollups (every
+`netsec` table named `*_hourly`), never the raw `netsec` tables. Restore one
+beside the live table to check it, or after a lost volume into the empty table
+that `schema.sql` created (stop `netsec-vector` first, or the materialized
+views add rows during the restore):
+
+```sh
+kubectl -n claude-sessions exec -it deploy/clickhouse -- bash -c \
+  'clickhouse-client --password "$CLICKHOUSE_PASSWORD" -q "RESTORE TABLE netsec.flows_hourly AS netsec.flows_hourly_restore FROM Disk('"'"'backups'"'"', '"'"'<name>'"'"')"'
+# after a lost volume, into the live table instead:
+#   RESTORE TABLE netsec.flows_hourly FROM Disk('backups', '<name>') SETTINGS allow_non_empty_tables = true
+```
+
+Tested on 2026-11-11: a restored `flows_hourly` summed to the same flow count
+as the live table for every complete hour. The raw tables are lost with the
+volume; the views fill the rollups again from the first new insert.
+
 ## Lost volume
 
 If the PVC is gone, Terraform recreates it and the image's initdb creates an empty schema from `files/schema.sql`. Then run step 2 above (drop the empty database first).

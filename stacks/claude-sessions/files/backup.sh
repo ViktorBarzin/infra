@@ -2,7 +2,13 @@
 # Nightly backup of the claude-sessions ClickHouse to the PVE NFS share
 # (mounted at /backups in both the server pod and this job).
 #
-# ClickHouse's native BACKUP writes the database's parts to disk 'backups'.
+# ClickHouse's native BACKUP writes the parts of database claude and of the
+# netsec hourly rollups (every netsec table named *_hourly) to disk 'backups'.
+# The raw netsec tables are left out on purpose (Viktor, 2026-11-11): they hold
+# every connection, name and URL, age out after 365 days, and would not fit the
+# offsite copy. The rollups are kept forever and cannot be rebuilt.
+# They are listed at run time, so a new rollup is included and a raw table
+# never is.
 # Sunday (or when no full backup exists yet) takes a full backup; other days
 # take an incremental against the newest full, so a restore needs at most two
 # backups. Retention: incrementals 28 days, fulls 35 days, which keeps the
@@ -14,19 +20,25 @@ ch() { clickhouse-client --host "$CH_HOST" --port 9000 --user default --password
 
 t0=$(date -u +%s)
 stamp=$(date -u +%Y%m%d-%H%M%S)
+# TABLE netsec.a, TABLE netsec.b, ... ; empty when the netsec database is absent.
+rollups=$(ch -q "SELECT arrayStringConcat(groupArray(concat('TABLE netsec.', name)), ', ')
+  FROM (SELECT name FROM system.tables WHERE database = 'netsec' AND endsWith(name, '_hourly')
+        AND engine LIKE '%MergeTree' ORDER BY name)")
+what="DATABASE claude${rollups:+, $rollups}"
+
 latest_full=$(find /backups -mindepth 1 -maxdepth 1 -type d -name 'full-*' -printf '%f\n' | sort | tail -1)
 
 if [ -z "$latest_full" ] || [ "${FORCE_FULL:-0}" = 1 ] || { [ "$(date -u +%u)" = 7 ] && [ "${FORCE_INCREMENTAL:-0}" != 1 ]; }; then
   kind=full
   name="full-$stamp"
-  query="BACKUP DATABASE claude TO Disk('backups', '$name')"
+  query="BACKUP $what TO Disk('backups', '$name')"
 else
   kind=incremental
   name="incr-$stamp"
-  query="BACKUP DATABASE claude TO Disk('backups', '$name') SETTINGS base_backup = Disk('backups', '$latest_full')"
+  query="BACKUP $what TO Disk('backups', '$name') SETTINGS base_backup = Disk('backups', '$latest_full')"
 fi
 
-echo "backup kind=$kind name=$name base=${latest_full:-none}"
+echo "backup kind=$kind name=$name base=${latest_full:-none} what=$what"
 result=$(ch -q "$query" --format TSV)
 echo "$result"
 status=$(printf '%s' "$result" | cut -f2)
