@@ -226,6 +226,17 @@ alloy:
         // line. All cluster nodes run containerd, so a bare stage.cri is correct.
         stage.cri { }
 
+        // Mask the password in any scheme://user:password@host URL before it is
+        // stored, for every namespace. go2rtc (inside Frigate) logged full RTSP
+        // URLs with camera passwords on every reconnect, and Loki kept them for
+        // the whole retention (infra#154). The user stays visible; only the
+        // password becomes <redacted>. '/' is excluded from the password so a
+        // host:port/path@... line is left alone.
+        stage.replace {
+          expression = `(?i)\b[a-z][a-z0-9+.-]*://[^:/@\s]+:([^@\s/]+)@`
+          replace    = "<redacted>"
+        }
+
         // Drop benign public-SMTP scanner noise from the mailserver pod only:
         // unknown[unknown] probes that never complete TLS/PROXY + postscreen
         // half-open drops (~9k lines/hr, the cluster's #1 Loki error source).

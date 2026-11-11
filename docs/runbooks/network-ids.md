@@ -55,9 +55,11 @@ nothing, although the TCP port answers.
 
 ## Is Suricata metadata flowing? (netsec.eve)
 
-1. Test: `dig icanhazip.com @10.0.10.1` from the devvm, then
-   `homelab netsec sql "SELECT ts, in_iface, signature FROM netsec.eve WHERE signature_id = 2054169 ORDER BY ts DESC LIMIT 1"`.
-   It arrived in 16 seconds on 2026-11-10.
+1. Test: `curl -s -A BlackSun http://example.com/ -o /dev/null` from the devvm, then
+   `homelab netsec sql "SELECT ts, in_iface, signature FROM netsec.eve WHERE signature_id = 2008983 ORDER BY ts DESC LIMIT 1"`
+   (`ET USER_AGENTS Suspicious User Agent (BlackSun)`; plain HTTP, so Suricata
+   sees the header). The older `dig icanhazip.com` test used an `emerging-info`
+   rule, and that category is off since 2026-11-11.
 2. On OPNsense (root shell is csh, so `ssh root@10.0.10.1 sh -s <<EOF`):
    `ls -la /var/log/suricata/eve-meta.json` grows; `sockstat -4 -c | grep 5140`
    shows syslog-ng connected to 10.0.20.211.
@@ -78,6 +80,7 @@ nothing, although the TCP port answers.
 | `NetsecSinkErrors` | a ClickHouse write failed | Vector logs; a 401/516 is the `netsec_writer` password (Vault `secret/claude-sessions` vs the pod's `netsec-secrets`), a quota error means a runaway source |
 | `NetsecFlowsStale` | no row written to `flows` for 30 minutes | the four checks above, in order |
 | `NetsecEveStale` | no row written to `eve` for 30 minutes | "Is Suricata metadata flowing?" above |
+| `SuricataCaptureDrops` | Suricata missed more than 1% of the packets it should inspect over an hour (blind spots, not dropped traffic) | `docs/runbooks/opnsense.md`, "Suricata tuning", capture section |
 | `NetsecHomeHostMalware` | a malware or C2 alert involving one of our hosts (CronJob `netsec-alerts`) | "A home host hit a malware rule" below |
 | `CameraVlanBlockedTraffic` | the VLAN 30 camera started traffic the firewall blocked | "Camera VLAN blocked traffic" below |
 | `CrowdSecOpnsenseAgentSilent` | OPNsense's agent sent nothing to LAPI for 15 minutes | `ssh root@10.0.10.1 'service crowdsec status'`, `/var/log/crowdsec/crowdsec.log` |

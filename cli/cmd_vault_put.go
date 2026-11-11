@@ -69,6 +69,11 @@ type putOpts struct {
 	Update        bool
 }
 
+// hasPasswordSource reports whether the caller asked for the password to be
+// written. A create always needs one; an update without one leaves the stored
+// password as it is (infra#147).
+func (o putOpts) hasPasswordSource() bool { return o.PasswordStdin || o.FromKV != "" }
+
 // nameValue is a resolved custom field.
 type nameValue struct{ Name, Value string }
 
@@ -80,7 +85,11 @@ type putValues struct {
 }
 
 const putUsage = `usage: homelab vault put <item-name> (--from-kv <path>#<key> | --password-stdin)
-              [--username U] [--uri URL]… [--note TEXT] [--update]
+              [--username U] [--uri URL]… [--note TEXT]
+              [--field NAME=VALUE] [--field-from-kv NAME=<path>#<key>]
+              [--totp SEED | --totp-from-kv <path>#<key>]
+       homelab vault put <item-name> --update [--from-kv <path>#<key> | --password-stdin]
+              [--username U] [--uri URL]… [--note TEXT]
               [--field NAME=VALUE] [--field-from-kv NAME=<path>#<key>]
               [--totp SEED | --totp-from-kv <path>#<key>]`
 
@@ -159,14 +168,20 @@ func parsePutArgs(args []string) (putOpts, error) {
 	if o.Name == "" {
 		return o, fmt.Errorf(putUsage)
 	}
-	if o.PasswordStdin == (o.FromKV != "") {
-		return o, fmt.Errorf("pass exactly one password source: --from-kv <path>#<key> (from the infra KV store) or --password-stdin (piped, or a no-echo prompt)")
+	if o.PasswordStdin && o.FromKV != "" {
+		return o, fmt.Errorf("pass one password source, not both: --from-kv <path>#<key> (from the infra KV store) or --password-stdin (piped, or a no-echo prompt)")
+	}
+	// An update may leave the password alone (infra#147); a create may not.
+	if !o.Update && !o.hasPasswordSource() {
+		return o, errNoPasswordSource
 	}
 	if o.TOTP != "" && o.TOTPKVRef != "" {
 		return o, fmt.Errorf("--totp and --totp-from-kv ask for the same field; pass one, not both")
 	}
 	return o, nil
 }
+
+var errNoPasswordSource = fmt.Errorf("pass exactly one password source: --from-kv <path>#<key> (from the infra KV store) or --password-stdin (piped, or a no-echo prompt); only --update may leave it out, to keep the stored password")
 
 // addField appends one --field / --field-from-kv spec. Duplicate names are
 // rejected: Vaultwarden would hold both, and the read side (normalizeItem)
@@ -240,7 +255,8 @@ func resolvePutValues(run cmdRunner, o putOpts, readStdin func(prompt string) (s
 		return val, nil
 	}
 
-	if o.PasswordStdin {
+	switch {
+	case o.PasswordStdin:
 		pw, err := readStdin("Password for " + o.Name + ": ")
 		if err != nil {
 			return v, err
@@ -249,7 +265,7 @@ func resolvePutValues(run cmdRunner, o putOpts, readStdin func(prompt string) (s
 			return v, fmt.Errorf("empty password; aborting (nothing written)")
 		}
 		v.Password = pw
-	} else {
+	case o.FromKV != "":
 		pw, err := fromKV(o.FromKV, "the password")
 		if err != nil {
 			return v, err
@@ -398,7 +414,9 @@ func mergeLoginItem(existing string, o putOpts, v putValues) ([]byte, error) {
 	if login == nil {
 		login = map[string]interface{}{}
 	}
-	login["password"] = v.Password
+	if o.hasPasswordSource() {
+		login["password"] = v.Password
+	}
 	if o.HasUsername {
 		login["username"] = o.Username
 	}
@@ -498,6 +516,10 @@ func putItem(run cmdRunner, runStdin cmdRunnerStdin, env []string, o putOpts, v 
 			len(ids), o.Name, strings.Join(ids, ", "))
 	}
 	if len(ids) == 0 {
+		// --update on a free name creates, and a create needs a password.
+		if !o.hasPasswordSource() {
+			return "", fmt.Errorf("no item named %q to update: %w", o.Name, errNoPasswordSource)
+		}
 		payload, err := buildLoginItem(o, v)
 		if err != nil {
 			return "", err

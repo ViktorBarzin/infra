@@ -1,9 +1,27 @@
 # Suricata in IDS mode (pcap: alerts, no drops; plan decision 8) on VLAN 10 (lan)
 # and VLAN 20 (opt1), with ET Open and the abuse.ch SSL blacklist, Feodo and URLhaus
-# lists. EVE alerts go to syslog, and from there to Alloy (syslog.yml).
+# lists, minus the ET Open categories listed below. EVE alerts go to syslog, and
+# from there to Alloy (syslog.yml). Capture buffer and stream bypass: see
+# files/opnsense/suricata-netsec-capture.yaml.
 # WAN is not inspected: every routed flow also crossed VLAN 10 or 20, so it alerted
 # twice, and on WAN it showed the firewall's address instead of the inside host
 # (2026-11-10, docs/plans/2026-11-10-network-ids.md decision 14).
+# The capture buffer: FreeBSD caps a BPF buffer at net.bpf.maxbufsize (512 KB by
+# default, about 40 ms of traffic at 100 Mbps), and bursts of video overflowed it
+# (4.4% of packets missed on 2026-11-10). 32 MB lets the 32 MB pcap buffer-size in
+# files/opnsense/suricata-netsec-capture.yaml take effect.
+- name: Tunable for the capture buffer
+  opnsense_mvc:
+    controller: core/tunables
+    item: item
+    match_key: tunable
+    items:
+      - tunable: net.bpf.maxbufsize
+        value: "33554432"
+        descr: "Suricata capture buffer up to 32 MB (playbooks/tasks/opnsense/suricata.yml)"
+    reconfigure: core/tunables/reconfigure
+  register: opn_ids_tunable
+
 - name: Suricata settings
   opnsense_mvc:
     mode: settings
@@ -27,13 +45,50 @@
   check_mode: false
   register: opn_ids_rulesets
 
-- name: Work out which rulesets to enable
+# ET Open categories left off (2026-11-10, Viktor): they target browsing people,
+# phones and desktops, which do not sit behind this firewall, or they are
+# informational and noisy. 20,740 of 63,816 rules; fewer rules also leave memory
+# for the capture buffer. The client-side ones (phishing, exploit_kit,
+# mobile_malware, adware_pup, web_client, activex) come back if the home LAN
+# moves behind OPNsense (docs/plans/2026-11-10-network-ids.md, open question 1).
+- name: ET Open categories left off
   ansible.builtin.set_fact:
-    opn_ids_missing: >-
+    opn_ids_excluded:
+      - {file: emerging-dyn_dns.rules, why: "weak signal; most remaining noise (Valchedrym DDNS, trackers)"}
+      - {file: emerging-info.rules, why: "informational; the bulk of the own-traffic noise"}
+      - {file: emerging-phishing.rules, why: "browsing clients; none behind the firewall"}
+      - {file: emerging-exploit_kit.rules, why: "browser exploits; same"}
+      - {file: emerging-hunting.rules, why: "noisy leads for manual hunting"}
+      - {file: emerging-mobile_malware.rules, why: "no phones behind the firewall"}
+      - {file: emerging-adware_pup.rules, why: "desktop adware"}
+      - {file: emerging-web_client.rules, why: "browser-side attacks"}
+      - {file: emerging-retired.rules, why: "rules ET has retired"}
+      - {file: emerging-activex.rules, why: "Internet Explorer"}
+      - {file: emerging-scada.rules, why: "no industrial equipment"}
+      - {file: emerging-chat.rules, why: "irrelevant here"}
+      - {file: emerging-games.rules, why: "irrelevant here"}
+
+- name: Work out which rulesets to enable and which to turn off
+  vars:
+    excluded_files: "{{ opn_ids_excluded | map(attribute='file') | list }}"
+    wanted: >-
       {{ opn_ids_rulesets.json.rows
          | selectattr('description', 'match', '^(ET open/|abuse\.ch/(SSL Fingerprint Blacklist|Feodo Tracker|URLhaus)$)')
-         | rejectattr('enabled', 'in', ['1', 1, true])
+         | rejectattr('filename', 'in', excluded_files) | list }}
+  ansible.builtin.set_fact:
+    opn_ids_missing: "{{ wanted | rejectattr('enabled', 'in', ['1', 1, true]) | map(attribute='filename') | list }}"
+    opn_ids_unwanted: >-
+      {{ opn_ids_rulesets.json.rows
+         | selectattr('filename', 'in', excluded_files)
+         | selectattr('enabled', 'in', ['1', 1, true])
          | map(attribute='filename') | list }}
+    opn_ids_excluded_unknown: >-
+      {{ excluded_files | difference(opn_ids_rulesets.json.rows | map(attribute='filename') | list) }}
+
+- name: Every left-off category is a ruleset OPNsense knows
+  ansible.builtin.assert:
+    that: opn_ids_excluded_unknown | length == 0
+    fail_msg: "Not offered by OPNsense any more, so the list needs a look: {{ opn_ids_excluded_unknown }}"
 
 - name: Enable the rulesets
   ansible.builtin.uri:
@@ -42,6 +97,15 @@
     body_format: json
     body: {}
   when: opn_ids_missing | length > 0 and not ansible_check_mode
+  changed_when: true
+
+- name: Turn the left-off rulesets off
+  ansible.builtin.uri:
+    url: "{{ opn_api_url }}/ids/settings/toggle_ruleset/{{ opn_ids_unwanted | join(',') }}/0"
+    method: POST
+    body_format: json
+    body: {}
+  when: opn_ids_unwanted | length > 0 and not ansible_check_mode
   changed_when: true
 
 - name: Count the installed rules
@@ -55,22 +119,13 @@
 
 # Signatures that fired only on our own services and say nothing about a threat
 # (1,497 of 1,905 inside alerts on 2026-11-10). Each is off for every host, so add
-# one here only when the runbook's "Suricata tuning" section records why.
+# one here only when the runbook's "Suricata tuning" section records why. The
+# STUN, cloudflared, GitHub, Tailscale, pages.dev and pythonhosted-TLS ones lived in
+# emerging-info, which is now off as a whole (ET Open categories left off above).
 - name: Signatures turned off
   ansible.builtin.set_fact:
     opn_ids_disabled_sids:
-      - {sid: 2016149, why: "STUN request: coturn, Matrix, Headscale DERP, WebRTC"}
-      - {sid: 2016150, why: "STUN response: same"}
-      - {sid: 2033078, why: "STUN on a high port: WebRTC to Google STUN"}
-      - {sid: 2046211, why: "global.stun.twilio.com lookups: WebRTC"}
-      - {sid: 2047122, why: "argotunnel.com lookups: cloudflared"}
-      - {sid: 2071407, why: "GitHub release assets lookup: image and tool downloads"}
-      - {sid: 2071408, why: "GitHub release assets TLS: same"}
       - {sid: 2049201, why: "files.pythonhosted.org lookup: pip"}
-      - {sid: 2049202, why: "files.pythonhosted.org TLS: pip"}
-      - {sid: 2071637, why: "Tailscale control lookups: Headscale clients"}
-      - {sid: 2057745, why: "pages.dev lookups: tv app sources"}
-      - {sid: 2057746, why: "pages.dev TLS: tv app sources"}
       - {sid: 2010144, why: "Vuze BitTorrent UDP: qBittorrent (servarr)"}
       - {sid: 2008581, why: "BitTorrent DHT ping: qBittorrent"}
       - {sid: 2008585, why: "BitTorrent DHT announce: qBittorrent"}
@@ -114,9 +169,40 @@
   changed_when: true
   register: opn_ids_rules_toggled
 
+# The capture buffer and stream bypass (files/opnsense/suricata-netsec-capture.yaml).
+# The file restates the template's stream section, so it is installed only while
+# that section is the one it was written against.
+- name: Fingerprint the template's stream section
+  ansible.builtin.shell: >-
+    awk '/^stream:/{f=1;print;next} f&&/^[^ #]/{f=0} f'
+    /usr/local/opnsense/service/templates/OPNsense/IDS/suricata.yaml | sha256
+  check_mode: false
+  changed_when: false
+  register: opn_ids_stream_tpl
+
+- name: The restated stream section still matches the template
+  ansible.builtin.assert:
+    that: opn_ids_stream_tpl.stdout | trim == 'eea015102d0255ae99673bfe962eecae8edb137898aae363476cbe1b394be59b'
+    fail_msg: >-
+      OPNsense's Suricata stream section changed (fingerprint {{ opn_ids_stream_tpl.stdout | trim }}).
+      Restate it in files/opnsense/suricata-netsec-capture.yaml with bypass: yes,
+      then update the fingerprint here.
+
+- name: Suricata capture file
+  ansible.builtin.copy:
+    src: "{{ opn_dir }}/suricata-netsec-capture.yaml"
+    dest: /usr/local/etc/suricata/conf.d/netsec-capture.yaml
+    owner: root
+    group: wheel
+    # An IDS reconfigure sets conf.d files to 0700; matching it keeps --check a no-op.
+    mode: "0700"
+  register: opn_ids_capture_file
+
 - name: Apply settings, download the rules and (re)start Suricata
   when: >-
     not ansible_check_mode and (opn_ids_settings is changed or opn_ids_missing | length > 0
+    or opn_ids_unwanted | length > 0 or opn_ids_capture_file is changed
+    or opn_ids_tunable is changed
     or (opn_ids_installed.json.total | default(0) | int) == 0)
   block:
     - name: Reconfigure the IDS
@@ -139,6 +225,18 @@
         body: {}
       changed_when: true
 
+    # update_rules rewrites the rule files but does not make the running Suricata
+    # load them: on 2026-11-11 the 13 left-off categories kept firing after the
+    # run until this reload.
+    - name: Make Suricata load the updated rule files
+      ansible.builtin.uri:
+        url: "{{ opn_api_url }}/ids/service/reload_rules"
+        timeout: 600
+        method: POST
+        body_format: json
+        body: {}
+      changed_when: true
+
 - name: Reload the rules so the turned-off signatures take effect
   ansible.builtin.uri:
     url: "{{ opn_api_url }}/ids/service/reload_rules"
@@ -148,3 +246,41 @@
     body: {}
   when: opn_ids_rules_toggled is changed
   changed_when: true
+
+- name: Suricata runs
+  ansible.builtin.command: pgrep -f /usr/local/bin/suricata
+  check_mode: false
+  changed_when: false
+  register: opn_ids_pgrep
+  until: opn_ids_pgrep.rc == 0
+  retries: 30
+  delay: 10
+
+- name: Read the capture and stream settings Suricata loads
+  ansible.builtin.shell: >-
+    suricata --dump-config -c /usr/local/etc/suricata/suricata.yaml
+    | grep -E '^(pcap\.[0-9]+\.(interface|buffer-size)|stream\.(bypass|inline|memcap|reassembly\.depth)) '
+  check_mode: false
+  changed_when: false
+  register: opn_ids_capture_dump
+
+- name: Suricata loads the 32 MB buffers and the stream bypass
+  ansible.builtin.assert:
+    that:
+      - "'pcap.0.interface = vtnet1' in opn_ids_capture_dump.stdout"
+      - "'pcap.0.buffer-size = 33554432' in opn_ids_capture_dump.stdout"
+      - "'pcap.1.interface = vtnet2' in opn_ids_capture_dump.stdout"
+      - "'pcap.1.buffer-size = 33554432' in opn_ids_capture_dump.stdout"
+      - "'stream.bypass = yes' in opn_ids_capture_dump.stdout"
+      - "'stream.inline = auto' in opn_ids_capture_dump.stdout"
+      - "'stream.reassembly.depth = 1mb' in opn_ids_capture_dump.stdout"
+    fail_msg: "Suricata's capture or stream settings are not the expected ones: {{ opn_ids_capture_dump.stdout_lines }}"
+  # A first --check run has not installed the file yet.
+  when: not ansible_check_mode or not (opn_ids_capture_file is changed)
+
+- name: The kernel allows the 32 MB capture buffer
+  ansible.builtin.command: sysctl -n net.bpf.maxbufsize
+  check_mode: false
+  changed_when: false
+  register: opn_ids_maxbuf
+  failed_when: not ansible_check_mode and (opn_ids_maxbuf.stdout | int) < 33554432
