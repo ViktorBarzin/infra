@@ -8,8 +8,9 @@
 #   2. mint an orphan token through the Vault token role devvm-bootstrap
 #      (policy devvm-bootstrap, read-only on the paths playbooks/devvm.yml
 #      reads), wrapped for one use;
-#   3. write {wrapped_token, infra_ref} to /run/devvm-bootstrap-handoff.json in
-#      the guest through the Proxmox guest-agent file-write API.
+#   3. write {wrapped_token, infra_ref} to /run/devvm-bootstrap/handoff.json in
+#      the guest through the Proxmox guest-agent file-write API. The directory
+#      is root-only (cloud-init bootcmd); the agent creates the file 0666.
 # scripts/devvm-bootstrap in the guest picks it up from there. The secret never
 # sits in the VM config, a snippet on the host, or Terraform state.
 #
@@ -23,7 +24,7 @@ INFRA_REF="${INFRA_REF:-master}"
 WAIT="${HANDOFF_WAIT:-1200}"
 POLL="${HANDOFF_POLL:-5}"
 WRAP_TTL="${WRAP_TTL:-1h}"
-HANDOFF_PATH="/run/devvm-bootstrap-handoff.json"
+HANDOFF_PATH="/run/devvm-bootstrap/handoff.json"
 API="${PVE_ENDPOINT%/}/api2/json/nodes/$PVE_NODE/qemu/$VMID/agent"
 
 log() { echo "[devvm-drill-handoff] vm $VMID: $*"; }
