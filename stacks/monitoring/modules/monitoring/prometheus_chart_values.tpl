@@ -6758,6 +6758,21 @@ serverFiles:
               lane: security
             annotations:
               summary: "OPNsense stopped reporting Squid intercept metrics for 30m"
+          - alert: SuricataCaptureDrops
+            # Suricata on OPNsense (IDS, VLAN 10 + 20) missed more than 1% of the
+            # packets it should have inspected over the last hour: blind spots, not
+            # dropped traffic. Counters come from netsec-squid-metrics (cron on
+            # OPNsense, stats.log every 5 minutes). Before the 32 MB capture buffer
+            # and stream bypass (2026-11-11) bursts of video reached 26%.
+            # Runbook: docs/runbooks/opnsense.md, "Suricata tuning".
+            expr: (sum(increase(netsec_suricata_capture_kernel_drops_total{job="opnsense-node"}[1h])) / sum(increase(netsec_suricata_capture_kernel_packets_total{job="opnsense-node"}[1h]))) > 0.01
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "Suricata on OPNsense missed {{ $value | humanizePercentage }} of packets over the last hour"
+              description: "Capture buffer overflow or CPU saturation; see docs/runbooks/opnsense.md, Suricata tuning."
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

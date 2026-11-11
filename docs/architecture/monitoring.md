@@ -97,6 +97,14 @@ DaemonSet (`alloy.yaml`) and shipped to Loki with labels `namespace` / `pod` /
 `container` / `app`; node + external-Pi system logs arrive as the `node-journal`
 and `rpi-sofia-journal` jobs (labels `node` / `unit` / `level`).
 
+**URL passwords are masked before storage (since 2026-11-11, infra#154).** A
+`stage.replace` right after `stage.cri` in `loki.process "pod_logs"` turns any
+`scheme://user:password@host` into `scheme://user:<redacted>@host` for every
+namespace. go2rtc inside Frigate had logged full RTSP URLs with the camera
+passwords on each reconnect. Lines shipped before the stage age out with the
+26-week retention; they were deliberately not deleted. Journals do not pass
+through this stage.
+
 > **Gotcha (regression found + fixed 2026-06-05):** `loki.source.file` does
 > **not** expand globs. The pod-log pipeline must place a **`local.file_match`**
 > component between `discovery.relabel` (which writes the

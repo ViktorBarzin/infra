@@ -6,6 +6,7 @@
   plus the assets it links. Nothing is committed or pushed. It exists so a
   caller with no pages checkout can look at a page before publishing it;
   the site itself is owner-gated and 403s every automated client.
+- /publish and /preview answer 413 for a page over publisher.MAX_PAGE_BYTES.
 - POST /publish-bundle -> bearer-authenticated with a BUNDLE token (a separate
   map from /publish's); replaces <user>/<slug>/ with the files sent and
   commits + pushes. No rendering.
@@ -20,8 +21,11 @@ import asyncio
 import logging
 import os
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from collections.abc import Awaitable, Callable
 from typing import Literal
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel
 
@@ -65,6 +69,24 @@ class BundleRequest(BaseModel):
     # NOTE: no user or slug field. Both come from the bundle token.
 
 
+# Endpoints that take one page of markdown; /publish-bundle has its own limits.
+_PAGE_PATHS = ("/publish", "/preview")
+
+
+def _too_large(what: str, size: int) -> str:
+    return (
+        f"{what} is {size} bytes; one page may be at most "
+        f"{publisher.MAX_PAGE_BYTES} bytes ({publisher.MAX_PAGE_BYTES // (1024 * 1024)} MiB) "
+        "of markdown. Split the page or move large embedded data out of it."
+    )
+
+
+def _require_page_size(content: str) -> None:
+    size = len(content.encode("utf-8"))
+    if size > publisher.MAX_PAGE_BYTES:
+        raise HTTPException(status_code=413, detail=_too_large("the markdown", size))
+
+
 def create_app(cfg: config.Config | None = None) -> FastAPI:
     cfg = cfg or config.load_config()
     app = FastAPI(title="pages-publish")
@@ -79,6 +101,21 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     ) -> tuple[str, str]:
         return auth.resolve_bundle(cfg.bundle_map, authorization)
 
+    @app.middleware("http")
+    async def cap_page_body(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Runs before the route reads the body, so an oversized page is refused
+        # without ever being held in memory.
+        if request.method == "POST" and request.url.path in _PAGE_PATHS:
+            length = request.headers.get("content-length", "")
+            if length.isdigit() and int(length) > publisher.MAX_PAGE_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": _too_large("the request body", int(length))},
+                )
+        return await call_next(request)
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -87,6 +124,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     async def preview_endpoint(
         body: PreviewRequest, user: str = Depends(current_user)
     ) -> dict:
+        _require_page_size(body.content)
         # Shares /publish's lock: a preview re-syncs the one clone, so running
         # it alongside a publish would reset that publish's working tree
         # mid-flight.
@@ -114,6 +152,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     async def publish_endpoint(
         body: PublishRequest, user: str = Depends(current_user)
     ) -> dict[str, str]:
+        _require_page_size(body.content)
         try:
             async with lock:
                 return await asyncio.to_thread(

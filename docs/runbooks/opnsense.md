@@ -31,14 +31,13 @@ Monitoring: Prometheus job `opnsense-node` (10.0.20.1:9100, `ScrapeTargetDown`; 
 
 Suricata runs in IDS mode on lan (VLAN 10, `vtnet1`) and opt1 (VLAN 20, `vtnet2`) only. WAN is not inspected (2026-11-10): every routed flow also crossed VLAN 10 or 20 and alerted twice, and on WAN it showed the firewall's address instead of the inside host. The HE tunnel's IPv6 is still seen as it enters VLAN 20.
 
-Signatures that fire only on our own services are turned off in `playbooks/tasks/opnsense/suricata.yml` (`opn_ids_disabled_sids`, each with its reason): STUN (coturn, Matrix, Headscale DERP, WebRTC), cloudflared, GitHub release downloads, pip, Tailscale control lookups, `pages.dev` (tv app sources) and BitTorrent (qBittorrent in servarr). The playbook asserts each listed SID is installed, so a renamed or retired rule fails the run. Add a SID only with its reason; never turn off a rule that names a threat (`ET COMPROMISED`, `ET DROP`, `ET CINS`, `ET SCAN`, abuse.ch).
+Signatures that fire only on our own services are turned off in `playbooks/tasks/opnsense/suricata.yml` (`opn_ids_disabled_sids`, each with its reason): the `files.pythonhosted.org` lookup (pip) and BitTorrent (qBittorrent in servarr). The STUN, cloudflared, GitHub release, Tailscale control and `pages.dev` signatures that used to be listed lived in `emerging-info`, which is now off as a whole (below). The playbook asserts each listed SID is installed, so a renamed or retired rule fails the run. Add a SID only with its reason; never turn off a rule that names a threat (`ET COMPROMISED`, `ET DROP`, `ET CINS`, `ET SCAN`, abuse.ch).
 
 Effect, measured 2026-11-10: about 400 alerts per 5 minutes before, 16 after (plus two tests). What stays, on purpose:
 
 | Source | Signatures | Why it stays |
 |---|---|---|
-| `valchedrym.ddns.net` lookups, about one a minute through CoreDNS (one Uptime Kuma ping monitor plus pods not yet attributed) | `ET DYN_DNS *.ddns .net` | the rule is a real malware signal for other names |
-| qBittorrent tracker lookups (`*.pw`, `*.tk`, `*.to`, `farted.net`, `duckdns.org`) | `ET DNS ... Likely Hostile`, `ET DYN_DNS` | same |
+| qBittorrent tracker lookups (`*.pw`, `*.tk`, `*.to`) | `ET DNS ... Likely Hostile` | the rule is a real malware signal for other names (the `ET DYN_DNS` ones, Valchedrym's DDNS name included, went with `emerging-dyn_dns` on 2026-11-11) |
 | tv app sources (`vavoo.to`, `*.top`) | `ET DNS Query for .to TLD`, `*.top` | same |
 | outside scanners and listed hosts | `ET DROP Dshield`, `ET DROP Spamhaus`, `ET CINS`, `ET COMPROMISED`, `SSH-2.0-Go` | real attacks; what CrowdSec will ban |
 
@@ -48,11 +47,41 @@ Count by signature and interface:
 homelab logs query 'sum by (sig, iface) (count_over_time({job="syslog", host="opnsense"} |= "event_type" |= "alert" | regexp `"in_iface":"(?P<iface>[^"]+)".*"signature":"(?P<sig>[^"]+)"` [1h]))' --since 1h
 ```
 
-Test that detection works: `dig icanhazip.com @10.0.10.1` from the devvm raises `ET INFO External IP Lookup Domain in DNS Lookup (icanhazip .com)` on `vtnet1` within a minute. `testmynids.org` no longer works: the domain is parked.
+Test that detection works: `curl -s -A BlackSun http://example.com/ -o /dev/null` from the devvm raises `ET USER_AGENTS Suspicious User Agent (BlackSun)` (SID 2008983, `emerging-user_agents`) on `vtnet1` within a minute. The earlier `dig icanhazip.com` test used an `emerging-info` rule, off since 2026-11-11; `testmynids.org` no longer works either, the domain is parked.
+
+### ET Open categories left off
+
+Since 2026-11-11 (Viktor) the playbook enables every `ET open/*` ruleset except the 13 in `opn_ids_excluded`, each with its reason: `dyn_dns`, `info`, `phishing`, `exploit_kit`, `hunting`, `mobile_malware`, `adware_pup`, `web_client`, `retired`, `activex`, `scada`, `chat`, `games`. They target browsing people, phones and desktops, none of which sit behind this firewall, or they are informational. That took the active rules from 63,816 to 43,082. The client-side ones come back if the home LAN moves behind OPNsense (`docs/plans/2026-11-10-network-ids.md`, open question 1). The playbook asserts every listed category still exists.
+
+`ids/service/update_rules` rewrites the rule files but the running Suricata keeps the rules it loaded: on 2026-11-11 the left-off categories kept firing until `ids/service/reload_rules`. The playbook now reloads after every update. A live reload builds the new detection engine beside the old one: RSS went from 4.1 GB to 5.1 GB for about 30 seconds and free memory fell to 180 MB (no swap), so reload in a quiet hour.
+
+### Capture: buffer and stream bypass
+
+Suricata's capture missed 4.4% of the packets it should have inspected (blind spots; traffic itself is not affected in IDS mode), in bursts of up to 26% per 5 minutes. Two changes on 2026-11-11, in `files/opnsense/suricata-netsec-capture.yaml` and the tunable task:
+
+- **Capture buffer**: `net.bpf.maxbufsize` 512 KB to 32 MB (System > Settings > Tunables, from the playbook) and `pcap: buffer-size: 33554432` for `vtnet1` and `vtnet2`. OPNsense's template has no `pcap:` section, so the conf.d list adds it. `netstat -B` shows the store buffer of Suricata's descriptors filling past 2.5 MB, which the old cap could not hold.
+- **Stream bypass**: `stream.bypass: yes` with the stock 1 MB reassembly depth, so the tail of camera video, tv streams and NFS skips detection (`flow_bypassed.local_pkts` in `stats.log`; 28% of packets in the first 10 minutes). The file restates the template's whole `stream:` section; the playbook refuses to install it when the template's section fingerprint changes and asserts the loaded values with `suricata --dump-config`.
+
+What limits it now: OPNsense's pcap mode runs one worker thread per interface (`W#01-vtnet2`), and VLAN 20 carries about 13,000 packets a second at night, most of it video (Frigate pulling RTSP on node1, tv app streams) and NFS. That thread reached 88% of a core in a 6-second sample during the warm-up after a restart.
+
+Counters: `netsec_suricata_capture_kernel_packets_total`, `netsec_suricata_capture_kernel_drops_total` and `netsec_suricata_flow_bypassed_packets_total` from `netsec-squid-metrics` (cron on OPNsense, `stats.log` every 5 minutes). Alert `SuricataCaptureDrops`: more than 1% missed over an hour.
+
+Measured after the change (5-minute `stats.log` intervals, local time, 2026-11-11; Suricata restarted 01:58, live rule reload 02:19:09 to 02:19:42):
+
+| Interval ending | Packets | Missed | Bypassed |
+|---|---|---|---|
+| 02:04, 02:09 | 4.0M, 3.7M | 3.5%, 4.0% | 28%, 27% |
+| 02:14, 02:19 | 4.1M, 3.1M | 0.04%, 0% | 37%, 34% |
+| 02:24 | 6.5M | 15.9% | 18% |
+| 02:29 | 3.1M | 0.17% | 32% |
+| 02:34 to 03:19, ten intervals | 2.9M to 7.5M | 0% each | 27% to 72% |
+
+Before: 82 of 1,982 intervals above 1%, peaks of 21% and 26%, a floor around 0.03%. The two misses left are Suricata itself: the first ten minutes after a start (warming flow and stream state) and the minutes around a live rule reload (the 02:24 interval held the reload and no bigger traffic than the rest; a 3.5 GB NFS write from node3 to the Proxmox host at 02:26, 55,000 packets a second, cost 0.17% in the next interval). Restart and reload in a quiet hour. Memory: Suricata's RSS went from 4,882 MiB to 3,801 MiB.
+
 
 A second EVE file, `eve-meta.json` (alert, DNS responses, TLS, HTTP), feeds ClickHouse `netsec.eve`; it comes from a `conf.d` file that restates the stock outputs, area `netsec_eve` (`docs/architecture/network-security-monitoring.md`, phase 2). Suricata allows one `anomaly` logger only, so a second output with `anomaly` stops it from starting.
 
-`ids/service/reconfigure` blocks while Suricata restarts with about 83,000 rules, longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
+`ids/service/reconfigure` blocks while Suricata restarts with its rules (about 83,000 installed, 43,000 active), longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
 
 ## Squid (decryption for opted-in machines)
 
