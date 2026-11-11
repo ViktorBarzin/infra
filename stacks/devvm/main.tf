@@ -50,7 +50,8 @@ locals {
   # RAM headroom; check `free -g` on the host first (runbook). Everything not
   # set here is the live devvm's shape (module defaults).
   drills = {
-    # First drill, 2026-11-11: proves the definition end to end. Remove after.
+    # First drill, 2026-11-11: proves the definition end to end. Removed again
+    # once checked (docs/runbooks/devvm-drill.md, "Tear it down").
     "devvm-drill" = { vm_id = 9102, ipv4_cidr = "10.0.10.11/24", cores = 4, memory_mb = 8192, disk_gb = 80 }
   }
 }
