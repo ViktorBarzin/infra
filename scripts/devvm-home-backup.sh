@@ -184,6 +184,10 @@ if [ ! -f "${SSH_KEY}" ]; then
     warn "SSH key ${SSH_KEY} missing — aborting"; push_metrics 1 0 0 0 0; exit 1
 fi
 mkdir -p "${DEST_ROOT}"
+# Root only. --numeric-ids keeps the devvm uids, and on this host uid 1000 is
+# the local account emo, so with the default 755 that account could read
+# every generation of wizard's home, 600 secrets included (found 2026-11-11).
+chmod 700 "${DEST_ROOT}"
 
 SSH_CMD="ssh -i ${SSH_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -o ConnectTimeout=15"
 
