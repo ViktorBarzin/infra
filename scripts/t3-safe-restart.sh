@@ -39,6 +39,13 @@
 # serves, which answered 404 for the whole install (2026-09-28).
 : "${T3_VERSIONS_DIR:=/usr/local/lib/t3}"
 : "${T3_LINK:=/usr/bin/t3}"
+# The link every t3-serve@ ExecStart runs. A T3_LINK anywhere else is a scratch
+# install (the tests, or a first install rehearsed on the live box): it must
+# never touch what the live serves run. On 2026-11-11 a scratch run read the
+# live /usr/bin/t3 as its own version, "rolled back" its scratch install, tried
+# npm -g, and paged T3AutoUpdateRollbackFailed for a box that was fine.
+T3_SERVE_LINK=/usr/bin/t3
+scratch_link() { [ "$T3_LINK" != "$T3_SERVE_LINK" ]; }
 : "${T3_LEGACY_DIR:=/usr/lib/node_modules/t3}"   # the npm -g install every build before this used
 : "${T3_KEEP_VERSIONS:=3}"
 : "${SMOKE_PORT:=${T3_SMOKE_PORT:-3799}}"
@@ -72,7 +79,9 @@ take_update_lock() {
   exec 9>>"$UPDATE_LOCK" || return 1
   if [ "${1:-0}" -gt 0 ]; then flock -w "$1" 9; else flock -n 9; fi
 }
-ver() { t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
+# The version at T3_LINK, not whatever `t3` PATH finds: a scratch run must read
+# its own link, never the live /usr/bin/t3.
+ver() { "$T3_LINK" --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
 # OS users owning a ~/.t3 (RHS of each non-comment "authentik=os_user" map line).
 osusers() { awk -F= '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$2);print $2}' "$USER_MAP" 2>/dev/null | sort -u; }
 # authentik username for an OS user (reverse map; first match) — for dispatch verify.
@@ -151,7 +160,10 @@ activate_version() {
 rollback_binary() {
   LOG "rolling back binary $target -> $last_good"
   if activate_version "$last_good"; then LOG "rolled back to $last_good"; return 0; fi
-  if npm i -g "t3@$last_good" >/dev/null 2>&1; then LOG "rolled back to $last_good (npm -g fallback)"; return 0; fi
+  # npm -g writes the live $T3_SERVE_LINK, so a scratch link never falls back to it.
+  if scratch_link; then
+    LOG "no npm -g fallback: $T3_LINK is a scratch link and npm -g would replace the live $T3_SERVE_LINK"
+  elif npm i -g "t3@$last_good" >/dev/null 2>&1; then LOG "rolled back to $last_good (npm -g fallback)"; return 0; fi
   LOG "ROLLBACK FAILED — could not reinstall t3@$last_good (t3 may be broken; manual fix per runbook)"; return 1
 }
 
