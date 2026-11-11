@@ -6763,6 +6763,19 @@ serverFiles:
               lane: security
             annotations:
               summary: "No NetFlow rows written to netsec.flows for 30m"
+          - alert: NetsecHaproxyStale
+            # HAProxy on OPNsense logs every connection to the mail ports, about
+            # 150-240 an hour on 2026-11-11, and the mailserver's own health probes
+            # keep it above zero. An hour with no row written to netsec.haproxy
+            # means the log-format, syslog-ng's netsec-haproxy.conf or the sink is
+            # stuck (docs/runbooks/network-ids.md).
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="haproxy_ch"}[1h])) or on() vector(0)) == 0
+            for: 10m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No HAProxy mail connections written to netsec.haproxy for 1h"
           - alert: NetsecTechnitiumStale
             # netsec-technitium (stacks/netsec) copies Technitium's Postgres query
             # log every 5 minutes and pushes the newest copied row's time. Sofia
