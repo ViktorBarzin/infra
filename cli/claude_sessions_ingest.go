@@ -39,6 +39,9 @@ type fileState struct {
 	MtimeNs int64  `json:"mtime_ns"`
 	Offset  int64  `json:"offset"`
 	TsHint  string `json:"ts_hint,omitempty"`
+	// Gen names the version of an append-only home file (claude.home_lines);
+	// it changes whenever the file is read again from the start.
+	Gen string `json:"gen,omitempty"`
 }
 
 type ingestState struct {
@@ -160,6 +163,8 @@ type pathInfo struct {
 //	<slug>/<session>/subagents/<agent>.jsonl            subagent transcript
 //	<slug>/<session>/subagents/<agent>.meta.json        subagent metadata
 //	<slug>/<session>/tool-results/<id>.txt              a large tool output
+//	<slug>/<session>/subagents/workflows/<run>/<agent>.jsonl      workflow subagent
+//	<slug>/<session>/subagents/workflows/<run>/<agent>.meta.json  its metadata
 func classifyTranscriptPath(projectsRoot, path string) (pathInfo, bool) {
 	rel, err := filepath.Rel(projectsRoot, path)
 	if err != nil {
@@ -175,6 +180,10 @@ func classifyTranscriptPath(projectsRoot, path string) (pathInfo, bool) {
 		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[3], ".jsonl"), Kind: kindTranscript}, true
 	case len(p) == 4 && p[2] == "tool-results":
 		return pathInfo{Project: p[0], Session: p[1], Kind: kindToolResult}, true
+	case len(p) == 6 && p[2] == "subagents" && p[3] == "workflows" && strings.HasSuffix(p[5], ".meta.json"):
+		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[5], ".meta.json"), Kind: kindSubagentMeta}, true
+	case len(p) == 6 && p[2] == "subagents" && p[3] == "workflows" && strings.HasSuffix(p[5], ".jsonl"):
+		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[5], ".jsonl"), Kind: kindTranscript}, true
 	}
 	return pathInfo{}, false
 }
@@ -332,6 +341,8 @@ type ingestStats struct {
 	Lines        int
 	Bytes        int64
 	SideFiles    int
+	HomeFiles    int // whole files sent to claude.home_files
+	HomeLines    int // lines sent to claude.home_lines
 	FileErrors   int
 }
 
@@ -356,7 +367,7 @@ type sideFileRow struct {
 	Content   string `json:"content"`
 }
 
-// runIngest does one pass over every user's transcripts. A database error
+// runIngest does one pass over every user's ~/.claude and ~/.codex. A database error
 // stops the run (the state keeps every batch that was accepted); a problem
 // with one file is counted and the run moves on.
 func runIngest(cfg ingestConfig) (ingestStats, error) {
@@ -383,18 +394,38 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 			continue
 		}
 		owner := hfi.Sys().(*syscall.Stat_t).Uid
-		root := filepath.Join(home, ".claude", "projects")
-		if _, err := os.Lstat(root); err != nil {
-			continue
-		}
-		st.Users++
-		err = walkTranscriptFiles(root, func(path string, info pathInfo) error {
-			seen[path] = true
+		user := h.Name()
+		batch := &homeFileBatch{db: cfg.DB, budget: cfg.Budget, state: state}
+		found, err := walkHome(home, func(abs, rel string, d fs.DirEntry) error {
+			class, info := classifyHomeFile(home, abs, rel)
+			if class == homeSkip {
+				return nil
+			}
+			seen[abs] = true
 			st.FilesSeen++
-			return ingestOne(cfg, state, &st, h.Name(), owner, path, info)
+			switch class {
+			case homeTranscript:
+				return ingestOne(cfg, state, &st, user, owner, abs, info)
+			case homeAppend:
+				return ingestHomeAppend(cfg, state, &st, user, owner, abs, rel)
+			}
+			if unchangedSinceLastRun(state.Files[abs], d) {
+				return nil
+			}
+			return ingestHomeWhole(cfg, state, &st, batch, user, owner, abs, rel)
 		})
+		if err == nil {
+			err = batch.flush()
+		}
+		if found {
+			st.Users++
+		}
 		if err != nil {
 			saveState(cfg.StatePath, state)
+			var dbe errDB
+			if errors.As(err, &dbe) {
+				return st, dbe.error
+			}
 			return st, err
 		}
 	}
@@ -408,57 +439,6 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 		}
 	}
 	return st, saveState(cfg.StatePath, state)
-}
-
-// walkTranscriptFiles visits the files classifyTranscriptPath recognises,
-// reading directories only (no file contents) and never following symlinks.
-func walkTranscriptFiles(root string, visit func(path string, info pathInfo) error) error {
-	slugs, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	for _, slug := range slugs {
-		if !slug.IsDir() {
-			continue
-		}
-		slugDir := filepath.Join(root, slug.Name())
-		entries, err := os.ReadDir(slugDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			p := filepath.Join(slugDir, e.Name())
-			if e.Type().IsRegular() {
-				if info, ok := classifyTranscriptPath(root, p); ok {
-					if err := visit(p, info); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			if !e.IsDir() {
-				continue // symlinks and anything else are ignored
-			}
-			for _, sub := range []string{"subagents", "tool-results"} {
-				files, err := os.ReadDir(filepath.Join(p, sub))
-				if err != nil {
-					continue
-				}
-				for _, f := range files {
-					if !f.Type().IsRegular() {
-						continue
-					}
-					fp := filepath.Join(p, sub, f.Name())
-					if info, ok := classifyTranscriptPath(root, fp); ok {
-						if err := visit(fp, info); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // errDB marks a database failure, which stops the whole run.
@@ -506,12 +486,34 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		return nil
 	}
 
+	return appendLines(cfg, state, st, path, f, sys.Ino, size, mtime, offset, hint, "", insertLines,
+		func(off int64, line []byte, h string) ([]byte, error) {
+			row := lineRow{OsUser: user, Project: info.Project, SessionID: info.Session, AgentID: info.Agent,
+				File: path, ByteOffset: off, Raw: string(line)}
+			if h != "" {
+				hv := h
+				row.TsHint = &hv
+			}
+			st.Lines++
+			return json.Marshal(row)
+		})
+}
+
+// appendLines sends the complete lines of f from offset on, in batches, with
+// query. mkRow turns one line into its JSONEachRow row. The state is saved
+// after every accepted batch.
+func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path string, f *os.File, inode uint64, size, mtime, offset int64, hint, gen, query string,
+	mkRow func(off int64, line []byte, hint string) ([]byte, error)) error {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		st.FileErrors++
 		return nil
 	}
+	tokenKey := path
+	if gen != "" {
+		tokenKey = path + "#" + gen
+	}
 	bt := newBatcher(cfg.Budget, func(token string, body []byte) error {
-		if err := cfg.DB.insert(insertLines, token, body); err != nil {
+		if err := cfg.DB.insert(query, token, body); err != nil {
 			return errDB{err}
 		}
 		return nil
@@ -521,25 +523,18 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		// batch in flight, which the dedup token then drops.
 		// Size -1 marks the file as part-done: if the run dies here, the next
 		// one must not mistake an unchanged size and mtime for "all sent".
-		state.Files[path] = &fileState{Inode: sys.Ino, Size: -1, MtimeNs: mtime, Offset: end, TsHint: h}
+		state.Files[path] = &fileState{Inode: inode, Size: -1, MtimeNs: mtime, Offset: end, TsHint: h, Gen: gen}
 		saveState(cfg.StatePath, state)
 	}
 	end, lastHint, err := readNewLines(io.LimitReader(f, size-offset), offset, hint, func(off int64, line []byte, h string) error {
-		row := lineRow{OsUser: user, Project: info.Project, SessionID: info.Session, AgentID: info.Agent,
-			File: path, ByteOffset: off, Raw: string(line)}
-		if h != "" {
-			hv := h
-			row.TsHint = &hv
-		}
-		b, err := json.Marshal(row)
+		b, err := mkRow(off, line, h)
 		if err != nil {
 			return err
 		}
-		if err := bt.add(path, off, b); err != nil {
+		if err := bt.add(tokenKey, off, b); err != nil {
 			return err
 		}
 		bt.setCommitPoint(off+int64(len(line))+1, h)
-		st.Lines++
 		st.Bytes += int64(len(line)) + 1
 		return nil
 	})
@@ -554,7 +549,7 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		st.FileErrors++
 		return nil
 	}
-	state.Files[path] = &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint}
+	state.Files[path] = &fileState{Inode: inode, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint, Gen: gen}
 	return nil
 }
 

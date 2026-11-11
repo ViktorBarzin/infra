@@ -559,7 +559,17 @@ Both are admin-only: they read `/etc/claude-sessions/reader.env`, which is
 `homelab claude-sessions ingest` is the write half, run as root by
 `claude-sessions-ingest.timer` every 15 minutes. It sends only the bytes
 appended to each transcript since the last run, with a dedup token per batch.
-Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+Since 2026-11-11 it also sends the rest of `~/.claude` and `~/.codex`
+(history, plans, tasks, teams, todos, file-history, workflows, Codex sessions,
+settings with secrets redacted) to `claude.home_files` and `claude.home_lines`,
+never credentials or caches.
+
+`homelab claude-sessions restore --user <name> (--to <home> | --tar -)
+[--session <id>] [--force]` writes it all back, so `claude --resume` works on a
+rebuilt devvm. Existing files are kept unless `--force`; redacted settings land
+as `<name>.from-store`. As root into another user's home, pipe `--tar -` into
+`runuser -u <user> -- tar -x --skip-old-files -C /home/<user>`. Admin-only, like
+`sql`. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
 ### v0.37 verbs — netsec (what the network IDS saw)
 
