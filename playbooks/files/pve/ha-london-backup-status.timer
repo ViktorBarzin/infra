@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly ha-london-backup-status run
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

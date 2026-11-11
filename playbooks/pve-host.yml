@@ -13,7 +13,9 @@
 # Windows10 (300) are deliberately outside Terraform, decided 2026-05-26 after
 # the telmate/proxmox provider rewrote entire disk lists and corrupted the
 # config of k8s-node2 and node3 twice. That decision stands. This playbook
-# manages the capping mechanism, not the VMs.
+# manages the capping mechanism, not the VMs. (The bpg/proxmox stacks
+# stacks/opnsense and stacks/devvm create VMs of their own; the devvm-tf tasks
+# below declare the scoped token stacks/devvm uses.)
 #
 #   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --check --diff
 #   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
@@ -424,6 +426,54 @@
       when: not (ansible_check_mode and pve_csi_leak_units is changed)
       tags: csi-leak
 
+    # ---- ha-london network backups ---------------------------------------------
+    # Home Assistant in London writes its automatic backups through Supervisor
+    # network storage to /srv/nfs/ha-london-backup, exported by
+    # scripts/pve-nfs-exports (that line needs this directory to exist first).
+    # nfs-mirror and offsite-sync then carry it to sda and the Synology like
+    # any other /srv/nfs subtree. ha-london-backup-status reports the newest
+    # archive's age hourly; HaLondonBackupStale pages on it.
+    # docs/architecture/london-site.md, "Backups".
+    - name: Create the ha-london backup directory
+      ansible.builtin.file:
+        path: /srv/nfs/ha-london-backup
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install ha-london-backup-status
+      ansible.builtin.copy:
+        src: files/pve/ha-london-backup-status
+        dest: /usr/local/bin/ha-london-backup-status
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install the ha-london-backup-status unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - ha-london-backup-status.service
+        - ha-london-backup-status.timer
+      register: pve_ha_london_backup_units
+      tags: ha-london-backup
+
+    - name: Enable the ha-london-backup-status timer
+      ansible.builtin.systemd:
+        name: ha-london-backup-status.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_ha_london_backup_units is changed }}"
+      when: not (ansible_check_mode and pve_ha_london_backup_units is changed)
+      tags: ha-london-backup
+
     # ---- drive SMART -----------------------------------------------------------
     # Nothing read the physical drives' own SMART data until 2026-11-09; the
     # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads
@@ -530,6 +580,132 @@
         - node4_bootstrap.yaml
         - k8s_node5_bootstrap.yaml
       tags: snippets
+
+    # ---- stacks/devvm: the Terraform devvm definition ----------------------
+    # The vendor snippet every Terraform-built devvm boots with
+    # (modules/proxmox-devvm). It embeds scripts/devvm-bootstrap, so a change to
+    # that script reaches new VMs only after this task runs. Runbook:
+    # docs/runbooks/devvm-drill.md.
+    - name: Install the devvm bootstrap cloud-init snippet
+      ansible.builtin.template:
+        src: files/pve/snippets/devvm_bootstrap.yaml.j2
+        dest: /var/lib/vz/snippets/devvm_bootstrap.yaml
+        mode: "0644"
+        owner: root
+        group: root
+        backup: true
+      tags: [snippets, devvm-tf]
+
+    # What stacks/devvm's token may touch: VMs in the pool `devvm`, plus the
+    # storage, network and node rights to create one. The live devvm (102) is
+    # not in the pool, so this token cannot reach it. The same scoping as
+    # stacks/opnsense (ADR-0038); the token secret is Vault secret/devvm
+    # pve_api_token, written by the token task below.
+    - name: Read the PVE pools, roles and users
+      ansible.builtin.command: "pvesh get {{ item }} --output-format json"
+      loop: [/pools, /access/roles, /access/users]
+      register: pve_access
+      changed_when: false
+      check_mode: false
+      tags: devvm-tf
+
+    - name: Create the devvm pool
+      ansible.builtin.command: pveum pool add devvm --comment "VMs stacks/devvm owns (modules/proxmox-devvm). The live devvm 102 is deliberately not a member."
+      when: "'devvm' not in (pve_access.results[0].stdout | from_json | map(attribute='poolid'))"
+      tags: devvm-tf
+
+    - name: Declare the TFDevvm role
+      ansible.builtin.command: >-
+        pveum role {{ 'modify' if 'TFDevvm' in (pve_access.results[1].stdout | from_json | map(attribute='roleid')) else 'add' }}
+        TFDevvm --privs {{ pve_devvm_tf_privs | join(',') }}
+      when: >-
+        'TFDevvm' not in (pve_access.results[1].stdout | from_json | map(attribute='roleid'))
+        or ((pve_access.results[1].stdout | from_json | selectattr('roleid', 'equalto', 'TFDevvm') | first).privs.split(',') | sort)
+           != (pve_devvm_tf_privs | sort)
+      vars:
+        pve_devvm_tf_privs:
+          - Datastore.AllocateSpace
+          - Datastore.AllocateTemplate
+          - Datastore.Audit
+          - Pool.Audit
+          - SDN.Use
+          - Sys.AccessNetwork
+          - Sys.Audit
+          - VM.Allocate
+          - VM.Audit
+          - VM.Config.CDROM
+          - VM.Config.CPU
+          - VM.Config.Cloudinit
+          - VM.Config.Disk
+          - VM.Config.HWType
+          - VM.Config.Memory
+          - VM.Config.Network
+          - VM.Config.Options
+          - VM.Console
+          - VM.GuestAgent.Audit
+          - VM.GuestAgent.FileWrite
+          - VM.PowerMgmt
+      tags: devvm-tf
+
+    - name: Create the terraform-devvm user
+      ansible.builtin.command: pveum user add terraform-devvm@pve --comment "Terraform stacks/devvm (bpg/proxmox), pool devvm only."
+      when: "'terraform-devvm@pve' not in (pve_access.results[2].stdout | from_json | map(attribute='userid'))"
+      tags: devvm-tf
+
+    - name: Read the terraform-devvm tokens
+      ansible.builtin.command: pveum user token list terraform-devvm@pve --output-format json
+      register: pve_devvm_tokens
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      tags: devvm-tf
+
+    # The secret is shown once, at creation, so it goes straight to Vault.
+    # Rotate: `pveum user token remove terraform-devvm@pve tf`, then rerun.
+    - name: Create the tf token and store it in Vault secret/devvm
+      ansible.builtin.shell: |
+        set -euo pipefail
+        secret=$(pveum user token add terraform-devvm@pve tf --privsep 1 \
+          --comment "stacks/devvm" --output-format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+        printf '%s' "terraform-devvm@pve!tf=$secret"
+      args:
+        executable: /bin/bash
+      register: pve_devvm_new_token
+      when: "'tf' not in ((pve_devvm_tokens.stdout | default('[]', true) | from_json) | map(attribute='tokenid'))"
+      no_log: true
+      tags: devvm-tf
+
+    - name: Write the new token to Vault
+      ansible.builtin.shell: vault kv put secret/devvm pve_api_token=-
+      args:
+        stdin: "{{ pve_devvm_new_token.stdout }}"
+        # Ansible appends a newline by default, and bpg rejects a token with one.
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      when: pve_devvm_new_token is changed
+      no_log: true
+      tags: devvm-tf
+
+    - name: Read the ACLs
+      ansible.builtin.command: pvesh get /access/acl --output-format json
+      register: pve_acl
+      changed_when: false
+      check_mode: false
+      tags: devvm-tf
+
+    - name: Grant TFDevvm where it is missing
+      ansible.builtin.command: >-
+        pveum acl modify {{ item.0 }} --roles TFDevvm
+        {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
+      loop: "{{ ['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
+                | product(['terraform-devvm@pve', 'terraform-devvm@pve!tf']) | list }}"
+      when: >-
+        (pve_acl.stdout | from_json
+         | selectattr('path', 'equalto', item.0)
+         | selectattr('ugid', 'equalto', item.1)
+         | selectattr('roleid', 'equalto', 'TFDevvm') | list | length) == 0
+      tags: devvm-tf
 
     # ---- storage content types --------------------------------------------
     # `local` also holds `import` content (raw/qcow2 disk images) since
