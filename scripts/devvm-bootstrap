@@ -12,8 +12,9 @@
 #   3. clone infra (public on Forgejo) at that ref;
 #   4. run playbooks/devvm.yml against this box with a local connection, the
 #      token in VAULT_TOKEN for the tasks that read Vault on the controller;
-#   5. install terminal-lobby from its (public) apt registry, then run the
-#      roster provisioner (t3-provision-users) once from the clone;
+#   5. install terminal-lobby from its (public) apt registry, copy the users'
+#      T3 snapshots back from the Proxmox host, then run the roster
+#      provisioner (t3-provision-users) once from the clone;
 #   6. revoke the token.
 # Progress goes to stdout (cloud-init captures it in /var/log/cloud-init-output.log)
 # and the result to $STATE/status: "ok" or "failed: <step>".
@@ -24,6 +25,8 @@
 #   DEVVM_BOOTSTRAP_CLONE    infra clone       (/opt/devvm-bootstrap/infra)
 #   DEVVM_BOOTSTRAP_PROVISIONER  installed provisioner (/usr/local/bin/t3-provision-users)
 #   DEVVM_BOOTSTRAP_WAIT / _POLL  seconds to wait for the handoff, poll interval
+#   DEVVM_BOOTSTRAP_T3_DIR / _T3_HOLD / _T3_SOURCE  T3 snapshot directory, hold
+#                            file, and the host they are copied from
 set -euo pipefail
 
 HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap/handoff.json}"
@@ -34,6 +37,9 @@ WAIT="${DEVVM_BOOTSTRAP_WAIT:-3600}"
 POLL="${DEVVM_BOOTSTRAP_POLL:-5}"
 INFRA_REMOTE="${DEVVM_BOOTSTRAP_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
 export VAULT_ADDR="${DEVVM_BOOTSTRAP_VAULT_ADDR:-https://vault.viktorbarzin.me}"
+T3_DIR="${DEVVM_BOOTSTRAP_T3_DIR:-/var/backups/t3-state}"
+T3_HOLD="${DEVVM_BOOTSTRAP_T3_HOLD:-/var/lib/t3-restore/awaiting-snapshots}"
+T3_SOURCE="${DEVVM_BOOTSTRAP_T3_SOURCE:-root@192.168.1.127}"
 
 log() { echo "[devvm-bootstrap] $*"; }
 mkdir -p "$STATE"
@@ -117,6 +123,15 @@ mkdir -p "$(dirname "$CLONE")"
 git clone --depth 1 --branch "$ref" "$INFRA_REMOTE" "$CLONE"
 
 # ---- 4. the playbook ------------------------------------------------------
+# --- t3-snapshot: hold (docs/architecture/backup-dr.md, "T3 snapshots") ---
+# The playbook enables the hourly t3-provision-users timer (OnBootSec=2min),
+# which can run before step 4c has copied the T3 snapshots and would start an
+# empty T3 database for every user. While this file exists, t3-restore-state
+# --if-missing holds the serve of a user with no snapshot and no database.
+step="T3 hold file"
+mkdir -p "$(dirname "$T3_HOLD")"
+echo "devvm-bootstrap $(date -u +%FT%TZ): T3 snapshots not copied from the Proxmox host yet" >"$T3_HOLD"
+# --- end t3-snapshot ---
 step="playbook (playbooks/devvm.yml)"
 status "running playbook"
 log "running playbooks/devvm.yml"
@@ -132,6 +147,50 @@ status "installing terminal-lobby"
 DEBIAN_FRONTEND=noninteractive apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq terminal-lobby ttyd-devvm
 
+# ---- 4c. T3 snapshots ------------------------------------------------------
+# --- t3-snapshot (disposable devvm, 2026-11-11) ---
+# Copy the users' nightly T3 snapshots from the Proxmox host's backup disk
+# (/mnt/backup/t3-state, written by t3-state-pull) into the directory
+# t3-restore-state reads, so step 5's provisioning restores each user's newest
+# before it first starts their serve. The key is Vault secret/devvm-t3-seed;
+# on the host it is pinned to `rrsync -ro /mnt/backup/t3-state` (pve-host.yml,
+# tag t3-snapshot), and the host key comes from the same secret. A failed copy
+# does not stop the build: the hold stays, so nobody gets an empty T3, and the
+# status says so. Recovery: backup-dr.md, "T3 snapshots".
+seed_t3_snapshots() {
+  local d rc=0 json
+  d="$(mktemp -d)" || return 1
+  chmod 700 "$d"
+  json="$(vault kv get -format=json secret/devvm-t3-seed)" || { rm -rf "$d"; return 1; }
+  ( umask 077
+    jq -r '.data.data.private_key // empty' <<<"$json" >"$d/key"
+    jq -r '.data.data.known_hosts // empty' <<<"$json" >"$d/known_hosts" )
+  unset json
+  [[ -s "$d/key" && -s "$d/known_hosts" ]] || { rm -rf "$d"; return 1; }
+  mkdir -p "$T3_DIR"
+  # The host keeps the copies 0700/0600; they stay that way here, root-owned,
+  # until each user's own nightly t3-backup-state takes their directory over.
+  rsync -rt --perms --chmod=D0700,F0600 --timeout=300 --exclude=.incoming \
+    -e "ssh -i $d/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$d/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30" \
+    "$T3_SOURCE:./" "$T3_DIR/" || rc=$?
+  rm -rf "$d"
+  # The copy gives the top directory the host's 0700. It must stay 0755:
+  # t3-backup-state writes each user's snapshot as that user.
+  chmod 0755 "$T3_DIR"
+  return "$rc"
+}
+step="T3 snapshots"
+status "copying T3 snapshots"
+t3_note=""
+if seed_t3_snapshots; then
+  rm -f "$T3_HOLD"
+  log "T3 snapshots copied from the Proxmox host into $T3_DIR"
+else
+  t3_note=" (T3 held: snapshots not copied from the Proxmox host)"
+  log "WARN: T3 snapshots were not copied from the Proxmox host; T3 stays held for every user without a database until they are (docs/architecture/backup-dr.md, T3 snapshots)"
+fi
+# --- end t3-snapshot ---
+
 # ---- 5. roster provisioning -----------------------------------------------
 step="roster provisioning (t3-provision-users)"
 status "provisioning users"
@@ -140,5 +199,5 @@ WORKSTATION_DIR="$CLONE/scripts/workstation" "$PROVISIONER"
 
 # ---- 6. done --------------------------------------------------------------
 step="done"
-status "ok"
+status "ok${t3_note}"
 log "devvm build finished"

@@ -963,6 +963,11 @@ resource "vault_policy" "devvm_bootstrap" {
     path "secret/data/agentmd" {
       capabilities = ["read"]
     }
+    # Not a playbook read: scripts/devvm-bootstrap step 4c copies the users'
+    # T3 snapshots from the PVE host with this key (read-only rrsync there).
+    path "secret/data/devvm-t3-seed" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
