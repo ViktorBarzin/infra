@@ -596,6 +596,33 @@
         backup: true
       tags: [snippets, devvm-tf]
 
+    # ---- T3 snapshots back onto a rebuilt devvm ------------------------------
+    # A Terraform-built devvm's first-boot build (scripts/devvm-bootstrap, step
+    # 4c) copies /mnt/backup/t3-state from here with this key, so provisioning
+    # restores each user's T3 threads before their serve first starts. The key
+    # reads that one directory and nothing else. from= is the firewall's
+    # inter-VLAN SNAT address, which every connection from VLAN 10 arrives
+    # from. The private key, this public key and the host's known_hosts line
+    # are Vault secret/devvm-t3-seed, which the devvm-bootstrap token reads.
+    # docs/architecture/backup-dr.md, "T3 snapshots".
+    - name: Read the devvm T3 seed key
+      ansible.builtin.command: vault kv get -field=public_key secret/devvm-t3-seed
+      delegate_to: localhost
+      become: false
+      register: devvm_t3_seed_key
+      changed_when: false
+      check_mode: false
+      no_log: true
+      tags: [t3-snapshot]
+
+    - name: Let a new devvm read /mnt/backup/t3-state and nothing else
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ devvm_t3_seed_key.stdout }}"
+        key_options: 'command="/usr/bin/rrsync -ro /mnt/backup/t3-state",restrict,from="192.168.1.2"'
+        state: present
+      tags: [t3-snapshot]
+
     # What stacks/devvm's token may touch: VMs in the pool `devvm` and the
     # VMID slots 9100-9109, plus the storage, network and node rights to create
     # one. The slots are needed as well as the pool because PVE checks
