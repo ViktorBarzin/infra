@@ -150,6 +150,16 @@ graph TB
 > dynamic disks correctly) is possible but not scheduled — the
 > cloud-init template above already captures the bootstrap-
 > reproducibility goal.
+>
+> **Two bpg/proxmox stacks now create VMs, each with a token scoped so it
+> cannot reach another VM.** `stacks/opnsense` owns VM 100 (ADR-0038).
+> `stacks/devvm` (2026-11-11, `modules/proxmox-devvm`) builds devvm-shaped
+> VMs from the Ubuntu cloud image for drills: cloud-init runs
+> `playbooks/devvm.yml` and the roster provisioner on first boot. Its token
+> (`TFDevvm`) is scoped to the pool `devvm`, which the live devvm (102) is
+> not in, and the module refuses 102's name, VMID, address and MAC. The
+> live devvm stays hand-managed and is not imported. Runbook:
+> `docs/runbooks/devvm-drill.md`.
 
 ### GPU Passthrough
 

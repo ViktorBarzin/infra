@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# First-boot build of a devvm made by stacks/devvm (modules/proxmox-devvm).
+#
+# cloud-init runs this as root from the vendor snippet devvm_bootstrap.yaml,
+# which playbooks/pve-host.yml renders from this file. It turns the bare Ubuntu
+# cloud image into a devvm the same way an admin builds one by hand:
+#   1. wait for the handoff file the applier writes through the guest agent
+#      (scripts/devvm-drill-handoff): a response-wrapped Vault token plus the
+#      infra ref to build from;
+#   2. unwrap the token. It is single use, so a failed unwrap means somebody
+#      else used it first: stop and say so;
+#   3. clone infra (public on Forgejo) at that ref;
+#   4. run playbooks/devvm.yml against this box with a local connection, the
+#      token in VAULT_TOKEN for the tasks that read Vault on the controller;
+#   5. run the roster provisioner (t3-provision-users) once from the clone;
+#   6. revoke the token.
+# Progress goes to stdout (cloud-init captures it in /var/log/cloud-init-output.log)
+# and the result to $STATE/status: "ok" or "failed: <step>".
+#
+# Overrides, used by scripts/test-devvm-bootstrap.sh:
+#   DEVVM_BOOTSTRAP_HANDOFF  handoff file      (/run/devvm-bootstrap-handoff.json)
+#   DEVVM_BOOTSTRAP_STATE    status directory  (/var/lib/devvm-bootstrap)
+#   DEVVM_BOOTSTRAP_CLONE    infra clone       (/opt/devvm-bootstrap/infra)
+#   DEVVM_BOOTSTRAP_PROVISIONER  installed provisioner (/usr/local/bin/t3-provision-users)
+#   DEVVM_BOOTSTRAP_WAIT / _POLL  seconds to wait for the handoff, poll interval
+set -euo pipefail
+
+HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap-handoff.json}"
+STATE="${DEVVM_BOOTSTRAP_STATE:-/var/lib/devvm-bootstrap}"
+CLONE="${DEVVM_BOOTSTRAP_CLONE:-/opt/devvm-bootstrap/infra}"
+PROVISIONER="${DEVVM_BOOTSTRAP_PROVISIONER:-/usr/local/bin/t3-provision-users}"
+WAIT="${DEVVM_BOOTSTRAP_WAIT:-3600}"
+POLL="${DEVVM_BOOTSTRAP_POLL:-5}"
+INFRA_REMOTE="${DEVVM_BOOTSTRAP_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
+export VAULT_ADDR="${DEVVM_BOOTSTRAP_VAULT_ADDR:-https://vault.viktorbarzin.me}"
+
+log() { echo "[devvm-bootstrap] $*"; }
+mkdir -p "$STATE"
+step="start"
+status() { printf '%s\n' "$1" >"$STATE/status"; }
+
+revoke() {
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    vault token revoke -self >/dev/null 2>&1 || log "WARN: could not revoke the bootstrap token; it expires on its own"
+  fi
+}
+on_exit() {
+  local rc=$?
+  revoke
+  if [[ $rc -ne 0 ]]; then
+    status "failed: $step"
+    log "FAILED at: $step"
+  fi
+}
+trap on_exit EXIT
+
+# ---- 1. handoff -----------------------------------------------------------
+step="no handoff at $HANDOFF within ${WAIT}s"
+status "waiting for handoff"
+waited=0
+until [[ -s "$HANDOFF" ]]; do
+  if (( waited >= WAIT )); then exit 1; fi
+  sleep "$POLL"
+  waited=$((waited + POLL))
+  # A poll of 0 (tests) still has to end.
+  (( POLL > 0 )) || waited=$((waited + 1))
+done
+chmod 600 "$HANDOFF"
+wrapped="$(jq -r '.wrapped_token // empty' "$HANDOFF")"
+ref="$(jq -r '.infra_ref // "master"' "$HANDOFF")"
+rm -f "$HANDOFF"
+
+step="handoff ref '$ref' is not a plain git ref"
+[[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 1
+step="handoff has no wrapped token"
+[[ -n "$wrapped" ]] || exit 1
+
+# ---- 2. unwrap ------------------------------------------------------------
+# The token goes in through curl's config on stdin, never argv, so it is not
+# visible in the process list.
+step="unwrap failed: the wrapped token was used already or expired; if nobody retried, treat it as intercepted"
+status "unwrapping"
+reply="$(printf 'header = "X-Vault-Token: %s"\n' "$wrapped" |
+  curl -sS -K - -X POST "$VAULT_ADDR/v1/sys/wrapping/unwrap" || true)"
+unset wrapped
+token="$(printf '%s' "$reply" | jq -r '.auth.client_token // empty' 2>/dev/null || true)"
+[[ -n "$token" ]] || exit 1
+export VAULT_TOKEN="$token"
+unset token reply
+log "Vault token unwrapped"
+
+# ---- 3. vault CLI and the infra clone -------------------------------------
+# The playbook's Vault reads call the vault CLI. The live devvm has it from the
+# HashiCorp apt repo the playbook declares, but the playbook does not install
+# it, so a blank box gets it here, from the same source.
+step="installing the vault CLI"
+if ! command -v vault >/dev/null 2>&1; then
+  status "installing vault"
+  curl -fsSL https://apt.releases.hashicorp.com/gpg -o /usr/share/keyrings/hashicorp-archive-keyring.asc
+  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc] https://apt.releases.hashicorp.com jammy main" \
+    >/etc/apt/sources.list.d/hashicorp.list
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq vault >/dev/null
+fi
+
+step="cloning infra at $ref"
+status "cloning infra"
+rm -rf "$CLONE"
+mkdir -p "$(dirname "$CLONE")"
+git clone --depth 1 --branch "$ref" "$INFRA_REMOTE" "$CLONE"
+
+# ---- 4. the playbook ------------------------------------------------------
+step="playbook (playbooks/devvm.yml)"
+status "running playbook"
+log "running playbooks/devvm.yml"
+(cd "$CLONE" && ansible-playbook -i localhost, -c local -e devvm_target=localhost \
+  -e ansible_python_interpreter=/usr/bin/python3 playbooks/devvm.yml)
+
+# ---- 5. roster provisioning -----------------------------------------------
+step="roster provisioning (t3-provision-users)"
+status "provisioning users"
+install -m 0755 "$CLONE/scripts/t3-provision-users.sh" "$PROVISIONER"
+WORKSTATION_DIR="$CLONE/scripts/workstation" "$PROVISIONER"
+
+# ---- 6. done --------------------------------------------------------------
+step="done"
+status "ok"
+log "devvm build finished"
