@@ -84,7 +84,22 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   is-enabled intercom-watch.timer` prints `enabled` (his repo's
   `devvm-setup.sh` ran). On a drill this means handing the drill an admin
   token; skip it there unless the drill is the final one, and record that
-  you did.
+  you did. On a drill, give it a child token of your own instead of your
+  periodic one (`vault token create -policy=vault-admin -policy=sops-admin
+  -ttl=3h -display-name=devvm-<drill>-admin -field=token`, written straight
+  to a 0600 file and copied to the drill's `~wizard/.vault-token`), and
+  before the run stop what would write shared state from a second box:
+  `systemctl mask` `claude-auth-sync@wizard` and `@emo` (timer and service:
+  a second holder of the shared Claude OAuth refresh tokens could rotate
+  them under the live box), `systemctl disable --now codex-auth-backup.path
+  codex-auth-backup.timer`, and right after the run, once `is-enabled`
+  has printed `enabled`, `systemctl --user disable --now
+  intercom-watch.timer` as emo (it would log in to Hik-Connect and can
+  reboot the B4 alongside the live box's copy). Before deleting the drill,
+  revoke every token the run minted, as root on the drill, reading each
+  file inside the command: `emo`'s `~/.vault-token` and both
+  `~/.config/claude-auth-sync/vault-token` files (`vault token revoke
+  -self`), then your child token by accessor.
 - The playbook converged: rerun it on the drill from the main checkout,
   check mode, with an inventory line for the drill address. Expect no
   changes beyond the ones the live box also shows.
@@ -364,3 +379,80 @@ Still open after these drills, for the final one:
   bootstrap policy covers only the playbook's reads; the final drill needs
   either a wider policy or an admin re-running provisioning after
   `vault login`.
+
+**2026-11-11, fifth drill, the plan's final one** (devvm-drill5, VM 9105,
+10.0.10.14, drill defaults), built by CI from master after all eight
+workstreams had landed, then checked per user with the admin provisioning
+re-run (a 3 h child token, with the safety steps in "What to check"):
+
+- 18:50 VM up, 19:11 first t3 install, 19:20-19:45 restores from the
+  session store (wizard 8,164 files, 6.96 GB in 756 s; emo 671 files,
+  0.97 GB in 91 s), 19:46 status plain `ok`: 56 minutes, playbook 316 ok,
+  0 failed. The admin run took 47 s and ended `reconcile complete`; a
+  later hourly run succeeded too.
+- Passed: credentials (wizard 44 and emo 19 files, names, modes and owners
+  identical to the live homes; content identical except the comment lines
+  of `~/.config/sops/age/keys.txt`, which is a Vault ref; `kubectl get
+  nodes` lists 6, `gh auth status`, Forgejo SSH, both GPG secret keys,
+  emo's minted Vault token); repos (emo's `tv`, `agents`, `app-kit`,
+  `vermont-device-configs`; wizard's locked `~/code/infra`; a private
+  clone over SSH and HTTPS); dotfiles (chezmoi applied, its status shows
+  the same drift pattern as on the live box); `~/.claude` (`settings.json`
+  is the same JSON as the live file for both users, history 13,154 and
+  4,273 lines as live, and `claude --resume` lists recent sessions for
+  both); T3 (wizard 2,342 threads, exactly the live threads created before
+  the 03:47 snapshot, emo 7 of 7, both serves active and answering 200);
+  user units (wizard lobby-local, tmux-plugin-update, agents-sync,
+  vault-token-renew; emo vault-token-renew and intercom-watch enabled);
+  `/tmp` tmpfs, journal in `/run/log/journal`, `vapid.env`; no rows in the
+  session store beyond the live ingest's own; drill logs only under
+  `job="devvm-drill-journal"`; the playbook in check mode against the drill
+  changed only the two `codex-auth-backup` units this drill had disabled.
+- Not checked: Vermont (out of scope), the infra unlock (kept the git-crypt
+  key off a throwaway disk), a Claude login (claude-auth-sync masked, see
+  above).
+
+Gaps it found, none fixed in the drill itself:
+
+- **MAJOR: no terraform.** The playbook declares the HashiCorp apt source
+  but installs only Docker and kubectl from the third-party sources; the
+  live box's terraform 1.15.4 was installed by hand. `homelab tf` and
+  `scripts/tg` cannot run on a rebuilt box.
+- **MAJOR: emo's agent instructions never come back.** The bootstrap's
+  provisioning run creates `/var/lib/t3-provision/agent-repos/emo.git`
+  before the admin infra clone exists, so as root; every later fetch runs
+  as wizard, gets `Permission denied` on `FETCH_HEAD`, and logs `fetch of
+  ebarzin/agents failed` every hour. `~emo/.agents/AGENTS.md` (62 KB on the
+  live box, the target of his `~/.claude/CLAUDE.md`) stays missing.
+- **MAJOR: emo's shell setup has no kept place.** His roster row has no
+  dotfiles repo, so `.zshrc`, `.zshenv`, `.zprofile`, `.tmux.conf.local`
+  and `.tmux` are lost. Without his `.zshrc`, `~/.local/bin` is not on his
+  zsh PATH, `claude` resolves to `/usr/local/bin/claude`, a link into
+  wizard's home, and that home is 0750 on a new box (0751 on the live one),
+  so his shell prints `permission denied: claude`. T3 is unaffected: its
+  unit's PATH falls through to `~/.local/bin`.
+- **MAJOR, known: `~/.claude.json` is not restored.** wizard loses the
+  `google_workspace` MCP server and 454 project entries, emo the
+  `paperless` MCP server; the first `claude` shows the onboarding and the
+  folder trust prompt.
+- MINOR: emo is in `docker` on the live box by hand; the roster gives
+  `docker` to admins only, so a rebuild drops it. A decision, since that
+  group is root-equivalent.
+- MINOR: skills come back only when `claude-skills-update.timer` fires
+  (05:45 daily); provisioning does not start it. After a manual run wizard
+  still lacks `unslop` and emo `cluster-health` and his 20
+  `~/.agents/skills` folders.
+- MINOR: wizard's `ios-rig-doctor.timer`, `ios-rig-tunnel.service` and
+  `ios-rig-wifi.service` come back only through `homelab ios bootstrap
+  --units-only` (`ios-test-rig.md`), which no rebuild step runs.
+- MINOR: no known_hosts entry for Forgejo on a new box, so wizard's first
+  `git` over SSH asks to trust `git.viktorbarzin.me`.
+- MINOR, as in drill 3: the hourly `t3-provision-users.service` fires
+  during the playbook and fails once before the infra clone exists; the
+  next run succeeds.
+- ancamilea gets no account (her roster row is parked). Her state is
+  kept: 200 `home_files` and 2 sessions in the store, 7 credential files in
+  Vault, her T3 copy on the host.
+
+Verdict: the rebuild works end to end in under an hour, but it did not
+pass cleanly, so the nightly devvm-home backup stays.
