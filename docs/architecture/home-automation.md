@@ -12,6 +12,31 @@ There is no Zigbee or Z-Wave coordinator. Devices arrive through vendor clouds
 (Tuya, Hydrawise, MELCloud and others), Bluetooth (PAX fans, AC Infinity), Matter
 (the front door lock) and ESPHome, with MQTT for the alarm interface.
 
+## Disk and backups
+
+VM 103's 64 GB disk is `ssd:vm-103-disk-0`, a thick LV in the `ssd` volume
+group on the single Samsung 850 EVO 1TB (no RAID), since 2026-11-11
+(infra#120). It moved off `local-lvm` on the shared HDD because each History
+query does about one random read per row: a cold one-day read of
+`sensor.ats_load_power` (about 6,000 rows) took 110 s there and 0.45 s on the
+SSD. The VM writes 99-130 KB/s, about 3-4 TB a year, against the SSD's
+150 TBW rating, of which 43.3 TB was used at the move.
+
+Nothing images the VM; the SSD can fail and recovery is a rebuild:
+
+- **HA's own daily backup** (about 05:20 local) covers Home Assistant with its
+  database, every add-on and `ssl`. It keeps 3 copies, on the local disk and
+  on the Synology NFS share `/volume1/Backup/HomeAssistant`. Recovery point
+  is up to 24 h, which Viktor accepted.
+- **The backups are encrypted.** The key is in Vault at
+  `secret/emo/ha-sofia-backup-key`; before 2026-11-11 it lived only inside
+  HA, so a dead disk would have made the Synology copies unreadable.
+- **Proof, 2026-11-11:** the 2026-11-10 Synology backup decrypted with that
+  key (python `securetar` 2026.10.0), 5,266 files extracted, and its
+  `home-assistant_v2.db` passed `PRAGMA integrity_check` with 8.7 M state rows.
+- **To rebuild:** recreate VM 103 from the PVE config copy that `daily-backup`
+  keeps, install HAOS, and restore the newest Synology backup with the key.
+
 ## Where the cluster meets the house
 
 | cluster side | role |
