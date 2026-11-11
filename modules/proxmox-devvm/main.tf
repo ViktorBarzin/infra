@@ -52,6 +52,10 @@ resource "proxmox_virtual_environment_vm" "devvm" {
   on_boot         = var.on_boot
   started         = true
   stop_on_destroy = true
+  # A purge also deletes the ACLs on /vms/<id>, which is where stacks/devvm's
+  # token holds its VMID slot, so the next drill in that slot gets 403 (seen
+  # 2026-11-11). Drills have no backup, replication or HA jobs to purge.
+  purge_on_destroy = false
 
   bios          = "seabios"
   scsi_hardware = "virtio-scsi-single"

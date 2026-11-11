@@ -33,6 +33,10 @@ run "drill_has_the_live_shape" {
     error_message = "network differs from the live devvm"
   }
   assert {
+    condition     = proxmox_virtual_environment_vm.devvm.purge_on_destroy == false
+    error_message = "a purge deletes the token's /vms/<id> slot ACL"
+  }
+  assert {
     condition     = proxmox_virtual_environment_vm.devvm.pool_id == "devvm"
     error_message = "the VM must sit in the pool the stack's token is scoped to"
   }
