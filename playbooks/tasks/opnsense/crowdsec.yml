@@ -21,7 +21,7 @@
 #
 # Network IDS phase 3 (docs/plans/2026-11-10-network-ids.md): the agent also
 # reads Suricata's eve.json (crowdsecurity/suricata), and every scenario here
-# runs in simulation until Viktor's review (simulation.yaml). abuse.ch C2 hits
+# ran in simulation until Viktor's review on 2026-11-11; it enforces since (simulation.yaml). abuse.ch C2 hits
 # are re-labelled by a local parser so their decision targets the C2 address
 # (scenario viktor/abusech-c2-destination, LAPI decision type c2-block, served
 # to the crowdsec_c2 alias by the C2 blocklist mirror, never to this bouncer,
@@ -78,6 +78,7 @@
     - { src: simulation.yaml, dest: simulation.yaml }
     - { src: acquis-suricata.yaml, dest: acquis.d/suricata.yaml }
     - { src: viktor-abusech-c2.yaml, dest: parsers/s02-enrich/viktor-abusech-c2.yaml }
+    - { src: viktor-suricata-replies.yaml, dest: parsers/s02-enrich/viktor-suricata-replies.yaml }
     - { src: viktor-abusech-c2-destination.yaml, dest: scenarios/viktor-abusech-c2-destination.yaml }
   loop_control:
     label: "{{ item.dest }}"
@@ -123,8 +124,8 @@
   changed_when: false
   register: opn_crowdsec_simulation
 
-- name: Every scenario on the agent is simulated
+- name: The agent enforces its decisions (global simulation off)
   ansible.builtin.assert:
-    that: "'global simulation: enabled' in (opn_crowdsec_simulation.stdout + opn_crowdsec_simulation.stderr)"
-    fail_msg: "CrowdSec global simulation is off on OPNsense: {{ opn_crowdsec_simulation.stdout }}"
+    that: "'global simulation: disabled' in (opn_crowdsec_simulation.stdout + opn_crowdsec_simulation.stderr)"
+    fail_msg: "CrowdSec global simulation is not off on OPNsense: {{ opn_crowdsec_simulation.stdout }}"
   when: not ansible_check_mode

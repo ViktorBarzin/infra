@@ -130,6 +130,7 @@
       - {sid: 2008581, why: "BitTorrent DHT ping: qBittorrent"}
       - {sid: 2008585, why: "BitTorrent DHT announce: qBittorrent"}
       - {sid: 2102180, why: "BitTorrent announce: qBittorrent"}
+      - {sid: 2102181, why: "BitTorrent transfer: qBittorrent"}
 
 - name: Read the state of the turned-off signatures
   ansible.builtin.uri:

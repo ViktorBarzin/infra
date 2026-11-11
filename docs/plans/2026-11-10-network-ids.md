@@ -1,6 +1,6 @@
 # Network intrusion detection and prevention
 
-Status: approved by Viktor on 2026-11-10; executing. Phases 0 to 5 done, phase 6 (turning bans on) due after the review from 2026-11-24; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
+Status: approved by Viktor on 2026-11-10; executing. Phases 0 to 6 done; bans enforced since 2026-11-11; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
 
 ## Goal
 
@@ -121,6 +121,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 ### 6. Go-live and enforcement
 - Simulation clock starts when phase 3 lands. After one hour of phase 2 data, measure `eve` volume and resize the claude-sessions PVC if the estimate (30-150 MB/day) is off.
 - After 2 weeks: review the would-be bans with Viktor, tune, switch simulation off on every agent.
+- **Done early, 2026-11-11.** Viktor reviewed the first ~14 hours instead of waiting two weeks: one real would-be ban (91.92.40.12, a Spamhaus DROP network trying React2Shell against Traefik), no false positives, internal sources held by the allowlist. Before enforcing, a guard parser (`playbooks/files/opnsense/crowdsec/viktor-suricata-replies.yaml`) drops alerts raised on replies to connections our hosts opened, because IP-reputation rules also fire on those (the tv app's Dshield-listed stream sources). Both the OPNsense agent and the journals agent enforce since.
 
 ## Production checks
 
