@@ -21,6 +21,14 @@
   минава през магистралата заедно с камерите).
 - Затова достъпът до устройствата в комплекса минава през **netns `guestns`**
   на rpi-sofia — отделен namespace именно заради застъпването.
+- Мрежовата част на Pi-то е описана в `playbooks/rpi-sofia-netmap.yml` (от
+  11.11.2026, infra#121): `camera_net_setup2.sh` с `camera-net.service`,
+  релетата `intercom-sdk-proxy` и `panel115-proxy`, и `vermont-netmap`.
+  Файловете са в `playbooks/files/rpi-sofia/` и се редактират там, не на
+  Pi-то. Playbook-ът не рестартира `camera-net`, защото спирането му трие
+  `guestns` и прекъсва камерите, HA и инвертора. Ако скриптът се промени,
+  рестартът е на ръка в тих момент, с отворен втори достъп
+  (`pi@192.168.1.16`): `sudo systemctl restart camera-net vermont-netmap`.
 
 Преди да се обяснява защо нещо „не отговаря", първо се проверява от коя от двете
 мрежи се пита.
