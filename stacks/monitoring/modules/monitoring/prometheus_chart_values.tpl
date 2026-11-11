@@ -4721,6 +4721,20 @@ serverFiles:
               notify: page
             annotations:
               summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
+          # ha-sofia (VM 103) is not imaged and since 2026-11-11 sits on the single
+          # unmirrored SSD, so HA's own daily backup (to the Synology, key in
+          # secret/emo/ha-sofia-backup-key) is the only way back (infra#120).
+          # HA exports the backup integration's last-success timestamp; 36h
+          # allows one missed daily run. absent() is covered by
+          # HomeAssistantMetricsMissing, so only a stale value fires here.
+          - alert: HomeAssistantSofiaBackupStale
+            expr: (time() - haos_sensor_timestamp_seconds{job="haos", entity="sensor.backup_last_successful_automatic_backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "ha-sofia has had no successful automatic backup for {{ $value | humanizeDuration }}; VM 103 is on a single unmirrored SSD, see docs/architecture/home-automation.md"
           - alert: LVMSnapshotStale
             expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
