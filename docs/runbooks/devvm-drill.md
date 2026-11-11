@@ -18,7 +18,7 @@ back, delete it. This runbook is how.
 
 The Vault side (`stacks/vault`): policy `devvm-bootstrap` reads exactly the
 paths `playbooks/devvm.yml` reads (`secret/claude-sessions`, `terminal-lobby`,
-`devvm-authorized-keys`, `rybbit`, `glitchtip`, `agentmd`); the token role makes
+`terminal-lobby/vapid`, `devvm-authorized-keys`, `rybbit`, `glitchtip`, `agentmd`); the token role makes
 orphan, non-renewable tokens with a 4 h hard limit; CI's policy may create
 tokens through that role and nothing else. When the playbook starts reading a
 new Vault path, add it to the policy, or a fresh build fails at that task.

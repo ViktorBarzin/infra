@@ -1,0 +1,22 @@
+# Managed by playbooks/devvm.yml ("Keep /tmp in RAM"). Local edits are overwritten.
+#
+# /tmp as an 8G tmpfs, hand-made on 2026-08-17 and declared 2026-11-11. The
+# devvm's virtual disk is throttled and shared with etcd's IO budget on the
+# Proxmox host, so build and test scratch under /tmp stays off it. The size cap
+# is what claude-scratch.conf and tmp.conf (tmpfiles.d) are tuned against.
+[Unit]
+Description=Temporary Directory (/tmp) as tmpfs
+ConditionPathIsSymbolicLink=!/tmp
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+After=swap.target
+
+[Mount]
+What=tmpfs
+Where=/tmp
+Type=tmpfs
+Options=mode=1777,strictatime,nosuid,nodev,size=8G
+
+[Install]
+WantedBy=local-fs.target

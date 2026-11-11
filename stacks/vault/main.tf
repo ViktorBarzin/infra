@@ -948,6 +948,9 @@ resource "vault_policy" "devvm_bootstrap" {
     path "secret/data/terminal-lobby" {
       capabilities = ["read"]
     }
+    path "secret/data/terminal-lobby/vapid" {
+      capabilities = ["read"]
+    }
     path "secret/data/devvm-authorized-keys" {
       capabilities = ["read"]
     }
