@@ -4885,6 +4885,37 @@ serverFiles:
               notify: page
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
+          # nightly-chain on the PVE host (scripts/nightly-chain.sh, since
+          # 2026-11-10) is now the only thing that starts the night's dumps and
+          # the five host backup steps, so a chain that stops running stops all
+          # of them. The per-backup *Stale alerts still fire, but only after
+          # 30 h to 9 d; these say which link broke the same morning.
+          - alert: NightlyChainNotSucceeding
+            expr: (time() - nightly_chain_last_success_timestamp{job="nightly-chain"}) > 108000
+            for: 30m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "The nightly backup chain has not finished cleanly for {{ $value | humanizeDuration }}"
+              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, devvm-home-backup and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
+          - alert: NightlyChainStepFailed
+            expr: nightly_chain_step_ok{job="nightly-chain"} == 0
+            for: 5m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Nightly backup chain step {{ $labels.step }} failed on its last run"
+              description: "A step is a host unit (journalctl -u <step> on the PVE host) or a dump as <namespace>/<cronjob> (kubectl get jobs -n <namespace>, Jobs named <cronjob>-chain-<stamp>). The chain carries on after a failed step. Docs: docs/architecture/backup-dr.md."
+          - alert: NightlyChainRanWithoutLock
+            expr: nightly_chain_lock_acquired{job="nightly-chain"} == 0
+            for: 5m
+            labels:
+              severity: info
+            annotations:
+              summary: "The nightly backup chain ran without kured's node lock"
+              description: "It waited 2 h and the lock (weave.works/kured-node-lock on kured/kured) was still held, so a kured reboot or an upgrade drain may have overlapped the backups. `kubectl get ds -n kured kured -o jsonpath='{.metadata.annotations}'` shows the holder."
           # The three vzdump rules (VzdumpBackupStale, VzdumpBackupNeverRun,
           # VzdumpBackupFailing) were removed on 2026-09-23. The backup they
           # watched was retired on 2026-09-15 (d05be720): vzdump-vms.timer is
