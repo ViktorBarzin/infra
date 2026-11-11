@@ -768,6 +768,23 @@ resource "vault_policy" "ci" {
     path "secret/metadata/claude-breakglass/*" {
       capabilities = ["deny"]
     }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
     path "transit/encrypt/sops-state-*" {
       capabilities = ["update"]
@@ -974,6 +991,23 @@ resource "vault_policy" "eso_reader" {
     path "secret/data/vault" {
       capabilities = ["deny"]
     }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
     path "database/static-creds/*" {
       capabilities = ["read"]
     }
@@ -1021,6 +1055,23 @@ resource "vault_policy" "openclaw_k8s" {
     }
     path "secret/data/*" {
       capabilities = ["read", "list"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
     }
   EOT
 }
@@ -1089,6 +1140,23 @@ resource "vault_policy" "terraform_state" {
       capabilities = ["deny"]
     }
     path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
       capabilities = ["deny"]
     }
   EOT

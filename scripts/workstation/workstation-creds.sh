@@ -22,8 +22,8 @@
 # and runs every write as the user (runuser), so a link the user planted reaches
 # only what they could reach. With --into it writes under DIR as the caller
 # instead, which is how a drill checks a restore without touching a home.
-# Needs a Vault token that can read the user's path (an admin's). Values are
-# never printed. Called by t3-provision-users.sh (restore_user_credentials).
+# Needs a Vault token that can read the user's path (an admin's); nothing run
+# as the user ever sees it. Values are never printed. Called by t3-provision-users.sh (restore_user_credentials).
 set -uo pipefail
 export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
 
@@ -99,9 +99,12 @@ wc_restore() {
     mkdir -p "$into"; root="$into"
     as() { "$@"; }
   else
-    root="$(getent passwd "$user" | cut -d: -f6)"
+    root="$(wc_home "$user")"
     [[ -n "$root" && -d "$root" ]] || wc_die "no home for $user"
-    as() { runuser -u "$user" -- "$@"; }
+    # runuser hands on the caller's environment, and a user can read the
+    # environment of any process running as them, so the admin token that
+    # reads Vault here is taken out before runuser starts.
+    as() { env -u VAULT_TOKEN runuser -u "$user" -- "$@"; }
   fi
   local slugs; slugs="$(wc_slugs "$user")"
   if [[ -z "$slugs" ]]; then echo "workstation-creds: nothing stored for $user"; return 0; fi

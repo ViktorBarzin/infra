@@ -53,7 +53,9 @@ case "$verb" in
   *) echo "stub: unsupported kv $verb" >&2; exit 9 ;;
 esac
 EOF
-printf '#!/usr/bin/env bash\n[[ "$1" == -u ]] && shift 2\n[[ "$1" == -- ]] && shift\nexec "$@"\n' > "$tmp/bin/runuser"
+# runuser also notes whether the command it runs would see a VAULT_TOKEN.
+printf '#!/usr/bin/env bash\necho "runuser VAULT_TOKEN=${VAULT_TOKEN:-<unset>}" >> "$RUNUSER_LOG"\n[[ "$1" == -u ]] && shift 2\n[[ "$1" == -- ]] && shift\nexec "$@"\n' > "$tmp/bin/runuser"
+export RUNUSER_LOG="$tmp/runuser.log"; : > "$RUNUSER_LOG"
 chmod +x "$tmp/bin/vault" "$tmp/bin/runuser"
 export PATH="$tmp/bin:$PATH"
 
@@ -129,6 +131,16 @@ no "an absolute path is not written" test -e /tmp/abs-escape
 no "a setuid mode is not written" test -e "$dst2/.ok-but-bad-mode"
 ok "the skips are reported" grep -q 'skipped 3' <<<"$out"
 rm "$KV_DIR/secret/workstation/$me/files/evil"*.json
+
+# --- restore into the home writes as the user, and the admin token stays out ---
+# The caller holds an admin Vault token; the user's own processes must never
+# see it, since a user can read the environment of anything running as them.
+home3="$tmp/home3"; mkdir -p "$home3"; : > "$RUNUSER_LOG"
+out="$(VAULT_TOKEN=s.admin-secret WORKSTATION_CREDS_HOME="$home3" bash "$CREDS" restore "$me" 2>&1)"
+ok "restore into the home succeeds" grep -q 'restored 5' <<<"$out"
+ok "it writes the files there" cmp -s "$home/.ssh/id_ed25519" "$home3/.ssh/id_ed25519"
+ok "every write goes through runuser" grep -q '^runuser ' "$RUNUSER_LOG"
+no "the admin Vault token never reaches a command run as the user" grep -q 's.admin-secret' "$RUNUSER_LOG"
 
 # --- no Vault access: restore says so and fails, so a caller can tell -----
 no "restore without Vault access fails" env FAKE_VAULT_DENY=1 WORKSTATION_CREDS_HOME="$home" bash "$CREDS" restore "$me" --into "$tmp/r3"
