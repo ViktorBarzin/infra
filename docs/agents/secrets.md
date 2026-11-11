@@ -24,6 +24,8 @@ sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home
 ```
 The same goes for `sudo grep <secret> ...`: use `grep -F -f <file>`.
 
+Since 2026-11-11 the devvm's promtail masks secret-shaped values before a line leaves the box (`*mask_secrets` in `scripts/devvm-promtail.yaml`, tested by `tests/devvm-promtail-redact.test.sh`): Vault, GitHub and AWS tokens, JWTs, private key blocks, `Authorization`/`Bearer` values, URL passwords, `curl -u`, `mysql -p`, and the values of secret-looking names (`ENV=VAULT_TOKEN=...`, `token=`, `"password": "..."`, `--token`). It is a net, not a licence: a bare password with no name or shape, or a token sudo splits across two `(command continued)` lines, still reaches Loki, so the rule above stands.
+
 ## Sealed Secrets (User-Managed Secrets)
 For secrets that users manage themselves (no SOPS/git-crypt access needed):
 1. **Create**: `kubectl create secret generic <name> --from-literal=key=value -n <ns> --dry-run=client -o yaml | kubeseal --controller-name sealed-secrets --controller-namespace sealed-secrets -o yaml > sealed-<name>.yaml`
