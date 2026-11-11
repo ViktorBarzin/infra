@@ -154,6 +154,10 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
 - The ClickHouse store's size growth once file-history and remote/ are
   ingested is not measured yet.
 - Which local SSH keys already match the copies in Vault was not checked.
+- wizard's login shell runs a hand-built `~/go/bin/sops` 3.12.1, not the
+  pinned 3.9.4 that CI and every other user run. A rebuild drops it, since
+  the home backup skips `~/go`. Whether to retire it now, or move the pin
+  and CI to 3.12.x, is open.
 
 ## Progress (2026-11-11)
 
@@ -177,8 +181,10 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   `secret/meshcentral` through ESO and was replaced with a new key; the
   devvm folder is deleted (`docs/runbooks/devvm-credentials.md`).
 - Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
-  at the live versions (terraform 1.15.4-1, vault 2.0.1-1, terragrunt
-  0.77.20, sops 3.9.4); not yet drilled.
+  at the live system-wide versions (terraform 1.15.4-1, vault 2.0.1-1,
+  terragrunt 0.77.20, sops 3.9.4), and `scripts/devvm-bootstrap` installs
+  the same vault version, read from the playbook, so the playbook does not
+  fail on a downgrade; not yet drilled.
 - intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
   no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki

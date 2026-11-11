@@ -430,8 +430,14 @@ Gaps it found, none fixed in the drill itself:
   `scripts/tg` cannot run on a rebuilt box. Fixed 2026-11-11 after the
   drill: the playbook installs terraform 1.15.4-1 and vault 2.0.1-1 from
   that source and fetches terragrunt 0.77.20 and sops 3.9.4 by checksum,
-  the versions the live box runs (`devvm_terraform_version` and the lines
-  after it). Not yet drilled.
+  the versions installed system-wide on the live box (`devvm_terraform_version`
+  and the lines after it). wizard's login shell resolves a hand-built
+  `~/go/bin/sops` 3.12.1 ahead of `/usr/local/bin/sops`; the home backup
+  skips `~/go`, so a rebuilt box runs 3.9.4, CI's version, for everyone.
+  Round 2 review: `scripts/devvm-bootstrap` installed the newest vault
+  (2.2.1-1) before the playbook, and the playbook's `vault=2.0.1-1` then
+  failed on the downgrade. The bootstrap now installs the version it reads
+  from `devvm_vault_version` in the cloned playbook. Not yet drilled.
 - **MAJOR: emo's agent instructions never come back.** The bootstrap's
   provisioning run creates `/var/lib/t3-provision/agent-repos/emo.git`
   before the admin infra clone exists, so as root; every later fetch runs
