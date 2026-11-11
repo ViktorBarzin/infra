@@ -6,6 +6,11 @@
 # The VM's name, address, admin account and SSH keys come from the Proxmox
 # cloud-init drive; the Vault token arrives later through the guest agent
 # (scripts/devvm-drill-handoff). Runbook: docs/runbooks/devvm-drill.md.
+# The handoff lands in /run/devvm-bootstrap. qemu-ga creates files 0666, so
+# the directory is what keeps other accounts out; bootcmd makes it before the
+# agent is installed.
+bootcmd:
+  - [install, -d, -m, "0700", -o, root, -g, root, /run/devvm-bootstrap]
 package_update: true
 packages:
   - qemu-guest-agent
