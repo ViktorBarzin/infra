@@ -479,6 +479,35 @@
       when: not (ansible_check_mode and pve_ha_london_backup_units is changed)
       tags: ha-london-backup
 
+    # ---- backup trees that hold secrets: root only ----------------------------
+    # These trees hold copies of secrets, and the host has non-root logins: uid
+    # 1000 is the local account emo, which owned /srv/nfs/meshcentral, and
+    # /mnt/backup is 755. Found 2026-11-12 (docs/runbooks/devvm-credentials.md):
+    #   /srv/nfs/meshcentral    MeshCentral's autobackup zips (encrypted only
+    #                           since 2026-11-12) and a stale 2026-04 copy of
+    #                           its data volume: password hashes, cert keys.
+    #   /mnt/backup/meshcentral nfs-mirror's copy of the above. nfs-mirror runs
+    #                           with --no-perms, so it keeps this mode.
+    #   /mnt/backup/vzdump      the retired full-disk images of VM 102 (devvm),
+    #                           every home on it included; files are 644.
+    # /mnt/backup/devvm-home is kept 700 by devvm-home-backup itself. This
+    # keeps out non-root host logins only; root, and the NFS export (which
+    # admits any client as root, scripts/pve-nfs-exports), are not covered.
+    # The pod and the backup scripts write as root, so nothing loses access.
+    - name: Keep backup trees that hold secrets root-only
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - /srv/nfs/meshcentral
+        - /mnt/backup/meshcentral
+        - /mnt/backup/vzdump
+      when: item is not match('/mnt/backup/') or (ansible_mounts | selectattr('mount', 'equalto', '/mnt/backup') | list | length > 0)
+      tags: backup-perms
+
     # ---- drive SMART -----------------------------------------------------------
     # Nothing read the physical drives' own SMART data until 2026-11-09; the
     # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads
