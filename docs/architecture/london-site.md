@@ -181,6 +181,33 @@ the ESPHome device YAMLs stay in `/homeassistant/esphome`.
 | Self-recovery | HA automation `wifi_watchdog_reboot` | Every 2 minutes: if `binary_sensor.192_168_8_1` (ping of the Flint) has been off for 6 minutes and the automation has not run in the last 30 minutes, it calls `hassio.host_reboot`. It cannot help while Core is stopped; power-cycle through the plug then. |
 | Upgrades | Core image needs about 3.1 GB free at peak | Procedure that worked twice: stop Core, `nohup docker pull` the image over SSH, `ha core update --version <v> --backup=false`, `ha core start`. A UI update with a backup starved the Pi on 2026-11-04. |
 
+### Backups
+
+Since 2026-11-11 ha-london's weekly automatic backup (Sunday 05:00 London time,
+encrypted, key in Vault `secret/viktor` `ha_london_backup_encryption_password`)
+goes to two places: the SD card (`hassio.local`) and the Proxmox host, through
+Supervisor network storage (Settings > System > Storage, mount `proxmox`,
+backup agent `hassio.proxmox`).
+
+| piece | value |
+|---|---|
+| mount | NFS `192.168.1.127:/srv/nfs/ha-london-backup`, usage backup. Supervisor mounts it with `softerr,timeo=100,retrans=2` (NFS 4.2), so a stalled tunnel fails a write after about 30 s instead of blocking |
+| default backup location | still local (`default_backup_mount` null). Adding the mount made it the default; that was undone so add-on and update backups stay on the card as before |
+| retention | 4 copies, per location |
+| export | `scripts/pve-nfs-exports`, clients `192.168.1.2` and `10.3.2.6`. The Pi's traffic reaches the host as 192.168.1.2: the Flint masquerades it to 10.3.2.6 and OPNsense source-NATs that to its LAN address (measured 2026-11-11). An export limited to 10.3.2.6 alone would refuse the Pi, which is how the Synology mount hung the Pi for 4 minutes on 2026-09-18 |
+| copies | nfs-mirror carries the directory to sda nightly and offsite-sync to the Synology (`docs/architecture/backup-dr.md`) |
+| alert | `HomeAssistantLondonBackupStale` pages when the newest `*.tar` there is over 8 days old or the metric is missing, from `ha-london-backup-status` on the host (hourly, `playbooks/pve-host.yml` tag `ha-london-backup`) |
+
+First run, 2026-11-11 12:56 UTC (`backup/generate_with_automatic_settings`):
+256,727,040 bytes, 4.5 minutes in all, of which about 75 s was the copy over
+the tunnel. The host copy and the card copy had the same sha256. The Pi kept
+answering ping and the API throughout.
+
+The file on the host only started growing in the backup's `finishing_file`
+stage, so Supervisor appears to build the archive on the card and then copy
+it. The network location therefore does not reduce SD writes; it removes the
+card as the only copy.
+
 ## Alexa voice control
 
 The Echo Dot on the guest network ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`)

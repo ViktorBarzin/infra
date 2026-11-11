@@ -742,6 +742,11 @@ resource "vault_policy" "ci" {
     path "secret/data/platform" {
       capabilities = ["create", "read", "update"]
     }
+    # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
+    # one wrapped token per new devvm through this role, nothing wider.
+    path "auth/token/create/devvm-bootstrap" {
+      capabilities = ["update"]
+    }
     # Allow CI to get dynamic K8s deploy tokens for user namespaces
     path "kubernetes/creds/*-deployer" {
       capabilities = ["read"]
@@ -872,6 +877,10 @@ resource "vault_policy" "ci_vault_admin" {
     path "kubernetes/roles/*" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
+    # vault_token_auth_backend_role.devvm_bootstrap
+    path "auth/token/roles/devvm-bootstrap" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
     # vault_transit_secret_backend_key (sops-state-<namespace>, incl. /config)
     path "transit/keys/sops-state-*" {
       capabilities = ["create", "read", "update", "delete"]
@@ -901,6 +910,55 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
   token_policies = [vault_policy.ci.name, vault_policy.ci_vault_admin.name]
   token_ttl      = 604800 # 7d
   token_period   = 604800 # periodic: auto-renews indefinitely
+}
+
+# --- devvm bootstrap (stacks/devvm, docs/runbooks/devvm-drill.md) ---
+#
+# A Terraform-built devvm runs playbooks/devvm.yml on itself at first boot
+# (scripts/devvm-bootstrap). The playbook's Vault reads need a token there, so
+# the applier mints one through this role and hands it over response-wrapped
+# through the guest agent (scripts/devvm-drill-handoff). Read-only on exactly
+# the paths the playbook reads; orphan so it outlives the applier's own token;
+# 4h hard limit, and the bootstrap revokes it when it finishes. A path the
+# playbook starts reading must be added here, or a fresh build fails at that
+# task with a 403.
+resource "vault_policy" "devvm_bootstrap" {
+  name   = "devvm-bootstrap"
+  policy = <<-EOT
+    path "secret/data/claude-sessions" {
+      capabilities = ["read"]
+    }
+    path "secret/data/terminal-lobby" {
+      capabilities = ["read"]
+    }
+    path "secret/data/devvm-authorized-keys" {
+      capabilities = ["read"]
+    }
+    path "secret/data/rybbit" {
+      capabilities = ["read"]
+    }
+    path "secret/data/glitchtip" {
+      capabilities = ["read"]
+    }
+    path "secret/data/agentmd" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_token_auth_backend_role" "devvm_bootstrap" {
+  role_name               = "devvm-bootstrap"
+  allowed_policies        = [vault_policy.devvm_bootstrap.name]
+  orphan                  = true
+  renewable               = false
+  token_type              = "service"
+  token_ttl               = 14400 # 4h
+  token_explicit_max_ttl  = 14400
+  token_no_default_policy = false
+
+  # CI applies this stack with ci-vault-admin, which gains the role path in
+  # the same apply.
+  depends_on = [vault_policy.ci_vault_admin]
 }
 
 # --- ESO Policy & Role ---
