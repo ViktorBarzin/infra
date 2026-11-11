@@ -38,6 +38,10 @@ locals {
     # reachable by one user, so prowlarr_log is owned by the prowlarr role.
     prowlarr     = {}
     prowlarr_log = { owner = "prowlarr" }
+    # reels (TanStack Start web app + Python worker, Forgejo viktor/trip-reel):
+    # trips, cuts, renders and the job queue between them. Drizzle migrations
+    # run from the web app's `migrate` init container.
+    reels = {}
   }
 }
 

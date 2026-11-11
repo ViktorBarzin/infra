@@ -27,6 +27,7 @@ variable "pg_app_roles" {
     learning        = { username = "learning", rotation_schedule = "43 10 * * TUE", rotation_window = 3600 }
     ntfy            = { username = "ntfy", rotation_schedule = "44 10 * * TUE", rotation_window = 3600 }
     prowlarr        = { username = "prowlarr", rotation_schedule = "13 10 * * TUE", rotation_window = 3600 }
+    reels           = { username = "reels", rotation_schedule = "15 10 * * TUE", rotation_window = 3600 }
   }
 }
 

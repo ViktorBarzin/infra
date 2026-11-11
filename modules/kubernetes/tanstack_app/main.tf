@@ -144,6 +144,11 @@ resource "kubernetes_deployment" "this" {
           run_as_user     = 10001
           run_as_group    = 10001
           fs_group        = 10001
+          # With fs_group set and no policy, the kubelet re-owns every file on
+          # a mounted volume at each pod start (an NFS volume with ~23k files
+          # took Forgejo about an hour). Only when the app mounts volumes, so
+          # apps without them render as before.
+          fs_group_change_policy = length(var.volumes) > 0 ? "OnRootMismatch" : null
         }
 
         # Drizzle migrations from the same image. Idempotent and serialised by
@@ -216,6 +221,15 @@ resource "kubernetes_deployment" "this" {
             read_only  = true
           }
 
+          dynamic "volume_mount" {
+            for_each = var.volumes
+            content {
+              name       = volume_mount.value.name
+              mount_path = volume_mount.value.mount_path
+              read_only  = volume_mount.value.read_only
+            }
+          }
+
           readiness_probe {
             http_get {
               path = "/healthz"
@@ -249,6 +263,16 @@ resource "kubernetes_deployment" "this" {
             items {
               key  = "DB_PASSWORD"
               path = "password"
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = var.volumes
+          content {
+            name = volume.value.name
+            persistent_volume_claim {
+              claim_name = volume.value.claim_name
             }
           }
         }

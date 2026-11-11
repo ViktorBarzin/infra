@@ -152,6 +152,13 @@
       ansible.builtin.import_tasks: tasks/opnsense/safety.yml
       tags: [ntp]
 
+    - name: Swap
+      ansible.builtin.import_tasks: tasks/opnsense/swap.yml
+      tags: [swap]
+    - name: Safety checks after swap
+      ansible.builtin.import_tasks: tasks/opnsense/safety.yml
+      tags: [swap]
+
     - name: Kea DHCP
       ansible.builtin.import_tasks: tasks/opnsense/kea.yml
       tags: [kea]

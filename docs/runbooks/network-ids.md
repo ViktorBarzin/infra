@@ -149,6 +149,11 @@ that would have been banned, decide: a real attacker (keep), something we use
 
 ### Turning bans on
 
+Done 2026-11-11 for the OPNsense agent and the journals agent (`stacks/crowdsec/modules/crowdsec/journals.tf`). To go back to watch-only, reverse step 1 (and set `simulation: true` in journals.tf).
+
+**Reply guard.** IP-reputation signatures (ET DROP Dshield, Spamhaus, CINS, COMPROMISED) fire on every packet from a listed address, including replies to connections our hosts opened, such as the tv app's stream sources. `viktor/suricata-replies` (s02-enrich on OPNsense) whitelists alerts whose EVE `direction` is `to_client`, except abuse.ch ones, so only traffic the outside address started can lead to a ban. Check it with `cscli explain -f <one eve line>.json --type suricata-evelogs` on OPNsense: a reply ends in "ignored by whitelist".
+
+
 1. Edit `playbooks/files/opnsense/crowdsec/simulation.yaml` to
    `simulation: false` and the assert in `playbooks/tasks/opnsense/crowdsec.yml`
    to `global simulation: disabled`.
@@ -220,7 +225,8 @@ EOS
 Expect within a minute: `Ip 192.0.2.1 performed 'viktor/abusech-c2-destination'`
 in the agent log, a simulated `c2-block` decision on the LAPI, and
 `NetsecHomeHostMalware` for 10.0.20.104 in Slack; within 10 minutes the
-grouped CrowdSec Slack message. Run 2026-11-10: all four seen, nothing reached
+grouped CrowdSec Slack message (the C2 profile still notifies; ban profiles
+stopped on 2026-11-11). Run 2026-11-10: all four seen, nothing reached
 pf.
 
 ## Server journals and pod DNS (phase 4)
