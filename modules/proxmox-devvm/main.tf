@@ -52,6 +52,13 @@ resource "proxmox_virtual_environment_vm" "devvm" {
   on_boot         = var.on_boot
   started         = true
   stop_on_destroy = true
+  # The real devvm (allow_live_identity) carries PVE's protection flag, so PVE
+  # refuses to destroy it or its disk: once VMID 102 is a granted slot the
+  # token could otherwise delete it from an apply that drops the entry or
+  # forces a replacement. Taking it down on purpose is a root step on the
+  # host (`qm set 102 --protection 0`, then the destroy), as in the runbook's
+  # replacement section. Drills stay destroyable by their teardown.
+  protection = var.allow_live_identity
   # Drills have no backup, replication or HA jobs for a purge to clean up.
   # Purge or not, PVE deletes the ACLs on /vms/<id> at every destroy
   # (remove_vm_access), which is where stacks/devvm's token holds its VMID

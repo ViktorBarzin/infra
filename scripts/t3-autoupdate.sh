@@ -77,6 +77,27 @@ if [ -e "$FREEZE_FILE" ]; then
 fi
 
 current="$(ver)"
+
+# ---- 0c. first install on a new box (2026-11-11) ---------------------------------
+# A devvm built from stacks/devvm has no t3 at all: setup-devvm.sh used to put
+# the first build in, and the bootstrap never runs it, so every t3-serve@ died
+# with 203/EXEC on the third drill. playbooks/devvm.yml runs this script once
+# when T3_LINK is absent. Only a box with no link and no legacy npm -g install
+# counts: a link that exists but does not run is a broken build on a box with
+# users, which must not be swapped to an ungated one, so that case keeps the
+# exit below. No gate: there is no running serve to break, and the restored
+# databases migrate forward on first start exactly as they would on a bump.
+if [ -z "$current" ] && [ ! -e "$T3_LINK" ] && [ ! -L "$T3_LINK" ] && [ ! -e "$T3_LEGACY_DIR" ]; then
+  if [ -n "$T3_PIN" ]; then target="$T3_PIN"
+  else target="$(npm view "t3@$T3_TRACK" version 2>/dev/null | tail -1 | tr -d '[:space:]')"; fi
+  [ -n "$target" ] || { LOG "first install: could not resolve t3@$T3_TRACK from npm"; exit 1; }
+  if [ "$DRY_RUN" = "1" ]; then LOG "DRY_RUN: first install would put t3 $target at $T3_LINK"; exit 0; fi
+  install_version "$target" || { LOG "first install: npm install of t3@$target FAILED"; exit 1; }
+  activate_version "$target" || { LOG "first install: could not point $T3_LINK at $target"; exit 1; }
+  echo "$target" >"$LAST_GOOD_FILE"
+  LOG "first install: t3 $target at $T3_LINK (no t3 on this box before)"
+  exit 0
+fi
 [ -n "$current" ] || { LOG "cannot read current t3 version — aborting (is t3 installed?)"; exit 0; }
 [ -s "$LAST_GOOD_FILE" ] || echo "$current" >"$LAST_GOOD_FILE"   # seed last-good on first run
 last_good="$(tr -d '[:space:]' <"$LAST_GOOD_FILE" 2>/dev/null)"

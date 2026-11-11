@@ -24,6 +24,12 @@ between builds; the gate is what makes auto-tracking safe.
    back at once.
 1. **Freeze gate** — `/etc/t3-autoupdate.freeze` present (or `T3_PIN=<ver>` set) →
    hold at current, do nothing.
+   **First install** (2026-11-11): on a box with no `/usr/bin/t3` and no legacy
+   `npm -g` install, which is a devvm built from `stacks/devvm`, the tracker
+   installs the tracked release (or `T3_PIN`) into `/usr/local/lib/t3/<ver>`,
+   links `/usr/bin/t3` to it, writes last-good and exits. No gate, since no
+   serve is running. `playbooks/devvm.yml` runs it once for that case. A
+   `/usr/bin/t3` that exists but does not run is left alone and the run stops.
 2. **Resolve + downgrade-guard** — `npm view t3@latest version`; proceed only if
    the target is strictly newer than installed (and, on the nightly track, a `-nightly.` build; the tag is
    mutable and can point backward).

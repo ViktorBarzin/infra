@@ -756,7 +756,8 @@
         label: "{{ item.path }}"
 
     # depcheck, a global npm install nothing calls. The other global packages
-    # (codex, pi, the Bitwarden CLI, t3) are declared further down.
+    # (codex, pi, the Bitwarden CLI) are declared further down, and t3 is put
+    # in by t3-autoupdate (section 7a4).
     # Guarded on the folder because on a new box npm does not exist yet here.
     - name: Look for the global depcheck
       ansible.builtin.stat:
@@ -2309,6 +2310,20 @@
         - { src: t3-migrate-idle.sh, dest: /usr/local/bin/t3-migrate-idle, mode: "0755" }
         - { src: t3-watchdog.sh, dest: /usr/local/bin/t3-watchdog, mode: "0755" }
         - { src: t3-backup-state.sh, dest: /usr/local/bin/t3-backup-state, mode: "0755" }
+
+    # The first t3 build on a new box (2026-11-11). setup-devvm.sh used to put
+    # it in, and a box built from stacks/devvm never runs that, so on the third
+    # drill every t3-serve@ died with 203/EXEC: /usr/bin/t3 did not exist. The
+    # updater's first-install branch puts the release it tracks (T3_TRACK, or
+    # T3_PIN) in /usr/local/lib/t3/<ver> with the /usr/bin/t3 link, the same
+    # layout its gated bumps use, and records last-good; after that the nightly
+    # agent-update owns the version. `creates` keeps this off any box that
+    # already has t3, and the script refuses on its own when /usr/bin/t3
+    # exists but does not run (a broken build on a box with users).
+    - name: Install the first t3 build on a box that has none
+      ansible.builtin.command: /usr/local/bin/t3-autoupdate
+      args:
+        creates: /usr/bin/t3
 
     # ---- T3 snapshots off the VM (disposable devvm, 2026-11-11) -------------
     # t3-backup-state's nightly copies in /var/backups/t3-state are on this

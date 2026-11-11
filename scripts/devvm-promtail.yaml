@@ -23,6 +23,7 @@
 #   {job="devvm-journal", unit="t3-dispatch.service"}        — dispatch (ws open/close lines)
 #   {job="devvm-journal", unit="t3-serve@wizard.service"}    — per-user t3 serve
 #   {job="sshd-devvm"}                        — sshd auth lines (parity with sshd-pve)
+#   {job="devvm-drill-journal", host="<name>"} — all of a drill VM's journal (docs/runbooks/devvm-drill.md)
 #   {job="agent-api-trace"}                   — agent-api's request trace (JSONL, see below)
 server:
   http_listen_port: 9080
@@ -82,6 +83,27 @@ scrape_configs:
         regex: 'sshd.*'
         target_label: job
         replacement: 'sshd-devvm'
+      # A drill's whole journal, sshd lines included, goes to
+      # job="devvm-drill-journal" (2026-11-11). Every devvm rule in
+      # stacks/monitoring (loki.tf), the TLEVENT dashboard and the crowdsec
+      # sshd source select on job alone, so a host label was not enough: the
+      # third drill's claude-auth-sync FAIL lines fired
+      # WorkstationClaudeAuthInvalid for wizard and emo while the live box
+      # logged OK, and a drill's stream would keep DevvmJournalSilent quiet if
+      # the live box stopped shipping. RE2 has no "not equal", so: mark every
+      # line, unmark the live hostname (an empty value deletes the label),
+      # then move what is still marked. __ labels are dropped after relabel.
+      - source_labels: ['host']
+        regex: '.+'
+        target_label: __drill_job
+        replacement: 'devvm-drill-journal'
+      - source_labels: ['host']
+        regex: 'devvm'
+        target_label: __drill_job
+        replacement: ''
+      - source_labels: ['__drill_job']
+        regex: '(.+)'
+        target_label: job
   # agent-api's request trace. Every call a machine caller (Muse first) makes
   # to Terminal Lobby's machine-facing API is appended to that file as one JSON
   # object per line; the design is docs/plans/2026-09-14-muse-agent-broker-design.md.
