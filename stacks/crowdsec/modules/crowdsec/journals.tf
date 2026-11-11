@@ -10,9 +10,8 @@
 # line ("<time> <host> sshd[1]: <message>") with line_format; the stock
 # syslog-logs and sshd-logs parsers then work unchanged.
 #
-# simulation: true for every scenario until the phase 6 review, like the
-# OPNsense agent: alerts and simulated decisions reach the LAPI, nothing is
-# enforced. The machine "journals" is registered by the crowdsec-lapi-reconcile
+# Enforcing since 2026-11-11 (Viktor reviewed the simulated decisions early),
+# like the OPNsense agent. The machine "journals" is registered by the crowdsec-lapi-reconcile
 # CronJob with the password from Vault secret/platform
 # crowdsec_journals_agent_password.
 
@@ -41,7 +40,7 @@ resource "kubernetes_config_map" "crowdsec_journals" {
   }
   data = {
     "loki.yaml"       = local.journals_acquisition
-    "simulation.yaml" = "simulation: true\nexclusions: []\n"
+    "simulation.yaml" = "simulation: false\nexclusions: []\n"
   }
 }
 

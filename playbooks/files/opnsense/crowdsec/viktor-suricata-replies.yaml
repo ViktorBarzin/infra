@@ -1,0 +1,24 @@
+# Managed by playbooks/tasks/opnsense/crowdsec.yml.
+#
+# Never ban the far end of a connection one of our hosts started. Suricata
+# raises IP-reputation alerts (ET DROP Dshield, Spamhaus, CINS, COMPROMISED) on
+# every packet from a listed address, including the replies to our own outbound
+# connections, so the hub scenarios (grouped by the alert's source) would ban a
+# server we fetch from. On 2026-11-11 the tv app's stream sources, such as
+# 193.47.62.157, were Dshield-listed and raised exactly these alerts; a ban would
+# reach the node nftables bouncer and cut the streams.
+#
+# A reply packet has "direction": "to_client" in EVE and its src_ip is the
+# server; an attacker's packets towards us are "to_server". abuse.ch alerts are
+# left alone: the C2 parser (viktor-abusech-c2.yaml) points those at the C2
+# address in either direction.
+name: viktor/suricata-replies
+description: "Drop Suricata alerts raised on replies to connections we started"
+whitelist:
+  reason: "Suricata alert on reply traffic to a connection our host opened"
+  expression:
+    - >-
+      evt.Meta.log_type == 'suricata_alert' &&
+      JsonExtract(evt.Parsed.message, 'direction') == 'to_client' &&
+      !(evt.Parsed.suricata_alert_signature startsWith 'Feodo Tracker:' ||
+        evt.Parsed.suricata_alert_signature startsWith 'SSLBL:')

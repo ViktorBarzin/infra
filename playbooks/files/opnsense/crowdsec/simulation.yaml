@@ -1,5 +1,6 @@
-# Managed by playbooks/tasks/opnsense/crowdsec.yml. Every scenario on this
-# agent is simulated: alerts reach the LAPI as would-be decisions that no
-# bouncer enforces, until Viktor reviews them (network IDS plan, phase 6;
-# docs/runbooks/network-ids.md "Turning bans on").
-simulation: true
+# Managed by playbooks/tasks/opnsense/crowdsec.yml. Bans are enforced since
+# 2026-11-11: Viktor reviewed the first ~14 hours of simulated decisions (one
+# real attacker, 91.92.40.12, React2Shell from a Spamhaus DROP network; no
+# false positives) and chose not to wait for the planned 2026-11-24 review.
+# To simulate one scenario again, list it under exclusions.
+simulation: false
