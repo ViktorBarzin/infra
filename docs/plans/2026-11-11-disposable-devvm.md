@@ -72,6 +72,31 @@ infra 6 commits and dirty worktrees, interview-prep-app, Plotting-Your-Dream-Boo
 stashes in 4 repos, insta2spotify and immich-repro dirty files, cloud with no
 remote). dot_files' 158 are stale history, not work.
 
+Done 2026-11-11. Pushed as branches, nothing merged and no master touched:
+- terminal-lobby `wizard/pane-ownership` (3 commits plus the uncommitted
+  claim work as one wip commit) and `wizard/inline-chip-art` (the
+  uncommitted work as one wip commit). Both were rebuilt on the rewritten
+  history, because their local copies sit on the pre-rewrite lineage, and
+  pushing that would bring back the three plan docs purged on 2026-09-17
+  and the old employer author address.
+- infra `wizard/tripit-country-days-cron` (the worker-label fix is not on
+  master), `wizard/immich-restore-runbook`, `wizard/ha-london-backup-upgrades`
+  and `wizard/bb-stale` (the one untracked test, as a wip commit).
+- interview-prep-app `wizard/render-generated-dsl` (2 commits from local master).
+- agent-conductor `wizard/de-meta-rust-wip` (the demeta-baseline-check stash).
+- cloud: new private Forgejo repo `viktor/cloud`, master pushed.
+
+Judged scratch and left in place: the other terminal-lobby branches (their
+only unique commits are the purged docs, or already on master by subject),
+its stash and agent-delegation's glossary edit (both on master already), infra
+`wizard/ebooks-calibre-trusted` (on master), Plotting-Your-Dream-Book (per-user
+beads and gitleaks hook drift), the broker-sync stash (landed on master as the
+HTML table fallback), the finance stash (a 2023 experiment), insta2spotify
+(3050 deletions of node_modules files that were tracked by mistake),
+immich-repro/src (a sparse upstream checkout plus 10 files byte-identical to
+upstream v3.3.5), and two orphaned T3 checkouts of the dissolved monorepo root
+under ~/.t3/worktrees/code (no edits since checkout).
+
 ## emo (changed without asking him first)
 - Retire: panel115-watch, camera-stream-watch, led_report, vermont-mon,
   valia-backup-cleanup (when done), printer-price watcher, PAI-issue watcher,
