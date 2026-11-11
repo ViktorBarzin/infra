@@ -293,7 +293,11 @@ plays without frame gaps**, so the Channel has 2 clean Feeds.
    taken off Tier 1. Comment with what you added and what the card showed.
    Revert only if your change broke a Feed that played before.
 6. If no other site carries the Channel, comment with the sites you checked,
-   add `needs-human` and stop.
+   add `needs-human` and stop. If Viktor accepts it as single-source, the
+   fix is `single_source: true` on its entry in `tv/channels/channels.yaml`:
+   the Watcher then stops judging it thin and closes the issue, and still
+   files a down issue if it stops playing (viktor/infra#162,
+   antenaplay-f1).
 
 If the Channel goes down while its thin issue is open, the Watcher files a
 separate down issue; work that one as a down issue and leave the thin one open.
