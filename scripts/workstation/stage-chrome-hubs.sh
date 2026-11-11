@@ -8,10 +8,10 @@
 # ~/.config/chrome-hub/hub.json that t3-provision-users (install_chrome_hub)
 # copies to that user whenever it differs.
 #
-# Needs root and an admin Vault token (VAULT_TOKEN or ~/.vault-token of the
-# invoking admin, passed through). Run by setup-devvm.sh section 8c, or alone
-# after a token rotation:
-#   sudo VAULT_TOKEN="$(cat ~/.vault-token)" scripts/workstation/stage-chrome-hubs.sh
+# Needs root and an admin Vault token in VAULT_TOKEN. Run by setup-devvm.sh
+# section 8c, or alone after a token rotation, reading the token inside sudo
+# (sudo logs a VAULT_TOKEN= or --preserve-env value to auth.log and Loki):
+#   sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec bash scripts/workstation/stage-chrome-hubs.sh'
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

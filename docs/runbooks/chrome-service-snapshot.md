@@ -169,7 +169,7 @@ Almost always means the Vault secret was rotated and the staged copy is stale.
 run, or run it now):
 ```bash
 vault login -method=oidc  # if needed
-sudo VAULT_TOKEN="$(cat ~/.vault-token)" bash ~/code/infra/scripts/workstation/stage-chrome-hubs.sh
+sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec bash "/home/$SUDO_USER/code/infra/scripts/workstation/stage-chrome-hubs.sh"'
 sudo systemctl start t3-provision-users.service
 sudo systemctl start playwright-snapshot-refresh@<user>.service
 ```
@@ -268,7 +268,7 @@ vault kv patch secret/chrome-service \
 kubectl -n chrome-service annotate externalsecret chrome-service-secrets force-sync=$(date +%s) --overwrite
 
 # On the dev box: re-stage, then let the provisioner copy the changed files.
-sudo VAULT_TOKEN="$(cat ~/.vault-token)" bash ~/code/infra/scripts/workstation/stage-chrome-hubs.sh
+sudo bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec bash "/home/$SUDO_USER/code/infra/scripts/workstation/stage-chrome-hubs.sh"'
 sudo systemctl start t3-provision-users.service
 
 # Verify the next refresh succeeds for a user:

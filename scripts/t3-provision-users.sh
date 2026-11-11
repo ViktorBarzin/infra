@@ -539,7 +539,8 @@ install_claude_auth_sync() {
 # docker, the admin kubeconfig) from Vault, secret/workstation/<user>/files,
 # via workstation-creds. Reading those needs an admin Vault token, which the
 # hourly run does not have, so this restores only when the provisioner is run
-# with one: on a rebuild, `sudo --preserve-env=VAULT_TOKEN t3-provision-users`
+# with one: on a rebuild, read from the admin's ~/.vault-token inside sudo and
+# never passed on the sudo line, which sudo logs
 # (docs/runbooks/devvm-credentials.md). A file already there is never replaced.
 restore_user_credentials() {  # restore_user_credentials USER
   local user="$1"
