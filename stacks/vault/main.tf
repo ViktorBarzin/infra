@@ -921,7 +921,7 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
 # the paths the playbook reads; orphan so it outlives the applier's own token;
 # 4h hard limit, and the bootstrap revokes it when it finishes. A path the
 # playbook starts reading must be added here, or a fresh build fails at that
-# task with a 403.
+# task with a 403. Exercised by every devvm drill (stacks/devvm local.drills).
 resource "vault_policy" "devvm_bootstrap" {
   name   = "devvm-bootstrap"
   policy = <<-EOT

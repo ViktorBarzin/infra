@@ -17,30 +17,32 @@
 #   {"devvm_target": "devvm_test", "devvm_admin_ssh_key": "ssh-ed25519 AAAA... comment"}
 #
 # WHAT THIS COVERS
-#   the apt toolset, node, the machine-wide PATH, the OIDC/secrets tooling, the
-#   enforced Claude config, /etc/skel, the apt source that delivers
-#   terminal-lobby, and three units that existed only on the box.
+#   the whole machine outside /home, as of the 2026-11-11 inventory
+#   (docs/plans/2026-11-11-disposable-devvm.md): the apt toolset and every
+#   third-party apt source, node, bun, bd, helm and promtail, the machine-wide
+#   PATH, the OIDC/secrets tooling, the enforced Claude config, /etc/skel, the
+#   apt source that delivers terminal-lobby, resource containment, the t3
+#   service layer and its units, the lobby's identity boundary, and the
+#   removal of everything the inventory found unused.
 #
-# WHAT IT DOES NOT COVER YET, in the order worth doing next
-#   1. Resource containment (setup-devvm.sh section 10) — the per-user memory
-#      caps and earlyoom backstop added after the 2026-06-22 overload, when the
-#      box had to be hard-killed. A machine built without them repeats that.
-#   2. The t3 service layer (section 9) — t3-dispatch, t3-serve@, the timers.
-#      The updater, idle-migrator and watchdog scripts are declared since
-#      2026-10-19 and the t3-dispatch binary since 2026-10-20; their units,
-#      timers and the dispatch account are not.
-#   3. Per-user provisioning — accounts, groups, clones, kubeconfigs. That is
-#      ViktorBarzin/infra#88, deliberately last because it touches live access.
-#   Until those land, a machine built from this playbook serves the lobby but is
-#   not a full workstation.
+# WHAT IT DOES NOT COVER YET
+#   1. Per-user provisioning: accounts, groups, clones, kubeconfigs. That is
+#      t3-provision-users.sh from roster.yaml (infra#88), which this playbook
+#      seeds and enables but does not replace.
+#   2. The Vault-sourced staging in setup-devvm.sh section 8: /opt/codex-shared
+#      and the per-person chrome hub configs. Root here has no Vault token.
+#   3. The MeshCentral agent (/usr/local/mesh_services). Its installer is
+#      issued per device group by the MeshCentral server; this playbook only
+#      tunes the installed agent.
 #
 # NOT ADOPTED, and why
-#   drone 1.7.0        Drone CLI; CI here is Woodpecker. Looks vestigial.
-#   immich-go 0.9.4    personal photo tooling, not workstation base.
-#   openclaw-task      a script belonging to the openclaw project, which should
-#                      ship it the way infra ships the homelab CLI.
-#   caddy              enabled and serving the stock page on :80, 0 requests in
-#                      7 days. Parking it is a separate, reversible decision.
+#   agent-conductor    stopped and disabled since 2026-09-13; its files stay
+#                      because their only archive is gone (see its tasks).
+#   kernel packages    old linux-modules-extra and the like are apt's business.
+#   ntpsec             replaced systemd-timesyncd by hand long ago; a new box
+#                      keeps timesyncd, which does the same job.
+#   docker volumes     caches (gradle, npm, android SDK) and scratch test
+#                      data; devvm-cleanup prunes the dangling ones.
 
 - name: devvm workstation base
   # Overridable so the same playbook can build a NEW machine without being
@@ -52,6 +54,10 @@
   vars:
     workstation_dir: "{{ playbook_dir }}/../scripts/workstation"
     node_major: 22
+    # kubectl's apt repo is per minor (pkgs.k8s.io/core:/stable:/v<minor>).
+    # The key checksum is of that path's Release.key.
+    devvm_kubectl_minor: "1.34"
+    devvm_kubectl_release_gpg_sha256: 7627818cf7bae52f9008c93e8b1f961f53dea11d40891778de216fb1b43be54d
     # Bun for TypeScript apps (ADR-0001, app-kit docs/adr/0001-default-app-stack.md).
     # Pinned to the version every app names in "packageManager": a Bun older
     # than the one that wrote bun.lock cannot read it (1.3.11 fails on a 1.4.3
@@ -68,6 +74,14 @@
     # beads_<version>_linux_amd64.tar.gz line of the release's checksums.txt.
     devvm_bd_version: "1.3.1"
     devvm_bd_sha256: 3219443a9734b89b93fb16ee8d65844759fa1b3cd3cf139c606b7353cfb0715c
+    # helm and promtail, pinned at the versions that were hand-installed here
+    # (adopted 2026-11-11). Checksums: get.helm.sh's helm-v<ver>-linux-amd64
+    # .tar.gz.sha256sum, and the promtail-linux-amd64.zip line of Loki's
+    # release SHA256SUMS.
+    devvm_helm_version: "3.13.1"
+    devvm_helm_sha256: 98c363564d00afd0cc3088e8f830f2a0eeb5f28755b3d8c48df89866374a1ed0
+    devvm_promtail_version: "3.5.1"
+    devvm_promtail_sha256: b70d5a5e259a64f6f9b6805bd42d725e50978bcd520fb46113a86cd8b418bbca
     # Latest, not pinned: nothing else in this pipeline pins versions either,
     # and these are tools rather than build inputs.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
@@ -417,6 +431,275 @@
             purge: true
             update_cache: false
 
+    # ---- 1a) what the 2026-11-11 inventory found and nothing uses ----------
+    # The disposable-devvm plan (docs/plans/2026-11-11-disposable-devvm.md)
+    # wants this playbook to describe the whole machine: anything used is
+    # declared, anything unused goes. Usage was checked three ways before each
+    # decision: the Claude session store (every Bash call by every user since
+    # 2026-10), the shell histories of wizard, emo and ancamilea, and the
+    # process list, listening ports and service journals. What stayed is in
+    # scripts/workstation/packages.txt under "adopted 2026-11-11".
+    #
+    # A local PostgreSQL 14, left over from the Ubuntu 22.04 era (its packages
+    # are jammy builds). Two databases: finance, with no tables at all, and
+    # trading_dev, the trading-bot dev schema holding only the 3 rows its
+    # migrations seed (a pg_dumpall on 2026-11-11 found nothing else). Zero
+    # transactions in either since the server last started on 2026-10-25, and
+    # nothing connected but the stats collector. trading-bot's tests expect
+    # their own docker-compose Postgres on 127.0.0.1:5432, which this server was
+    # occupying. The cluster is dropped, then the server packages purged; the
+    # psql client stays (postgresql-client in packages.txt).
+    - name: Remove the local PostgreSQL server and its two empty databases
+      tags: [postgres-local]
+      block:
+        - name: Look for the PostgreSQL 14 cluster
+          ansible.builtin.stat:
+            path: /etc/postgresql/14/main
+          register: devvm_pg14_cluster
+
+        # pg_dropcluster --stop stops the instance and deletes its data and
+        # config directories. Skipped in check mode, which only reports it.
+        - name: Drop the PostgreSQL 14 cluster
+          ansible.builtin.command: pg_dropcluster --stop 14 main
+          when: devvm_pg14_cluster.stat.exists
+          changed_when: true
+
+        - name: Remove the PostgreSQL server packages
+          ansible.builtin.apt:
+            name: [postgresql-14, postgresql-common]
+            state: absent
+            purge: true
+            update_cache: false
+
+    # Two long-running containers nobody uses any more. tl-fallback was the
+    # loopback lobby on 127.0.0.1:7899 that the 2026-09-18 authentik upgrade
+    # kept open in case the browser path broke
+    # (docs/plans/2026-09-18-authentik-inline-outpost.md, step 1); it served
+    # its last request on 2026-10-23 and nothing in terminal-lobby refers to
+    # it. Its config, under the admin's ~/.local/share/tl-fallback, carries a
+    # rendered copy of the lobby proxy secret, so it goes too. paperless-mcp
+    # listened on 127.0.0.1:5111 and no MCP config on the box points at it:
+    # emo's paperless MCP runs its own npx process instead.
+    - name: Remove the retired docker containers
+      tags: [docker-retired]
+      block:
+        - name: List the docker containers
+          ansible.builtin.command: docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}'
+          register: devvm_docker_names
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        - name: Remove tl-fallback and paperless-mcp
+          ansible.builtin.command: "docker rm -f {{ item }}"
+          loop: [tl-fallback, paperless-mcp]
+          when: item in (devvm_docker_names.stdout_lines | default([]))
+          changed_when: true
+
+        - name: Remove the tl-fallback config
+          ansible.builtin.file:
+            path: "/home/{{ devvm_admin_user }}/.local/share/tl-fallback"
+            state: absent
+
+    # Hand-installed packages with no use found. Each line says what it was.
+    #   samba        nmbd ran, smbd had been disabled, and the one share was
+    #                /home/wizard. Nothing connected; smbclient was never
+    #                installed (emo's one attempt to use it found it missing).
+    #   postfix      listened on 0.0.0.0:25 and its log holds only its own
+    #                starts and stops. gpg-wks-server depends on an MTA and
+    #                goes with it. Mail for the homelab goes through the
+    #                cluster's mailserver.
+    #   php7.4       a jammy build from the disabled ondrej PPA, with the
+    #                Apache module that came with it. Every php call in the
+    #                session store ran inside a container or on OPNsense.
+    #   et           Eternal Terminal, from a disabled jammy PPA. etserver
+    #                listened on 2022 with no connection in its journal.
+    #   certbot      a daily timer and no certificates; the cluster issues
+    #                them. The CSR, key and ACME account it left go too.
+    #   nvidia-*     the driver, DKMS modules and container toolkit, on a VM
+    #                with no GPU. The CDI refresh units failed every boot (the
+    #                old "Stop the NVIDIA CDI refresh" task) and DKMS rebuilt
+    #                the modules on every kernel update. dockerd's nvidia
+    #                runtime entry goes in the docker section.
+    #   tigervnc     no VNC server or viewer ran; remote browsers use the
+    #                cluster's chrome-service and noVNC.
+    #   python2      python-mysqldb and libssl1.1 kept a Python 2.7 around;
+    #                no session ever ran python2.
+    #   the rest     epiphany-browser, glmark2, mesa-utils, stockfish, nikto,
+    #                dns2tcp, httpie, graphviz, stress-ng, iperf3, sshfs,
+    #                cifs-utils, ntfs-3g, kubectx, scdaemon, debian-keyring and
+    #                virtualenvwrapper: no use in the session store, and none in
+    #                the shell histories since 2025 at the latest.
+    - name: Retire the hand-installed packages nothing uses
+      tags: [packages]
+      block:
+        - name: Remove the unused packages
+          ansible.builtin.apt:
+            name:
+              - samba
+              - samba-ad-provision
+              - samba-common
+              - samba-common-bin
+              - samba-dsdb-modules
+              - samba-vfs-modules
+              - samba-libs
+              - python3-samba
+              - postfix
+              - gpg-wks-server
+              - php7.4
+              - php7.4-cli
+              - php7.4-common
+              - php7.4-json
+              - php7.4-opcache
+              - php7.4-readline
+              - php-common
+              - libapache2-mod-php7.4
+              - apache2-bin
+              - et
+              - certbot
+              - python3-certbot
+              - "nvidia-*"
+              - "libnvidia-*"
+              - tigervnc-common
+              - tigervnc-standalone-server
+              - tigervnc-tools
+              - tigervnc-viewer
+              - tigervnc-xorg-extension
+              - python-mysqldb
+              - libssl1.1
+              - python
+              - python2
+              - python2-minimal
+              - python2.7
+              - python2.7-minimal
+              - libpython2-stdlib
+              - libpython2.7-minimal
+              - libpython2.7-stdlib
+              - epiphany-browser
+              - epiphany-browser-data
+              - glmark2-x11
+              - glmark2-data
+              - mesa-utils
+              - mesa-utils-bin
+              - stockfish
+              - nikto
+              - dns2tcp
+              - httpie
+              - graphviz
+              - stress-ng
+              - iperf3
+              - sshfs
+              - cifs-utils
+              - ntfs-3g
+              - kubectx
+              - scdaemon
+              - debian-keyring
+              - python3-virtualenvwrapper
+              - virtualenvwrapper
+            state: absent
+            purge: true
+            update_cache: false
+
+        # What the purge leaves behind: state the packages wrote at run time,
+        # and the apt sources that delivered three of them. The samba state
+        # includes its password database. /etc/letsencrypt itself stays,
+        # because ntpsec ships a renewal hook inside it.
+        - name: Remove what the retired packages left behind
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/samba
+            - /var/lib/samba
+            - /var/cache/samba
+            - /var/log/samba
+            - /etc/letsencrypt/accounts
+            - /etc/letsencrypt/keys
+            - /etc/letsencrypt/csr
+            - /etc/apt/sources.list.d/jgmath2000-ubuntu-et-jammy.list.disabled
+            - /etc/apt/sources.list.d/ondrej-ubuntu-php-jammy.list.disabled
+            - /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            - /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+            - /usr/local/lib/python2.7
+
+    # A Go 1.21.5 tarball install from 2023 (update-golang.sh). Its profile.d
+    # file put /usr/local/go/bin FIRST on every login shell's PATH, so a login
+    # shell built with Go 1.21.5 while everything else (t3-dispatch, the
+    # homelab CLI, this playbook) used the declared golang-go. One Go now.
+    - name: Remove the hand-installed Go 1.21.5
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/profile.d/golang_path.sh
+        - /usr/local/go
+        - /usr/local/go1.21.5.linux-amd64
+        - /usr/local/go1.21.5.linux-amd64.tar.gz
+
+    # Leftovers in /usr/local with no owner and no use.
+    #   *.prev, *.bak-*  rollback copies from the deploy scripts terminal-lobby
+    #                    replaced with its Debian package in August, and from
+    #                    old homelab and provisioner self-deploys. Nothing
+    #                    writes them any more.
+    #   tl-t3-*.prev     binaries of services that no longer exist.
+    #   drone            the Drone CLI; CI here is Woodpecker.
+    #   age, age-keygen  no session or script ever ran them; sops carries its
+    #                    own age implementation.
+    #   immich-go        a link to a 2023 binary in the admin's home.
+    #   openclaw-task    OpenClaw runs no pods and the script was not called in
+    #                    30 days. Its source stays in stacks/openclaw/files.
+    #   tsc, tsserver    TypeScript 5.0.4 from 2023, installed globally. Every
+    #                    project runs its own compiler through npx or bunx.
+    #   virtualenvwrapper.sh  a 2023 pip copy of the package removed above.
+    - name: Remove the unowned leftovers in /usr/local
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/clipboard-upload.prev
+        - /usr/local/bin/homelab.prev
+        - /usr/local/bin/session-events.prev
+        - /usr/local/bin/t3-dispatch.bak-193225
+        - /usr/local/bin/t3-provision-users.prev
+        - /usr/local/bin/tl-t3-bridge.prev
+        - /usr/local/bin/tl-t3-sync.prev
+        - /usr/local/bin/tmux-api.prev
+        - /usr/local/bin/ttyd.prev
+        - /usr/local/bin/drone
+        - /usr/local/bin/age
+        - /usr/local/bin/age-keygen
+        - /usr/local/bin/immich-go
+        - /usr/local/bin/openclaw-task
+        - /usr/local/bin/tsc
+        - /usr/local/bin/tsserver
+        - /usr/local/lib/node_modules/typescript
+        - /usr/local/bin/virtualenvwrapper.sh
+
+    # depcheck, a global npm install nothing calls. The other global packages
+    # (codex, pi, the Bitwarden CLI, t3) are declared further down.
+    # Guarded on the folder because on a new box npm does not exist yet here.
+    - name: Look for the global depcheck
+      ansible.builtin.stat:
+        path: /usr/lib/node_modules/depcheck
+      register: devvm_depcheck
+
+    - name: Remove the global depcheck
+      community.general.npm:
+        name: depcheck
+        global: true
+        state: absent
+      when: devvm_depcheck.stat.exists
+
+    # A pg_dump of the authentik database taken before the 2026-09-18 upgrade,
+    # kept as a rollback point. The upgrade held, and the database has its own
+    # backups (/mnt/backup/postgresql on the Proxmox host), so the plan marks it
+    # scratch. The 74 MB file was mode 0644, readable by every account here.
+    # It was the only thing under /srv/nfs, which nothing exported.
+    - name: Remove the pre-upgrade authentik dump
+      ansible.builtin.file:
+        path: /srv/nfs
+        state: absent
+
     # The HashiCorp repo is where terraform and vault on this box came from, and
     # it existed only as hand-made files in /etc/apt until now, which is how its
     # keyring went stale unnoticed: HashiCorp rotated their package signing key
@@ -448,12 +731,95 @@
         path: /usr/share/keyrings/hashicorp-archive-keyring.gpg
         state: absent
 
+    # ---- 1b) third-party apt sources (adopted 2026-11-11) -------------------
+    # Docker and Kubernetes came from their vendors' repos, set up by hand: the
+    # files in /etc/apt existed only on this box. Both keys are pinned by
+    # checksum, which keeps --check quiet (get_url without one reports changed
+    # on every dry run) and makes a rotated upstream key fail here loudly
+    # rather than be trusted silently. A rotation means fetching the new key,
+    # checking it, and changing the checksum below.
+    - name: Install the Docker signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        checksum: sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
+        mode: "0644"
+
+    - name: Declare the Docker apt source
+      register: devvm_docker_source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+
+    # The minor is part of the repo path, so a kubectl bump is a change to
+    # devvm_kubectl_minor plus the key checksum for that path. The cluster runs
+    # 1.35; a client one minor behind is inside the supported skew.
+    - name: Install the Kubernetes signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ devvm_kubectl_minor }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        checksum: "sha256:{{ devvm_kubectl_release_gpg_sha256 }}"
+        mode: "0644"
+
+    - name: Declare the Kubernetes apt source
+      register: devvm_kubernetes_source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ devvm_kubectl_minor }}/deb/ /
+
+    # The hand-made source named a dearmored copy of the same key.
+    - name: Drop the superseded Kubernetes keyring
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        state: absent
+
     - name: Install the declared apt packages
       ansible.builtin.apt:
         name: "{{ devvm_packages }}"
         state: present
         update_cache: true
         cache_valid_time: 3600
+      tags: [packages]
+
+    # Docker (the containment for it is section 9) and kubectl, from the
+    # sources declared above.
+    - name: Install the packages from the third-party sources
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+          - kubectl
+        state: present
+        # The install above refreshes the cache at most hourly, which on a
+        # new box can predate these sources.
+        update_cache: "{{ devvm_docker_source.changed or devvm_kubernetes_source.changed }}"
+      tags: [packages]
+
+    # Google Chrome, which T3's headless browser and the agents' Playwright
+    # runs use. Installed from Google's .deb rather than a source declared
+    # here: the package writes its own apt source and key, and its daily cron
+    # job rewrites them, so a copy declared here would fight it every day.
+    - name: Check for Google Chrome
+      ansible.builtin.command: dpkg-query -W -f='${Status}' google-chrome-stable
+      register: devvm_chrome_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [packages]
+
+    - name: Install Google Chrome
+      ansible.builtin.apt:
+        deb: https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+      when: "'install ok installed' not in devvm_chrome_installed.stdout"
       tags: [packages]
 
     # ---- 2) node ------------------------------------------------------------
@@ -625,6 +991,47 @@
         owner: "{{ devvm_admin_user }}"
         group: "{{ devvm_admin_user }}"
         follow: false
+
+    # ---- 2-quater) helm, pinned (adopted 2026-11-11) -------------------------
+    # Hand-copied into /usr/local/bin in December 2023 and used ever since
+    # (helm template, pull and show against the charts the stacks pin). Pinned
+    # at the version that was there, whose official tarball holds a
+    # byte-identical binary, so adopting it changes nothing a chart sees. Same
+    # layout as bun. The checksum is get.helm.sh's .sha256sum for the tarball.
+    - name: Create the helm release folder
+      tags: [helm]
+      ansible.builtin.file:
+        path: "/usr/local/lib/helm/{{ devvm_helm_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      check_mode: false
+
+    - name: Download helm
+      tags: [helm]
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-v{{ devvm_helm_version }}-linux-amd64.tar.gz"
+        dest: "/usr/local/lib/helm/{{ devvm_helm_version }}/helm-linux-amd64.tar.gz"
+        checksum: "sha256:{{ devvm_helm_sha256 }}"
+        mode: "0644"
+      check_mode: false
+
+    - name: Unpack helm
+      tags: [helm]
+      ansible.builtin.unarchive:
+        src: "/usr/local/lib/helm/{{ devvm_helm_version }}/helm-linux-amd64.tar.gz"
+        dest: "/usr/local/lib/helm/{{ devvm_helm_version }}"
+        remote_src: true
+        creates: "/usr/local/lib/helm/{{ devvm_helm_version }}/linux-amd64/helm"
+
+    - name: Point helm at the pinned version
+      tags: [helm]
+      ansible.builtin.file:
+        src: "/usr/local/lib/helm/{{ devvm_helm_version }}/linux-amd64/helm"
+        dest: /usr/local/bin/helm
+        state: link
+        force: true
 
     # ---- 2a) ~/.local/bin on PATH for every login shell ---------------------
     - name: Put ~/.local/bin on PATH for login shells
@@ -1255,8 +1662,8 @@
     # its restore-one to bring back a conversation the pane memory cap killed.
     # The hourly t3-provision-users reconcile also syncs it (sync_tmux_persist);
     # this task declares it for a box built from the playbook before that first
-    # runs. Both install the same repo file. Its save/restore units are still
-    # installed by setup-devvm.sh.
+    # runs. Both install the same repo file. Its save/restore units are in
+    # section 7a5.
     - name: Install tmux-persist
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/tmux-persist.sh"
@@ -1345,7 +1752,13 @@
     # Stopped and disabled rather than deleted, so reversing this is one
     # command. Deleting the files is a separate, later step. Orca took that
     # step on 2026-09-23, in the two tasks below this one; agent-conductor's
-    # files are still in place.
+    # files are still in place (acd, acd-demux, acmux, ac-relay and ac-spa in
+    # /usr/local/bin, /usr/local/share/agent-conductor, and the units).
+    #
+    # They STAY, checked 2026-11-11: the archive named above is no longer on
+    # the Proxmox host (nothing under /mnt/backup matches agent-conductor), so
+    # the live files are the only copy. Re-archive them somewhere that is not
+    # mirrored with --delete before removing them.
     #
     # NOT masked, and that is deliberate. Masking works by putting a symlink to
     # /dev/null at a higher-priority path than the unit file, and these unit
@@ -1414,22 +1827,9 @@
         - multipathd.service
         - multipathd.socket
 
-    # nvidia-container-toolkit is installed because dockerd's daemon.json
-    # carries the nvidia runtime (section 9), but this VM has no GPU, so the
-    # toolkit's CDI refresh failed at every boot and kept the box reporting
-    # "degraded" (found 2026-09-24). The package puts these unit files
-    # straight into /etc/systemd/system, where a mask cannot land (see the
-    # note above the evaluation services), so they are disabled instead. The
-    # toolkit itself stays for the daemon.json runtime.
-    - name: Stop the NVIDIA CDI refresh, which has no GPU to describe here
-      ansible.builtin.systemd_service:
-        name: "{{ item }}"
-        enabled: false
-        state: stopped
-      loop:
-        - nvidia-cdi-refresh.path
-        - nvidia-cdi-refresh.service
-      tags: vm-hardware
+    # The NVIDIA CDI refresh units that used to be disabled here went with the
+    # container toolkit on 2026-11-11 ("Retire the hand-installed packages
+    # nothing uses"): this VM has no GPU, so nothing needed either.
 
     # openipmi came in on 2026-06-10 as a recommendation of ipmitool, which
     # stays. Its service loads the local IPMI drivers, and a VM has no BMC, so
@@ -1699,8 +2099,8 @@
     # a serve onto a half-installed build while t3-autoupdate was mid-install,
     # and both rolled back at once. The four files only work as a set, so they
     # are declared together. t3-backup-state joined them on 2026-10-20, when it
-    # had to follow 0.1.0's statev2.sqlite. Their units and timers are still
-    # installed by setup-devvm.sh (section 9), which installs the same repo files.
+    # had to follow 0.1.0's statev2.sqlite. Their units and timers are in
+    # section 7a5 below (until 2026-11-11 only setup-devvm.sh installed them).
     - name: Install the t3 updater, idle migrator and watchdog scripts
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/{{ item.src }}"
@@ -1819,8 +2219,8 @@
     # t3_session_<hash> and the dispatch had to accept both names. Built on the
     # controller from the repo source with flags that make the build
     # reproducible, so an unchanged source is a no-op here and in --check.
-    # setup-devvm.sh still creates the service account and the sudoers entry
-    # for t3-mint. The unit and its proxy-secret file are installed with the
+    # The service account and the sudoers entry for t3-mint are in section
+    # 7a5. The unit and its proxy-secret file are installed with the
     # lobby's proxy secret further down ("Make t3-dispatch demand the proxy
     # secret").
     - name: Make a build directory for t3-dispatch
@@ -1884,6 +2284,154 @@
         - codex-update.timer
         - t3-autoupdate.timer
       notify: reload systemd
+
+    # ---- 7a5) the t3 service layer (adopted 2026-11-11) ---------------------
+    # Until now only setup-devvm.sh section 9 installed these, by hand, so a
+    # machine built from this playbook had no roster provisioner, no T3 timers
+    # and no tmux-persist units. Every file below was byte-identical to its
+    # repo copy when adopted, so on the live box this is a no-op. Still in
+    # setup-devvm.sh and not here: the Vault-sourced staging in its section 8
+    # (/opt/codex-shared, the chrome hub configs), which needs an admin token
+    # that root on this box does not hold.
+    - name: Install the t3 helper scripts
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/{{ item.src }}"
+        dest: "/usr/local/bin/{{ item.dest }}"
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - { src: t3-cgroup-snap.sh, dest: t3-cgroup-snap }
+        - { src: t3-mint, dest: t3-mint }
+        - { src: workstation/claude-auth-sync.sh, dest: claude-auth-sync }
+
+    # Seeded only when absent. Once on the box, the provisioner deploys itself
+    # from infra's origin/master at every hourly run, and a copy from whatever
+    # checkout runs this playbook would fight that.
+    - name: Seed the roster provisioner
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/t3-provision-users.sh"
+        dest: /usr/local/bin/t3-provision-users
+        mode: "0755"
+        owner: root
+        group: root
+        force: false
+
+    - name: Create the t3-dispatch service account
+      ansible.builtin.user:
+        name: t3-dispatch
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+        state: present
+
+    # t3-dispatch may run only t3-mint as root. A malformed file in
+    # /etc/sudoers.d breaks every sudo on the box, hence the validate.
+    - name: Let t3-dispatch run t3-mint
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/sudoers-t3-autopair"
+        dest: /etc/sudoers.d/t3-autopair
+        mode: "0440"
+        owner: root
+        group: root
+        validate: visudo -cf %s
+
+    # t3-dispatch.service is installed with its proxy secret in section 14.
+    - name: Install the t3 service layer units
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/{{ item }}"
+        dest: "/etc/systemd/system/{{ item | basename }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - t3-serve@.service
+        - claude-auth-sync@.service
+        - claude-auth-sync@.timer
+        - t3-autoupdate.service
+        - t3-migrate-idle.service
+        - t3-migrate-idle.timer
+        - t3-watchdog.service
+        - t3-watchdog.timer
+        - t3-cgroup-snap.service
+        - t3-backup-state.service
+        - t3-backup-state.timer
+        - t3-provision-users.service
+        - t3-provision-users.timer
+        - tmux-persist-save.service
+        - tmux-persist-save.timer
+        - tmux-persist-restore.service
+        - workstation/playwright/playwright-mcp@.service
+        - workstation/playwright/playwright-snapshot-refresh@.service
+        - workstation/playwright/playwright-snapshot-refresh@.timer
+      notify: reload systemd
+
+    # The templates (t3-serve@, claude-auth-sync@, playwright-*@) are enabled
+    # per user by the provisioner, not here. tmux-persist-restore runs once at
+    # boot, so it is enabled and never started from here.
+    - name: Enable the t3 service layer timers and services
+      ansible.builtin.systemd_service:
+        name: "{{ item.name }}"
+        enabled: true
+        state: "{{ omit if (item.boot_only | default(false)) else 'started' }}"
+        daemon_reload: true
+      loop:
+        - { name: t3-provision-users.timer }
+        - { name: t3-backup-state.timer }
+        - { name: t3-migrate-idle.timer }
+        - { name: t3-watchdog.timer }
+        - { name: tmux-persist-save.timer }
+        - { name: t3-cgroup-snap.service }
+        - { name: tmux-persist-restore.service, boot_only: true }
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Shell-side halves of the per-user Claude setup. 25 loads the user's own
+    # setup-token (never a shared one) into interactive shells, 26 stamps
+    # Claude's telemetry with the OS user and tmux session (ADR-0025). Debian's
+    # zsh does not read /etc/profile, so /etc/zsh/zshenv sources both.
+    - name: Install the Claude shell profile scripts
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/profile.d/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - 25-claude-oauth-token.sh
+        - 26-claude-otel-attrs.sh
+
+    - name: Source the Claude shell profile scripts from zsh
+      ansible.builtin.lineinfile:
+        path: /etc/zsh/zshenv
+        line: "[ -r /etc/profile.d/{{ item }} ] && . /etc/profile.d/{{ item }}"
+      loop:
+        - 25-claude-oauth-token.sh
+        - 26-claude-otel-attrs.sh
+
+    # agent-api resolves `claude` on its PATH at startup, and its unit's PATH
+    # has /usr/local/bin but not the admin's ~/.local/bin, where Claude Code
+    # installs. Without this link every agent-api conversation starts and dies.
+    # It dangles on a new box until the admin's first Claude Code install.
+    - name: Link claude for the services that run as the admin
+      ansible.builtin.file:
+        src: "/home/{{ devvm_admin_user }}/.local/bin/claude"
+        dest: /usr/local/bin/claude
+        state: link
+        force: true
+        follow: false
+
+    # terminal-lobby's clipboard-upload (User=admin) writes the session image
+    # store here, but the package creates neither this directory nor a
+    # StateDirectory=, and the service account cannot create it under
+    # /var/lib. It was made by hand in July. The contents are scratch.
+    - name: Create the session image store
+      ansible.builtin.file:
+        path: /var/lib/clipboard-store
+        state: directory
+        owner: "{{ devvm_admin_user }}"
+        group: "{{ devvm_admin_user }}"
+        mode: "0755"
 
     # ---- 7b) nightly refresh of the mattpocock skill set --------------------
     # Added 2026-08-30. The skills are a working dependency of how sessions run
@@ -2365,9 +2913,9 @@
     # a person started themselves.
     #
     # Where the browsers come from. playwright-mcp@.service and the
-    # playwright-snapshot-refresh@ service and timer are not declared by this
-    # playbook: they live in git under scripts/workstation/playwright/ (since
-    # commit 0a6ed4b2), setup-devvm.sh section 9e installs them, and
+    # playwright-snapshot-refresh@ service and timer live in git under
+    # scripts/workstation/playwright/ (since commit 0a6ed4b2), section 7a5
+    # installs them (since 2026-11-11; setup-devvm.sh section 9e before), and
     # t3-provision-users.sh enables one instance per user. They were first
     # hand-installed in /etc/systemd/system on 2026-06-20, before that commit.
     #
@@ -2479,6 +3027,65 @@
     # The identifier allowlist in that file is what gives Loki rules a label to
     # select on. A rule keyed to an identifier missing from the allowlist matches
     # nothing and reports no error, so the two files have to move together.
+    # The binary and unit, adopted 2026-11-11. Both were hand-installed; the
+    # unit is scripts/devvm-promtail.service, which setup-devvm.sh never
+    # installed either. Pinned at the running 3.5.1, whose release zip holds a
+    # byte-identical binary. The checksum is the release's SHA256SUMS line.
+    - name: Create the promtail release folder
+      tags: [promtail]
+      ansible.builtin.file:
+        path: "/usr/local/lib/promtail/{{ devvm_promtail_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      check_mode: false
+
+    - name: Download promtail
+      tags: [promtail]
+      ansible.builtin.get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ devvm_promtail_version }}/promtail-linux-amd64.zip"
+        dest: "/usr/local/lib/promtail/{{ devvm_promtail_version }}/promtail-linux-amd64.zip"
+        checksum: "sha256:{{ devvm_promtail_sha256 }}"
+        mode: "0644"
+      check_mode: false
+
+    - name: Unpack promtail
+      tags: [promtail]
+      ansible.builtin.unarchive:
+        src: "/usr/local/lib/promtail/{{ devvm_promtail_version }}/promtail-linux-amd64.zip"
+        dest: "/usr/local/lib/promtail/{{ devvm_promtail_version }}"
+        remote_src: true
+        creates: "/usr/local/lib/promtail/{{ devvm_promtail_version }}/promtail-linux-amd64"
+
+    - name: Make the unpacked promtail executable
+      tags: [promtail]
+      ansible.builtin.file:
+        path: "/usr/local/lib/promtail/{{ devvm_promtail_version }}/promtail-linux-amd64"
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode
+
+    - name: Point promtail at the pinned version
+      tags: [promtail]
+      ansible.builtin.file:
+        src: "/usr/local/lib/promtail/{{ devvm_promtail_version }}/promtail-linux-amd64"
+        dest: /usr/local/bin/promtail
+        state: link
+        force: true
+      notify: restart promtail
+
+    - name: Install the promtail unit
+      tags: [promtail]
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/devvm-promtail.service"
+        dest: /etc/systemd/system/promtail.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: [reload systemd, restart promtail]
+
     - name: Deploy the promtail config
       ansible.builtin.copy:
         src: ../scripts/devvm-promtail.yaml
@@ -2765,8 +3372,11 @@
         mode: "0644"
       notify: reload systemd
 
-    # A merge, not a rewrite: daemon.json also carries buildkit and the nvidia
-    # runtime, and clobbering those would be a worse outage than no cap.
+    # A merge, not a rewrite: these are the keys this playbook owns, and any
+    # other key someone adds by hand survives. Until 2026-11-11 only
+    # cgroup-parent was declared, so a rebuilt box would have lost the local
+    # registry (10.0.20.10:5000 is the plain-HTTP registry VM) and the upload
+    # limit that keeps a push from saturating the uplink.
     - name: Read the current docker daemon config
       ansible.builtin.slurp:
         src: /etc/docker/daemon.json
@@ -2779,18 +3389,41 @@
         docker_daemon: >-
           {{ (docker_daemon_raw.content | b64decode | from_json)
              if (docker_daemon_raw.content is defined) else {} }}
+        docker_daemon_declared:
+          features: { buildkit: true }
+          insecure-registries: ["10.0.20.10:5000"]
+          max-concurrent-uploads: 1
+          cgroup-parent: docker.slice
 
     # Guarded on the VALUE, not on the rendering. Writing the merged JSON
     # unconditionally reformats a file that is already correct, and the handler
     # would then restart dockerd -- interrupting every running container -- for a
     # whitespace difference.
     - name: Point dockerd at the capped slice
-      when: docker_daemon.get('cgroup-parent') != 'docker.slice'
+      when: (docker_daemon | combine(docker_daemon_declared)) != docker_daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
         mode: "0644"
-        content: "{{ docker_daemon | combine({'cgroup-parent': 'docker.slice'}) | to_nice_json }}\n"
+        content: "{{ docker_daemon | combine(docker_daemon_declared) | to_nice_json }}\n"
       notify: restart docker
+
+    # The nvidia runtime entry, 2026-11-11. The toolkit it named is gone with
+    # the rest of the NVIDIA stack (this VM has no GPU), so the entry pointed at
+    # a binary that no longer exists. Deliberately NO restart: the running
+    # dockerd keeps the runtime it loaded, nothing starts a container with it,
+    # and restarting dockerd would stop every container on the box for a key
+    # nobody uses. dockerd reads the file without it at its next start.
+    - name: Drop the nvidia runtime from the docker daemon config
+      when: "'runtimes' in docker_daemon and 'nvidia' in docker_daemon.runtimes"
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ (docker_daemon | combine(docker_daemon_declared)
+             | dict2items | rejectattr('key', 'equalto', 'runtimes') | items2dict
+             | combine({'runtimes': docker_daemon.runtimes | dict2items
+                        | rejectattr('key', 'equalto', 'nvidia') | items2dict}
+                       if (docker_daemon.runtimes | length) > 1 else {}))
+             | to_nice_json }}\n"
 
     # ---- 14) the lobby's identity boundary ----------------------------------
     # Measured 2026-09-11. The five lobby HTTP services and ttyd believe
@@ -2998,9 +3631,14 @@
     # that built it are in git history (3b4aaf55 and its follow-ups).
     #
     # emo's userspace tailscaled out of /home/emo/.tailscale-us (ports 1055 and
-    # 1056, started by hand, declared in no repository) is a separate daemon
-    # and is left exactly as it is. It runs /usr/sbin/tailscaled, which is why
-    # the package and its apt source stay declared here.
+    # 1056, started by hand, declared in no repository) was a separate daemon,
+    # never this playbook's. It was retired on 2026-11-11 (node devvm-emo
+    # logged out, its user unit disabled, its state moved to
+    # ~/.cache/retired-2026-11-11/), and since then nothing on the box runs
+    # /usr/sbin/tailscaled: the system tailscaled is disabled too. The package
+    # and its apt source below stay declared until the disposable-devvm plan's
+    # unused-package pass decides on them
+    # (docs/plans/2026-11-11-disposable-devvm.md, Machine).
     - name: Install the Tailscale signing key
       ansible.builtin.get_url:
         url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc

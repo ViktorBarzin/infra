@@ -113,3 +113,72 @@ libwoff1
 # one MP4 with ffmpeg, and the verb checks the result for an audio stream with
 # ffprobe. Already on the box before it was declared here.
 ffmpeg
+
+# --- adopted 2026-11-11 (disposable devvm, docs/plans/2026-11-11-disposable-devvm.md) ---
+# Hand-installed before this date and kept because something on the box uses
+# them: each was checked against the Claude session store (every Bash call
+# since 2026-10), the shell histories and the process list. Counts are Bash
+# calls that ran the tool, wizard + emo. What was found unused was removed
+# instead; the list and the reasons are in playbooks/devvm.yml ("Retire the
+# hand-installed packages nothing uses").
+gh                   # GitHub CLI (Ubuntu's 2.45, not cli.github.com): 1,868 calls
+git-crypt            # unlocks infra and other repos: 145 calls in scripts, more inside git
+git-lfs              # a git filter, so it never shows as a command of its own
+ansible              # runs this playbook and the others in playbooks/
+adb                  # milka-help, the tv and iOS rigs: 1,872 calls
+hugo                 # builds the Website and kms-website repos
+imagemagick          # screenshot crops and resizes: 352 calls
+poppler-utils        # pdftotext/pdftoppm: 348 calls
+tesseract-ocr        # OCR of screenshots and scans
+tesseract-ocr-eng
+zbar-tools           # zbarimg, QR codes in screenshots: 42 calls
+qrencode
+libimage-exiftool-perl  # exiftool
+sqlite3              # 178 calls, T3 and Claude state among them
+zip
+skopeo               # registry image inspection: 66 calls
+openjdk-21-jdk-headless  # Android builds (tv, portalframe gradle)
+nmap
+tcpdump
+socat
+sshpass              # LAN devices that only take passwords
+whois
+mtr-tiny
+traceroute
+telnet
+net-tools            # arp
+wireguard-tools
+ipcalc
+snmp                 # snmpwalk against the UPS and the switch
+nethogs
+iotop
+ncdu
+bubblewrap           # bwrap, Claude Code's sandbox
+uuid-runtime
+qemu-guest-agent     # vzdump's fs-consistent snapshots of this VM need it
+# Build inputs for Python and native modules: mysqlclient needs
+# libmysqlclient-dev and pkg-config.
+autoconf
+cmake
+pkg-config
+libffi-dev
+libsqlite3-dev
+libmysqlclient-dev
+# Database clients for the cluster databases. The mysql and postgres SERVERS
+# that used to run here are gone (2026-11-03 and 2026-11-11); the clients stay.
+mysql-client
+postgresql-client
+# Playwright Chromium's runtime: the fonts and libraries
+# `playwright install-deps chromium` asks for, plus the virtual display and the
+# xauth that xvfb-run needs.
+libnss3
+libnspr4
+fonts-ipafont-gothic
+fonts-noto-color-emoji
+fonts-tlwg-loma-otf
+fonts-unifont
+fonts-wqy-zenhei
+xfonts-cyrillic
+xfonts-scalable
+xvfb
+xauth
