@@ -75,11 +75,12 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 ### 2. Suricata metadata off the box
 - **Done 2026-11-10.** As built: `docs/architecture/network-security-monitoring.md`, phase 2. Deviation: `eve-meta.json` has no `anomaly` (Suricata allows one anomaly logger) and logs DNS responses only.
 - Done 2026-11-10: Suricata inspects `lan,opt1` only, and 16 own-traffic signatures are off (runbook `docs/runbooks/opnsense.md`, "Suricata tuning").
+- Done 2026-11-11 (Viktor asked that Suricata stop missing packets): 32 MB capture buffer, stream bypass after the 1 MB depth, 13 ET Open categories off (63,816 to 43,082 active rules), alert `SuricataCaptureDrops`. Runbook `docs/runbooks/opnsense.md`, "Suricata tuning".
 - A conf.d file that restates all four stock outputs (eve.json, syslog eve, stats, syslog) and adds `eve-meta.json`. A repeated `outputs:` key replaces the template's list, so the playbook asserts with `suricata --dump-config` that all five exist.
 - A `newsyslog.conf.d` entry rotates `eve-meta.json`.
 - A syslog-ng `conf.d` file tails it and sends raw JSON lines over TCP to Vector, avoiding the 8 KB syslog limit.
 - All in `playbooks/tasks/opnsense/`; `--check` must stay a no-op after apply.
-- Verify: `dig icanhazip.com @10.0.10.1` from the devvm (testmynids.org is parked) lands in `netsec.eve`; dns and tls rows arrive; Intrusion Detection > Alerts and Loki still show the alert.
+- Verify: `dig icanhazip.com @10.0.10.1` from the devvm (testmynids.org is parked; since 2026-11-11 `emerging-info` is off, so the test is `curl -A BlackSun http://example.com/`) lands in `netsec.eve`; dns and tls rows arrive; Intrusion Detection > Alerts and Loki still show the alert.
 - Rollback: remove the two conf.d files and reconfigure the IDS.
 
 ### 3. Alerts into bans, in simulation
