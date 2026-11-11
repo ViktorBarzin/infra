@@ -178,4 +178,12 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
   (checked 14 days). The runbooks now read the token inside sudo
   (`docs/agents/secrets.md`).
-
+- Round 2, provisioning: wizard's dotfiles brought up to the live home
+  (tmux-resurrect and continuum, the memory MCP and old `~/.claude` copies
+  gone; chezmoi keeps only links under `~/.claude` on the devvm); the
+  dotfiles apply never writes a regular file under `~/.claude` or `~/.codex`,
+  so the session store's copies win; emo has `ebarzin/dotfiles` and keeps
+  `docker` (`extra_groups`); his agent-instruction fetch no longer ends up
+  owned by root; and a rebuilt box gets Forgejo's host key, the iOS rig units
+  (live address only), one early skills update, and no failed hourly run
+  before the infra clone (`docs/runbooks/devvm-credentials.md`).

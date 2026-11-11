@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`)
 
 ## What is kept where
 
@@ -119,10 +119,23 @@ that to Loki for 26 weeks. So root reads the token from the admin's
 Order inside that run: credentials for every existing account (step 3d: the
 admin kubeconfig is what the other users' kubeconfigs copy the cluster
 address from), the shared Codex login and chrome hub configs (step 3e), then
-per account: dotfiles, the admin's infra clone, clones, kubeconfigs, and
-`vault-token-renew` with a first `~/.vault-token`, and later the agent-tool
-keys in `settings.json`. A file or key that is already there is never
-replaced, so a second run writes only what has gone missing.
+per account: dotfiles, Forgejo's pinned SSH host key in
+`~/.ssh/known_hosts`, the admin's infra clone, groups (the tier's plus the
+row's `extra_groups`; emo keeps `docker`), clones, kubeconfigs,
+`vault-token-renew` with a first `~/.vault-token`, and for an admin on the
+live box's address whose token reads `secret/ios-rig`, the iOS rig's user
+units (`homelab ios bootstrap --units-only`, `ios-test-rig.md`); later the
+agent-tool keys in `settings.json`, and once per box, when every user's
+`~/.claude` is back, a start of `claude-skills-update` (marker
+`/var/lib/t3-provision/skills-update.started`). A file or key that is already
+there is never replaced, so a second run writes only what has gone missing.
+
+An hourly run that fires before the admin's `~/code/infra` exists (during
+the first boot's playbook) logs `the infra checkout ... is not there yet` and
+exits 0. The agent-instruction fetches under
+`/var/lib/t3-provision/agent-repos` belong to the admin
+(`resolve_agents_owner`), even when the run reads its roster from the
+bootstrap's root-owned clone, and a fetch owned by anyone else is made again.
 
 The admin token never reaches a user's code. The script takes `VAULT_TOKEN`
 out of its environment before it runs anything as a user
@@ -142,13 +155,25 @@ k=$(mktemp); vault kv get -field=git_crypt_key_b64 secret/infra | base64 -d > "$
 
 ## Dotfiles
 
-A roster row with `dotfiles: owner/name` (wizard: `viktor/dot_files`) gets
-`chezmoi init --apply --force --no-tty --keep-going --exclude=encrypted`
-from that Forgejo repo, once, when `~/.local/share/chezmoi` does not exist
-or is empty (a failed first init leaves it empty, and the next hourly run
-retries); chezmoi itself is installed into `~/.local/bin` at
-`CHEZMOI_VERSION` when missing. An existing source is never touched, because the live home has
-drifted from the repo and a whole-tree apply would overwrite work there.
+A roster row with `dotfiles: owner/name` (wizard: `viktor/dot_files`, emo:
+`ebarzin/dotfiles`) gets `chezmoi init --no-tty` from that Forgejo repo,
+once, when `~/.local/share/chezmoi` does not exist or is empty (a failed
+first init leaves it empty, and the next hourly run retries), then an apply
+(`dotfiles_apply`); chezmoi itself is installed into `~/.local/bin` at
+`CHEZMOI_VERSION` when missing. An existing source is never touched, because
+the live home may have drifted from the repo and a whole-tree apply would
+overwrite work there.
+
+The apply has two parts, both `--force --no-tty --keep-going
+--exclude=encrypted`: every top-level entry except `~/.claude` and `~/.codex`
+whole, then those two with `--exclude=encrypted,files`, so only their links
+(`CLAUDE.md`, `AGENTS.md`, skill links) and directories come from the
+dotfiles. Every regular file there is the session store's (step 4a,
+`restore-claude-sessions.md`). Until 2026-11-11 one `chezmoi init --apply`
+wrote the dotfiles' copies first; the restore then kept them (it never
+replaces a file) and the ingest sent them back to the store as the newest.
+wizard's repo also ignores `.claude/*` except those links on `devvm*` hosts,
+so a hand-run `chezmoi apply` there leaves the store's files alone too.
 
 The two GPG-encrypted entries in the dotfiles (`.kube/config` and
 `.oh-my-zsh/custom/secrets.zsh`) are skipped by `--exclude=encrypted` and,
@@ -160,7 +185,17 @@ wizard's user units live in the dotfiles since 2026-11-11, with the
 `*.target.wants` links that enable them: `lobby-local.service` (devvm only),
 `tmux-plugin-update.{service,timer}` with `~/.local/bin/tmux-plugin-update`,
 and the link for the existing `agents-sync.timer`. `tmux.service` was left
-out: it was retired on 2026-11-02 and is disabled.
+out: it was retired on 2026-11-02 and is disabled. The repo was brought up to
+the live home the same day (`.tmux.conf.local` without resurrect and
+continuum, the merged `.zshrc`, `.zshenv` and `.bash_aliases`), so `chezmoi
+diff` on those files is empty on the live box.
+
+emo's `ebarzin/dotfiles` (private, his own, viktor a collaborator) holds his
+`.zshrc`, `.zshenv`, `.zprofile`, `.tmux.conf`, `.tmux.conf.local` and
+`~/.local/bin/t`, and clones oh-my-tmux into `~/.tmux` through
+`.chezmoiexternal.toml`. Its `.zshenv` sources `~/.zshenv.local`, which holds
+`HA_MCP_URL` and is one of his credential files in Vault
+(`secret/workstation/emo/files`), restored before the dotfiles apply.
 
 ## A repo's own setup (step 4b)
 
