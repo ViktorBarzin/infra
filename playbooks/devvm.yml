@@ -739,6 +739,7 @@
     # rather than be trusted silently. A rotation means fetching the new key,
     # checking it, and changing the checksum below.
     - name: Install the Docker signing key
+      tags: [packages]
       ansible.builtin.get_url:
         url: https://download.docker.com/linux/ubuntu/gpg
         dest: /etc/apt/keyrings/docker.asc
@@ -746,6 +747,7 @@
         mode: "0644"
 
     - name: Declare the Docker apt source
+      tags: [packages]
       register: devvm_docker_source
       ansible.builtin.copy:
         dest: /etc/apt/sources.list.d/docker.list
@@ -758,6 +760,7 @@
     # devvm_kubectl_minor plus the key checksum for that path. The cluster runs
     # 1.35; a client one minor behind is inside the supported skew.
     - name: Install the Kubernetes signing key
+      tags: [packages]
       ansible.builtin.get_url:
         url: "https://pkgs.k8s.io/core:/stable:/v{{ devvm_kubectl_minor }}/deb/Release.key"
         dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
@@ -765,6 +768,7 @@
         mode: "0644"
 
     - name: Declare the Kubernetes apt source
+      tags: [packages]
       register: devvm_kubernetes_source
       ansible.builtin.copy:
         dest: /etc/apt/sources.list.d/kubernetes.list
@@ -775,6 +779,7 @@
 
     # The hand-made source named a dearmored copy of the same key.
     - name: Drop the superseded Kubernetes keyring
+      tags: [packages]
       ansible.builtin.file:
         path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         state: absent
@@ -801,7 +806,9 @@
         state: present
         # The install above refreshes the cache at most hourly, which on a
         # new box can predate these sources.
-        update_cache: "{{ devvm_docker_source.changed or devvm_kubernetes_source.changed }}"
+        update_cache: >-
+          {{ (devvm_docker_source.changed | default(false))
+             or (devvm_kubernetes_source.changed | default(false)) }}
       tags: [packages]
 
     # Google Chrome, which T3's headless browser and the agents' Playwright
