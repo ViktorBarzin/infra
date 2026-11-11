@@ -18,6 +18,7 @@ extract() {
   awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{" {on=1} on {print} on && /^}/ {exit}' "$SCRIPT"
 }
 eval "$(extract restore_agent_state)"
+eval "$(extract agent_state_restored)"
 declare -F restore_agent_state >/dev/null || { echo "FAIL: restore_agent_state not found in $SCRIPT"; exit 1; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -61,6 +62,16 @@ eq "dry run says what it would do" "[dry-run] restore ~/.claude and ~/.codex fro
 HOMELAB_BIN="$tmp/none"; DRY_RUN=0; : > "$tmp/log"
 restore_agent_state emo
 eq "no binary is a warning" "[t3-provision] WARN: no $tmp/none -> agent state restore skipped for emo" "$(cat "$tmp/log")"
+
+# Step 5 starts a user's T3 serve only once their marker exists.
+CLAUDE_SESSIONS_RESTORED_DIR="$tmp/restored"; mkdir -p "$CLAUDE_SESSIONS_RESTORED_DIR"
+DRY_RUN=0
+agent_state_restored emo; eq "no marker holds the serve" 1 "$?"
+touch "$CLAUDE_SESSIONS_RESTORED_DIR/emo"
+agent_state_restored emo; eq "the marker lets it start" 0 "$?"
+DRY_RUN=1; agent_state_restored wizard; eq "a dry run never holds" 0 "$?"
+grep -q 'agent_state_restored "$os_user"' "$SCRIPT"; eq "step 5 checks the marker" 0 "$?"
+grep -q '^CLAUDE_SESSIONS_RESTORED_DIR="${CLAUDE_SESSIONS_RESTORED_DIR:-/var/lib/claude-sessions-ingest/restored}"' "$SCRIPT"; eq "the marker dir" 0 "$?"
 
 echo "agent-state: $pass passed, $fail failed"
 [[ "$fail" == 0 ]]

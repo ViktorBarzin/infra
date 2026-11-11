@@ -12,10 +12,13 @@ package main
 //	                   by line like transcripts: an append costs one line.
 //	claude.home_files  everything else, sent whole each time it changes.
 //
+// Also kept: ~/.agents/.skill-lock.json (homeExtraFiles).
+//
 // Never sent: credentials (.credentials.json, auth.json, key files, anything
-// named token, secret or credential), caches, runtime state and downloadable
-// binaries. Settings files go with their secret values replaced, and restore
-// writes those beside the real name, never over it.
+// named token, secret or credential), caches, runtime state, symlinks and
+// downloadable binaries. Settings files go with their secret values replaced;
+// restore writes them under the real name without those keys, and
+// provisioning fills the secrets back in from Vault.
 
 import (
 	"bytes"
@@ -36,6 +39,12 @@ import (
 
 // homeRoots are the directories under each home that the store keeps.
 var homeRoots = []string{".claude", ".codex"}
+
+// homeExtraFiles are single files outside homeRoots that the store keeps:
+// the skills CLI's lockfile, from which claude-skills-update reinstalls a
+// user's skills (and the ~/.claude/skills links into ~/.agents/skills) on a
+// rebuilt box.
+var homeExtraFiles = []string{".agents/.skill-lock.json"}
 
 type homeClass int
 
@@ -153,7 +162,10 @@ func homeKind(rel string) string {
 }
 
 // walkHome visits every regular file under home/<root> for each homeRoots
-// entry, pruning skipped directories and never following symlinks.
+// entry, then each homeExtraFiles entry, pruning skipped directories and
+// never following symlinks. Symlinks are not kept: the ones under ~/.claude
+// and ~/.codex (CLAUDE.md and AGENTS.md links, skill links, Codex's shared
+// auth.json) are made again by t3-provision-users and claude-skills-update.
 func walkHome(home string, visit func(abs, rel string, d fs.DirEntry) error) (bool, error) {
 	found := false
 	for _, r := range homeRoots {
@@ -189,6 +201,16 @@ func walkHome(home string, visit func(abs, rel string, d fs.DirEntry) error) (bo
 			return found, err
 		}
 	}
+	for _, rel := range homeExtraFiles {
+		p := filepath.Join(home, filepath.FromSlash(rel))
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if err := visit(p, rel, fs.FileInfoToDirEntry(fi)); err != nil {
+			return found, err
+		}
+	}
 	return found, nil
 }
 
@@ -208,15 +230,45 @@ var (
 	bearerRe    = regexp.MustCompile(`(?i)\b(bearer|basic|token)(\s+)[A-Za-z0-9._~+/=-]{8,}`)
 	urlCredRe   = regexp.MustCompile(`(://[^/\s:@"']+:)[^@\s/"']+@`)
 	randomRunRe = regexp.MustCompile(`[A-Za-z0-9_+=-]{20,}`)
+	// An environment variable's name that hints at a secret, wider than
+	// secretKeyRe because a bare MEMORY_KEY or DB_PASS is common there.
+	envSecretKeyRe = regexp.MustCompile(`(?i)(key|pass|pwd|token|secret|auth|cred|cookie|private)`)
 	tomlQuoted  = regexp.MustCompile(`("(?:[^"\\]|\\.)*"|'[^']*')`)
 )
 
-// secretTables are objects (JSON) or tables (TOML) whose every value is
-// treated as a secret: environment variables and HTTP headers.
-func isSecretTable(k string) bool {
+// How the values of an object (JSON) or table (TOML) are treated.
+type redactMode int
+
+const (
+	redactKeys redactMode = iota // a value goes when its key names a secret
+	redactEnv                    // environment variables: also a value that looks like a key
+	redactAll                    // HTTP headers: every value
+)
+
+// tableMode is the mode for the values under key k, inside a parent in mode
+// parent. Environment variables are judged one by one, so flags such as
+// DISABLE_AUTOUPDATER=1 survive and come back on restore; headers carry
+// credentials too often to keep any.
+func tableMode(k string, parent redactMode) redactMode {
+	if parent == redactAll {
+		return redactAll
+	}
 	switch strings.ToLower(strings.Trim(k, `"' `)) {
-	case "env", "headers", "http_headers", "env_http_headers":
-		return true
+	case "headers", "http_headers", "env_http_headers":
+		return redactAll
+	case "env":
+		return redactEnv
+	}
+	return parent
+}
+
+// looksSecretValue reports whether an environment value looks like a key:
+// a long run of letters and digits with both in it (hex tokens included).
+func looksSecretValue(s string) bool {
+	for _, m := range randomRunRe.FindAllString(s, -1) {
+		if strings.ContainsAny(m, "0123456789") && strings.IndexFunc(m, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+			return true
+		}
 	}
 	return false
 }
@@ -242,43 +294,51 @@ func redactSettings(base string, content []byte) ([]byte, bool) {
 	var v any
 	if strings.Contains(base, ".json") && json.Unmarshal(content, &v) == nil {
 		changed := false
-		v = redactJSON(v, false, &changed)
+		v = redactJSON(v, redactKeys, &changed)
 		if !changed {
 			return content, false
 		}
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if enc.Encode(v) != nil {
+		b, err := encodeSettingsJSON(v)
+		if err != nil {
 			return nil, true
 		}
-		return buf.Bytes(), true
+		return b, true
 	}
 	return redactTOML(content)
 }
 
-func redactJSON(v any, all bool, changed *bool) any {
+func encodeSettingsJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func redactJSON(v any, mode redactMode, changed *bool) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if s, ok := val.(string); ok && (all || secretKeyRe.MatchString(k)) {
+			if s, ok := val.(string); ok && (mode == redactAll || secretKeyRe.MatchString(k) || (mode == redactEnv && (envSecretKeyRe.MatchString(k) || looksSecretValue(s)))) {
 				if s != "" {
 					t[k] = redactedValue
 					*changed = true
 				}
 				continue
 			}
-			t[k] = redactJSON(val, all || isSecretTable(k), changed)
+			t[k] = redactJSON(val, tableMode(k, mode), changed)
 		}
 		return t
 	case []any:
 		for i := range t {
-			t[i] = redactJSON(t[i], all, changed)
+			t[i] = redactJSON(t[i], mode, changed)
 		}
 		return t
 	case string:
-		if all && t != "" {
+		if t != "" && (mode == redactAll || (mode == redactEnv && looksSecretValue(t))) {
 			*changed = true
 			return redactedValue
 		}
@@ -292,19 +352,23 @@ func redactJSON(v any, all bool, changed *bool) any {
 
 func redactTOML(content []byte) ([]byte, bool) {
 	lines := strings.Split(string(content), "\n")
-	inSecret, changed := false, false
+	mode, changed := redactKeys, false
 	for i, l := range lines {
 		trim := strings.TrimSpace(l)
 		if strings.HasPrefix(trim, "[") {
 			name := strings.Trim(trim, "[] ")
-			parts := strings.Split(name, ".")
-			inSecret = isSecretTable(parts[len(parts)-1])
+			mode = redactKeys
+			for _, part := range strings.Split(name, ".") {
+				mode = tableMode(part, mode)
+			}
 			continue
 		}
 		out := l
 		if k, rest, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(trim, "#") {
 			key := strings.TrimSpace(k)
-			if inSecret || secretKeyRe.MatchString(key) || isSecretTable(key) {
+			// An inline table (env = { ... }) is redacted whole.
+			if mode == redactAll || secretKeyRe.MatchString(key) || tableMode(key, redactKeys) != redactKeys ||
+				(mode == redactEnv && (envSecretKeyRe.MatchString(key) || looksSecretValue(rest))) {
 				out = k + "=" + tomlQuoted.ReplaceAllString(rest, `"`+redactedValue+`"`)
 			}
 		}
@@ -315,6 +379,68 @@ func redactTOML(content []byte) ([]byte, bool) {
 		}
 	}
 	return []byte(strings.Join(lines, "\n")), changed
+}
+
+// redactVersion is bumped when redaction keeps more than it did, so the
+// ingest sends every settings file once more and the store's copy gains what
+// the old rule blanked (version 2: environment flags are kept).
+const redactVersion = 2
+
+// needsRedactRefresh reports whether a settings file must be sent again
+// although it did not change, because it was stored under an older rule.
+func needsRedactRefresh(rel string, prev *fileState) bool {
+	return prev != nil && isSettingsFile(path.Base(rel)) && prev.Rv < redactVersion
+}
+
+// withoutRedacted takes the placeholders out of a stored settings file, so
+// restore can write it under its real name: a JSON key whose value is the
+// placeholder, or a TOML key = value line that holds one, is left out, and
+// provisioning fills the secrets in from Vault (install_agent_api_keys)
+// instead of finding a "<redacted>" key and leaving it.
+func withoutRedacted(base string, content []byte) []byte {
+	var v any
+	if strings.Contains(base, ".json") && json.Unmarshal(content, &v) == nil {
+		if b, err := encodeSettingsJSON(dropRedacted(v)); err == nil {
+			return b
+		}
+		return content
+	}
+	if strings.Contains(base, ".json") {
+		return content
+	}
+	quoted := `"` + redactedValue + `"`
+	var keep []string
+	for _, l := range strings.Split(string(content), "\n") {
+		trim := strings.TrimSpace(l)
+		if _, rest, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(trim, "#") && !strings.HasPrefix(trim, "[") && strings.Contains(rest, quoted) {
+			continue
+		}
+		keep = append(keep, l)
+	}
+	return []byte(strings.Join(keep, "\n"))
+}
+
+func dropRedacted(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if s, ok := val.(string); ok && s == redactedValue {
+				delete(t, k)
+				continue
+			}
+			t[k] = dropRedacted(val)
+		}
+	case []any:
+		out := t[:0]
+		for _, e := range t {
+			if s, ok := e.(string); ok && s == redactedValue {
+				continue
+			}
+			out = append(out, dropRedacted(e))
+		}
+		return out
+	}
+	return v
 }
 
 // ---- ingest ----------------------------------------------------------------
@@ -432,7 +558,7 @@ func ingestHomeWhole(cfg ingestConfig, state *ingestState, st *ingestStats, batc
 	}
 	defer f.Close()
 	size, mtime := fi.Size(), fi.ModTime().UnixNano()
-	if skip, _, _ := planFile(state.Files[abs], sys.Ino, size, mtime); skip {
+	if skip, _, _ := planFile(state.Files[abs], sys.Ino, size, mtime); skip && !needsRedactRefresh(rel, state.Files[abs]) {
 		return nil
 	}
 	st.FilesChanged++
@@ -462,7 +588,11 @@ func ingestHomeWhole(cfg ingestConfig, state *ingestState, st *ingestStats, batc
 	}
 	st.HomeFiles++
 	st.Bytes += int64(len(content))
-	return batch.add(b, abs, &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size})
+	fst := &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size}
+	if isSettingsFile(path.Base(rel)) {
+		fst.Rv = redactVersion
+	}
+	return batch.add(b, abs, fst)
 }
 
 // ingestHomeAppend sends the lines appended to a .jsonl file since the last

@@ -73,7 +73,9 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   for a drill.
 - Agent state: `sudo ls /var/lib/claude-sessions-ingest/restored/` lists each
   user once provisioning step 4a has restored them, and `claude --resume` as
-  each user lists their sessions. The drill reads the store and never writes
+  each user lists their sessions. `~/.claude/settings.json` is the user's own
+  (statusLine, enabledPlugins, env flags) with the memory keys filled from
+  Vault, not a hooks-only skeleton. The drill reads the store and never writes
   to it: no `/etc/claude-sessions/ingest.env`, and
   `claude-sessions-ingest.timer` is disabled.
 - The drill does not take over anything of the live devvm's: Traefik, DNS and

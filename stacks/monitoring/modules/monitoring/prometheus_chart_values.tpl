@@ -6940,6 +6940,19 @@ serverFiles:
             annotations:
               summary: "Claude session ingest on the devvm has not succeeded for over an hour"
               description: "Check `journalctl -u claude-sessions-ingest` on the devvm and the claude-sessions ClickHouse. Offsets are kept, so the next good run catches up."
+          - alert: ClaudeSessionsUserWaitingForRestore
+            # The same textfile. On a rebuilt devvm the ingest skips a user
+            # until t3-provision-users' `restore --rebuild` has put their
+            # stored ~/.claude back (claude_sessions_rebuild.go). A user stuck
+            # here has new sessions that never reach the store and would be
+            # lost at the next rebuild.
+            expr: max(claude_sessions_ingest_users_waiting_for_restore{job="devvm"}) > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} devvm user(s) wait for their agent state restore, so their sessions are not stored"
+              description: "Check `journalctl -u t3-provision-users | grep 'restore'` on the devvm. Runbook: docs/runbooks/restore-claude-sessions.md."
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m

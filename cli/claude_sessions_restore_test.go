@@ -180,14 +180,16 @@ func TestRestoreRoundTrip(t *testing.T) {
 			t.Errorf("%s: got %q (%v), want %q", rel, got, err, want)
 		}
 	}
-	for _, never := range []string{".claude/.credentials.json", ".codex/auth.json", ".claude/settings.json", ".claude/cache/changelog.md"} {
+	for _, never := range []string{".claude/.credentials.json", ".codex/auth.json", ".claude/cache/changelog.md", ".claude/settings.json.from-store"} {
 		if _, err := os.Stat(filepath.Join(dest, never)); err == nil {
 			t.Errorf("%s must not be restored", never)
 		}
 	}
-	red, err := os.ReadFile(filepath.Join(dest, ".claude/settings.json.from-store"))
-	if err != nil || strings.Contains(string(red), "k-1") || !strings.Contains(string(red), "opus") {
-		t.Errorf("redacted settings should land beside the real name: %q %v", red, err)
+	// The redacted settings file comes back under its real name, without the
+	// redacted key, so provisioning can fill it from Vault.
+	red, err := os.ReadFile(filepath.Join(dest, ".claude/settings.json"))
+	if err != nil || strings.Contains(string(red), "k-1") || strings.Contains(string(red), "MEMORY_API_KEY") || strings.Contains(string(red), redactedValue) || !strings.Contains(string(red), "opus") {
+		t.Errorf("redacted settings should come back under the real name without the secret: %q %v", red, err)
 	}
 	if len(st.Redacted) != 1 || st.Written != 7 {
 		t.Errorf("stats %+v", st)
@@ -199,8 +201,22 @@ func TestRestoreRoundTrip(t *testing.T) {
 
 	// A second restore leaves what is there alone.
 	st, err = runRestore(src, "emo", "", &dirSink{root: dest}, 100)
-	if err != nil || st.Written != 0 || st.Skipped != 7 {
+	if err != nil || st.Written != 0 || st.Skipped != 7 || len(st.Beside) != 0 {
 		t.Fatalf("second run: %+v %v", st, err)
+	}
+
+	// A settings file of the user's own that differs gets the stored copy
+	// beside it.
+	os.WriteFile(filepath.Join(dest, ".claude/settings.json"), []byte(`{"theme":"dark"}`), 0o600)
+	st, err = runRestore(src, "emo", "", &dirSink{root: dest}, 100)
+	if err != nil || len(st.Beside) != 1 || st.Beside[0] != ".claude/settings.json.from-store" {
+		t.Fatalf("third run: %+v %v", st, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dest, ".claude/settings.json")); string(b) != `{"theme":"dark"}` {
+		t.Fatalf("the user's file was changed: %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dest, ".claude/settings.json.from-store")); !strings.Contains(string(b), "opus") {
+		t.Fatalf("beside copy %q", b)
 	}
 }
 

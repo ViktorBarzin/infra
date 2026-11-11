@@ -76,7 +76,8 @@ homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
 
 On a rebuilt devvm this runs by itself: `t3-provision-users.sh` step 4a calls
 `homelab claude-sessions restore --user <name> --rebuild` as root for every
-account with a home under `/home`, before step 5 starts their T3 serve. A user
+account with a home under `/home`. Step 5 starts a user's T3 serve only once their
+marker exists, and logs `t3-serve held for <user>` until then. A user
 outside the roster (ancamilea since she was parked) gets no account on a
 rebuilt box, so nothing is restored for her until her roster row comes back. It restores each user once,
 records the restored files in the ingest state as already sent, and leaves
@@ -107,11 +108,20 @@ stopped.
 Only the devvm at 10.0.10.10 ingests. A drill VM restores from the store but
 never writes to it (`playbooks/devvm.yml` section 8d).
 
-A settings file whose secrets were redacted at ingest comes back as
-`<name>.from-store` (for example `.claude/settings.json.from-store`), never over
-the real name; the command lists them. Merge by hand, or let provisioning write
-the real file. Files over 32 MiB were stored without content and are counted as
-`omitted`.
+A settings file whose secrets were redacted at ingest comes back under its real
+name without the redacted keys; the command lists them. Provisioning step 5d
+then fills the memory and pages keys from Vault (`install_agent_api_keys`, admin
+Vault token only); any other secret, such as an MCP server's header, has to be
+added again by hand. Environment flags without a secret, such as
+`DISABLE_AUTOUPDATER`, are kept. If the real file is already there, `--to`
+writes the stored copy beside it as `<name>.from-store` to merge by hand, and
+`--rebuild` merges a JSON file itself. Files over 32 MiB were stored without
+content and are counted as `omitted`.
+
+If `ClaudeSessionsUserWaitingForRestore` fires, a user's restore keeps failing
+and the ingest is skipping them: read the WARN line in
+`journalctl -u t3-provision-users`, fix the cause (usually ClickHouse or
+`/etc/claude-sessions/reader.env`), and the next hourly pass restores them.
 
 Tested on 2026-11-11: one of wizard's sessions (1,248 lines and two subagents)
 came back byte for byte, and `claude --resume` in a temporary HOME listed it.

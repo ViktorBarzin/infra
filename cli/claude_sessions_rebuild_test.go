@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -275,9 +276,62 @@ func TestIngestTokensChangeWhenAFileIsReplaced(t *testing.T) {
 	if _, err := runIngest(cfg); err != nil {
 		t.Fatal(err)
 	}
+	// The rewritten copy starts with the bytes already sent, so only the
+	// new line goes, under a token of its own.
 	all := fake.insertsTo("lines")
-	if len(all) != 2 || all[1].Token == first[0].Token || !strings.HasPrefix(all[1].Token, tp+"@") || !strings.HasSuffix(all[1].Token, ":0") {
+	if len(all) != 2 || all[1].Token == first[0].Token || all[1].Token != tp+"@"+strconv.FormatUint(inodeOf(t, tp), 10)+":"+strconv.Itoa(len(old)) {
 		t.Fatalf("tokens %q then %q", first[0].Token, all[len(all)-1].Token)
+	}
+	if rows := fake.rows("lines"); len(rows) != 2 {
+		t.Fatalf("lines stored %d, want 2 (no line twice)", len(rows))
+	}
+
+	// A rewrite that changed what was sent is read again from 0.
+	os.WriteFile(tmp, []byte(`{"type":"user","timestamp":"2026-10-01T10:00:09Z"}`+"\n"), 0o640)
+	os.Rename(tmp, tp)
+	if _, err := runIngest(cfg); err != nil {
+		t.Fatal(err)
+	}
+	all = fake.insertsTo("lines")
+	if len(all) != 3 || !strings.HasSuffix(all[2].Token, ":0") {
+		t.Fatalf("a changed prefix must be sent from 0, token %q", all[len(all)-1].Token)
+	}
+}
+
+// A state written before the running hash existed still resumes correctly:
+// the first append re-reads the prefix to build the hash, and a rewrite after
+// that is recognised.
+func TestIngestBuildsTheHashForAnOldState(t *testing.T) {
+	fake, url, done := startFake(t)
+	defer done()
+	homes, home := agentHomeFixture(t)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	cfg := ingestConfig{HomesRoot: homes, StatePath: statePath, DB: dbConn{URL: url, User: "ingest", Password: "pw"}, Budget: 1 << 20}
+	if _, err := runIngest(cfg); err != nil {
+		t.Fatal(err)
+	}
+	tp := filepath.Join(home, ".claude/projects/-home-emo-code/5e55.jsonl")
+	state, _ := loadState(statePath)
+	state.Files[tp].Sum = ""
+	saveState(statePath, state)
+	f, _ := os.OpenFile(tp, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("\n" + `{"type":"assistant","timestamp":"2026-10-01T10:01:00Z"}` + "\n")
+	f.Close()
+	if _, err := runIngest(cfg); err != nil {
+		t.Fatal(err)
+	}
+	state, _ = loadState(statePath)
+	if state.Files[tp].Sum == "" {
+		t.Fatal("the hash was not built")
+	}
+	old, _ := os.ReadFile(tp)
+	os.WriteFile(tp+".new", append(old, []byte(`{"type":"user","timestamp":"2026-10-01T10:02:00Z"}`+"\n")...), 0o640)
+	os.Rename(tp+".new", tp)
+	if _, err := runIngest(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if rows := fake.rows("lines"); len(rows) != 3 {
+		t.Fatalf("lines stored %d, want 3", len(rows))
 	}
 }
 
