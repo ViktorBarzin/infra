@@ -55,7 +55,12 @@ locals {
   # 8). Check `free -g` on the host first (runbook). The replacement sets the
   # full size explicitly. Everything else is the live devvm's shape (module
   # defaults).
-  drills = {}
+  drills = {
+    # Final drill of the disposable-devvm plan, 2026-11-11: every workstream
+    # landed, checked per user with the admin provisioning re-run. Removed
+    # again once checked.
+    "devvm-drill5" = { vm_id = 9105, ipv4_cidr = "10.0.10.14/24" }
+  }
 }
 
 provider "proxmoxbpg" {
