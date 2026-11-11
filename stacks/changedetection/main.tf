@@ -110,7 +110,7 @@ resource "kubernetes_deployment" "changedetection" {
           # Upstream's own compose runs sockpuppetbrowser:latest, and the newest
           # version tag (0.0.3, 2025-08) is a year behind it, so pin
           # latest@digest; Renovate bumps the digest.
-          image             = "dgtlmoon/sockpuppetbrowser:latest@sha256:1d8f72d2ce2085faed4232e5ae1e65c02efe5b831a18e127829b267c260b4fb2"
+          image             = "dgtlmoon/sockpuppetbrowser:latest@sha256:55b602098351ae41818be91c3eef27368311aefff6df9fa00e387ec8d0495a38"
           image_pull_policy = "IfNotPresent"
           port {
             name           = "ws"
