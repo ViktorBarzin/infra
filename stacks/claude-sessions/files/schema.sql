@@ -238,7 +238,8 @@ WHERE type = 'system' AND subtype = 'turn_duration';
 -- What the network IDS records (docs/plans/2026-11-10-network-ids.md,
 -- docs/architecture/network-security-monitoring.md). Written by the netsec
 -- Vector (stacks/netsec) as netsec_writer; read by Viktor as netsec_reader.
--- Not in backup.sh on purpose: browsing data stays off NFS and offsite.
+-- backup.sh saves the *_hourly rollups (kept forever) but not the raw tables,
+-- so per-connection detail stays off NFS and offsite (Viktor, 2026-11-11).
 -- Addresses are IPv6 columns; IPv4 arrives as text and is stored mapped.
 CREATE DATABASE IF NOT EXISTS netsec;
 

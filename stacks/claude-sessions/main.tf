@@ -12,7 +12,8 @@
 #   homelab netsec sql --------------HTTPS------> netsec_reader (SELECT netsec.*)
 #
 # The netsec database (network IDS data) shares this server but not its
-# backup: backup.sh saves DATABASE claude only, so browsing data stays off NFS.
+# backup: backup.sh saves DATABASE claude and the netsec *_hourly rollups; the raw
+# netsec tables stay off NFS and offsite (Viktor, 2026-11-11).
 #
 # Schema: files/schema.sql, run once by the image's initdb on an empty volume.
 # Later schema changes are applied by hand as the default user and copied into
