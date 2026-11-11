@@ -7,7 +7,7 @@
 # Suricata missed 4.4% of packets on 2026-11-10, in bursts of up to 26% per
 # 5 minutes while its worker averaged 16% CPU: the capture buffer (FreeBSD's
 # net.bpf.maxbufsize, 512 KB, about 40 ms at 100 Mbps) overflowed during
-# bursts of camera and tv video. Two changes:
+# bursts of camera and tv video. Three changes:
 #
 # 1. pcap: a 32 MB capture buffer per inspected interface. OPNsense starts
 #    Suricata with --pcap=vtnet1 --pcap=vtnet2 and its template has no pcap
@@ -21,11 +21,20 @@
 #    still inspected; the long tail of video and NFS transfers is not.
 #    suricata.yml refuses to install this file when the template's stream
 #    section changes.
+#
+# 3. bpf-filter: the kernel never copies two trusted bulk flows to Suricata,
+#    because local bypass still copies every packet before discarding it and
+#    their bursts overflowed even the 32 MB buffer (0.46% missed per hour on
+#    2026-11-11): NFS to the Proxmox host, and SSH between the devvm and the
+#    Proxmox host. SSH from anywhere else to the host stays inspected
+#    (Viktor, 2026-11-11).
 pcap:
   - interface: vtnet1
     buffer-size: 33554432
+    bpf-filter: "not (host 192.168.1.127 and port 2049) and not (host 10.0.10.10 and host 192.168.1.127 and port 22)"
   - interface: vtnet2
     buffer-size: 33554432
+    bpf-filter: "not (host 192.168.1.127 and port 2049) and not (host 10.0.10.10 and host 192.168.1.127 and port 22)"
   - interface: default
 
 stream:
