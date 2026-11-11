@@ -320,6 +320,27 @@ Found in review of drill 3, fixed afterwards:
   `secret/workstation/*`, which the bootstrap token cannot read. "What to
   check" and the replacement now include the admin re-run.
 
+**2026-11-11, fourth drill** (devvm-drill4, VM 9104, 10.0.10.13, the
+drill defaults 4 cores, 8 GiB, 80 GiB), to check those fixes, built by CI
+from master:
+
+- 17:25 apply, 17:49 the playbook's first t3 install (`/usr/bin/t3` ->
+  `/usr/local/lib/t3/0.1.9/...`, last-good 0.1.9), 18:26 status `ok`,
+  `cloud-init status` done.
+- `t3-serve@wizard` and `@emo` active with 0 restarts, both answer 200 on
+  3773 and 3774, and wizard's serve logged "T3 Code server is ready" on the
+  restored database. The restored databases hold 2,342 and 7 threads against
+  2,408 and 7 on the live box: the snapshot was the 03:47 nightly, so the 66
+  threads since then are what a rebuild without the replacement pre-flight
+  would lose.
+- Its journal is in Loki only as `{job="devvm-drill-journal",
+  host="devvm-drill4"}`; no line from it is under `job="devvm-journal"`.
+  Its two `claude-auth-sync` failures stayed in the drill job, so they add
+  nothing to `WorkstationClaudeAuthInvalid`, which was still firing from
+  drill 3's 17:03 lines until they leave the rule's 7 h window.
+- Not checked here: the admin provisioning re-run, which would need an admin
+  token on the drill.
+
 Still open after these drills, for the final one:
 
 - `agent-api` binds 10.0.10.10 and exits on any other address, so it fails on
