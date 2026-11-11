@@ -41,7 +41,8 @@ flowchart TD
 | `dns_queries` | one pod DNS lookup | 365 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
 | `tetragon` | one process start or outbound connect | 365 days | phase 4b |
 | `haproxy` | one connection to a mail port (25, 465, 587, 993) through HAProxy on OPNsense | 365 days | phase 7 |
-| `*_hourly` (10 tables) | one row per hour and key: `flows_hourly`, `eve_{alert,dns,tls,http,ssh}_hourly`, `haproxy_hourly`, `proxy_hourly`, `dns_queries_hourly`, `tetragon_hourly` | forever | materialized views on the raw tables (phase 7) |
+| `technitium` | one Sofia DNS lookup answered by Technitium (home LAN, VLAN 10 and 20, pods via CoreDNS), with blocked or not | 365 days | CronJob `netsec-technitium` from Postgres `technitium.dns_logs` (phase 7) |
+| `*_hourly` (11 tables) | one row per hour and key: `flows_hourly`, `eve_{alert,dns,tls,http,ssh}_hourly`, `haproxy_hourly`, `proxy_hourly`, `dns_queries_hourly`, `tetragon_hourly`, `technitium_hourly` | forever | materialized views on the raw tables (phase 7) |
 
 Addresses are `IPv6` columns; IPv4 is stored mapped (`::ffff:10.0.20.101`).
 Tables are partitioned by day, so TTL drops whole parts.
@@ -145,7 +146,8 @@ the ClickHouse pod 295 MiB.
 
 **Alerts** (lane `security`, `prometheus_chart_values.tpl`):
 `NetsecVectorDown`, `NetsecSinkErrors`, `NetsecFlowsStale` (no row written to
-`flows` for 30 minutes), `NetsecEveStale` (the same for `eve`).
+`flows` for 30 minutes), `NetsecEveStale` (the same for `eve`),
+`NetsecTechnitiumStale` (no new Technitium row copied for 30 minutes).
 
 ## Phase 2: Suricata metadata
 
@@ -442,6 +444,19 @@ flowchart TD
 - **Suricata ssh**: `eve-meta.json` gains the `ssh` type, so every SSH session
   (Forgejo's 10.0.20.200:22 is open to the internet) records the client and
   server version strings in `payload.ssh`.
+- **Technitium query log**: the home LAN (192.168.1.x, behind the AX6000) and
+  hosts on VLAN 20 reach Technitium (10.0.20.201) without crossing OPNsense,
+  so Suricata never sees their lookups. CronJob `netsec-technitium`
+  (`stacks/netsec`, every 5 minutes) has the ClickHouse server read new rows
+  of Postgres `technitium.dns_logs` with `postgresql()` and insert them into
+  `netsec.technitium`; a materialized view fills `technitium_hourly`.
+  `technitium_pull.sql` copies `dlid > newest - 20000` and skips dlids already
+  present, so a late-committed row is caught and no row is copied twice. The 90
+  days Postgres held (14,682,621 rows from 2026-08-13) were backfilled once as
+  the admin on 2026-11-11, matching Postgres exactly; ClickHouse holds them in
+  213 MB against 8.1 GB in Postgres. Postgres logging stays as is for Grafana
+  and `dns-digest`. Viktor agreed to keep the home LAN's lookups for 365 days
+  and the rollup forever (2026-11-11). Alert `NetsecTechnitiumStale`.
 - **Not covered**: Suricata `anomaly` events stay in `eve.json` on OPNsense
   only, because Suricata allows one anomaly logger. Inbound IPv4 to ports
   without a forward is dropped by the ISP router before OPNsense. CrowdSec

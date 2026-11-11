@@ -80,6 +80,7 @@ nothing, although the TCP port answers.
 | `NetsecSinkErrors` | a ClickHouse write failed | Vector logs; a 401/516 is the `netsec_writer` password (Vault `secret/claude-sessions` vs the pod's `netsec-secrets`), a quota error means a runaway source |
 | `NetsecFlowsStale` | no row written to `flows` for 30 minutes | the four checks above, in order |
 | `NetsecEveStale` | no row written to `eve` for 30 minutes | "Is Suricata metadata flowing?" above |
+| `NetsecTechnitiumStale` | CronJob `netsec-technitium` copied no newer Technitium lookup for 30 minutes | "Technitium query log" below |
 | `SuricataCaptureDrops` | Suricata missed more than 1% of the packets it should inspect over an hour (blind spots, not dropped traffic) | `docs/runbooks/opnsense.md`, "Suricata tuning", capture section |
 | `NetsecHomeHostMalware` | a malware or C2 alert involving one of our hosts (CronJob `netsec-alerts`) | "A home host hit a malware rule" below |
 | `CameraVlanBlockedTraffic` | the VLAN 30 camera started traffic the firewall blocked | "Camera VLAN blocked traffic" below |
@@ -90,6 +91,38 @@ nothing, although the TCP port answers.
 | `SquidInterceptDown` | Squid is down while machines are opted in: their web traffic is cut off | `ssh root@10.0.10.1 'configctl proxy restart'`; `/var/log/squid/cache.log`; to stop the impact at once, empty `opted_in` |
 | `SquidInterceptCAExpiring` | the interception intermediate expires within 30 days | "CA renewal" below |
 | `SquidInterceptMetricsMissing` | the cron `netsec-squid-metrics` on OPNsense stopped writing its metrics | `ssh root@10.0.10.1 /usr/local/bin/netsec-squid-metrics`, then `cat /var/tmp/node_exporter/netsec_squid.prom` |
+
+## Technitium query log
+
+`netsec.technitium` is copied from Postgres `technitium.dns_logs` by CronJob
+`netsec-technitium` every 5 minutes (`stacks/netsec/files/technitium_pull.{sh,sql}`).
+
+```sh
+kubectl -n netsec logs job/$(kubectl -n netsec get jobs -o name | grep technitium | tail -1 | cut -d/ -f2)
+homelab netsec sql "SELECT max(ts), max(dlid) FROM netsec.technitium"
+```
+
+- A failed run with `password authentication failed`: the Vault static role
+  `pg-technitium` rotated and ExternalSecret `netsec-technitium-pg` has not
+  refreshed yet (15 minutes); it heals on its own.
+- No new rows in Postgres either: Technitium's query logging stopped
+  (`docs/architecture/dns.md`, "Query Logging").
+- An empty `netsec.technitium` (lost volume): the job refuses to run. Backfill
+  once as the admin in 2,000,000-dlid chunks, not through the job, because a
+  big copy as `netsec_writer` would use up the hourly quota Vector shares:
+
+```sh
+P=$(kubectl get pods -n claude-sessions -o name | grep clickhouse)
+pull() { { kubectl get secret -n netsec netsec-technitium-pg -o jsonpath='{.data.password}' | base64 -d; echo
+           cat stacks/netsec/files/technitium_pull.sql; } |
+         kubectl exec -i -n claude-sessions $P -- bash -c "read -r pw; clickhouse-client --param_pw=\"\$pw\" --param_lo=$1 --param_hi=$2 --multiquery"; }
+# lo from: homelab k8s db technitium -- "SELECT min(dlid) - 1 FROM dns_logs"
+lo=<min-1>; while [ $lo -lt <max dlid> ]; do pull $lo $((lo + 2000000)); lo=$((lo + 2000000)); done
+```
+
+Each 2,000,000-dlid chunk took about 14 s on 2026-11-11. Do not kill a
+running copy: the raw insert and the rollup drift apart, and both tables then
+need a TRUNCATE and a fresh backfill.
 
 ## Vector config tests
 

@@ -332,13 +332,19 @@ func capabilities() []capability {
 			},
 		},
 		{
-			Intent:  "query what the network IDS saw: NetFlow records, Suricata alerts and DNS/TLS/HTTP metadata, which host talked to what",
-			Use:     "homelab netsec schema  /  homelab netsec sql \"SELECT ...\"",
-			Instead: "Loki {job=\"syslog\", host=\"opnsense\"} for Suricata alerts, or the OPNsense GUI",
+			Intent: "query what devices on the network looked up or connected to: DNS lookup history (Technitium, home LAN included, blocked or not), " +
+				"NetFlow, Suricata alerts, TLS/HTTP/SSH metadata, mail clients, traffic patterns over months",
+			Use: "homelab netsec schema  /  homelab netsec sql \"SELECT ...\"",
+			Instead: "Technitium's Postgres dns_logs (90 days), Loki {job=\"syslog\", host=\"opnsense\"}, " +
+				"or the OPNsense and Technitium GUIs",
 			Synonyms: []string{"netflow", "flows", "suricata", "ids", "intrusion", "who talked to", "network traffic",
-				"top talkers", "netsec", "dns queries", "tls sni"},
+				"top talkers", "netsec", "dns queries", "dns lookups", "query log", "technitium", "dns history",
+				"looked up", "domain", "blocked", "home lan", "tls sni", "traffic patterns", "history"},
 			Detail: []string{
-				"Database netsec on the claude-sessions ClickHouse (docs/architecture/network-security-monitoring.md).",
+				"Database netsec on the claude-sessions ClickHouse, the source of truth for these questions " +
+					"(docs/architecture/network-security-monitoring.md).",
+				"Full rows 365 days; *_hourly rollups kept forever for patterns over months.",
+				"technitium: every Sofia DNS lookup with blocked or not, copied from Postgres every 5 minutes.",
 				"Viktor only: it shows what every device looks up and connects to.",
 				"Run `schema` first for tables, retention and example queries.",
 			},
