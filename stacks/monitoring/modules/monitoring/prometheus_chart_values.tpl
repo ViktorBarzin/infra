@@ -4737,6 +4737,24 @@ serverFiles:
               notify: page
             annotations:
               summary: "ha-sofia has had no successful automatic backup for {{ $value | humanizeDuration }}; VM 103 is on a single unmirrored SSD, see docs/architecture/home-automation.md"
+          # ha-london (the Pi 3 in London) writes its weekly automatic backup
+          # (Sun 05:00 Europe/London) through Supervisor network storage to
+          # /srv/nfs/ha-london-backup on the Proxmox host. Without it the only
+          # copies sit on the Pi's SD card. ha-london-backup-status (hourly,
+          # textfile collector) reports the newest archive's mtime, 0 when there
+          # is none; 8 days allows the weekly run plus a day. absent() covers the
+          # script or the export going away, after 6h so a host reboot is quiet.
+          # docs/architecture/london-site.md, "Backups".
+          - alert: HomeAssistantLondonBackupStale
+            expr: |
+              (time() - ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"}) > 691200
+                or absent(ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"})
+            for: 6h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "ha-london's newest backup on the Proxmox host (/srv/nfs/ha-london-backup) is over 8 days old or missing; its only other copies are on the Pi's SD card. See docs/architecture/london-site.md, Backups"
           - alert: LVMSnapshotStale
             expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
