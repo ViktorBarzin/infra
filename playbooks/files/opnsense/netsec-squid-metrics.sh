@@ -25,10 +25,16 @@ not_after=$(/usr/local/bin/php -r '
 if pgrep -x squid >/dev/null 2>&1; then up=1; else up=0; fi
 members=$(/sbin/pfctl -t opted_in -T show 2>/dev/null | grep -c . || true)
 stats=/var/log/suricata/stats.log
-counter() { [ -r "$stats" ] && tail -n 600 "$stats" | awk -v k="$1" '$1 == k {v = $NF} END {if (v != "") print v}'; }
+# Read only the newest block: Suricata leaves zero counters out of a block, so
+# an older block's value would otherwise stand in for a zero (seen 2026-11-11:
+# no capture.kernel_drops line at all after the restart).
+counter() { [ -r "$stats" ] && tail -n 600 "$stats" | awk -v k="$1" '/^Date:/ {v = ""} $1 == k {v = $NF} END {if (v != "") print v}'; }
 cap_pkts=$(counter capture.kernel_packets || true)
 cap_drops=$(counter capture.kernel_drops || true)
 bypassed=$(counter flow_bypassed.local_pkts || true)
+# A block that counted packets but printed no drops means zero drops.
+if [ -n "$cap_pkts" ] && [ -z "$cap_drops" ]; then cap_drops=0; fi
+if [ -n "$cap_pkts" ] && [ -z "$bypassed" ]; then bypassed=0; fi
 
 {
   echo "# HELP netsec_squid_ca_not_after_seconds Expiry of the Squid intercept signing CA (unix time)."

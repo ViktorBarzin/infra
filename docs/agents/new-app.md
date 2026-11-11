@@ -86,6 +86,25 @@ anonymously: add the namespace to `ghcr_private_namespaces` in
 `image_pull_secrets = ["ghcr-credentials"]` to the module and
 `--visibility private` to the script.
 
+## Files
+
+An app that stores files mounts a PVC with the module's `volumes` variable,
+usually an `nfs_volume` claim (`storage_class_name = "nfs-pve"`). Create the
+NFS directory owned by 10001:10001 first (`docs/runbooks/nfs-prerequisites.md`);
+the module sets `fs_group_change_policy = "OnRootMismatch"` so pod starts do
+not re-own every file. `stacks/reels` is the reference, including a second
+Deployment (a worker) in the same namespace that reuses the module's
+`<name>-db-creds` Secret.
+
+## Metrics
+
+The Service is scraped automatically, but the `kubernetes-service-endpoints`
+job keeps only an allowlist of metric names
+(`metric_relabel_configs` in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`).
+An app's own metrics are silently dropped until its prefix is added there
+(`tripit_.+`, `reels_.+`), so an alert on them never fires. Check with a
+Prometheus query, not by curling `/metrics`.
+
 ## Connection budget
 
 Each pod holds a pool of 4 plus 1 LISTEN connection on the shared primary

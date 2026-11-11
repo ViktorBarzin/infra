@@ -112,6 +112,17 @@ variable "extra_env" {
   description = "Plain env vars appended after the platform env. A list because env order is part of the pod spec."
 }
 
+variable "volumes" {
+  type = list(object({
+    name       = string
+    claim_name = string
+    mount_path = string
+    read_only  = optional(bool, false)
+  }))
+  default     = []
+  description = "PVCs mounted into the app container (not the migrate init container), e.g. an nfs_volume claim. Any volume sets fs_group_change_policy = OnRootMismatch, so the kubelet does not re-own every file on the volume at each pod start."
+}
+
 variable "emit_group_env" {
   type        = bool
   default     = true

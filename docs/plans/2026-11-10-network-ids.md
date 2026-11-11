@@ -1,6 +1,6 @@
 # Network intrusion detection and prevention
 
-Status: approved by Viktor on 2026-11-10; executing. Phases 0 to 5 done, phase 6 (turning bans on) due after the review from 2026-11-24; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
+Status: approved by Viktor on 2026-11-10; executing. Phases 0 to 6 done; bans enforced since 2026-11-11; as-built in `docs/architecture/network-security-monitoring.md`. Grilled with Viktor on 2026-11-10 (memory #17435); revised the same day after two blind challenger reviews. Research: `docs/research/2026-11-03-network-ids-options.md`, ADR-0038.
 
 ## Goal
 
@@ -18,7 +18,7 @@ Inspect Sofia traffic for malicious flows, keep what the IDS sees queryable in C
 | 6 | Data | Alerts 365d, dns/tls/http 30d, NetFlow 14d, proxy URLs 30d, pod DNS queries 30d, Tetragon process and connection events 30d. No Suricata flow events |
 | 7 | Store | Database `netsec` on the existing `claude-sessions` ClickHouse (encrypted SAS). Not backed up: losing the disk loses history only, and no browsing data lands on NFS or offsite |
 | 8 | Access | Viktor only. No Grafana datasource, because every Authentik user is a Grafana Viewer and OSS Grafana cannot restrict a datasource. Queries through `homelab netsec sql` |
-| 9 | Notify | Slack #alerts for everything. Bans grouped into one message per 10 minutes by the CrowdSec Slack plugin; home-device malware alerts post at once from a scheduled query job through Alertmanager (`lane=security`) |
+| 9 | Notify | Slack #alerts for everything. Bans grouped into one message per 10 minutes by the CrowdSec Slack plugin (amended 2026-11-11: ban profiles no longer notify, only C2 blocks do; would-be bans are reviewed with `cscli alerts list`); home-device malware alerts post at once from a scheduled query job through Alertmanager (`lane=security`) |
 | 10 | Shipper | Its own Vector Deployment in `stacks/netsec`, same image and config pattern as rybbit's `event-pipeline` (ADR-0041). Viktor first chose to share `event-pipeline`, then reversed after the review showed a netsec fault would stop app analytics |
 | 11 | No host agents | Nothing is installed on any server OS or personal device (Viktor, 2026-11-10). Tetragon is the one exception in the cluster: a watch-only Helm DaemonSet, like the CrowdSec node bouncer, added back because nothing else sees a compromise inside a pod before it reaches the network. The central CrowdSec reads server journals that already reach Loki (Proxmox, devvm, rpi-sofia, k8s nodes); OPNsense does the blocking; CoreDNS query logs in ClickHouse show which pod looked up a name. Given up: the exact program per connection, blocking an attacker already inside, and Windows VM 300 (it ships no logs) |
 | 12 | Decryption | Squid SSL bump on OPNsense for an `opted_in` alias. URLs only, no virus scanning |
@@ -62,7 +62,7 @@ flowchart TD
 
 ## Phases
 
-Every OPNsense change lands on the production firewall: `--check --diff` first, applied in a quiet hour, verified, with the listed rollback. Each phase is verified before the next.
+Every OPNsense change lands on the production firewall: `--check --diff` first, applied at any hour (the firewall has swap and every service fails safe), verified, with the listed rollback. Each phase is verified before the next.
 
 ### 1. Store and shipper
 - `netsec` database, a writer user with a real quota (rows and bytes per hour) and a reader user for Viktor, tables `eve` (typed columns plus JSON, TTL per event type, IPv6 columns), `flows`, `proxy`, `dns_queries`, on the claude-sessions instance (`stacks/claude-sessions`). `backup.sh` stays `DATABASE claude` only.
@@ -121,6 +121,7 @@ Every OPNsense change lands on the production firewall: `--check --diff` first, 
 ### 6. Go-live and enforcement
 - Simulation clock starts when phase 3 lands. After one hour of phase 2 data, measure `eve` volume and resize the claude-sessions PVC if the estimate (30-150 MB/day) is off.
 - After 2 weeks: review the would-be bans with Viktor, tune, switch simulation off on every agent.
+- **Done early, 2026-11-11.** Viktor reviewed the first ~14 hours instead of waiting two weeks: one real would-be ban (91.92.40.12, a Spamhaus DROP network trying React2Shell against Traefik), no false positives, internal sources held by the allowlist. Before enforcing, a guard parser (`playbooks/files/opnsense/crowdsec/viktor-suricata-replies.yaml`) drops alerts raised on replies to connections our hosts opened, because IP-reputation rules also fire on those (the tv app's Dshield-listed stream sources). Both the OPNsense agent and the journals agent enforce since.
 
 ## Production checks
 

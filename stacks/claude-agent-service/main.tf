@@ -143,6 +143,18 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # Bearer token for POST /v1/reels/trending-songs, the Reels app's
+          # weekly trending-songs lookup (app/reels_trending.py). Its own token
+          # so the Reels worker, which parses untrusted media, never holds the
+          # /execute one; the worker's copy is secret/reels trending_token, the
+          # same value.
+          secretKey = "REELS_TRENDING_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "reels_trending_token"
+          }
+        },
+        {
           # Long-lived OAuth token (1-year) from `claude setup-token`.
           # Preferred over the short-lived .credentials.json — CLI picks this up and
           # skips the refresh flow entirely. Rotate yearly; alert 30d before expiry.

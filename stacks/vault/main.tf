@@ -1171,7 +1171,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:04 both verify-probe roles
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
 #   10:12 mysql-uptimekuma   10:13 pg-prowlarr (app_db_roles.tf; owns prowlarr and prowlarr_log)
-#   10:14 mysql-nextcloud   10:16 mysql-speedtest   10:18 mysql-wrongmove
+#   10:14 mysql-nextcloud   10:15 pg-reels (app_db_roles.tf)   10:16 mysql-speedtest
+#   10:18 mysql-wrongmove
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.
