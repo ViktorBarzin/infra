@@ -6,6 +6,7 @@ package main
 //	ingest   root, from claude-sessions-ingest.timer: ship new transcript bytes
 //	sql      admins: run a read-only query
 //	schema   admins: tables, columns and example queries
+//	restore  admins: write a user's ~/.claude and ~/.codex back from the store
 
 import (
 	"errors"
@@ -36,8 +37,11 @@ func claudeSessionsCommands() []Command {
 			Summary: "tables, columns and example queries for the Claude session store (admins)",
 			Run:     claudeSessionsSchema},
 		{Path: []string{"claude-sessions", "ingest"}, Tier: TierWrite,
-			Summary: "ship new transcript bytes into the session store (root; run by claude-sessions-ingest.timer): claude-sessions ingest [--user <name>] [--homes /home]",
+			Summary: "ship new transcript bytes and the rest of ~/.claude and ~/.codex into the session store (root; run by claude-sessions-ingest.timer): claude-sessions ingest [--user <name>] [--homes /home]",
 			Run:     claudeSessionsIngest},
+		{Path: []string{"claude-sessions", "restore"}, Tier: TierWrite,
+			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|->) [--session <id>] [--force]",
+			Run:     claudeSessionsRestore},
 	}
 }
 
@@ -132,6 +136,13 @@ How to read it
             A typed prompt: role='user' AND kind='text' AND prompt_origin='human'.
   files     large tool outputs (kind tool-result) and subagent metadata; use
             FROM claude.files FINAL.
+  home_files  the rest of ~/.claude and ~/.codex, one row per file (plans,
+            tasks, teams, todos, file-history, settings with secrets
+            redacted, Codex config). path is relative to the home; kind is
+            tool:top-level-entry (claude:plans, codex:sessions). encoding
+            text|base64|omitted. Use FROM claude.home_files FINAL.
+  home_lines  .jsonl home files line by line: .claude/history.jsonl (every
+            typed prompt), Codex rollouts under .codex/sessions/.
   sessions  view, one row per session: cost_usd, prompts, human_prompts,
             subagents, compactions, api_requests, tokens, models,
             started/ended. cost_usd sums the last cost-state of each Claude
