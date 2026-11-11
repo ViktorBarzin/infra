@@ -1726,6 +1726,40 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
 
+# --- emo-jobs (disposable devvm, 2026-11-11) ---
+# 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
+# at its root: the steps that put back what the user built around the clone by
+# hand, such as ~/bin links and systemd user units. emo's
+# ebarzin/vermont-device-configs restores the B4 intercom watchdog this way
+# (docs/runbooks/cameras-nvr-intercom.md). It runs AS the user on every
+# reconcile, so it must be idempotent and print nothing when nothing changed.
+# The environment is emptied first: a rebuild runs this script with an admin
+# VAULT_TOKEN (step 3d), and the user's own code must never see it. Linger is
+# turned on so the user's timers fire while they are logged out.
+run_repo_setup() {  # run_repo_setup USER SUBPATH
+  local user="$1" sub="$2" home="" uid="" f out
+  IFS=: read -r _ _ uid _ _ home _ < <(getent passwd "$user") || return 0
+  [[ -n "$home" && -n "$uid" ]] || return 0
+  f="$home/$sub/devvm-setup.sh"
+  [[ -f "$f" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] run ~/$sub/devvm-setup.sh as $user"; return 0; fi
+  [[ "$(loginctl show-user "$user" -p Linger 2>/dev/null)" == "Linger=yes" ]] || loginctl enable-linger "$user" >/dev/null 2>&1 || true
+  if out="$(timeout 300 runuser -u "$user" -- env -i HOME="$home" USER="$user" LOGNAME="$user" \
+        PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$uid" bash "$f" 2>&1)"; then
+    [[ -z "$out" ]] || log "$user ~/$sub/devvm-setup.sh: $(tail -n 1 <<<"$out")"
+  else
+    log "WARN: ~/$sub/devvm-setup.sh failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+while IFS=$'\t' read -r os_user repos_csv; do
+  IFS=',' read -ra extra_repos <<< "$repos_csv"
+  for repo in "${extra_repos[@]}"; do
+    [[ -n "$repo" && "$repo" != "-" ]] || continue
+    run_repo_setup "$os_user" "code/${repo##*/}"
+  done
+done < <(jq -r '.accounts[] | select(.tier != "admin" and .code_layout == "workspace") | [.os_user, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
+# --- end emo-jobs ---
+
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
   envf="$ENVDIR/$os_user.env"
