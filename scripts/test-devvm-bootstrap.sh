@@ -53,7 +53,7 @@ case "$*" in
     printf "{\"data\":{\"data\":{\"private_key\":\"PRIVKEY-SECRET\",\"known_hosts\":\"192.168.1.127 ssh-ed25519 AAAAhostkey\"}}}" ;;
 esac'
   stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n[ -e \"\$DEVVM_BOOTSTRAP_T3_HOLD\" ] && echo provisioner-held >>\"$LOG\"\nexit 0\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
-  stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN cwd=$PWD" >>"$LOG.env"; [ -e "$DEVVM_BOOTSTRAP_T3_HOLD" ] && echo "hold present at playbook" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
+  stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN HOME=${HOME:-unset} cwd=$PWD" >>"$LOG.env"; [ -e "$DEVVM_BOOTSTRAP_T3_HOLD" ] && echo "hold present at playbook" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
   # rsync records the key and known_hosts files its ssh was given, then
   # "copies" one snapshot into a destination that arrives root-only, as the
   # host'"'"'s 0700 /mnt/backup/t3-state would make it.
@@ -68,7 +68,8 @@ exit "${RSYNC_RC:-0}"'
 }
 
 run_bootstrap() {
-  PATH="$SB/bin:$PATH" \
+  # cloud-init's runcmd has no HOME, and that is how the bootstrap runs for real.
+  env -u HOME PATH="$SB/bin:$PATH" \
     DEVVM_BOOTSTRAP_HANDOFF="$SB/handoff.json" \
     DEVVM_BOOTSTRAP_STATE="$SB/state" \
     DEVVM_BOOTSTRAP_CLONE="$SB/clone" \
@@ -93,6 +94,8 @@ hasnt "inner token never in argv" "$LOG" 'hvs\.inner'
 has "clones the handed-over ref" "$LOG" 'git clone --depth 1 --branch wizard/drill https://forgejo\.viktorbarzin\.me/viktor/infra\.git'
 has "playbook runs locally against this box" "$LOG" 'ansible-playbook -i localhost, -c local -e devvm_target=localhost .*playbooks/devvm\.yml'
 has "playbook sees the unwrapped token" "$LOG.env" 'playbook VAULT_TOKEN=hvs\.inner'
+has "playbook gets a HOME under cloud-init (go build needs one)" "$LOG.env" 'playbook .*HOME=/root '
+
 has "provisioner runs from the bootstrap clone" "$LOG" "provisioner $SB/clone/scripts/workstation"
 has "installs the lobby packages after the playbook" "$LOG" 'apt-get install -y -qq terminal-lobby ttyd-devvm'
 if [[ "$(grep -nE '^ansible-playbook' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "lobby install comes after the playbook"; fi
