@@ -150,7 +150,19 @@ default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
   bootstrap now installs it from the public registry after the playbook. All
   seven lobby units came up.
 
+Result on devvm-drill2 after the fixes: bootstrap status `ok`; wizard and emo
+log in, sudo works, emo's `~/.claude` came back from the session store, every
+user's T3 database from the Proxmox host copy, and six of the seven lobby
+units are active. Both drill VMs were then removed.
+
 Still open after this drill, for the final one:
+
+- `agent-api` binds 10.0.10.10 and exits on any other address, so it fails on
+  a drill by design of its config; a rebuild at 10.0.10.10 is unaffected.
+- cloud-init's own run on drill2 is marked failed (`cloud-final`), from the
+  pre-fix HOME failure; the clean result came from a rerun of the same
+  bootstrap under a service with no HOME. The next drill should be the first
+  that goes green from cloud-init alone.
 
 - wizard's unlocked `~/code/infra` is not cloned on a new box, so the hourly
   `t3-provision-users.service` fails ("roster/engine not under
