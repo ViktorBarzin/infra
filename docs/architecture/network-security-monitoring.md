@@ -41,6 +41,7 @@ flowchart TD
 | `dns_queries` | one pod DNS lookup | 365 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
 | `tetragon` | one process start or outbound connect | 365 days | phase 4b |
 | `haproxy` | one connection to a mail port (25, 465, 587, 993) through HAProxy on OPNsense | 365 days | phase 7 |
+| `*_hourly` (10 tables) | one row per hour and key: `flows_hourly`, `eve_{alert,dns,tls,http,ssh}_hourly`, `haproxy_hourly`, `proxy_hourly`, `dns_queries_hourly`, `tetragon_hourly` | forever | materialized views on the raw tables (phase 7) |
 
 Addresses are `IPv6` columns; IPv4 is stored mapped (`::ffff:10.0.20.101`).
 Tables are partitioned by day, so TTL drops whole parts.
@@ -53,6 +54,20 @@ the plan's 14 and 30 days. Measured that day from `system.parts`: `eve` about
 200 Gi `storage_limit` (`stacks/claude-sessions/main.tf`); the SAS thin pool
 had 470 GB free. TTLs were changed live with `ALTER TABLE ... MODIFY TTL`
 and copied into `schema.sql`.
+
+**Rollups, kept forever.** Viktor wants traffic patterns available
+indefinitely (2026-11-11). Full rows stay 365 days; ten `*_hourly`
+SummingMergeTree tables with no TTL keep the counts per hour and key (pairs
+and service port with flows, bytes and packets; alert signatures; DNS names
+per client; SNI, JA4 and TLS version; HTTP host and user agent; SSH software
+versions; mail clients; pod DNS; Tetragon binaries and destinations). Built
+from that day's data they come to about 3.5 GB a year, 2.6 GB of it
+`flows_hourly`, because every scanner is a new pair. A materialized view on
+each raw table fills its rollup on insert; the views count rows from
+2026-11-11 11:45 UTC, and older rows were backfilled once with the same
+SELECT, so nothing is counted twice. A view that fails also fails the raw
+insert it hangs on, so test a changed view's SELECT against the raw table
+before creating it. Not backed up, like the raw tables (Viktor, 2026-11-11).
 
 **Users.** `netsec_writer` (INSERT on `netsec.*`, quota 4 GB written and
 20,000 inserts per hour, about ten times the measured rate) and

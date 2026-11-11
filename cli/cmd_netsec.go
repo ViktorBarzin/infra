@@ -118,7 +118,7 @@ func netsecSQL(args []string) error {
 
 const netsecGuide = `
 How to read it
-  Every table keeps 365 days.
+  Raw tables keep 365 days. The *_hourly rollups keep counts forever.
   flows        one row per NetFlow record from OPNsense (VLAN 10 and 20).
                Pod traffic shows the node's address: Calico NATs it.
                Mail clients show as OPNsense (10.0.20.1): use haproxy.
@@ -136,6 +136,11 @@ How to read it
   dns_queries  pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP.
                client_ip is the pod; name it with kube_pod_info.
   tetragon     process starts and outbound connects from k8s nodes.
+  *_hourly     one row per hour and key, kept forever, filled by materialized
+               views from the raw table of the same name (eve_* from eve).
+               SummingMergeTree: a key can sit in several rows until a merge,
+               so always sum() the counters with GROUP BY. flows_hourly.port is
+               the lower of the two ports, so both directions share it.
   Addresses are IPv6 columns; IPv4 is stored mapped (::ffff:a.b.c.d).
   Use IPv4NumToString(toIPv4(src_ip)) or toString(src_ip) to print them.
 
@@ -152,6 +157,10 @@ Examples
   -- alerts by signature today
   SELECT signature, count() n FROM netsec.eve
   WHERE event_type = 'alert' AND ts > today() GROUP BY signature ORDER BY n DESC
+
+  -- long range: bytes per month to an address, from the rollup
+  SELECT toStartOfMonth(hour) m, sum(bytes) b FROM netsec.flows_hourly
+  WHERE dst_ip = toIPv6('203.0.113.7') GROUP BY m ORDER BY m
 `
 
 func netsecSchema(args []string) error {
@@ -159,7 +168,7 @@ func netsecSchema(args []string) error {
 		return fmt.Errorf("schema takes no arguments")
 	}
 	out, err := runNetsecQuery(netsecEnvDir, "TSV", `SELECT table, groupArray(concat('    ', name, '  ', type)) FROM system.columns
-		WHERE database = 'netsec' GROUP BY table ORDER BY table FORMAT TSV`)
+		WHERE database = 'netsec' AND NOT endsWith(table, '_mv') GROUP BY table ORDER BY table FORMAT TSV`)
 	if err != nil {
 		return err
 	}
