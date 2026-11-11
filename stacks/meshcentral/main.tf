@@ -156,6 +156,16 @@ resource "kubernetes_deployment" "meshcentral" {
               }
             }
           }
+          # Changing this label makes fix-config drop the login-cookie,
+          # invitation-link and AMT keys from meshcentral.db once, so
+          # MeshCentral generates new ones on start. 2026-11-11: the old keys
+          # sat in a world-readable copy of this volume on the devvm and in
+          # its backups, and the login-cookie key let anyone holding it open
+          # an admin /control.ashx session.
+          env {
+            name  = "DB_KEY_GENERATION"
+            value = "2026-11-11"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/opt/meshcentral/meshcentral-data"

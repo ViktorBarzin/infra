@@ -93,10 +93,16 @@ against Vault first and then deleted:
 | `~/code/infra-git-crypt-key` (the infra repo's git-crypt key; until then it was in no Vault path, only there, in the clone's `.git` and in three ConfigMaps: `woodpecker/git-crypt-key` and the `git_crypt_key` ones in `stacks/claude-agent-service` and `stacks/openclaw`) | `secret/infra`, field `git_crypt_key_b64` |
 | `~/meshcentral-data/*-private.key` (5 keys, byte-identical to the live meshcentral pod's) | `secret/workstation/wizard/loose/meshcentral`, one field per key. First stored at `secret/meshcentral`, which every `secret/data/*` reader above could read, and moved here the same day; the agent-server key would let its holder pose as the server to agents that run as root. Nothing reads it: the pod keeps its own copy on its volume. |
 | `~/code/tmp_id` (a single newline, no secret) | deleted |
-| The rest of `~/meshcentral-data` (a 2024 copy of the live server's data volume: `config.json` with the `sessionKey` that signs MeshCentral's web login cookie, `meshcentral.db` with the live login-cookie and invitation-link encryption keys, public certs and stale agent builds; mode 664 in a 755 folder until 2026-11-11, so every devvm user could read it) | Deleted 2026-11-11. The pod now reads its `sessionKey` from `secret/meshcentral` field `session_key` (ExternalSecret `meshcentral-secrets`, written into `config.json` by the `fix-config` init container), and that key was replaced with a new one the same day, so the copy in the devvm-home backups is dead. The database keys stay only in the pod's `meshcentral.db`; they were not rotated. |
+| The rest of `~/meshcentral-data` (a 2024 copy of the live server's data volume: `config.json` with the `sessionKey` that signs MeshCentral's web login cookie, `meshcentral.db` with the live login-cookie and invitation-link encryption keys, public certs and stale agent builds; mode 664 in a 755 folder until 2026-11-11, so every devvm user could read it) | Deleted 2026-11-11. The pod now reads its `sessionKey` from `secret/meshcentral` field `session_key` (ExternalSecret `meshcentral-secrets`, written into `config.json` by the `fix-config` init container), and that key was replaced with a new one the same day. The three keys in `meshcentral.db` (login cookie, invitation link, AMT event secret) were still the live ones, and the login-cookie key forged a working admin `/control.ashx` session (tested 2026-11-11). They were rotated the same day by the `DB_KEY_GENERATION` label in `stacks/meshcentral/main.tf` (see `docs/agents/service-notes.md`). Since then the backed-up copy holds no key the server accepts, except the five certificate private keys, which were not re-keyed. |
 
-The nightly devvm-home backup on the Proxmox host still holds the deleted
-copies until its 14 generations roll over.
+Copies of the deleted files remain in the devvm-home backup generations on
+the Proxmox host (`/mnt/backup/devvm-home/`, until its 14 generations roll
+over), in the retired vzdump images in `/mnt/backup/vzdump/` (they never roll
+over), and in the Synology copy of `/mnt/backup`. For MeshCentral that leaves
+the five certificate private keys live in those copies, and in MeshCentral's
+own autobackup zips. Since 2026-11-11 `devvm-home-backup` keeps
+`/mnt/backup/devvm-home` root-only (700): the host's uid 1000 is the local
+account emo, and the generations keep the devvm's numeric uids.
 
 ## Rebuild: put a user's credentials back
 
