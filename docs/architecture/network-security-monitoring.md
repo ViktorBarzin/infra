@@ -154,7 +154,7 @@ flowchart TD
   LAPI -->|type ban| BOUNCERS["OPNsense bouncer (in: WAN, HE)<br/>Traefik plugin, node nftables"]
   LAPI -->|type c2-block| MIRROR["crowdsec-c2-mirror<br/>10.0.20.212:41412"]
   MIRROR -->|URL table, ~5 min| ALIAS["alias crowdsec_c2<br/>block out on VLAN 10 + 20"]
-  LAPI -->|grouped 10 min| SLACK["Slack #alerts"]
+  LAPI -->|c2-block only, grouped 10 min| SLACK["Slack #alerts"]
   CH[("netsec.eve")] --> JOB["CronJob netsec-alerts<br/>every minute"] -->|lane=security| AM["Alertmanager"] --> SLACK
 ```
 
@@ -181,8 +181,10 @@ flowchart TD
   refresh about every 5 minutes) and blocks it, logged, on `lan` and `opt1`.
   The os-crowdsec bouncer fills one pair of pf tables, so a separate list needed
   a second consumer; the mirror is CrowdSec's own and needs no code.
-- **Slack**: the LAPI's `slack_alerts` plugin has `group_wait: 10m`, so bans
-  arrive as one message per 10 minutes.
+- **Slack**: only the `c2_destination_block` profile notifies, through the
+  LAPI's `slack_alerts` plugin (`group_wait: 10m`, one message per 10 minutes).
+  The ban profiles send nothing since 2026-11-11: bans are enforced silently and
+  reviewed with `cscli alerts list` and `cscli decisions list` on the LAPI.
 - **`netsec-alerts`** (`stacks/netsec`, `files/alerts.sql`, test
   `files/alerts_test.sh`): every minute, malware and C2 alerts that involve one
   of our hosts (abuse.ch, `ET MALWARE`, `ET TROJAN`, `ET MOBILE_MALWARE`,
