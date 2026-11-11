@@ -37,6 +37,10 @@ WAIT="${DEVVM_BOOTSTRAP_WAIT:-3600}"
 POLL="${DEVVM_BOOTSTRAP_POLL:-5}"
 INFRA_REMOTE="${DEVVM_BOOTSTRAP_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
 export VAULT_ADDR="${DEVVM_BOOTSTRAP_VAULT_ADDR:-https://vault.viktorbarzin.me}"
+# cloud-init's runcmd runs with no HOME, and the playbook's go build of
+# t3-dispatch then fails ("neither GOMODCACHE nor GOPATH is set"; the second
+# stacks/devvm drill, 2026-11-11). This runs as root, so root's home it is.
+export HOME="${HOME:-/root}"
 T3_DIR="${DEVVM_BOOTSTRAP_T3_DIR:-/var/backups/t3-state}"
 T3_HOLD="${DEVVM_BOOTSTRAP_T3_HOLD:-/var/lib/t3-restore/awaiting-snapshots}"
 T3_SOURCE="${DEVVM_BOOTSTRAP_T3_SOURCE:-root@192.168.1.127}"

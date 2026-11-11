@@ -142,6 +142,10 @@ default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
   slot grant went with it and the next apply got 403 refreshing the old VM.
   The module now destroys without purge; rerun `pve-host.yml --tags
   devvm-tf` if a slot ACL is missing.
+- cloud-init's runcmd has no HOME, and the playbook's go build of
+  t3-dispatch fails without one; the bootstrap now sets `HOME=/root`. With
+  that, a rerun of the bootstrap on devvm-drill2 under a service with no HOME
+  ran the playbook clean (292 ok, 0 failed).
 - terminal-lobby is installed by its deploy pipeline on the live box; the
   bootstrap now installs it from the public registry after the playbook. All
   seven lobby units came up.
