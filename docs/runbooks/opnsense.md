@@ -83,6 +83,8 @@ A second EVE file, `eve-meta.json` (alert, DNS responses, TLS, HTTP), feeds Clic
 
 `ids/service/reconfigure` blocks while Suricata restarts with its rules (about 83,000 installed, 43,000 active), longer than the `uri` module's 30 second default, so that task has a 600 second timeout.
 
+Two trusted bulk flows never reach Suricata (kernel `bpf-filter` in `playbooks/files/opnsense/suricata-netsec-capture.yaml`, Viktor 2026-11-11): NFS to the Proxmox host (192.168.1.127, port 2049) and SSH between the devvm and the Proxmox host. Local bypass still copies every packet into Suricata before skipping it, and their bursts overflowed even the 32 MB buffer (0.46% missed per hour, e.g. 1.4M NFS packets and a 1.6 GB devvm-to-Proxmox SSH copy at 03:20 local). SSH to the host from anywhere else stays inspected.
+
 ## Squid (decryption for opted-in machines)
 
 os-squid decrypts HTTP and HTTPS only for the machines in alias `opted_in`, which is empty: the redirects in `nat_port_forwards.yml` match that alias alone, and Squid listens only on loopback (3128, 3129, and a plain 3130). The `squid` area installs the plugin, imports the interception root (certificate only) and intermediate (with its key from Vault) into System > Trust, writes the settings, the JSON access log (`/usr/local/etc/squid/post-auth/netsec-log.conf`), its rotation and syslog-ng tail, and the metrics cron. Opting a machine in, the no-bump list and CA renewal: `docs/runbooks/network-ids.md`, "Decryption (phase 5)".
