@@ -9,7 +9,9 @@
 #   3. Ensures the Forgejo push-mirror (sync_on_commit) + fires an initial sync.
 #   4. Registers the mirror in Woodpecker (github forge) → deploy repo id.
 #   4b. Sets the GitHub repo variable WOODPECKER_REPO_ID to that id (workflows
-#      that read `${{ vars.WOODPECKER_REPO_ID }}`, e.g. the app template's).
+#      that read `${{ vars.WOODPECKER_REPO_ID }}`, e.g. the app template's),
+#      and FORGEJO_REPO to <owner>/<name>, where the template's build pushes
+#      its semver tag.
 #   5. Renders .github/workflows/build.yml + .woodpecker/deploy.yml into the
 #      clone (skipped with --keep-workflows), removes the old in-cluster
 #      build pipeline.
@@ -68,9 +70,17 @@ run() { if [ "$DRY_RUN" = 1 ]; then echo "DRY: $*"; else "$@"; fi; }
 
 # --- credentials ---
 export VAULT_ADDR=${VAULT_ADDR:-https://vault.viktorbarzin.me}
-WP_TOKEN=$(vault kv get -field=woodpecker_api_token secret/ci/global)
-SLACK_WEBHOOK=$(vault kv get -field=slack_webhook secret/ci/global)
-GH_PAT=$(vault kv get -field=github_pat secret/viktor)
+# Admins read the originals. A non-admin who owns an app (emo) reads copies of
+# the same three values from ONBOARD_KV (docs/agents/new-app.md, "An app owned
+# by a non-admin"), which an admin re-seeds when a source rotates.
+ONBOARD_KV=secret/workstation/shared/app-onboarding
+kvf() { vault kv get -field="$1" "$2" 2>/dev/null; }
+WP_TOKEN=$(kvf woodpecker_api_token secret/ci/global || kvf woodpecker_api_token "$ONBOARD_KV") || { echo "cannot read the Woodpecker token (secret/ci/global or $ONBOARD_KV)" >&2; exit 1; }
+SLACK_WEBHOOK=$(kvf slack_webhook secret/ci/global || kvf slack_webhook "$ONBOARD_KV") || { echo "cannot read the Slack webhook (secret/ci/global or $ONBOARD_KV)" >&2; exit 1; }
+GH_PAT=$(kvf github_pat secret/viktor || kvf github_pat "$ONBOARD_KV") || { echo "cannot read the GitHub PAT (secret/viktor or $ONBOARD_KV)" >&2; exit 1; }
+# gh acts as the PAT's owner (ViktorBarzin) whoever runs this, so a user with
+# no gh login of their own can create the mirror under GH_OWNER.
+export GH_TOKEN=$GH_PAT
 # Forgejo token: from the clone's forgejo remote URL (the documented contract)
 FORGEJO_REMOTE=$(git -C "$CLONE" remote -v | awk -v h="$FORGEJO_HOST" '$2 ~ h && $3 == "(push)" {print $1; exit}')
 [ -n "$FORGEJO_REMOTE" ] || { echo "no forgejo remote in $CLONE" >&2; exit 1; }
@@ -78,6 +88,11 @@ FORGEJO_TOKEN=$(git -C "$CLONE" remote get-url "$FORGEJO_REMOTE" | sed -n 's#htt
 # Fallback: clones using the credential-store helper carry no token in the URL
 [ -n "$FORGEJO_TOKEN" ] || FORGEJO_TOKEN=$(sed -n "s#https://[^:]*:\([^@]*\)@$FORGEJO_HOST.*#\1#p" ~/.git-credentials 2>/dev/null | head -1)
 [ -n "$FORGEJO_TOKEN" ] || { echo "could not extract forgejo token (remote URL or ~/.git-credentials)" >&2; exit 1; }
+# The Forgejo owner comes from the remote too: viktor/<name>, or a non-admin's
+# own account (ebarzin/<name>), since only viktor can create repos under viktor.
+FORGEJO_OWNER=$(git -C "$CLONE" remote get-url "$FORGEJO_REMOTE" | sed -nE "s#.*$FORGEJO_HOST[/:]([^/]+)/[^/]+\$#\1#p")
+[ -n "$FORGEJO_OWNER" ] || { echo "could not read the Forgejo owner from the $FORGEJO_REMOTE remote URL" >&2; exit 1; }
+FORGEJO_REPO="$FORGEJO_OWNER/$NAME"
 
 FJ() { curl -sf --resolve "$FORGEJO_HOST:443:$FORGEJO_LB" -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' "$@"; }
 
@@ -105,7 +120,7 @@ if state=$(gh api "repos/$GH_OWNER/$NAME" --jq '{archived,private}' 2>/dev/null)
 else
   log "creating GitHub mirror repo ($VISIBILITY)"
   run gh repo create "$GH_OWNER/$NAME" "--$VISIBILITY" \
-    --description "One-way mirror of forgejo viktor/$NAME — do NOT commit here (ADR-0002)" >/dev/null
+    --description "One-way mirror of forgejo $FORGEJO_REPO — do NOT commit here (ADR-0002)" >/dev/null
 fi
 
 # --- 2) GHA secrets ---
@@ -117,16 +132,16 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 # --- 3) Forgejo push-mirror ---
-mirrors=$(FJ "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors" || echo '[]')
+mirrors=$(FJ "https://$FORGEJO_HOST/api/v1/repos/$FORGEJO_REPO/push_mirrors" || echo '[]')
 if printf '%s' "$mirrors" | jq -e --arg a "github.com/$GH_OWNER/$NAME" '.[] | select(.remote_address | contains($a))' >/dev/null 2>&1; then
   log "push-mirror already configured — SKIP"
 else
   log "creating push-mirror -> github.com/$GH_OWNER/$NAME (sync_on_commit)"
-  run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors" \
+  run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/$FORGEJO_REPO/push_mirrors" \
     -d "{\"remote_address\":\"https://github.com/$GH_OWNER/$NAME.git\",\"remote_username\":\"$GH_OWNER\",\"remote_password\":$(jq -Rn --arg p "$GH_PAT" '$p'),\"interval\":\"8h0m0s\",\"sync_on_commit\":true}" >/dev/null
 fi
 log "firing initial mirror sync"
-run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors-sync" >/dev/null || true
+run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/$FORGEJO_REPO/push_mirrors-sync" >/dev/null || true
 
 # --- 4) Woodpecker registration (github forge) ---
 if [ "$NO_DEPLOY" = 1 ]; then
@@ -170,6 +185,9 @@ if [ "$NO_DEPLOY" = 0 ]; then
   log "setting repo variable WOODPECKER_REPO_ID=$WP_REPO_ID"
   run gh variable set WOODPECKER_REPO_ID -R "$GH_OWNER/$NAME" --body "$WP_REPO_ID"
 fi
+# The app template's build pushes its semver tag to this Forgejo repo.
+log "setting repo variable FORGEJO_REPO=$FORGEJO_REPO"
+run gh variable set FORGEJO_REPO -R "$GH_OWNER/$NAME" --body "$FORGEJO_REPO"
 
 # --- 5) Render workflow + deploy files into the clone ---
 DEPLOY_CMDS=""

@@ -86,6 +86,45 @@ anonymously: add the namespace to `ghcr_private_namespaces` in
 `image_pull_secrets = ["ghcr-credentials"]` to the module and
 `--visibility private` to the script.
 
+## An app owned by a non-admin
+
+emo (tier `power-user`) builds and ships his own apps on this stack. Five
+things differ from the steps above.
+
+- **Repo.** Only viktor can create repos under `viktor`, so emo's app lives
+  under his own Forgejo account: "Use this template" on `viktor/app-template`
+  into `ebarzin/<slug>`. `offinfra-onboard` reads the owner from the clone's
+  Forgejo remote and sets the GitHub repo variable `FORGEJO_REPO`, which the
+  template's build uses for its tag push. The GitHub mirror is still
+  `ViktorBarzin/<slug>` and the image `ghcr.io/viktorbarzin/<slug>`.
+- **Secrets.** Seed them in his own tree, `secret/emo/apps/<slug>`, and pass
+  `vault_kv_name = "emo/apps/<slug>"` to the module. ESO and CI read
+  `secret/*`, so this needs no Vault policy change.
+- **Owner and admin.** Look him up with
+  `data "authentik_user" "emo" { username = "emil.barzin@gmail.com" }` and
+  put `data.authentik_user.emo.id` in `initial_user_pks` and
+  `admin_user_pks`.
+- **Applying.** He pushes infra `master` and CI applies dbaas, vault and the
+  new stack, as for any of his infra changes.
+- **CI wiring.** `offinfra-onboard` falls back to Vault
+  `secret/workstation/shared/app-onboarding` when it cannot read
+  `secret/ci/global` and `secret/viktor`. That path holds copies of Viktor's
+  GitHub PAT, the Woodpecker API token and the CI Slack webhook, and emo reads
+  it through the `projects-emo` policy (`stacks/vault/main.tf`). The PAT acts
+  as Viktor on every repo of his GitHub account; Viktor chose to hand it over
+  on 2026-11-11. It sits outside `secret/ci/` because `woodpecker-sync`
+  copies everything there into Woodpecker.
+
+The copies do not follow a rotation. After `github_pat` or
+`woodpecker_api_token` changes, an admin re-seeds them:
+
+```sh
+vault kv patch secret/workstation/shared/app-onboarding \
+  github_pat="$(vault kv get -field=github_pat secret/viktor)" \
+  woodpecker_api_token="$(vault kv get -field=woodpecker_api_token secret/ci/global)" \
+  slack_webhook="$(vault kv get -field=slack_webhook secret/ci/global)"
+```
+
 ## Files
 
 An app that stores files mounts a PVC with the module's `volumes` variable,

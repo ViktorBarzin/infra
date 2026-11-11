@@ -96,7 +96,7 @@
 # 2026-08-17, which its deploy installed over the generated one.
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin, t3_port: 3773, t3_host: t3}                                          # base config author + cluster-admin
-  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, code_layout: workspace, repos: [tv, ebarzin/agents], agents_repo: ebarzin/agents, t3_port: 3774, t3_host: t3-emo}  # NET-NEW k8s_users entry (add as power-user before provisioning)
+  emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user, code_layout: workspace, repos: [tv, ebarzin/agents, app-kit], agents_repo: ebarzin/agents, t3_port: 3774, t3_host: t3-emo}  # NET-NEW k8s_users entry (add as power-user before provisioning)
   #  tv (then f1-stream) added 2026-10-18 (Viktor: emo maintains it with him); the
   #  entry follows the 2026-11-01 rename to viktor/tv. He is an admin collaborator
   #  on Forgejo viktor/tv, granted through the API like his infra write access; the
@@ -104,6 +104,8 @@ users:
   #  ebarzin/agents added 2026-11-03, when the ~/code monorepo was dissolved: his
   #  AGENTS.md moved from its docs/agents/users/emo/ to this private repo, which
   #  he owns (Forgejo login ebarzin) and viktor is a collaborator on.
+  #  app-kit added 2026-11-11 (Viktor: emo builds new apps on the default
+  #  stack), so the org policy's ~/code/app-kit/docs/stack.md exists for him.
 # ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit, anca/agents], agents_repo: anca/agents, parked: true}
   #  REMOVED 2026-08-17 (Viktor: "remove anca from t3 users") -- the reversible
   #  cut from docs/runbooks/offboard-user.md part A1, one step past the parking of
