@@ -44,7 +44,8 @@ locals {
     trimspace(k) if startswith(trimspace(k), "ssh-")
   ]
 
-  # Drills: a VM with its own name, VMID and address below VLAN 10's DHCP pool
+  # Drills: a VM with its own name, a VMID in 9100-9109 (the slots the token is
+  # granted; anything else gets 403 at create) and an address below VLAN 10's DHCP pool
   # (.100-.254). Smaller than the live devvm by default so it fits the host's
   # RAM headroom; check `free -g` on the host first (runbook). Everything not
   # set here is the live devvm's shape (module defaults).
