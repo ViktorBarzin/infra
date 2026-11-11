@@ -136,6 +136,10 @@ How to read it
   dns_queries  pod DNS lookups logged by node-local-dns, sent by Alloy over OTLP.
                client_ip is the pod; name it with kube_pod_info.
   tetragon     process starts and outbound connects from k8s nodes.
+  technitium   every Sofia DNS lookup Technitium answered: home LAN (192.168.1.x),
+               VLAN 10 and 20, pods via CoreDNS. response and blocked say whether
+               it was blocked. The only source for the home LAN and VLAN 20
+               hosts. Copied from Technitium's Postgres every 5 minutes.
   *_hourly     one row per hour and key, kept forever, filled by materialized
                views from the raw table of the same name (eve_* from eve).
                SummingMergeTree: a key can sit in several rows until a merge,
@@ -157,6 +161,10 @@ Examples
   -- alerts by signature today
   SELECT signature, count() n FROM netsec.eve
   WHERE event_type = 'alert' AND ts > today() GROUP BY signature ORDER BY n DESC
+
+  -- which home devices looked up a name, and whether Technitium blocked it
+  SELECT toString(client_ip) c, response, sum(n) n FROM netsec.technitium_hourly
+  WHERE qname = 'example.com' GROUP BY c, response ORDER BY n DESC
 
   -- long range: bytes per month to an address, from the rollup
   SELECT toStartOfMonth(hour) m, sum(bytes) b FROM netsec.flows_hourly

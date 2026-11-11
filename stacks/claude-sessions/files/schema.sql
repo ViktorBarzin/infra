@@ -701,3 +701,55 @@ SELECT toStartOfHour(ts) AS hour, node, event_type, namespace, binary, dst_ip, d
 FROM netsec.tetragon
 WHERE ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
 GROUP BY ALL;
+
+-- Technitium query log (Sofia DNS: home LAN, VLAN 10 and 20, pods through
+-- CoreDNS), copied from Postgres technitium.dns_logs by the netsec-technitium
+-- CronJob (stacks/netsec, files/technitium_pull.sql). The only netsec source
+-- for the home LAN and for VLAN 20 hosts, whose lookups never cross OPNsense,
+-- and the only one that knows whether a lookup was blocked. 365 days; Postgres
+-- keeps its own 90 days for Grafana and dns-digest.
+CREATE TABLE IF NOT EXISTS netsec.technitium
+(
+    ts           DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    dlid         UInt64,
+    instance     LowCardinality(String),
+    server       LowCardinality(String),
+    client_ip    IPv6,
+    protocol     LowCardinality(String),
+    response     LowCardinality(String),
+    blocked      Bool,
+    rcode        LowCardinality(String),
+    qname        String,
+    qtype        LowCardinality(String),
+    response_rtt Float32,
+    answer       String CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (toStartOfHour(ts), client_ip, ts)
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- Technitium lookups per hour, client and name. Fills on every insert: the
+-- pull job is the only writer and never inserts a dlid twice, so no cutoff.
+CREATE TABLE IF NOT EXISTS netsec.technitium_hourly
+(
+    hour      DateTime('UTC'),
+    instance  LowCardinality(String),
+    client_ip IPv6,
+    qname     String,
+    qtype     LowCardinality(String),
+    rcode     LowCardinality(String),
+    response  LowCardinality(String),
+    n         UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, qname, qtype, rcode, response, instance);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.technitium_hourly_mv TO netsec.technitium_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, instance, client_ip, qname, qtype, rcode, response, count() AS n
+FROM netsec.technitium
+GROUP BY ALL;

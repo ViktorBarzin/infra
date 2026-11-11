@@ -364,6 +364,145 @@ resource "kubernetes_config_map" "alerts" {
   }
 }
 
+# netsec-technitium: every 5 minutes, copies new rows of Technitium's Postgres
+# query log (technitium.dns_logs) into netsec.technitium, so the home LAN and
+# VLAN 20, whose lookups never cross OPNsense, are in ClickHouse too. The
+# query runs on the ClickHouse server through postgresql(); this pod only
+# sends it. Script and query: files/technitium_pull.{sh,sql}.
+resource "kubernetes_manifest" "technitium_pg" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "netsec-technitium-pg"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "netsec-technitium-pg"
+      }
+      data = [{
+        # Vault static role pg-technitium, the same one Grafana and
+        # dns-digest read; each run reads the current password.
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-technitium"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.netsec]
+}
+
+resource "kubernetes_config_map" "technitium_pull" {
+  metadata {
+    name      = "netsec-technitium"
+    namespace = kubernetes_namespace.netsec.metadata[0].name
+  }
+  data = {
+    "technitium_pull.sh"  = file("${path.module}/files/technitium_pull.sh")
+    "technitium_pull.sql" = file("${path.module}/files/technitium_pull.sql")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "technitium_pull" {
+  metadata {
+    name      = "netsec-technitium"
+    namespace = kubernetes_namespace.netsec.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/5 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit           = 0
+        active_deadline_seconds = 240
+        template {
+          metadata {
+            labels = {
+              app = "netsec-technitium"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "pull"
+              image   = "clickhouse/clickhouse-server:26.10.3.7"
+              command = ["/bin/bash", "/scripts/technitium_pull.sh"]
+              env {
+                name  = "CH_HOST"
+                value = "clickhouse.claude-sessions.svc.cluster.local"
+              }
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
+              }
+              env {
+                name = "NETSEC_WRITER_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "netsec-secrets"
+                    key  = "netsec_writer_password"
+                  }
+                }
+              }
+              env {
+                name = "PG_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "netsec-technitium-pg"
+                    key  = "password"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "scripts"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+            volume {
+              name = "scripts"
+              config_map {
+                name = kubernetes_config_map.technitium_pull.metadata[0].name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.technitium_pg]
+}
+
 resource "kubernetes_cron_job_v1" "alerts" {
   metadata {
     name      = "netsec-alerts"
