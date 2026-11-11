@@ -14,12 +14,16 @@ package main
 //	                   that holds a secret, header line to the next header, as it is live
 //
 // capture reads the live files and merges into that secret (an entry captured
-// now replaces the one before; one the files no longer have stays, unused).
+// now replaces the one before; one the files no longer have stays, unused),
+// and records a digest of each entry it read in ~/.claude/mcp-captured.json,
+// so the ingest can warn about a secret added or rotated after the capture.
 // fill puts the secrets back into a restored file: an entry is replaced by
 // its Vault copy only when it is exactly what the store's redaction makes of
 // that copy, so a file on the live box, whose entries still hold their
 // secrets, is never touched, and an entry that changed since the capture is
-// reported instead of guessed at. Values are never printed.
+// reported instead of guessed at, as is an entry Vault keeps that the file
+// lacks. A file is written only over the copy fill read; one that changed
+// meanwhile is read again. Values are never printed.
 //
 // Both need a Vault token that can read secret/workstation/<user> (an
 // admin's). Run as root, they read the user's files and write as the user
@@ -30,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -452,6 +457,17 @@ func readHomeFile(home, rel string) ([]byte, error) {
 	return b, nil
 }
 
+// mcpFillBeforeWrite runs between computing a filled file and writing it;
+// tests use it to change the file under fill, as a claude session can.
+var mcpFillBeforeWrite = func(rel string) {}
+
+// sameVersion reports whether two stats are of one unchanged file: a claude
+// session rewrites ~/.claude.json by rename (a new inode) or in place (a new
+// mtime or size).
+func sameVersion(a, b fs.FileInfo) bool {
+	return os.SameFile(a, b) && a.ModTime().Equal(b.ModTime()) && a.Size() == b.Size()
+}
+
 func fillMCPSecrets(kv mcpKV, user, home string, w homeWriter) (fillResult, error) {
 	var res fillResult
 	c, codex, found, err := readMCPSecrets(kv, user)
@@ -460,35 +476,171 @@ func fillMCPSecrets(kv mcpKV, user, home string, w homeWriter) (fillResult, erro
 	}
 	type job struct {
 		rel  string
-		fill func([]byte) ([]byte, bool, error)
+		fill func([]byte, *fillResult) ([]byte, bool, error)
 	}
 	for _, j := range []job{
-		{claudeJSONRel, func(b []byte) ([]byte, bool, error) { return fillClaudeJSON(b, c, &res) }},
-		{codexConfigRel, func(b []byte) ([]byte, bool, error) { out, ch := fillCodexTOML(b, codex, &res); return out, ch, nil }},
+		{claudeJSONRel, func(b []byte, r *fillResult) ([]byte, bool, error) { return fillClaudeJSON(b, c, r) }},
+		{codexConfigRel, func(b []byte, r *fillResult) ([]byte, bool, error) {
+			out, ch := fillCodexTOML(b, codex, r)
+			return out, ch, nil
+		}},
 	} {
-		b, err := readHomeFile(home, j.rel)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return res, err
-		}
-		out, changed, err := j.fill(b)
-		if err != nil {
-			return res, err
-		}
-		if !changed {
-			continue
-		}
-		fi, err := os.Lstat(filepath.Join(home, filepath.FromSlash(j.rel)))
-		if err != nil {
-			return res, err
-		}
-		if err := w.write(home, j.rel, fi.Mode().Perm(), out); err != nil {
-			return res, err
+		p := filepath.Join(home, filepath.FromSlash(j.rel))
+		for attempt := 1; ; attempt++ {
+			before, err := os.Lstat(p)
+			if errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return res, err
+			}
+			b, err := readHomeFile(home, j.rel)
+			if err != nil {
+				return res, err
+			}
+			var part fillResult
+			out, changed, err := j.fill(b, &part)
+			if err != nil {
+				return res, err
+			}
+			if changed {
+				// The file may have moved on since it was read: write only
+				// over the copy the fill was computed from, else start over.
+				mcpFillBeforeWrite(j.rel)
+				if now, err := os.Lstat(p); err != nil || !sameVersion(before, now) {
+					if attempt == 3 {
+						return res, fmt.Errorf("%s kept changing while fill worked on it: run fill again", j.rel)
+					}
+					continue
+				}
+				if err := w.write(home, j.rel, before.Mode().Perm(), out); err != nil {
+					return res, err
+				}
+			}
+			res.Filled = append(res.Filled, part.Filled...)
+			res.Differ = append(res.Differ, part.Differ...)
+			res.Absent = append(res.Absent, part.Absent...)
+			break
 		}
 	}
 	return res, nil
+}
+
+// reportFill prints what fill did, names only. Quiet when there is nothing
+// to do: provisioning runs fill once per rebuilt user and logs every line.
+func reportFill(out io.Writer, who string, res fillResult) {
+	for _, f := range res.Filled {
+		fmt.Fprintf(out, "mcp-secrets fill user=%s: secrets put back: %s\n", who, f)
+	}
+	for _, d := range res.Differ {
+		fmt.Fprintf(out, "mcp-secrets fill user=%s: WARN the restored entry differs from the Vault copy, fill by hand: %s\n", who, d)
+	}
+	for _, a := range res.Absent {
+		fmt.Fprintf(out, "mcp-secrets fill user=%s: WARN kept in Vault but not in the file, add it back by hand: %s\n", who, a)
+	}
+}
+
+// ---- drift between the live files and the last capture ---------------------------
+
+// mcpCapturedName is the file in ~/.claude where capture records a SHA-256
+// of each secret-bearing entry it stored: {"entries": {label: sha256}}. The
+// ingest compares the live entries with it (uncapturedMCPEntries), so a
+// secret added or rotated after the capture shows up before a rebuild puts
+// back the old one. It holds digests of high-entropy tokens, never a value,
+// and the session store keeps and restores it with the rest of ~/.claude.
+const mcpCapturedName = "mcp-captured.json"
+
+type mcpCaptured struct {
+	About   string            `json:"about"`
+	Entries map[string]string `json:"entries"`
+}
+
+// liveMCPDigests is label -> SHA-256 of every MCP server entry in the home's
+// ~/.claude.json and ~/.codex/config.toml that holds a secret, labelled as
+// mcp-secrets list names them.
+func liveMCPDigests(home string) (map[string]string, error) {
+	out := map[string]string{}
+	if b, err := readHomeFile(home, claudeJSONRel); err == nil {
+		var all map[string]any
+		if err := json.Unmarshal(b, &all); err != nil {
+			return nil, fmt.Errorf("%s does not parse: %w", claudeJSONRel, err)
+		}
+		add := func(servers any, prefix string) {
+			m, _ := servers.(map[string]any)
+			for name, e := range m {
+				if _, changed := stripEntry(name, e); changed {
+					j, _ := json.Marshal(e)
+					out[claudeJSONRel+" "+prefix+name] = contentSum(j)
+				}
+			}
+		}
+		add(all["mcpServers"], "mcpServers.")
+		projects, _ := all["projects"].(map[string]any)
+		for dir, pv := range projects {
+			p, _ := pv.(map[string]any)
+			add(p["mcpServers"], "projects["+dir+"].mcpServers.")
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	if b, err := readHomeFile(home, codexConfigRel); err == nil {
+		for _, blk := range splitTOMLBlocks(b) {
+			if _, changed := stripTOML(blk.body()); changed {
+				h := blk.header
+				if h == "" {
+					h = "(top level)"
+				}
+				out[codexConfigRel+" "+h] = contentSum([]byte(blk.body()))
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	return out, nil
+}
+
+// writeCaptureDigests records the live secret-bearing entries as captured.
+// A home without ~/.claude gets no record.
+func writeCaptureDigests(home string, w homeWriter) error {
+	d, err := liveMCPDigests(home)
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Lstat(filepath.Join(home, ".claude")); err != nil || !fi.IsDir() {
+		return nil
+	}
+	b, err := json.MarshalIndent(mcpCaptured{
+		About:   "SHA-256 of each MCP server entry whose secrets `homelab claude-sessions mcp-secrets capture` stored in Vault; the claude-sessions ingest warns about entries that differ.",
+		Entries: d,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return w.write(home, ".claude/"+mcpCapturedName, 0o600, append(b, '\n'))
+}
+
+// uncapturedMCPEntries names the live secret-bearing entries that the last
+// capture did not store as they are now: new, rotated, or never captured.
+func uncapturedMCPEntries(home string) ([]string, error) {
+	live, err := liveMCPDigests(home)
+	if err != nil || len(live) == 0 {
+		return nil, err
+	}
+	var rec mcpCaptured
+	if b, err := readHomeFile(home, ".claude/"+mcpCapturedName); err == nil {
+		if err := json.Unmarshal(b, &rec); err != nil {
+			return nil, fmt.Errorf("%s does not parse: %w", mcpCapturedName, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	var names []string
+	for _, l := range sortedKeys(live) {
+		if rec.Entries[l] != live[l] {
+			names = append(names, l)
+		}
+	}
+	return names, nil
 }
 
 // ---- Vault through the CLI ------------------------------------------------------
@@ -539,10 +691,12 @@ func (vaultCLI) put(p string, data map[string]string) error {
 const mcpSecretsUsage = `usage: homelab claude-sessions mcp-secrets (capture | fill | list) --user <name> [--home <dir>]
   capture  store the MCP server secrets of the user's live ~/.claude.json and ~/.codex/config.toml
            in Vault (secret/workstation/<user>/mcp), merged into what is there; refuses a file that
-           still holds <redacted>
+           still holds <redacted>. Records a digest of each entry in ~/.claude/mcp-captured.json,
+           from which the ingest warns about entries added or changed since
   fill     put them back into a restored, redacted copy of those files; touches only entries that
-           are exactly what the session store made of the Vault copy, so live files are left alone
-           (t3-provision-users runs it on every pass that holds an admin Vault token)
+           are exactly what the session store made of the Vault copy, and warns, by name, about
+           entries that differ or that Vault has and the file lacks (t3-provision-users runs it once
+           per rebuilt user, on the first pass that holds an admin Vault token)
   list     the entries kept in Vault, names only
   --home   another directory instead of the user's home, such as a drill restore
 Needs a Vault token that reads secret/workstation/<user> (VAULT_TOKEN or ~/.vault-token).
@@ -602,6 +756,10 @@ func claudeSessionsMCPSecrets(args []string) error {
 		return fmt.Errorf("%s is not a directory", home)
 	}
 	owner := strconv.FormatUint(uint64(fi.Sys().(*syscall.Stat_t).Uid), 10)
+	w, err := mcpHomeWriter(who, u, home, owner)
+	if err != nil {
+		return err
+	}
 	if verb == "capture" {
 		names, err := captureMCPSecrets(kv, who, home)
 		if err != nil {
@@ -615,24 +773,27 @@ func claudeSessionsMCPSecrets(args []string) error {
 		for _, n := range names {
 			fmt.Fprintf(os.Stderr, "  %s\n", n)
 		}
+		if err := writeCaptureDigests(home, w); err != nil {
+			return fmt.Errorf("stored in Vault, but ~/.claude/%s was not written, so the ingest keeps warning: %w", mcpCapturedName, err)
+		}
 		return nil
 	}
-	var w homeWriter = directWriter{}
+	res, err := fillMCPSecrets(kv, who, home, w)
+	reportFill(os.Stderr, who, res)
+	return err
+}
+
+// mcpHomeWriter writes into home as its owner: directly when that is the
+// caller, through runuser when root works on a user's directory.
+func mcpHomeWriter(who string, u *user.User, home, owner string) (homeWriter, error) {
 	if os.Geteuid() == 0 && owner != "0" {
 		if owner != u.Uid {
-			return fmt.Errorf("%s belongs to uid %s, not %s: as root, fill only a directory the user owns", home, owner, who)
+			return nil, fmt.Errorf("%s belongs to uid %s, not %s: as root, work only in a directory the user owns", home, owner, who)
 		}
-		w = userWriter{user: who}
-	} else if strconv.Itoa(os.Geteuid()) != owner {
-		return fmt.Errorf("%s is not yours: fill another user's home as root", home)
+		return userWriter{user: who}, nil
 	}
-	res, err := fillMCPSecrets(kv, who, home, w)
-	// Quiet when there is nothing to do: provisioning runs this every pass.
-	for _, f := range res.Filled {
-		fmt.Fprintf(os.Stderr, "mcp-secrets fill user=%s: secrets put back: %s\n", who, f)
+	if strconv.Itoa(os.Geteuid()) != owner {
+		return nil, fmt.Errorf("%s is not yours: work on another user's home as root", home)
 	}
-	for _, d := range res.Differ {
-		fmt.Fprintf(os.Stderr, "mcp-secrets fill user=%s: WARN the restored entry differs from the Vault copy, fill by hand: %s\n", who, d)
-	}
-	return err
+	return directWriter{}, nil
 }

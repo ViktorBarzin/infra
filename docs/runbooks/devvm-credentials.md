@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys`, `install_mcp_tools`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`)
 
 ## What is kept where
 
@@ -224,12 +224,39 @@ secret path, are blanked. Their kept place is one KV secret per user,
 `secret/workstation/<user>/mcp`, written by `homelab claude-sessions
 mcp-secrets capture` and read back by `mcp-secrets fill`
 (`docs/architecture/claude-session-store.md`). Provisioning step 4a2
-(`fill_mcp_secrets`) runs the fill for every roster user on a pass that holds
-an admin token, after their session-store restore; on the live box it changes
-nothing.
+(`fill_mcp_secrets`) runs the fill once per roster user per box: on the first
+pass that holds an admin token after their session-store restore. A marker,
+`/var/lib/claude-sessions-ingest/mcp-filled/<user>`, records that it ran, so a
+later pass cannot put back a secret the user has removed since. A failed fill
+leaves no marker and runs again on the next admin pass. To fill a user again
+by hand, delete their marker or run `mcp-secrets fill` yourself. Fill prints a
+`WARN` line, by name, for an entry that differs from the Vault copy and for
+one Vault keeps that the file lacks (a server lost to the `~/.claude.json`
+clobber race); both go back by hand.
+
+Step 4a3 (`install_mcp_tools`) installs the home-local programs a restored
+config starts, as the user, pinned, and only when the config names them and
+they are absent: uv 0.11.19 into `~/.local/bin` (wizard's `google_workspace`
+server runs `~/.local/bin/uvx workspace-mcp`) and the phpipam MCP server
+0.2.1, with the exact packages of the live venv, into
+`~/.local/share/phpipam-mcp` (wizard's Codex `phpipam` server). The
+`google_workspace` OAuth files are credential files in Vault
+(`secret/workstation/wizard/files`, stored 2026-11-11):
+`.config/google-drive-mcp/gcp-oauth.keys.json` and
+`.google_workspace_mcp/credentials/vbarzin@gmail.com.json`. The second
+holds the refresh token. When Google is re-authorised (`start_google_auth`),
+capture it again with `workstation-creds capture wizard
+'.google_workspace_mcp/credentials/vbarzin@gmail.com.json'`.
 
 Capture again after adding an MCP server with a secret or rotating one. It
-merges, and refuses a file that still holds `<redacted>`:
+merges, and refuses a file that still holds `<redacted>`. It also writes a
+SHA-256 of each entry it stored to `~/.claude/mcp-captured.json`. The
+ingest compares the live entries with that file every 15 minutes and logs
+`claude-sessions-ingest WARN user=<u>: N MCP server entries ...` naming the
+new or changed ones. The count is the metric
+`claude_sessions_ingest_mcp_entries_uncaptured`, and the alert
+`ClaudeSessionsMCPSecretsUncaptured` fires once it has stayed above 0 for
+6 hours. The ingest has no Vault access, so it can only point at a capture:
 
 ```bash
 homelab claude-sessions mcp-secrets capture --user wizard     # your own files, your ~/.vault-token
@@ -249,6 +276,19 @@ live files, `claude mcp list` there showed every server `Connected`, and
 `claude` in a trusted folder (`~/code/infra`, `/home/emo/code`) opened
 straight to the prompt, with no onboarding and no trust question. A fill on
 the live homes printed nothing and changed nothing.
+
+Captured again at 23:42 with the digest file (same entries), and checked
+as a rebuild in a private mount namespace on the live box. Empty tmpfs
+mounts hid wizard's `~/.local/bin`, `~/.local/share/{uv,phpipam-mcp}`,
+`~/.cache/uv` and both Google folders. In that state `install_mcp_tools
+wizard` installed uv and the phpipam server, and `workstation-creds
+restore` brought the two Google files back from Vault. `restore --path`
+and `fill` gave a HOME whose `claude mcp list` showed `google_workspace`
+and `playwright` `Connected`. A `claude -p` call to `list_calendars`, with
+only the restored `google_workspace` entry, returned calendars, and the new
+phpipam server answered an MCP `initialize`. A first install without the
+venv pins failed: a fresh resolve brings a version that the 0.2.1 server
+cannot import.
 
 ## Add or refresh a credential
 

@@ -120,7 +120,11 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   (statusLine, enabledPlugins, env flags) with the memory keys filled from
   Vault, not a hooks-only skeleton. `jq '.mcpServers | keys' ~/.claude.json` lists the
   user's MCP servers, `claude mcp list` shows them connected after the admin
-  run's `mcp-secrets fill`, and `claude` in a project the user trusted on the
+  run's `mcp-secrets fill` (`sudo ls /var/lib/claude-sessions-ingest/mcp-filled/`
+  lists each user it ran for), wizard's `~/.local/bin/uvx` and
+  `~/.local/share/phpipam-mcp/bin/phpipam-mcp-server` exist (step 4a3), a
+  `google_workspace` tool call such as `list_calendars` returns data, and
+  `claude` in a project the user trusted on the
   live box starts without the trust prompt. The drill must read the store and never
   write to it: no `/etc/claude-sessions/ingest.env`,
   `claude-sessions-ingest.timer` disabled, and after the drill no rows from
@@ -193,7 +197,8 @@ comes back:
    `sudo systemctl start claude-sessions-ingest.service`; both journals end
    with a success line. Re-capture any credential rotated since its last
    capture (`devvm-credentials.md`, "Add or refresh a credential"), and each
-   user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets").
+   user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets");
+  `journalctl -u claude-sessions-ingest -n 1` shows `mcp_uncaptured=0`.
 3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
@@ -469,6 +474,11 @@ Gaps it found, none fixed in the drill itself:
   `secret/workstation/<user>/mcp` in provisioning step 4a2
   (`claude-session-store.md`). Checked on the live box into scratch homes
   (`devvm-credentials.md`, "MCP server secrets"); not yet drilled on a VM.
+  A review then found that `google_workspace` and the Codex `phpipam`
+  server start programs under `~/.local` and read OAuth files that nothing
+  kept. Step 4a3 now installs those programs, the OAuth files are in Vault,
+  and a mount-namespace check with all of them hidden got calendars back
+  through the restored config.
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
   group is root-equivalent. Viktor decided he keeps it: his row has
