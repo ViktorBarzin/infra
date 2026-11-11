@@ -426,6 +426,54 @@
       when: not (ansible_check_mode and pve_csi_leak_units is changed)
       tags: csi-leak
 
+    # ---- ha-london network backups ---------------------------------------------
+    # Home Assistant in London writes its automatic backups through Supervisor
+    # network storage to /srv/nfs/ha-london-backup, exported by
+    # scripts/pve-nfs-exports (that line needs this directory to exist first).
+    # nfs-mirror and offsite-sync then carry it to sda and the Synology like
+    # any other /srv/nfs subtree. ha-london-backup-status reports the newest
+    # archive's age hourly; HaLondonBackupStale pages on it.
+    # docs/architecture/london-site.md, "Backups".
+    - name: Create the ha-london backup directory
+      ansible.builtin.file:
+        path: /srv/nfs/ha-london-backup
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install ha-london-backup-status
+      ansible.builtin.copy:
+        src: files/pve/ha-london-backup-status
+        dest: /usr/local/bin/ha-london-backup-status
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install the ha-london-backup-status unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - ha-london-backup-status.service
+        - ha-london-backup-status.timer
+      register: pve_ha_london_backup_units
+      tags: ha-london-backup
+
+    - name: Enable the ha-london-backup-status timer
+      ansible.builtin.systemd:
+        name: ha-london-backup-status.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_ha_london_backup_units is changed }}"
+      when: not (ansible_check_mode and pve_ha_london_backup_units is changed)
+      tags: ha-london-backup
+
     # ---- drive SMART -----------------------------------------------------------
     # Nothing read the physical drives' own SMART data until 2026-11-09; the
     # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads

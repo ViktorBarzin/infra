@@ -52,8 +52,36 @@ Tested on 2026-11-08 against a full plus an incremental: the restored counts mat
    PY
    ```
 
-   Side files (`claude.files`) are replaced by path, so re-sending them is harmless; they are absent from the rebuilt state and get sent again.
+   Side files (`claude.files`) are replaced by path, so re-sending them is harmless; they are absent from the rebuilt state and get sent again. The same holds for `claude.home_files` and `claude.home_lines`: both are `ReplacingMergeTree` keyed by path (and offset), so their files are sent again in full and the duplicates merge away. A re-sent `.jsonl` home file gets a new generation, and restore reads only the newest one.
 4. Start the timer again: `sudo systemctl start claude-sessions-ingest.timer`. Lines written after the backup are recovered as long as the local transcripts still hold them (kept 180 days).
+
+## Restore a user's ~/.claude and ~/.codex
+
+After a devvm rebuild, `homelab claude-sessions restore` writes a user's agent
+state back from the store: transcripts and subagent transcripts, tool results,
+prompt history, plans, tasks, teams, todos, file-history, workflows, Codex
+sessions and the settings files. Files that already exist are kept unless
+`--force`. Credentials are not in the store; they come from Vault. Admins only
+(it uses `/etc/claude-sessions/reader.env`).
+
+```sh
+# your own home, as yourself
+homelab claude-sessions restore --user wizard --to "$HOME"
+# another user's home: build the tar as an admin, extract it as that user, so
+# root never writes into a directory the user controls
+homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar -x --skip-old-files -C /home/emo
+# one session only, into a scratch HOME, to look at it
+homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
+```
+
+A settings file whose secrets were redacted at ingest comes back as
+`<name>.from-store` (for example `.claude/settings.json.from-store`), never over
+the real name; the command lists them. Merge by hand, or let provisioning write
+the real file. Files over 32 MiB were stored without content and are counted as
+`omitted`.
+
+Tested on 2026-11-11: one of wizard's sessions (1,248 lines and two subagents)
+came back byte for byte, and `claude --resume` in a temporary HOME listed it.
 
 ## netsec rollups
 

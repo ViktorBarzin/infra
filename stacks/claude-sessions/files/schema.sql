@@ -125,6 +125,46 @@ CREATE TABLE IF NOT EXISTS claude.files
 ENGINE = ReplacingMergeTree(mtime)
 ORDER BY (os_user, session_id, path);
 
+-- The rest of ~/.claude and ~/.codex (docs/plans/2026-11-11-disposable-devvm.md):
+-- what `homelab claude-sessions restore` writes back after a rebuild.
+-- Credentials and caches are never sent; settings files arrive with secret
+-- values replaced (redacted = 1). path is relative to the home directory.
+-- Whole files, replaced when they change: plans, tasks, teams, todos,
+-- file-history, settings, remote/ logs, Codex config and databases.
+-- encoding: text | base64 (not UTF-8) | omitted (over 32 MiB, no content).
+CREATE TABLE IF NOT EXISTS claude.home_files
+(
+    os_user     LowCardinality(String),
+    path        String,
+    kind        LowCardinality(String),
+    mtime       DateTime64(3, 'UTC'),
+    mode        UInt32,
+    size        UInt64,
+    encoding    LowCardinality(String),
+    redacted    Bool,
+    content     String CODEC(ZSTD(3)),
+    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (os_user, path);
+
+-- Append-only .jsonl files outside the transcripts (history.jsonl, Codex
+-- rollouts and session_index.jsonl), one row per line like claude.lines.
+-- generation changes when the file is read again from the start (replaced
+-- or truncated); restore uses the newest generation only.
+CREATE TABLE IF NOT EXISTS claude.home_lines
+(
+    os_user     LowCardinality(String),
+    path        String,
+    generation  String,
+    byte_offset UInt64,
+    mtime       DateTime64(3, 'UTC'),
+    raw         String CODEC(ZSTD(3)),
+    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (os_user, path, generation, byte_offset);
+
 -- One row per API request. Claude Code writes one transcript line per content
 -- block and repeats the message's usage on each, so token sums must come from
 -- here, never from summing lines (that inflates them about 2.5x).
