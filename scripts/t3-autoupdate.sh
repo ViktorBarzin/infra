@@ -180,7 +180,15 @@ LOG "health gate passed for $target and $T3_LINK now points at it; canary-restar
 
 # ---- 6. canary rollout: idle instances one-by-one, verify pairing after each ----
 restarted=0; deferred=0
-for unit in $(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' 2>/dev/null | awk '{print $1}'); do
+# The serves run $T3_SERVE_LINK. Restarting them after a scratch-link bump
+# would test nothing and interrupt real users, so a scratch run skips them.
+units=""
+if scratch_link; then
+  LOG "not restarting t3-serve@ units: they run $T3_SERVE_LINK, not the scratch link $T3_LINK"
+else
+  units="$(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' 2>/dev/null | awk '{print $1}')"
+fi
+for unit in $units; do
   u="$(printf '%s' "$unit" | sed -n 's/^t3-serve@\(.*\)\.service$/\1/p')"; [ -n "$u" ] || continue
   if unit_busy "$unit"; then
     LOG "deferring $unit (active agent) — migrates on its next idle restart"
