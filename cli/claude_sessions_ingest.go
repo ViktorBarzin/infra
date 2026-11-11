@@ -465,10 +465,16 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 	return st, saveState(cfg.StatePath, state)
 }
 
+// hasAgentDirs reports whether home has a ~/.claude or ~/.codex with
+// anything in it, the users worth counting as waiting.
 func hasAgentDirs(home string) bool {
 	for _, r := range homeRoots {
-		if fi, err := os.Lstat(filepath.Join(home, r)); err == nil && fi.IsDir() {
-			return true
+		if d, err := os.Open(filepath.Join(home, r)); err == nil {
+			names, _ := d.Readdirnames(1)
+			d.Close()
+			if len(names) > 0 {
+				return true
+			}
 		}
 	}
 	return false

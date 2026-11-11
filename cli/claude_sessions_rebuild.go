@@ -3,7 +3,8 @@ package main
 // `homelab claude-sessions restore --rebuild`: the session store's half of a
 // devvm rebuild (docs/plans/2026-11-11-disposable-devvm.md).
 //
-// t3-provision-users runs it as root for every roster user on every pass.
+// t3-provision-users runs it as root for every account with a home under
+// /home (the roster users, breakglass) on every pass.
 // Once per user and box it writes the user's stored ~/.claude and ~/.codex
 // into their home (as the user, through runuser and tar --skip-old-files),
 // then records every file it wrote in the ingest state as already sent, and

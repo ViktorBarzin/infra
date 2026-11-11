@@ -1917,8 +1917,10 @@ restore_agent_state() {  # restore_agent_state USER
     log "WARN: agent state restore failed for $user: $(tail -n 1 <<<"$out")"
   fi
 }
-for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
-  id "$u" >/dev/null 2>&1 && restore_agent_state "$u"
+# Every account with a home under /home, not only the roster's: the ingest
+# reads every home (breakglass too), and waits for each one's marker.
+for u in $( { jq -r '.accounts[].os_user' "$desired_file"; for h in /home/*/; do basename "$h"; done; } | sort -u); do
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && restore_agent_state "$u"
 done
 # --- end session-store ---
 
