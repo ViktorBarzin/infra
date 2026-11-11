@@ -10,8 +10,11 @@
 # alias through a pfSense route. A rebuilt Pi (an ageing SD card, see
 # docs/architecture/monitoring.md) must get it back from here.
 #
-# Scope: only vermont-netmap. camera_net_setup2.sh, camera-net.service, the
-# socat relays and the rest of the Pi stay hand-managed for now.
+# Scope: the complex network on the Pi. The first play declares the camera
+# network (netns guestns, camera_net_setup2.sh, camera-net.service) and the two
+# socat relays into guestns, copied byte for byte from the live Pi on
+# 2026-11-11 (infra#121); the second declares vermont-netmap. The rest of the
+# Pi (promtail, watchdogs, timers, MQTT monitor) is still configured by hand.
 #
 # RUN (from repo root; claim presence first:
 #      presence claim host:rpi-sofia --purpose "vermont-netmap"):
@@ -23,6 +26,105 @@
 # The full rule set is saved before every change under
 # /home/pi/netbackup-<timestamp>-ansible/, restorable with iptables-restore
 # (host) and `ip netns exec guestns iptables-restore` (guestns).
+
+- name: rpi-sofia camera network and relays
+  # camera-net is the only path from the home LAN to the complex network:
+  # HA's Vermont cameras, Frigate, the Solarman inverter (FV-B), the relays
+  # below and vermont-netmap all ride on it. Its stop action deletes netns
+  # guestns, so this play never restarts it. A changed script or unit is
+  # installed and reported; restart it by hand at a quiet moment, with a
+  # second way into the Pi open (pi@192.168.1.16, wlan0):
+  #   sudo systemctl restart camera-net vermont-netmap
+  # The relays only serve SSH tunnels from the devvm, so they restart on
+  # change.
+  hosts: rpi_sofia
+  gather_facts: false
+  become: true
+  vars:
+    camera_relays:
+      # 10.200.1.2:8134 -> .134:8000, Emil's B4 intercom SDK port (x86-only SDK
+      # reaches it over an SSH tunnel)
+      - intercom-sdk-proxy
+      # 10.200.1.2:8115 -> .115:80, entrance panel "VTORI VHOD"
+      - panel115-proxy
+
+  tasks:
+    - name: Install socat for the relays
+      ansible.builtin.apt:
+        name: socat
+        state: present
+
+    - name: Script directory
+      ansible.builtin.file:
+        path: /home/pi/vermont_cameras
+        state: directory
+        mode: "0755"
+        owner: pi
+        group: pi
+
+    - name: Install camera_net_setup2.sh
+      ansible.builtin.copy:
+        src: files/rpi-sofia/camera_net_setup2.sh
+        dest: /home/pi/vermont_cameras/camera_net_setup2.sh
+        mode: "0755"
+        owner: pi
+        group: pi
+      register: camera_script
+
+    - name: Install camera-net.service
+      # Owned by pi on the live Pi since the 2026-07-28 rebuild; kept as found
+      # so a check run stays a no-op.
+      ansible.builtin.copy:
+        src: files/rpi-sofia/camera-net.service
+        dest: /etc/systemd/system/camera-net.service
+        mode: "0644"
+        owner: pi
+        group: pi
+      register: camera_unit
+
+    - name: Install the relay units
+      ansible.builtin.copy:
+        src: "files/rpi-sofia/{{ item }}.service"
+        dest: "/etc/systemd/system/{{ item }}.service"
+        mode: "0644"
+        owner: root
+        group: root
+      loop: "{{ camera_relays }}"
+      register: relay_units
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: camera_unit.changed or relay_units.changed
+
+    - name: Enable camera-net (not restarted, see the play comment)
+      ansible.builtin.systemd:
+        name: camera-net.service
+        enabled: true
+
+    - name: Tell the operator camera-net needs a restart by hand
+      ansible.builtin.debug:
+        msg: >-
+          camera_net_setup2.sh or camera-net.service changed and was installed,
+          but the running rules are the old ones. Restart by hand at a quiet
+          moment: sudo systemctl restart camera-net vermont-netmap
+      when: camera_script.changed or camera_unit.changed
+
+    - name: Enable and start the relays
+      ansible.builtin.systemd:
+        name: "{{ item }}.service"
+        enabled: true
+        state: started
+      loop: "{{ camera_relays }}"
+
+    - name: Restart a relay whose unit changed
+      ansible.builtin.systemd:
+        name: "{{ item.item }}.service"
+        state: restarted
+      loop: "{{ relay_units.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.changed
 
 - name: rpi-sofia vermont-netmap
   hosts: rpi_sofia

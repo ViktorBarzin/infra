@@ -1,0 +1,13 @@
+[Unit]
+Description=Camera network namespace and DNAT setup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/pi/vermont_cameras/camera_net_setup2.sh setup
+ExecStop=/home/pi/vermont_cameras/camera_net_setup2.sh cleanup
+
+[Install]
+WantedBy=multi-user.target
