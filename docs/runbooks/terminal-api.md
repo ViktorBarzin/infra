@@ -171,5 +171,6 @@ duration. To lift a ban on a legitimate caller:
   `tests/devvm-lobby-anp.test.sh` checks who reaches which port.
   These were AdminNetworkPolicies (`v1alpha1`) until 2026-10-17. Calico 3.32 stopped enforcing
   ANP/BANP, so after the 3.33 upgrade on 2026-10-12 they did nothing and every pod reached ttyd
-  again (infra#123). Verify enforcement with a live probe, not just by checking that the object
+  again (infra#123). The three leftover v1alpha1 objects were deleted on 2026-11-11 (infra#124),
+  so `kubectl get anp` is empty and `kubectl get clusternetworkpolicies` is the one to read. Verify enforcement with a live probe, not just by checking that the object
   exists: from a pod in any other namespace, `wget -T5 http://10.0.10.10:7681/` must time out.
