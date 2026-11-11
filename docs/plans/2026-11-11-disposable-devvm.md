@@ -131,6 +131,13 @@ the watchdog's user units and enables its timer; linger is turned on for him.
 - The nightly devvm-home backup stays until the drill passes, then shrinks and
   retires.
 
+Drilled 2026-11-11 (fifth drill, after every workstream landed): a box built
+from master came up in 56 minutes with every user's credentials, repos,
+dotfiles, `~/.claude`, T3 threads and user units back, but four MAJOR gaps
+remain (no terraform, emo's agent instructions, emo's shell setup,
+`~/.claude.json`), so it did not pass cleanly and the devvm-home backup
+stays (`docs/runbooks/devvm-drill.md`, drill log).
+
 ## Open questions
 
 - The B4 intercom does not accept the ISAPI reboot over HTTP: it has no HTTP
