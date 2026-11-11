@@ -1,0 +1,15 @@
+[Unit]
+Description=Copy the devvm's nightly T3 snapshots to sda
+
+[Timer]
+# DISABLED (DISABLED_TIMERS in scripts/ci/pve-scripts-sync.sh): nightly-chain
+# starts this unit after devvm-home-backup and before offsite-sync-backup.
+# The schedule below is only a fallback, kept so running it on its own is one
+# command: 06:00 UTC is after the devvm's t3-backup-state (03:30 UTC, up to
+# ~40 min) and devvm-cleanup (04:00 UTC) have settled the night's files.
+OnCalendar=*-*-* 06:00:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -72,6 +72,31 @@ infra 6 commits and dirty worktrees, interview-prep-app, Plotting-Your-Dream-Boo
 stashes in 4 repos, insta2spotify and immich-repro dirty files, cloud with no
 remote). dot_files' 158 are stale history, not work.
 
+Done 2026-11-11. Pushed as branches, nothing merged and no master touched:
+- terminal-lobby `wizard/pane-ownership` (3 commits plus the uncommitted
+  claim work as one wip commit) and `wizard/inline-chip-art` (the
+  uncommitted work as one wip commit). Both were rebuilt on the rewritten
+  history, because their local copies sit on the pre-rewrite lineage, and
+  pushing that would bring back the three plan docs purged on 2026-09-17
+  and the old employer author address.
+- infra `wizard/tripit-country-days-cron` (the worker-label fix is not on
+  master), `wizard/immich-restore-runbook`, `wizard/ha-london-backup-upgrades`
+  and `wizard/bb-stale` (the one untracked test, as a wip commit).
+- interview-prep-app `wizard/render-generated-dsl` (2 commits from local master).
+- agent-conductor `wizard/de-meta-rust-wip` (the demeta-baseline-check stash).
+- cloud: new private Forgejo repo `viktor/cloud`, master pushed.
+
+Judged scratch and left in place: the other terminal-lobby branches (their
+only unique commits are the purged docs, or already on master by subject),
+its stash and agent-delegation's glossary edit (both on master already), infra
+`wizard/ebooks-calibre-trusted` (on master), Plotting-Your-Dream-Book (per-user
+beads and gitleaks hook drift), the broker-sync stash (landed on master as the
+HTML table fallback), the finance stash (a 2023 experiment), insta2spotify
+(3050 deletions of node_modules files that were tracked by mistake),
+immich-repro/src (a sparse upstream checkout plus 10 files byte-identical to
+upstream v3.3.5), and two orphaned T3 checkouts of the dissolved monorepo root
+under ~/.t3/worktrees/code (no edits since checkout).
+
 ## emo (changed without asking him first)
 - Retire: panel115-watch, camera-stream-watch, led_report, vermont-mon,
   valia-backup-cleanup (when done), printer-price watcher, PAI-issue watcher,
@@ -81,6 +106,15 @@ remote). dot_files' 158 are stale history, not work.
   the Vermont allowlist (OPNsense alias + rpi-sofia netmap). Verify the B4
   accepts the ISAPI reboot first.
 - Hand tools go into his vermont-device-configs repo, cloned by provisioning.
+
+Done 2026-11-11: the eight jobs above are stopped and archived in
+`retired/2026-11-11/` of ebarzin/vermont-device-configs (valia-backup-cleanup's
+last run did not report done, so its copy in ~/bin stays). His tools are in
+that repo's `bin/`, ~/bin links to them, and his roster row clones the repo to
+~/code/vermont-device-configs. intercom-watch stays on the devvm: the B4 has no
+HTTP service (ports 80 and 443 refuse, checked 2026-11-11 without a reboot), so
+a ha-sofia rest_command cannot send it the ISAPI reboot, and ha-sofia was not
+added to the Vermont allowlist. Its script and units are in the same repo.
 
 ## Also
 - HA London backs up through HA network storage to a new NFS export on the
@@ -95,11 +129,15 @@ remote). dot_files' 158 are stale history, not work.
 
 ## Open questions
 
-- The B4 intercom may not accept the ISAPI reboot the ha-sofia automation
-  would use (the current script uses the vendor SDK). Checked before
-  intercom-watch is retired; if it fails, the fallback is decided then.
+- The B4 intercom does not accept the ISAPI reboot over HTTP: it has no HTTP
+  listener, and ISAPI reaches it only tunnelled through the x86-only vendor
+  SDK on port 8000 (checked 2026-11-11). The fallback for intercom-watch is
+  still open: keep it on the devvm (today), or run the SDK reboot from an x86
+  host other than the devvm.
 - HA network storage over the tunnel to London has not been tried; a mount
-  across the WAN can stall.
+  across the WAN can stall. Tried 2026-11-11: an NFS mount over the tunnel wrote a 257 MB
+  backup in about 75 s with matching checksums (`docs/architecture/london-site.md`,
+  "Backups").
 - The ClickHouse store's size growth once file-history and remote/ are
   ingested is not measured yet.
 - Which local SSH keys already match the copies in Vault was not checked.
