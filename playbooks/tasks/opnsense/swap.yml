@@ -1,0 +1,17 @@
+# Swap (swap.php): OPNsense's built-in 2 GB swap file, so a Suricata rule reload
+# (about 1 GB extra for a moment) cannot exhaust the 8 GB VM. With it, reloads and
+# restarts need no quiet hour (Viktor, 2026-11-11: resilience over time-of-day
+# rules). Alerts OPNsenseMemoryLow and OPNsenseSwapHeavy watch it.
+- name: Swap file
+  ansible.builtin.script:
+    cmd: "swap.php {{ 'check' if ansible_check_mode else 'apply' }}"
+    executable: /usr/local/bin/php
+  check_mode: false
+  register: opn_swap_result
+  changed_when: opn_swap_result.stdout is search('^changed', multiline=true)
+  failed_when: opn_swap_result.rc != 0 or opn_swap_result.stdout is search('^error', multiline=true)
+
+- name: Swap changes
+  ansible.builtin.debug:
+    var: opn_swap_result.stdout_lines
+  when: opn_swap_result is changed

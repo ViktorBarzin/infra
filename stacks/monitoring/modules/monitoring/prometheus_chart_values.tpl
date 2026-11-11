@@ -6789,6 +6789,29 @@ serverFiles:
             annotations:
               summary: "Suricata on OPNsense missed {{ $value | humanizePercentage }} of packets over the last hour"
               description: "Capture buffer overflow or CPU saturation; see docs/runbooks/opnsense.md, Suricata tuning."
+          - alert: OPNsenseMemoryLow
+            # The edge firewall VM has 8 GB and a 2 GB swap file (tasks/opnsense/
+            # swap.yml, 2026-11-11). Suricata holds about 3.8 GB and a rule reload
+            # briefly needs about 1 GB more. Free + inactive + cache is what the
+            # FreeBSD kernel can hand out without swapping; under 512 MiB for 10m
+            # means swap is carrying the box. Runbook: docs/runbooks/opnsense.md.
+            expr: sum(node_memory_free_bytes{job="opnsense-node"} + node_memory_inactive_bytes{job="opnsense-node"} + node_memory_cache_bytes{job="opnsense-node"}) < 512 * 1024 * 1024
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "OPNsense has {{ $value | humanize1024 }}B of memory left without swapping"
+              description: "Check Suricata's size (top -o res on the firewall) and the ruleset count; see docs/runbooks/opnsense.md, Suricata tuning."
+          - alert: OPNsenseSwapHeavy
+            # A reload spike pages out briefly and comes back; more than 1 GiB of
+            # swap in use for 30m means the steady state no longer fits in RAM.
+            expr: max(node_memory_swap_used_bytes{job="opnsense-node"}) > 1024 * 1024 * 1024
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "OPNsense has {{ $value | humanize1024 }}B in swap for 30m"
+              description: "The firewall's steady state no longer fits in its 8 GB: trim Suricata rulesets or give the VM more RAM; see docs/runbooks/opnsense.md."
           - alert: ClaudeSessionsDBDown
             # The claude-sessions ClickHouse (ADR-0039). While it is down the
             # devvm ingest timer fails and keeps its offsets, so nothing is

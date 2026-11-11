@@ -62,7 +62,7 @@ flowchart TD
 
 ## Phases
 
-Every OPNsense change lands on the production firewall: `--check --diff` first, applied in a quiet hour, verified, with the listed rollback. Each phase is verified before the next.
+Every OPNsense change lands on the production firewall: `--check --diff` first, applied at any hour (the firewall has swap and every service fails safe), verified, with the listed rollback. Each phase is verified before the next.
 
 ### 1. Store and shipper
 - `netsec` database, a writer user with a real quota (rows and bytes per hour) and a reader user for Viktor, tables `eve` (typed columns plus JSON, TTL per event type, IPv6 columns), `flows`, `proxy`, `dns_queries`, on the claude-sessions instance (`stacks/claude-sessions`). `backup.sh` stays `DATABASE claude` only.
