@@ -526,7 +526,7 @@ config:
     # genuine return after the previous ban had lapsed. The other 357 were the
     # scenario overflowing again while a ban was already active. 24h turns those
     # 359 re-mints into roughly three, which cuts decision churn in the LAPI
-    # database and the Slack notification that rides along with each one.
+    # database.
     #
     # WHY FLAT 24h AND NOT EXPONENTIAL ESCALATION. duration_expr,
     # GetDecisionsCount and GetDecisionsSinceCount all exist in v1.7.8, so an
@@ -555,20 +555,21 @@ config:
     decisions:
       - type: ban
         duration: 24h
-    notifications:
-      - slack_alerts
     on_success: break
     ---
     # Ban for serious attacks (CVE exploits, scanners, brute force) AND for the
     # four ex-captcha scenarios above.
+    #
+    # The ban profiles send no Slack message (Viktor, 2026-11-11): a ban is the
+    # response, and a message per probing scanner was noise in #alerts. Only
+    # c2_destination_block above still notifies, because it means one of OUR
+    # hosts reached a botnet C2. Review bans with cscli alerts/decisions list.
     name: default_ip_remediation
     filters:
       - Alert.Remediation == true && Alert.GetScope() == "Ip"
     decisions:
       - type: ban
         duration: 4h
-    notifications:
-      - slack_alerts
     on_success: break
     ---
     name: default_range_remediation
@@ -577,8 +578,6 @@ config:
     decisions:
       - type: ban
         duration: 4h
-    notifications:
-      - slack_alerts
     on_success: break
 
   config.yaml.local: |

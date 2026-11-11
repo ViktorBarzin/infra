@@ -220,7 +220,8 @@ EOS
 Expect within a minute: `Ip 192.0.2.1 performed 'viktor/abusech-c2-destination'`
 in the agent log, a simulated `c2-block` decision on the LAPI, and
 `NetsecHomeHostMalware` for 10.0.20.104 in Slack; within 10 minutes the
-grouped CrowdSec Slack message. Run 2026-11-10: all four seen, nothing reached
+grouped CrowdSec Slack message (the C2 profile still notifies; ban profiles
+stopped on 2026-11-11). Run 2026-11-10: all four seen, nothing reached
 pf.
 
 ## Server journals and pod DNS (phase 4)
