@@ -14,11 +14,12 @@ back, delete it. This runbook is how.
 | Token | Vault `secret/devvm` `pve_api_token` | `terraform-devvm@pve!tf`, role `TFDevvm` on `/pool/devvm`, the VMID slots `/vms/9100`-`/vms/9109`, and storage, network and node paths. PVE checks `/vms/<id>` during create, before the VM joins the pool, so a drill needs a slot. VM 102 is neither, so the token gets 403 on it. Declared by `playbooks/pve-host.yml --tags devvm-tf`. |
 | Snippet | `/var/lib/vz/snippets/devvm_bootstrap.yaml` | Vendor data for every Terraform devvm. Rendered by `pve-host.yml --tags snippets` from `playbooks/files/pve/snippets/devvm_bootstrap.yaml.j2`, embedding `scripts/devvm-bootstrap`. |
 | Handoff | `scripts/devvm-drill-handoff` | Runs on the applier after the VM is up: mints a wrapped token through Vault token role `devvm-bootstrap` and writes it into the guest through the guest agent. |
-| First boot | `scripts/devvm-bootstrap` | In the guest: unwraps the token, clones infra at `infra_ref`, runs `playbooks/devvm.yml` locally, runs `t3-provision-users` once, revokes the token, writes `/var/lib/devvm-bootstrap/status`. |
+| First boot | `scripts/devvm-bootstrap` | In the guest: unwraps the token, clones infra at `infra_ref`, runs `playbooks/devvm.yml` locally, copies the users' T3 snapshots from the host's `/mnt/backup/t3-state` (key Vault `secret/devvm-t3-seed`, read-only on the host), runs `t3-provision-users` once, revokes the token, writes `/var/lib/devvm-bootstrap/status`. |
 
 The Vault side (`stacks/vault`): policy `devvm-bootstrap` reads exactly the
 paths `playbooks/devvm.yml` reads (`secret/claude-sessions`, `terminal-lobby`,
-`devvm-authorized-keys`, `rybbit`, `glitchtip`, `agentmd`); the token role makes
+`terminal-lobby/vapid`, `devvm-authorized-keys`, `rybbit`, `glitchtip`, `agentmd`), plus
+`secret/devvm-t3-seed` for the bootstrap's T3 snapshot copy; the token role makes
 orphan, non-renewable tokens with a 4 h hard limit; CI's policy may create
 tokens through that role and nothing else. When the playbook starts reading a
 new Vault path, add it to the policy, or a fresh build fails at that task.
@@ -51,7 +52,11 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
    ```sh
    ssh wizard@10.0.10.11 'cat /var/lib/devvm-bootstrap/status; sudo tail -f /var/log/cloud-init-output.log'
    ```
-   `ok` means the playbook and the provisioner finished. `failed: <step>`
+   `ok` means the playbook and the provisioner finished.
+   `ok (T3 held: snapshots not copied from the Proxmox host)` means the same,
+   but the T3 snapshot copy failed, so every user without a database has T3
+   stopped until the snapshots arrive (backup-dr.md, "T3 snapshots", copy by
+   hand). `failed: <step>`
    names the step; the log above has the detail. `cloud-init status --long`
    shows the same result from cloud-init's side.
 
@@ -111,6 +116,10 @@ Only once VM 102 is gone: add an instance with the live identity
 (`name = "devvm"`, `vm_id = 102`, `ipv4_cidr = "10.0.10.10/24"`,
 `mac_address = "00:0c:29:c0:89:ec"` so the DHCP reservation and every
 neighbour cache still match, `allow_live_identity = true`) and the full size.
+The new box has new SSH host keys, so the host's nightly pulls from 10.0.10.10
+(`t3-state-pull`, `devvm-home-backup`) fail until the host trusts the new key:
+`ssh-keygen -R 10.0.10.10` on the host, then the `ssh-keyscan` step in
+backup-dr.md, "T3 snapshots", "After a rebuild, on the host".
 `stacks/devvm` drills pass `on_boot = false`; the replacement wants the module
 default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
 
@@ -142,7 +151,9 @@ Still open after this drill, for the final one:
 - wizard's unlocked `~/code/infra` is not cloned on a new box, so the hourly
   `t3-provision-users.service` fails ("roster/engine not under
   /home/wizard/code/infra/scripts/workstation"). The one-off run from the
-  bootstrap clone works.
+  bootstrap clone works. Fixed after this drill: that run now clones it,
+  locked, from Forgejo (`install_admin_infra_clone`); unlocking it is in
+  `devvm-credentials.md`.
 - `claude-sessions-ingest.service` fails with 203/EXEC: the program it runs is
   not installed by the playbook on a new box. Since 2026-11-11 a drill does not
   run the ingest at all (only 10.0.10.10 does, `playbooks/devvm.yml` 8d), so

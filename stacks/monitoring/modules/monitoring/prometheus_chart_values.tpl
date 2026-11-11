@@ -4946,13 +4946,15 @@ serverFiles:
           # step since 2026-11-11). The devvm writes one per user at ~03:30
           # UTC and the chain pulls it the next night, so the newest copy on sda
           # is ~23 h old after a pull and ~47 h just before the next one. 72 h
-          # means at least one night's T3 threads exist only on the devvm. The
-          # 30-day upper bound drops users who left T3 and whose last snapshot
-          # stays on sda on purpose (ancamilea, frozen 2026-08-17).
+          # means at least one night's T3 threads exist only on the devvm.
+          # ancamilea left the roster on 2026-08-17 and her last snapshot stays
+          # on sda on purpose, so she is excluded by name. A user who leaves
+          # T3 later is added here and in docs/architecture/backup-dr.md
+          # ("Freshness"); there is no age cut-off, which would let a missed
+          # page resolve itself after 30 days.
           - alert: T3SnapshotOffVmStale
             expr: |
-              (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"}) > 259200
-              and (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"}) < 2592000
+              (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull", user!="ancamilea"}) > 259200
             for: 3h
             labels:
               severity: warning

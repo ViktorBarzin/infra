@@ -18,8 +18,9 @@
 # derivation; record each explicitly.
 #
 # Tiers: admin | power-user | namespace-owner
-#   admin           - cluster-admin, unlocked tree, secrets (groups: sudo,docker,code-shared)
+#   admin           - cluster-admin, unlocked tree, secrets (groups: sudo,docker,code-shared,codex-shared)
 #   power-user      - cluster-wide READ (no Secrets) via oidc-power-user-readonly; locked clone
+#                     (group: codex-shared, the shared ChatGPT login for codex)
 #   namespace-owner - admin in their own namespace(s) only; locked clone
 #
 # Optional per-user code layout (non-admins):
