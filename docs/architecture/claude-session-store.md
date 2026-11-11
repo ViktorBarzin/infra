@@ -1,13 +1,13 @@
 # Claude session store
 
-Every Claude Code session on the devvm, for every user, kept in ClickHouse so it can be queried in bulk. Decision record: [ADR-0039](../adr/0039-claude-sessions-are-kept-in-clickhouse.md). Research: [2026-11-07-session-transcript-store.md](../research/2026-11-07-session-transcript-store.md).
+Every Claude Code session on the devvm, for every user, kept in ClickHouse so it can be queried in bulk. Since 2026-11-11 it also keeps the rest of each user's `~/.claude` and `~/.codex` except credentials and caches, so `homelab claude-sessions restore` can write them back after a rebuild ([disposable devvm plan](../plans/2026-11-11-disposable-devvm.md)). Decision record: [ADR-0039](../adr/0039-claude-sessions-are-kept-in-clickhouse.md). Research: [2026-11-07-session-transcript-store.md](../research/2026-11-07-session-transcript-store.md).
 
 ```mermaid
 flowchart LR
   subgraph devvm["devvm"]
-    T["/home/*/.claude/projects<br/>session .jsonl, subagents/, tool-results/<br/>kept 180 days"]
+    T["/home/*/.claude and /home/*/.codex<br/>transcripts kept 180 days, history, plans,<br/>tasks, file-history, Codex sessions"]
     I["claude-sessions-ingest.timer<br/>root oneshot, every 15 min<br/>IOReadIOPSMax dm-0 60"]
-    Q["homelab claude-sessions sql / schema<br/>admins (sudo group)"]
+    Q["homelab claude-sessions sql / schema / restore<br/>admins (sudo group)"]
     T -->|"new bytes only"| I
   end
   subgraph k8s["namespace claude-sessions"]
@@ -30,6 +30,8 @@ flowchart LR
 | `claude.lines` | transcript line | `raw` is the original JSON line. All other columns are `DEFAULT` expressions over `raw`, computed at insert. Identity columns (`os_user`, `project`, `session_id`, `agent_id`, `file`, `byte_offset`) come from the ingester. |
 | `claude.blocks` | message content block | Filled by materialized view `blocks_mv` from `lines`: prompts, replies, thinking, `tool_use` (with `tool_name` and input) and `tool_result` (with `is_error` and output). Text index on `text`. |
 | `claude.files` | side file | `tool-results/*.txt` and `subagents/*.meta.json`. `ReplacingMergeTree(mtime)`, so query with `FINAL`. Text index on `content`. |
+| `claude.home_files` | file under `~/.claude` or `~/.codex` | Everything that is not a transcript, a credential or a cache, sent whole when it changes: plans, tasks, teams, todos, file-history, settings, workflows, remote/ logs, Codex config and databases. `path` is relative to the home. `encoding` is `text`, `base64` (not UTF-8) or `omitted` (over 32 MiB, no content). `redacted` marks a settings file sent with its secret values replaced. `ReplacingMergeTree(ingested_at)`, so query with `FINAL`. |
+| `claude.home_lines` | line of a `.jsonl` home file | `history.jsonl`, Codex rollouts (`.codex/sessions/`) and `session_index.jsonl`, appended like `lines`. `generation` changes when a file is read again from the start; restore uses the newest. |
 | `claude.requests` | API request (view) | model and token counts, deduplicated by `requestId`. Sum tokens here: `lines` repeats a message's usage on each of its content-block lines, so summing `lines` inflates tokens about 2.5x. |
 | `claude.sessions` | session (view) | cost, prompts, human prompts, subagents, compactions, API requests, tokens (from `requests`), models, start and end. |
 | `claude.model_costs` | session and model (view) | cost and tokens per model, from `cost-state`'s per-model `modelUsage`. Use it for spend per model; `arrayJoin(sessions.models)` credits a session's whole cost to every model it touched. |
@@ -46,7 +48,10 @@ Details worth knowing before writing queries (`homelab claude-sessions schema` p
 
 `homelab claude-sessions ingest` (`cli/claude_sessions_ingest.go`), run by `claude-sessions-ingest.timer` from `playbooks/devvm.yml` section 8d:
 
-- Walks `/home/*/.claude/projects/<slug>/`, plus `<session>/subagents/` and `<session>/tool-results/`. It reads directories and stats files; it opens only files whose (inode, size, mtime) changed since the state file (`/var/lib/claude-sessions-ingest/state.json`).
+- Walks `/home/*/.claude` and `/home/*/.codex`. Transcripts (`projects/<slug>/<session>.jsonl`, `<session>/subagents/*.jsonl`, and since 2026-11-11 workflow subagents in `<session>/subagents/workflows/<run>/`) go to `lines`; `tool-results/*.txt` and `*.meta.json` go to `files`; other `.jsonl` files go to `home_lines`; everything else goes whole to `home_files`. It reads directories and stats files; it opens only files whose (inode, size, mtime) changed since the state file (`/var/lib/claude-sessions-ingest/state.json`).
+- Never sent (`cli/claude_sessions_home.go`): credentials (`.credentials.json*`, `auth.json`, `*.key`, `*.pem`, any name containing token, secret, credential or oauth), caches and runtime state (`cache/`, `paste-cache/`, `shell-snapshots/`, `session-env/`, `sessions/`, `daemon/`, `backups/` with its copies of `~/.claude.json`, `debug/`, `telemetry/`, `tmp/`, `plugins/cache` and `plugins/marketplaces`, Codex `logs_*.sqlite`, `packages/`, `*-shm`, locks), and downloadable binaries (`remote/ccd-cli/`, `remote/srv/`, `remote/server`). Symlinks are not followed, so `CLAUDE.md` and `AGENTS.md` links stay with the dotfiles.
+- Settings files (`settings*.json*`, `*.toml`, `hooks.json`, `*mcp.json`) are sent with secret values replaced by `<redacted>`: values of keys that name a token, key, password or auth, every value under `env` and `headers`, `KEY=value` pairs inside strings, bearer tokens, URL passwords, and long runs mixing upper case, lower case and digits. Checked on 2026-11-11 against all 17 settings files on the box: no token-like string survived.
+- Whole home files from many files share one INSERT of up to 8 MB, so a first run makes a few parts, not thousands.
 - Reads from the stored byte offset to the end of the last complete line. A partial last line waits for the next run. A smaller file or a new inode restarts the file from 0.
 - Sends gzip-compressed JSONEachRow batches of about 8 MB. Each batch carries `insert_deduplication_token = <file>:<first offset>`, so a retried batch is dropped by ClickHouse. The state is saved after every accepted batch.
 - Security: runs as root with `ProtectHome=read-only`. Opens files with `O_NOFOLLOW`, ignores symlinks, and skips files not owned by the home directory's owner.
@@ -55,13 +60,17 @@ Details worth knowing before writing queries (`homelab claude-sessions schema` p
 
 Credentials come from Vault `secret/claude-sessions` (`clickhouse_password`, `ingest_password`, `reader_password`). The playbook writes `/etc/claude-sessions/ingest.env` (root, 0600) and `reader.env` (root:sudo, 0640). The stack's ExternalSecret reads the same keys.
 
+## Restore
+
+`homelab claude-sessions restore --user <name> (--to <home> | --tar -) [--session <id>] [--force]` (`cli/claude_sessions_restore.go`) writes the store back into a home directory: `home_files`, `home_lines` (newest generation), `files`, and `lines` reassembled in byte-offset order, with modes and mtimes. Existing files are kept unless `--force`. Redacted settings land as `<name>.from-store`. As root it refuses to write into a directory another user owns; that case uses `--tar - | runuser -u <user> -- tar -x --skip-old-files`. It reads as `reader` with keyset pages of 500 rows and stops at an empty page, so the reader's silent row and byte caps cannot cut a file short. Procedure: [restore-claude-sessions.md](../runbooks/restore-claude-sessions.md).
+
 ## Access
 
 | ClickHouse user | Used by | Rights |
 |---|---|---|
 | `default` | backup CronJob, schema changes | admin |
-| `ingest` | devvm timer | `INSERT` on `claude.lines` and `claude.files` |
-| `reader` | `homelab claude-sessions sql/schema` | `SELECT` on `claude.*`, `readonly=2`, 120 s, 2 GB memory, 100,000 rows |
+| `ingest` | devvm timer | `INSERT` on `claude.lines`, `claude.files`, `claude.home_files` and `claude.home_lines` |
+| `reader` | `homelab claude-sessions sql/schema/restore` | `SELECT` on `claude.*`, `readonly=2`, 120 s, 2 GB memory, 100,000 rows |
 | `netsec_writer` | `stacks/netsec` Vector | `INSERT` on `netsec.*`, hourly quota |
 | `netsec_reader` | `homelab netsec sql/schema` (Viktor only) | `SELECT` on `netsec.*`, same limits as `reader` |
 

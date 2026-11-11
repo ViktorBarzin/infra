@@ -4737,6 +4737,24 @@ serverFiles:
               notify: page
             annotations:
               summary: "ha-sofia has had no successful automatic backup for {{ $value | humanizeDuration }}; VM 103 is on a single unmirrored SSD, see docs/architecture/home-automation.md"
+          # ha-london (the Pi 3 in London) writes its weekly automatic backup
+          # (Sun 05:00 Europe/London) through Supervisor network storage to
+          # /srv/nfs/ha-london-backup on the Proxmox host. Without it the only
+          # copies sit on the Pi's SD card. ha-london-backup-status (hourly,
+          # textfile collector) reports the newest archive's mtime, 0 when there
+          # is none; 8 days allows the weekly run plus a day. absent() covers the
+          # script or the export going away, after 6h so a host reboot is quiet.
+          # docs/architecture/london-site.md, "Backups".
+          - alert: HomeAssistantLondonBackupStale
+            expr: |
+              (time() - ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"}) > 691200
+                or absent(ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"})
+            for: 6h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "ha-london's newest backup on the Proxmox host (/srv/nfs/ha-london-backup) is over 8 days old or missing; its only other copies are on the Pi's SD card. See docs/architecture/london-site.md, Backups"
           - alert: LVMSnapshotStale
             expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
@@ -4903,7 +4921,7 @@ serverFiles:
               summary: "NFS local mirror last run failed (status={{ $value }})"
           # nightly-chain on the PVE host (scripts/nightly-chain.sh, since
           # 2026-11-10) is now the only thing that starts the night's dumps and
-          # the five host backup steps, so a chain that stops running stops all
+          # the six host backup steps, so a chain that stops running stops all
           # of them. The per-backup *Stale alerts still fire, but only after
           # 30 h to 9 d; these say which link broke the same morning.
           - alert: NightlyChainNotSucceeding
@@ -4914,7 +4932,7 @@ serverFiles:
               notify: page
             annotations:
               summary: "The nightly backup chain has not finished cleanly for {{ $value | humanizeDuration }}"
-              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, devvm-home-backup and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
+              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, devvm-home-backup, t3-state-pull and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
           - alert: NightlyChainStepFailed
             expr: nightly_chain_step_ok{job="nightly-chain"} == 0
             for: 5m
@@ -4924,6 +4942,33 @@ serverFiles:
             annotations:
               summary: "Nightly backup chain step {{ $labels.step }} failed on its last run"
               description: "A step is a host unit (journalctl -u <step> on the PVE host) or a dump as <namespace>/<cronjob> (kubectl get jobs -n <namespace>, Jobs named <cronjob>-chain-<stamp>). The chain carries on after a failed step. Docs: docs/architecture/backup-dr.md."
+          # T3 snapshots off the devvm (scripts/t3-state-pull.sh, a nightly-chain
+          # step since 2026-11-11). The devvm writes one per user at ~03:30
+          # UTC and the chain pulls it the next night, so the newest copy on sda
+          # is ~23 h old after a pull and ~47 h just before the next one. 72 h
+          # means at least one night's T3 threads exist only on the devvm. The
+          # 30-day upper bound drops users who left T3 and whose last snapshot
+          # stays on sda on purpose (ancamilea, frozen 2026-08-17).
+          - alert: T3SnapshotOffVmStale
+            expr: |
+              (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"}) > 259200
+              and (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"}) < 2592000
+            for: 3h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Newest T3 snapshot of {{ $labels.user }} on the PVE host is {{ $value | humanizeDuration }} old"
+              description: "A rebuilt devvm would lose that user's T3 threads since then. Check the devvm side (`systemctl status t3-backup-state`, `sudo ls -l /var/backups/t3-state/<user>`) and the host side (`journalctl -u t3-state-pull` on 192.168.1.127, `ls -l /mnt/backup/t3-state/<user>`). Docs: docs/architecture/backup-dr.md, T3 snapshots."
+          - alert: T3SnapshotPullNeverReported
+            expr: absent(t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"})
+            for: 48h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "No T3 snapshot on the PVE host has been reported for 48 h"
+              description: "t3-state-pull has not pushed to the Pushgateway, or /mnt/backup/t3-state is empty, so no T3 thread history is kept off the devvm. Run `nightly-chain --only t3-state-pull` on 192.168.1.127 and read its journal. Docs: docs/architecture/backup-dr.md, T3 snapshots."
           - alert: NightlyChainRanWithoutLock
             expr: nightly_chain_lock_acquired{job="nightly-chain"} == 0
             for: 5m

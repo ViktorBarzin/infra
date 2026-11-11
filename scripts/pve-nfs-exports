@@ -24,3 +24,18 @@
 #
 /srv/nfs *(rw,async,no_subtree_check,no_root_squash,insecure)
 /srv/nfs-ssd *(rw,sync,no_subtree_check,no_root_squash,insecure,fsid=1)
+#
+# ha-london's Supervisor network-storage backups (2026-11-11,
+# docs/architecture/london-site.md "Backups"). Nested under /srv/nfs so
+# nfs-mirror and offsite-sync carry it with no extra config.
+# The client list is where ha-london's traffic actually comes from, measured
+# 2026-11-11 from a held TCP connection to :2049: the Pi (192.168.8.103) is
+# masqueraded to 10.3.2.6 by the London Flint, and OPNsense then source-NATs
+# it to its LAN address 192.168.1.2 on the way to this host. So 192.168.1.2 is
+# the address that must be admitted; 10.3.2.6 is listed in case that NAT is
+# ever removed. 192.168.1.2 is shared by every routed client (the devvm too),
+# and the /srv/nfs line above already admits everyone to this subtree, so this
+# line records intent and options rather than isolating the directory.
+# The directory is created by playbooks/pve-host.yml (tag ha-london-backup);
+# exportfs fails on a path that does not exist.
+/srv/nfs/ha-london-backup 192.168.1.2(rw,async,no_subtree_check,no_root_squash,insecure) 10.3.2.6(rw,async,no_subtree_check,no_root_squash,insecure)

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Sync the PVE host backup scripts and their systemd units from this repo.
 #
-# Covers eight: nightly-chain (since 2026-11-10, with its helper kured-lock),
+# Covers nine: t3-state-pull (since 2026-11-11), nightly-chain (since
+# 2026-11-10, with its helper kured-lock),
 # lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
 # devvm-home-backup, vzdump-vms, nfs-mirror and router-config-backup (joined
 # 2026-10-05, the weekly site-router config backup). The first three were here from
@@ -24,7 +25,7 @@
 set -eu
 
 PVE_HOST="${PVE_HOST:-192.168.1.127}"
-NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror router-config-backup nightly-chain}"
+NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror router-config-backup nightly-chain t3-state-pull}"
 # Scripts with no units of their own, copied to /usr/local/bin/<name>.
 # kured-lock is sourced by nightly-chain (and by the k8s upgrade chain, which
 # gets it from its ConfigMap instead).
@@ -52,7 +53,9 @@ HELPERS="${HELPERS:-kured-lock}"
 # devvm-home-backup, offsite-sync-backup), so their own timers must stay off
 # or each would also run at its old time. Their timer files still ship, so
 # running one step on its own schedule again is one systemctl away.
-DISABLED_TIMERS="${DISABLED_TIMERS:-vzdump-vms nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup offsite-sync-backup}"
+# t3-state-pull joined them on 2026-11-11, a chain step between
+# devvm-home-backup and offsite-sync-backup.
+DISABLED_TIMERS="${DISABLED_TIMERS:-vzdump-vms nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup t3-state-pull offsite-sync-backup}"
 SSH="ssh -o BatchMode=yes root@$PVE_HOST"
 
 echo "---diff---"

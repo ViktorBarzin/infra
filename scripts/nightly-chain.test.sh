@@ -87,9 +87,13 @@ out=$(NIGHTLY_CHAIN_DOW=7 run_chain)
 grep -q "create job -n vault vault-raft-backup-chain" "$CALLS" && ok "Sunday: the Sunday dump runs too" || bad "sunday: $(cat "$CALLS")"
 
 out=$(NIGHTLY_CHAIN_DOW=3 run_chain)
-steps=$(grep -o 'systemctl start --wait [a-z.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
-[ "$steps" = "nfs-mirror.service lvm-pvc-snapshot.service daily-backup.service devvm-home-backup.service offsite-sync-backup.service " ] \
+steps=$(grep -o 'systemctl start --wait [a-z0-9.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
+[ "$steps" = "nfs-mirror.service lvm-pvc-snapshot.service daily-backup.service devvm-home-backup.service t3-state-pull.service offsite-sync-backup.service " ] \
   && ok "host steps run in dependency order" || bad "host order: [$steps]"
+# t3-state-pull writes /mnt/backup/t3-state, so it must finish before
+# offsite-sync-backup copies /mnt/backup to the Synology.
+[ "$(order 'systemctl start --wait t3-state-pull')" -lt "$(order 'systemctl start --wait offsite-sync-backup')" ] \
+  && ok "the T3 snapshot pull runs before the offsite copy" || bad "t3 vs offsite: $(cat "$CALLS")"
 last_dump=$(grep -n 'get job' "$CALLS" | tail -1 | cut -d: -f1)
 [ "$last_dump" -lt "$(order 'systemctl start --wait nfs-mirror')" ] && ok "host steps start only after every dump finished" || bad "dumps vs host: $(cat "$CALLS")"
 [ "$(order 'lock acquire')" -lt "$(order 'create job')" ] && [ "$(order 'lock release')" -gt "$(order 'offsite-sync-backup')" ] \
@@ -119,7 +123,7 @@ grep -q 'systemctl start --wait daily-backup' "$CALLS" && ok "API down: host bac
 
 out=$(NIGHTLY_CHAIN_DOW=3 run_chain --only backup-etcd,daily-backup)
 grep -q 'postgresql-backup' "$CALLS" && bad "--only ran another dump" || ok "--only limits the dumps"
-steps=$(grep -o 'systemctl start --wait [a-z.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
+steps=$(grep -o 'systemctl start --wait [a-z0-9.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
 [ "$steps" = "daily-backup.service " ] && ok "--only limits the host steps" || bad "--only steps: [$steps]"
 grep -q 'nightly_chain_last_success_timestamp' "$WORK_METRICS" && bad "--only recorded a full-night success" || ok "--only does not record a full-night success"
 

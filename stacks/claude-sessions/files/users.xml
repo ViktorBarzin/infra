@@ -45,6 +45,8 @@
             <grants>
                 <query>GRANT INSERT ON claude.lines</query>
                 <query>GRANT INSERT ON claude.files</query>
+                <query>GRANT INSERT ON claude.home_files</query>
+                <query>GRANT INSERT ON claude.home_lines</query>
             </grants>
         </ingest>
         <reader>
