@@ -39,7 +39,7 @@ graph TB
         end
 
         subgraph "VLAN 10 - Management<br/>10.0.10.0/24"
-            Proxmox[Proxmox Host<br/>10.0.10.1]
+            OPNsenseMgmt[OPNsense<br/>10.0.10.1]
             DevVM[DevVM<br/>10.0.10.10]
             Registry[Registry VM<br/>10.0.20.10]
         end
@@ -75,7 +75,7 @@ graph TB
 
     vmbr0 -.physical link.- bond0[bond0 active-backup<br/>eno1 → AX6000 port 1<br/>eno2 → TL-SG105PE P5]
     vmbr0 --> vmbr1
-    vmbr1 -.VLAN 10.- Proxmox
+    vmbr1 -.VLAN 10.- OPNsenseMgmt
     vmbr1 -.VLAN 10.- DevVM
     vmbr1 -.VLAN 20.- OPNsense
     vmbr1 -.VLAN 20.- Tech
@@ -138,7 +138,7 @@ Isolated camera segment for owned cameras at the Sofia site (first: `vermont-gar
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
 - WAN in (home LAN side): pass `192.168.1.8` (ha-sofia) → `10.0.30.70:80` (ISAPI/hikvision_next) and `:554` (RTSP), reply-to disabled on both.
 - dKubernetes is allow-all, so cluster Frigate/go2rtc pulls RTSP with no extra rule (pod egress SNATs to node IPs).
-- Home-LAN clients need the **AX6000 static route** `10.0.30.0/24 via 192.168.1.2` (camera-day step) to reach the camera UI.
+- Home-LAN clients reach the camera UI through the AX6000's static route `10.0.0.0/8 via 192.168.1.2` (read on the router 2026-11-11), which covers 10.0.30.0/24; no separate camera route exists or is needed.
 
 **Consumers**: cluster Frigate (`/srv/nfs/frigate/config/config.yml` — NOT Terraform) pulls `rtsp://10.0.30.70:554` main+sub as `vermont-garage`; HA integrates via Frigate plus direct hikvision_next for tamper events.
 
@@ -600,7 +600,7 @@ The tunnel MTU matters for QUIC: quic-go (Traefik v3.7.14) sends 1280-byte UDP p
 |---|---|---|
 | Perimeter | TP-Link forwards only the published ports to OPNsense WAN | HE_IPv6 rules pass only 80/443 TCP, 443 UDP to `::203` and 25/465/587/993 to `::204`; everything else is dropped and logged |
 | Anti-spoofing | Nothing outside the home LAN arrives with an RFC 1918 source | The first HE_IPv6 rules drop sources in `fc00::/7`, `2001:470:5a7f::/48`, `2001:470:6f:43d::/64` and `ff00::/8` |
-| Suricata (IDS in pcap mode, alerts only; replaced pfSense's Snort) | on WAN (`vtnet0`), VLAN 10 and VLAN 20, ET Open plus the abuse.ch SSL Fingerprint Blacklist, Feodo Tracker and URLhaus lists; EVE alerts go to Loki through syslog (`tasks/opnsense/suricata.yml`) | The WAN instance carries the 6in4 packets (IPv6 inside IPv4 protocol 41). `HOME_NET` holds `2001:470:5a7f::/48`, `2001:470:6f:43d::/64` and the home LAN ULA. There is no instance on `gif0`; whether Suricata decodes the inner IPv6 of the 6in4 packets has not been checked here |
+| Suricata (IDS in pcap mode, alerts only; replaced pfSense's Snort) | on VLAN 10 (`vtnet1`) and VLAN 20 (`vtnet2`) only since 2026-11-11 (WAN dropped: every routed flow alerted twice; IPv6 from the HE tunnel is inspected as it enters VLAN 20; tuning in `docs/runbooks/opnsense.md`), ET Open plus the abuse.ch SSL Fingerprint Blacklist, Feodo Tracker and URLhaus lists; EVE alerts go to Loki through syslog (`tasks/opnsense/suricata.yml`) | The WAN instance carries the 6in4 packets (IPv6 inside IPv4 protocol 41). `HOME_NET` holds `2001:470:5a7f::/48`, `2001:470:6f:43d::/64` and the home LAN ULA. There is no instance on `gif0`; whether Suricata decodes the inner IPv6 of the 6in4 packets has not been checked here |
 | CrowdSec, node nftables bouncer | `ip crowdsec` table, single-address bans | `ip6 crowdsec6` table, single-address bans |
 | CrowdSec, Traefik plugin | address and range bans | address and range bans; local IPv6 bans are copied to their /64 every 2 minutes (`crowdsec-ipv6-ban-widen` CronJob) |
 | Rate limits | per client address | per client /64: `X-Client-Prefix` from the real-ip plugin, or `ipStrategy.ipv6Subnet = 64` where the limiter keys on the TCP peer |
@@ -730,7 +730,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
   - 10.0.20.0/24 → `10.0.20.1, 94.140.14.14`
   - 192.168.1.0/24 → `192.168.1.2, 94.140.14.14` (served by TP-Link, unchanged by WS E)
   - Rationale: clients survive an internal resolver outage by falling through to AdGuard (`94.140.14.14`) — confirmed via null-route drill on 2026-04-19.
-- 42 MAC→IP reservations for 192.168.1.0/24 (all known home devices)
+- 51 MAC→IP reservations for 192.168.1.0/24 on the AX6000 (read on the router 2026-11-11)
 - DHCP DDNS: not configured on OPNsense (see "IPAM & DNS Auto-Registration"). On pfSense, Kea DHCP-DDNS sent **TSIG-signed** RFC 2136 updates to Technitium (key `kea-ddns`, HMAC-SHA256; secret in Vault `secret/viktor/kea_ddns_tsig_secret`) from a hand-managed `/usr/local/etc/kea/kea-dhcp-ddns.conf`, until pfSense dropped the settings on 2026-07-18. Zone `viktorbarzin.lan` + reverse zones require both a firewall-source IP AND a valid TSIG signature.
 - Firewall rules (`filter.yml`): Allow K8s egress, block inter-VLAN by default
 
