@@ -429,8 +429,10 @@ def test_derive_ttyd_admins_carries_a_do_not_edit_header():
 
 def test_derive_accounts_assign_tier_groups_and_shell():
     ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
-    assert ds.accounts["wizard"].groups == ("code-shared", "docker", "sudo")
-    assert ds.accounts["emo"].groups == ()
+    assert ds.accounts["wizard"].groups == ("code-shared", "codex-shared", "docker", "sudo")
+    # The shared ChatGPT login (/opt/codex-shared) goes to admins and power
+    # users, as on the box today; a namespace-owner does not get it.
+    assert ds.accounts["emo"].groups == ("codex-shared",)
     assert ds.accounts["ancamilea"].groups == ()
     assert ds.accounts["emo"].shell == "/bin/zsh"
 

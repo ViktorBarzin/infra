@@ -44,7 +44,8 @@ Since 2026-11-11 the provisioner does this (`install_vault_token_renew` in
 `~/.local/bin/vault-token-renew` and the two units into
 `~/.config/systemd/user/` (from infra `origin/master`, rewritten only when
 they differ), turns on linger, and enables the timer. A user without a case
-arm gets nothing and a log line. When `~/.vault-token` is absent and the run
+arm gets nothing and a log line, and a user outside the roster is not looked
+at: ancamilea, offboarded 2026-08-17, gets no renewer on a rebuilt box. When `~/.vault-token` is absent and the run
 holds an admin Vault token, it also mints the token below with that user's
 policies; the hourly run has no Vault token, so on a new box run it once with
 one (see [devvm-credentials](devvm-credentials.md)):

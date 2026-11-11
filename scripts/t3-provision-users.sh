@@ -18,6 +18,9 @@ WORKSTATION_DIR="${WORKSTATION_DIR:-/home/wizard/code/infra/scripts/workstation}
 ENGINE="$WORKSTATION_DIR/roster_engine.py"
 ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
+# The shared ChatGPT login for codex (stage_shared_auth; the wrapper, group and
+# directory are in playbooks/devvm.yml).
+CODEX_SHARED_DIR="${CODEX_SHARED_DIR:-/opt/codex-shared}"
 MAP=/etc/ttyd-user-map
 # The browser-bridge server, for the per-user CLI token in 5d-quater. The
 # public host rather than the in-cluster Service: the devvm is outside the
@@ -618,11 +621,18 @@ install_vault_token_renew() {  # install_vault_token_renew USER
 # them) come from Vault through restore_user_credentials, which runs first.
 # chezmoi itself is installed into ~/.local/bin, pinned, when absent.
 install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
-  local user="$1" repo="$2" home uid bin
+  local user="$1" repo="$2" home uid bin src
   [[ -n "$repo" && "$repo" != "-" ]] || return 0
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
-  [[ -e "$home/.local/share/chezmoi" ]] && return 0
+  src="$home/.local/share/chezmoi"
+  # A first init that failed (Forgejo or the network down) leaves an empty
+  # source directory behind. rmdir removes only an empty one, so that case is
+  # retried and a real source, which always has files, is left alone.
+  if [[ -e "$src" || -L "$src" ]]; then
+    [[ "$DRY_RUN" != 1 && ! -L "$src" ]] && runuser -u "$user" -- rmdir "$src" 2>/dev/null || return 0
+    log "retrying dotfiles for $user: ~/.local/share/chezmoi was left empty"
+  fi
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] chezmoi init --apply $repo -> $user"; return 0; fi
   bin="$home/.local/bin/chezmoi"
   if [[ ! -x "$bin" ]]; then
@@ -634,9 +644,86 @@ install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
     log "applied dotfiles $repo -> $user"
   else
     log "WARN: chezmoi init --apply $repo for $user finished with errors (some entries may be missing)"
+    runuser -u "$user" -- rmdir "$src" 2>/dev/null || true   # nothing cloned: let the next run retry
   fi
   uid="$(id -u "$user" 2>/dev/null)" && \
     runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
+# The admin's own infra checkout at ~/code/infra. Non-admins get a locked clone
+# from install_locked_clone; the admin's was made by hand, so on a new box there
+# was none, and both the hourly run (whose WORKSTATION_DIR is that checkout) and
+# the rebuild command in docs/runbooks/devvm-credentials.md stopped at "roster/
+# engine not under ...". The bootstrap's own run, from its clone in /opt, makes
+# it. Cloned over HTTPS from Forgejo, where infra is public, as the admin; it
+# stays git-crypt locked until the admin unlocks it with the key in
+# secret/infra (same runbook). An existing ~/code/infra, or a ~/code that is
+# itself the clone, is never touched.
+install_admin_infra_clone() {  # install_admin_infra_clone USER
+  local user="$1" home dst
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  dst="$home/code/infra"
+  [[ -e "$dst" || -L "$dst" || -e "$home/code/.git" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] clone infra -> $user:~/code/infra"; return 0; fi
+  if [[ ! -d "$home/code" ]]; then
+    mkdir_as "$user" 2770 "$home/code" || { log "WARN: could not create $user:~/code"; return 0; }
+    runuser -u "$user" -- chgrp code-shared "$home/code" 2>/dev/null || true
+  fi
+  log "clone infra -> $user:~/code/infra (locked; unlock with secret/infra git_crypt_key_b64)"
+  if runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$FORGEJO_INFRA_REMOTE" "$dst" 2>/dev/null; then
+    runuser -u "$user" -- git -C "$dst" remote add forgejo "$FORGEJO_INFRA_REMOTE" 2>/dev/null || true
+  else
+    log "WARN: clone of infra failed for $user (offline?); the next run retries"
+  fi
+}
+
+# Shared logins that live outside any home (setup-devvm.sh section 8, which a
+# rebuilt box never ran): the one ChatGPT login every codex user shares, at
+# /opt/codex-shared/auth.json (codex-auth-backup keeps secret/workstation
+# codex_shared_auth_json current), and each person's chrome hub config,
+# /etc/t3-serve/chrome-hub-<user>.json, which install_chrome_hub copies into
+# their home. Only with an admin Vault token, and only what is missing: the
+# live Codex file is newer than Vault between two backups.
+stage_shared_auth() {
+  local need=0 u auth t out   # need: 2 = the Codex login, 1 = a hub config
+  [[ -s "$CODEX_SHARED_DIR/auth.json" ]] || need=2
+  if [[ -s "$HUBS_MAP" ]]; then
+    for u in $(jq -r 'keys[]' "$HUBS_MAP" 2>/dev/null); do
+      [[ -s "$ENVDIR/chrome-hub-$u.json" ]] || { need=$((need | 1)); break; }
+    done
+  fi
+  (( need )) || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] stage the shared Codex login and chrome hub configs from Vault"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault_admin token lookup >/dev/null 2>&1; then
+    log "shared login staging skipped: no admin Vault token (expected on the hourly run)"
+    return 0
+  fi
+  if (( need & 2 )); then
+    if auth="$(vault_admin kv get -field=codex_shared_auth_json secret/workstation 2>/dev/null)" && [[ -n "$auth" ]]; then
+      getent group codex-shared >/dev/null 2>&1 || groupadd codex-shared
+      install -d -m 2770 "$CODEX_SHARED_DIR" && chgrp codex-shared "$CODEX_SHARED_DIR" && chmod 2770 "$CODEX_SHARED_DIR"
+      # Group members can write in this directory, so the temp file is made
+      # with mktemp (exclusive create) rather than a name they could plant.
+      if t="$(mktemp "$CODEX_SHARED_DIR/.auth.json.XXXXXX")" && printf '%s\n' "$auth" > "$t" &&
+         chgrp codex-shared "$t" && chmod 0660 "$t" && mv -f "$t" "$CODEX_SHARED_DIR/auth.json"; then
+        log "staged the shared Codex login -> $CODEX_SHARED_DIR/auth.json"
+      else
+        rm -f "$t"; log "WARN: could not write $CODEX_SHARED_DIR/auth.json"
+      fi
+    else
+      log "WARN: secret/workstation codex_shared_auth_json unreadable -> shared Codex login not staged"
+    fi
+  fi
+  if (( need & 1 )) && [[ -s "$HUBS_SRC" ]]; then
+    if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" CHROME_HUBS_MAP="$HUBS_MAP" CHROME_HUBS_OUT="$ENVDIR" bash "$HUBS_SRC" 2>&1)"; then
+      log "chrome hub configs: $(grep -c 'staged' <<<"$out") staged"
+    else
+      log "WARN: chrome hub staging failed: $(tail -n 1 <<<"$out")"
+    fi
+  fi
+  return 0
 }
 
 # Re-deploy the managed per-user Claude launcher to ~/start-claude.sh. /etc/skel only
@@ -1537,6 +1624,8 @@ committed scripts/vault-token-renew.service "$STATEDIR/vault-token-renew.committ
 committed scripts/vault-token-renew.timer "$STATEDIR/vault-token-renew.committed.timer" || true
 committed scripts/tmux-persist.sh "$STATEDIR/tmux-persist.committed.sh" || true
 committed scripts/workstation/skel/start-claude.sh "$STATEDIR/start-claude.committed.sh" || true
+committed scripts/workstation/stage-chrome-hubs.sh "$STATEDIR/stage-chrome-hubs.committed.sh" || true
+committed scripts/workstation/chrome-hubs.json "$STATEDIR/chrome-hubs.committed.json" || true
 [[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
 for f in metadata.json config.yaml gitignore README.md; do
   committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
@@ -1575,6 +1664,8 @@ VTR_SERVICE="$(pick vault-token-renew.committed.service "$WORKSTATION_DIR/../vau
 VTR_TIMER="$(pick vault-token-renew.committed.timer "$WORKSTATION_DIR/../vault-token-renew.timer")"
 TMUX_PERSIST_SRC="$(pick tmux-persist.committed.sh "$WORKSTATION_DIR/../tmux-persist.sh")"
 LAUNCHER_SRC="$(pick start-claude.committed.sh "$WORKSTATION_DIR/skel/start-claude.sh")"
+HUBS_SRC="$(pick stage-chrome-hubs.committed.sh "$WORKSTATION_DIR/stage-chrome-hubs.sh")"
+HUBS_MAP="$(pick chrome-hubs.committed.json "$WORKSTATION_DIR/chrome-hubs.json")"
 HOOKS_SRC="$WORKSTATION_DIR/claude-hooks"
 [[ -d "$STATEDIR/claude-hooks.committed" ]] && HOOKS_SRC="$STATEDIR/claude-hooks.committed"
 
@@ -1750,6 +1841,10 @@ sync_tmux_persist
 for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
   id "$u" >/dev/null 2>&1 && restore_user_credentials "$u"
 done
+# 3e) the shared Codex login and the chrome hub configs, from Vault when absent
+#     (admin token only), before step 4 adds users to codex-shared and step 5c
+#     copies each hub config into its home.
+stage_shared_auth
 
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
@@ -1765,6 +1860,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     restore_user_credentials "$os_user"    # an existing account was done in 3d
   fi
   install_user_dotfiles "$os_user" "$dotfiles"
+  [[ "$tier" == admin ]] && install_admin_infra_clone "$os_user"
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
     IFS=',' read -ra want <<< "$groups_csv"

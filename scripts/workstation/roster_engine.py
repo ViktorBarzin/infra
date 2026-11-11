@@ -58,9 +58,12 @@ def repo_dir(repo: str) -> str:
     """The directory under ~/code a `repos` entry clones to: its name part."""
     return repo.rsplit("/", 1)[-1]
 # Tier -> supplementary groups the reconcile ENSURES (additive-only; never stripped).
+# codex-shared reads the shared ChatGPT login in /opt/codex-shared (the codex
+# wrapper in playbooks/devvm.yml); admins and power users had it by hand until
+# 2026-11-11, so a rebuilt box now gives it to the same people.
 TIER_GROUPS: dict[str, tuple[str, ...]] = {
-    "admin": ("code-shared", "docker", "sudo"),
-    "power-user": (),
+    "admin": ("code-shared", "codex-shared", "docker", "sudo"),
+    "power-user": ("codex-shared",),
     "namespace-owner": (),
 }
 DEFAULT_SHELL = "/bin/zsh"
