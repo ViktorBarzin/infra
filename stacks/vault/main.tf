@@ -1172,6 +1172,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
 #   10:12 mysql-uptimekuma   10:13 pg-prowlarr (app_db_roles.tf; owns prowlarr and prowlarr_log)
 #   10:14 mysql-nextcloud   10:15 pg-reels (app_db_roles.tf)   10:16 mysql-speedtest
+#   10:17 pg-vermont-access (app_db_roles.tf)
 #   10:18 mysql-wrongmove
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
@@ -1958,6 +1959,13 @@ resource "vault_policy" "projects_emo" {
     # woodpecker-sync copies into Woodpecker. Re-seed it when either source
     # rotates (docs/agents/new-app.md, "An app owned by a non-admin").
     path "secret/data/workstation/shared/app-onboarding" {
+      capabilities = ["read"]
+    }
+    # Read the vermont_access database password (infra#176, 2026-11-11), so
+    # emo's agent can answer "who came in when" from the two-year archive of
+    # the Vermont complex access events. Viktor decided the role is readable
+    # only through emo's Vault access; cluster admins keep theirs.
+    path "database/static-creds/pg-vermont-access" {
       capabilities = ["read"]
     }
   EOT

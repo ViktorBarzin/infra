@@ -993,6 +993,25 @@ rules:
   disabled: false
   statetype: keep state
   linked_nat_rule: nat_6a9dc06d2bf487.08020455
+# infra#176: must stay above the block rule below, which is quick and would
+# otherwise drop the k8s nodes (sequence follows YAML order).
+- description: 'Vermont access devices: k8s nodes on TCP 80 only (infra#176)'
+  interface:
+  - wan
+  floating: true
+  direction: out
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: tcp
+  source:
+    alias: vermont_acs_pollers
+  destination:
+    alias: vermont_acs_devices
+    port: '80'
+  log: false
+  disabled: false
+  statetype: keep state
 - pfsense_tracker: '1792256910'
   description: 'Vermont complex alias: only k8s nodes and devvm (ADR-0035)'
   interface:
