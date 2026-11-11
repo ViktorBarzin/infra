@@ -8073,6 +8073,28 @@ serverFiles:
             annotations:
               summary: "Alexa assistant cannot reach the ha-london delivery webhook"
               description: "More than two webhook calls to ha-london failed in an hour, so results are not being spoken. ha-london has no uptime monitor of its own; check https://ha-london.viktorbarzin.me."
+      - name: Reels
+        rules:
+          - alert: ReelsWorkerDown
+            # Each worker lane writes worker_beat every 15 s, idle or busy; the
+            # web app exports the age at scrape time.
+            expr: max by (lane) (reels_worker_beat_age_seconds) > 300
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: reels
+            annotations:
+              summary: "Reels worker lane {{ $labels.lane }} has stopped"
+              description: "The reels-worker {{ $labels.lane }} lane has not written its heartbeat for over 5 minutes, so imports, picking or renders are not running. Check the pod (kubectl -n reels get pods -l app=reels-worker) and its logs (homelab logs query '{namespace=\"reels\", container=\"worker\"}'). Plan: viktor/trip-reel docs/plans/2026-11-11-reels-web-app.md."
+          - alert: ReelsQueueStuck
+            expr: max by (lane) (reels_jobs_queued_oldest_seconds) > 900
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: reels
+            annotations:
+              summary: "Reels {{ $labels.lane }} jobs have waited over 15 minutes"
+              description: "The oldest queued job in the {{ $labels.lane }} lane is over 15 minutes old while the worker is up. A long import or render may be hogging the slow lane, or the worker is failing every claim; check the worker logs (homelab logs query '{namespace=\"reels\", container=\"worker\"}') and the job table (status running, heartbeat_at)."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown

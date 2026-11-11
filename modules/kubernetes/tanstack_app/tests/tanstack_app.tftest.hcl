@@ -79,3 +79,38 @@ run "open_mode_without_admins_is_fine" {
     signup_mode    = "open"
   }
 }
+
+run "no_volumes_by_default" {
+  command = plan
+  assert {
+    condition     = length(kubernetes_deployment.this.spec[0].template[0].spec[0].volume) == 1
+    error_message = "only the db-password volume by default"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].security_context[0].fs_group_change_policy == null
+    error_message = "fs_group_change_policy unset by default, so existing apps render unchanged"
+  }
+}
+
+run "nfs_volume_mounts_without_rechowning" {
+  command = plan
+  variables {
+    volumes = [{ name = "data", claim_name = "demo-one-data", mount_path = "/data", read_only = false }]
+  }
+  assert {
+    condition     = [for v in kubernetes_deployment.this.spec[0].template[0].spec[0].volume : v.name] == ["db-password", "data"]
+    error_message = "the data volume is added after db-password"
+  }
+  assert {
+    condition     = one([for v in kubernetes_deployment.this.spec[0].template[0].spec[0].volume : v.persistent_volume_claim[0].claim_name if v.name == "data"]) == "demo-one-data"
+    error_message = "claim name"
+  }
+  assert {
+    condition     = one([for m in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].volume_mount : m.mount_path if m.name == "data"]) == "/data"
+    error_message = "mount path"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].security_context[0].fs_group_change_policy == "OnRootMismatch"
+    error_message = "OnRootMismatch, or the kubelet re-owns every file on the volume at each pod start"
+  }
+}

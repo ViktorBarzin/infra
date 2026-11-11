@@ -104,6 +104,10 @@ locals {
     # ServiceAccount references the cloned secret (stacks/orchestrator-sandbox).
     # Remove with that stack after the sprint.
     "orchestrator-sandbox",
+    # reels: PRIVATE ghcr.io/viktorbarzin/reels and reels-worker (trip reels
+    # web app + Python worker, Forgejo viktor/trip-reel, private GitHub
+    # mirror). Both Deployments reference the cloned secret.
+    "reels",
   ]
 }
 
