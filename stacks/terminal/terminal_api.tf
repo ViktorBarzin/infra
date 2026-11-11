@@ -307,13 +307,3 @@ resource "kubernetes_manifest" "devvm_lobby_cnp" {
     spec = each.value
   }
 }
-
-# The v1alpha1 AdminNetworkPolicies these replace. Calico 3.32+ ignores them
-# (infra#123), so they are dropped from state without deleting the objects;
-# deleting the three inert objects is tracked separately.
-removed {
-  from = kubernetes_manifest.devvm_lobby_anp
-  lifecycle {
-    destroy = false
-  }
-}
