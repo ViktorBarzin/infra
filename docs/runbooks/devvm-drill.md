@@ -10,7 +10,7 @@ back, delete it. This runbook is how.
 | Piece | Where | What it does |
 |---|---|---|
 | VM definition | `modules/proxmox-devvm` | One VM with the live devvm's shape (32 cores, 32 GiB, 228 GiB scsi0 capped 60/60 MB/s, vmbr1 VLAN 10, guest agent), a static address and the admin's keys on the cloud-init drive. Refuses the live name, VMID 102, 10.0.10.10 and its MAC unless `allow_live_identity = true`. |
-| Stack | `stacks/devvm` | `local.drills` lists the drill VMs. Empty means the stack holds nothing on the host, not even the Ubuntu image. Standalone terragrunt (bpg/proxmox as `proxmoxbpg`, like `stacks/opnsense`). |
+| Stack | `stacks/devvm` | `local.drills` lists the drill VMs. Empty means the stack holds only the pinned Ubuntu image (~600 MB in `local`), kept because deleting it would need a wider grant. Standalone terragrunt (bpg/proxmox as `proxmoxbpg`, like `stacks/opnsense`). |
 | Token | Vault `secret/devvm` `pve_api_token` | `terraform-devvm@pve!tf`, role `TFDevvm` on `/pool/devvm`, the VMID slots `/vms/9100`-`/vms/9109`, and storage, network and node paths. PVE checks `/vms/<id>` during create, before the VM joins the pool, so a drill needs a slot. VM 102 is neither, so the token gets 403 on it. Declared by `playbooks/pve-host.yml --tags devvm-tf`. |
 | Snippet | `/var/lib/vz/snippets/devvm_bootstrap.yaml` | Vendor data for every Terraform devvm. Rendered by `pve-host.yml --tags snippets` from `playbooks/files/pve/snippets/devvm_bootstrap.yaml.j2`, embedding `scripts/devvm-bootstrap`. |
 | Handoff | `scripts/devvm-drill-handoff` | Runs on the applier after the VM is up: mints a wrapped token through Vault token role `devvm-bootstrap` and writes it into the guest through the guest agent. |
@@ -83,8 +83,8 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
 ## Tear it down
 
 Remove the entry from `local.drills` and land it. CI stops and destroys the VM
-(without purge, so the VMID slot's ACL stays) and, with no drills left, deletes the image from `local`.
-Check: `ssh root@192.168.1.127 'qm list; pvesm list local --content import'`.
+(without purge, so the VMID slot's ACL stays). The Ubuntu image stays in `local` for the next drill.
+Check: `ssh root@192.168.1.127 'qm list'` shows no 91xx VM.
 
 ## When it goes wrong
 
@@ -146,6 +146,9 @@ default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
   t3-dispatch fails without one; the bootstrap now sets `HOME=/root`. With
   that, a rerun of the bootstrap on devvm-drill2 under a service with no HOME
   ran the playbook clean (292 ok, 0 failed).
+- The teardown could not delete the Ubuntu image: that needs
+  Datastore.Allocate on `local`, which would let the token delete every backup
+  and ISO there. The image now stays between drills.
 - terminal-lobby is installed by its deploy pipeline on the live box; the
   bootstrap now installs it from the public registry after the playbook. All
   seven lobby units came up.
