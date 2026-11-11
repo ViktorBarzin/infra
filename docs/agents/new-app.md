@@ -96,6 +96,15 @@ not re-own every file. `stacks/reels` is the reference, including a second
 Deployment (a worker) in the same namespace that reuses the module's
 `<name>-db-creds` Secret.
 
+## Metrics
+
+The Service is scraped automatically, but the `kubernetes-service-endpoints`
+job keeps only an allowlist of metric names
+(`metric_relabel_configs` in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`).
+An app's own metrics are silently dropped until its prefix is added there
+(`tripit_.+`, `reels_.+`), so an alert on them never fires. Check with a
+Prometheus query, not by curling `/metrics`.
+
 ## Connection budget
 
 Each pod holds a pool of 4 plus 1 LISTEN connection on the shared primary
