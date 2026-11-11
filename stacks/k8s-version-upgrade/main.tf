@@ -28,10 +28,12 @@
 variable "schedule" {
   type = string
   # Weekly Sunday 21:00 UTC. The chain takes about 2 h (2026-11-02: first drain
-  # 23:02, last 00:36), so it finishes before the Proxmox host's nfs-mirror
-  # (00:10-00:35 UTC, then devvm-home, daily and offsite backups until ~04:15
-  # UTC) and before the kured OS-reboot window (02:00-06:00 Europe/London), so
-  # the two drain pipelines never overlap. Moved from 23:00 on 2026-11-10: the
+  # 23:02, last 00:36), so it usually finishes before the Proxmox host's
+  # nightly backup chain (00:00 UTC) and the kured OS-reboot window
+  # (02:00-06:00 Europe/London). The time is only a preference since
+  # 2026-11-10: every master and worker phase holds kured's node lock
+  # (scripts/kured-lock.sh), so the three never overlap even when this runs
+  # long; whoever comes second waits. Moved from 23:00 on 2026-11-10: the
   # 11-02 node4/node5 drains ran inside nfs-mirror, host IO "full" PSI hit
   # 17-31%, qemu-server hot-unplug timed out and leaked Proxmox CSI slots
   # (Proxmox bug 8273), costing ~1,234 workload-minutes. Cadence history: weekly Sunday until
@@ -231,6 +233,17 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
     resources  = ["deployments", "deployments/scale"]
     verbs      = ["patch", "update"]
   }
+  # kured's node lock (scripts/kured-lock.sh, 2026-11-10): each master and
+  # worker phase holds the weave.works/kured-node-lock annotation on the kured
+  # DaemonSet from before its drain until after its soak, so kured cannot
+  # reboot a node and the host's nightly-chain cannot start its backups while
+  # the chain has a node out.
+  rule {
+    api_groups     = ["apps"]
+    resources      = ["daemonsets"]
+    resource_names = ["kured"]
+    verbs          = ["patch"]
+  }
   # Chain dispatch — create the next Job; reconcile via apply on retry.
   # In `default` ns to also create the etcd-snapshot Job from cronjob/backup-etcd.
   rule {
@@ -328,6 +341,7 @@ resource "kubernetes_config_map" "k8s_upgrade_scripts" {
   }
   data = {
     "upgrade-step.sh"   = file("${path.module}/scripts/upgrade-step.sh")
+    "kured-lock.sh"     = file("${path.module}/../../scripts/kured-lock.sh")
     "update_k8s.sh"     = file("${path.module}/../../scripts/update_k8s.sh")
     "compat-gate.py"    = file("${path.module}/scripts/compat-gate.py")
     "coredns-sync.py"   = file("${path.module}/scripts/coredns-sync.py")

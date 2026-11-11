@@ -320,6 +320,7 @@ The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply`
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
+- **Drains share kured's node lock** (2026-11-10). Each master and worker phase holds the `weave.works/kured-node-lock` annotation on `kured/kured` as `k8s-upgrade-chain` from before its drain until after its soak (`scripts/kured-lock.sh`), so a kured reboot or the Proxmox host's nightly backup chain never runs on top of an upgrade drain, whatever the clock says. Holders and TTLs: `docs/runbooks/k8s-node-auto-upgrades.md`.
 - **PDB-blocked pods don't stall the chain**. After cordoning the node, `predrain_unstick` deletes PDB=0 pods on it directly (bypassing the eviction API), so the parent Deployment recreates them elsewhere. CNPG pods are left to CNPG's own switchover. This was the workaround applied manually during the 2026-05-11 recovery for Anubis single-replica instances.
 
 ### Secrets

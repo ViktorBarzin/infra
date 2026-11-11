@@ -7,7 +7,7 @@ nodes (k8s-master + k8s-node1..6) are upgraded automatically by a weekly
 detection CronJob that seeds a chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
 drain target** — so no pod in the chain can preempt itself.
 
-The chain (weekly Sunday 21:00 UTC; moved from 23:00 on 2026-11-10 to finish before the host's 00:10 UTC nfs-mirror):
+The chain (weekly Sunday 21:00 UTC; moved from 23:00 on 2026-11-10 so it usually finishes before the host's nightly backup chain at 00:00 UTC):
 
 ```
 detection CronJob → preflight Job → master Job → one worker Job per worker (enumerated live) → postflight Job
@@ -20,6 +20,16 @@ here runs weekly Sunday 21:00 UTC) — when a kured reboot lands within 24h of t
 Sunday detection, the `RecentNodeReboot` alert in the Upgrade Gates
 group blocks the version-upgrade preflight, so the chain self-defers
 to the next Sunday rather than rolling on top of a half-fresh node.
+
+**Shared node lock (2026-11-10).** Every master and worker phase holds
+kured's own node lock, the `weave.works/kured-node-lock` annotation on the
+`kured/kured` DaemonSet, as `k8s-upgrade-chain` (TTL 3 h), from before its
+drain until the phase exits after the soak (`take_node_lock` /
+`release_node_lock` in `upgrade-step.sh`, helper `scripts/kured-lock.sh`).
+kured skips its reboot while anyone else holds it, and the Proxmox host's
+nightly backup chain waits for it before starting the dumps. A phase that
+finds the lock held waits up to 3 h, then aborts. To see the holder:
+`kubectl get ds -n kured kured -o jsonpath='{.metadata.annotations.weave\.works/kured-node-lock}'`.
 
 ## Architecture
 
