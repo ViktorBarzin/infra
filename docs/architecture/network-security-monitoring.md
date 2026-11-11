@@ -64,10 +64,17 @@ versions; mail clients; pod DNS; Tetragon binaries and destinations). Built
 from that day's data they come to about 3.5 GB a year, 2.6 GB of it
 `flows_hourly`, because every scanner is a new pair. A materialized view on
 each raw table fills its rollup on insert; the views count rows from
-2026-11-11 11:45 UTC, and older rows were backfilled once with the same
-SELECT, so nothing is counted twice. A view that fails also fails the raw
-insert it hangs on, so test a changed view's SELECT against the raw table
-before creating it. Not backed up, like the raw tables (Viktor, 2026-11-11).
+2026-11-11 12:05 UTC (`flows` by arrival time `received` from 12:13, because
+NetFlow records arrive up to about 5 minutes after their `ts`), and older rows
+were backfilled once with the same SELECT, so nothing is counted twice.
+Checked after the backfill: every rollup's counters equal the raw table's.
+Every view needs `DEFINER = default SQL SECURITY DEFINER`: `netsec_writer`
+holds INSERT only, and a view running with its rights makes each raw insert
+fail after the raw rows are written. That ran for 21 minutes on 2026-11-11
+(11:27-11:48 UTC): the raw tables kept every row, but Vector logged about
+159,000 events as dropped. Test a new or changed view with an insert as
+`netsec_writer` on scratch tables, then watch `netsec-vector` for errors
+right after creating it. Not backed up, like the raw tables (Viktor, 2026-11-11).
 
 **Users.** `netsec_writer` (INSERT on `netsec.*`, quota 4 GB written and
 20,000 inserts per hour, about ten times the measured rate) and
