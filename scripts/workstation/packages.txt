@@ -138,10 +138,15 @@ sqlite3              # 178 calls, T3 and Claude state among them
 zip
 skopeo               # registry image inspection: 66 calls
 openjdk-21-jdk-headless  # Android builds (tv, portalframe gradle)
+default-jre-headless     # the default-java alternative other packages expect
 nmap
 tcpdump
 socat
 sshpass              # LAN devices that only take passwords
+sshfs                # hand mounts of a LAN host's files (shell history, 2026-01)
+nfs-common           # hand NFS mounts and showmount against the Proxmox host
+mosh                 # installed by hand on purpose 2026-05-15; mosh-server for roaming logins
+age                  # age-keygen for a new SOPS operator (docs/agents/terraform.md)
 whois
 mtr-tiny
 traceroute
