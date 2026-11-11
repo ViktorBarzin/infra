@@ -34,6 +34,8 @@ Nothing images the VM; the SSD can fail and recovery is a rebuild:
 - **Proof, 2026-11-11:** the 2026-11-10 Synology backup decrypted with that
   key (python `securetar` 2026.10.0), 5,266 files extracted, and its
   `home-assistant_v2.db` passed `PRAGMA integrity_check` with 8.7 M state rows.
+- **Alert:** `HomeAssistantSofiaBackupStale` pages Slack when the last
+  successful automatic backup is older than 36 h.
 - **To rebuild:** recreate VM 103 from the PVE config copy that `daily-backup`
   keeps, install HAOS, and restore the newest Synology backup with the key.
 
