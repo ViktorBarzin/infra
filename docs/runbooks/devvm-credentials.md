@@ -193,8 +193,9 @@ diff` on those files is empty on the live box.
 
 emo's `ebarzin/dotfiles` (private, his own, viktor a collaborator) holds his
 `.zshrc`, `.zshenv`, `.zprofile`, `.tmux.conf`, `.tmux.conf.local` and
-`~/.local/bin/t`, and clones oh-my-tmux into `~/.tmux` through
-`.chezmoiexternal.toml`. Its `.zshenv` sources `~/.zshenv.local`, which holds
+`~/.local/bin/t`, and puts oh-my-tmux into `~/.tmux` from an archive pinned
+in `.chezmoiexternal.toml` (a git-repo external ran `git pull` in his existing
+`~/.tmux` on the first apply, which failed on its untracked files). Its `.zshenv` sources `~/.zshenv.local`, which holds
 `HA_MCP_URL` and is one of his credential files in Vault
 (`secret/workstation/emo/files`), restored before the dotfiles apply.
 
