@@ -209,7 +209,7 @@ ok "the clone gets the forgejo remote the land flow pushes to" \
   grep -qx "git -C $home/code/infra remote add forgejo $FORGEJO_INFRA_REMOTE" "$CALLS"
 eq "~/code is made like the live one, setgid for code-shared" "2770" "$(stat -c %a "$home/code")"
 ok "~/code is handed to code-shared" grep -qx "chgrp code-shared $home/code" "$CALLS"
-ok "the clone is logged with where its unlock key is" logged "git_crypt_key_b64"
+ok "the clone is logged as locked until an admin run unlocks it" logged "a run with an admin Vault token unlocks it"
 : > "$CALLS"
 install_admin_infra_clone "$me"
 no "an existing ~/code/infra is never touched" grep -q '^git ' "$CALLS"
