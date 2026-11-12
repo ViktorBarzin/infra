@@ -42,7 +42,7 @@ terraform {
     proxmoxbpg = {
       source = "bpg/proxmox"
       # renovate: datasource=terraform-provider depName=bpg/proxmox
-      version = "0.121.0"
+      version = "0.122.0"
     }
   }
 }
