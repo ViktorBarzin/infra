@@ -680,5 +680,8 @@ the nightly devvm-home backup on 2026-11-12.
   host keys are installed`; no `PRIVATE KEY` line in the cloud-init logs or
   the journal.
 - Torn down the same hour, before its build finished: the test was the host
-  keys, which a drill must not keep. Its bootstrap token expires on its own
-  within 4 h.
+  keys, which a drill must not keep. Its bootstrap token, the only one
+  carrying `devvm-host-identity`, was revoked by accessor after the destroy
+  (found with `vault token lookup -accessor` over `auth/token/accessors`).
+  The snippet was re-rendered (`pve-host.yml --tags snippets`) before the
+  build, since the bootstrap changed.
