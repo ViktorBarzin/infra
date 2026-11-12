@@ -109,6 +109,58 @@
         sysctl_file: /etc/sysctl.d/90-swappiness.conf
         reload: true
 
+    # ---- zram swap in front of the disk swap ---------------------------------
+    # Measured 2026-11-12: 6 of the 8 GiB on pve/swap in use, almost all QEMU
+    # guest RAM, swapped back in at 6.7 pages/s on a 7-day average and 836/s at
+    # peak, each a ~15 ms seek on sdc that stalls the guest's vCPU. A zram
+    # device at priority 100 takes every new swap-out into compressed RAM;
+    # pve/swap stays at -1 as overflow and drains as guests touch their old
+    # pages. Still not swapoff, for the reason above. The size is the
+    # uncompressed ceiling, so the worst case is 8 GiB of RAM for pages that do
+    # not compress; the host had 42 GiB available when this was added.
+    # Research: docs/research/2026-11-12-nvme-tier-vs-cache.md ("Other caching
+    # layers").
+    - name: Install zram-generator
+      ansible.builtin.apt:
+        name: systemd-zram-generator
+        state: present
+      tags: zram
+
+    - name: Configure the zram swap device
+      ansible.builtin.copy:
+        dest: /etc/systemd/zram-generator.conf
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by infra playbooks/pve-host.yml. Compressed swap in RAM,
+          # used before the disk swap on sdc (priority -1).
+          [zram0]
+          zram-size = 8192
+          compression-algorithm = zstd
+          swap-priority = 100
+      register: zram_conf
+      tags: zram
+
+    # Restarting the setup unit recreates the device, which moves whatever is
+    # in it back into RAM; that only happens when the config above changes.
+    - name: Recreate the zram device after a config change
+      ansible.builtin.systemd_service:
+        name: systemd-zram-setup@zram0.service
+        state: restarted
+        daemon_reload: true
+      when: zram_conf.changed
+      # A dry run before the first install has no unit to find yet.
+      ignore_errors: "{{ ansible_check_mode }}"
+      tags: zram
+
+    - name: Keep zram swap active
+      ansible.builtin.systemd_service:
+        name: dev-zram0.swap
+        state: started
+      ignore_errors: "{{ ansible_check_mode }}"
+      tags: zram
+
     # ---- journald in RAM -----------------------------------------------------
     # This host was the last one still writing its journal to disk, and that
     # disk is pve-root on sdc. Measured 2026-09-13: 258.9 GB over 57.6 days of
