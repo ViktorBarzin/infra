@@ -22,7 +22,7 @@ _SAFE_RE = re.compile(r"[0-9A-Za-z._-]+")
 # Top-level dirs of viktor/pages that belong to the site, not to a user. The
 # user dirs sit at the repo root beside these and .git, so a user named after
 # one would publish into it. Kept in sync with publisher._RESERVED_SEGMENTS.
-RESERVED_USERS = ("shared", "assets", "tools")
+RESERVED_USERS = ("shared", "assets", "tools", "c", "p")
 
 
 def _unsafe_segment(segment: object) -> bool:

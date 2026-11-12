@@ -54,11 +54,17 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
 
   var path = location.pathname;
   var rest = location.search + location.hash;
+  // Every frame URL is built on this origin. A path like //evil.example/x
+  // must never become a protocol-relative src (2026-11-12 review).
+  var here = location.origin;
   var frame = document.createElement("iframe");
   frame.setAttribute("sandbox", SANDBOX);
   frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay");
   frame.setAttribute("allowfullscreen", "");
   frame.title = "Page";
+  // rr-block: session replay records this element as a blank box, so a
+  // Bundle URL in its src never lands in a replay.
+  frame.className = "rr-block";
   document.body.appendChild(frame);
 
   function setTitle(text) {
@@ -72,7 +78,7 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
   }
 
   function titleFrom(src) {
-    fetch(src, { headers: { Range: "bytes=0-8191" }, credentials: "same-origin" })
+    fetch(here + src, { headers: { Range: "bytes=0-8191" }, credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.text() : ""; })
       .then(function (t) {
         var m = /<title[^>]*>([^<]*)<\/title>/i.exec(t);
@@ -82,7 +88,7 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
   }
 
   function show(src) {
-    frame.src = src;
+    frame.src = here + src;
   }
 
   var segs = path.split("/").filter(Boolean);
@@ -120,7 +126,7 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
       return;
     }
     var root = roots[i];
-    fetch(root + ".pages-bundle.json", { credentials: "same-origin" })
+    fetch(here + root + ".pages-bundle.json", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (m) {
         if (m && typeof m.cap === "string" && CAP.test(m.cap)) {
