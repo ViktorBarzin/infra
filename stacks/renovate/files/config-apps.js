@@ -93,6 +93,13 @@ module.exports = {
   packageRules: [
     {
       description:
+        'Our @viktorbarzin/* packages come from Forgejo\'s npm registry, where the apps install them from (app-kit ADR-0003, 2026-11-12); npmjs.org only carries a mirror that can lag',
+      matchDatasources: ['npm'],
+      matchPackageNames: ['@viktorbarzin/**'],
+      registryUrls: ['https://forgejo.viktorbarzin.me/api/packages/viktor/npm/'],
+    },
+    {
+      description:
         'Wait 3 days before taking a new npm release (ADR-0001). Our own @viktorbarzin/* packages are excluded. Matches the app\'s bunfig.toml install.minimumReleaseAge',
       matchDatasources: ['npm'],
       matchPackageNames: ['!@viktorbarzin/**'], // only a negation: every npm package except ours
