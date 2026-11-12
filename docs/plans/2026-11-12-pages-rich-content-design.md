@@ -42,35 +42,17 @@ These were measured before writing the design, and three of them change how deci
 ### Request paths
 
 ```mermaid
-flowchart LR
-  subgraph Browser
-    V[Viewer tab]
-    F[Sandboxed iframe<br/>opaque origin]
-  end
-  subgraph Edge[Traefik]
-    G[pages ingress<br/>Authentik forward auth]
-    PUB[/p/ /c/ /assets/ ingresses<br/>no auth, noindex, anti-AI/]
-  end
-  subgraph Learn[learn pod: Caddy + git-sync]
-    SH[Shell<br/>ConfigMap file, Rybbit]
-    RAW[Raw page<br/>CSP sandbox]
-    CAP[/c/&lt;cap&gt;/ Bundle files<br/>CSP sandbox, CORS */]
-    PL[/p/&lt;token&gt;/ public link<br/>symlink into a Space/]
-    AS[/assets/ libraries<br/>CORS */]
-  end
-  subgraph Publish[pages-publish]
-    API[POST /publish, /publish-bundle,<br/>/share, /unshare]
-  end
-  REPO[(Forgejo viktor/pages)]
-
-  V -- "private: GET /x.html (Sec-Fetch-Dest: document)" --> G --> SH
-  SH -- "iframe GET /x.html (cookie sent)" --> G --> RAW
-  SH -- "Bundle: iframe GET /c/&lt;cap&gt;/" --> PUB --> CAP
-  F -- "relative files, no cookie" --> PUB
-  F -- "/assets/three, reveal, chart" --> PUB --> AS
-  V -- "public: GET /p/&lt;token&gt;/" --> PUB --> PL
-  CLI[homelab pages publish / share] -- bearer token --> API --> REPO
-  REPO -- "git-sync every 30s" --> Learn
+flowchart TD
+  V["Browser opens a page"] -->|"Sec-Fetch-Dest: document"| G["pages ingress, Authentik"]
+  G --> SH["Shell from the ConfigMap: Rybbit + sandboxed frame"]
+  SH -->|"frame GET, sign-in cookie sent"| RAW["Page from git, CSP sandbox"]
+  SH -->|"Bundle: marker gives the cap"| CAP["/c/&lt;cap&gt;/ Bundle files, no auth"]
+  RAW -->|"no cookie"| AS["/assets/ libraries, CORS *"]
+  CAP --> AS
+  PUB["Anyone with a link"] --> PL["/p/&lt;token&gt;/ no auth, same shell + sandbox"]
+  CLI["homelab pages publish / share"] -->|"bearer token"| API["pages-publish"]
+  API -->|"commit + push"| REPO[("Forgejo viktor/pages")]
+  REPO -->|"git-sync every 30 s"| RAW
 ```
 
 ### The shell and the sandboxed frame
