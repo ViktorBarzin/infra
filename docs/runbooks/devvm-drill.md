@@ -664,3 +664,21 @@ Gaps it found, none fixed in the drill itself, none CRITICAL or MAJOR:
 
 Verdict: the rebuild passed with no CRITICAL or MAJOR gap. Viktor retired
 the nightly devvm-home backup on 2026-11-12.
+
+**2026-11-12, host-key test, round 3** (devvm-drill-hostkeys, VM 9101,
+10.0.10.14, 2 cores, 4 GiB), built by CI from master with
+`live_host_keys = true`, to test the host-key path without VM 102:
+
+- At 08:08 UTC the box answered with its first-boot keys (ED25519
+  `SHA256:6xr/R5fZ...`); at 08:09:28, a few seconds after the unwrap, with
+  the live devvm's three: ED25519 `SHA256:r1N+5R/B...`, ECDSA
+  `SHA256:dDyXeaVD...`, RSA `SHA256:ZRwm1gJv...`, the ones the Proxmox host
+  pins for 10.0.10.10.
+- `ssh` with `StrictHostKeyChecking=yes` and a known_hosts file holding only
+  the live public keys for 10.0.10.14 logged in. The cloud-init drop-in was
+  there, the keys 600 and 644 root, and the log said `the live devvm's SSH
+  host keys are installed`; no `PRIVATE KEY` line in the cloud-init logs or
+  the journal.
+- Torn down the same hour, before its build finished: the test was the host
+  keys, which a drill must not keep. Its bootstrap token expires on its own
+  within 4 h.
