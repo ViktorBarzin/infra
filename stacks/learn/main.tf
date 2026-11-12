@@ -112,10 +112,64 @@ resource "kubernetes_config_map" "caddyfile" {
     namespace = kubernetes_namespace.learn.metadata[0].name
   }
   data = {
-    Caddyfile = <<-EOT
+    Caddyfile          = <<-EOT
       {
       	admin off
       	auto_https off
+      }
+      # --- pages sandbox (ADR-0042, docs/plans/2026-11-12-pages-rich-content-design.md) ---
+      # Every page on pages.viktorbarzin.me is two documents on one URL: the
+      # SHELL (a browser navigation, Sec-Fetch-Dest: document) is the fixed file
+      # pages-shell.html from this ConfigMap, the only document that runs with
+      # the site's real origin; it frames the same URL, and that RAW response
+      # (Sec-Fetch-Dest: iframe, or anything else) is the page from git with a
+      # CSP sandbox, so page scripts get an opaque origin: no cookies, no
+      # storage, no reading other Spaces. The pages ingresses skip Traefik's
+      # shared csp-headers middleware (skip_default_csp), because Traefik
+      # REPLACES a backend's CSP; these snippets set frame-ancestors instead.
+      # Keep the sandbox flags in step with SANDBOX in pages-shell.html.
+      (pages_frame_ancestors) {
+      	header Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
+      }
+      # Takes an optional matcher: Caddy runs a matcher-less `header` AFTER the
+      # matched ones, so the legacy override below only works if this one is
+      # matched too.
+      (pages_sandbox_private) {
+      	header {args[0]} Content-Security-Policy "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock allow-top-navigation-by-user-activation; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
+      	header Vary Sec-Fetch-Dest
+      	header X-Content-Type-Options nosniff
+      }
+      # /c/ and /p/ are readable without signing in, so they also allow any
+      # page to frame or fetch them (CORS *), which nested frames and a
+      # Bundle's own fetch("data.json") from the opaque origin need.
+      (pages_sandbox_public) {
+      	header Content-Security-Policy "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock allow-top-navigation-by-user-activation"
+      	header Access-Control-Allow-Origin *
+      	header Vary Sec-Fetch-Dest
+      	header X-Content-Type-Options nosniff
+      	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noai, noimageai"
+      	header Referrer-Policy no-referrer
+      }
+      (pages_shell) {
+      	root * /etc/caddy
+      	rewrite * /pages-shell.html
+      	header Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me; object-src 'none'; base-uri 'none'; script-src 'self' 'unsafe-inline'; frame-src 'self'"
+      	header Cache-Control no-store
+      	header Vary Sec-Fetch-Dest
+      	header X-Content-Type-Options nosniff
+      	file_server
+      }
+      # Pages written before the sandbox that load files from a SIBLING
+      # directory, or call localStorage unguarded. A single page has no Bundle
+      # URL, so in the sandbox their images would go out without the sign-in
+      # cookie and fail. All are Viktor's own, in pages/wizard; they keep the
+      # old serving (no shell, no sandbox) until republished as Bundles.
+      (pages_legacy_paths) {
+      	path /2026-09-11-live-display-upscale.html /wizard/2026-09-11-live-display-upscale.html
+      	path /2026-09-24-orchestrator-bake-off.html /wizard/2026-09-24-orchestrator-bake-off.html
+      	path /2026-09-24-text-composer-redesign.html /wizard/2026-09-24-text-composer-redesign.html
+      	path /2026-09-27-text-view-t3-pass.html /wizard/2026-09-27-text-view-t3-pass.html
+      	path /paladin-sources.html /wizard/paladin-sources.html /paladin-video.html /wizard/paladin-video.html
       }
       :8080 {
       	# host/auth-agnostic health endpoint so the caddy readiness probe
@@ -210,17 +264,95 @@ resource "kubernetes_config_map" "caddyfile" {
       	# (PWA; repointed 2026-07-27).
       	# In-cluster callers can still spoof the header (same trust class as
       	# ttyd, per ADR) — accepted for this 3-user homelab (Viktor, 2026-07-26).
+      	# /assets/ is PUBLIC since 2026-11-12 (module "ingress_pages_assets"):
+      	# a sandboxed page's requests carry no sign-in cookie, so the stylesheet
+      	# and the vendored libraries (assets/VERSIONS.md) must load without one.
+      	# Module scripts and fonts from an opaque origin are CORS requests, hence *.
+      	# Nothing private lives here; the publish service never writes assets/.
       	@pages_assets {
       		host pages.viktorbarzin.me
       		path /assets/*
       	}
       	handle @pages_assets {
+      		import pages_frame_ancestors
+      		header Access-Control-Allow-Origin *
+      		header Cache-Control "public, max-age=3600"
       		root * /repo/src/current
       		file_server
+      	}
+      	# /c/<cap>/ — the Bundle URL (module "ingress_pages_bundles", no auth).
+      	# c/<cap> in viktor/pages is a symlink to <space>/<bundle>, written by
+      	# pages-publish and rotated on every publish of that Bundle. Readable by
+      	# anyone holding the 128-bit cap: that is the accepted trade-off in the
+      	# design doc. Only a 32-hex first segment is served and dotfiles (the
+      	# marker naming the cap) never are.
+      	@pages_cap {
+      		host pages.viktorbarzin.me
+      		path /c/*
+      	}
+      	handle @pages_cap {
+      		@pages_cap_bad not path_regexp ^/c/[0-9a-f]{32}/
+      		respond @pages_cap_bad "Not Found" 404
+      		import pages_sandbox_public
+      		root * /repo/src/current
+      		file_server {
+      			hide .*
+      		}
+      	}
+      	# /p/<token>/ — a public link (module "ingress_pages_public", no auth,
+      	# no Turnstile). p/<token> is a symlink into a Space, written by
+      	# pages-publish /share and removed by /unshare. Same shell and sandbox as
+      	# a private page, so Rybbit counts it the same way.
+      	@pages_public {
+      		host pages.viktorbarzin.me
+      		path /p/*
+      	}
+      	handle @pages_public {
+      		@pages_public_bad not path_regexp ^/p/[0-9a-f]{32}(/|$)
+      		respond @pages_public_bad "Not Found" 404
+      		@pages_public_bare path_regexp ^/p/[0-9a-f]{32}$
+      		redir @pages_public_bare {path}/ 308
+      		@pages_public_shell {
+      			method GET
+      			header Sec-Fetch-Dest document
+      			path */ *.html
+      			not query raw=*
+      			not query print-pdf=*
+      		}
+      		handle @pages_public_shell {
+      			import pages_shell
+      		}
+      		handle {
+      			import pages_sandbox_public
+      			root * /repo/src/current
+      			file_server {
+      				hide .*
+      			}
+      		}
       	}
       	@plans_redirect host plans.viktorbarzin.me
       	handle @plans_redirect {
       		redir https://pages.viktorbarzin.me{uri} permanent
+      	}
+      	# The shell for every other browser navigation to a page. It is the same
+      	# fixed file for everyone and holds nothing private, so it is served
+      	# before the identity handles; the frame's request then goes through
+      	# them as before. ?raw and reveal's ?print-pdf skip it, which is how a
+      	# page is printed (browsers print only the visible part of a frame).
+      	@pages_shell {
+      		host pages.viktorbarzin.me
+      		method GET
+      		header Sec-Fetch-Dest document
+      		path / */ *.html
+      		not path /assets/* /_t/* /outpost.goauthentik.io/* /tools/* /.*
+      		not query raw=*
+      		not query print-pdf=*
+      		not {
+      			import pages_legacy_paths
+      		}
+      	}
+      	handle @pages_shell {
+      		import pages_shell
       	}
       	@pages_shared {
       		host pages.viktorbarzin.me
@@ -228,6 +360,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin|valentinakolevabarzina)(@.*)?$
       	}
       	handle @pages_shared {
+      		import pages_sandbox_private
       		root * /repo/src/current
       		file_server
       	}
@@ -247,6 +380,16 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
       	}
       	handle @pages_wizard {
+      		@pages_wizard_legacy {
+      			import pages_legacy_paths
+      		}
+      		@pages_wizard_sandboxed {
+      			not {
+      				import pages_legacy_paths
+      			}
+      		}
+      		import pages_sandbox_private @pages_wizard_sandboxed
+      		header @pages_wizard_legacy Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
       		root * /repo/src/current
       		try_files /wizard{path} /wizard{path}index.html /emo{path} /emo{path}index.html /shared{path} /shared{path}index.html
       		file_server
@@ -273,6 +416,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		# root means a path outside her space cannot resolve at all. The two
       		# admin handles above keep the prefixed form because they are supposed
       		# to read every space, so the same fallback is harmless there.
+      		import pages_sandbox_private
       		root * /repo/src/current/anca
       		try_files {path} {path}index.html
       		file_server
@@ -293,6 +437,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^valentinakolevabarzina(@.*)?$
       	}
       	handle @pages_valia {
+      		import pages_sandbox_private
       		@pages_valia_own file {
       			root /repo/src/current/valia
       			try_files {path} {path}index.html
@@ -313,15 +458,27 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^emil\.barzin(@.*)?$
       	}
       	handle @pages_emo {
+      		@pages_emo_legacy {
+      			import pages_legacy_paths
+      		}
+      		@pages_emo_sandboxed {
+      			not {
+      				import pages_legacy_paths
+      			}
+      		}
+      		import pages_sandbox_private @pages_emo_sandboxed
+      		header @pages_emo_legacy Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
       		root * /repo/src/current
       		try_files /emo{path} /emo{path}index.html /wizard{path} /wizard{path}index.html /shared{path} /shared{path}index.html
       		file_server
       	}
       	handle {
+      		import pages_frame_ancestors
       		respond "Forbidden" 403
       	}
       }
     EOT
+    "pages-shell.html" = file("${path.module}/pages-shell.html")
   }
 }
 
@@ -353,7 +510,7 @@ resource "kubernetes_deployment" "learn" {
         }
         annotations = {
           # Roll the pod when the Caddyfile changes (config mounts don't restart pods)
-          "viktorbarzin.me/caddyfile-sha" = sha1(kubernetes_config_map.caddyfile.data["Caddyfile"])
+          "viktorbarzin.me/caddyfile-sha" = sha1(join("", [kubernetes_config_map.caddyfile.data["Caddyfile"], kubernetes_config_map.caddyfile.data["pages-shell.html"]]))
         }
       }
       spec {
@@ -515,6 +672,9 @@ module "ingress_pages" {
   # stacks/authentik/forward-auth-apps.json, which must name the same groups
   # (scripts/check-allowed-groups.py enforces that before plan).
   allowed_groups = ["Home Server Admins", "Home Users"]
+  # Caddy sets the CSP per path (the sandbox on raw pages, frame-ancestors on
+  # the shell and assets); Traefik's shared CSP middleware would replace it.
+  skip_default_csp = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Pages"
@@ -752,10 +912,11 @@ module "ingress_prep" {
   # auth = "none": the page anyone with the link should open with no login. Not
   # "public", which currently 302s anonymous visitors to a login page (measured
   # estate-wide 2026-09-03), and not a posture the offline file:// copy can sync from.
-  auth             = "none"
-  dns_type         = "none"
-  external_monitor = false
-  anti_ai_scraping = true
+  auth              = "none"
+  dns_type          = "none"
+  external_monitor  = false
+  anti_ai_scraping  = true
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "150"
     # A carve-out on a host that already has its dashboard tile, so it stays
@@ -782,10 +943,11 @@ module "ingress_pe_summit_trip" {
   namespace       = kubernetes_namespace.learn.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # auth = "none": a static trip page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
-  auth             = "none"
-  dns_type         = "none"
-  external_monitor = false
-  anti_ai_scraping = true
+  auth              = "none"
+  dns_type          = "none"
+  external_monitor  = false
+  anti_ai_scraping  = true
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "150"
     "gethomepage.dev/enabled"                       = "false"
@@ -807,10 +969,11 @@ module "ingress_vietnam_guide" {
   namespace       = kubernetes_namespace.learn.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # auth = "none": a static page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
-  auth             = "none"
-  dns_type         = "none"
-  external_monitor = false
-  anti_ai_scraping = true
+  auth              = "none"
+  dns_type          = "none"
+  external_monitor  = false
+  anti_ai_scraping  = true
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "150"
     "gethomepage.dev/enabled"                       = "false"
@@ -833,10 +996,11 @@ module "ingress_homelab_showcase" {
   namespace       = kubernetes_namespace.learn.metadata[0].name
   tls_secret_name = var.tls_secret_name
   # auth = "none": a static page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
-  auth             = "none"
-  dns_type         = "none"
-  external_monitor = false
-  anti_ai_scraping = true
+  auth              = "none"
+  dns_type          = "none"
+  external_monitor  = false
+  anti_ai_scraping  = true
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "150"
     "gethomepage.dev/enabled"                       = "false"
@@ -872,4 +1036,119 @@ module "ingress_prep_api" {
     # An API path behind the page, not something anyone browses to.
     "gethomepage.dev/enabled" = "false"
   }
+}
+
+
+# === pages rich content (2026-11-12, ADR-0042) ===
+# docs/plans/2026-11-12-pages-rich-content-design.md. Three public carve-outs
+# on the gated host, each matched by Caddy on PATH before any identity handle,
+# with root pinned to its own tree:
+#   /assets/  the stylesheet and vendored libraries. A sandboxed page's
+#             requests carry no sign-in cookie, so these must load without one.
+#   /c/<cap>/ the Bundle URL: a Bundle's files, behind a 128-bit random cap.
+#   /p/<tok>/ a public link to a page or Bundle, until it is unshared.
+# Paths end in "/" because ingress_factory paths are string prefixes: "/c"
+# would also take /composer/ and /camera-specs/ out from behind Authentik.
+
+# A client can send its own X-Authentik-* headers. Behind forward auth Traefik
+# overwrites them from the outpost; on these auth-free routes nothing does, so
+# strip them before Caddy, whose identity handles trust X-Authentik-Username.
+# The Caddy path handles are terminal, so this is the second line of defence.
+resource "kubernetes_manifest" "strip_authentik_headers" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "strip-authentik-headers"
+      namespace = kubernetes_namespace.learn.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-Authentik-Username"     = ""
+          "X-Authentik-Groups"       = ""
+          "X-Authentik-Email"        = ""
+          "X-Authentik-Name"         = ""
+          "X-Authentik-Uid"          = ""
+          "X-Authentik-Entitlements" = ""
+        }
+      }
+    }
+  }
+}
+
+module "ingress_pages_assets" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "pages-assets"
+  host            = "pages"
+  ingress_path    = ["/assets/"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a stylesheet and public open-source libraries, loaded by sandboxed pages whose requests carry no sign-in cookie.
+  auth = "none"
+  # Subresources: a browser never asks for an HTML page here, and a challenge would only break the page that loads them.
+  turnstile         = false
+  dns_type          = "none"
+  external_monitor  = false
+  anti_ai_scraping  = true
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
+  }
+  depends_on = [kubernetes_manifest.strip_authentik_headers]
+}
+
+module "ingress_pages_bundles" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "pages-bundles"
+  host            = "pages"
+  ingress_path    = ["/c/"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a Bundle's files, loaded inside a sandboxed frame whose requests carry no sign-in cookie; the 128-bit cap in the path is the gate.
+  auth = "none"
+  # Loaded inside a frame and by fetch(); a challenge page there would only break the Bundle.
+  turnstile         = false
+  search_noindex    = true
+  anti_ai_scraping  = true
+  skip_default_csp  = true
+  dns_type          = "none"
+  external_monitor  = false
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
+  }
+  depends_on = [kubernetes_manifest.strip_authentik_headers]
+}
+
+module "ingress_pages_public" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "pages-public"
+  host            = "pages"
+  ingress_path    = ["/p/"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a public link anyone holding it may open (decision 7); the 128-bit token in the path is the gate.
+  auth = "none"
+  # Decision 7 of the design: no Turnstile on public links, so a link opens for whoever it was sent to.
+  turnstile         = false
+  search_noindex    = true
+  anti_ai_scraping  = true
+  skip_default_csp  = true
+  dns_type          = "none"
+  external_monitor  = false
+  extra_middlewares = ["learn-strip-authentik-headers@kubernetescrd"]
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
+  }
+  depends_on = [kubernetes_manifest.strip_authentik_headers]
 }

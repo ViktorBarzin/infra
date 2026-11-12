@@ -505,6 +505,14 @@ _Avoid_: "site", "upload".
 The browser isolation every Page runs under: its scripts get an opaque origin, so they cannot read cookies or other Pages.
 _Avoid_: calling a Page "trusted" because its author is.
 
+**Shell**:
+The fixed document the site answers a browser navigation with. It runs as the site's real origin, carries the analytics, and frames the Page in its Sandbox on the same URL. It never holds Page content (ADR-0042).
+_Avoid_: "wrapper page", "viewer".
+
+**Bundle URL**:
+The unguessable `/c/<cap>/` address a multi-file Bundle's files are also served at, because inside the Sandbox they load without the sign-in cookie. Only the Shell uses it; it changes on every publish of the Bundle. Not a Public link: nobody hands it out.
+_Avoid_: "cap link", "private link".
+
 **Public link**:
 An unguessable URL that opens one Page without signing in. It lasts until its author revokes it; the Page itself stays in its Space.
 _Avoid_: "public page" (the Page is not moved or copied), "share link" (the shared Space is a different thing).

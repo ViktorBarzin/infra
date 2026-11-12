@@ -37,10 +37,12 @@ DEFAULT_ATTEMPTS = 5
 # '..' check in sanitize_slug is what blocks parent traversal, not the regex.
 _SLUG_RE = re.compile(r"[0-9A-Za-z._-]+")
 
-# Every asset a rendered page can reference, as it appears in the HTML. The
-# charset has no '/' so a match is always a bare filename inside assets/,
-# which is what keeps the preview from serving an arbitrary repo file.
-_ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
+# Every asset a rendered page can reference, as it appears in the HTML: a file
+# in assets/ or in one of its versioned library dirs (assets/reveal-6.0.2/...).
+# No segment may start with '.', and collect_assets() checks the resolved path
+# stays inside assets/, which is what keeps the preview from serving an
+# arbitrary repo file.
+_ASSET_REF_RE = re.compile(r"/assets/((?:[0-9A-Za-z_-][0-9A-Za-z._-]*/){0,3}[0-9A-Za-z_-][0-9A-Za-z._-]*)")
 
 # Assets are text (css/js). A preview of a page with a mermaid diagram carries
 # mermaid.min.js, ~3.5 MB, so the ceiling is well above that and still bounded.
@@ -58,10 +60,11 @@ MAX_PAGE_BYTES = 8 * 1024 * 1024
 MAX_PAGE_REQUEST_BYTES = 2 * MAX_PAGE_BYTES
 
 
-# /publish-bundle limits. The showcase site is a handful of text files plus one
-# OpenGraph PNG; these leave room for growth while bounding one request.
+# /publish-bundle limits, for the Showcase's bundle token and for every user's
+# Bundles (app/bundles.py adds a 10 MiB per-file cap and a file-type list).
+# 25 MiB per publish is decision 3 of the 2026-11-12 design.
 MAX_BUNDLE_FILES = 200
-MAX_BUNDLE_BYTES = 20 * 1024 * 1024
+MAX_BUNDLE_BYTES = 25 * 1024 * 1024
 MAX_BUNDLE_DEPTH = 3  # path segments, so "a/b/file" at most
 BUNDLE_ENCODINGS = ("utf-8", "base64")
 
@@ -176,12 +179,24 @@ def ensure_repo(cfg: Config) -> None:
     _run(["git", "-C", cfg.repo_dir, "config", "user.email", cfg.committer_email])
 
 
-def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> str:
+def render_page(
+    cfg: Config,
+    md_path: str,
+    abs_target_dir: str,
+    status: str,
+    source_name: str | None = None,
+) -> str:
     """Invoke the repo's renderer (tools/render.py); return the path it emitted.
 
     render.py prints the written page path on stdout (``<date>-<slug>.html``,
     or a reused page) and regenerates that dir's index.html — the emitted path
     is authoritative for the served URL, so we read it back rather than guess.
+
+    ``source_name`` is the file name the author published from. The markdown
+    sits in a fresh temp dir on every call, so without it the renderer saw a
+    new source each time and minted a new page per day (fixed 2026-11-12).
+    Exit code 3 is a content error in the markdown (an invalid chart block),
+    which is the author's to fix, so it becomes a 400.
     """
     cmd = [
         cfg.python_bin,
@@ -192,7 +207,11 @@ def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> 
         "--status",
         status,
     ]
+    if source_name:
+        cmd += ["--source-name", source_name]
     p = _run(cmd)
+    if p.returncode == 3:
+        raise PublishError(p.stderr.strip().removeprefix("error: "))
     if p.returncode != 0:
         raise RenderError(f"render.py failed: {p.stderr.strip()}")
     lines = [ln.strip() for ln in p.stdout.splitlines() if ln.strip()]
@@ -353,7 +372,7 @@ def publish(
         for attempt in range(1, attempts + 1):
             sync_to_master(cfg)
             os.makedirs(abs_target, exist_ok=True)
-            out_path = render_page(cfg, md_path, abs_target, status)
+            out_path = render_page(cfg, md_path, abs_target, status, f"{slug}.md")
             result = {
                 "url": derive_url(cfg, out_path, shared),
                 "path": os.path.relpath(out_path, cfg.repo_dir),
@@ -392,6 +411,8 @@ def collect_assets(cfg: Config, html: str) -> dict[str, str]:
     assets: dict[str, str] = {}
     root = os.path.realpath(os.path.join(cfg.repo_dir, "assets"))
     for name in sorted(set(_ASSET_REF_RE.findall(html))):
+        if ".." in name:
+            continue
         path = os.path.realpath(os.path.join(root, name))
         if path != root and not path.startswith(root + os.sep):
             continue  # unreachable given the charset; kept as the explicit gate
@@ -443,7 +464,7 @@ def render_preview(
             f.write(content)
         out_dir = os.path.join(td, "out")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = render_page(cfg, md_path, out_dir, status)
+        out_path = render_page(cfg, md_path, out_dir, status, f"{slug}.md")
         with open(out_path, encoding="utf-8") as f:
             html = f.read()
 

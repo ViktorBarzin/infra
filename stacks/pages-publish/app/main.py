@@ -7,9 +7,12 @@
   caller with no pages checkout can look at a page before publishing it;
   the site itself is owner-gated and 403s every automated client.
 - /publish and /preview answer 413 for a page over publisher.MAX_PAGE_BYTES.
-- POST /publish-bundle -> bearer-authenticated with a BUNDLE token (a separate
-  map from /publish's); replaces <user>/<slug>/ with the files sent and
-  commits + pushes. No rendering.
+- POST /publish-bundle -> with a user's API token (2026-11-12): publishes one
+  HTML file as a page or several files as a Bundle in that user's Space, with
+  its Bundle URL (app/bundles.py). With a legacy BUNDLE token (a separate map,
+  the Showcase CI): replaces <user>/<slug>/ with the files sent. No rendering.
+- POST /share, /unshare -> API token; create or remove a public link
+  /p/<token>/ to a page in the caller's Space or shared/.
 
 Concurrent publishes serialize on an asyncio lock; the blocking render + git
 work runs in a worker thread so /health stays responsive.
@@ -29,7 +32,7 @@ from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel
 
-from . import auth, config, publisher
+from . import auth, bundles, config, publisher
 
 # Without a root handler, module loggers fall back to stderr at WARNING+ only,
 # so the successful-publish audit line would never reach Loki. uvicorn keeps its
@@ -54,6 +57,7 @@ class PublishRequest(BaseModel):
     filename: str  # e.g. "2026-07-27-foo.md" — only the sanitized slug is used
     status: str = "draft"
     shared: bool = False
+    public: bool = False  # also create (or keep) a public link; see /share
     # NOTE: there is deliberately NO `user` field. Identity comes from the
     # token; any extra body keys are ignored by pydantic.
 
@@ -66,7 +70,18 @@ class BundleFile(BaseModel):
 
 class BundleRequest(BaseModel):
     files: list[BundleFile]
-    # NOTE: no user or slug field. Both come from the bundle token.
+    # With a user token: the file or directory name published from, which is
+    # the page's identity. Ignored with a bundle token, whose slug is fixed.
+    name: str | None = None
+    status: str = "draft"
+    shared: bool = False
+    public: bool = False
+    # NOTE: no user field. It comes from the token, as does a bundle slug.
+
+
+class ShareRequest(BaseModel):
+    page: str  # a page URL, its served name, shared/<name>, or its source name
+    shared: bool = False
 
 
 # Endpoints that take one page of markdown; /publish-bundle has its own limits.
@@ -98,8 +113,12 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
 
     async def current_bundle(
         authorization: str | None = Header(default=None),
-    ) -> tuple[str, str]:
-        return auth.resolve_bundle(cfg.bundle_map, authorization)
+    ) -> tuple[str, str | None]:
+        """(user, slug) for a bundle token, (user, None) for an API token."""
+        token = (authorization or "").removeprefix("Bearer ").strip()
+        if token in cfg.bundle_map:
+            return cfg.bundle_map[token]
+        return auth.resolve_user(cfg.key_map, authorization), None
 
     @app.middleware("http")
     async def cap_page_body(
@@ -107,12 +126,22 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     ) -> Response:
         # Runs before the route reads the body, so an oversized page is refused
         # without ever being held in memory.
+        length = request.headers.get("content-length", "")
         if request.method == "POST" and request.url.path in _PAGE_PATHS:
-            length = request.headers.get("content-length", "")
             if length.isdigit() and int(length) > publisher.MAX_PAGE_REQUEST_BYTES:
                 return JSONResponse(
                     status_code=413,
                     content={"detail": _too_large("the request body", int(length))},
+                )
+        if request.method == "POST" and request.url.path == "/publish-bundle":
+            if length.isdigit() and int(length) > bundles.MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": (
+                        f"the request body is {length} bytes; a publish may carry at most "
+                        f"{bundles.MAX_PUBLISH_BYTES // (1024 * 1024)} MiB of files "
+                        f"({bundles.MAX_REQUEST_BYTES // (1024 * 1024)} MiB of request)"
+                    )},
                 )
         return await call_next(request)
 
@@ -148,6 +177,22 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
             log.exception("unhandled error previewing %s for %s", body.filename, user)
             raise
 
+    def publish_and_maybe_share(body: PublishRequest, user: str) -> dict[str, str]:
+        result = publisher.publish(
+            cfg,
+            user=user,
+            content=body.content,
+            filename=body.filename,
+            status=body.status,
+            shared=body.shared,
+        )
+        if body.public:
+            link = bundles.share(
+                cfg, user=user, page=os.path.basename(result["path"]), shared=body.shared
+            )
+            result["public_url"] = link["url"]
+        return result
+
     @app.post("/publish")
     async def publish_endpoint(
         body: PublishRequest, user: str = Depends(current_user)
@@ -155,15 +200,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
         _require_page_size(body.content)
         try:
             async with lock:
-                return await asyncio.to_thread(
-                    publisher.publish,
-                    cfg,
-                    user=user,
-                    content=body.content,
-                    filename=body.filename,
-                    status=body.status,
-                    shared=body.shared,
-                )
+                return await asyncio.to_thread(publish_and_maybe_share, body, user)
         except publisher.PublishError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except publisher.RenderError as e:
@@ -179,17 +216,29 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
 
     @app.post("/publish-bundle")
     async def publish_bundle_endpoint(
-        body: BundleRequest, target: tuple[str, str] = Depends(current_bundle)
+        body: BundleRequest, target: tuple[str, str | None] = Depends(current_bundle)
     ) -> dict:
         user, slug = target
+        files = [f.model_dump() for f in body.files]
         try:
             async with lock:
+                if slug is None:
+                    return await asyncio.to_thread(
+                        bundles.publish,
+                        cfg,
+                        user=user,
+                        name=body.name,
+                        files=files,
+                        status=body.status,
+                        shared=body.shared,
+                        public=body.public,
+                    )
                 return await asyncio.to_thread(
                     publisher.publish_bundle,
                     cfg,
                     user=user,
                     slug=slug,
-                    files=[f.model_dump() for f in body.files],
+                    files=files,
                 )
         except publisher.PublishError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -199,6 +248,31 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
         except Exception:
             log.exception("unhandled error publishing bundle %s/%s", user, slug)
             raise
+
+    async def link_call(fn, body: ShareRequest, user: str) -> dict:
+        try:
+            async with lock:
+                return await asyncio.to_thread(
+                    fn, cfg, user=user, page=body.page, shared=body.shared
+                )
+        except LookupError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no page {body.page!r} in your Space or shared/",
+            )
+        except publisher.PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except publisher.RenderError as e:
+            log.error("%s failed for %s (%s): %s", fn.__name__, user, body.page, e)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/share")
+    async def share_endpoint(body: ShareRequest, user: str = Depends(current_user)) -> dict:
+        return await link_call(bundles.share, body, user)
+
+    @app.post("/unshare")
+    async def unshare_endpoint(body: ShareRequest, user: str = Depends(current_user)) -> dict:
+        return await link_call(bundles.unshare, body, user)
 
     return app
 

@@ -113,6 +113,16 @@ variable "custom_content_security_policy" {
   type    = string
   default = null
 }
+# The backend sets its own Content-Security-Policy and it must reach the
+# browser. Traefik's headers middleware REPLACES a backend's CSP (Vaultwarden's
+# own policy never arrives through the shared csp-headers middleware), so the
+# only way through is to leave both CSP middlewares off. The backend then owns
+# frame-ancestors too. Used by pages.viktorbarzin.me, whose Caddy sends a CSP
+# sandbox per path (ADR-0042).
+variable "skip_default_csp" {
+  type    = bool
+  default = false
+}
 variable "full_host" {
   type    = string
   default = null
@@ -486,7 +496,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         "traefik-retry@kubernetescrd",
         var.skip_error_pages ? null : "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
-        var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
+        var.custom_content_security_policy == null && !var.skip_default_csp ? "traefik-csp-headers@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
         local.effective_anti_ai && !var.search_noindex ? "traefik-anti-ai-headers@kubernetescrd" : null,
         var.search_noindex ? "${var.namespace}-noindex-${var.name}@kubernetescrd" : null,
