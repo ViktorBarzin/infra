@@ -1003,6 +1003,8 @@ resource "vault_policy" "devvm_host_identity" {
   EOT
 }
 
+# The caller names the policies (scripts/devvm-drill-handoff); Vault refuses
+# any outside allowed_policies, whatever the caller's own policies are.
 resource "vault_token_auth_backend_role" "devvm_bootstrap" {
   role_name               = "devvm-bootstrap"
   allowed_policies        = [vault_policy.devvm_bootstrap.name, vault_policy.devvm_host_identity.name]
