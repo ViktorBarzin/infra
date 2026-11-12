@@ -45,6 +45,12 @@ variable "allow_live_identity" {
   description = "Allow the live devvm's name, VMID, address or MAC. Only for building the replacement once VM 102 is gone."
 }
 
+variable "live_host_keys" {
+  type        = bool
+  default     = false
+  description = "Install the live devvm's SSH host keys (Vault secret/workstation/devvm/ssh-host-keys) at first boot. Always on with allow_live_identity; set it on a drill only to test that path, then take it off."
+}
+
 variable "description" {
   type    = string
   default = "devvm workstation."

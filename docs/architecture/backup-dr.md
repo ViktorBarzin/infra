@@ -536,17 +536,15 @@ night before the restore, its own nightly snapshot of the empty database is now 
 file there: pass `--snapshot` with the pulled one, one user at a time (`--all` takes no
 `--snapshot`).
 
-**After a rebuild, on the host.** The new devvm has new SSH host keys, and the host's
-`/root/.ssh/known_hosts` still pins the old ones for 10.0.10.10, so the next night's
-`t3-state-pull` fails (`NightlyChainStepFailed` pages). Once
-the new box answers on 10.0.10.10:
-
-```bash
-ssh root@192.168.1.127 'ssh-keygen -R 10.0.10.10 && ssh-keyscan -t ed25519 10.0.10.10 >>/root/.ssh/known_hosts'
-```
-
-Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
-new devvm before trusting it.
+**After a rebuild, on the host.** Nothing to do for the host key. The box that replaces
+the devvm installs the live devvm's SSH host keys from Vault
+`secret/workstation/devvm/ssh-host-keys` at first boot (`scripts/devvm-bootstrap` step
+2b), so the line the host's `/root/.ssh/known_hosts` holds for 10.0.10.10 still matches
+and the next night's `t3-state-pull` runs. Only if the bootstrap status ends
+`(host keys not installed: ...)` does the box answer with a new key and the pull fail
+(`NightlyChainStepFailed` pages); install the keys by hand as in
+`docs/runbooks/devvm-drill.md`, "Building the real replacement", rather than trusting
+the new key on the host.
 
 **ancamilea.** Her snapshots are pulled and kept, but she left the roster on 2026-08-17,
 so a rebuilt box has no account for her: provisioning and `--all` skip her. Her data is the

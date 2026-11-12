@@ -97,7 +97,11 @@ module "drill" {
   on_boot     = try(each.value.on_boot, false)
   mac_address = try(each.value.mac_address, null)
   # Only for the replacement once VM 102 is gone (runbook, last section).
+  # It also brings the live devvm's SSH host keys from Vault.
   allow_live_identity = try(each.value.allow_live_identity, false)
+  # A drill that tests the host-key path: the live keys on a drill address.
+  # Take it off again after the check (runbook, "Building the real replacement").
+  live_host_keys = try(each.value.live_host_keys, false)
   description = (try(each.value.allow_live_identity, false)
     ? "The devvm workstation, rebuilt from stacks/devvm. Protected: PVE refuses to destroy it until root clears the flag (docs/runbooks/devvm-drill.md, replacement)."
   : "Throwaway devvm drill (docs/runbooks/devvm-drill.md). Delete by removing it from stacks/devvm local.drills.")
@@ -114,5 +118,5 @@ moved {
 }
 
 output "drills" {
-  value = { for k, m in module.drill : k => { vm_id = m.vm_id, address = m.address } }
+  value = { for k, m in module.drill : k => { vm_id = m.vm_id, address = m.address, live_host_keys = m.live_host_keys } }
 }

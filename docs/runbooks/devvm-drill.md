@@ -14,15 +14,19 @@ back, delete it. This runbook is how.
 | Token | Vault `secret/devvm` `pve_api_token` | `terraform-devvm@pve!tf`, role `TFDevvm` on `/pool/devvm`, the VMID slots `/vms/9100`-`/vms/9109`, and storage, network and node paths. PVE checks `/vms/<id>` during create, before the VM joins the pool, so a drill needs a slot. VM 102 is neither, so the token gets 403 on it. Declared by `playbooks/pve-host.yml --tags devvm-tf`. |
 | Slot grants | `pve-devvm-tf-acl.timer` on the host | Every VM destroy deletes the ACLs on its `/vms/<id>`, purge or not, so each teardown takes its slot grant with it. `scripts/pve-devvm-tf-acl` puts the grants back every minute, for the VMIDs in `pve_devvm_tf_vmids` (`pve-host.yml`), and never for a VMID that holds a guest outside pool `devvm`. |
 | Snippet | `/var/lib/vz/snippets/devvm_bootstrap.yaml` | Vendor data for every Terraform devvm. Rendered by `pve-host.yml --tags snippets` from `playbooks/files/pve/snippets/devvm_bootstrap.yaml.j2`, embedding `scripts/devvm-bootstrap`. |
-| Handoff | `scripts/devvm-drill-handoff` | Runs on the applier after the VM is up: mints a wrapped token through Vault token role `devvm-bootstrap` and writes it into the guest through the guest agent. |
-| First boot | `scripts/devvm-bootstrap` | In the guest: unwraps the token, clones infra at `infra_ref`, runs `playbooks/devvm.yml` locally, copies the users' T3 snapshots from the host's `/mnt/backup/t3-state` (key Vault `secret/devvm-t3-seed`, read-only on the host), runs `t3-provision-users` once, revokes the token, writes `/var/lib/devvm-bootstrap/status`. |
+| Handoff | `scripts/devvm-drill-handoff` | Runs on the applier after the VM is up: mints a wrapped token through Vault token role `devvm-bootstrap` and writes it into the guest through the guest agent. For the replacement (`allow_live_identity`, or a drill's `live_host_keys` test) the token also carries policy `devvm-host-identity` and the handoff says `host_keys: true`. |
+| First boot | `scripts/devvm-bootstrap` | In the guest: unwraps the token, on the replacement swaps the first-boot SSH host keys for the live devvm's (Vault `secret/workstation/devvm/ssh-host-keys`) and tells cloud-init never to regenerate them, clones infra at `infra_ref`, runs `playbooks/devvm.yml` locally, copies the users' T3 snapshots from the host's `/mnt/backup/t3-state` (key Vault `secret/devvm-t3-seed`, read-only on the host), runs `t3-provision-users` once, revokes the token, writes `/var/lib/devvm-bootstrap/status`. |
 
 The Vault side (`stacks/vault`): policy `devvm-bootstrap` reads exactly the
 paths `playbooks/devvm.yml` reads (`secret/claude-sessions`, `terminal-lobby`,
 `terminal-lobby/vapid`, `devvm-authorized-keys`, `rybbit`, `glitchtip`, `agentmd`), plus
 `secret/devvm-t3-seed` for the bootstrap's T3 snapshot copy; the token role makes
 orphan, non-renewable tokens with a 4 h hard limit; CI's policy may create
-tokens through that role and nothing else. When the playbook starts reading a
+tokens through that role and nothing else. Policy `devvm-host-identity` reads
+the live devvm's SSH host keys, `secret/workstation/devvm/ssh-host-keys`; the
+role allows it, but the handoff asks for it only for the replacement, so a
+drill's token cannot read them. `ci`, `eso-reader`, `openclaw-k8s` and
+`terraform-state` deny `secret/data/workstation/devvm/*`. When the playbook starts reading a
 new Vault path, add it to the policy, or a fresh build fails at that task.
 
 ## Before a drill
@@ -243,10 +247,61 @@ of destroying the box. To take it down on purpose, root runs `qm set 102
 Once the bootstrap says `ok`, run provisioning with an admin token
 (`devvm-credentials.md`, "Rebuild: put a user's credentials back") and go
 through "What to check" above, including the T3 and emo items.
-The new box has new SSH host keys, so the host's nightly pulls from 10.0.10.10
-(`t3-state-pull`) fails until the host trusts the new key:
-`ssh-keygen -R 10.0.10.10` on the host, then the `ssh-keyscan` step in
-backup-dr.md, "T3 snapshots", "After a rebuild, on the host".
+
+The new box keeps the live devvm's SSH host keys, so nobody runs
+`ssh-keygen -R` or `ssh-keyscan`: the Proxmox host's `t3-state-pull` and every
+user's ssh client go on trusting 10.0.10.10. With `allow_live_identity` the
+handoff gives the bootstrap a token that reads Vault
+`secret/workstation/devvm/ssh-host-keys`, and right after the unwrap it checks
+each private key against its `.pub`, installs them in `/etc/ssh`, writes
+`/etc/cloud/cloud.cfg.d/99-devvm-host-keys.cfg` (`ssh_deletekeys: false`,
+`ssh_genkeytypes: []`, so a later change to the VM's cloud-init settings,
+which gives the next boot a new instance-id, does not regenerate them) and
+restarts sshd. The keys are fetched by the guest rather than put on the
+cloud-init drive because a Terraform-supplied key would sit in this stack's
+Tier 1 state, which is not encrypted and which every holder of the
+`pg-terraform-state` creds can read, and in the drive's ISO on the host.
+
+For the first few minutes after boot, until the handoff arrives, sshd
+answers with the keys cloud-init made. A client that has the live key pinned
+refuses those with `REMOTE HOST IDENTIFICATION HAS CHANGED`; that is the
+window, not a reason to remove the pinned key. Wait for the status to move
+past `installing the live devvm's SSH host keys`. Checks:
+
+- Before step 1 above, on the live box: the Vault copy is the live one,
+  `vault kv get -field=ssh_host_ed25519_key.pub
+  secret/workstation/devvm/ssh-host-keys | ssh-keygen -lf -` prints the same
+  fingerprint as `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. If the
+  live keys were ever regenerated, capture them again (below).
+- After the build: `ssh-keyscan 10.0.10.10 | ssh-keygen -lf -` prints the
+  fingerprints recorded below, the same ones `ssh root@192.168.1.127
+  'ssh-keygen -F 10.0.10.10 -l'` shows the host pinning (checked
+  2026-11-12), and `systemctl start t3-state-pull.service` on the host ends
+  without a host-key error.
+- A status ending `(host keys not installed: ...)` means the read or the
+  check failed and the box kept its first-boot keys; the log above says
+  which key. Install them by hand as root on the new box: read each field of
+  the secret into `/etc/ssh/<field>` (mode 600 for the private keys, 644 for
+  the `.pub`), write the cloud-init drop-in above, `systemctl restart ssh`.
+
+Fingerprints of the live devvm's keys, captured 2026-11-12 (version 1 of the
+secret): ED25519 `SHA256:r1N+5R/BFK4AsnlDIUWmO3kzEA/AX4xZdX5kpU1hKL8`, ECDSA
+`SHA256:dDyXeaVDjoYGHGmasqpgDEq2M4TKfiFFqrSHWiweVvo`, RSA 3072
+`SHA256:ZRwm1gJvJ8rkjkf0QlYZGIjPu/Dq0DrvhYe9XlG9Nkk`. The 2023 DSA key in
+`/etc/ssh` is not captured: sshd does not load it. To capture again, as an
+admin on the live box, reading the token inside sudo so no secret reaches the
+command line:
+
+```sh
+sudo bash -c 'cd /etc/ssh && VAULT_ADDR=https://vault.viktorbarzin.me VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec vault kv put -mount=secret workstation/devvm/ssh-host-keys ssh_host_ed25519_key=@ssh_host_ed25519_key ssh_host_ed25519_key.pub=@ssh_host_ed25519_key.pub ssh_host_ecdsa_key=@ssh_host_ecdsa_key ssh_host_ecdsa_key.pub=@ssh_host_ecdsa_key.pub ssh_host_rsa_key=@ssh_host_rsa_key ssh_host_rsa_key.pub=@ssh_host_rsa_key.pub'
+```
+
+To test the host-key path without touching VM 102, give a drill entry
+`live_host_keys = true`: it installs the live keys on the drill's own
+address and nothing else of the live identity. Compare `ssh-keyscan
+<drill address> | ssh-keygen -lf -` with the fingerprints above, then take
+the flag off (or the whole entry) and land again; a drill must not keep the
+live identity's keys.
 `stacks/devvm` drills pass `on_boot = false`; the replacement wants the module
 default `true`, and boot order stays in `playbooks/reboot-boot-order.yml`.
 

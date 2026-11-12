@@ -793,6 +793,14 @@ resource "vault_policy" "ci" {
     path "secret/metadata/workstation/+/mcp" {
       capabilities = ["deny"]
     }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
     path "transit/encrypt/sops-state-*" {
       capabilities = ["update"]
@@ -979,9 +987,25 @@ resource "vault_policy" "devvm_bootstrap" {
   EOT
 }
 
+# Only for the box that replaces the live devvm (stacks/devvm
+# allow_live_identity): its bootstrap puts the live devvm's SSH host keys back
+# in place of the first-boot ones, so ssh clients and the Proxmox host's
+# t3-state-pull still trust 10.0.10.10. scripts/devvm-drill-handoff adds this
+# policy to the token only with HOST_KEYS=true; drill tokens never carry it.
+# Written by an admin from the live box (docs/runbooks/devvm-drill.md,
+# "Building the real replacement"); every broad secret/data/* reader denies it.
+resource "vault_policy" "devvm_host_identity" {
+  name   = "devvm-host-identity"
+  policy = <<-EOT
+    path "secret/data/workstation/devvm/ssh-host-keys" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 resource "vault_token_auth_backend_role" "devvm_bootstrap" {
   role_name               = "devvm-bootstrap"
-  allowed_policies        = [vault_policy.devvm_bootstrap.name]
+  allowed_policies        = [vault_policy.devvm_bootstrap.name, vault_policy.devvm_host_identity.name]
   orphan                  = true
   renewable               = false
   token_type              = "service"
@@ -1030,6 +1054,14 @@ resource "vault_policy" "eso_reader" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
     path "database/static-creds/*" {
@@ -1103,6 +1135,14 @@ resource "vault_policy" "openclaw_k8s" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
   EOT
@@ -1197,6 +1237,14 @@ resource "vault_policy" "terraform_state" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
   EOT

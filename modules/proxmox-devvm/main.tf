@@ -19,7 +19,10 @@
 #      build, which waits for a Vault token;
 #   3. terraform_data.handoff runs scripts/devvm-drill-handoff on the applier,
 #      which hands the guest a wrapped token through the guest agent;
-#   4. the guest runs playbooks/devvm.yml and the roster provisioner on itself
+#   4. the box that replaces the live devvm (allow_live_identity, or a drill
+#      with live_host_keys as a test) first swaps its first-boot SSH host keys
+#      for the live devvm's from Vault; drills keep their own;
+#   5. the guest runs playbooks/devvm.yml and the roster provisioner on itself
 #      and writes "ok" or "failed: <step>" to /var/lib/devvm-bootstrap/status.
 # The apply returns after step 3; the build takes a while longer.
 
@@ -38,6 +41,11 @@ locals {
     split("/", var.ipv4_cidr)[0] == "10.0.10.10" ||
     lower(coalesce(var.mac_address, "-")) == "00:0c:29:c0:89:ec"
   )
+  # The host keys are fetched by the guest with its bootstrap token, not put on
+  # the cloud-init drive: a Terraform-supplied key would sit in this stack's
+  # state (Tier 1 PG, not encrypted, readable by every holder of the
+  # pg-terraform-state creds) and in the drive's ISO on the host.
+  live_host_keys = var.allow_live_identity || var.live_host_keys
 }
 
 resource "proxmox_virtual_environment_vm" "devvm" {
@@ -176,6 +184,7 @@ resource "terraform_data" "handoff" {
       VMID          = tostring(proxmox_virtual_environment_vm.devvm.vm_id)
       PVE_API_TOKEN = var.pve_api_token
       INFRA_REF     = var.infra_ref
+      HOST_KEYS     = tostring(local.live_host_keys)
     }
   }
 }

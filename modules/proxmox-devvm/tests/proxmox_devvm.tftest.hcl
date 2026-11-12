@@ -56,6 +56,21 @@ run "drill_has_the_live_shape" {
     condition     = proxmox_virtual_environment_vm.devvm.protection == false
     error_message = "a drill must stay destroyable by its teardown apply"
   }
+  assert {
+    condition     = output.live_host_keys == false
+    error_message = "a drill keeps its own SSH host keys"
+  }
+}
+
+run "drill_tests_the_live_host_keys_when_asked" {
+  command = plan
+  variables {
+    live_host_keys = true
+  }
+  assert {
+    condition     = output.live_host_keys == true && proxmox_virtual_environment_vm.devvm.protection == false
+    error_message = "live_host_keys on a drill installs the live host keys and nothing else of the live identity"
+  }
 }
 
 run "live_address_refused" {
@@ -94,5 +109,9 @@ run "live_identity_allowed_when_asked" {
   assert {
     condition     = proxmox_virtual_environment_vm.devvm.protection == true
     error_message = "the real devvm must carry PVE's protection flag, so a dropped entry or a forced replacement cannot destroy it"
+  }
+  assert {
+    condition     = output.live_host_keys == true
+    error_message = "the real devvm must come up with the live devvm's SSH host keys"
   }
 }
