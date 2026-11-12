@@ -324,3 +324,17 @@ devvm-home backup is the next step and Viktor's call.
   needed a hand fill because his entry changed after the last capture.
   Both are MAJOR against the measure (`docs/runbooks/devvm-drill.md`,
   drill log).
+
+## One Vault sign-in (2026-11-12)
+
+After round 3, a rebuild needs one Vault sign-in (the admin provisioning
+run) and nothing by hand after it: that run unlocks wizard's infra clone,
+the replacement keeps the live devvm's SSH host keys from Vault, and each
+user's Claude login sync starts right after its token is minted (c059f2bd;
+drill 7 had found Claude logged out until a hand `systemctl start`). A real
+`claude -p` worked for wizard and emo on drill 7. The pre-rebuild steps in
+`docs/runbooks/devvm-drill.md` (fresh T3 snapshot and session-store sync,
+re-capture of changed credentials and MCP secrets, pushing work) stay,
+because they save data rather than sign in. emo's MCP secrets were
+re-captured 2026-11-12; the ingest reports `mcp_uncaptured=0`.
+
