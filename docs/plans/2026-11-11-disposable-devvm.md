@@ -279,6 +279,16 @@ devvm-home backup is the next step and Viktor's call.
   browser-bridge token goes through `vault kv patch` on the command line
   (`docs/runbooks/devvm-drill.md`, drill log).
 
+- Round 3, host identity: the live devvm's SSH host keys (ED25519, ECDSA,
+  RSA) are in Vault `secret/workstation/devvm/ssh-host-keys`, denied to every
+  broad `secret/data/*` reader. The replacement's first-boot token alone
+  carries policy `devvm-host-identity`, and its bootstrap installs them right
+  after the unwrap and tells cloud-init never to regenerate them, so the
+  host's `ssh-keygen -R` / `ssh-keyscan` step is gone from the replacement
+  runbook. The guest fetches them; Terraform does not pass them, since the
+  stack's PG state is not encrypted. sshd answers with first-boot keys for
+  the minutes before the handoff.
+
 ## Decisions after the second drill (2026-11-12)
 
 - The ha-sofia `ha-mcp` add-on's secret URL path was public (commit c114c7f07

@@ -45,6 +45,7 @@ bootstrap_stubs() {
   stub curl 'cat >>"$LOG.stdin"
 case "$*" in
   *sys/wrapping/unwrap*) printf "%s" "${UNWRAP_REPLY-{\"auth\":{\"client_token\":\"hvs.inner\"}}}" ;;
+  *secret/data/workstation/devvm/ssh-host-keys*) [ -n "${HOSTKEYS_REPLY:-}" ] && cat "$HOSTKEYS_REPLY" || printf "{\"errors\":[\"permission denied\"]}" ;;
 esac'
   stub vault 'echo "VAULT_TOKEN=$VAULT_TOKEN VAULT_ADDR=$VAULT_ADDR" >>"$LOG.env"
 case "$*" in
@@ -66,6 +67,12 @@ esac'
 d="${@: -1}"; mkdir -p "$d/wizard"; chmod 0700 "$d"; echo snap >"$d/wizard/state-20261111-034710.sqlite.gz"
 exit "${RSYNC_RC:-0}"'
   stub install 'cp "${@: -2:1}" "${@: -1}" && chmod +x "${@: -1}"'
+  stub systemctl 'exit 0'
+  # The box's own first-boot host keys, which a drill keeps.
+  mkdir -p "$SB/etc-ssh" "$SB/cloud.cfg.d" "$SB/tmp"
+  for t in ed25519 ecdsa; do
+    ssh-keygen -q -t "$t" -N "" -C fresh -f "$SB/etc-ssh/ssh_host_${t}_key"
+  done
   stub apt-get 'exit 0'
   # dpkg-query reports the installed vault: none on a blank box.
   stub dpkg-query 'printf "%s" "${VAULT_INSTALLED:-}"; [ -n "${VAULT_INSTALLED:-}" ]'
@@ -82,6 +89,9 @@ run_bootstrap() {
     DEVVM_BOOTSTRAP_T3_HOLD="$SB/hold/awaiting-snapshots" \
     DEVVM_BOOTSTRAP_HASHICORP_KEYRING="$SB/hashicorp.asc" \
     DEVVM_BOOTSTRAP_HASHICORP_LIST="$SB/hashicorp.list" \
+    DEVVM_BOOTSTRAP_SSH_DIR="$SB/etc-ssh" \
+    DEVVM_BOOTSTRAP_CLOUD_CFG_D="$SB/cloud.cfg.d" \
+    TMPDIR="$SB/tmp" \
     DEVVM_BOOTSTRAP_WAIT="${WAIT:-2}" \
     DEVVM_BOOTSTRAP_POLL=1 \
     bash "$BOOTSTRAP" </dev/null >"$SB/log/out" 2>&1
@@ -107,6 +117,10 @@ has "installs the lobby packages after the playbook" "$LOG" 'apt-get install -y 
 if [[ "$(grep -nE '^ansible-playbook' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "lobby install comes after the playbook"; fi
 has "token revoked at the end" "$LOG" 'vault token revoke -self'
 [[ -e "$SB/handoff.json" ]] && bad "handoff file removed after reading" || ok
+hasnt "a drill never asks for the live host keys" "$LOG" 'ssh-host-keys'
+eq "a drill keeps its own host keys" "fresh" "$(cut -d' ' -f3 "$SB/etc-ssh/ssh_host_ed25519_key.pub")"
+[[ -z "$(ls -A "$SB/cloud.cfg.d")" ]] && ok || bad "a drill leaves cloud-init's key handling alone"
+hasnt "a drill does not restart sshd" "$LOG" '^systemctl .*ssh'
 
 # 1a. T3 snapshots: copied from the PVE host after the playbook, before
 # provisioning, with the read-only key from Vault, so provisioning's
@@ -170,6 +184,70 @@ for fail_how in RSYNC_RC=23 SEED_VAULT_FAIL=1; do
   has "$fail_how: the build log warns" "$SB/log/out" 'WARN.*T3'
   k="$(cat "$LOG.seedkeypath" 2>/dev/null)"; [[ -z "$k" || ! -e "$k" ]] && ok || bad "$fail_how: seed key removed"
   hasnt "$fail_how: seed key never printed" "$SB/log/out" 'PRIVKEY-SECRET'
+done
+
+# 1e. The live identity (handoff host_keys true, modules/proxmox-devvm
+# allow_live_identity): the live devvm's SSH host keys come from Vault
+# secret/workstation/devvm/ssh-host-keys and replace the first-boot ones right
+# after the unwrap, before the long build, so the Proxmox host's pinned
+# known_hosts line and every user's keep matching. cloud-init is told never to
+# delete or regenerate them, or a later instance-id change would.
+hostkeys_json() {  # <dir with ssh_host_*_key{,.pub}> -> JSON reply on stdout
+  local d="$1" args=() f
+  for f in "$d"/ssh_host_*; do args+=(--rawfile "$(basename "$f")" "$f"); done
+  jq -n "${args[@]}" '{data: {data: $ARGS.named}}'
+}
+live_keys() {  # makes $SB/live with the live box's pairs, the reply in $SB/hostkeys.json
+  mkdir -p "$SB/live"
+  ssh-keygen -q -t ed25519 -N "" -C "root@devvm" -f "$SB/live/ssh_host_ed25519_key"
+  ssh-keygen -q -t ecdsa -N "" -C "root@devvm" -f "$SB/live/ssh_host_ecdsa_key"
+  ssh-keygen -q -t rsa -b 2048 -N "" -C "root@devvm" -f "$SB/live/ssh_host_rsa_key"
+  hostkeys_json "$SB/live" >"$SB/hostkeys.json"
+}
+
+new_sandbox; bootstrap_stubs; live_keys
+printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master","host_keys":true}' >"$SB/handoff.json"
+HOSTKEYS_REPLY="$SB/hostkeys.json" run_bootstrap; rc=$?
+eq "live identity exits 0" 0 "$rc"
+eq "live identity: status is ok" "ok" "$(cat "$SB/state/status" 2>/dev/null)"
+has "reads the host keys with the unwrapped token" "$LOG" 'curl .*https://vault\.viktorbarzin\.me/v1/secret/data/workstation/devvm/ssh-host-keys'
+has "host-key read sends the token as a header on stdin" "$LOG.stdin" 'X-Vault-Token: hvs\.inner'
+for t in ed25519 ecdsa rsa; do
+  if cmp -s "$SB/live/ssh_host_${t}_key" "$SB/etc-ssh/ssh_host_${t}_key"; then ok; else bad "$t private key installed"; fi
+  if cmp -s "$SB/live/ssh_host_${t}_key.pub" "$SB/etc-ssh/ssh_host_${t}_key.pub"; then ok; else bad "$t public key installed"; fi
+  eq "$t private key is 600" 600 "$(stat -c %a "$SB/etc-ssh/ssh_host_${t}_key")"
+  eq "$t public key is 644" 644 "$(stat -c %a "$SB/etc-ssh/ssh_host_${t}_key.pub")"
+done
+has "cloud-init keeps the keys" "$SB/cloud.cfg.d/99-devvm-host-keys.cfg" '^ssh_deletekeys: false$'
+has "cloud-init generates none" "$SB/cloud.cfg.d/99-devvm-host-keys.cfg" '^ssh_genkeytypes: \[\]$'
+has "sshd restarted on the new keys" "$LOG" '^systemctl try-restart ssh\.service'
+if [[ "$(grep -nE '^systemctl try-restart ssh' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^git clone' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "host keys go in before the clone and the playbook"; fi
+priv_line="$(sed -n 2p "$SB/live/ssh_host_ed25519_key")"
+hasnt "host private key never in argv" "$LOG" "$priv_line"
+hasnt "host private key never printed" "$SB/log/out" "$priv_line"
+[[ -z "$(ls -A "$SB/tmp")" ]] && ok || bad "no host-key temp files left behind"
+
+# A pair that does not match, a missing ed25519 key, or a Vault refusal
+# installs nothing: the box keeps its first-boot keys, the build goes on, and
+# the status says the identity was not kept.
+for case in mismatch no-ed25519 denied; do
+  new_sandbox; bootstrap_stubs; live_keys
+  case "$case" in
+    mismatch) ssh-keygen -q -t ed25519 -N "" -f "$SB/other"; cp "$SB/other.pub" "$SB/live/ssh_host_ed25519_key.pub"; hostkeys_json "$SB/live" >"$SB/hostkeys.json" ;;
+    no-ed25519) rm "$SB/live/ssh_host_ed25519_key"*; hostkeys_json "$SB/live" >"$SB/hostkeys.json" ;;
+    denied) rm "$SB/hostkeys.json" ;;
+  esac
+  printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master","host_keys":true}' >"$SB/handoff.json"
+  HOSTKEYS_REPLY="$( [[ -e "$SB/hostkeys.json" ]] && echo "$SB/hostkeys.json")" run_bootstrap; rc=$?
+  eq "$case: build still exits 0" 0 "$rc"
+  has "$case: status names the host keys" "$SB/state/status" '^ok .*host keys'
+  has "$case: the build log warns" "$SB/log/out" 'WARN.*host keys'
+  eq "$case: first-boot ed25519 key left in place" "fresh" "$(cut -d' ' -f3 "$SB/etc-ssh/ssh_host_ed25519_key.pub")"
+  [[ -e "$SB/etc-ssh/ssh_host_rsa_key" ]] && bad "$case: no live key installed" || ok
+  [[ -z "$(ls -A "$SB/cloud.cfg.d")" ]] && ok || bad "$case: cloud-init left alone"
+  hasnt "$case: sshd not restarted" "$LOG" '^systemctl .*ssh'
+  has "$case: provisioning still runs" "$LOG" '^provisioner'
+  [[ -z "$(ls -A "$SB/tmp")" ]] && ok || bad "$case: no host-key temp files left behind"
 done
 
 # 1b. The guest agent creates the file 0666, so the bootstrap refuses a
@@ -236,6 +314,7 @@ run_handoff() {
   PATH="$SB/bin:$PATH" \
     PVE_ENDPOINT="https://pve.test:8006" PVE_NODE=pve VMID=9102 \
     PVE_API_TOKEN='terraform-devvm@pve!tf=secret-uuid' INFRA_REF="${REF:-master}" \
+    HOST_KEYS="${HOST_KEYS:-false}" \
     HANDOFF_WAIT="${HWAIT:-5}" HANDOFF_POLL=0 \
     bash "$HANDOFF" >"$SB/log/out" 2>&1
 }
@@ -254,6 +333,16 @@ has "PVE token sent as a header on stdin" "$LOG.stdin" 'Authorization: PVEAPITok
 hasnt "PVE token never in argv" "$LOG" 'secret-uuid'
 hasnt "wrapped token never in argv" "$LOG" 'hvs\.wrappedtoken'
 hasnt "nothing secret printed" "$SB/log/out" 'secret-uuid|hvs\.'
+hasnt "a drill's token cannot read the live host keys" "$LOG" 'devvm-host-identity'
+has "a drill's handoff asks for no host keys" "$LOG.content" '"host_keys": *false'
+
+# 6a. The live identity: the token may also read the live host keys, and the
+# handoff tells the guest to install them.
+new_sandbox; handoff_stubs
+HOST_KEYS=true run_handoff; rc=$?
+eq "live handoff exits 0" 0 "$rc"
+has "live token carries the host-key policy" "$LOG" 'vault token create -role=devvm-bootstrap -policy=devvm-bootstrap -policy=devvm-host-identity -wrap-ttl=1h -field=wrapping_token'
+has "live handoff asks for the host keys" "$LOG.content" '"host_keys": *true'
 
 # 7. An agent that never answers fails without minting a token.
 new_sandbox; handoff_stubs

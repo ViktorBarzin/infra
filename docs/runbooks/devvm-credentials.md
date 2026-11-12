@@ -50,6 +50,14 @@ the four policies that otherwise read all of `secret/data/*`:
 (`stacks/vault/main.tf`, 2026-11-11). Those readers can still reach
 `secret/viktor`, `secret/infra` and the other shared paths, as before.
 
+The devvm's own SSH host keys are `secret/workstation/devvm/ssh-host-keys`
+(captured from the live box 2026-11-12). The same four policies deny
+`secret/data/workstation/devvm/*`, and the only token that reads them is the
+first-boot token of the box that replaces the devvm (policy
+`devvm-host-identity`, `docs/runbooks/devvm-drill.md`, "Building the real
+replacement"). They are not a user's credential, so the provisioner never
+touches them.
+
 Not stored here, because something else already brings them back:
 
 - The agent-tool keys in `~/.claude/settings.json` (`MEMORY_API_KEY`,
