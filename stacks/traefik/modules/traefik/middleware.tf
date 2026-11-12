@@ -257,12 +257,12 @@ resource "kubernetes_manifest" "middleware_home_lans_only" {
     spec = {
       ipAllowList = {
         sourceRange = [
-          "192.168.1.0/24", # Sofia LAN (hub site)
-          "10.0.0.0/8",     # VLANs, K8s pod/svc CIDRs, WG tunnel subnet
-          "192.168.8.0/24", # London LAN (via WG tunnel)
-          "192.168.9.0/24", # London GUEST net — the Portal Plus actually leases here (Portal-75AE8F9C2A8A = 192.168.9.198)
-          "192.168.0.0/24", # Valchedrym LAN (via WG tunnel)
-          "192.168.3.0/24", # Mladost 3 LAN (via WG tunnel)
+          "192.168.1.0/24",       # Sofia LAN (hub site)
+          "10.0.0.0/8",           # VLANs, K8s pod/svc CIDRs, WG tunnel subnet
+          "192.168.8.0/24",       # London LAN (via WG tunnel)
+          "192.168.9.0/24",       # London GUEST net — the Portal Plus actually leases here (Portal-75AE8F9C2A8A = 192.168.9.198)
+          "192.168.0.0/24",       # Valchedrym LAN (via WG tunnel)
+          "192.168.3.0/24",       # Mladost 3 LAN (via WG tunnel)
           "2001:470:6f:43d::/64", # management VLAN 10 by SLAAC (devvm); pfSense drops it as a WAN source
           "fc00::/7",
           "fe80::/10",
@@ -407,6 +407,51 @@ resource "kubernetes_manifest" "middleware_strip_auth_headers" {
           "X-authentik-name"     = ""
           "X-authentik-groups"   = ""
           "X-Auth-Fallback"      = ""
+        }
+      }
+    }
+  }
+
+  field_manager {
+    force_conflicts = true
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Client-sent identity headers, dropped at the websecure ENTRYPOINT (main.tf)
+# so no request reaches a router carrying them. Forward auth runs later, at
+# the router, and sets fresh values on gated routes; on auth-free routes the
+# backend now sees none. Before this (2026-11-12), an auth-free route was a way
+# to hand a backend a forged X-Authentik-Username: pages.viktorbarzin.me served
+# a private Space that way, and offline-reader accepted the forged identity on
+# /api/ingest. Separate from strip-auth-headers above, which some routes run
+# at a different point in their chain; this list also covers entitlements,
+# the JWT and the meta headers the outpost can send.
+resource "kubernetes_manifest" "middleware_strip_client_identity" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "strip-client-identity"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-authentik-username"      = ""
+          "X-authentik-uid"           = ""
+          "X-authentik-email"         = ""
+          "X-authentik-name"          = ""
+          "X-authentik-groups"        = ""
+          "X-authentik-entitlements"  = ""
+          "X-authentik-jwt"           = ""
+          "X-authentik-meta-jwks"     = ""
+          "X-authentik-meta-outpost"  = ""
+          "X-authentik-meta-provider" = ""
+          "X-authentik-meta-app"      = ""
+          "X-authentik-meta-version"  = ""
+          "X-Auth-Fallback"           = ""
         }
       }
     }
