@@ -105,6 +105,21 @@ resource "kubernetes_deployment" "aiostreams" {
             ])
           }
           env {
+            # Regexes the (non-trusted) user config may put in excludedRegexPatterns.
+            # These are the release-name strings Real-Debrid refuses to unrestrict
+            # (HTTP 451 / infringing_file) since May 2026, from Debrid Media
+            # Manager's src/utils/deInfringe.ts as re-measured 2026-10-14. The first
+            # is case-sensitive on purpose: "WEBDL" without the hyphen still plays.
+            # On 2026-11-11 they caught 6 of the 26 dead "cached" results in a
+            # 76-result sample and hid none that played; RD changes its list, so
+            # this goes stale. The user config's failover covers what they miss.
+            name = "WHITELISTED_REGEX_PATTERNS"
+            value = jsonencode([
+              "/WEB-DL|WEB\\.(?:x264|H264)/",
+              "/(?:web|bd|hd|dvd)rip|bluray\\.x264|p\\.bluray\\.dts|hdtv\\.(?:x264|xvid)/i",
+            ])
+          }
+          env {
             # Whitelisted SEL (Stream Expression Language) sync URLs. Stream-expression
             # files (Vidhin's ranked expressions + Tamtaro's ISE/PSE/ESE) go here, NOT
             # in WHITELISTED_REGEX_PATTERNS_URLS — AIOStreams validates each field
