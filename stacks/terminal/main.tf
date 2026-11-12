@@ -196,6 +196,9 @@ resource "kubernetes_manifest" "clipboard_ingressroute" {
         match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/clipboard/`)"
         kind  = "Rule"
         middlewares = [
+          # X-Real-Ip from the visitor, not the cloudflared pod, for the
+          # telemetry library's context.ip (Product events need the country).
+          { name = "real-ip", namespace = "traefik" },
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
@@ -403,6 +406,9 @@ resource "kubernetes_manifest" "tmux_api_ingressroute" {
         match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/api/sessions/`)"
         kind  = "Rule"
         middlewares = [
+          # X-Real-Ip from the visitor, not the cloudflared pod, for the
+          # telemetry library's context.ip (Product events need the country).
+          { name = "real-ip", namespace = "traefik" },
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
@@ -570,6 +576,9 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
         match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/answer/`) || PathPrefix(`/model/`) || PathPrefix(`/browser/`))"
         kind  = "Rule"
         middlewares = [
+          # X-Real-Ip from the visitor, not the cloudflared pod, for the
+          # telemetry library's context.ip (Product events need the country).
+          { name = "real-ip", namespace = "traefik" },
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
@@ -643,6 +652,9 @@ resource "kubernetes_manifest" "file_api_ingressroute" {
         match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/files/`)"
         kind  = "Rule"
         middlewares = [
+          # X-Real-Ip from the visitor, not the cloudflared pod, for the
+          # telemetry library's context.ip (Product events need the country).
+          { name = "real-ip", namespace = "traefik" },
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
@@ -733,6 +745,9 @@ resource "kubernetes_manifest" "skills_api_ingressroute" {
         match = "Host(`terminal.viktorbarzin.me`) && (Path(`/skills`) || PathPrefix(`/skills/`))"
         kind  = "Rule"
         middlewares = [
+          # X-Real-Ip from the visitor, not the cloudflared pod, for the
+          # telemetry library's context.ip (Product events need the country).
+          { name = "real-ip", namespace = "traefik" },
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
