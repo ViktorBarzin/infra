@@ -27,7 +27,8 @@ Measured on 2026-11-12 (the design doc has the evidence):
 
 ## Consequences
 
-- Isolation between Spaces no longer depends on page authors behaving. A Space's content is still readable by everyone the Caddy routing admits, as before.
+- Isolation between Spaces no longer depends on page authors behaving, **on sandboxed paths**. Pages left unsandboxed on the same origin (five legacy wizard pages, `wizard/reels`, Anca's app, the four public carve-outs) still run with the reader's sign-in cookie, so a script there, or a CDN script they load without SRI, can read other Spaces as before. A Space's content is still readable by everyone the Caddy routing admits.
+- Every page, Bundle URL and public link is sent `Cache-Control: private, no-cache`, because Cloudflare caches static file types by URL whatever the cookie. `/assets/` alone is publicly cacheable.
 - Anyone holding a Bundle URL can read that one Bundle without signing in. It appears only inside the gated shell's frame, and a viewer can still copy it ("open frame in new tab"). Republishing rotates it.
 - Page scripts lose `localStorage`, `sessionStorage`, `IndexedDB`, cookies and service workers. Five legacy pages in `wizard/` that load files from a sibling directory, or call `localStorage` unguarded, are exempt by path in the Caddyfile until they are republished as Bundles. The four older public carve-outs (`/prep`, `/pe-summit-trip`, `/vietnam`, `/homelab`) keep their own handles and are not sandboxed yet.
 - Rybbit counts the shell, not the page in the frame. Session replay shows the shell with an empty frame.

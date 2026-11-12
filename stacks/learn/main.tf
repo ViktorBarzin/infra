@@ -136,6 +136,11 @@ resource "kubernetes_config_map" "caddyfile" {
       # matched too.
       (pages_sandbox_private) {
       	header {args[0]} Content-Security-Policy "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock allow-top-navigation-by-user-activation; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
+      	# Cloudflare caches images, scripts and media by URL whatever the
+      	# cookie, so a signed-in 200 would be served to the next visitor at that
+      	# edge without Authentik ever seeing them (found 2026-11-12). private
+      	# keeps every shared cache out; no-cache makes browsers revalidate.
+      	header Cache-Control "private, no-cache"
       	header Vary Sec-Fetch-Dest
       	header X-Content-Type-Options nosniff
       }
@@ -145,6 +150,9 @@ resource "kubernetes_config_map" "caddyfile" {
       (pages_sandbox_public) {
       	header Content-Security-Policy "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock allow-top-navigation-by-user-activation"
       	header Access-Control-Allow-Origin *
+      	# Not cached at Cloudflare either: an unshared link or a rotated Bundle
+      	# URL must stop serving its files at once, not when the edge copy ages out.
+      	header Cache-Control "private, no-cache"
       	header Vary Sec-Fetch-Dest
       	header X-Content-Type-Options nosniff
       	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noai, noimageai"
@@ -170,8 +178,20 @@ resource "kubernetes_config_map" "caddyfile" {
       	path /2026-09-24-text-composer-redesign.html /wizard/2026-09-24-text-composer-redesign.html
       	path /2026-09-27-text-view-t3-pass.html /wizard/2026-09-27-text-view-t3-pass.html
       	path /paladin-sources.html /wizard/paladin-sources.html /paladin-video.html /wizard/paladin-video.html
+      	# Trip clips (97 MB): kept off the no-login Bundle URLs on purpose.
+      	path /reels /reels/* /wizard/reels /wizard/reels/*
       }
       :8080 {
+      	# An encoded slash (%2F) has no business in a pages URL, and it is how
+      	# a request could reach a path Traefik never routed: Traefik resolves
+      	# ".." but passes %2F, Caddy matches the cleaned path. Refused outright.
+      	@pages_encoded_slash {
+      		host pages.viktorbarzin.me
+      		expression {http.request.uri}.matches("(?i)%2f|%5c")
+      	}
+      	handle @pages_encoded_slash {
+      		respond "Bad Request" 400
+      	}
       	# host/auth-agnostic health endpoint so the caddy readiness probe
       	# stays green now that the learn.* handler was removed (repointed).
       	handle /healthz {
@@ -277,6 +297,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		import pages_frame_ancestors
       		header Access-Control-Allow-Origin *
       		header Cache-Control "public, max-age=3600"
+      		header X-Content-Type-Options nosniff
       		root * /repo/src/current
       		file_server
       	}
@@ -362,6 +383,11 @@ resource "kubernetes_config_map" "caddyfile" {
       		not {
       			import pages_legacy_paths
       		}
+      		# Anca's space is one hand-written app (the Citadel prep page, also
+      		# public at /prep/) that keeps state in localStorage and registers a
+      		# service worker, both of which the sandbox forbids. Her handle
+      		# below serves it as before.
+      		not header_regexp X-Authentik-Username ^ancaelena98(@.*)?$
       	}
       	handle @pages_shell {
       		import pages_shell
@@ -372,7 +398,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin|valentinakolevabarzina)(@.*)?$
       	}
       	handle @pages_shared {
-      		import pages_sandbox_private
+      		import pages_sandbox_private *
       		root * /repo/src/current
       		file_server
       	}
@@ -428,7 +454,9 @@ resource "kubernetes_config_map" "caddyfile" {
       		# root means a path outside her space cannot resolve at all. The two
       		# admin handles above keep the prefixed form because they are supposed
       		# to read every space, so the same fallback is harmless there.
-      		import pages_sandbox_private
+      		# No sandbox: see the Anca exception on @pages_shell.
+      		import pages_frame_ancestors
+      		header Cache-Control "private, no-cache"
       		root * /repo/src/current/anca
       		try_files {path} {path}index.html
       		file_server
@@ -449,7 +477,7 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^valentinakolevabarzina(@.*)?$
       	}
       	handle @pages_valia {
-      		import pages_sandbox_private
+      		import pages_sandbox_private *
       		@pages_valia_own file {
       			root /repo/src/current/valia
       			try_files {path} {path}index.html
@@ -566,7 +594,9 @@ resource "kubernetes_deployment" "learn" {
             limits = {
               # 256Mi since 2026-11-10: a git fetch of viktor/pages reached 119 MB on
               # its own and the 128Mi cgroup OOM-killed git and git-sync (KernelOOMKiller).
-              memory = "256Mi"
+              # 512Mi since 2026-11-12: Bundles put images and clips in the repo
+              # (up to 25 MiB per publish), so each fetch can carry more.
+              memory = "512Mi"
             }
           }
         }

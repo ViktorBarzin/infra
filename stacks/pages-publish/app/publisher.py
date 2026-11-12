@@ -70,7 +70,7 @@ BUNDLE_ENCODINGS = ("utf-8", "base64")
 
 # Top-level dirs of the repo that belong to the site itself, not to a user or a
 # bundle owner. Kept in sync with config.RESERVED_USERS.
-_RESERVED_SEGMENTS = ("shared", "assets", "tools")
+_RESERVED_SEGMENTS = ("shared", "assets", "tools", "c", "p")
 
 
 def _unsafe_segment(segment: str) -> bool:
@@ -261,6 +261,15 @@ def sync_to_master(cfg: Config) -> None:
     if reset.returncode != 0:
         log.error("git reset failed: %s", reset.stderr.strip())
         raise RenderError(f"git reset failed: {reset.stderr.strip()}")
+
+    # Drop untracked files a failed request left behind (a Bundle written
+    # before its index.md failed to render, a public link whose commit never
+    # happened). reset --hard leaves them, and the next publish's scoped
+    # `git add` would commit them as part of somebody else's page.
+    clean = _run(["git", "-C", cfg.repo_dir, "clean", "-ffd"], env=env)
+    if clean.returncode != 0:
+        log.error("git clean failed: %s", clean.stderr.strip())
+        raise RenderError(f"git clean failed: {clean.stderr.strip()}")
 
     # Land on a real branch. Nothing here needs one (`push HEAD:master` works
     # detached), but a detached HEAD is exactly what made the wedged clone hard

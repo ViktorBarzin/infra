@@ -49,9 +49,10 @@ MAX_REQUEST_BYTES = 40 * 1024 * 1024
 ALLOWED_EXTENSIONS = frozenset(
     """html htm css js mjs json csv tsv txt md svg map wasm xml
     png jpg jpeg gif webp avif ico bmp
-    glb gltf bin stl obj mtl ply hdr ktx2
+    glb gltf bin stl obj mtl ply hdr ktx2 drc riv
     woff woff2 ttf otf
-    mp4 webm m4v mov mp3 ogg oga wav m4a vtt""".split()
+    mp4 webm m4v mov mp3 ogg oga wav m4a vtt
+    pdf geojson topojson webmanifest""".split()
 )
 
 MARKER = ".pages-bundle.json"
@@ -188,6 +189,43 @@ def html_title(text: str) -> str | None:
     return title or None
 
 
+# Injected into a published HTML page. The page runs in a sandboxed frame,
+# and a navigation the frame starts itself carries no sign-in cookie, so a
+# plain link to another page would land on the login redirect inside the
+# frame. Links that leave this document open at the top level instead, which
+# the sandbox allows on a click (allow-top-navigation-by-user-activation).
+TOP_LINKS_SCRIPT = (
+    '<script id="pages-top-links">document.addEventListener("click",function(e){'
+    'var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;'
+    'if(!a||a.target||a.hasAttribute("download"))return;'
+    'var u=new URL(a.href,location.href);'
+    'if(!/^https?:$/.test(u.protocol))return;'
+    'if(u.pathname===location.pathname&&u.search===location.search)return;'
+    'a.target="_top"},true)</script>'
+)
+
+
+def free_name(abs_space: str, stem: str, source: str, *, is_dir: bool) -> str:
+    """``stem`` (``.html`` for a page), unless another source holds it.
+
+    foo.md and foo.html both map to <date>-foo.html, and a Bundle dir may
+    collide with a hand-made one; the second publish took the first's place.
+    The same rule lives in render.free_name for markdown.
+    """
+    for n in range(1, 100):
+        name = stem if n == 1 else f"{stem}-{n}"
+        path = os.path.join(abs_space, name if is_dir else f"{name}.html")
+        if not os.path.lexists(path):
+            return name
+        if is_dir:
+            owner = read_marker(path).get("source")
+        else:
+            owner = _head_meta(path).get("source")
+        if owner and _key(str(owner)) == _key(source):
+            return name
+    raise publisher.PublishError(f"no free name for {stem!r}")
+
+
 def inject_meta(text: str, *, title: str, status: str, date: str, source: str) -> str:
     """Add the ``plan-*`` meta the Space index reads, replacing any already there.
 
@@ -195,12 +233,14 @@ def inject_meta(text: str, *, title: str, status: str, date: str, source: str) -
     ``<head>`` (or after the doctype when there is no head).
     """
     text = PLAN_META_TAG_RE.sub("", text)
+    text = re.sub(r'<script id="pages-top-links">.*?</script>', "", text, flags=re.DOTALL)
     esc = lambda v: html.escape(v, quote=True)  # noqa: E731
     tags = (
         f'\n<meta name="plan-title" content="{esc(title)}">'
         f'\n<meta name="plan-status" content="{esc(status)}">'
         f'\n<meta name="plan-date" content="{esc(date)}">'
         f'\n<meta name="plan-source" content="{esc(source)}">\n'
+        f"{TOP_LINKS_SCRIPT}\n"
     )
     m = HEAD_RE.search(text, 0, 4096)
     if m is None:
@@ -379,7 +419,9 @@ def publish(
     def page_step():
         abs_space = _expect_inside(cfg, subdir)
         os.makedirs(abs_space, exist_ok=True)
-        entry = find_page(abs_space, source) or f"{dated(slug)}.html"
+        entry = find_page(abs_space, source) or (
+            free_name(abs_space, dated(slug), source, is_dir=False) + ".html"
+        )
         text = decoded[0][1].decode("utf-8", errors="replace")
         date = _date_of(entry)
         out = inject_meta(
@@ -403,7 +445,9 @@ def publish(
     def bundle_step():
         abs_space = _expect_inside(cfg, subdir)
         os.makedirs(abs_space, exist_ok=True)
-        entry = find_bundle(abs_space, source) or dated(slug)
+        entry = find_bundle(abs_space, source) or free_name(
+            abs_space, dated(slug), source, is_dir=True
+        )
         target = _expect_inside(cfg, f"{subdir}/{entry}")
         old_cap = read_marker(target).get("cap")
         if os.path.isdir(target):

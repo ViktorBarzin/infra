@@ -43,7 +43,10 @@ push-mirror, by Viktor's decision.
 means publishes are serialized. Each attempt inside `publish()` runs:
 
 1. `sync_to_master` — abandon any interrupted rebase/merge, `fetch origin
-   master`, `reset --hard FETCH_HEAD`, `checkout -B master`.
+   master`, `reset --hard FETCH_HEAD`, `clean -ffd` (a failed request's
+   untracked files would otherwise ride along with the next commit),
+   `checkout -B master`. The pod clones at startup (`PAGES_PRECLONE=0` turns
+   that off) so the first publish after a restart does not wait for it.
 2. `render_page` — regenerate the page **and** that dir's `index.html`.
 3. `stage_and_commit` — `git add`/`status` scoped to `<user>/`; an
    unchanged dir returns the URL without committing.
@@ -136,7 +139,16 @@ how to print it.
   3 path levels, no segment starting with `.`. Allowed types: web files
   (`html css js mjs json csv txt md svg wasm ...`), images, 3D models
   (`glb gltf bin stl obj ...`), fonts and short clips (`mp4 webm mp3 ogg ...`).
-  `/publish-bundle` refuses a `Content-Length` over 40 MiB before reading it.
+  `/publish-bundle` refuses a `Content-Length` over 40 MiB before reading it,
+  a body with no `Content-Length` (411), and a second body over 1 MiB while
+  one is in flight (429, `Retry-After: 30`): requests queue on the publish
+  lock only after FastAPI has parsed the whole body, at ~4x its size.
+- A page or Bundle from another source never takes a name: foo.md and
+  foo.html both map to `<date>-foo`, so the second gets `<date>-foo-2`.
+- Published HTML pages get `plan-*` meta and a small click handler
+  (`#pages-top-links`) that opens links to other pages outside the frame,
+  because a navigation the sandboxed frame starts itself carries no sign-in
+  cookie.
 - Each publish writes `<bundle>/.pages-bundle.json` (`cap`, `source`, `title`,
   `status`, `date`) and the symlink `c/<cap> → ../<space>/<bundle>`, with a new
   128-bit cap each time, removing the old link. The site's shell reads the

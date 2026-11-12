@@ -399,3 +399,79 @@ def test_bundle_token_still_publishes_its_one_dir(site, api):
     assert r.status_code == 200, r.text
     assert r.json()["path"] == "showcase/homelab"
     assert not (site.view() / "showcase/homelab/.pages-bundle.json").exists()
+
+
+# ---- challenger findings, 2026-11-12 ------------------------------------------
+
+
+def test_a_failed_bundle_leaves_nothing_for_the_next_publish(site, api):
+    """A 400 after the Bundle files were written must not leave them in the
+    clone, where the next publish's git add would sweep them up."""
+    bad = [f("index.md", "BADCHART"), f("a.png", PNG, binary=True)]
+    assert api.post("/publish-bundle", headers=AUTH_V, json={"name": "broken", "files": bad}).status_code == 400
+    api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "other.md"})
+    v = site.view()
+    assert not (v / "wizard" / "2026-11-12-broken").exists()
+    assert not any(p.name.endswith("broken") for p in (v / "c").iterdir()) if (v / "c").exists() else True
+
+
+def test_html_page_does_not_overwrite_a_markdown_page_of_the_same_slug(site, api):
+    api.post("/publish", headers=AUTH_V, json={"content": "markdown body", "filename": "foo.md"})
+    r = api.post("/publish-bundle", headers=AUTH_V,
+                 json={"name": "foo.html", "files": [f("foo.html", "<title>H</title>html body")]})
+    assert r.json()["path"] == "wizard/2026-11-12-foo-2.html"
+    v = site.view()
+    assert "markdown body" in (v / "wizard/2026-11-12-foo.html").read_text()
+    assert "html body" in (v / "wizard/2026-11-12-foo-2.html").read_text()
+
+
+def test_bundle_does_not_take_over_a_dir_from_another_source(site, api):
+    api.post("/publish-bundle", headers=AUTH_V, json={"name": "demo", "files": bundle_files()})
+    v = site.view()
+    marker = v / "wizard/2026-11-12-demo/.pages-bundle.json"
+    data = json.loads(marker.read_text())
+    assert data["source"] == "demo"
+    # A dir with that name but no marker (hand-made) is not overwritten.
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "2026-11-12-hand", "files": bundle_files()})
+    assert r.status_code == 200
+
+
+def test_html_page_links_open_outside_the_frame(site, api):
+    r = api.post("/publish-bundle", headers=AUTH_V,
+                 json={"name": "l.html", "files": [f("l.html", "<html><head><title>L</title></head><body><a href='/x.html'>x</a></body></html>")]})
+    page = (site.view() / r.json()["path"]).read_text()
+    assert "pages-top-links" in page
+
+
+@pytest.mark.parametrize("user", ["c", "p"])
+def test_c_and_p_are_reserved(user):
+    from app import config
+    with pytest.raises(config.ConfigError):
+        config._invert_api_keys(json.dumps({user: "tok"}))
+    with pytest.raises(publisher.PublishError):
+        publisher.target_subdir(user, False)
+
+
+@pytest.mark.parametrize("name", ["a.riv", "doc.pdf", "PHOTO.JPG", "m.drc", "map.geojson", "site.webmanifest"])
+def test_more_file_types_pass(api, name):
+    files = [f("index.html", "<title>x</title>"), f(name, "x")]
+    assert api.post("/publish-bundle", headers=AUTH_V, json={"name": "t", "files": files}).status_code == 200
+
+
+def test_bundle_without_content_length_is_411(api):
+    def gen():
+        yield b'{"name": "t", "files": []}'
+    r = api.post("/publish-bundle", headers=AUTH_V, content=gen())
+    assert r.status_code == 411
+
+
+def test_second_large_publish_while_one_runs_is_429(site, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+    app = main.create_app(site)
+    app.state.large_in_flight.acquire()
+    try:
+        r = TestClient(app).post("/publish-bundle", headers={**AUTH_V, "Content-Length": str(2 * 1024 * 1024)}, content=b"x" * (2 * 1024 * 1024))
+        assert r.status_code == 429
+    finally:
+        app.state.large_in_flight.release()

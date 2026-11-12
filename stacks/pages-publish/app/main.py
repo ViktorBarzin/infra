@@ -21,10 +21,12 @@ work runs in a worker thread so /health stays responsive.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import threading
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -84,6 +86,9 @@ class ShareRequest(BaseModel):
     shared: bool = False
 
 
+# A /publish-bundle body over this waits for no one: see large_in_flight.
+LARGE_BODY_BYTES = 1024 * 1024
+
 # Endpoints that take one page of markdown; /publish-bundle has its own limits.
 _PAGE_PATHS = ("/publish", "/preview")
 
@@ -104,9 +109,34 @@ def _require_page_size(content: str) -> None:
 
 def create_app(cfg: config.Config | None = None) -> FastAPI:
     cfg = cfg or config.load_config()
-    app = FastAPI(title="pages-publish")
-    app.state.cfg = cfg
     lock = asyncio.Lock()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Clone viktor/pages now rather than inside the first publish, which
+        # otherwise outlived the CLI's timeout after every pod restart.
+        task = None
+        if os.environ.get("PAGES_PRECLONE", "1") != "0" and cfg.key_map:
+
+            async def run() -> None:
+                async with lock:
+                    try:
+                        await asyncio.to_thread(publisher.ensure_repo, cfg)
+                    except Exception:
+                        log.exception("startup clone failed; the first publish will retry")
+
+            task = asyncio.create_task(run())
+        yield
+        if task is not None and not task.done():
+            task.cancel()
+
+    app = FastAPI(title="pages-publish", lifespan=lifespan)
+    app.state.cfg = cfg
+    # One large publish at a time, refused BEFORE its body is read. Requests
+    # queue on `lock` only after FastAPI has parsed the whole body, so five
+    # queued 25 MiB publishes held ~700 MB between them (measured by the
+    # 2026-11-12 challenger at ~140 MB per 35 MB body).
+    app.state.large_in_flight = threading.BoundedSemaphore(1)
 
     async def current_user(authorization: str | None = Header(default=None)) -> str:
         return auth.resolve_user(cfg.key_map, authorization)
@@ -134,7 +164,12 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
                     content={"detail": _too_large("the request body", int(length))},
                 )
         if request.method == "POST" and request.url.path == "/publish-bundle":
-            if length.isdigit() and int(length) > bundles.MAX_REQUEST_BYTES:
+            if not length.isdigit():
+                return JSONResponse(
+                    status_code=411,
+                    content={"detail": "send Content-Length: a chunked body has no size to check"},
+                )
+            if int(length) > bundles.MAX_REQUEST_BYTES:
                 return JSONResponse(
                     status_code=413,
                     content={"detail": (
@@ -143,6 +178,17 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
                         f"({bundles.MAX_REQUEST_BYTES // (1024 * 1024)} MiB of request)"
                     )},
                 )
+            if int(length) > LARGE_BODY_BYTES:
+                if not app.state.large_in_flight.acquire(blocking=False):
+                    return JSONResponse(
+                        status_code=429,
+                        headers={"Retry-After": "30"},
+                        content={"detail": "another large publish is running; retry in a minute"},
+                    )
+                try:
+                    return await call_next(request)
+                finally:
+                    app.state.large_in_flight.release()
         return await call_next(request)
 
     @app.get("/health")
