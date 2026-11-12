@@ -193,6 +193,11 @@ read the environment of any process running as them; before 2026-11-11 every
 `runuser` step (git in a user's clones, `bash -lc` with the user's
 `~/.profile`, chezmoi) carried it.
 
+The same run mints each user's `claude-auth-sync` Vault token if it is
+missing and then starts `claude-auth-sync@<user>.service` once, so Claude is
+logged in right after the run instead of at the timer's next tick, up to 6 h
+later (since 2026-11-12).
+
 The same run unlocks wizard's infra clone (`unlock_admin_infra_clone`,
 since 2026-11-12; before that it was a hand step after the run). For an
 admin whose `~/code/infra` has no git-crypt key yet, root reads

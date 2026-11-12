@@ -267,14 +267,13 @@ through "What to check" above, including the T3 and emo items. That run
 also unlocks wizard's `~/code/infra` (the box is on 10.0.10.10, so no
 opt-in is needed); its log says `unlocked wizard:~/code/infra`, and
 `head -c 10 ~/code/infra/config.tfvars | grep -qa GITCRYPT && echo locked
-|| echo unlocked` prints `unlocked`. Two things still need a hand after
-the Vault sign-in (drill 7, 2026-11-12): Claude answers `Not logged in`
-for every user until `claude-auth-sync@<user>` runs, and the admin run
-does not start it, so run `sudo systemctl start claude-auth-sync@wizard
-claude-auth-sync@emo` (or wait up to 6 h for the timer); and an MCP entry
-that changed after its last capture is left for a hand fill (the run's
-`WARN ... fill by hand` line), which the pre-flight's `mcp_uncaptured=0`
-check above prevents.
+|| echo unlocked` prints `unlocked`. The run also starts each user's
+`claude-auth-sync` once right after minting its token (since 2026-11-12),
+so `claude -p` answers within a minute; check with `journalctl -u
+claude-auth-sync@wizard -n 3`. Nothing else needs a hand after the Vault
+sign-in, provided the pre-flight's `mcp_uncaptured=0` check above passed:
+an MCP entry that changed after its last capture is otherwise left for a
+hand fill (the run's `WARN ... fill by hand` line).
 
 The new box keeps the live devvm's SSH host keys, so nobody runs
 `ssh-keygen -R` or `ssh-keyscan`: the Proxmox host's `t3-state-pull` and every
@@ -753,10 +752,11 @@ Hand steps after the Vault sign-in, against the one-sign-in measure:
 - **MAJOR: Claude is not logged in after the admin run.** The run mints
   each user's `claude-auth-sync` Vault token but does not start the
   service, so wizard, emo and their T3 serves have no Claude until the
-  timer's next run up to 6 h later, or a hand `systemctl start`. A fix:
-  `install_claude_auth_sync` starts `claude-auth-sync@<user>.service` once
-  (`--no-block`) right after it mints the token. On a drill that is safe
-  only while the user has a `setup_token` (above).
+  timer's next run up to 6 h later, or a hand `systemctl start`. Fixed
+  the same day: `install_claude_auth_sync` starts
+  `claude-auth-sync@<user>.service` once (`--no-block`) right after it mints
+  the token (test `scripts/test-t3-provision-claude-auth.sh`). On a drill
+  that is safe only while the user has a `setup_token` (above).
 - **MAJOR, avoidable by the pre-flight: emo's `paperless` MCP server
   fails.** emo's live entry gained `PAPERLESS_API_VERSION` at 08:51, after
   the 03:47 capture; the key itself is unchanged. Fill compares whole
