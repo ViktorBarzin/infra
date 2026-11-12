@@ -278,3 +278,19 @@ devvm-home backup is the next step and Viktor's call.
   `~/.agents/skills` folders have no kept place; a newly minted
   browser-bridge token goes through `vault kv patch` on the command line
   (`docs/runbooks/devvm-drill.md`, drill log).
+
+## Decisions after the second drill (2026-11-12)
+
+- The ha-sofia `ha-mcp` add-on's secret URL path was public (commit c114c7f07
+  in the public infra repo) and in one stored transcript. Rotated: the old path
+  returns 404; the new one is in the add-on, Vault `secret/openclaw`, the
+  openclaw deployment, wizard's and emo's MCP configs and the captured MCP
+  secrets.
+- emo keeps root on the Proxmox host (his key in root's authorized_keys), by
+  Viktor's choice. `/mnt/backup` was made root-only anyway, as hygiene against
+  the non-root login.
+- The nightly devvm-home backup is retired: removed from the nightly chain,
+  timer stays disabled, last generations kept on sda and the Synology. They no
+  longer roll over, so they keep copies of secrets deleted from the devvm until
+  removed by hand.
+

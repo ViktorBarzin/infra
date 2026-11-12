@@ -25,19 +25,22 @@
 #   2. nfs-mirror          /srv/nfs -> /mnt/backup, including tonight's dumps
 #   3. lvm-pvc-snapshot    thin snapshots of the Proxmox CSI PVCs
 #   4. daily-backup        copies from the snapshots in step 3 to sda
-#   5. devvm-home-backup   devvm /home to sda
-#   6. t3-state-pull       the devvm's nightly T3 snapshots to sda (2026-11-11)
-#   7. offsite-sync-backup sda + immich to the Synology, after 2-6 wrote sda
+#   5. t3-state-pull       the devvm's nightly T3 snapshots to sda (2026-11-11)
+#   6. offsite-sync-backup sda + immich to the Synology, after 2-5 wrote sda
+#   devvm-home-backup was step 5 until 2026-11-12: the devvm is disposable now
+#   (docs/plans/2026-11-11-disposable-devvm.md) and the second rebuild drill
+#   passed with nothing lost, so a file copy of /home is no longer kept. Its
+#   script and units still ship, disabled, and its last copies stay on sda.
 #   Each host step is its own systemd unit with its own IO class, timeout and
 #   metrics; this script only starts it and waits. A failed step is reported
 #   and the chain carries on, because the later steps do not lose anything by
 #   running on yesterday's copy of an earlier one.
-#   8. Release the lock.
+#   7. Release the lock.
 #
 # If the cluster API does not answer, the dumps cannot run, but the host
 # steps still do: they are the recovery copies for exactly that situation.
 #
-# Testing: `nightly-chain --only backup-etcd,devvm-home-backup` runs just
+# Testing: `nightly-chain --only backup-etcd,t3-state-pull` runs just
 # those (no lock, no full-night success metric). Tests: scripts/nightly-chain.test.sh.
 set -uo pipefail
 
@@ -48,7 +51,7 @@ DUMP_PARALLEL=${NIGHTLY_CHAIN_DUMP_PARALLEL:-3}
 DUMP_TIMEOUT=${NIGHTLY_CHAIN_DUMP_TIMEOUT:-7200}
 POLL=${NIGHTLY_CHAIN_POLL:-30}
 ANNOTATION=backup.viktorbarzin.me/nightly-chain
-HOST_STEPS="nfs-mirror lvm-pvc-snapshot daily-backup devvm-home-backup t3-state-pull offsite-sync-backup"
+HOST_STEPS="nfs-mirror lvm-pvc-snapshot daily-backup t3-state-pull offsite-sync-backup"
 PUSHGATEWAY="${NIGHTLY_CHAIN_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB=nightly-chain
 LOCK_LIB=${NIGHTLY_CHAIN_LOCK_LIB:-/usr/local/bin/kured-lock}

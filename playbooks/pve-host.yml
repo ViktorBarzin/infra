@@ -494,6 +494,11 @@
     # keeps out non-root host logins only; root, and the NFS export (which
     # admits any client as root, scripts/pve-nfs-exports), are not covered.
     # The pod and the backup scripts write as root, so nothing loses access.
+    # /mnt/backup itself is root-only too since 2026-11-12 (Viktor): it holds
+    # every app's PVC files in plain text under pvc-data/, and closing the top
+    # folder covers them all. emo also holds a key in root's authorized_keys,
+    # by Viktor's choice, so this is hygiene against the non-root login, not a
+    # boundary against emo.
     - name: Keep backup trees that hold secrets root-only
       ansible.builtin.file:
         path: "{{ item }}"
@@ -503,9 +508,10 @@
         mode: "0700"
       loop:
         - /srv/nfs/meshcentral
+        - /mnt/backup
         - /mnt/backup/meshcentral
         - /mnt/backup/vzdump
-      when: item is not match('/mnt/backup/') or (ansible_mounts | selectattr('mount', 'equalto', '/mnt/backup') | list | length > 0)
+      when: item is not match('/mnt/backup') or (ansible_mounts | selectattr('mount', 'equalto', '/mnt/backup') | list | length > 0)
       tags: backup-perms
 
     # ---- drive SMART -----------------------------------------------------------

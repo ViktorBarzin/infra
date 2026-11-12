@@ -88,7 +88,7 @@ grep -q "create job -n vault vault-raft-backup-chain" "$CALLS" && ok "Sunday: th
 
 out=$(NIGHTLY_CHAIN_DOW=3 run_chain)
 steps=$(grep -o 'systemctl start --wait [a-z0-9.-]*' "$CALLS" | awk '{print $4}' | tr '\n' ' ')
-[ "$steps" = "nfs-mirror.service lvm-pvc-snapshot.service daily-backup.service devvm-home-backup.service t3-state-pull.service offsite-sync-backup.service " ] \
+[ "$steps" = "nfs-mirror.service lvm-pvc-snapshot.service daily-backup.service t3-state-pull.service offsite-sync-backup.service " ] \
   && ok "host steps run in dependency order" || bad "host order: [$steps]"
 # t3-state-pull writes /mnt/backup/t3-state, so it must finish before
 # offsite-sync-backup copies /mnt/backup to the Synology.
