@@ -22,6 +22,12 @@
 #      (kubernetes pkg/controller/cronjob/cronjob_controllerv2.go, checked for
 #      v1.35), so the *BackupStale alerts keep working. Most dumps land on
 #      /srv/nfs, so they must finish before step 2 copies it.
+#      A dump whose Job cannot be created is tried again every
+#      NIGHTLY_CHAIN_RETRY_DELAY seconds, NIGHTLY_CHAIN_START_TRIES times in
+#      all, while the other dumps go on (2026-11-12: the host lost its route
+#      to the API from 00:01:56 to about 00:06 and eight dumps were skipped
+#      for the night). A create that errors after the Job was written is
+#      noticed by the retry, which finds the Job and follows it.
 #   2. nfs-mirror          /srv/nfs -> /mnt/backup, including tonight's dumps
 #   3. lvm-pvc-snapshot    thin snapshots of the Proxmox CSI PVCs
 #   4. daily-backup        copies from the snapshots in step 3 to sda
@@ -50,6 +56,8 @@ LOCK_WAIT=${NIGHTLY_CHAIN_LOCK_WAIT:-7200}     # 2 h
 DUMP_PARALLEL=${NIGHTLY_CHAIN_DUMP_PARALLEL:-3}
 DUMP_TIMEOUT=${NIGHTLY_CHAIN_DUMP_TIMEOUT:-7200}
 POLL=${NIGHTLY_CHAIN_POLL:-30}
+START_TRIES=${NIGHTLY_CHAIN_START_TRIES:-5}
+RETRY_DELAY=${NIGHTLY_CHAIN_RETRY_DELAY:-180}   # 5 tries cover ~12 min of no API
 ANNOTATION=backup.viktorbarzin.me/nightly-chain
 HOST_STEPS="nfs-mirror lvm-pvc-snapshot daily-backup t3-state-pull offsite-sync-backup"
 PUSHGATEWAY="${NIGHTLY_CHAIN_PUSHGATEWAY:-http://10.0.20.100:30091}"
@@ -117,31 +125,48 @@ job_state() {
   fi
 }
 
+# start_dump <ns> <cronjob> <job> -> 0 when the Job exists afterwards. A
+# create can fail after the API wrote the Job (an etcd timeout), and a retry
+# then gets AlreadyExists, so a failed create checks for the Job.
+start_dump() {
+  $KUBECTL create job -n "$1" "$3" --from=cronjob/"$2" >/dev/null && return 0
+  $KUBECTL get job -n "$1" "$3" -o name >/dev/null 2>&1
+}
+
 # run_dumps -> 0 when every dump completed
 run_dumps() {
-  local queue=() running=() started=() ns cj job state i rc=0 stamp
+  local queue=() next=() running=() started=() ns cj job state i rc=0 stamp now tries due entry
   stamp=$(date -u +%Y%m%d%H%M)
   while read -r ns cj; do
     [ -n "$ns" ] || continue
     wanted "$cj" || continue
-    queue+=("$ns $cj")
+    queue+=("$ns $cj 0 0")   # namespace, CronJob, failed starts, next try (epoch)
   done < <(dump_list)
   log "dumps: ${#queue[@]} tonight, ${DUMP_PARALLEL} at a time"
   while [ "${#queue[@]}" -gt 0 ] || [ "${#running[@]}" -gt 0 ]; do
-    while [ "${#queue[@]}" -gt 0 ] && [ "${#running[@]}" -lt "$DUMP_PARALLEL" ]; do
-      read -r ns cj <<<"${queue[0]}"
-      queue=("${queue[@]:1}")
+    now=$(date +%s)
+    next=()
+    for entry in "${queue[@]}"; do
+      read -r ns cj tries due <<<"$entry"
+      if [ "${#running[@]}" -ge "$DUMP_PARALLEL" ] || [ "$due" -gt "$now" ]; then
+        next+=("$entry")
+        continue
+      fi
       job="${cj}-chain-${stamp}"
-      if $KUBECTL create job -n "$ns" "$job" --from=cronjob/"$cj" >/dev/null; then
+      if start_dump "$ns" "$cj" "$job"; then
         log "dump started: $ns/$job"
         running+=("$ns $cj $job")
         started+=("$(date +%s)")
+      elif [ $((tries + 1)) -lt "$START_TRIES" ]; then
+        log "dump start failed, retrying in ${RETRY_DELAY}s ($((tries + 1))/${START_TRIES}): $ns/$cj"
+        next+=("$ns $cj $((tries + 1)) $((now + RETRY_DELAY))")
       else
-        log "dump FAILED to start: $ns/$cj"
+        log "dump FAILED to start after ${START_TRIES} tries: $ns/$cj"
         metric "nightly_chain_step_ok{step=\"$ns/$cj\"} 0"
         rc=1
       fi
     done
+    queue=("${next[@]}")
     local still=() still_started=()
     for i in "${!running[@]}"; do
       read -r ns cj job <<<"${running[$i]}"
@@ -157,7 +182,9 @@ run_dumps() {
     done
     running=("${still[@]}")
     started=("${still_started[@]}")
-    [ "${#running[@]}" -gt 0 ] && sleep "$POLL"
+    if [ "${#running[@]}" -gt 0 ] || [ "${#queue[@]}" -gt 0 ]; then
+      sleep "$POLL"
+    fi
   done
   return "$rc"
 }

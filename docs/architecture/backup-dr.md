@@ -36,7 +36,11 @@ Last updated: 2026-11-11
 > `scripts/ci/pve-scripts-sync.sh`). daily-backup, offsite-sync-backup and
 > lvm-pvc-snapshot moved to the idle IO class like nfs-mirror and
 > devvm-home-backup. If the cluster API is down the dumps are skipped and the
-> host steps still run. Alerts: `NightlyChainNotSucceeding` (30 h),
+> host steps still run. A dump whose Job cannot be created is tried again
+> every 180 s, 5 tries in all (`NIGHTLY_CHAIN_START_TRIES`,
+> `NIGHTLY_CHAIN_RETRY_DELAY`), while the other dumps go on. Before
+> 2026-11-12 a failed start was final: that night the host lost its route to
+> the API from 00:01:56 to about 00:06 and 8 of 12 dumps were skipped. Alerts: `NightlyChainNotSucceeding` (30 h),
 > `NightlyChainStepFailed`, `NightlyChainRanWithoutLock` (info). Test one
 > piece by hand with `nightly-chain --only backup-etcd,t3-state-pull`.
 > The times in the older sections below are the pre-chain schedule.
