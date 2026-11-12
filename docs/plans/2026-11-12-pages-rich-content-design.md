@@ -1,11 +1,11 @@
 ---
-status: executing
+status: done
 ---
 
 # Pages rich content: sandboxed pages, bundles for everyone, public links
 
 - Date: 2026-11-12
-- Status: executing (Viktor approved the decisions in a grilling session the same day; the build follows this doc)
+- Status: done (Viktor approved the decisions in a grilling session the same day; built and verified the same day, see "Rollout status")
 - Related: ADR-0042 (`docs/adr/0042-pages-run-sandboxed-on-the-shared-origin.md`), `stacks/pages-publish`, `stacks/learn`, Forgejo `viktor/pages` (`tools/render.py`), ADR-0031 (per-host forward auth), ADR-0041 (Rybbit)
 
 ## Why
@@ -170,6 +170,17 @@ Plan for them:
 - Republishing the same source name updates the same URL, and the public link keeps working.
 - The shell's Rybbit sends a pageview for a private and a public page.
 - Every existing page in the table above behaves as stated.
+
+## Rollout status (2026-11-12)
+
+| Step | State |
+|---|---|
+| `viktor/pages`: renderer, vendored assets, legacy markers | landed (ec57519, 002ec22, b94ec4e) |
+| infra: Caddyfile, shell, ingresses, publish API, CLI | landed (9156632e6, 7cac1f2cf); CI pipeline #3781 was killed, so `learn` and `pages-publish` were applied from the main checkout |
+| CLI v0.38.0 on the devvm, org instructions, emo's instructions | deployed by `t3-provision-users` (emo: `ebarzin/agents` e671f84) |
+| Pages capability demo | `https://pages.viktorbarzin.me/shared/2026-11-12-pages-demo/`, public link `https://pages.viktorbarzin.me/p/17f7c0aea6a8d3dc9204a24ec732482f/` |
+
+Verified live: the public link opens signed out with the shell, Rybbit (`/_t/r/track` 200) and the page in the frame; from inside, `document.cookie`, `localStorage` and reading the shell throw `SecurityError`, `fetch` of `/wizard/`, `/emo/` and `/shared/` is blocked, and the Bundle's own `data.json` loads. The three.js model, both charts drawn in the browser, the SVG chart, the WebP image, the MP4 clip, mermaid, callouts and stat tiles all render. Republishing the demo and the deck kept their URLs and public links. A public link went from 200 to 404 within 30 s of `unshare`. `/c/../`, `/c/%2e%2e/`, `/p/<tok>/../../` and `/assets/../` with a forged `X-Authentik-Username` all land on the Authentik redirect. Not verified in a browser: a private page signed in as a user, because the browser profile on the devvm has no Authentik session; the private paths were checked inside the learn pod with the identity header instead.
 
 ## Open questions
 

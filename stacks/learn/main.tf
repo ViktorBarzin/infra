@@ -330,6 +330,18 @@ resource "kubernetes_config_map" "caddyfile" {
       			}
       		}
       	}
+      	# A revoked or mistyped public link: say so in the frame rather than
+      	# leave the shell blank. Bundle URLs get the same short answer.
+      	handle_errors 404 {
+      		@pages_public_gone {
+      			host pages.viktorbarzin.me
+      			path /p/* /c/*
+      		}
+      		handle @pages_public_gone {
+      			header Content-Type "text/html; charset=utf-8"
+      			respond "<!doctype html><meta charset=utf-8><title>Link not available</title><body style='font:17px/1.6 system-ui,sans-serif;padding:2rem;color:#52514e'><p>This link is not available. It may have been revoked by the person who shared it.</p></body>" 404
+      		}
+      	}
       	@plans_redirect host plans.viktorbarzin.me
       	handle @plans_redirect {
       		redir https://pages.viktorbarzin.me{uri} permanent
