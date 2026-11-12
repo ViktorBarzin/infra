@@ -1936,8 +1936,8 @@ done
 # 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
 # at its root: the steps that put back what the user built around the clone by
 # hand, such as ~/bin links and systemd user units. emo's
-# ebarzin/vermont-device-configs restores the B4 intercom watchdog this way
-# (docs/runbooks/cameras-nvr-intercom.md). It runs AS the user on every
+# ebarzin/vermont-device-configs restores his ~/bin links and the Hikvision SDK
+# this way (docs/runbooks/cameras-nvr-intercom.md). It runs AS the user on every
 # reconcile, so it must be idempotent and print nothing when nothing changed.
 # The environment is emptied first: a rebuild runs this script with an admin
 # VAULT_TOKEN (step 3d), and the user's own code must never see it. Linger is

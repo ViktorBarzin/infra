@@ -23,7 +23,8 @@
   на rpi-sofia — отделен namespace именно заради застъпването.
 - Мрежовата част на Pi-то е описана в `playbooks/rpi-sofia-netmap.yml` (от
   11.11.2026, infra#121): `camera_net_setup2.sh` с `camera-net.service`,
-  релетата `intercom-sdk-proxy` и `panel115-proxy`, и `vermont-netmap`.
+  релетата `intercom-sdk-proxy` и `panel115-proxy`, ограниченият SSH ключ на
+  add-on-а за В4 (от 12.11.2026, tag `intercom_watch`) и `vermont-netmap`.
   Файловете са в `playbooks/files/rpi-sofia/` и се редактират там, не на
   Pi-то. Playbook-ът не рестартира `camera-net`, защото спирането му трие
   `guestns` и прекъсва камерите, HA и инвертора. Ако скриптът се промени,
@@ -557,21 +558,21 @@ Hikvision SDK V6.1.9.48 за x86 е в `vendor/hikvision-sdk/lib` на хран�
    `docs/runbooks/devvm-credentials.md`) и клонира хранилището (ред `repos` на emo
    в `scripts/workstation/roster.yaml`);
 2. стъпка 4b пуска като emo `~/code/vermont-device-configs/devvm-setup.sh`, който
-   прави връзките `~/bin/<инструмент>`, копира SDK-то в `~/hikvision-sdk/lib`,
-   слага `intercom-watch.service` и `.timer` в `~/.config/systemd/user/` и
-   включва таймера при първото слагане; provisioning-ът включва и linger за emo,
-   за да тръгва таймерът без вход.
+   прави връзките `~/bin/<инструмент>` и копира SDK-то в `~/hikvision-sdk/lib`
+   (за ръчните SDK инструменти). От 12.11.2026 не слага нито един таймер:
+   пазачът на В4 е add-on на ha-sofia, виж по-долу.
 
-Проверка след вдигането, като emo: `systemctl --user list-timers intercom-watch.timer`
-показва следващо пускане, а след 5 минути `~/.local/state/intercom/watch.log`
-има ред `ONLINE`. Старият път `~/vermont-device-configs` е връзка само на
-сегашния devvm; на нова машина пътят е `~/code/vermont-device-configs`.
+Проверка след вдигането, като emo: `ls -l ~/bin/hikreboot.py` сочи към
+`~/code/vermont-device-configs/bin/`, а `~/hikvision-sdk/lib/libhcnetsdk.so`
+съществува. Старият път `~/vermont-device-configs` е връзка само на сегашния
+devvm; на нова машина пътят е `~/code/vermont-device-configs`.
 
 Спрени на 11.11.2026 и архивирани в `retired/2026-11-11/` на същото хранилище:
 `panel115-watch`, `camera-stream-watch`, `led-report`, `vermont-mon`, копие на
 `valia-backup-cleanup.sh`, наблюдателите за цените на принтера и за PAI issue
 #545 (crontab) и userspace Tailscale възелът `devvm-emo` (отписан с
-`tailscale logout`). Пазачът на В4 (`intercom-watch`) остава, виж по-долу.
+`tailscale logout`). Пазачът на В4 (`intercom-watch`) мина на 12.11.2026 в
+add-on на ha-sofia, а devvm таймерът му е в `retired/2026-11-12/`, виж по-долу.
 
 ## Наблюдение — какво следи какво (проверено 19.08.2026)
 
@@ -603,36 +604,55 @@ HC_SERIAL=Q13432772 HC_USER=... HC_PASS=... ~/bin/intercom-cloud.py
 търсенето по име `hik-connect.com` гърми с „More than one result", защото има и
 `ieu.hik-connect.com` (на vbarzin).
 
-**Пазачът (devvm, systemd --user):** `intercom-watch.timer` на 5 мин →
-`~/code/vermont-device-configs/bin/intercom-watch.py` (юнитът е
-`systemd/intercom-watch.service` в същото хранилище; `~/bin/intercom-watch.py` е
-връзка към него). Три поредни офлайн проверки (~15 мин) → рестарт по
-SDK; минимум 1 час между рестартите, максимум 4 на ден; при **недостъпен облак
-НЕ рестартира** (грешката е наша, не на устройството). Дневник —
-`~/.local/state/intercom/watch.log` (НЕ journald: emo не е в група `adm` и не би
-могъл да го чете, а пазач, който пише където никой не гледа, е същият тих отказ).
-Състояние — `~/.local/state/intercom/watch.json`.
+**Пазачът (add-on на ha-sofia от 12.11.2026):** local add-on
+`local_intercom_watch` („Пазач на домофона В4"), изходен код в `ha-addon/` на
+`ebarzin/vermont-device-configs`. В него върви
+`bin/intercom-watch.py --loop 300`, същият файл, който беше на devvm. Три
+поредни офлайн проверки (~15 мин) → рестарт по SDK; минимум 1 час между
+рестартите, максимум 4 на ден; при **недостъпен облак НЕ рестартира** (грешката
+е наша, не на устройството). Известие към `notify.mobile_app_emil_s_iphone` при
+всеки рестарт и при траен отказ (облакът не отговаря ~30 мин, изчерпани
+рестарти за деня, неуспешна самопроверка при пускане). Опцията `dry_run` прави
+всичко без самия рестарт. Дневник: разделът Log на add-on-а (или
+`sudo docker logs app_local_intercom_watch` от SSH add-on-а); състояние:
+`/data/state/watch.json` в add-on-а.
 
-**Към 11.11.2026 пазачът остава на devvm.** Планът за devvm предвиждаше да мине
-в ha-sofia като автоматизация с `rest_command` към ISAPI `PUT /ISAPI/System/reboot`.
-Проверено на 11.11.2026 без рестарт: мониторът (V2.2.124 build 260814) няма HTTP
-услуга. `10.77.1.134` порт 80 и 443 връщат „connection refused" (за сравнение
-`10.77.1.115:80` отговаря), макар `/ISAPI/Security/adminAccesses`, прочетено през
-SDK, да изброява HTTP на порт 80. `/ISAPI/System/capabilities` през SDK няма
-отделен флаг за рестарт, а `/ISAPI/System/reboot/capabilities` връща
-`methodNotAllowed`. ISAPI се приема само пренесено през SDK на порт 8000, а SDK-то
-е само за x86, тоест HTTP заявка от HA не стига до устройството. Затова ha-sofia
-не е добавен в списъка с източници за `10.77.1.0/24`. Скриптовете на пазача са в
-`bin/` на `ebarzin/vermont-device-configs`, unit файловете в `systemd/` там; на
-нова машина ги слага `devvm-setup.sh` (виж „Инструментите на emo“ по-горе).
+- Слагане и обновяване: `ha-addon/deploy.sh --live` (или `--dry-run`) от
+  клонинга на хранилището. Копира папката в `/addons/intercom_watch`, попълва
+  опциите от Vault и Vaultwarden и пуска add-on-а; тайни в хранилището няма.
+- При пускане прави самопроверка без рестарт: BootTime по SADP и SDK логин през
+  тунела (`самопроверка: ... ОК` в дневника).
+- Защо add-on, а не автоматизация с `rest_command` към ISAPI
+  `PUT /ISAPI/System/reboot`, както предвиждаше планът за devvm: проверено на
+  11.11.2026 без рестарт, мониторът (V2.2.124 build 260814) няма HTTP услуга.
+  `10.77.1.134` порт 80 и 443 връщат „connection refused" (за сравнение
+  `10.77.1.115:80` отговаря), макар `/ISAPI/Security/adminAccesses`, прочетено
+  през SDK, да изброява HTTP на порт 80. `/ISAPI/System/capabilities` през SDK
+  няма отделен флаг за рестарт, а `/ISAPI/System/reboot/capabilities` връща
+  `methodNotAllowed`. ISAPI се приема само пренесено през SDK на порт 8000, а
+  SDK-то е x86-64 glibc. HA core е Alpine/musl и не го зарежда; add-on-ът е
+  Debian контейнер на същия x86-64 HA OS.
+- От 19.08 до 12.11.2026 пазачът беше systemd --user таймер на devvm
+  (`intercom-watch.timer`), с дневник `~/.local/state/intercom/watch.log`;
+  дневникът и състоянието там са запазени, unit файловете са в
+  `retired/2026-11-12/` на хранилището.
 
-Всичко е на devvm нарочно: рестартът минава през Hikvision SDK, който е само за
-x86. Ако devvm е долу, няма лечение независимо къде се взима решението — старото
-разделяне „Pi решава, devvm изпълнява" добавяше механика без устойчивост.
+Решението и рестартът са на едно място нарочно: рестартът минава през
+Hikvision SDK, който е само за x86. Старото разделяне „Pi решава, devvm
+изпълнява" добавяше механика без устойчивост.
 
-**Пътят до устройството:** devvm → `ssh -L 18134:10.200.1.2:8134` → rpi-sofia →
+**Пътят до устройството:** add-on → `ssh -L 18134:10.200.1.2:8134` → rpi-sofia →
 `intercom-sdk-proxy.service` (socat в `guestns`) → `192.168.1.134:8000`. Тунелът
-се вдига само за рестарта. Паролата за SDK е във **Vault: `secret/emo/intercom-b4`**.
+се вдига само за рестарта и самопроверката. Add-on-ът има собствен ключ
+`intercom-watch@ha-sofia` (Vault `secret/emo/intercom-b4`, поле
+`ha_addon_ssh_key`), който на Pi-а е ограничен до този тунел
+(`permitopen="10.200.1.2:8134"`) и до `/usr/local/bin/b4-boottime` (редът на
+`.134` от SADP); и двете слага `playbooks/rpi-sofia-netmap.yml`, tag
+`intercom_watch`. ha-sofia не е в списъка с източници за `10.77.1.0/24`: HA OS
+няма удобен начин за постоянен маршрут към Pi-а, а тунелът вече съществуваше.
+Паролата за SDK е във **Vault: `secret/emo/intercom-b4`**.
+
+Рестарт на ръка (от devvm, като emo, с неговия ключ):
 
 ```sh
 # ръчен рестарт (доказан 03.08 и 19.08)

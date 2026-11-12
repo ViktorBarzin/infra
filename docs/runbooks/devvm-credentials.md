@@ -169,8 +169,9 @@ roster repo that has one, as the user, with an emptied environment (so the
 admin `VAULT_TOKEN` of a rebuild run never reaches the user's code), and turns
 on linger for that user. The script must be idempotent and print nothing when
 everything is in place. Today only emo's `ebarzin/vermont-device-configs` ships
-one: it restores his `~/bin` links, the Hikvision SDK and the B4 intercom
-watchdog's user units (`docs/runbooks/cameras-nvr-intercom.md`).
+one: it restores his `~/bin` links and the Hikvision SDK for his hand tools
+(`docs/runbooks/cameras-nvr-intercom.md`). The B4 intercom watchdog it used to
+install as a user timer runs on ha-sofia as an add-on since 2026-11-12.
 
 ## Add or refresh a credential
 
