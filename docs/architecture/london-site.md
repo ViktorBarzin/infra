@@ -208,6 +208,54 @@ stage, so Supervisor appears to build the archive on the card and then copy
 it. The network location therefore does not reduce SD writes; it removes the
 card as the only copy.
 
+### Sleep stage cleanup
+
+Since 2026-11-12 a job on ha-london repairs Viktor's sleep stage history every
+hour. The iOS companion app (2026.10.3) merges each stage's samples across all
+sources. When the Apple Watch and Sleep Cycle both stage a night, a minute that
+one calls core and the other deep counts in both sensors. On 2026-11-12 the
+stages were 662 min against 488 min of sleep. Sleep Duration is correct, because
+the app merges all asleep stages together. Viktor keeps both apps writing to
+Apple Health, so the job repairs the data in HA. A fix for the app is written
+but not submitted: the project's AI policy needs a person to submit it.
+
+| piece | value |
+|---|---|
+| code | `scripts/ha-london/sleep_stage_cleanup.py`, tests in `sleep_stage_cleanup_test.py` next to it (`python3 scripts/ha-london/sleep_stage_cleanup_test.py`). Standard library only |
+| deployed copy | `/homeassistant/sleep_stage_cleanup/sleep_stage_cleanup.py` on the Pi, which is `/config/...` inside the Core container |
+| schedule | `command_line` sensor `sensor.sleep_stage_cleanup` in `configuration.yaml`, `scan_interval: 3600`. It runs the job inside the Core container and shows its JSON status: `ok`, `dry_run`, `self_check_failed`, `schema_changed` or `error` |
+| sensors it repairs | `sensor.viktor_barzins_iphone_17_{core_sleep,deep_sleep,rem_sleep,awake}`, checked against `_sleep_duration`. Window: the last 72 h |
+| alert | automation `sleep_stage_cleanup_alert`: a push to Viktor's iPhone 17 and an HA notification when the status is not `ok` for 10 minutes, or there was no run for 3 hours. It does not use `notify.viktorbarzin`, because that Slack bot is not in its default channel (`not_in_channel`, 2026-11-12) |
+| undo | each run that writes saves the original rows to `/homeassistant/sleep_stage_cleanup/undo-<UTC time>.sql`, kept 30 days. To undo a run: `sudo sqlite3 /homeassistant/home-assistant_v2.db < <file>` |
+| cost | about 1-2 s a run on the Pi; 3,736 statistics rows are checked on each run |
+
+How it decides, per phone update:
+
+- **Clean:** core + deep + REM is within 2 min of Sleep Duration, since each sensor is rounded.
+- **Inflated:** the stages of the last clean update of the same night are used. The same night means at most 12 h earlier, with Sleep Duration grown by 0-90 min.
+- **Inflated with no clean update that night:** the stages become `unknown`, because HA never held the right values.
+- **The same inflated values again,** such as after an HA restart: the same answer as before.
+
+It then recomputes the hourly and 5-minute statistics of the changed hours from
+the corrected states.
+
+Before it writes, the job recomputes the statistics rows it does not change.
+It compares them with HA's own. Any difference stops the run with
+`self_check_failed`, because the job's model of HA's statistics compiler no
+longer holds, for example after an HA upgrade. A missing database column stops
+it with `schema_changed`. Before it went live, a replay of the 2026-11-06 to
+11-12 data gave the same 12 state rows and 2,376 statistics changes as the
+manual repair of 2026-11-12.
+
+Limits:
+
+- **Sleep Cycle data arrives before the Watch's:** the night keeps Sleep Cycle's split, because HA only receives totals.
+- **The live tile:** it shows the inflated value until the next night, because the phone sends it again on every update. The history and the graphs are correct.
+- **ha-sofia:** it gets the same sensors but has no job. No dashboard uses them there, and they have no `state_class`, so Sofia keeps no statistics for them.
+
+Remove the job when a companion app release counts each stage from one source:
+delete the `command_line` entry and the automation, then the folder.
+
 ## Alexa voice control
 
 The Echo Dot on the guest network ("Milea's Echo Dot", `cc:9e:a2:24:11:e0`)
