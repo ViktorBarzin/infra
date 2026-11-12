@@ -96,8 +96,8 @@ against Vault first and then deleted:
 | The rest of `~/meshcentral-data` (a 2024 copy of the live server's data volume: `config.json` with the `sessionKey` that signs MeshCentral's web login cookie, `meshcentral.db` with the live login-cookie and invitation-link encryption keys, public certs and stale agent builds; mode 664 in a 755 folder until 2026-11-11, so every devvm user could read it) | Deleted 2026-11-11. The pod now reads its `sessionKey` from `secret/meshcentral` field `session_key` (ExternalSecret `meshcentral-secrets`, written into `config.json` by the `fix-config` init container), and that key was replaced with a new one the same day. The three keys in `meshcentral.db` (login cookie, invitation link, AMT event secret) were still the live ones, and the login-cookie key forged a working admin `/control.ashx` session (tested 2026-11-11). They were rotated the same day by the `DB_KEY_GENERATION` label in `stacks/meshcentral/main.tf` (see `docs/agents/service-notes.md`). Since then the backed-up copy holds no key the server accepts, except the five certificate private keys, which were not re-keyed, and the users' password hashes. |
 
 Copies of the deleted files remain in the devvm-home backup generations on
-the Proxmox host (`/mnt/backup/devvm-home/`, until its 14 generations roll
-over), in the retired vzdump images of VM 102 in `/mnt/backup/vzdump/` (full
+the Proxmox host (`/mnt/backup/devvm-home/`; the backup was retired on
+2026-11-12, so these no longer roll over and stay until deleted by hand), in the retired vzdump images of VM 102 in `/mnt/backup/vzdump/` (full
 disk images; they never roll over), and in the Synology copy of `/mnt/backup`.
 The server's own data has more copies on the host: MeshCentral's nightly
 autobackup zips in `/srv/nfs/meshcentral/meshcentral-backups` (the pod's

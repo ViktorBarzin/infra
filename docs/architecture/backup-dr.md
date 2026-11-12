@@ -18,11 +18,19 @@ Last updated: 2026-11-11
 >    3 at a time, via `kubectl create job --from=cronjob/...`. The 18 CronJobs
 >    are suspended; a Job created from a CronJob still moves its
 >    `lastSuccessfulTime`, so the `*BackupStale` alerts are unchanged;
-> 3. nfs-mirror, 4. lvm-pvc-snapshot, 5. daily-backup, 6. devvm-home-backup,
->    7. t3-state-pull (since 2026-11-11, see "T3 snapshots"),
->    8. offsite-sync-backup, each its own unit, started with
+> 3. nfs-mirror, 4. lvm-pvc-snapshot, 5. daily-backup,
+>    6. t3-state-pull (since 2026-11-11, see "T3 snapshots"),
+>    7. offsite-sync-backup, each its own unit, started with
 >    `systemctl start --wait`; a failed step is reported and the rest still run;
-> 9. release the lock.
+> 8. release the lock.
+>
+> **2026-11-12: devvm-home-backup retired.** It was step 6. The devvm is
+> disposable now (`docs/plans/2026-11-11-disposable-devvm.md`) and the second
+> rebuild drill passed with nothing lost, so the file copy of `/home` stopped.
+> Its script and units still ship, disabled. Its last generations stay in
+> `/mnt/backup/devvm-home/` and the Synology copy; nothing rolls them over any
+> more, so they keep their contents, deleted secrets included
+> (`docs/runbooks/devvm-credentials.md`), until removed by hand.
 >
 > The six step timers are disabled (`DISABLED_TIMERS` in
 > `scripts/ci/pve-scripts-sync.sh`). daily-backup, offsite-sync-backup and
@@ -30,7 +38,7 @@ Last updated: 2026-11-11
 > devvm-home-backup. If the cluster API is down the dumps are skipped and the
 > host steps still run. Alerts: `NightlyChainNotSucceeding` (30 h),
 > `NightlyChainStepFailed`, `NightlyChainRanWithoutLock` (info). Test one
-> piece by hand with `nightly-chain --only backup-etcd,devvm-home-backup`.
+> piece by hand with `nightly-chain --only backup-etcd,t3-state-pull`.
 > The times in the older sections below are the pre-chain schedule.
 
 > **2026-06-01 — regenerable services carved back out** (offsite Synology hit
@@ -253,13 +261,12 @@ graph LR
         T0200["nfs-mirror<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>now includes tonight's dumps"]
         T0300["lvm-pvc-snapshot<br/>thin snapshots of Proxmox CSI PVCs"]
         T0500["daily-backup<br/>mount the snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + opnsense + pve-config"]
-        T0330["devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
         T3P["t3-state-pull<br/>devvm /var/backups/t3-state → sda /mnt/backup/t3-state/<user>/"]
         T0600["offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
         T0700["release the lock"]
     end
 
-    T0000 --> T0015 --> T0200 --> T0300 --> T0500 --> T0330 --> T3P --> T0600 --> T0700
+    T0000 --> T0015 --> T0200 --> T0300 --> T0500 --> T3P --> T0600 --> T0700
     INO -.->|change events feed Step 2| T0600
 
     style Nightly fill:#ffe0b2
@@ -369,7 +376,7 @@ graph LR
 | Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
 | Offsite Sync | Nightly chain step 8, last | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
-| devvm /home (incremental) | Nightly chain step 6, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
+| devvm /home (incremental) | **Retired 2026-11-12** (removed from the nightly chain; last generations kept) | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
 | T3 snapshots | Nightly chain step 7, keep 3 per user | PVE host: `t3-state-pull` | devvm `/var/backups/t3-state/<user>/` daily snapshots → `/mnt/backup/t3-state/<user>/`, gzipped; restored by `t3-restore-state` on the devvm |
 | PostgreSQL Backup (full) | Nightly chain dumps, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Nightly chain dumps (same Job as the full dump), 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
@@ -531,7 +538,7 @@ file there: pass `--snapshot` with the pulled one, one user at a time (`--all` t
 
 **After a rebuild, on the host.** The new devvm has new SSH host keys, and the host's
 `/root/.ssh/known_hosts` still pins the old ones for 10.0.10.10, so the next night's
-`t3-state-pull` and `devvm-home-backup` both fail (`NightlyChainStepFailed` pages). Once
+`t3-state-pull` fails (`NightlyChainStepFailed` pages). Once
 the new box answers on 10.0.10.10:
 
 ```bash
@@ -849,7 +856,7 @@ Nothing in this set is deployed by hand any more.
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | **Disabled since 2026-11-10**: nightly-chain step 4 |
 | `/etc/systemd/system/daily-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 5 |
 | `/etc/systemd/system/offsite-sync-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 8 |
-| `/etc/systemd/system/devvm-home-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 6 |
+| `/etc/systemd/system/devvm-home-backup.timer` | **Disabled since 2026-11-10**; the step itself retired from the nightly chain 2026-11-12 |
 | `/usr/local/bin/t3-state-pull` | PVE host: nightly-chain step 7, the devvm's daily T3 snapshots → `/mnt/backup/t3-state/<user>/` (source `infra/scripts/t3-state-pull.{sh,service,timer}`; timer disabled, the chain starts it) |
 | `/mnt/backup/t3-state/` | PVE host: newest 3 T3 snapshots per user as `state-<ts>.sqlite.gz`, mode 0700/0600, carried offsite nightly through the manifest |
 | `/usr/local/bin/t3-restore-state` | devvm: puts a user's newest snapshot back as `~/.t3/userdata/statev2.sqlite` (source `infra/scripts/t3-restore-state.sh`, installed by `playbooks/devvm.yml`) |

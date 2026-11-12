@@ -4932,7 +4932,7 @@ serverFiles:
               notify: page
             annotations:
               summary: "The nightly backup chain has not finished cleanly for {{ $value | humanizeDuration }}"
-              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, devvm-home-backup, t3-state-pull and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
+              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, t3-state-pull and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
           - alert: NightlyChainStepFailed
             expr: nightly_chain_step_ok{job="nightly-chain"} == 0
             for: 5m

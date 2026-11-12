@@ -201,7 +201,7 @@ comes back:
    user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets");
   `journalctl -u claude-sessions-ingest -n 1` shows `mcp_uncaptured=0
   mcp_unfilled=0`.
-3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
+3. On the host: `systemctl start t3-state-pull.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
 4. Push work: for every user's clone under `/home/*/code`, `git status
@@ -244,7 +244,7 @@ Once the bootstrap says `ok`, run provisioning with an admin token
 (`devvm-credentials.md`, "Rebuild: put a user's credentials back") and go
 through "What to check" above, including the T3 and emo items.
 The new box has new SSH host keys, so the host's nightly pulls from 10.0.10.10
-(`t3-state-pull`, `devvm-home-backup`) fail until the host trusts the new key:
+(`t3-state-pull`) fails until the host trusts the new key:
 `ssh-keygen -R 10.0.10.10` on the host, then the `ssh-keyscan` step in
 backup-dr.md, "T3 snapshots", "After a rebuild, on the host".
 `stacks/devvm` drills pass `on_boot = false`; the replacement wants the module
@@ -592,5 +592,5 @@ Gaps it found, none fixed in the drill itself, none CRITICAL or MAJOR:
   push but had already created the VM and handed over the token; the
   re-touch commit then applied nothing. Check `qm list` before re-touching.
 
-Verdict: the rebuild passed with no CRITICAL or MAJOR gap. Retiring the
-nightly devvm-home backup is the plan's next step and Viktor's call.
+Verdict: the rebuild passed with no CRITICAL or MAJOR gap. Viktor retired
+the nightly devvm-home backup on 2026-11-12.
