@@ -7,6 +7,7 @@ package main
 //	sql      admins: run a read-only query
 //	schema   admins: tables, columns and example queries
 //	restore  admins: write a user's ~/.claude and ~/.codex back from the store
+//	mcp-secrets  admins: the MCP secrets the store leaves out, kept in Vault
 
 import (
 	"errors"
@@ -40,8 +41,11 @@ func claudeSessionsCommands() []Command {
 			Summary: "ship new transcript bytes and the rest of ~/.claude and ~/.codex into the session store (root; run by claude-sessions-ingest.timer): claude-sessions ingest [--user <name>] [--homes /home]",
 			Run:     claudeSessionsIngest},
 		{Path: []string{"claude-sessions", "restore"}, Tier: TierWrite,
-			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--force]",
+			Summary: "write a user's ~/.claude and ~/.codex back from the store so claude --resume works after a rebuild (admins): claude-sessions restore --user <name> (--to <home-dir> | --tar <file|-> | --rebuild) [--session <id>] [--path <rel>]... [--force]",
 			Run:     claudeSessionsRestore},
+		{Path: []string{"claude-sessions", "mcp-secrets"}, Tier: TierWrite,
+			Summary: "keep the MCP server secrets the store leaves out in Vault and put them back after a rebuild (admins): claude-sessions mcp-secrets (capture | fill | list) --user <name> [--home <dir>]",
+			Run:     claudeSessionsMCPSecrets},
 	}
 }
 
@@ -269,8 +273,8 @@ func claudeSessionsIngest(args []string) error {
 		status = "error"
 	}
 	// key=value so Loki can filter it by the unit label (devvm-io-guard.md).
-	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d users_waiting_for_restore=%d duration_ms=%d\n",
-		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, st.UsersWaiting, dur.Milliseconds())
+	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d users_waiting_for_restore=%d mcp_uncaptured=%d duration_ms=%d\n",
+		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, st.UsersWaiting, st.MCPUncaptured, dur.Milliseconds())
 	if metrics != "" {
 		writeIngestMetrics(metrics, st, runErr == nil, dur)
 	}
@@ -311,6 +315,10 @@ func writeIngestMetrics(path string, st ingestStats, ok bool, dur time.Duration)
 	// user stuck here has new sessions that never reach the store.
 	fmt.Fprintf(&b, "# HELP claude_sessions_ingest_users_waiting_for_restore Users with agent state that the ingest skips until restore --rebuild has run for them.\n")
 	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_users_waiting_for_restore gauge\nclaude_sessions_ingest_users_waiting_for_restore %d\n", st.UsersWaiting)
+	// MCP server entries whose secret was added or changed after the last
+	// `mcp-secrets capture`: a rebuild would lose it or put back the old one.
+	fmt.Fprintf(&b, "# HELP claude_sessions_ingest_mcp_entries_uncaptured Live MCP server entries with secrets that are new or changed since the last mcp-secrets capture.\n")
+	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_mcp_entries_uncaptured gauge\nclaude_sessions_ingest_mcp_entries_uncaptured %d\n", st.MCPUncaptured)
 	tmp := path + ".tmp"
 	if os.WriteFile(tmp, []byte(b.String()), 0o644) == nil {
 		os.Rename(tmp, path)

@@ -60,7 +60,8 @@ Tested on 2026-11-08 against a full plus an incremental: the restored counts mat
 After a devvm rebuild, `homelab claude-sessions restore` writes a user's agent
 state back from the store: transcripts and subagent transcripts, tool results,
 prompt history, plans, tasks, teams, todos, file-history, workflows, Codex
-sessions and the settings files. Files that already exist are kept unless
+sessions, the settings files and a reduced `~/.claude.json` (project trust,
+user-scope MCP servers, the onboarding flags). Files that already exist are kept unless
 `--force`. Credentials are not in the store; they come from Vault. Admins only
 (it uses `/etc/claude-sessions/reader.env`).
 
@@ -72,6 +73,9 @@ homelab claude-sessions restore --user wizard --to "$HOME"
 homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar -x --skip-old-files -C /home/emo
 # one session only, into a scratch HOME, to look at it
 homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
+# only ~/.claude.json and the Codex config, then their MCP secrets from Vault
+homelab claude-sessions restore --user wizard --path .claude.json --path .codex/config.toml --to /var/tmp/x
+homelab claude-sessions mcp-secrets fill --user wizard --home /var/tmp/x
 ```
 
 On a rebuilt devvm this runs by itself: `t3-provision-users.sh` step 4a calls
@@ -116,8 +120,18 @@ them with `ALTER TABLE ... DELETE` as `default`.
 A settings file whose secrets were redacted at ingest comes back under its real
 name without the redacted keys; the command lists them. Provisioning step 5d
 then fills the memory and pages keys from Vault (`install_agent_api_keys`, admin
-Vault token only); any other secret, such as an MCP server's header, has to be
-added again by hand. Environment flags without a secret, such as
+Vault token only), and step 4a2 the MCP server secrets of `~/.claude.json` and
+`~/.codex/config.toml` from `secret/workstation/<user>/mcp`
+(`homelab claude-sessions mcp-secrets fill`, admin token only, once per user
+and box; a restored entry that no longer matches the Vault copy, or one Vault
+keeps that the file lacks, is named in a `WARN` line, fill it by hand). Step
+4a3 installs the home-local programs the restored MCP config starts (uv, the
+phpipam venv). Those secrets reach Vault only through `mcp-secrets capture`,
+run by an admin after adding or rotating an MCP server; the ingest logs a
+`WARN` and the alert `ClaudeSessionsMCPSecretsUncaptured` fires when a live
+entry changed since the last capture
+([devvm-credentials.md](devvm-credentials.md), "MCP server secrets"). Any other
+secret in a settings file has to be added again by hand. Environment flags without a secret, such as
 `DISABLE_AUTOUPDATER`, are kept. If the real file is already there, `--to`
 writes the stored copy beside it as `<name>.from-store` to merge by hand, and
 `--rebuild` merges a JSON file itself. Files over 32 MiB were stored without

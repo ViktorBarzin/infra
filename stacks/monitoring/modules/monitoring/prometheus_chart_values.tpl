@@ -6953,6 +6953,19 @@ serverFiles:
             annotations:
               summary: "{{ $value }} devvm user(s) wait for their agent state restore, so their sessions are not stored"
               description: "Check `journalctl -u t3-provision-users | grep 'restore'` on the devvm. Runbook: docs/runbooks/restore-claude-sessions.md."
+          - alert: ClaudeSessionsMCPSecretsUncaptured
+            # The same textfile. MCP server secrets (headers, env keys, the
+            # ha URL path) are kept in Vault only by a manual `mcp-secrets
+            # capture`; the ingest compares the live entries with the digests
+            # that capture recorded. A count here is a secret a rebuild would
+            # lose or put back stale.
+            expr: max(claude_sessions_ingest_mcp_entries_uncaptured{job="devvm"}) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} devvm MCP server entries hold secrets not captured to Vault"
+              description: "`journalctl -u claude-sessions-ingest | grep WARN` on the devvm names the user and entries; run `homelab claude-sessions mcp-secrets capture --user <user>` (docs/runbooks/devvm-credentials.md, MCP server secrets)."
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m

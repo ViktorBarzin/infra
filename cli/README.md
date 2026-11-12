@@ -561,11 +561,13 @@ Both are admin-only: they read `/etc/claude-sessions/reader.env`, which is
 appended to each transcript since the last run, with a dedup token per batch.
 Since 2026-11-11 it also sends the rest of `~/.claude` and `~/.codex`
 (history, plans, tasks, teams, todos, file-history, workflows, Codex sessions,
-settings with secrets redacted) to `claude.home_files` and `claude.home_lines`,
-never credentials or caches.
+settings with secrets redacted, and a reduced `~/.claude.json` with project
+trust, user-scope MCP servers and the onboarding flags) to `claude.home_files`
+and `claude.home_lines`, never credentials or caches.
 
 `homelab claude-sessions restore --user <name> (--to <home> | --tar -)
-[--session <id>] [--force]` writes it all back, so `claude --resume` works on a
+[--session <id>] [--path <rel>]... [--force]` writes it all back (`--path`: only
+those stored home files), so `claude --resume` works on a
 rebuilt devvm. Existing files are kept unless `--force`; redacted settings come
 back under the real name without the redacted keys (or as `<name>.from-store`
 when the real file is there). As root into another user's home, pipe `--tar -` into
@@ -573,7 +575,16 @@ when the real file is there). As root into another user's home, pipe `--tar -` i
 `sql`. `restore --user <name> --rebuild` is the root form t3-provision-users
 runs for every user on a rebuilt box: once per box it restores the user, records
 the restored files in the ingest state as already sent, and writes the marker
-the ingest waits for. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+the ingest waits for. `homelab claude-sessions mcp-secrets (capture | fill |
+list) --user <name> [--home <dir>]` keeps the MCP server secrets the store
+redacts out of `~/.claude.json` and `~/.codex/config.toml` in Vault
+`secret/workstation/<user>/mcp` and puts them back into a restored copy,
+never touching an entry that still holds its own secret (provisioning step
+4a2, once per user and box). `fill` names, with a `WARN`, entries that differ
+from Vault's copy or that the file lacks. `capture` also writes
+`~/.claude/mcp-captured.json` (digests, no values). The ingest compares the
+live entries with it and counts the new or changed ones in
+`claude_sessions_ingest_mcp_entries_uncaptured`. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
 ### v0.37 verbs — netsec (what the network IDS saw)
 
