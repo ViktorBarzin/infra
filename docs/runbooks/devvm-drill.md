@@ -75,7 +75,11 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   `t3-autoupdate`; before 2026-11-11 it did not, and every serve died with
   `203/EXEC`.
 - Run provisioning once with an admin token, as in `devvm-credentials.md`,
-  "Rebuild: put a user's credentials back". The bootstrap's own run has only
+  "Rebuild: put a user's credentials back", started from `/` (`cd /`
+  first). chezmoi runs as each user in the caller's directory and stops
+  with `stat .: permission denied` in a home that user cannot read, so a
+  run started in wizard's home leaves emo's dotfiles to the next hourly run
+  (drill 6). The bootstrap's own run has only
   the bootstrap token, which cannot read `secret/workstation/*`, so it skips
   every credential and every clone that needs one. Then check, as root:
   `ls /home/wizard/.vault-token /home/emo/.vault-token`; `ls /home/emo/code`
@@ -504,3 +508,89 @@ Gaps it found, none fixed in the drill itself:
 
 Verdict: the rebuild works end to end in under an hour, but it did not
 pass cleanly, so the nightly devvm-home backup stays.
+
+**2026-11-12, sixth drill, after round 2** (devvm-drill6, VM 9106,
+10.0.10.15, drill defaults), built by CI from master (74fc9313a) once every
+round-2 workstream had landed, then checked per user after the admin
+provisioning run (a 3 h child token, the safety steps in "What to check";
+intercom-watch has no devvm unit any more, so there was nothing to stop):
+
+- 01:34 VM up, 01:36-01:56 playbook (315 ok, 0 failed), 02:00-02:27
+  restores from the session store (wizard 8,298 files, 7.02 GB in 788 s;
+  emo 672 files, 0.97 GB in 90 s), 02:28 status plain `ok`: 54 minutes.
+  The hourly `t3-provision-users` run at 01:52 fired during the playbook
+  and exited 0 ("the infra checkout ... is not there yet"). The admin run
+  took 58 s and ended `reconcile complete`; a later hourly run succeeded.
+- Passed, against the live box: credentials (wizard 46 and emo 20 files,
+  names, modes and owners as live; content as live except the sops
+  `keys.txt` comment lines, the Google OAuth file the drill's own MCP call
+  refreshed, and emo's `.git-credentials`, below); terraform 1.15.4, vault
+  2.0.1, terragrunt 0.77.20 and sops 3.9.4, and `homelab tf plan devvm` as
+  wizard on the drill reported "No changes" through the PG backend;
+  `~/.claude.json` for both users with the same `mcpServers`, the same
+  trusted projects (wizard 72, emo 2) and the onboarding flag, no
+  `<redacted>` left in it or in `~/.codex/config.toml`, both `mcp-filled`
+  markers, `claude mcp list` connected for every user server
+  (`google_workspace`, `playwright`, emo's `paperless`), `list_calendars`
+  through the restored `google_workspace` (workspace-mcp 2.4.2) returned 8
+  calendars, `claude` in `~/code/infra` opened at the prompt with no
+  onboarding and no trust prompt, and `claude --resume` listed sessions for
+  both users; `settings.json`, `history.jsonl` (13,154 and 4,273 lines) and
+  both users' `AGENTS.md` identical to live; wizard's dotfiles
+  (`.zshrc`, `.zshenv`, `.bash_aliases`, `.tmux.conf.local` byte-identical
+  to live, no tmux-resurrect or continuum plugin, no `tmux.service`, no
+  `.mcp.json` memory server, `~/.kube` 0700); emo's dotfiles
+  byte-identical to live once applied (below), his `claude` resolving to
+  `~/.local/bin/claude` in zsh; emo's agent-instruction fetch owned by
+  wizard and fetching, `~emo/.agents/AGENTS.md` back; emo in `docker`
+  (`docker ps` works as him); Forgejo's host key in both users'
+  `known_hosts` (wizard's SSH to Forgejo authenticates with no prompt);
+  skills right after the bootstrap's provisioning run
+  (`claude-skills-update` started once at 02:28); T3 (wizard 1,013 and emo
+  7 threads, the live counts, both serves 200); user units as live minus
+  the iOS rig (live address only); the playbook in check mode against the
+  drill changed only the two `codex-auth-backup` units the drill had
+  disabled; nothing in the session store beyond the live ingest's own rows;
+  drill logs only under `job="devvm-drill-journal"`, and a logged fake
+  Vault token, bearer header and GitHub token reached Loki as `[REDACTED]`.
+- All four tokens the run minted (emo's `~/.vault-token`, both
+  `claude-auth-sync` tokens, the child) were revoked before the teardown,
+  and a scan of Vault's accessors found no other token created in the
+  drill's window apart from CI and cluster ones.
+- Not checked: Vermont (out of scope), the infra unlock, a Claude login
+  (claude-auth-sync masked).
+
+Gaps it found, none fixed in the drill itself, none CRITICAL or MAJOR:
+
+- MINOR: neither the bootstrap's provisioning run nor the admin run applied
+  emo's dotfiles. The bootstrap run cannot clone his private repo without
+  his credentials; the admin run, started over SSH in wizard's home, ran
+  `chezmoi init` as emo in that directory, which emo cannot read, and
+  chezmoi stopped with `stat .: permission denied`. The next hourly run,
+  whose working directory is `/`, applied them. On a rebuild his zsh has no
+  `.zshrc` and prints `permission denied: claude` until then. A fix is to
+  run the chezmoi calls in `install_user_dotfiles` from the user's home;
+  until then, start the admin run from `/` ("What to check").
+- MINOR: emo's `.git-credentials` in Vault holds a GitHub token that GitHub
+  rejects (401 from `/user`). On the live box git dropped that line at
+  02:00:11, so the kept copy and the live file differ. Capture his file
+  again, or drop the line from the Vault copy.
+- MINOR, as in drill 5: wizard has no `unslop` skill, and emo has no
+  `cluster-health` in `~/.claude/skills` and none of his 20
+  `~/.agents/skills` folders; no kept place holds them.
+- MINOR, latent: `install_browser_bridge_token` stores a newly minted
+  token with `vault kv patch secret/browser-bridge/tokens "$user=$token"`,
+  so the token is on that process's command line. A rebuild never takes
+  this path (wizard's and emo's tokens are in Vault); a new roster user
+  would.
+- Note: emo is uid 1001 on the drill and 1002 on the live box, because
+  `useradd` takes the next free uid and the roster pins none. Restores
+  chown by name, so nothing on the drill broke.
+- Note: the project `ha` server in infra's `.mcp.json` needs `HA_MCP_URL`,
+  which wizard's environment lacks on the live box too.
+- Note: the first pipeline for the drill commit was cancelled by a later
+  push but had already created the VM and handed over the token; the
+  re-touch commit then applied nothing. Check `qm list` before re-touching.
+
+Verdict: the rebuild passed with no CRITICAL or MAJOR gap. Retiring the
+nightly devvm-home backup is the plan's next step and Viktor's call.

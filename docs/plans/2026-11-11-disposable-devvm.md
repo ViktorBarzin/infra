@@ -151,6 +151,15 @@ remain (no terraform, emo's agent instructions, emo's shell setup,
 `~/.claude.json`), so it did not pass cleanly and the devvm-home backup
 stays (`docs/runbooks/devvm-drill.md`, drill log).
 
+Drilled again 2026-11-12 after round 2 (sixth drill, devvm-drill6): built
+from master in 54 minutes, and every check passed, including terraform and
+`homelab tf`, `~/.claude.json` with trust and filled MCP secrets (no
+onboarding or trust prompt, `google_workspace` returned calendars), both
+users' dotfiles, emo's agent instructions and `docker`, skills and Forgejo's
+host key on first boot, and a no-op playbook `--check`. It found four MINOR
+gaps and no CRITICAL or MAJOR one, so the drill passed; retiring the
+devvm-home backup is the next step and Viktor's call.
+
 ## Open questions
 
 - Settled 2026-11-12: the B4 intercom does not accept the ISAPI reboot over
@@ -261,3 +270,11 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   owned by root; and a rebuilt box gets Forgejo's host key, the iOS rig units
   (live address only), one early skills update, and no failed hourly run
   before the infra clone (`docs/runbooks/devvm-credentials.md`).
+- Round 2 drill (devvm-drill6, 2026-11-12): passed with no CRITICAL or
+  MAJOR gap. MINOR: the admin provisioning run applies emo's dotfiles only
+  when started from a directory he can read, else the next hourly run does;
+  emo's kept `.git-credentials` holds a GitHub token GitHub rejects;
+  wizard's `unslop` skill and emo's `cluster-health` and 20
+  `~/.agents/skills` folders have no kept place; a newly minted
+  browser-bridge token goes through `vault kv patch` on the command line
+  (`docs/runbooks/devvm-drill.md`, drill log).
