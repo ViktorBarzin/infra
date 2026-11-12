@@ -88,7 +88,7 @@ grep -q 'fill_mcp_secrets "$u"' "$SCRIPT"; eq "the step runs for every roster us
 # install_mcp_tools: the home-local programs a restored MCP config starts.
 eval "$(extract install_mcp_tools)"
 declare -F install_mcp_tools >/dev/null || { echo "FAIL: install_mcp_tools not found in $SCRIPT"; exit 1; }
-eval "$(grep -E '^MCP_(UV|PHPIPAM)_[A-Z0-9_]+=' "$SCRIPT")"
+eval "$(grep -E '^MCP_(UV|PHPIPAM|WORKSPACE)_[A-Z0-9_]+=' "$SCRIPT")"
 H="$tmp/home/emo"; mkdir -p "$H/.codex"
 getent() { echo "emo:x:1002:1002::$H:/bin/zsh"; }
 runuser() { echo "runuser $*" >> "$CALLS"; [[ "${FAKE_RUNUSER:-ok}" == ok ]]; }
@@ -99,14 +99,22 @@ eq "a config without home-local programs installs nothing" "" "$(cat "$CALLS")"
 echo '{"mcpServers":{"gw":{"command":"'"$H"'/.local/bin/uvx","args":["workspace-mcp"]}}}' > "$H/.claude.json"
 printf '[mcp_servers.phpipam]\ncommand = "%s/.local/share/phpipam-mcp/bin/phpipam-mcp-server"\n' "$H" > "$H/.codex/config.toml"
 install_mcp_tools emo
-eq "uv, then the phpipam venv, both as the user" 2 "$(grep -c "^runuser -u emo -- env -i " "$CALLS")"
+eq "uv, workspace-mcp, then the phpipam venv, all as the user" 3 "$(grep -c "^runuser -u emo -- env -i " "$CALLS")"
+grep -q "tool install --quiet --python \"\$py\".* _ $MCP_WORKSPACE_PYTHON workspace-mcp==$MCP_WORKSPACE_VERSION .*fastmcp==4.1.8 .*mcp==2.3.0 " "$CALLS"; eq "workspace-mcp is a uv tool, pinned with what it pulls in and its python" 0 "$?"
 grep -q "/$MCP_UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz $MCP_UV_SHA256\$" "$CALLS"; eq "uv is pinned by version and checksum" 0 "$?"
 grep -q " _ phpipam-mcp-server==$MCP_PHPIPAM_VERSION .*mcp==1.14.1 .*starlette==" "$CALLS"; eq "phpipam and what it pulls in are pinned" 0 "$?"
-eq "both installs are logged" 2 "$(grep -c 'emo: installed' "$tmp/log")"
-mkdir -p "$H/.local/bin" "$H/.local/share/phpipam-mcp/bin"
+eq "every install is logged" 3 "$(grep -c 'emo: installed' "$tmp/log")"
+mkdir -p "$H/.local/bin" "$H/.local/share/phpipam-mcp/bin" "$H/.local/share/uv/tools/workspace-mcp"
 touch "$H/.local/bin/uvx" "$H/.local/share/phpipam-mcp/bin/phpipam-mcp-server"; chmod +x "$H/.local/bin/uvx" "$H/.local/share/phpipam-mcp/bin/phpipam-mcp-server"
 : > "$CALLS"; install_mcp_tools emo
 eq "programs already there are left alone" "" "$(cat "$CALLS")"
+# A home where uvx already ran workspace-mcp keeps what its cache resolved:
+# the live box is not moved onto the pinned tool.
+rm -rf "$H/.local/share/uv/tools/workspace-mcp"
+mkdir -p "$H/.cache/uv/archive-v0/abc/lib/python3.14/site-packages/workspace_mcp-2.4.2.dist-info"
+: > "$CALLS"; install_mcp_tools emo
+eq "a home whose uv cache has workspace-mcp is left alone" "" "$(cat "$CALLS")"
+rm -rf "$H/.cache"
 rm -f "$H/.local/bin/uvx"; FAKE_RUNUSER=fail; : > "$tmp/log"; install_mcp_tools emo; rc=$?
 eq "a failed install is a warning" 1 "$(grep -c 'WARN: could not install uv' "$tmp/log")"
 eq "a failed install does not stop the run" 0 "$rc"

@@ -584,7 +584,9 @@ never touching an entry that still holds its own secret (provisioning step
 from Vault's copy or that the file lacks. `capture` also writes
 `~/.claude/mcp-captured.json` (digests, no values). The ingest compares the
 live entries with it and counts the new or changed ones in
-`claude_sessions_ingest_mcp_entries_uncaptured`. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+`claude_sessions_ingest_mcp_entries_uncaptured`, and the recorded entries
+the live files lack or hold redacted in
+`claude_sessions_ingest_mcp_entries_unfilled`. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
 ### v0.37 verbs — netsec (what the network IDS saw)
 

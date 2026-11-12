@@ -333,3 +333,73 @@ func TestIngestMetricsCountUncapturedMCPEntries(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+// A rebuilt box whose files were restored but never filled (no admin pass
+// ran, or fill named an entry it could not put back) has no secrets left in
+// them, so the uncaptured check sees nothing. The capture record still names
+// every entry Vault keeps, and each one the live files lack, or hold without
+// its secret, is counted as unfilled until fill runs.
+func TestUnfilledMCPEntries(t *testing.T) {
+	kv := fakeKV{}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o700)
+	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(liveClaudeJSON), 0o600)
+	os.WriteFile(filepath.Join(home, ".codex/config.toml"), []byte(liveCodexTOML), 0o600)
+	// No record yet: nothing to compare with.
+	if got, err := unfilledMCPEntries(home); err != nil || len(got) != 0 {
+		t.Fatalf("before any capture: %v %v", got, err)
+	}
+	if _, err := captureMCPSecrets(kv, "emo", home); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaptureDigests(home, directWriter{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := unfilledMCPEntries(home); err != nil || len(got) != 0 {
+		t.Fatalf("live box: %v %v", got, err)
+	}
+	// The restore wrote the redacted copies.
+	os.WriteFile(filepath.Join(home, ".claude.json"), restoredCopy(t, claudeJSONRel, []byte(liveClaudeJSON)), 0o600)
+	os.WriteFile(filepath.Join(home, ".codex/config.toml"), restoredCopy(t, codexConfigRel, []byte(liveCodexTOML)), 0o600)
+	got, err := unfilledMCPEntries(home)
+	if err != nil || len(got) != 6 {
+		t.Fatalf("restored, not filled: %v %v", got, err)
+	}
+	if un, _ := uncapturedMCPEntries(home); len(un) != 0 {
+		t.Fatalf("an unfilled entry is not an uncaptured one: %v", un)
+	}
+	res, err := fillMCPSecrets(kv, "emo", home, directWriter{})
+	if err != nil || len(res.Filled) != 6 {
+		t.Fatalf("fill: %+v %v", res, err)
+	}
+	if got, err := unfilledMCPEntries(home); err != nil || len(got) != 0 {
+		t.Fatalf("after fill: %v %v", got, err)
+	}
+	// A server the user dropped stays unfilled until capture runs again,
+	// which records the files as they are now.
+	toml := strings.Replace(liveCodexTOML, "[mcp_servers.ha]\nurl = \"http://192.168.1.8:9583/private_FakeHaPath0000000000aa\"\n\n", "", 1)
+	os.WriteFile(filepath.Join(home, ".codex/config.toml"), []byte(toml), 0o600)
+	got, _ = unfilledMCPEntries(home)
+	if strings.Join(got, "|") != ".codex/config.toml [mcp_servers.ha]" {
+		t.Fatalf("dropped server: %v", got)
+	}
+	if _, err := captureMCPSecrets(kv, "emo", home); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaptureDigests(home, directWriter{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := unfilledMCPEntries(home); len(got) != 0 {
+		t.Fatalf("after capture again: %v", got)
+	}
+}
+
+func TestIngestMetricsCountUnfilledMCPEntries(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "m.prom")
+	writeIngestMetrics(p, ingestStats{MCPUnfilled: 2}, true, 0)
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), "\nclaude_sessions_ingest_mcp_entries_unfilled 2\n") {
+		t.Fatalf("%s", b)
+	}
+}

@@ -2138,6 +2138,14 @@ MCP_PHPIPAM_VERSION="0.2.1"
 # The live venv's packages, exact: 0.2.1 pins mcp but not what mcp pulls in,
 # and a fresh resolve (Nov 2026) gets versions its import fails on.
 MCP_PHPIPAM_PINS="annotated-types==0.7.0 anyio==4.13.0 attrs==26.1.0 certifi==2026.2.25 charset-normalizer==3.4.7 click==8.3.2 h11==0.16.0 httpcore==1.0.9 httpx==0.28.1 httpx-sse==0.4.3 idna==3.11 jsonschema==4.26.0 jsonschema-specifications==2025.9.1 mcp==1.14.1 pydantic==2.12.5 pydantic-core==2.41.5 pydantic-settings==2.13.1 python-dotenv==1.2.2 python-multipart==0.0.25 referencing==0.37.0 requests==2.32.5 rpds-py==0.30.0 sse-starlette==3.3.4 starlette==1.0.0 typing-extensions==4.15.0 typing-inspection==0.4.2 urllib3==2.6.3 uvicorn==0.44.0"
+# google_workspace runs `uvx workspace-mcp` with no version, so a fresh box
+# would resolve whatever PyPI has newest. A uv tool install of the version
+# wizard's live servers run (from his uv cache, Nov 2026) holds it: uvx uses
+# an installed tool before it resolves one. Skipped in a home whose uv cache
+# already has workspace-mcp, so the live box keeps what it runs.
+MCP_WORKSPACE_VERSION="2.4.2"
+MCP_WORKSPACE_PYTHON="3.14.5"
+MCP_WORKSPACE_PINS="aiofile==3.12.3 annotated-doc==0.0.6 annotated-types==0.8.0 anyio==4.16.0 attrs==26.1.0 authlib==1.9.5 beartype==0.23.1 cachetools==8.0.0 caio==0.12.10 certifi==2026.10.23 cffi==2.1.1 charset-normalizer==3.5.2 click==8.5.1 cryptography==50.0.2 cyclopts==5.4.1 defusedxml==0.7.1 dnspython==2.9.2 docstring_parser==0.18.0 email-validator==2.3.0 exceptiongroup==1.3.1 fastapi==0.162.5 fastmcp==4.1.8 fastmcp-slim==4.1.8 google-api-core==2.44.0 google-api-python-client==2.202.0 googleapis-common-protos==1.76.0 google-auth==2.62.2 google-auth-httplib2==0.4.4 google-auth-oauthlib==1.5.0 griffelib==2.4.1 h11==0.16.0 httpcore==1.0.9 httpcore2==2.16.0 httplib2==0.32.1 httpx==0.28.1 httpx2==2.16.0 idna==3.20 joserfc==1.8.0 jsonref==1.1.0 jsonschema==4.26.0 jsonschema-path==0.5.0 jsonschema-specifications==2025.9.1 markdown-it-py==4.3.0 mcp==2.3.0 mcp-types==2.3.0 mdurl==0.1.2 oauthlib==4.0.1 openapi-pydantic==0.6.0 opentelemetry-api==1.45.2 packaging==26.3 pathable==0.6.0 platformdirs==4.14.5 protobuf==7.36.2 proto-plus==1.29.0 pyasn1==0.6.5 pyasn1_modules==0.4.2 pycparser==3.12 pydantic==2.14.3 pydantic_core==2.50.4 pydantic-settings==2.16.2 pygments==2.21.0 pyjwt==2.15.1 py-key-value-aio==0.4.6 pyparsing==3.3.3 pypdf==7.0.1 pyperclip==1.11.0 python-dotenv==1.2.4 python-multipart==0.0.33 pytz==2026.6 pyyaml==6.0.3 referencing==0.37.0 requests==2.34.2 requests-oauthlib==2.0.0 rich==15.0.0 rich-rst==2.2.0 rpds-py==2026.9.1 sse-starlette==3.7.0 starlette==1.10.0 truststore==0.10.5 typing_extensions==4.16.0 typing-inspection==0.4.5 tzdata==2026.6 uncalled-for==0.6.1 uritemplate==4.2.0 urllib3==2.8.0 uvicorn==0.54.0 watchfiles==1.3.0 websockets==17.4"
 install_mcp_tools() {  # install_mcp_tools USER
   local user="$1" home cfgs=() f uv ipam
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -2151,6 +2159,11 @@ install_mcp_tools() {  # install_mcp_tools USER
   [[ ! -x "$uv" ]] && grep -qF '.local/bin/uv' "${cfgs[@]}" 2>/dev/null && need_uv=1
   # The phpipam venv is made with uv.
   [[ ! -x "$ipam" && ! -x "$home/.local/bin/uv" ]] && grep -qF '.local/share/phpipam-mcp/' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  # google_workspace: a pinned uv tool, unless uvx already ran it here.
+  local need_ws=0
+  [[ ! -d "$home/.local/share/uv/tools/workspace-mcp" ]] && grep -qF '"workspace-mcp"' "${cfgs[@]}" 2>/dev/null \
+    && ! compgen -G "$home/.cache/uv/archive-v0/*/lib/python*/site-packages/workspace_mcp-*.dist-info" >/dev/null && need_ws=1
+  (( need_ws )) && [[ ! -x "$home/.local/bin/uv" ]] && need_uv=1
   if (( need_uv )); then
     if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install uv $MCP_UV_VERSION -> $user ~/.local/bin"
     elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; umask 022; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT
@@ -2162,6 +2175,17 @@ install_mcp_tools() {  # install_mcp_tools USER
       log "$user: installed uv $MCP_UV_VERSION into ~/.local/bin for the restored MCP config"
     else
       log "WARN: could not install uv for $user (the MCP servers that run ~/.local/bin/uvx will not start)"
+    fi
+  fi
+  if (( need_ws )); then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install workspace-mcp $MCP_WORKSPACE_VERSION -> $user ~/.local/share/uv/tools"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT; py="$1" r="$2"; shift 2
+        printf "%s\n" "$@" > "$d/constraints.txt"
+        "$HOME/.local/bin/uv" tool install --quiet --python "$py" -c "$d/constraints.txt" "$r"' _ "$MCP_WORKSPACE_PYTHON" "workspace-mcp==$MCP_WORKSPACE_VERSION" $MCP_WORKSPACE_PINS \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed workspace-mcp $MCP_WORKSPACE_VERSION as a uv tool for the restored MCP config"
+    else
+      log "WARN: could not install workspace-mcp for $user (google_workspace will resolve the newest release on its first start)"
     fi
   fi
   if [[ ! -x "$ipam" ]] && grep -qF '.local/share/phpipam-mcp/bin/phpipam-mcp-server' "${cfgs[@]}" 2>/dev/null; then

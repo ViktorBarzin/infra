@@ -269,7 +269,11 @@ clobber race); both go back by hand.
 Step 4a3 (`install_mcp_tools`) installs the home-local programs a restored
 config starts, as the user, pinned, and only when the config names them and
 they are absent: uv 0.11.19 into `~/.local/bin` (wizard's `google_workspace`
-server runs `~/.local/bin/uvx workspace-mcp`) and the phpipam MCP server
+server runs `~/.local/bin/uvx workspace-mcp`), `workspace-mcp` 2.4.2 as a uv
+tool on Python 3.14.5 with every package it pulls in pinned to what wizard's
+live servers ran on 2026-11-12 (the config names no version, and `uvx` uses
+an installed tool before it resolves the newest release; skipped in a home
+whose uv cache already has `workspace-mcp`), and the phpipam MCP server
 0.2.1, with the exact packages of the live venv, into
 `~/.local/share/phpipam-mcp` (wizard's Codex `phpipam` server). The
 `google_workspace` OAuth files are credential files in Vault
@@ -288,7 +292,15 @@ ingest compares the live entries with that file every 15 minutes and logs
 new or changed ones. The count is the metric
 `claude_sessions_ingest_mcp_entries_uncaptured`, and the alert
 `ClaudeSessionsMCPSecretsUncaptured` fires once it has stayed above 0 for
-6 hours. The ingest has no Vault access, so it can only point at a capture:
+6 hours. The other direction is counted too: an entry `mcp-captured.json`
+names that the live files lack, or hold without its secret, is
+`claude_sessions_ingest_mcp_entries_unfilled`, and
+`ClaudeSessionsMCPSecretsUnfilled` fires after 6 hours above 0. After a
+rebuild that means fill never ran (no admin provisioning pass) or named the
+entry in a `WARN` line: run `mcp-secrets fill --user <u>` with an admin
+token, or put the entry back by hand. On the live box it means a server was
+removed since the capture; capture again and the record forgets it. The
+ingest has no Vault access, so it can only point at a capture or a fill:
 
 ```bash
 homelab claude-sessions mcp-secrets capture --user wizard     # your own files, your ~/.vault-token

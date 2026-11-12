@@ -125,11 +125,14 @@ Vault token only), and step 4a2 the MCP server secrets of `~/.claude.json` and
 (`homelab claude-sessions mcp-secrets fill`, admin token only, once per user
 and box; a restored entry that no longer matches the Vault copy, or one Vault
 keeps that the file lacks, is named in a `WARN` line, fill it by hand). Step
-4a3 installs the home-local programs the restored MCP config starts (uv, the
-phpipam venv). Those secrets reach Vault only through `mcp-secrets capture`,
-run by an admin after adding or rotating an MCP server; the ingest logs a
-`WARN` and the alert `ClaudeSessionsMCPSecretsUncaptured` fires when a live
-entry changed since the last capture
+4a3 installs the home-local programs the restored MCP config starts (uv,
+`workspace-mcp` as a pinned uv tool, the phpipam venv). Those secrets reach
+Vault only through `mcp-secrets capture`, run by an admin after adding or
+rotating an MCP server; the ingest logs a `WARN` and the alert
+`ClaudeSessionsMCPSecretsUncaptured` fires when a live entry changed since the
+last capture, and `ClaudeSessionsMCPSecretsUnfilled` fires when an entry the
+capture recorded is missing from the files or still redacted, such as a
+rebuild where fill never ran or named an entry to fill by hand
 ([devvm-credentials.md](devvm-credentials.md), "MCP server secrets"). Any other
 secret in a settings file has to be added again by hand. Environment flags without a secret, such as
 `DISABLE_AUTOUPDATER`, are kept. If the real file is already there, `--to`

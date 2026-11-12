@@ -375,6 +375,7 @@ type ingestStats struct {
 	FileErrors    int
 	UsersWaiting  int // users skipped until restore --rebuild has run for them
 	MCPUncaptured int // live MCP server entries with secrets that are new or changed since the last capture (uncapturedMCPEntries)
+	MCPUnfilled   int // captured MCP server entries the live files lack or hold without their secret (unfilledMCPEntries)
 }
 
 type lineRow struct {
@@ -475,6 +476,11 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 				st.MCPUncaptured += len(names)
 				fmt.Fprintf(os.Stderr, "claude-sessions-ingest WARN user=%s: %d MCP server entries with secrets are new or changed since the last capture, so a rebuild would not bring them back as they are; run `homelab claude-sessions mcp-secrets capture --user %s`: %s\n",
 					user, len(names), user, strings.Join(names, ", "))
+			}
+			if names, uerr := unfilledMCPEntries(home); uerr == nil && len(names) > 0 {
+				st.MCPUnfilled += len(names)
+				fmt.Fprintf(os.Stderr, "claude-sessions-ingest WARN user=%s: %d captured MCP server entries are missing from the live files or hold no secret, so those servers do not work; after a rebuild run `homelab claude-sessions mcp-secrets fill --user %s` (or add them back by hand), and if they were removed on purpose run `mcp-secrets capture --user %s` so the record forgets them: %s\n",
+					user, len(names), user, user, strings.Join(names, ", "))
 			}
 		}
 		if err != nil {

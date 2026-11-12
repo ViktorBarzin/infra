@@ -220,10 +220,20 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   `google_workspace` OAuth files are in `secret/workstation/wizard/files`.
   A mount-namespace check with those programs and files hidden got
   calendars back through the restored config.
+- Round 2, claude-state second review: the ingest also counts entries the
+  capture recorded that the live files lack or hold redacted (alert
+  `ClaudeSessionsMCPSecretsUnfilled`), so a rebuild where fill never ran,
+  or named an entry to fill by hand, no longer goes unnoticed. Step 4a3
+  installs `workspace-mcp` 2.4.2 as a pinned uv tool, so `google_workspace`
+  no longer resolves the newest release on a rebuild.
 - Open, needs Viktor: the ha-sofia ha-mcp add-on's secret URL path was
   committed in a round-1 test (c114c7f07, replaced by a fake value in
-  a81d0584a). That commit is on Forgejo and on the public GitHub mirror
-  `ViktorBarzin/infra`, so the value is exposed. The endpoint is a LAN
+  a81d0584a). That commit is served without login by both copies of the
+  repo: Forgejo `viktor/infra` is public too (API `private: false`, the
+  commit page answers 200 anonymously, checked 2026-11-12), as is the GitHub
+  mirror `ViktorBarzin/infra`, so the value is exposed and still works. A
+  session transcript also shows it once, and the session store copies
+  transcripts; rotation makes that copy harmless too. The endpoint is a LAN
   address (192.168.1.8:9583), so using it needs LAN access. Not rotated
   yet: regenerating the path changes the add-on on ha-sofia. After a
   rotation, update wizard's and emo's `~/.codex/config.toml` and

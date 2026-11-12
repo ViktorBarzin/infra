@@ -273,8 +273,8 @@ func claudeSessionsIngest(args []string) error {
 		status = "error"
 	}
 	// key=value so Loki can filter it by the unit label (devvm-io-guard.md).
-	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d users_waiting_for_restore=%d mcp_uncaptured=%d duration_ms=%d\n",
-		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, st.UsersWaiting, st.MCPUncaptured, dur.Milliseconds())
+	fmt.Printf("claude-sessions-ingest status=%s users=%d files_seen=%d files_changed=%d lines=%d bytes=%d side_files=%d home_files=%d home_lines=%d file_errors=%d users_waiting_for_restore=%d mcp_uncaptured=%d mcp_unfilled=%d duration_ms=%d\n",
+		status, st.Users, st.FilesSeen, st.FilesChanged, st.Lines, st.Bytes, st.SideFiles, st.HomeFiles, st.HomeLines, st.FileErrors, st.UsersWaiting, st.MCPUncaptured, st.MCPUnfilled, dur.Milliseconds())
 	if metrics != "" {
 		writeIngestMetrics(metrics, st, runErr == nil, dur)
 	}
@@ -319,6 +319,10 @@ func writeIngestMetrics(path string, st ingestStats, ok bool, dur time.Duration)
 	// `mcp-secrets capture`: a rebuild would lose it or put back the old one.
 	fmt.Fprintf(&b, "# HELP claude_sessions_ingest_mcp_entries_uncaptured Live MCP server entries with secrets that are new or changed since the last mcp-secrets capture.\n")
 	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_mcp_entries_uncaptured gauge\nclaude_sessions_ingest_mcp_entries_uncaptured %d\n", st.MCPUncaptured)
+	// Captured entries the live files lack or hold redacted: on a rebuilt
+	// box, MCP servers that fill did not bring back.
+	fmt.Fprintf(&b, "# HELP claude_sessions_ingest_mcp_entries_unfilled Captured MCP server entries that the live files lack or hold without their secret.\n")
+	fmt.Fprintf(&b, "# TYPE claude_sessions_ingest_mcp_entries_unfilled gauge\nclaude_sessions_ingest_mcp_entries_unfilled %d\n", st.MCPUnfilled)
 	tmp := path + ".tmp"
 	if os.WriteFile(tmp, []byte(b.String()), 0o644) == nil {
 		os.Rename(tmp, path)

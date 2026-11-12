@@ -195,7 +195,8 @@ comes back:
    with a success line. Re-capture any credential rotated since its last
    capture (`devvm-credentials.md`, "Add or refresh a credential"), and each
    user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets");
-  `journalctl -u claude-sessions-ingest -n 1` shows `mcp_uncaptured=0`.
+  `journalctl -u claude-sessions-ingest -n 1` shows `mcp_uncaptured=0
+  mcp_unfilled=0`.
 3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
