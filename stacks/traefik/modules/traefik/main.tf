@@ -225,6 +225,10 @@ resource "helm_release" "traefik" {
           # a rollback here costs minutes rather than seconds.
           middlewares = [
             "traefik-crowdsec@kubernetescrd",
+            # Drops client-sent X-Authentik-* (and X-Auth-Fallback) before any
+            # router, so only forward auth can set them (2026-11-12 audit,
+            # middleware.tf strip-client-identity). Created by an earlier apply.
+            "traefik-strip-client-identity@kubernetescrd",
             "traefik-compress@kubernetescrd",
             # After compress: compress reads the browser's Accept-Encoding on
             # the way in, then analytics-inject drops it for HTML pages it may
