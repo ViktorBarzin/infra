@@ -23,11 +23,13 @@ const (
 func pagesCommands() []Command {
 	return []Command{
 		{Path: []string{"pages", "publish"}, Tier: TierWrite,
-			Summary: "publish a page: pages publish <doc.md | page.html | dir/> [--shared] [--public] [--status draft|approved|executing|done]; a dir is a Bundle (index.html or index.md plus its images, data, scripts); --public also prints a no-login link", Run: pagesPublish},
+			Summary: "publish a page: pages publish <doc.md | page.html | dir/> [--shared] [--public] [--expires 30d|90d|never] [--status draft|approved|executing|done]; a dir is a Bundle (index.html or index.md plus its images, data, scripts); --public also prints a no-login link; new pages expire after 90 days unless --expires says otherwise", Run: pagesPublish},
 		{Path: []string{"pages", "share"}, Tier: TierWrite,
-			Summary: "make a public link (no login) to one of your pages: pages share <page URL | name> [--shared]; it lives until pages unshare", Run: pagesShare},
+			Summary: "make a public link (no login) to one of your pages: pages share <page URL | name> [--shared] [--expires 30d|90d|never]; it lives until it expires (90 days by default) or pages unshare", Run: pagesShare},
 		{Path: []string{"pages", "unshare"}, Tier: TierWrite,
 			Summary: "revoke the public links of a page, or one link: pages unshare <page URL | name | public link> [--shared]", Run: pagesUnshare},
+		{Path: []string{"pages", "unpublish"}, Tier: TierWrite,
+			Summary: "delete one of your pages or Bundles, with its public links: pages unpublish <page URL | name> [--shared]; git history keeps a copy", Run: pagesUnpublish},
 		{Path: []string{"pages", "preview"}, Tier: TierRead,
 			Summary: "render a doc to local files you can open and screenshot, without publishing: pages preview <path/to/doc.md> [--status ...] [--out DIR]", Run: pagesPreview},
 	}
@@ -43,6 +45,11 @@ func pagesPublish(args []string) error {
 			req.Shared = true
 		case a == "--public":
 			req.Public = true
+		case a == "--expires":
+			if i+1 < len(args) {
+				req.Expires = args[i+1]
+				i++
+			}
 		case a == "--status":
 			if i+1 < len(args) {
 				req.Status = args[i+1]
@@ -53,7 +60,7 @@ func pagesPublish(args []string) error {
 		}
 	}
 	if path == "" {
-		return fmt.Errorf("usage: homelab pages publish <doc.md | page.html | dir/> [--shared] [--public] [--status draft|approved|executing|done]")
+		return fmt.Errorf("usage: homelab pages publish <doc.md | page.html | dir/> [--shared] [--public] [--expires 30d|90d|never] [--status draft|approved|executing|done]")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -100,6 +107,12 @@ func printPublished(raw []byte) error {
 	if resp.PublicURL != "" {
 		fmt.Println("public: " + resp.PublicURL)
 	}
+	if resp.Expires != "" {
+		fmt.Println("expires: " + resp.Expires)
+	}
+	for _, w := range resp.Warnings {
+		fmt.Fprintln(os.Stderr, "warning: "+w)
+	}
 	return nil
 }
 
@@ -109,7 +122,7 @@ func printPublished(raw []byte) error {
 // Dotfiles and dot-directories (.git, .DS_Store) are skipped; the server
 // refuses paths that start with a dot.
 func pagesPublishBundle(path string, isDir bool, base pagesPublishReq) error {
-	req := pagesBundleReq{Status: base.Status, Shared: base.Shared, Public: base.Public}
+	req := pagesBundleReq{Status: base.Status, Shared: base.Shared, Public: base.Public, Expires: base.Expires}
 	var total int64
 	add := func(rel string, data []byte) error {
 		if int64(len(data)) > pagesMaxFileBytes {
@@ -188,10 +201,16 @@ func pagesPublishBundle(path string, isDir bool, base pagesPublishReq) error {
 
 func pagesLinkArgs(args []string, verb string) (pagesShareReq, error) {
 	var req pagesShareReq
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--shared":
 			req.Shared = true
+		case a == "--expires" && verb == "share":
+			if i+1 < len(args) {
+				req.Expires = args[i+1]
+				i++
+			}
 		case !strings.HasPrefix(a, "-") && req.Page == "":
 			req.Page = a
 		}
@@ -218,12 +237,43 @@ func pagesShare(args []string) error {
 		return err
 	}
 	var resp struct {
-		URL string `json:"url"`
+		URL     string `json:"url"`
+		Expires string `json:"expires"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil || resp.URL == "" {
 		return fmt.Errorf("pages API returned no link: %s", strings.TrimSpace(string(raw)))
 	}
 	fmt.Println(resp.URL)
+	if resp.Expires != "" {
+		fmt.Println("expires: " + resp.Expires)
+	}
+	return nil
+}
+
+// pagesUnpublish deletes a page or Bundle from the caller's Space (or
+// shared/), with its public links and Bundle URL. The pages repo's history
+// keeps a copy, so a mistake can be restored.
+func pagesUnpublish(args []string) error {
+	req, err := pagesLinkArgs(args, "unpublish")
+	if err != nil {
+		return err
+	}
+	c, err := newPagesClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("POST", "/unpublish", req)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Removed string `json:"removed"`
+		Links   int    `json:"links"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.Removed == "" {
+		return fmt.Errorf("pages API returned no result: %s", strings.TrimSpace(string(raw)))
+	}
+	fmt.Printf("removed %s and %d public link(s)\n", resp.Removed, resp.Links)
 	return nil
 }
 

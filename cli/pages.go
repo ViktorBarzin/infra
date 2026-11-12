@@ -76,6 +76,9 @@ type pagesPublishReq struct {
 	Status   string `json:"status"`
 	Shared   bool   `json:"shared"`
 	Public   bool   `json:"public"`
+	// Expires is "<N>d" or "never"; left out, the server applies its rule
+	// (new pages 90 days, existing pages keep their own lifetime).
+	Expires string `json:"expires,omitempty"`
 }
 
 // pagesBundleFile is one file of a POST /publish-bundle body; binary files go
@@ -90,25 +93,29 @@ type pagesBundleFile struct {
 // one .html file (a page) or a directory's files (a Bundle). Name is the file
 // or directory name, which identifies the page across publishes.
 type pagesBundleReq struct {
-	Name   string            `json:"name"`
-	Files  []pagesBundleFile `json:"files"`
-	Status string            `json:"status"`
-	Shared bool              `json:"shared"`
-	Public bool              `json:"public"`
+	Name    string            `json:"name"`
+	Files   []pagesBundleFile `json:"files"`
+	Status  string            `json:"status"`
+	Shared  bool              `json:"shared"`
+	Public  bool              `json:"public"`
+	Expires string            `json:"expires,omitempty"`
 }
 
 // pagesShareReq is the POST /share and /unshare body.
 type pagesShareReq struct {
-	Page   string `json:"page"`
-	Shared bool   `json:"shared"`
+	Page    string `json:"page"`
+	Shared  bool   `json:"shared"`
+	Expires string `json:"expires,omitempty"`
 }
 
 // pagesPublishResp is the POST /publish response: the served page URL and its
 // path within the pages site.
 type pagesPublishResp struct {
-	URL       string `json:"url"`
-	Path      string `json:"path"`
-	PublicURL string `json:"public_url"`
+	URL       string   `json:"url"`
+	Path      string   `json:"path"`
+	PublicURL string   `json:"public_url"`
+	Expires   string   `json:"expires"`
+	Warnings  []string `json:"warnings"`
 }
 
 // pagesPreviewReq is the POST /preview body. Same shape as publish so a caller

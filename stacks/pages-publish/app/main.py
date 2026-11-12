@@ -13,6 +13,9 @@
   the Showcase CI): replaces <user>/<slug>/ with the files sent. No rendering.
 - POST /share, /unshare -> API token; create or remove a public link
   /p/<token>/ to a page in the caller's Space or shared/.
+- POST /unpublish -> API token; delete a page or Bundle with its links.
+- Pages and links published from 2026-11-12 expire after 90 days unless
+  `expires` says otherwise; a background sweep deletes them (app/bundles.py).
 
 Concurrent publishes serialize on an asyncio lock; the blocking render + git
 work runs in a worker thread so /health stays responsive.
@@ -60,6 +63,7 @@ class PublishRequest(BaseModel):
     status: str = "draft"
     shared: bool = False
     public: bool = False  # also create (or keep) a public link; see /share
+    expires: str | None = None  # "<N>d" or "never"; new pages default to 90d
     # NOTE: there is deliberately NO `user` field. Identity comes from the
     # token; any extra body keys are ignored by pydantic.
 
@@ -78,12 +82,14 @@ class BundleRequest(BaseModel):
     status: str = "draft"
     shared: bool = False
     public: bool = False
+    expires: str | None = None  # "<N>d" or "never"; new items default to 90d
     # NOTE: no user field. It comes from the token, as does a bundle slug.
 
 
 class ShareRequest(BaseModel):
     page: str  # a page URL, its served name, shared/<name>, or its source name
     shared: bool = False
+    expires: str | None = None  # /share only: the link's lifetime
 
 
 # A /publish-bundle body over this waits for no one: see large_in_flight.
@@ -126,9 +132,27 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
                         log.exception("startup clone failed; the first publish will retry")
 
             task = asyncio.create_task(run())
+        # Expiry sweep (2026-11-12): pages and public links past their date
+        # are deleted, a few times a day, under the publish lock.
+        sweeper = None
+        interval = int(os.environ.get("PAGES_EXPIRY_INTERVAL", "21600"))
+        if interval > 0 and cfg.key_map:
+
+            async def sweep() -> None:
+                while True:
+                    await asyncio.sleep(interval)
+                    async with lock:
+                        try:
+                            result = await asyncio.to_thread(bundles.expire, cfg)
+                            log.info("expiry sweep: %s", result)
+                        except Exception:
+                            log.exception("expiry sweep failed")
+
+            sweeper = asyncio.create_task(sweep())
         yield
-        if task is not None and not task.done():
-            task.cancel()
+        for t in (task, sweeper):
+            if t is not None and not t.done():
+                t.cancel()
 
     app = FastAPI(title="pages-publish", lifespan=lifespan)
     app.state.cfg = cfg
@@ -223,7 +247,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
             log.exception("unhandled error previewing %s for %s", body.filename, user)
             raise
 
-    def publish_and_maybe_share(body: PublishRequest, user: str) -> dict[str, str]:
+    def publish_and_maybe_share(body: PublishRequest, user: str) -> dict:
         result = publisher.publish(
             cfg,
             user=user,
@@ -231,6 +255,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
             filename=body.filename,
             status=body.status,
             shared=body.shared,
+            ttl=body.expires,
         )
         if body.public:
             link = bundles.share(
@@ -242,7 +267,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     @app.post("/publish")
     async def publish_endpoint(
         body: PublishRequest, user: str = Depends(current_user)
-    ) -> dict[str, str]:
+    ) -> dict:
         _require_page_size(body.content)
         try:
             async with lock:
@@ -278,6 +303,7 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
                         status=body.status,
                         shared=body.shared,
                         public=body.public,
+                        ttl=body.expires,
                     )
                 return await asyncio.to_thread(
                     publisher.publish_bundle,
@@ -295,11 +321,11 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
             log.exception("unhandled error publishing bundle %s/%s", user, slug)
             raise
 
-    async def link_call(fn, body: ShareRequest, user: str) -> dict:
+    async def link_call(fn, body: ShareRequest, user: str, **extra) -> dict:
         try:
             async with lock:
                 return await asyncio.to_thread(
-                    fn, cfg, user=user, page=body.page, shared=body.shared
+                    fn, cfg, user=user, page=body.page, shared=body.shared, **extra
                 )
         except LookupError:
             raise HTTPException(
@@ -314,11 +340,15 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
 
     @app.post("/share")
     async def share_endpoint(body: ShareRequest, user: str = Depends(current_user)) -> dict:
-        return await link_call(bundles.share, body, user)
+        return await link_call(bundles.share, body, user, ttl=body.expires)
 
     @app.post("/unshare")
     async def unshare_endpoint(body: ShareRequest, user: str = Depends(current_user)) -> dict:
         return await link_call(bundles.unshare, body, user)
+
+    @app.post("/unpublish")
+    async def unpublish_endpoint(body: ShareRequest, user: str = Depends(current_user)) -> dict:
+        return await link_call(bundles.unpublish, body, user)
 
     return app
 

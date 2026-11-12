@@ -29,6 +29,31 @@ log = logging.getLogger(__name__)
 
 STATUSES = ("draft", "approved", "executing", "done")
 
+# Lifetimes (Viktor, 2026-11-12): pages and public links published from now on
+# expire after 90 days unless the author says otherwise; app/bundles.py
+# deletes them once expired, recoverable from git history.
+DEFAULT_TTL = "90d"
+_TTL_RE = re.compile(r"^(?:([1-9]\d{0,3})d|never)$")
+_META_RE = re.compile(r'<meta name="plan-(\w+)" content="([^"]*)"')
+
+
+def validate_ttl(ttl: str | None) -> str | None:
+    """None (use the default rule), "<N>d" with N up to 9999, or "never"."""
+    if ttl is None or ttl == "":
+        return None
+    if not _TTL_RE.match(ttl):
+        raise PublishError(f"expires must be <days>d (such as 30d or 90d) or never, got {ttl!r}")
+    return ttl
+
+
+def page_meta(path: str) -> dict[str, str]:
+    """The plan-* meta tags in a page's first 4 KB (empty if unreadable)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return dict(_META_RE.findall(f.read(4096)))
+    except OSError:
+        return {}
+
 # How many times publish() will re-sync + re-render + re-push when another
 # publish lands on master first.
 DEFAULT_ATTEMPTS = 5
@@ -185,6 +210,10 @@ def render_page(
     abs_target_dir: str,
     status: str,
     source_name: str | None = None,
+    *,
+    ttl: str | None = None,
+    default_ttl: str | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Invoke the repo's renderer (tools/render.py); return the path it emitted.
 
@@ -209,7 +238,19 @@ def render_page(
     ]
     if source_name:
         cmd += ["--source-name", source_name]
+    if ttl:
+        cmd += ["--ttl", ttl]
+    if default_ttl:
+        cmd += ["--default-ttl", default_ttl]
     p = _run(cmd)
+    if warnings is not None:
+        # render.py's "warning:" lines (the plan prose budget) go back to the
+        # author; they never fail a publish.
+        warnings += [
+            ln.strip().removeprefix("warning:").strip()
+            for ln in (p.stderr or "").splitlines()
+            if ln.strip().startswith("warning:")
+        ]
     if p.returncode == 3:
         raise PublishError(p.stderr.strip().removeprefix("error: "))
     if p.returncode != 0:
@@ -344,7 +385,8 @@ def publish(
     status: str = "draft",
     shared: bool = False,
     attempts: int = DEFAULT_ATTEMPTS,
-) -> dict[str, str]:
+    ttl: str | None = None,
+) -> dict:
     """Full pipeline: validate -> (sync -> render -> commit -> push). url + path.
 
     ``user`` is the token-resolved identity; callers must never pass a
@@ -360,6 +402,7 @@ def publish(
     """
     slug = sanitize_slug(filename)
     status = validate_status(status)
+    ttl = validate_ttl(ttl)
     subdir = target_subdir(user, shared)
     abs_target = os.path.join(cfg.repo_dir, subdir)
 
@@ -381,10 +424,17 @@ def publish(
         for attempt in range(1, attempts + 1):
             sync_to_master(cfg)
             os.makedirs(abs_target, exist_ok=True)
-            out_path = render_page(cfg, md_path, abs_target, status, f"{slug}.md")
+            warnings: list[str] = []
+            out_path = render_page(
+                cfg, md_path, abs_target, status, f"{slug}.md",
+                ttl=ttl, default_ttl=DEFAULT_TTL, warnings=warnings,
+            )
+            meta = page_meta(out_path)
             result = {
                 "url": derive_url(cfg, out_path, shared),
                 "path": os.path.relpath(out_path, cfg.repo_dir),
+                "expires": meta.get("expires") or None,
+                "warnings": warnings,
             }
 
             if not stage_and_commit(cfg, subdir, slug, user, status):

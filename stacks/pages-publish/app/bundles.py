@@ -66,11 +66,29 @@ DOCTYPE_RE = re.compile(r"<!doctype[^>]*>", re.IGNORECASE)
 
 LINKS_DIR = "p"
 CAPS_DIR = "c"
+# Public link lifetimes: {token: {target, created, ttl, expires}}. A dotfile, so
+# Caddy never serves it. Links made before 2026-11-12 have no entry and never
+# expire ("new ones only", Viktor).
+LINK_REGISTRY = ".links.json"
 
 
 def today() -> str:
     """Seam for tests."""
     return datetime.date.today().isoformat()
+
+
+def lifetime(explicit: str | None, prior_exists: bool, prior_ttl: str | None) -> tuple[str, str | None]:
+    """``(ttl, expires)`` for something being published or shared now.
+
+    An explicit ttl wins. Otherwise an existing item keeps its own ttl (and
+    one from before expiry existed keeps none), and a new one gets 90 days.
+    The clock restarts at every publish. ``ttl`` is "" for no expiry.
+    """
+    ttl = explicit or (prior_ttl or "" if prior_exists else publisher.DEFAULT_TTL)
+    if not ttl or ttl == "never":
+        return ttl, None
+    days = int(ttl[:-1])
+    return ttl, (datetime.date.fromisoformat(today()) + datetime.timedelta(days=days)).isoformat()
 
 
 def new_token() -> str:
@@ -226,7 +244,10 @@ def free_name(abs_space: str, stem: str, source: str, *, is_dir: bool) -> str:
     raise publisher.PublishError(f"no free name for {stem!r}")
 
 
-def inject_meta(text: str, *, title: str, status: str, date: str, source: str) -> str:
+def inject_meta(
+    text: str, *, title: str, status: str, date: str, source: str,
+    ttl: str = "", expires: str | None = None,
+) -> str:
     """Add the ``plan-*`` meta the Space index reads, replacing any already there.
 
     The index only reads a page's first 4 KB, so the tags go right after
@@ -239,8 +260,10 @@ def inject_meta(text: str, *, title: str, status: str, date: str, source: str) -
         f'\n<meta name="plan-title" content="{esc(title)}">'
         f'\n<meta name="plan-status" content="{esc(status)}">'
         f'\n<meta name="plan-date" content="{esc(date)}">'
-        f'\n<meta name="plan-source" content="{esc(source)}">\n'
-        f"{TOP_LINKS_SCRIPT}\n"
+        f'\n<meta name="plan-source" content="{esc(source)}">'
+        + (f'\n<meta name="plan-ttl" content="{esc(ttl)}">' if ttl else "")
+        + (f'\n<meta name="plan-expires" content="{esc(expires)}">' if expires else "")
+        + f"\n{TOP_LINKS_SCRIPT}\n"
     )
     m = HEAD_RE.search(text, 0, 4096)
     if m is None:
@@ -293,6 +316,22 @@ def find_links(cfg: Config, subdir: str, entry: str, is_bundle: bool) -> list[st
     return found
 
 
+def _registry(cfg: Config) -> dict:
+    try:
+        with open(os.path.join(cfg.repo_dir, LINKS_DIR, LINK_REGISTRY), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_registry(cfg: Config, reg: dict) -> None:
+    root = _expect_inside(cfg, LINKS_DIR)
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, LINK_REGISTRY), "w", encoding="utf-8") as fh:
+        json.dump(dict(sorted(reg.items())), fh, indent=1)
+
+
 def make_link(cfg: Config, token: str, subdir: str, entry: str, is_bundle: bool) -> None:
     root = _expect_inside(cfg, LINKS_DIR)
     os.makedirs(root, exist_ok=True)
@@ -310,12 +349,25 @@ def remove_link(cfg: Config, token: str) -> None:
         os.unlink(path)
     elif os.path.isdir(path):
         shutil.rmtree(path)
+    reg = _registry(cfg)
+    if token in reg:
+        del reg[token]
+        _save_registry(cfg, reg)
 
 
 def stage_and_commit(cfg: Config, paths: list[str], user: str, msg: str) -> bool:
     """``git add -A`` scoped to ``paths`` and commit as ``user``. False = no change."""
     env = publisher._git_env(cfg, author=user)
-    spec = [f"{p}/" for p in paths]
+    # Only paths that exist or are tracked: a pathspec matching nothing makes
+    # git add fail, and an EMPTY pathspec would stage the whole clone.
+    def known(p: str) -> bool:
+        if os.path.lexists(os.path.join(cfg.repo_dir, p)):
+            return True
+        ls = publisher._run(["git", "-C", cfg.repo_dir, "ls-files", "--", f"{p}/"], env=env)
+        return bool(ls.stdout.strip())
+    spec = [f"{p}/" for p in dict.fromkeys(paths) if known(p)]
+    if not spec:
+        return False
     add = publisher._run(["git", "-C", cfg.repo_dir, "add", "-A", "--", *spec], env=env)
     if add.returncode != 0:
         raise publisher.RenderError(f"git add failed: {add.stderr.strip()}")
@@ -357,12 +409,33 @@ def _public_url(cfg: Config, token: str) -> str:
     return f"{cfg.base_url}/{LINKS_DIR}/{token}/"
 
 
-def _ensure_public(cfg: Config, token: str, subdir: str, entry: str, is_bundle: bool) -> str:
+def _ensure_public(
+    cfg: Config, token: str, subdir: str, entry: str, is_bundle: bool,
+    ttl: str | None = None,
+) -> tuple[str, str | None]:
+    """``(url, expires)`` of the page's public link, made if it has none.
+
+    Sharing again returns the same link and restarts its clock.
+    """
     existing = find_links(cfg, subdir, entry, is_bundle)
+    reg = _registry(cfg)
     if existing:
-        return _public_url(cfg, existing[0])
-    make_link(cfg, token, subdir, entry, is_bundle)
-    return _public_url(cfg, token)
+        token = existing[0]
+        prior = reg.get(token)
+        new_ttl, expires = lifetime(ttl, True, (prior or {}).get("ttl"))
+    else:
+        make_link(cfg, token, subdir, entry, is_bundle)
+        prior = None
+        new_ttl, expires = lifetime(ttl, False, None)
+    if new_ttl:
+        reg[token] = {
+            "target": f"{subdir}/{entry}",
+            "created": (prior or {}).get("created", today()),
+            "ttl": new_ttl,
+            "expires": expires,
+        }
+        _save_registry(cfg, reg)
+    return _public_url(cfg, token), expires
 
 
 def _space_url(cfg: Config, shared: bool) -> str:
@@ -382,10 +455,12 @@ def publish(
     shared: bool = False,
     public: bool = False,
     attempts: int = publisher.DEFAULT_ATTEMPTS,
+    ttl: str | None = None,
 ) -> dict:
     """Publish one HTML file as a page, or several files as a Bundle."""
     source, slug = source_name(name)
     status = publisher.validate_status(status)
+    ttl = publisher.validate_ttl(ttl)
     subdir = publisher.target_subdir(user, shared)
     decoded = publisher.validate_bundle_files(files)
     check_files(decoded)
@@ -404,6 +479,7 @@ def publish(
         result = publisher.publish(
             cfg, user=user, content=decoded[0][1].decode("utf-8"),
             filename=f"{slug}.md", status=status, shared=shared, attempts=attempts,
+            ttl=ttl,
         )
         if public:
             result["public_url"] = share(cfg, user=user, page=os.path.basename(result["path"]), shared=shared)["url"]
@@ -424,8 +500,13 @@ def publish(
         )
         text = decoded[0][1].decode("utf-8", errors="replace")
         date = _date_of(entry)
+        prior_path = os.path.join(abs_space, entry)
+        page_ttl, expires = lifetime(
+            ttl, os.path.exists(prior_path), _head_meta(prior_path).get("ttl")
+        )
         out = inject_meta(
-            text, title=html_title(text) or slug, status=status, date=date, source=source
+            text, title=html_title(text) or slug, status=status, date=date, source=source,
+            ttl=page_ttl, expires=expires,
         )
         _expect_inside(cfg, f"{subdir}/{entry}")
         with open(os.path.join(abs_space, entry), "w", encoding="utf-8") as fh:
@@ -435,10 +516,11 @@ def publish(
             "url": f"{_space_url(cfg, shared)}/{entry}",
             "path": f"{subdir}/{entry}",
             "kind": "page",
+            "expires": expires,
         }
         touched = [subdir]
         if public:
-            result["public_url"] = _ensure_public(cfg, token, subdir, entry, False)
+            result["public_url"], _ = _ensure_public(cfg, token, subdir, entry, False)
             touched.append(LINKS_DIR)
         return result, touched, f"pages: publish {entry} for {user} ({status})"
 
@@ -449,7 +531,9 @@ def publish(
             abs_space, dated(slug), source, is_dir=True
         )
         target = _expect_inside(cfg, f"{subdir}/{entry}")
-        old_cap = read_marker(target).get("cap")
+        old_marker = read_marker(target)
+        old_cap = old_marker.get("cap")
+        bundle_ttl, expires = lifetime(ttl, bool(old_marker), old_marker.get("ttl"))
         if os.path.isdir(target):
             shutil.rmtree(target)
         for rel, data in decoded:
@@ -481,7 +565,9 @@ def publish(
         with open(os.path.join(target, MARKER), "w", encoding="utf-8") as fh:
             json.dump(
                 {"cap": cap, "source": source, "title": title, "status": status,
-                 "date": _date_of(entry)},
+                 "date": _date_of(entry),
+                 **({"ttl": bundle_ttl} if bundle_ttl else {}),
+                 **({"expires": expires} if expires else {})},
                 fh, indent=1,
             )
         rebuild_index(cfg, abs_space)
@@ -490,10 +576,11 @@ def publish(
             "path": f"{subdir}/{entry}",
             "kind": "bundle",
             "files": len(decoded),
+            "expires": expires,
         }
         touched = [subdir, CAPS_DIR]
         if public:
-            result["public_url"] = _ensure_public(cfg, token, subdir, entry, True)
+            result["public_url"], _ = _ensure_public(cfg, token, subdir, entry, True)
             touched.append(LINKS_DIR)
         return result, touched, f"pages: publish bundle {entry} for {user} ({status})"
 
@@ -541,13 +628,14 @@ def _resolve(cfg: Config, user: str, page: str, shared: bool) -> tuple[str, str,
 
 
 def share(cfg: Config, *, user: str, page: str, shared: bool = False,
-          attempts: int = publisher.DEFAULT_ATTEMPTS) -> dict:
+          attempts: int = publisher.DEFAULT_ATTEMPTS, ttl: str | None = None) -> dict:
     token = new_token()
+    ttl = publisher.validate_ttl(ttl)
 
     def step():
         subdir, entry, is_bundle = _resolve(cfg, user, page, shared)
-        url = _ensure_public(cfg, token, subdir, entry, is_bundle)
-        return ({"url": url, "page": f"{subdir}/{entry}"}, [LINKS_DIR],
+        url, expires = _ensure_public(cfg, token, subdir, entry, is_bundle, ttl)
+        return ({"url": url, "page": f"{subdir}/{entry}", "expires": expires}, [LINKS_DIR],
                 f"pages: public link to {subdir}/{entry} for {user}")
 
     return _commit_loop(cfg, user, attempts, step)
@@ -582,3 +670,111 @@ def unshare(cfg: Config, *, user: str, page: str, shared: bool = False,
                 f"pages: remove public link to {what} for {user}")
 
     return _commit_loop(cfg, user, attempts, step)
+
+
+# ---- unpublish and expiry -----------------------------------------------------
+
+
+def _caps_for(cfg: Config, subdir: str, entry: str) -> list[str]:
+    root = os.path.join(cfg.repo_dir, CAPS_DIR)
+    if not os.path.isdir(root):
+        return []
+    target = f"../{subdir}/{entry}"
+    return [c for c in os.listdir(root)
+            if CAP_RE.match(c) and os.path.islink(os.path.join(root, c))
+            and os.readlink(os.path.join(root, c)) == target]
+
+
+def _remove_entry(cfg: Config, subdir: str, entry: str, is_bundle: bool) -> int:
+    """Delete a page or Bundle with its Bundle URL and public links.
+
+    Returns how many public links went with it. The Space index is rebuilt by
+    the caller once per Space.
+    """
+    tokens = find_links(cfg, subdir, entry, is_bundle)
+    for tok in tokens:
+        remove_link(cfg, tok)
+    path = _expect_inside(cfg, f"{subdir}/{entry}")
+    if is_bundle:
+        for cap in _caps_for(cfg, subdir, entry):
+            os.unlink(os.path.join(cfg.repo_dir, CAPS_DIR, cap))
+        shutil.rmtree(path)
+    else:
+        os.unlink(path)
+    return len(tokens)
+
+
+def unpublish(cfg: Config, *, user: str, page: str, shared: bool = False,
+              attempts: int = publisher.DEFAULT_ATTEMPTS) -> dict:
+    """Delete one page or Bundle from the caller's Space or shared/.
+
+    Its public links and Bundle URL go with it. git history keeps a copy.
+    """
+
+    def step():
+        subdir, entry, is_bundle = _resolve(cfg, user, page, shared)
+        links = len(find_links(cfg, subdir, entry, is_bundle))
+        _remove_entry(cfg, subdir, entry, is_bundle)
+        rebuild_index(cfg, os.path.join(cfg.repo_dir, subdir))
+        return ({"removed": f"{subdir}/{entry}", "links": links},
+                [subdir, CAPS_DIR, LINKS_DIR],
+                f"pages: unpublish {subdir}/{entry} for {user}")
+
+    return _commit_loop(cfg, user, attempts, step)
+
+
+def _spaces(cfg: Config) -> list[str]:
+    reserved = set(publisher._RESERVED_SEGMENTS) - {"shared"}
+    out = []
+    for name in sorted(os.listdir(cfg.repo_dir)):
+        path = os.path.join(cfg.repo_dir, name)
+        if name.startswith(".") or name in reserved or os.path.islink(path) or not os.path.isdir(path):
+            continue
+        out.append(name)
+    return out
+
+
+def expire(cfg: Config, *, today: str | None = None,
+           attempts: int = publisher.DEFAULT_ATTEMPTS) -> dict:
+    """Delete every page, Bundle and public link whose expiry date has passed.
+
+    Only items that carry an expiry are touched: pages published or shared
+    before 2026-11-12 have none. Runs as the service, a few times a day.
+    """
+    when = today or globals()["today"]()
+
+    def step():
+        pages = links = 0
+        touched_spaces = []
+        for space in _spaces(cfg):
+            abs_space = os.path.join(cfg.repo_dir, space)
+            gone = False
+            for name in sorted(os.listdir(abs_space)):
+                path = os.path.join(abs_space, name)
+                if os.path.islink(path):
+                    continue
+                if name.endswith(".html") and name != "index.html" and os.path.isfile(path):
+                    exp = _head_meta(path).get("expires")
+                    if exp and exp < when:
+                        _remove_entry(cfg, space, name, False)
+                        pages += 1
+                        gone = True
+                elif os.path.isdir(path):
+                    exp = read_marker(path).get("expires")
+                    if isinstance(exp, str) and exp < when:
+                        _remove_entry(cfg, space, name, True)
+                        pages += 1
+                        gone = True
+            if gone:
+                rebuild_index(cfg, abs_space)
+                touched_spaces.append(space)
+        for tok, entry in sorted(_registry(cfg).items()):
+            exp = entry.get("expires") if isinstance(entry, dict) else None
+            if isinstance(exp, str) and exp < when:
+                remove_link(cfg, tok)
+                links += 1
+        msg = f"pages: expire {pages} page(s) and {links} public link(s) (as of {when})"
+        result = {"pages": pages, "links": links}
+        return result, touched_spaces + [CAPS_DIR, LINKS_DIR], msg
+
+    return _commit_loop(cfg, "pages-publish", attempts, step)
