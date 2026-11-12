@@ -111,6 +111,7 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | Per-VM disk I/O caps (`apply-mbps-caps` script, service and timer) | Keeps one VM's reads out of the queue that etcd's fsyncs wait in on sdc |
 | cgroup io delegation and no swap for k8s-master (`pve-cgroup-io` script, service and timer) | Per-VM io.stat for attribution, and `memory.swap.max=0` on `200.scope` so etcd's VM is never swapped onto sdc |
 | `vm.swappiness=10` (`/etc/sysctl.d/90-swappiness.conf`) | The swap LV is on sdc. At 60 it filled, and swap-in reads showed up in daytime etcd stalls (2026-11-05) |
+| zram swap, 8 GiB zstd at priority 100 (`systemd-zram-generator`, `/etc/systemd/zram-generator.conf`, tag `zram`), added 2026-11-12 | New swap-outs go to compressed RAM instead of the swap LV on sdc, where each swap-in was a ~15 ms seek that stalled a guest vCPU. The swap LV stays at priority -1 as overflow and is never swapoff'd, since that would re-read its contents from sdc at once. Check with `swapon --show` and `zramctl` |
 | journald in RAM (`Storage=volatile`) | The on-disk journal wrote about 4.5 GB/day to sdc |
 | `xfs_scrub_all.timer` and `xfs_scrub_all.service` masked | The host has no XFS filesystems, and the scrub deadlocks here on its own `lsblk` output, which kept systemd reporting "starting" from 2026-07-18 to 2026-09-24 |
 | Fan actuator (`scripts/fan-control.sh` and its unit) | Replaces the old scp deploy. The script passes the Home Assistant token through a file descriptor, so it no longer appears in the host's command audit |
