@@ -316,7 +316,7 @@ def _stub_pipeline(monkeypatch, push_results):
     def fake_sync(_cfg):
         seen["sync"] += 1
 
-    def fake_render(_cfg, md_path, abs_target, status):
+    def fake_render(_cfg, md_path, abs_target, status, source_name=None):
         seen["render"] += 1
         return f"{abs_target}/2026-08-17-foo.html"
 
@@ -385,7 +385,7 @@ def test_publish_syncs_before_rendering(tmp_path, monkeypatch):
     monkeypatch.setattr(
         publisher,
         "render_page",
-        lambda _c, m, t, s: (order.append("render"), f"{t}/x.html")[1],
+        lambda _c, m, t, s, n=None: (order.append("render"), f"{t}/x.html")[1],
     )
     monkeypatch.setattr(publisher, "stage_and_commit", lambda *a, **k: True)
     monkeypatch.setattr(publisher, "push_to_master", lambda *a, **k: (True, ""))
@@ -412,7 +412,7 @@ def _preview_cfg(tmp_path, monkeypatch, html, assets=None):
     def fake_sync(_cfg):
         calls["sync"] += 1
 
-    def fake_render(_cfg, md_path, abs_target, status):
+    def fake_render(_cfg, md_path, abs_target, status, source_name=None):
         calls["render"] = {"abs_target": abs_target, "status": status}
         with open(md_path, encoding="utf-8") as f:
             calls["render"]["content"] = f.read()

@@ -296,9 +296,11 @@ def test_bundle_token_rejected_on_preview(client):
     assert r.status_code == 401
 
 
-def test_api_token_rejected_on_publish_bundle(client):
+def test_api_token_on_publish_bundle_needs_a_name(client):
+    # Since 2026-11-12 an API token publishes Bundles into its own Space
+    # (tests/test_rich.py); it never reaches the bundle-token directory.
     r = client.post("/publish-bundle", headers=AUTH_V, json=_bundle(INDEX))
-    assert r.status_code == 401
+    assert r.status_code == 400
     assert "commit_bundle" not in client.calls
 
 

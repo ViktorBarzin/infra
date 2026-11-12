@@ -75,13 +75,40 @@ type pagesPublishReq struct {
 	Filename string `json:"filename"`
 	Status   string `json:"status"`
 	Shared   bool   `json:"shared"`
+	Public   bool   `json:"public"`
+}
+
+// pagesBundleFile is one file of a POST /publish-bundle body; binary files go
+// as base64.
+type pagesBundleFile struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+}
+
+// pagesBundleReq is the POST /publish-bundle body sent with a user's API key:
+// one .html file (a page) or a directory's files (a Bundle). Name is the file
+// or directory name, which identifies the page across publishes.
+type pagesBundleReq struct {
+	Name   string            `json:"name"`
+	Files  []pagesBundleFile `json:"files"`
+	Status string            `json:"status"`
+	Shared bool              `json:"shared"`
+	Public bool              `json:"public"`
+}
+
+// pagesShareReq is the POST /share and /unshare body.
+type pagesShareReq struct {
+	Page   string `json:"page"`
+	Shared bool   `json:"shared"`
 }
 
 // pagesPublishResp is the POST /publish response: the served page URL and its
 // path within the pages site.
 type pagesPublishResp struct {
-	URL  string `json:"url"`
-	Path string `json:"path"`
+	URL       string `json:"url"`
+	Path      string `json:"path"`
+	PublicURL string `json:"public_url"`
 }
 
 // pagesPreviewReq is the POST /preview body. Same shape as publish so a caller
