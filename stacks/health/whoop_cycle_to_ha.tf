@@ -10,13 +10,16 @@
 # unofficial and against WHOOP's terms, so it can break whenever WHOOP changes
 # its app, and carries a (low, accepted) risk to Anca's paid account.
 #
-# To keep the footprint on that account minimal, it runs ONCE A MONTH: one
-# login, one read. It writes the cycle anchor into persisted HA helpers
+# It runs ONCE A DAY, so a period Anca logs in the app reaches ha-london within
+# a day. Each run is one token refresh and one read. A password login makes
+# WHOOP email Anca a code, so the job keeps WHOOP's ~30-day refresh token in the
+# Secret whoop-cycle-to-ha-session and logs in with a code only when that token
+# is missing or expired: about once a month. It writes the cycle anchor into persisted HA helpers
 # (input_datetime.anca_cycle_start, input_number.anca_cycle_length /
 # anca_period_length, input_datetime.anca_cycle_last_sync); the template sensor
 # in ha-london packages/anca_cycle.yaml advances sensor.anca_cycle_phase and
 # sensor.anca_cycle_day LOCALLY every day from those helpers, so the phase stays
-# current with no further WHOOP traffic. The script jitters its start time
+# current on a day the read fails. The script jitters its start time
 # (JITTER_SECONDS) so the request does not land on a clock boundary, and sends
 # the WHOOP app's own identity headers.
 #
@@ -85,6 +88,59 @@ resource "kubernetes_manifest" "whoop_cycle_to_ha_external_secret" {
   depends_on = [kubernetes_namespace.health]
 }
 
+# WHOOP's refresh token for Anca's account. The CronJob owns the value;
+# Terraform creates the Secret empty and then leaves it alone.
+resource "kubernetes_secret_v1" "whoop_cycle_to_ha_session" {
+  metadata {
+    name      = "whoop-cycle-to-ha-session"
+    namespace = kubernetes_namespace.health.metadata[0].name
+  }
+  data = {
+    refresh_token = ""
+  }
+  lifecycle {
+    ignore_changes = [data]
+  }
+}
+
+resource "kubernetes_service_account_v1" "whoop_cycle_to_ha" {
+  metadata {
+    name      = "whoop-cycle-to-ha"
+    namespace = kubernetes_namespace.health.metadata[0].name
+  }
+}
+
+# The job may read and update only its own session Secret.
+resource "kubernetes_role_v1" "whoop_cycle_to_ha_session" {
+  metadata {
+    name      = "whoop-cycle-to-ha-session"
+    namespace = kubernetes_namespace.health.metadata[0].name
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["secrets"]
+    resource_names = [kubernetes_secret_v1.whoop_cycle_to_ha_session.metadata[0].name]
+    verbs          = ["get", "patch"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "whoop_cycle_to_ha_session" {
+  metadata {
+    name      = "whoop-cycle-to-ha-session"
+    namespace = kubernetes_namespace.health.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.whoop_cycle_to_ha_session.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.whoop_cycle_to_ha.metadata[0].name
+    namespace = kubernetes_namespace.health.metadata[0].name
+  }
+}
+
 # The script is shipped verbatim from files/; any change there re-applies this stack.
 resource "kubernetes_config_map" "whoop_cycle_to_ha_script" {
   metadata {
@@ -103,10 +159,10 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
   }
 
   spec {
-    # 09:37 UTC on the 3rd of each month; the script then sleeps a random
-    # 0-60 min (JITTER_SECONDS) so the one monthly WHOOP request does not land
-    # on a predictable boundary.
-    schedule                      = "37 9 3 * *"
+    # 09:37 UTC daily; the script then sleeps a random 0-60 min
+    # (JITTER_SECONDS) so the WHOOP request does not land on a predictable
+    # boundary.
+    schedule                      = "37 9 * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
@@ -126,7 +182,8 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
             }
           }
           spec {
-            restart_policy = "Never"
+            restart_policy       = "Never"
+            service_account_name = kubernetes_service_account_v1.whoop_cycle_to_ha.metadata[0].name
 
             container {
               name = "whoop-cycle-to-ha"
@@ -142,6 +199,10 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
               env {
                 name  = "HA_URL"
                 value = "https://ha-london.viktorbarzin.me"
+              }
+              env {
+                name  = "SESSION_SECRET"
+                value = kubernetes_secret_v1.whoop_cycle_to_ha_session.metadata[0].name
               }
               env {
                 name  = "JITTER_SECONDS"
@@ -173,7 +234,10 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
       }
     }
   }
-  depends_on = [kubernetes_manifest.whoop_cycle_to_ha_external_secret]
+  depends_on = [
+    kubernetes_manifest.whoop_cycle_to_ha_external_secret,
+    kubernetes_role_binding_v1.whoop_cycle_to_ha_session,
+  ]
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
