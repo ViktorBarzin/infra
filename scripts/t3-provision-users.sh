@@ -530,6 +530,13 @@ install_claude_auth_sync() {
         -display-name="devvm-claude-auth-$user" -field=token 2>/dev/null)"; then
       if mkdir_as "$user" 0700 "$cfg" && write_as "$user" 0600 "$token_file" <<<"$token"; then
         log "minted isolated Claude-auth Vault token -> $user"
+        # Sync once now. On a rebuilt box the timer's first run fired during
+        # the build, before this token existed, and the next is ~6 h away, so
+        # Claude stayed "Not logged in" after the admin run (round-3 drill,
+        # 2026-11-12). Only on a fresh mint: the hourly run, which finds the
+        # token already there, never starts it. --no-block so a slow Vault
+        # does not hold up the rest of provisioning.
+        run systemctl start --no-block "claude-auth-sync@$user.service" >/dev/null 2>&1 || true
       else
         log "WARN: minted a Claude-auth Vault token for $user but could not write $token_file"
       fi
