@@ -304,3 +304,12 @@ devvm-home backup is the next step and Viktor's call.
   longer roll over, so they keep copies of secrets deleted from the devvm until
   removed by hand.
 
+## Round 3 (2026-11-12): one Vault sign-in
+
+- infra-unlock: the admin provisioning run now unlocks wizard's
+  `~/code/infra` with `secret/infra` `git_crypt_key_b64`
+  (`unlock_admin_infra_clone`, tests `scripts/test-t3-provision-infra-unlock.sh`),
+  so the hand unlock after a rebuild is gone. It acts only on 10.0.10.10 or
+  on a drill with `/var/lib/t3-provision/drill-unlock-infra`, never on a
+  clone that already holds its key, and adds `--key-file` to the filters as
+  on the live clone (`docs/runbooks/devvm-credentials.md`). Not yet drilled.

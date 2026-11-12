@@ -100,7 +100,16 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   `systemctl mask` `claude-auth-sync@wizard` and `@emo` (timer and service:
   a second holder of the shared Claude OAuth refresh tokens could rotate
   them under the live box), `systemctl disable --now codex-auth-backup.path
-  codex-auth-backup.timer`. Before deleting the drill,
+  codex-auth-backup.timer`. The run also unlocks wizard's `~/code/infra`
+  with the git-crypt key, but only on 10.0.10.10: a drill keeps the key off
+  its disk and logs `not the live devvm: wizard:~/code/infra stays locked`.
+  To test the unlock on a drill, opt in before the run with `sudo touch
+  /var/lib/t3-provision/drill-unlock-infra`, then check it as wizard
+  (`devvm-credentials.md`, the unlock check): `head -c 10
+  ~/code/infra/config.tfvars | grep -qa GITCRYPT && echo locked || echo
+  unlocked` prints `unlocked`. The key then sits in that drill's
+  `~wizard/code/infra/.git/git-crypt/keys/default` until the VM is
+  destroyed. Before deleting the drill,
   revoke every token the run minted, as root on the drill, reading each
   file inside the command: `emo`'s `~/.vault-token` and both
   `~/.config/claude-auth-sync/vault-token` files (`vault token revoke
@@ -246,7 +255,12 @@ of destroying the box. To take it down on purpose, root runs `qm set 102
 --protection 0` first.
 Once the bootstrap says `ok`, run provisioning with an admin token
 (`devvm-credentials.md`, "Rebuild: put a user's credentials back") and go
-through "What to check" above, including the T3 and emo items.
+through "What to check" above, including the T3 and emo items. That run
+also unlocks wizard's `~/code/infra` (the box is on 10.0.10.10, so no
+opt-in is needed); its log says `unlocked wizard:~/code/infra`, and
+`head -c 10 ~/code/infra/config.tfvars | grep -qa GITCRYPT && echo locked
+|| echo unlocked` prints `unlocked`. Nothing else is done by hand after the
+Vault sign-in.
 
 The new box keeps the live devvm's SSH host keys, so nobody runs
 `ssh-keygen -R` or `ssh-keyscan`: the Proxmox host's `t3-state-pull` and every
@@ -441,8 +455,9 @@ Still open after these drills, for the final one:
   `t3-provision-users.service` fails ("roster/engine not under
   /home/wizard/code/infra/scripts/workstation"). The one-off run from the
   bootstrap clone works. Fixed after this drill: that run now clones it,
-  locked, from Forgejo (`install_admin_infra_clone`); unlocking it is in
-  `devvm-credentials.md`.
+  locked, from Forgejo (`install_admin_infra_clone`), and since 2026-11-12
+  the admin provisioning run unlocks it (`unlock_admin_infra_clone`,
+  `devvm-credentials.md`).
 - `claude-sessions-ingest.service` fails with 203/EXEC: the program it runs is
   not installed by the playbook on a new box. Since 2026-11-11 a drill does not
   run the ingest at all (only 10.0.10.10 does, `playbooks/devvm.yml` 8d and the
