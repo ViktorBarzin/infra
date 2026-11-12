@@ -157,6 +157,11 @@ transforms:
       .raw_user_agent = if ctx_ua != "" { ctx_ua } else { string(.request_ua) ?? "" }
       .user_agent = ctx_ua
       if .user_agent == "" && .page_host != "" { .user_agent = string(.request_ua) ?? "" }
+      # Only a browser's agent goes to Rybbit. An app's HTTP client
+      # (okhttp on Android TV, Python-urllib from a script) matches Rybbit's
+      # bot patterns, and to_rybbit_* would then trade the device's stable
+      # id for an IP fingerprint shared by every device behind that IP.
+      if !starts_with(string!(.user_agent), "Mozilla/") { .user_agent = "" }
       ctx_ip = string(m.context.ip) ?? ""
       .client_ip = if ctx_ip != "" { ctx_ip } else { string(.request_ip) ?? "" }
       .message_id = string(m.messageId) ?? ""
@@ -513,6 +518,32 @@ tests:
               assert_eq!(.type, "pageview")
               assert_eq!(.pathname, "/player")
               assert!(!exists(.event_name))
+
+  - name: an app's HTTP client agent is not a browser, so the device keeps its id
+    inputs:
+      - insert_at: explode
+        type: log
+        log_fields:
+          authorization: "Basic dGVzdGtleTo="
+          user-agent: "okhttp/4.12.0"
+          x-real-ip: "81.2.69.142"
+          type: track
+          event: viewing.ended
+          anonymousId: tv-device-1
+          context:
+            userAgent: "okhttp/4.12.0"
+    outputs:
+      - extract_from: to_rybbit_track
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.user_agent))
+              assert_eq!(.anonymous_id, "tv-device-1")
+      - extract_from: to_raw
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.user_agent, "okhttp/4.12.0")
 
   - name: bad event name is rejected
     inputs:
