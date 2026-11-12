@@ -487,6 +487,28 @@ _Avoid_: syncing a folder root when the servable content lives in a subfolder (s
 The HTML file a **Valia site** serves at `/`. Defaults to `index.html`; per-site override when she names it differently (stem95su: `stem_board.html`). The override is a registration-time setting, not a constraint on her authoring.
 _Avoid_: asking Valia to rename her files to fit hosting conventions.
 
+### Pages site
+
+**Page**:
+One published document at `pages.viktorbarzin.me`, owned by one user and kept as a commit in the `viktor/pages` repo. Publishing the same source again from the same user updates that Page in place; it never makes a new one.
+_Avoid_: "artifact" (claude.ai Artifacts are a vendor product we don't use), "doc" when you mean the published result.
+
+**Space**:
+The part of the site a Page lives in: a user's own Space (`pages/<user>/`, readable by that user and admins) or the shared Space (`pages/shared/`).
+_Avoid_: "folder", "area".
+
+**Bundle**:
+A Page published as a set of files: an HTML entry plus its images, data and scripts. A single self-contained HTML file is a one-file Bundle.
+_Avoid_: "site", "upload".
+
+**Sandbox**:
+The browser isolation every Page runs under: its scripts get an opaque origin, so they cannot read cookies or other Pages.
+_Avoid_: calling a Page "trusted" because its author is.
+
+**Public link**:
+An unguessable URL that opens one Page without signing in. It lasts until its author revokes it; the Page itself stays in its Space.
+_Avoid_: "public page" (the Page is not moved or copied), "share link" (the shared Space is a different thing).
+
 ### Showcase
 
 **Showcase**:
