@@ -619,6 +619,20 @@ func writeCaptureDigests(home string, w homeWriter) error {
 	return w.write(home, ".claude/"+mcpCapturedName, 0o600, append(b, '\n'))
 }
 
+// readMCPCaptured is the home's capture record; an empty one when there is
+// none.
+func readMCPCaptured(home string) (mcpCaptured, error) {
+	var rec mcpCaptured
+	if b, err := readHomeFile(home, ".claude/"+mcpCapturedName); err == nil {
+		if err := json.Unmarshal(b, &rec); err != nil {
+			return rec, fmt.Errorf("%s does not parse: %w", mcpCapturedName, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return rec, err
+	}
+	return rec, nil
+}
+
 // uncapturedMCPEntries names the live secret-bearing entries that the last
 // capture did not store as they are now: new, rotated, or never captured.
 func uncapturedMCPEntries(home string) ([]string, error) {
@@ -626,17 +640,36 @@ func uncapturedMCPEntries(home string) ([]string, error) {
 	if err != nil || len(live) == 0 {
 		return nil, err
 	}
-	var rec mcpCaptured
-	if b, err := readHomeFile(home, ".claude/"+mcpCapturedName); err == nil {
-		if err := json.Unmarshal(b, &rec); err != nil {
-			return nil, fmt.Errorf("%s does not parse: %w", mcpCapturedName, err)
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	rec, err := readMCPCaptured(home)
+	if err != nil {
 		return nil, err
 	}
 	var names []string
 	for _, l := range sortedKeys(live) {
 		if rec.Entries[l] != live[l] {
+			names = append(names, l)
+		}
+	}
+	return names, nil
+}
+
+// unfilledMCPEntries names the entries the last capture stored that the live
+// files do not hold with their secret: absent, or still the redacted copy a
+// restore wrote. On a rebuilt box that is a fill that never ran or could not
+// put an entry back; on a live one, a server the user dropped since the
+// capture (capture again and the record forgets it).
+func unfilledMCPEntries(home string) ([]string, error) {
+	rec, err := readMCPCaptured(home)
+	if err != nil || len(rec.Entries) == 0 {
+		return nil, err
+	}
+	live, err := liveMCPDigests(home)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, l := range sortedKeys(rec.Entries) {
+		if _, ok := live[l]; !ok {
 			names = append(names, l)
 		}
 	}

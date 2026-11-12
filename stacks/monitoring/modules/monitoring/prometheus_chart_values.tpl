@@ -6966,6 +6966,19 @@ serverFiles:
             annotations:
               summary: "{{ $value }} devvm MCP server entries hold secrets not captured to Vault"
               description: "`journalctl -u claude-sessions-ingest | grep WARN` on the devvm names the user and entries; run `homelab claude-sessions mcp-secrets capture --user <user>` (docs/runbooks/devvm-credentials.md, MCP server secrets)."
+          - alert: ClaudeSessionsMCPSecretsUnfilled
+            # The same textfile. The other half: entries the capture record
+            # names that the live files lack or hold redacted. After a
+            # rebuild that is a fill that never ran (no admin provisioning
+            # pass) or could not put an entry back, so those MCP servers
+            # stay broken; on the live box, a server dropped since capture.
+            expr: max(claude_sessions_ingest_mcp_entries_unfilled{job="devvm"}) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} captured devvm MCP server entries are missing their secrets"
+              description: "`journalctl -u claude-sessions-ingest | grep WARN` on the devvm names the user and entries. After a rebuild run `homelab claude-sessions mcp-secrets fill --user <user>` with an admin token, or add the entry back by hand; if it was removed on purpose, run `mcp-secrets capture --user <user>` (docs/runbooks/devvm-credentials.md, MCP server secrets)."
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m
