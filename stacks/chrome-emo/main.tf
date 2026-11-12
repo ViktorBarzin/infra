@@ -31,7 +31,7 @@ locals {
   namespace    = "chrome-emo"
   labels       = { app = "chrome-hub" }
   files        = "${path.module}/../chrome-service/files"
-  python_image = "mcr.microsoft.com/playwright/python:v1.65.0-noble"
+  python_image = "mcr.microsoft.com/playwright/python:v1.65.1-noble"
   # Same browser image the pool workers run, read from their template so the two
   # cannot drift apart.
   browser_image = jsondecode(file("${local.files}/broker/worker_pod.json")).spec.containers[0].image
