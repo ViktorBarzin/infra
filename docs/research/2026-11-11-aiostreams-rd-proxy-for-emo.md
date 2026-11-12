@@ -581,7 +581,12 @@ link (a 1080p Comet result for Inception) with range requests [measured]:
 Stream lists from the base config carry
 `https://aiostreams-direct.viktorbarzin.me/api/v1/proxy/...` for RD results
 and leave P2P results untouched; the `sofia` variant returns the direct
-Comet and Torrentio resolve links. Not yet observed: real playback on the
+Comet and Torrentio resolve links. Later the same night emo's BRAVIA got the `/v/sofia` install and lost
+Torrentio, and an admin login `viktor` (Vault `aiostreams_admin_password`)
+was added so the AIOStreams dashboard can show proxied streams and their
+bandwidth during the trial.
+
+Not yet observed: real playback on the
 London projector, behaviour at the two-stream cap, and whether RD shows a
 single IP on its devices page after a few days of use.
 
