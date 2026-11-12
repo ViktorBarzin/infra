@@ -5,7 +5,7 @@ plan: true
 
 # Uptime probes for the login-free paths on pages.viktorbarzin.me
 
-The only check on pages today, Uptime Kuma's `[External] pages`, follows the 302 to the Authentik login page and accepts any 200-499, so it watches Authentik and never reaches the learn pod; a broken `/p/`, `/c/` or `/assets/` handle would go unnoticed. This plan adds five blackbox probes against a canary Bundle and the vendored assets, alerting to Slack through the Alertmanager route that already pages for `StatusPageDown`.
+Today, pages has one check: Uptime Kuma's `[External] pages`. This check follows the 302 to the Authentik login page and accepts any status from 200 to 499. Thus it monitors Authentik, not the learn pod. If the `/p/`, `/c/` or `/assets/` handle breaks, no alert starts. This plan adds five blackbox probes. They test a canary Bundle and the vendored assets. A failure sends an alert to Slack, through the Alertmanager route of `StatusPageDown`.
 
 ## In numbers
 
@@ -64,7 +64,12 @@ What each probe asserts:
 | pages-public-shell | `/p/<canary token>/` with `Sec-Fetch-Dest: document` | `http_pages_shell` | 200, body has `SANDBOX =` (the shell, not the page) |
 | pages-bundle | `/c/<canary cap>/canary.json` | `http_pages_public` | as pages-public-link |
 
-A walled-off carve-out (302 to Authentik), a missing symlink or an empty git-sync tree (404), a lost sandbox or CORS header, and a broken shell each fail a different row.
+Each fault fails a different row:
+
+- a carve-out that asks for a login (302 to Authentik);
+- a missing symlink or an empty git-sync tree (404);
+- a missing sandbox or CORS header;
+- a broken shell.
 
 ## Decisions
 
@@ -116,7 +121,11 @@ steps:
 - {key: locals.pages_canary_token / pages_canary_cap, where: monitoring module, old: "-", new: "32-hex values from step 1, plaintext: they open a page that says pages-canary-ok"}
 ```
 
-The alert description names the likely cause per row: all five down means the learn pod or Traefik; only the two `/p/` rows means the link symlink; only `pages-bundle` means the cap rotated because someone republished the canary, in which case update `pages_canary_cap`.
+The alert description gives the probable cause for each pattern:
+
+- All five rows fail: the learn pod or Traefik is down.
+- Only the two `/p/` rows fail: the link symlink is missing.
+- Only `pages-bundle` fails: a republish of the canary changed its cap. Update `pages_canary_cap`.
 
 ## Open questions
 
