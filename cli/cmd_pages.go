@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -71,6 +72,10 @@ func pagesPublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	// A publish right after the pod starts waits for its first clone of
+	// viktor/pages, and --public adds a second commit: 30s was not enough
+	// on 2026-11-12, and the page landed after the CLI had given up.
+	c.http.Timeout = 3 * time.Minute
 	raw, err := c.do("POST", "/publish", req)
 	if err != nil {
 		return err
