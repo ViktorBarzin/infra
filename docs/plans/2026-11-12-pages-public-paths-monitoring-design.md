@@ -1,5 +1,5 @@
 ---
-status: draft
+status: executing
 plan: true
 ---
 
@@ -126,7 +126,7 @@ steps:
 - {key: modules.http_pages_shell, where: same, old: "-", new: "header Sec-Fetch-Dest document, [200], body SANDBOX ="}
 - {key: "job blackbox-pages-public", where: prometheus_chart_values.tpl extraScrapeConfigs, old: "-", new: "5 targets, scrape_interval 2m, __param_module per target"}
 - {key: alert PagesPublicPathDown, where: prometheus_chart_values.tpl alerting rules, old: "-", new: "probe_success{job=\"blackbox-pages-public\"} == 0 for 10m, severity warning, by service"}
-- {key: locals.pages_canary_token / pages_canary_cap, where: monitoring module, old: "-", new: "32-hex values from step 1, plaintext: they open a page that says pages-canary-ok"}
+- {key: locals.pages_canary_link_id / pages_canary_cap, where: monitoring module, old: "-", new: "32-hex values from step 1, plaintext: they open a page that says pages-canary-ok"}
 ```
 
 The alert description gives the probable cause for each pattern:

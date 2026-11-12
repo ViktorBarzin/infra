@@ -8197,6 +8197,29 @@ serverFiles:
             annotations:
               summary: "Status/failover page https://status.viktorbarzin.me unreachable for >10m"
               description: "The external status/failover page on mx2 (nginx + gatus, ADR-0020) has failed its in-cluster HTTPS probe for >10m. During a homelab outage the Cloudflare Worker serves this page's /error.html to visitors of all proxied hosts — while it is down, outage error pages degrade to the Worker's inline fallback HTML. Check gatus/nginx on mx2: `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` or the OCI console. NOTE: if BackupMxDown (TCP:25, same VM) fires simultaneously, the whole VM — or our own egress (see WANGatewayUnreachable/InternetEgressDown) — is the problem, not nginx. Runbook: docs/runbooks/backup-mx.md."
+      # pages.viktorbarzin.me login-free paths (job blackbox-pages-public,
+      # docs/plans/2026-11-12-pages-public-paths-monitoring-design.md). Per
+      # target, so the alert names which path broke.
+      - name: Pages public paths
+        rules:
+          - alert: PagesPublicPathDown
+            expr: probe_success{job="blackbox-pages-public"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: pages
+            annotations:
+              summary: "pages.viktorbarzin.me {{ $labels.service }} failing for >10m"
+              description: "{{ $labels.instance }} has not given the expected answer for >10m (200, no redirect, CORS *, and on /p/ and /c/ the CSP sandbox and the canary text). All pages-* targets down: the learn pod or Traefik. Only pages-public-link and pages-public-shell: the canary's public link symlink (p/<token> in viktor/pages) is gone. Only pages-bundle: the canary was republished and its cap changed; put the new cap in local.pages_canary_cap (stacks/monitoring authentik_walloff_probe.tf). Only pages-public-shell: the shell handle in the learn Caddyfile. A 302 to Authentik on any of them is a walled-off carve-out (AuthentikWallingOffPublicPath fires too). Check: `curl -sI '{{ $labels.instance }}'`."
+          - alert: PagesPublicProbeMissing
+            expr: absent(up{job="blackbox-pages-public"})
+            for: 30m
+            labels:
+              severity: warning
+              subsystem: pages
+            annotations:
+              summary: "The blackbox-pages-public scrape job has no series"
+              description: "Nothing is probing the pages login-free paths, so PagesPublicPathDown cannot fire. Check the job in prometheus_chart_values.tpl and the blackbox-exporter in the monitoring namespace."
       - name: Loki
         rules:
           - alert: LokiStreamLimitNear
@@ -9345,6 +9368,27 @@ extraScrapeConfigs: |
         labels:
           service: "${svc}"
           __param_module: "http_no_authentik_redirect_options"
+%{ endfor ~}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # pages.viktorbarzin.me login-free paths (/assets/, /c/, /p/; ADR-0042).
+  # Each target names its own blackbox module (__param_module); targets and
+  # modules are in authentik_walloff_probe.tf. Alert: PagesPublicPathDown.
+  - job_name: 'blackbox-pages-public'
+    scrape_interval: 2m
+    scrape_timeout: 30s
+    metrics_path: /probe
+    static_configs:
+%{ for svc, t in pages_public_targets ~}
+      - targets: ["${t.url}"]
+        labels:
+          service: "${svc}"
+          __param_module: "${t.module}"
 %{ endfor ~}
     relabel_configs:
       - source_labels: [__address__]

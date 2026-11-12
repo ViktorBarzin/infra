@@ -103,6 +103,22 @@ locals {
   # They join the same scrape job as the GET targets (the template sets
   # `__param_module` per target), so AuthentikWallingOffPublicPath and the
   # ingress-reachability alerts cover them without changes.
+  # pages.viktorbarzin.me login-free paths, probed for the RIGHT answer, not
+  # just "not walled off" (docs/plans/2026-11-12-pages-public-paths-monitoring-design.md,
+  # ADR-0042). The canary is the Bundle wizard/2026-11-12-pages-canary in
+  # viktor/pages, published with --public --expires never. Its token and cap
+  # are plaintext on purpose: they open a page that says "pages-canary-ok".
+  # A republish of the canary changes its cap; put the new one here.
+  pages_canary_link_id = "175356e76a6571105259d80685dcafd4"
+  pages_canary_cap     = "e7f2404c377ab41a56c2a0a39d255558"
+  pages_public_targets = {
+    "pages-assets-css"   = { module = "http_pages_asset", url = "https://pages.viktorbarzin.me/assets/page.css" }
+    "pages-assets-lib"   = { module = "http_pages_asset", url = "https://pages.viktorbarzin.me/assets/chart-4.6.1/chart.umd.min.js" }
+    "pages-public-link"  = { module = "http_pages_public", url = "https://pages.viktorbarzin.me/p/${local.pages_canary_link_id}/" }
+    "pages-public-shell" = { module = "http_pages_shell", url = "https://pages.viktorbarzin.me/p/${local.pages_canary_link_id}/" }
+    "pages-bundle"       = { module = "http_pages_public", url = "https://pages.viktorbarzin.me/c/${local.pages_canary_cap}/canary.json" }
+  }
+
   authentik_walloff_options_targets = {
     # T3 native-client CORS preflight (rule 4 of stacks/t3code
     # kubernetes_manifest.t3_native_ingressroute): T3 desktop's renderer
@@ -192,6 +208,59 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
                 allow_missing = true
               },
             ]
+          }
+        }
+        # pages login-free paths (job blackbox-pages-public, alert
+        # PagesPublicPathDown). Each module checks the answer a visitor needs:
+        # a 200 with no redirect, CORS * (sandboxed pages fetch these from an
+        # opaque origin), and on /p/ and /c/ the CSP sandbox plus the canary text.
+        http_pages_asset = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method                = "GET"
+            no_follow_redirects   = true
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            valid_http_versions   = ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes    = [200]
+            fail_if_header_not_matches = [
+              { header = "Access-Control-Allow-Origin", regexp = "^\\*$", allow_missing = false },
+            ]
+          }
+        }
+        http_pages_public = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method                = "GET"
+            headers               = { "Sec-Fetch-Dest" = "iframe" }
+            no_follow_redirects   = true
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            valid_http_versions   = ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes    = [200]
+            fail_if_header_not_matches = [
+              { header = "Access-Control-Allow-Origin", regexp = "^\\*$", allow_missing = false },
+              { header = "Content-Security-Policy", regexp = "^sandbox ", allow_missing = false },
+            ]
+            fail_if_body_not_matches_regexp = ["pages-canary-ok"]
+          }
+        }
+        # A browser navigation to a public link must get the shell (it carries
+        # Rybbit and frames the page), not the page itself.
+        http_pages_shell = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method                          = "GET"
+            headers                         = { "Sec-Fetch-Dest" = "document" }
+            no_follow_redirects             = true
+            preferred_ip_protocol           = "ip4"
+            ip_protocol_fallback            = false
+            valid_http_versions             = ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes              = [200]
+            fail_if_body_not_matches_regexp = ["SANDBOX ="]
           }
         }
         # ICMP egress probes (added 2026-06-28 after the 2026-06-27 pfSense

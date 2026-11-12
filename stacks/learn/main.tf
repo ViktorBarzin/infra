@@ -301,6 +301,8 @@ resource "kubernetes_config_map" "caddyfile" {
       		root * /repo/src/current
       		file_server
       	}
+      	# Watched by job blackbox-pages-public (stacks/monitoring) and gatus on
+      	# mx2 through a canary Bundle that must never be republished.
       	# /c/<cap>/ — the Bundle URL (module "ingress_pages_bundles", no auth).
       	# c/<cap> in viktor/pages is a symlink to <space>/<bundle>, written by
       	# pages-publish and rotated on every publish of that Bundle. Readable by
@@ -717,6 +719,11 @@ module "ingress_pages" {
   # Caddy sets the CSP per path (the sandbox on raw pages, frame-ancestors on
   # the shell and assets); Traefik's shared CSP middleware would replace it.
   skip_default_csp = true
+  # No Uptime Kuma [External] monitor (Viktor, 2026-11-12): it followed the
+  # redirect to the Authentik login page, so it watched Authentik, not pages.
+  # The pages paths are watched by job blackbox-pages-public (stacks/monitoring)
+  # and by gatus on mx2 through Cloudflare (stacks/backup-mx).
+  external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Pages"
