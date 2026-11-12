@@ -218,6 +218,30 @@ rules:
   disabled: false
   statetype: keep state
   linked_nat_rule: nat_6379141e5dd694.39054144
+# The Proxmox host routes 10.0.0.0/16 straight to this box (playbooks/pve-host.yml,
+# "Route to the internal VLANs"). With reply-to on, the replies still went back
+# through the TP-Link at 192.168.1.1, so every host-to-cluster packet crossed it
+# twice, and on 2026-11-11 and 2026-11-12 the host lost the cluster from 00:00 to
+# about 00:06 while everything else worked; the nightly backup chain skipped 8
+# dumps. Reply-to off sends the replies straight back on the shared bridge. Other
+# home-network devices keep "Allow all from LAN" below: their requests still come
+# through the TP-Link, and replies that skip it would be asymmetric there.
+- description: Proxmox host to the internal VLANs, replies straight back
+  interface: wan
+  floating: false
+  direction: in
+  action: pass
+  quick: true
+  ipprotocol: inet
+  protocol: any
+  source:
+    address: 192.168.1.127
+  destination:
+    address: 10.0.0.0/16
+  log: false
+  disabled: false
+  statetype: keep state
+  reply_to_disabled: true
 - pfsense_tracker: '1609759405'
   description: Allow all from LAN
   interface: wan

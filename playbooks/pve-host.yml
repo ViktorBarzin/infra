@@ -109,6 +109,36 @@
         sysctl_file: /etc/sysctl.d/90-swappiness.conf
         reload: true
 
+    # ---- route to the internal VLANs -----------------------------------------
+    # The host's default route is the TP-Link at 192.168.1.1, which sent every
+    # host-to-cluster packet back out to OPNsense (192.168.1.2) on the same
+    # bridge, and OPNsense's reply-to sent the replies back through it too. On
+    # 2026-11-11 and 2026-11-12 the host lost the cluster from 00:00 UTC to
+    # about 00:06 while the cluster, the devvm and the internet path all
+    # worked; the nightly backup chain skipped 8 dumps. Routing 10.0.0.0/16
+    # straight to OPNsense, with reply-to off on its matching WAN rule
+    # (playbooks/files/opnsense/filter.yml, "Proxmox host to the internal
+    # VLANs"), keeps the TP-Link out of both directions. /etc/network/interfaces
+    # is otherwise hand-kept; this line is the only part managed here.
+    - name: Persist the route to the internal VLANs on vmbr0
+      ansible.builtin.lineinfile:
+        path: /etc/network/interfaces
+        line: "\tup ip route replace 10.0.0.0/16 via 192.168.1.2 dev vmbr0"
+        insertafter: '^\tgateway 192\.168\.1\.1$'
+      tags: routes
+
+    - name: Read the live route to the internal VLANs
+      ansible.builtin.command: ip -4 route show 10.0.0.0/16
+      register: pve_internal_route
+      changed_when: false
+      check_mode: false
+      tags: routes
+
+    - name: Add the live route to the internal VLANs
+      ansible.builtin.command: ip route replace 10.0.0.0/16 via 192.168.1.2 dev vmbr0
+      when: "'via 192.168.1.2' not in pve_internal_route.stdout"
+      tags: routes
+
     # ---- zram swap in front of the disk swap ---------------------------------
     # Measured 2026-11-12: 6 of the 8 GiB on pve/swap in use, almost all QEMU
     # guest RAM, swapped back in at 6.7 pages/s on a 7-day average and 836/s at
