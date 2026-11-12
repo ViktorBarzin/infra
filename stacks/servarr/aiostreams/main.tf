@@ -23,6 +23,16 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
+resource "kubernetes_config_map" "rd_blocked_names" {
+  metadata {
+    name      = "rd-blocked-names"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    "rd_blocked_names.py" = file("${path.module}/files/rd_blocked_names.py")
+  }
+}
+
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -46,6 +56,14 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata {
         labels = {
           app = "aiostreams"
+        }
+        annotations = {
+          # Roll the pod when the sidecar script changes.
+          "checksum/rd-blocked-names" = sha1(file("${path.module}/files/rd_blocked_names.py"))
+          # kubernetes-pods job scrapes the sidecar's /metrics (RdBlockedNamesStale).
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "8081"
+          "prometheus.io/path"   = "/metrics"
         }
       }
       spec {
@@ -127,25 +145,13 @@ resource "kubernetes_deployment" "aiostreams" {
           }
           env {
             # Whitelisted regex sync URLs. Vidhin's regexes.json contains release-group
-            # patterns (TRaSH Guides-aligned).
+            # patterns (TRaSH Guides-aligned). The localhost one is the
+            # rd-blocked-names sidecar below: Real-Debrid's blocked release names,
+            # read by the user config's syncedExcludedRegexUrls.
             name = "WHITELISTED_REGEX_PATTERNS_URLS"
             value = jsonencode([
               "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/regexes.json",
-            ])
-          }
-          env {
-            # Regexes the (non-trusted) user config may put in excludedRegexPatterns.
-            # These are the release-name strings Real-Debrid refuses to unrestrict
-            # (HTTP 451 / infringing_file) since May 2026, from Debrid Media
-            # Manager's src/utils/deInfringe.ts as re-measured 2026-10-14. The first
-            # is case-sensitive on purpose: "WEBDL" without the hyphen still plays.
-            # On 2026-11-11 they caught 6 of the 26 dead "cached" results in a
-            # 76-result sample and hid none that played; RD changes its list, so
-            # this goes stale. The user config's failover covers what they miss.
-            name = "WHITELISTED_REGEX_PATTERNS"
-            value = jsonencode([
-              "/WEB-DL|WEB\\.(?:x264|H264)/",
-              "/(?:web|bd|hd|dvd)rip|bluray\\.x264|p\\.bluray\\.dts|hdtv\\.(?:x264|xvid)/i",
+              "http://localhost:8081/rd-blocked-names.json",
             ])
           }
           env {
@@ -175,6 +181,53 @@ resource "kubernetes_deployment" "aiostreams" {
             limits = {
               memory = "768Mi"
             }
+          }
+        }
+        container {
+          # Keeps Real-Debrid's blocked release names current. Since May 2026 RD
+          # refuses (HTTP 451) files whose names carry certain tags, and changes
+          # that list every few weeks; Debrid Media Manager re-measures it in
+          # src/utils/deInfringe.ts. This fetches that file every 6h, refuses an
+          # update that would hide ordinary names, keeps the last good list in
+          # /app/data, and serves it on :8081 for AIOStreams' synced exclude list.
+          # Standard library only, so nothing is installed at start.
+          # Tests: cd files && python3 -m unittest test_rd_blocked_names
+          name    = "rd-blocked-names"
+          image   = "docker.io/library/python:3.15.2-alpine"
+          command = ["python3", "-u", "/scripts/rd_blocked_names.py"]
+          port {
+            container_port = 8081
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8081
+            }
+            period_seconds = 30
+          }
+          volume_mount {
+            name       = "rd-blocked-names-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "24Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "rd-blocked-names-script"
+          config_map {
+            name = kubernetes_config_map.rd_blocked_names.metadata[0].name
           }
         }
         volume {
