@@ -35,8 +35,8 @@ nodes:
   - {id: caddy, label: Caddy handles, group: learn, state: same}
   - {id: tree, label: git-sync tree of viktor/pages, group: learn, state: same}
   - {id: canary, label: canary Bundle, note: "wizard/pages-canary, --public --expires never", group: learn, state: new, risk: low}
-  - {id: kuma, label: "Kuma [External] pages", scope: out}
-  - {id: cf, label: Cloudflare edge, scope: out}
+  - {id: kuma, label: "Kuma [External] pages", note: watches the login page only, state: removed, risk: low}
+  - {id: gatus, label: gatus on mx2, note: "3 checks through Cloudflare", state: new, risk: low}
 edges:
   - {from: prom, to: bb, state: new, label: /probe every 2m}
   - {from: bb, to: ing, state: new, label: HTTPS GET}
@@ -44,14 +44,15 @@ edges:
   - {from: caddy, to: tree}
   - {from: tree, to: canary, state: new}
   - {from: prom, to: am, state: new, label: PagesPublicPathDown}
+  - {from: gatus, to: ing, state: new, label: via Cloudflare}
+  - {from: kuma, to: ing, state: removed}
 checks:
   - {node: prom, text: "probe_success{job=\"blackbox-pages-public\"} is 1 for all 5 targets after apply", status: open}
   - {node: bb, text: "/probe with a bogus /p/ token and with a non-shell URL each returns probe_success 0", status: open}
   - {node: canary, text: "/p/<token>/ and /c/<cap>/canary.json return pages-canary-ok with the sandbox CSP", status: open}
+  - {node: gatus, text: "the 3 gatus checks are green on mx2 and fail when the canary link is unshared", status: open}
 left_out:
   - Uptime Kuma keyword monitors
-  - an outside vantage through Cloudflare
-  - adding these paths to the Authentik walling-off guard
 ```
 
 What each probe asserts:
@@ -93,9 +94,15 @@ Each fault fails a different row:
   why: the headers are what make these paths safe and usable without a login, so losing one is an outage.
 - question: Where do the probes run from?
   options:
-    - {name: inside the cluster, chosen: true}
-    - {name: outside through Cloudflare, note: needs a host off the cluster; see open questions}
-  why: every failure mode above lives in Traefik or the learn pod, and the in-cluster path tests both.
+    - {name: inside the cluster only, note: a Cloudflare cache or firewall fault goes unseen}
+    - {name: "inside, plus 3 gatus checks on mx2 through Cloudflare", chosen: true}
+    - {name: outside only, note: cannot tell a Cloudflare fault from a pod fault}
+  why: Viktor decided on 2026-11-12; gatus on mx2 is free and sees the path a visitor uses.
+- question: What happens to Uptime Kuma's [External] pages monitor?
+  options:
+    - {name: delete it, chosen: true}
+    - {name: point it at /assets/page.css, note: duplicates the new probes}
+  why: Viktor decided on 2026-11-12; it watches only the login page and notifies nobody.
 ```
 
 ## Order of work
@@ -107,7 +114,8 @@ steps:
   - {when: 2. code, what: "stacks/monitoring: 3 modules in blackbox.yml, job blackbox-pages-public, alert PagesPublicPathDown; homelab tf plan", rollback: revert the commit}
   - {when: 3. apply, what: "homelab tf apply monitoring from the main checkout, or merge and let CI apply", rollback: revert and re-apply}
   - {when: 4. verify, what: "all 5 targets at probe_success 1; negative /probe calls return 0; alert rule loaded", rollback: n/a}
-  - {when: 5. docs, what: "docs/agents/monitoring.md, the /c/ and /p/ comment block in stacks/learn/main.tf, ADR-0042 design doc", rollback: revert}
+  - {when: 5. gatus, what: "3 checks on mx2 for /assets/page.css, /p/<token>/ and /c/<cap>/canary.json; delete the Kuma [External] pages monitor", rollback: revert the commit}
+  - {when: 6. docs, what: "docs/agents/monitoring.md, the /c/ and /p/ comment block in stacks/learn/main.tf, ADR-0042 design doc", rollback: revert}
 ```
 
 ## Configuration
@@ -126,13 +134,6 @@ The alert description gives the probable cause for each pattern:
 - All five rows fail: the learn pod or Traefik is down.
 - Only the two `/p/` rows fail: the link symlink is missing.
 - Only `pages-bundle` fails: a republish of the canary changed its cap. Update `pages_canary_cap`.
-
-## Open questions
-
-- An outside vantage through Cloudflare would catch an edge cache or WAF rule on these paths. gatus already runs on mx2 for the status page; Viktor decides whether that is worth a phase 2.
-- `authentik_walloff_probe.tf` asks every new carve-out to add one URL to its #security-lane guard, and the three pages carve-outs from ADR-0042 are not there. The new probes already fail on an Authentik 302; adding them there as well is Viktor's call.
-- `[External] pages` keeps watching the login page. Pointing it somewhere useful is out of scope here.
-- I have not confirmed that a two-file directory is published as a Bundle with a cap; step 1 settles it.
 
 ## Commands
 
