@@ -586,6 +586,15 @@ Torrentio, and an admin login `viktor` (Vault `aiostreams_admin_password`)
 was added so the AIOStreams dashboard can show proxied streams and their
 bandwidth during the trial.
 
+On the BRAVIA itself, Inception's top three results were VC-1 REMUXes and
+failed in Exo ("stuck playing with no progress", no video decoder opened)
+while the links downloaded fine from Sofia. The TV's media_codecs list AVC,
+HEVC, WMV and DTS-HD decoders, no VC-1, so the `sofia` variant also runs
+`add excludedEncodes "VC-1"`. After that, Inception played in HEVC and the
+Bulgarian subtitle was selected on its own. The subtitle menu listed
+Bulgarian entries from the Bulgarian Subtitles addon, AIOStreams (Sofia) and
+OpenSubtitles v3. [measured]
+
 Not yet observed: real playback on the
 London projector, behaviour at the two-stream cap, and whether RD shows a
 single IP on its devices page after a few days of use.
