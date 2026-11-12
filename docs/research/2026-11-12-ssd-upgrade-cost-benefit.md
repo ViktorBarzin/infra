@@ -118,6 +118,8 @@ lever for devvm alone and is not exclusive with B.
 
 ## Migration outline, if B goes ahead
 
+Superseded in detail by `docs/research/2026-11-12-nvme-tier-vs-cache.md`, which compares tiering with a write-through cache and keeps the tier.
+
 1. Fit the adapters and drives; confirm both enumerate in slots 6 and 7.
 2. Mirror with LVM raid1 or mdadm, VG `nvme`, thin pool `nvme/data`, Proxmox storage `nvme-lvm`, via `playbooks/` or the host's existing config path.
 3. StorageClasses `proxmox-lvm-nvme` and `proxmox-lvm-encrypted-nvme`, same as the SAS pair.
