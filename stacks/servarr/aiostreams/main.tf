@@ -76,8 +76,37 @@ resource "kubernetes_deployment" "aiostreams" {
             failure_threshold = 3
           }
           env {
+            # The built-in proxy always emits BASE_URL/api/v1/proxy/..., and
+            # Cloudflare's CDN terms bar video on proxied hosts, so BASE_URL is
+            # the grey-cloud host (module.ingress_direct). The proxied host
+            # keeps serving the configure page and every existing install.
+            # Why the proxy exists: docs/research/2026-11-11-aiostreams-rd-proxy-for-emo.md.
             name  = "BASE_URL"
-            value = "https://aiostreams.viktorbarzin.me"
+            value = "https://aiostreams-direct.viktorbarzin.me"
+          }
+          env {
+            # One proxy-only account; Viktor's config authenticates the built-in
+            # proxy as it. Setting this also enables /login, but
+            # AIOSTREAMS_AUTH_REQUIRED stays false, so the configure page is
+            # public as before.
+            name = "AIOSTREAMS_AUTH"
+            value_from {
+              secret_key_ref {
+                name = "aiostreams-auth"
+                key  = "AIOSTREAMS_AUTH"
+              }
+            }
+          }
+          env {
+            # Users not listed here default to admin.
+            name  = "AIOSTREAMS_AUTH_PERMISSIONS"
+            value = "proxy=proxy"
+          }
+          env {
+            # Uplink guard: at most two proxied streams at once in total. Each
+            # one is London playback leaving through the ~148 Mbit/s Sofia uplink.
+            name  = "STREAMS_CONNECTION_LIMITS"
+            value = "**:2"
           }
           env {
             name  = "SECRET_KEY"
@@ -165,6 +194,42 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
+  depends_on = [kubernetes_manifest.auth_secret]
+}
+
+# The built-in proxy's account. AIOStreams reads AIOSTREAMS_AUTH only at start,
+# so changing the Vault key needs a rollout of the deployment.
+resource "kubernetes_manifest" "auth_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "aiostreams-auth"
+      namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "aiostreams-auth"
+        template = {
+          data = {
+            AIOSTREAMS_AUTH = "proxy:{{ .proxy_password }}"
+          }
+        }
+      }
+      data = [
+        { secretKey = "proxy_password", remoteRef = { key = "viktor", property = "aiostreams_proxy_password" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.aiostreams]
 }
 
 resource "kubernetes_service" "aiostreams" {
@@ -681,4 +746,23 @@ module "ingress" {
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Grey-cloud name for the same app, carrying the built-in proxy's video.
+# Real-Debrid allows one public IP at a time; Viktor's config proxies its RD
+# streams through here so London playback reaches RD from the Sofia IP, the
+# same IP emo's TV uses (emo installs the /v/sofia variant, which plays
+# direct). Proxy URLs carry SECRET_KEY-encrypted credentials checked on every
+# request. CrowdSec covers the origin in nftables, as for stremio.
+module "ingress_direct" {
+  source       = "../../../modules/kubernetes/ingress_factory"
+  auth         = "app"
+  dns_type     = "non-proxied" # video: Cloudflare's CDN terms bar it on proxied hosts
+  namespace    = kubernetes_namespace.aiostreams.metadata[0].name
+  name         = "aiostreams-direct"
+  service_name = kubernetes_service.aiostreams.metadata[0].name
+  # No Turnstile gate: Stremio players fetching video.
+  turnstile        = false
+  homepage_enabled = false
+  tls_secret_name  = var.tls_secret_name
 }
