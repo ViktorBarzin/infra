@@ -700,9 +700,9 @@ dotfiles_apply() {
 # the rebuild command in docs/runbooks/devvm-credentials.md stopped at "roster/
 # engine not under ...". The bootstrap's own run, from its clone in /opt, makes
 # it. Cloned over HTTPS from Forgejo, where infra is public, as the admin; it
-# stays git-crypt locked until the admin unlocks it with the key in
-# secret/infra (same runbook). An existing ~/code/infra, or a ~/code that is
-# itself the clone, is never touched.
+# stays git-crypt locked until a run with an admin token unlocks it
+# (unlock_admin_infra_clone, below). An existing ~/code/infra, or a ~/code that
+# is itself the clone, is never touched.
 install_admin_infra_clone() {  # install_admin_infra_clone USER
   local user="$1" home dst
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -714,12 +714,69 @@ install_admin_infra_clone() {  # install_admin_infra_clone USER
     mkdir_as "$user" 2770 "$home/code" || { log "WARN: could not create $user:~/code"; return 0; }
     runuser -u "$user" -- chgrp code-shared "$home/code" 2>/dev/null || true
   fi
-  log "clone infra -> $user:~/code/infra (locked; unlock with secret/infra git_crypt_key_b64)"
+  log "clone infra -> $user:~/code/infra (locked; a run with an admin Vault token unlocks it)"
   if runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$FORGEJO_INFRA_REMOTE" "$dst" 2>/dev/null; then
     runuser -u "$user" -- git -C "$dst" remote add forgejo "$FORGEJO_INFRA_REMOTE" 2>/dev/null || true
   else
     log "WARN: clone of infra failed for $user (offline?); the next run retries"
   fi
+}
+
+# The admin's ~/code/infra comes from install_admin_infra_clone git-crypt
+# locked, and until round 3 of the disposable-devvm plan the admin unlocked it
+# by hand on every rebuild. On a run whose admin Vault token reads secret/infra,
+# this does it: the key (git_crypt_key_b64) goes through pipes into a 0600 file
+# in a 0700 directory the admin owns, git-crypt unlocks the clone as the admin,
+# and the directory is removed. The key is never on a command line, in an
+# environment or in a log line. A clone that already holds its key
+# (.git/git-crypt/keys/default) is not touched, so the live box's clone is left
+# alone and nothing is ever locked again. Only on the live box's address: drills
+# keep the key off throwaway disks, unless root opted the drill in with
+# `touch $STATEDIR/drill-unlock-infra` (docs/runbooks/devvm-drill.md).
+# The filters then get --key-file, as wizard's live clone has had since
+# 2026-11-09: git-crypt 0.7.0 looks for its key under a linked worktree's own
+# gitdir, so without it a plain `git worktree add` (T3 worktree threads) fails
+# in the smudge filter.
+unlock_admin_infra_clone() {  # unlock_admin_infra_clone USER
+  local user="$1" home dst kf d b64 out
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  dst="$home/code/infra"
+  [[ -d "$dst/.git" && ! -L "$dst" ]] || return 0
+  kf="$dst/.git/git-crypt/keys/default"
+  [[ -e "$kf" || -L "$kf" ]] && return 0
+  if ! is_live_devvm && [[ ! -e "$STATEDIR/drill-unlock-infra" ]]; then
+    log "not the live devvm: $user:~/code/infra stays locked (a drill opts in with: touch $STATEDIR/drill-unlock-infra)"
+    return 0
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] git-crypt unlock $user:~/code/infra with secret/infra git_crypt_key_b64"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault_admin token lookup >/dev/null 2>&1; then
+    log "infra unlock skipped: no admin Vault token (expected on the hourly run)"
+    return 0
+  fi
+  command -v git-crypt >/dev/null || { log "WARN: git-crypt is not installed -> $user:~/code/infra stays locked"; return 0; }
+  if ! b64="$(vault_admin kv get -field=git_crypt_key_b64 secret/infra 2>/dev/null)" || [[ -z "$b64" ]]; then
+    log "infra unlock skipped: this Vault token cannot read secret/infra git_crypt_key_b64 (the bootstrap's cannot; the admin run unlocks)"
+    return 0
+  fi
+  if ! d="$(runuser -u "$user" -- mktemp -d "${INFRA_UNLOCK_TMP:-/tmp}/infra-unlock.XXXXXX")"; then
+    unset b64; log "WARN: no key directory for $user -> ~/code/infra stays locked"; return 0
+  fi
+  if ! printf '%s' "$b64" | base64 -d 2>/dev/null | write_as "$user" 0600 "$d/key"; then
+    log "WARN: could not write the git-crypt key for $user -> ~/code/infra stays locked"
+  elif ! out="$(runuser -u "$user" -- env HOME="$home" sh -c 'cd "$1" && git-crypt unlock "$2"' _ "$dst" "$d/key" </dev/null 2>&1)"; then
+    log "WARN: git-crypt unlock of $user:~/code/infra failed: $(head -n 1 <<<"$out")"
+  else
+    runuser -u "$user" -- env HOME="$home" git -C "$dst" config filter.git-crypt.smudge "\"git-crypt\" smudge --key-file $kf" &&
+      runuser -u "$user" -- env HOME="$home" git -C "$dst" config filter.git-crypt.clean "\"git-crypt\" clean --key-file $kf" &&
+      runuser -u "$user" -- env HOME="$home" git -C "$dst" config diff.git-crypt.textconv "\"git-crypt\" diff --key-file $kf" ||
+      log "WARN: could not add --key-file to $user:~/code/infra's git-crypt filters (worktrees will not decrypt)"
+    log "unlocked $user:~/code/infra with secret/infra git_crypt_key_b64"
+  fi
+  unset b64
+  runuser -u "$user" -- rm -rf "$d"
+  return 0
 }
 
 # Shared logins that live outside any home (setup-devvm.sh section 8, which a
@@ -2024,6 +2081,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_user_dotfiles "$os_user" "$dotfiles"
   install_forgejo_known_hosts "$os_user"
   [[ "$tier" == admin ]] && install_admin_infra_clone "$os_user"
+  [[ "$tier" == admin ]] && unlock_admin_infra_clone "$os_user"
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
     IFS=',' read -ra want <<< "$groups_csv"
