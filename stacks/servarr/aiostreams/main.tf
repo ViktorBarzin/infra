@@ -755,7 +755,9 @@ module "ingress" {
 # direct). Proxy URLs carry SECRET_KEY-encrypted credentials checked on every
 # request. CrowdSec covers the origin in nftables, as for stremio.
 module "ingress_direct" {
-  source       = "../../../modules/kubernetes/ingress_factory"
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "app": the same AIOStreams app as module.ingress, with the same own
+  # UUID + password gate; proxy URLs also carry encrypted proxy credentials.
   auth         = "app"
   dns_type     = "non-proxied" # video: Cloudflare's CDN terms bar it on proxied hosts
   namespace    = kubernetes_namespace.aiostreams.metadata[0].name
