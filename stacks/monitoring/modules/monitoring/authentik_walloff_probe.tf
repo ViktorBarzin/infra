@@ -85,6 +85,14 @@ locals {
     # stacks/terminal module.ingress_assets): the manifest fetch is
     # credential-less by spec and OS icon fetchers carry no session cookies.
     "terminal-pwa-assets" = "https://terminal.viktorbarzin.me/manifest.webmanifest"
+    # pages.viktorbarzin.me login-free paths (stacks/learn, ADR-0042, added
+    # 2026-11-12): the stylesheet and vendored libraries, Bundle URLs and
+    # public links. A sandboxed page loads all three without the sign-in
+    # cookie, so an Authentik 302 on any of them blanks every page. The all-zero
+    # cap and token answer 404 from Caddy when the carve-out is intact.
+    "pages-assets"  = "https://pages.viktorbarzin.me/assets/page.css"
+    "pages-bundles" = "https://pages.viktorbarzin.me/c/00000000000000000000000000000000/"
+    "pages-public"  = "https://pages.viktorbarzin.me/p/00000000000000000000000000000000/"
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.
