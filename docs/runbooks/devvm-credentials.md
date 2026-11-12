@@ -3,7 +3,7 @@
 **Host:** `devvm` (10.0.10.10), users `wizard`, `emo`, `ancamilea`
 **Plan:** [disposable devvm](../plans/2026-11-11-disposable-devvm.md), the "Credentials" and "Dotfiles" kept places
 **Tool:** `scripts/workstation/workstation-creds.sh` (tests: `bash scripts/test-workstation-creds.sh`)
-**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys`, `install_mcp_tools`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`)
+**Provisioner steps:** `restore_user_credentials`, `stage_shared_auth`, `install_admin_infra_clone`, `unlock_admin_infra_clone`, `install_vault_token_renew`, `install_user_dotfiles`, `install_forgejo_known_hosts`, `install_ios_rig_units`, `install_agent_api_keys`, `install_mcp_tools`, `fill_mcp_secrets` in `scripts/t3-provision-users.sh` (tests: `bash scripts/test-t3-provision-creds.sh`, `bash scripts/test-t3-provision-rebuild.sh`, `bash scripts/test-t3-provision-mcp-secrets.sh`, `bash scripts/test-t3-provision-infra-unlock.sh`)
 
 ## What is kept where
 
@@ -167,7 +167,7 @@ Order inside that run: credentials for every existing account (step 3d: the
 admin kubeconfig is what the other users' kubeconfigs copy the cluster
 address from), the shared Codex login and chrome hub configs (step 3e), then
 per account: dotfiles, Forgejo's pinned SSH host key in
-`~/.ssh/known_hosts`, the admin's infra clone, groups (the tier's plus the
+`~/.ssh/known_hosts`, the admin's infra clone and its git-crypt unlock, groups (the tier's plus the
 row's `extra_groups`; emo keeps `docker`), clones, kubeconfigs,
 `vault-token-renew` with a first `~/.vault-token`, and for an admin on the
 live box's address whose token reads `secret/ios-rig`, the iOS rig's user
@@ -193,11 +193,39 @@ read the environment of any process running as them; before 2026-11-11 every
 `runuser` step (git in a user's clones, `bash -lc` with the user's
 `~/.profile`, chezmoi) carried it.
 
-To unlock wizard's infra clone on the new box:
+The same run unlocks wizard's infra clone (`unlock_admin_infra_clone`,
+since 2026-11-12; before that it was a hand step after the run). For an
+admin whose `~/code/infra` has no git-crypt key yet, root reads
+`secret/infra` field `git_crypt_key_b64` with the admin token and pipes it,
+decoded, into a 0600 file in a 0700 directory under `/tmp` that the admin
+owns. `git-crypt unlock` then runs as the admin in the clone, the directory
+is deleted, and the three git-crypt filters get `--key-file
+<clone>/.git/git-crypt/keys/default`, as on the live clone, so plain
+worktrees of it decrypt (`docs/agents/known-issues.md`). The key never
+appears on a command line or in a log line. The step leaves the clone alone
+when:
+
+- it already holds `.git/git-crypt/keys/default`: the live box's clone, or
+  a second run. Nothing ever locks it again;
+- the box is not on 10.0.10.10, unless root opted the drill in with
+  `touch /var/lib/t3-provision/drill-unlock-infra` (drills keep the key off
+  throwaway disks; `devvm-drill.md`);
+- the token cannot read `secret/infra`: the hourly run has none, and the
+  bootstrap's own run cannot (log `infra unlock skipped: ...`);
+- the tree has local changes, which `git-crypt unlock` refuses (`WARN:
+  git-crypt unlock of wizard:~/code/infra failed: Error: Working directory
+  not clean.`).
+
+Check it as wizard. `git-crypt status` lists `encrypted: config.tfvars`
+whether the clone is locked or not, because it reports the attribute. So
+read the file's first bytes too:
 
 ```bash
-k=$(mktemp); vault kv get -field=git_crypt_key_b64 secret/infra | base64 -d > "$k"
-(cd ~/code/infra && git-crypt unlock "$k"); rm -f "$k"
+cd ~/code/infra
+git-crypt status config.tfvars          # "    encrypted: config.tfvars"
+head -c 10 config.tfvars | grep -qa GITCRYPT && echo locked || echo unlocked
+ls -l .git/git-crypt/keys/default       # the key, mode 0600
+git status --porcelain                  # empty
 ```
 
 ## Dotfiles

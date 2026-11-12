@@ -623,3 +623,17 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 ## Design
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
+
+### v0.38 verbs — pages: HTML, Bundles and public links
+
+`homelab pages publish` takes `<doc.md | page.html | dir/>` since v0.38.0. A
+markdown doc goes to `/publish` as before. One HTML file, or every file under
+a directory (dotfiles skipped, binary files sent as base64), goes to
+pages-publish `/publish-bundle` with the user's own `PAGES_API_KEY`; the file
+or directory name is the page's identity, so publishing it again updates the
+same page. The CLI checks the limits (10 MiB per file, 25 MiB per publish, 200
+files) before sending. `--public` also creates a public link and prints it as
+`public: <url>`. `homelab pages share <page>` and `homelab pages unshare
+<page | public link>` create and revoke links
+(`https://pages.viktorbarzin.me/p/<random>/`). Pages run sandboxed (ADR-0042);
+`stacks/pages-publish/README.md` has what a page can and cannot do.
