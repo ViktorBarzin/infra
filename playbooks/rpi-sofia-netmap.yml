@@ -13,7 +13,9 @@
 # Scope: the complex network on the Pi. The first play declares the camera
 # network (netns guestns, camera_net_setup2.sh, camera-net.service) and the two
 # socat relays into guestns, copied byte for byte from the live Pi on
-# 2026-11-11 (infra#121); the second declares vermont-netmap. The rest of the
+# 2026-11-11 (infra#121), and the restricted SSH key the B4 watchdog add-on on
+# ha-sofia uses for the intercom relay (tag intercom_watch); the second
+# declares vermont-netmap. The rest of the
 # Pi (promtail, watchdogs, timers, MQTT monitor) is still configured by hand.
 #
 # RUN (from repo root; claim presence first:
@@ -47,6 +49,13 @@
       - intercom-sdk-proxy
       # 10.200.1.2:8115 -> .115:80, entrance panel "VTORI VHOD"
       - panel115-proxy
+    # emo's B4 watchdog, the intercom_watch add-on on ha-sofia
+    # (ebarzin/vermont-device-configs, ha-addon/). Its own key, which may only
+    # forward to the intercom relay and read the B4's BootTime (b4-boottime is
+    # the forced command). The private half is in Vault,
+    # secret/emo/intercom-b4 field ha_addon_ssh_key, and in the add-on options.
+    intercom_watch_ssh_pubkey: >-
+      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG19heQWjlM1EOGUYbvHlc/gqU5cMS5Dqj/wP2ijrnWm intercom-watch@ha-sofia
 
   tasks:
     - name: Install socat for the relays
@@ -125,6 +134,25 @@
       loop_control:
         label: "{{ item.item }}"
       when: item.changed
+
+    - name: Install b4-boottime, the forced command of the intercom_watch key
+      ansible.builtin.copy:
+        src: files/rpi-sofia/b4-boottime
+        dest: /usr/local/bin/b4-boottime
+        mode: "0755"
+        owner: root
+        group: root
+      tags: [intercom_watch]
+
+    - name: Authorize the intercom_watch add-on key, restricted to its tunnel
+      ansible.posix.authorized_key:
+        user: pi
+        key: "{{ intercom_watch_ssh_pubkey }}"
+        key_options: >-
+          restrict,port-forwarding,permitopen="10.200.1.2:8134",command="/usr/local/bin/b4-boottime"
+        state: present
+        exclusive: false
+      tags: [intercom_watch]
 
 - name: rpi-sofia vermont-netmap
   hosts: rpi_sofia

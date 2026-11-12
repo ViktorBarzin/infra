@@ -80,9 +80,9 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   every credential and every clone that needs one. Then check, as root:
   `ls /home/wizard/.vault-token /home/emo/.vault-token`; `ls /home/emo/code`
   lists `tv`, `agents`, `app-kit` and `vermont-device-configs`; and
-  `sudo -u emo XDG_RUNTIME_DIR=/run/user/$(id -u emo) systemctl --user
-  is-enabled intercom-watch.timer` prints `enabled` (his repo's
-  `devvm-setup.sh` ran). On a drill this means handing the drill an admin
+  `readlink /home/emo/bin/hikreboot.py` points into
+  `~/code/vermont-device-configs/bin/` (his repo's `devvm-setup.sh` ran; since
+  2026-11-12 it installs no timer, the B4 watchdog runs on ha-sofia). On a drill this means handing the drill an admin
   token; skip it there unless the drill is the final one, and record that
   you did. On a drill, give it a child token of your own instead of your
   periodic one (`vault token create -policy=vault-admin -policy=sops-admin
@@ -92,10 +92,7 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   `systemctl mask` `claude-auth-sync@wizard` and `@emo` (timer and service:
   a second holder of the shared Claude OAuth refresh tokens could rotate
   them under the live box), `systemctl disable --now codex-auth-backup.path
-  codex-auth-backup.timer`, and right after the run, once `is-enabled`
-  has printed `enabled`, `systemctl --user disable --now
-  intercom-watch.timer` as emo (it would log in to Hik-Connect and can
-  reboot the B4 alongside the live box's copy). Before deleting the drill,
+  codex-auth-backup.timer`. Before deleting the drill,
   revoke every token the run minted, as root on the drill, reading each
   file inside the command: `emo`'s `~/.vault-token` and both
   `~/.config/claude-auth-sync/vault-token` files (`vault token revoke

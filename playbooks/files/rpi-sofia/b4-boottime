@@ -1,0 +1,10 @@
+#!/bin/bash
+# Managed by playbooks/rpi-sofia-netmap.yml — edit there, not here.
+#
+# Forced command of the intercom_watch add-on's SSH key (ha-sofia, emo's B4
+# watchdog, ebarzin/vermont-device-configs ha-addon/). Whatever the client
+# asks to run, this runs instead: the SADP line of the B4 intercom .134, whose
+# BootTime column is the watchdog's proof that a reboot happened. The same key
+# may forward only to the SDK relay 10.200.1.2:8134 (intercom-sdk-proxy).
+sudo -n ip netns exec guestns /usr/local/bin/sadp-scan.py --src 192.168.1.2 \
+  --model DS-KH6320 --timeout 8 | grep '^192.168.1.134' || true

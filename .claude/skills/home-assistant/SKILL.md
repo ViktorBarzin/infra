@@ -346,7 +346,7 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya, MELCloud, Synology DSM, HP Printer (IPP)
 
 ### Add-ons
-Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client, **Home Assistant Version Control**
+Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client, **Home Assistant Version Control**, **Пазач на домофона В4** (`local_intercom_watch`, local add-on from `ebarzin/vermont-device-configs` `ha-addon/`, deployed with its `deploy.sh`; see `docs/runbooks/cameras-nvr-intercom.md`)
 
 ### Version Control (Git Config Tracking)
 - **Add-on**: Home Assistant Version Control v1.2.0 (slug: `4ab554b2_home-assistant-version-control`)

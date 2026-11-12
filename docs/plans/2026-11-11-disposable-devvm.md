@@ -113,14 +113,25 @@ Done 2026-11-11: the eight jobs above are stopped and archived in
 `retired/2026-11-11/` of ebarzin/vermont-device-configs (valia-backup-cleanup's
 last run did not report done, so its copy in ~/bin stays). His tools are in
 that repo's `bin/`, ~/bin links to them, and his roster row clones the repo to
-~/code/vermont-device-configs. intercom-watch stays on the devvm: the B4 has no
-HTTP service (ports 80 and 443 refuse, checked 2026-11-11 without a reboot), so
-a ha-sofia rest_command cannot send it the ISAPI reboot, and ha-sofia was not
-added to the Vermont allowlist. Its script and units are in the same repo,
-and so is the x86 Hikvision SDK it needs (vendor/hikvision-sdk/lib; the NAS
-copy the docs named does not exist). On a rebuilt box provisioning step 4b runs
-the repo's devvm-setup.sh as emo, which puts back the ~/bin links, the SDK and
-the watchdog's user units and enables its timer; linger is turned on for him.
+~/code/vermont-device-configs. The x86 Hikvision SDK his SDK tools need is in
+the same repo (vendor/hikvision-sdk/lib; the NAS copy the docs named does not
+exist). On a rebuilt box provisioning step 4b runs the repo's devvm-setup.sh as
+emo, which puts back the ~/bin links and the SDK; linger is turned on for him.
+
+intercom-watch did not become a rest_command automation: the B4 has no HTTP
+service (ports 80 and 443 refuse, checked 2026-11-11 without a reboot) and
+takes ISAPI only through the x86 glibc SDK on port 8000. Viktor chose a
+Home Assistant add-on instead. Since 2026-11-12 it runs on ha-sofia as the
+local add-on `local_intercom_watch`, a Debian container with the same script
+and limits, notifying emo on every reboot and on persistent failure; source
+and `deploy.sh` are in `ha-addon/` of his repo. It reaches the B4 through an
+SSH tunnel to rpi-sofia with its own key, restricted on the Pi to that tunnel
+and the BootTime read (`playbooks/rpi-sofia-netmap.yml`, tag `intercom_watch`);
+that was a smaller change than adding ha-sofia to the Vermont allowlist, which
+would also have needed a static route on HA OS. It ran in dry-run beside the
+devvm copy for an hour and passed its self-test (SDK login through the tunnel)
+before the devvm timer was disabled and its units archived in
+`retired/2026-11-12/` of the repo.
 
 ## Also
 - HA London backs up through HA network storage to a new NFS export on the
@@ -142,11 +153,9 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
 
 ## Open questions
 
-- The B4 intercom does not accept the ISAPI reboot over HTTP: it has no HTTP
-  listener, and ISAPI reaches it only tunnelled through the x86-only vendor
-  SDK on port 8000 (checked 2026-11-11). The fallback for intercom-watch is
-  still open: keep it on the devvm (today), or run the SDK reboot from an x86
-  host other than the devvm.
+- Settled 2026-11-12: the B4 intercom does not accept the ISAPI reboot over
+  HTTP, so intercom-watch runs the SDK reboot from a Debian add-on on ha-sofia
+  (see the emo section).
 - HA network storage over the tunnel to London has not been tried; a mount
   across the WAN can stall. Tried 2026-11-11: an NFS mount over the tunnel wrote a 257 MB
   backup in about 75 s with matching checksums (`docs/architecture/london-site.md`,
@@ -171,8 +180,9 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   restored; MCP server secrets have no kept place; chezmoi applies before the
   `~/.claude` restore; the dotfiles repo is behind the live home; the
   MeshCentral sessionKey is still loose. Steps: `docs/runbooks/devvm-drill.md`.
-- intercom-watch stays on the devvm (declared, survives a rebuild): the B4 has
-  no HTTP listener, so a ha-sofia ISAPI reboot cannot reach it.
+- intercom-watch moved to ha-sofia on 2026-11-12 as the local add-on
+  `local_intercom_watch` (the B4 has no HTTP listener, so it reboots it through
+  the SDK); the devvm timer is retired.
 - Incident during the run: wizard's admin Vault token reached auth.log and Loki
   through `sudo VAULT_TOKEN=...` and `--preserve-env` lines that snoopy logs.
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid

@@ -2,8 +2,8 @@
 # Checks run_repo_setup in t3-provision-users.sh: a roster repo that ships
 # devvm-setup.sh at its root gets it run as the user after the clone, so a
 # rebuilt devvm puts back what the user built around the clone by hand (emo's
-# ebarzin/vermont-device-configs restores the B4 intercom watchdog this way;
-# docs/plans/2026-11-11-disposable-devvm.md).
+# ebarzin/vermont-device-configs restores his ~/bin links and the Hikvision SDK
+# this way; docs/plans/2026-11-11-disposable-devvm.md).
 #
 # Run: bash scripts/test-t3-provision-repo-setup.sh
 #
