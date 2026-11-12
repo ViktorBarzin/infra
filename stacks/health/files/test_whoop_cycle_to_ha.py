@@ -151,14 +151,14 @@ class AuthenticateTests(unittest.TestCase):
             return R()
 
     def test_direct_login_never_reads_email(self):
-        sess = self.FakeSession([{"AuthenticationResult": {"AccessToken": "tok-direct"}}])
+        sess = self.FakeSession([{"AuthenticationResult": {"AccessToken": "tok-direct", "RefreshToken": "ref-direct"}}])
         called = {"otp": False}
 
         def otp():
             called["otp"] = True
             return "000000"
 
-        self.assertEqual(wc.authenticate(sess, "a@b.com", "pw", otp), "tok-direct")
+        self.assertEqual(wc.authenticate(sess, "a@b.com", "pw", otp), ("tok-direct", "ref-direct"))
         self.assertFalse(called["otp"])
 
     def test_email_otp_challenge_answered(self):
@@ -166,7 +166,7 @@ class AuthenticateTests(unittest.TestCase):
             {"ChallengeName": "EMAIL_OTP", "Session": "sess-1", "AuthenticationResult": None},
             {"AuthenticationResult": {"AccessToken": "tok-otp"}},
         ])
-        self.assertEqual(wc.authenticate(sess, "a@b.com", "pw", lambda: "418293"), "tok-otp")
+        self.assertEqual(wc.authenticate(sess, "a@b.com", "pw", lambda: "418293"), ("tok-otp", None))
         # second call must carry the code under EMAIL_OTP_CODE
         self.assertEqual(sess.calls[1]["ChallengeResponses"]["EMAIL_OTP_CODE"], "418293")
 
@@ -177,6 +177,99 @@ class AuthenticateTests(unittest.TestCase):
         ])
         with self.assertRaises(RuntimeError):
             wc.authenticate(sess, "a@b.com", "pw", lambda: "000000")
+
+
+class StatusSession:
+    """Fake requests.Session whose responses carry a status code."""
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def post(self, url, json, headers, timeout):
+        self.calls.append(json)
+        status, body = self._responses.pop(0)
+
+        class R:
+            status_code = status
+            text = str(body)
+            def json(self_inner):
+                return body
+        return R()
+
+
+class MemoryStore:
+    def __init__(self, token=None):
+        self.token = token
+        self.saves = []
+
+    def load(self):
+        return self.token
+
+    def save(self, token):
+        self.saves.append(token)
+        self.token = token
+
+
+class RefreshTests(unittest.TestCase):
+    def test_refresh_sends_only_the_refresh_token(self):
+        sess = StatusSession([(200, {"AuthenticationResult": {"AccessToken": "acc"}})])
+        self.assertEqual(wc.refresh_tokens(sess, "ref-1"), ("acc", "ref-1"))
+        self.assertEqual(sess.calls[0], {
+            "AuthFlow": "REFRESH_TOKEN_AUTH",
+            "AuthParameters": {"REFRESH_TOKEN": "ref-1"},
+            "ClientId": "",
+        })
+
+    def test_rotated_refresh_token_is_returned(self):
+        sess = StatusSession([(200, {"AuthenticationResult": {"AccessToken": "acc", "RefreshToken": "ref-2"}})])
+        self.assertEqual(wc.refresh_tokens(sess, "ref-1"), ("acc", "ref-2"))
+
+    def test_expired_refresh_token_returns_none(self):
+        sess = StatusSession([(400, {"__type": "NotAuthorizedException", "message": "Refresh Token has expired"})])
+        self.assertIsNone(wc.refresh_tokens(sess, "ref-old"))
+
+
+class SignInTests(unittest.TestCase):
+    def otp_never(self):
+        raise AssertionError("must not read the login-code email")
+
+    def test_saved_token_signs_in_without_email(self):
+        sess = StatusSession([(200, {"AuthenticationResult": {"AccessToken": "acc"}})])
+        store = MemoryStore("ref-1")
+        self.assertEqual(wc.sign_in(sess, "a@b.com", "pw", store, self.otp_never), "acc")
+        self.assertEqual(store.saves, [])  # unchanged token is not rewritten
+
+    def test_rotated_token_is_saved(self):
+        sess = StatusSession([(200, {"AuthenticationResult": {"AccessToken": "acc", "RefreshToken": "ref-2"}})])
+        store = MemoryStore("ref-1")
+        wc.sign_in(sess, "a@b.com", "pw", store, self.otp_never)
+        self.assertEqual(store.saves, ["ref-2"])
+
+    def test_expired_token_falls_back_to_email_login_and_saves(self):
+        sess = StatusSession([
+            (400, {"__type": "NotAuthorizedException"}),
+            (200, {"ChallengeName": "EMAIL_OTP", "Session": "s", "AuthenticationResult": None}),
+            (200, {"AuthenticationResult": {"AccessToken": "acc-new", "RefreshToken": "ref-new"}}),
+        ])
+        store = MemoryStore("ref-old")
+        self.assertEqual(wc.sign_in(sess, "a@b.com", "pw", store, lambda: "418293"), "acc-new")
+        self.assertEqual(store.saves, ["ref-new"])
+
+    def test_no_saved_token_logs_in(self):
+        sess = StatusSession([(200, {"AuthenticationResult": {"AccessToken": "acc", "RefreshToken": "ref"}})])
+        store = MemoryStore(None)
+        self.assertEqual(wc.sign_in(sess, "a@b.com", "pw", store, lambda: "1"), "acc")
+        self.assertEqual(store.saves, ["ref"])
+
+
+class SecretCodecTests(unittest.TestCase):
+    def test_round_trip(self):
+        body = wc.secret_patch_body("ref-abc")
+        self.assertEqual(wc.token_from_secret(body), "ref-abc")
+
+    def test_empty_secret_has_no_token(self):
+        self.assertIsNone(wc.token_from_secret({"data": {"refresh_token": ""}}))
+        self.assertIsNone(wc.token_from_secret({}))
 
 
 class HelperCallsTests(unittest.TestCase):

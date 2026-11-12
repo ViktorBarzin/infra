@@ -2,8 +2,8 @@
 
 WHOOP's public developer API has no menstrual data, so this reads the private
 endpoint the WHOOP phone app itself uses (see whoop_cycle_to_ha.tf for the
-background and the ban-risk trade-off). It runs ONCE A MONTH to keep the
-footprint on Anca's paid account minimal: one login, one read.
+background and the ban-risk trade-off). It runs ONCE A DAY, so a period Anca
+logs in the app reaches ha-london within a day: one token refresh, one read.
 
 Each run reads today's Menstrual Cycle Insights and writes four persisted HA
 helpers on ha-london:
@@ -14,23 +14,29 @@ helpers on ha-london:
   input_datetime.anca_cycle_last_sync when this job last ran
 
 A template sensor in packages/anca_cycle.yaml advances the phase and cycle day
-LOCALLY from those helpers every day, so the phase stays current between the
-monthly reads with no extra WHOOP traffic. Helpers persist across HA restarts;
+LOCALLY from those helpers every day, so the phase stays current even when a
+daily read fails. Helpers persist across HA restarts;
 transient /api/states sensors do not, which is why this uses helpers.
 
 Recovery, HRV and sleep reach ha-london separately, through the official API
 and the HACS integration prankstr/hassio-whoop.
 
-WHOOP emails a 6-digit login code (EMAIL_OTP) on each login. The job answers it
-automatically: it reads the code from Anca's Gmail over IMAP, completes the
-login, then deletes the code email. GMAIL_USER / GMAIL_APP_PASSWORD are a Gmail
+WHOOP emails a 6-digit login code (EMAIL_OTP) on each password login. The job
+answers it automatically: it reads the code from Anca's Gmail over IMAP,
+completes the login, then deletes the code email. To keep that email to about
+once a month, the job saves WHOOP's refresh token (valid ~30 days) in the
+Kubernetes Secret SESSION_SECRET and signs in with it on later days. Only when
+it is missing or expired does the job fall back to the password + code login. GMAIL_USER / GMAIL_APP_PASSWORD are a Gmail
 app password (needs 2-Step Verification on her Google account); it grants broad
 mailbox access, so it is stored in Vault and only the WHOOP code email is touched.
 
 Env: WHOOP_EMAIL, WHOOP_PASSWORD, WHOOP_INSTALLATION_ID, HA_URL, HA_TOKEN,
      GMAIL_USER, GMAIL_APP_PASSWORD,
+     SESSION_SECRET (optional; Secret in the pod's namespace that holds the
+       refresh token; unset = no reuse, every run logs in with a code),
      JITTER_SECONDS (optional, default 3600; 0 disables).
 """
+import base64
 import datetime as dt
 import email
 import email.utils
@@ -49,6 +55,9 @@ WHOOP = "https://api.prod.whoop.com"
 AUTH_URL = f"{WHOOP}/auth-service/v3/whoop/"
 CYCLE_PATH = "/womens-health-service/v1/menstrual-cycle-insights"
 TIMEOUT = 30
+
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+SESSION_KEY = "refresh_token"
 
 IMAP_HOST = "imap.gmail.com"
 # WHOOP's login-code emails come from a whoop.com address; match loosely on the
@@ -206,8 +215,10 @@ def _email_text(msg: email.message.Message) -> str:
     return " ".join(parts)
 
 
-def authenticate(session: requests.Session, email_addr: str, password: str, otp_getter) -> str:
-    """Return a WHOOP access token, answering an emailed login code if asked.
+def authenticate(session: requests.Session, email_addr: str, password: str,
+                 otp_getter) -> tuple[str, str | None]:
+    """Return (access token, refresh token) for a password login, answering an
+    emailed login code if asked.
     `otp_getter()` is called only when WHOOP issues an OTP challenge, so no email
     is read on a login that WHOOP lets through directly."""
     body = _cognito(session, "InitiateAuth", {
@@ -216,7 +227,8 @@ def authenticate(session: requests.Session, email_addr: str, password: str, otp_
         "ClientId": "",
     })
     if body.get("AuthenticationResult"):
-        return body["AuthenticationResult"]["AccessToken"]
+        result = body["AuthenticationResult"]
+        return result["AccessToken"], result.get("RefreshToken")
 
     challenge = body.get("ChallengeName")
     code_key = OTP_CHALLENGES.get(challenge)
@@ -234,7 +246,95 @@ def authenticate(session: requests.Session, email_addr: str, password: str, otp_
     })
     if not resp.get("AuthenticationResult"):
         raise RuntimeError(f"WHOOP rejected the login code; challenge={resp.get('ChallengeName')}")
-    return resp["AuthenticationResult"]["AccessToken"]
+    result = resp["AuthenticationResult"]
+    return result["AccessToken"], result.get("RefreshToken")
+
+
+def refresh_tokens(session: requests.Session, refresh_token: str) -> tuple[str, str] | None:
+    """Exchange a saved refresh token for (access token, refresh token), or None
+    if WHOOP no longer accepts it. WHOOP's proxy fills in ClientId and
+    SECRET_HASH, so only the token is sent. Cognito usually keeps the same
+    refresh token; a rotated one is returned so the caller can save it."""
+    try:
+        body = _cognito(session, "InitiateAuth", {
+            "AuthFlow": "REFRESH_TOKEN_AUTH",
+            "AuthParameters": {"REFRESH_TOKEN": refresh_token},
+            "ClientId": "",
+        })
+    except RuntimeError as exc:
+        print(f"saved WHOOP sign-in not accepted ({exc}); logging in with a code")
+        return None
+    result = body.get("AuthenticationResult") or {}
+    if not result.get("AccessToken"):
+        return None
+    return result["AccessToken"], result.get("RefreshToken") or refresh_token
+
+
+def sign_in(session: requests.Session, email_addr: str, password: str, store, otp_getter) -> str:
+    """Return a WHOOP access token. Uses the refresh token in `store` when WHOOP
+    still accepts it, so no login-code email is sent; otherwise logs in with
+    password + emailed code and saves the new refresh token."""
+    saved = store.load()
+    if saved:
+        tokens = refresh_tokens(session, saved)
+        if tokens:
+            access, refresh = tokens
+            if refresh != saved:
+                store.save(refresh)
+            print("signed in with the saved WHOOP refresh token")
+            return access
+    access, refresh = authenticate(session, email_addr, password, otp_getter)
+    if refresh:
+        store.save(refresh)
+    print("signed in with password + login code; saved the new refresh token")
+    return access
+
+
+def token_from_secret(secret: dict) -> str | None:
+    raw = (secret.get("data") or {}).get(SESSION_KEY)
+    if not raw:
+        return None
+    return base64.b64decode(raw).decode() or None
+
+
+def secret_patch_body(token: str) -> dict:
+    return {"data": {SESSION_KEY: base64.b64encode(token.encode()).decode()}}
+
+
+class KubeSecretStore:
+    """The refresh token, kept in a Secret in this pod's namespace. The pod's
+    ServiceAccount may only get and patch that one Secret."""
+
+    def __init__(self, name: str):
+        with open(f"{SA_DIR}/namespace", encoding="utf-8") as fh:
+            namespace = fh.read().strip()
+        with open(f"{SA_DIR}/token", encoding="utf-8") as fh:
+            self._headers = {"Authorization": f"Bearer {fh.read().strip()}"}
+        host = os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
+        port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+        self._url = f"https://{host}:{port}/api/v1/namespaces/{namespace}/secrets/{name}"
+
+    def load(self) -> str | None:
+        resp = requests.get(self._url, headers=self._headers, verify=f"{SA_DIR}/ca.crt", timeout=TIMEOUT)
+        resp.raise_for_status()
+        return token_from_secret(resp.json())
+
+    def save(self, token: str) -> None:
+        resp = requests.patch(
+            self._url, json=secret_patch_body(token), verify=f"{SA_DIR}/ca.crt", timeout=TIMEOUT,
+            headers={**self._headers, "Content-Type": "application/merge-patch+json"},
+        )
+        resp.raise_for_status()
+
+
+class NoStore:
+    """No saved sign-in (local runs): every run logs in with a code."""
+
+    def load(self) -> None:
+        return None
+
+    def save(self, token: str) -> None:
+        pass
 
 
 def fetch_cycle(session: requests.Session, token: str, date: str, installation_id: str) -> dict:
@@ -356,24 +456,31 @@ def main() -> int:
     now = dt.datetime.now(dt.UTC)
     today = now.date()
     login_started = now  # the OTP email must be newer than this
-    with requests.Session() as session:
-        token = authenticate(
-            session, env["WHOOP_EMAIL"], env["WHOOP_PASSWORD"],
-            otp_getter=lambda: fetch_otp_code(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started),
-        )
-        cycle = project(fetch_cycle(session, token, today.isoformat(), env["WHOOP_INSTALLATION_ID"]), today.isoformat())
-        print(f"{today}: {cycle}")
-        for service_path, payload in helper_calls(cycle, today, now.isoformat(timespec="seconds")):
-            resp = session.post(
-                f"{env['HA_URL']}/api/services/{service_path}",
-                json=payload,
-                headers={"Authorization": f"Bearer {env['HA_TOKEN']}"},
-                timeout=TIMEOUT,
-            )
-            resp.raise_for_status()
-    # Login succeeded, so the code is spent: trash it and any decoys left behind.
-    moved = delete_otp_emails(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started)
-    print(f"cleaned up {moved} WHOOP sign-in-code email(s)")
+    store = KubeSecretStore(env["SESSION_SECRET"]) if env.get("SESSION_SECRET") else NoStore()
+    code_emailed = []
+
+    def otp_getter() -> str:
+        code_emailed.append(True)
+        return fetch_otp_code(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started)
+
+    try:
+        with requests.Session() as session:
+            token = sign_in(session, env["WHOOP_EMAIL"], env["WHOOP_PASSWORD"], store, otp_getter)
+            cycle = project(fetch_cycle(session, token, today.isoformat(), env["WHOOP_INSTALLATION_ID"]), today.isoformat())
+            print(f"{today}: {cycle}")
+            for service_path, payload in helper_calls(cycle, today, now.isoformat(timespec="seconds")):
+                resp = session.post(
+                    f"{env['HA_URL']}/api/services/{service_path}",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {env['HA_TOKEN']}"},
+                    timeout=TIMEOUT,
+                )
+                resp.raise_for_status()
+    finally:
+        # A code was emailed, so trash it and any decoys, even if a later step failed.
+        if code_emailed:
+            moved = delete_otp_emails(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started)
+            print(f"cleaned up {moved} WHOOP sign-in-code email(s)")
     return 0
 
 
