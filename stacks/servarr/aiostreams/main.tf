@@ -60,6 +60,9 @@ resource "kubernetes_deployment" "aiostreams" {
         annotations = {
           # Roll the pod when the sidecar script changes.
           "checksum/rd-blocked-names" = sha1(file("${path.module}/files/rd_blocked_names.py"))
+          # AIOSTREAMS_AUTH is read only at start: change this when the account
+          # list in kubernetes_manifest.auth_secret changes, to roll the pod.
+          "aiostreams-auth-users" = "proxy,viktor"
           # kubernetes-pods job scrapes the sidecar's /metrics (RdBlockedNamesStale).
           "prometheus.io/scrape" = "true"
           "prometheus.io/port"   = "8081"
@@ -250,8 +253,9 @@ resource "kubernetes_deployment" "aiostreams" {
   depends_on = [kubernetes_manifest.auth_secret]
 }
 
-# The built-in proxy's account. AIOStreams reads AIOSTREAMS_AUTH only at start,
-# so changing the Vault key needs a rollout of the deployment.
+# AIOStreams accounts: the built-in proxy's, and viktor's admin login for the
+# dashboard (Vault secret/viktor aiostreams_admin_password). AIOStreams reads
+# AIOSTREAMS_AUTH only at start, so changing a Vault key needs a rollout.
 resource "kubernetes_manifest" "auth_secret" {
   field_manager {
     force_conflicts = true
@@ -273,12 +277,16 @@ resource "kubernetes_manifest" "auth_secret" {
         name = "aiostreams-auth"
         template = {
           data = {
-            AIOSTREAMS_AUTH = "proxy:{{ .proxy_password }}"
+            # viktor is unlisted in AIOSTREAMS_AUTH_PERMISSIONS, so admin: the
+            # dashboard at /dashboard, which shows each proxied stream and its
+            # bandwidth (added 2026-11-12 to judge the London proxy trial).
+            AIOSTREAMS_AUTH = "proxy:{{ .proxy_password }},viktor:{{ .admin_password }}"
           }
         }
       }
       data = [
         { secretKey = "proxy_password", remoteRef = { key = "viktor", property = "aiostreams_proxy_password" } },
+        { secretKey = "admin_password", remoteRef = { key = "viktor", property = "aiostreams_admin_password" } },
       ]
     }
   }
