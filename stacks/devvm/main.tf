@@ -55,10 +55,7 @@ locals {
   # 8). Check `free -g` on the host first (runbook). The replacement sets the
   # full size explicitly. Everything else is the live devvm's shape (module
   # defaults).
-  drills = {
-    # Round-2 drill, 2026-11-12 (devvm-drill.md, drill log).
-    "devvm-drill6" = { vm_id = 9106, ipv4_cidr = "10.0.10.15/24" }
-  }
+  drills = {}
 }
 
 provider "proxmoxbpg" {

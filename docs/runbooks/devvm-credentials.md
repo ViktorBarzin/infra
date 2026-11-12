@@ -146,6 +146,7 @@ command below read. After that, run it once with an admin token:
 ```bash
 export VAULT_ADDR=https://vault.viktorbarzin.me
 vault login -method=oidc            # writes ~/.vault-token; skip if it holds an admin token
+cd /                                # chezmoi runs as each user here; another user's home stops it
 sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec t3-provision-users'
 ```
 
