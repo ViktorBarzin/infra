@@ -1543,7 +1543,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "docker.io/library/postgres:16.15-trixie"
+              image = "docker.io/library/postgres:16.16-trixie"
               command = ["/bin/bash", "-c", <<-EOT
                 set -euo pipefail
                 # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl
