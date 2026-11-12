@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 plan: true
 ---
 
@@ -47,10 +47,11 @@ edges:
   - {from: gatus, to: ing, state: new, label: via Cloudflare}
   - {from: kuma, to: ing, state: removed}
 checks:
-  - {node: prom, text: "probe_success{job=\"blackbox-pages-public\"} is 1 for all 5 targets after apply", status: open}
-  - {node: bb, text: "/probe with a bogus /p/ token and with a non-shell URL each returns probe_success 0", status: open}
-  - {node: canary, text: "/p/<token>/ and /c/<cap>/canary.json return pages-canary-ok with the sandbox CSP", status: open}
-  - {node: gatus, text: "the 3 gatus checks are green on mx2 and fail when the canary link is unshared", status: open}
+  - {node: prom, text: "probe_success{job=\"blackbox-pages-public\"} is 1 for all 5 targets; both alert rules load as healthy", status: passed}
+  - {node: bb, text: "in a local blackbox-exporter, 5 good targets pass and 4 broken cases fail (bogus link, wrong module, a redirect, no canary text)", status: passed}
+  - {node: canary, text: "/p/<token>/ and /c/<cap>/canary.json return pages-canary-ok with the sandbox CSP and CORS *", status: passed}
+  - {node: gatus, text: "the 3 gatus checks are green on mx2; a nonexistent link returns 404 without the canary text, so both conditions fail", status: passed}
+  - {node: kuma, text: "the sync deleted [External] pages (1 deleted, 139 unchanged)", status: passed}
 left_out:
   - Uptime Kuma keyword monitors
 ```
