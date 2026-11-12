@@ -55,18 +55,7 @@ locals {
   # 8). Check `free -g` on the host first (runbook). The replacement sets the
   # full size explicitly. Everything else is the live devvm's shape (module
   # defaults).
-  drills = {
-    # Test of the host-key path (round 3, host identity): the live devvm's SSH
-    # host keys on a drill address. Removed again once its fingerprints are
-    # checked against the live box's.
-    "devvm-drill-hostkeys" = {
-      vm_id          = 9101
-      ipv4_cidr      = "10.0.10.14/24"
-      cores          = 2
-      memory_mb      = 4096
-      live_host_keys = true
-    }
-  }
+  drills = {}
 }
 
 provider "proxmoxbpg" {
