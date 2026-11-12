@@ -161,7 +161,7 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 |---|---|---|---|---|---|
 | tv (pilot, includes the Android TV app) | live | live; `link.shared`, `cast.started`, `quality.chosen` | server | yes | 2026-11-09-tv-sends-product-events |
 | tripit | live | live; `search.opened`, `offline_copy.toggled`, `tour.started` | server | yes (keeps its formatter and secret scrubbing) | 0077 |
-| terminal-lobby | live; Go 0.2.0 with request context shipped 2026-11-12, not yet checked live | live | live | yes | 0048 |
+| terminal-lobby | live on Go 0.2.0 (v0.142.3, 2026-11-12); events carry the browser, and the visitor IP since the lobby API routes got `traefik/real-ip` | live | live | yes | 0048 |
 | offline-reader | live | `download.completed`, `download.interrupted`, `page.read` | server | yes | 0007 |
 | learning | live | `reference.opened`, `routine_guide.opened`, `progress.queued` | server | yes | 0005 |
 | health | live | `plate_calculator.opened`, `rest_timer.skipped`, `rest_timer.adjusted` | server | yes | 0014 |
@@ -177,7 +177,9 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 | blog, kms, pages | n/a | pageviews (pages: on each page's next publish) | n/a | n/a | n/a |
 | Third-party apps (Forgejo, Immich, Home Assistant, Paperless, CyberChef and the rest) | n/a | pageviews through the injection plugin, `hosted` site | n/a | n/a | n/a |
 
-Every browser above runs `@viktorbarzin/telemetry` 0.2.1 from Forgejo's npm registry, except tasks and alexa-assistant, which run 0.2.0 until Renovate moves them. "Server" under Errors means GlitchTip gets backend errors only; those frontends had no browser Sentry before, and none was added.
+Every browser above runs `@viktorbarzin/telemetry` 0.2.1 from Forgejo's npm registry. "Server" under Errors means GlitchTip gets backend errors only; those frontends had no browser Sentry before, and none was added.
+
+Segment events and pageviews do not share a Rybbit `user_id` for a visitor who is not signed in. The Rybbit script (v2.9.2) keeps `rybbit-visitor-id` only for feature flags, and pageviews get an IP and user-agent fingerprint. Events sent with the visitor id hash it instead (seen on terminal-lobby 2026-11-12: events `5d421c561c62`, pageviews `d867526b0b51`, then `7cb13b13bc5a` after a network change). Signed-in visits still join through the identified user id.
 
 The server and browser events were checked by sending them by hand with real headers, and the served bundles were read. No real signed-in browser visit has been checked since the 2026-11-12 changes. Rybbit files headless browsers under `bot_events`, so automated checks never reach the counted tables; a signed-in visit settles it.
 
