@@ -312,4 +312,15 @@ devvm-home backup is the next step and Viktor's call.
   so the hand unlock after a rebuild is gone. It acts only on 10.0.10.10 or
   on a drill with `/var/lib/t3-provision/drill-unlock-infra`, never on a
   clone that already holds its key, and adds `--key-file` to the filters as
-  on the live clone (`docs/runbooks/devvm-credentials.md`). Not yet drilled.
+  on the live clone (`docs/runbooks/devvm-credentials.md`). Drilled 2026-11-12 (devvm-drill7, below).
+- Round 3 drill (devvm-drill7, 2026-11-12): built from master in 53
+  minutes. The admin run unlocked wizard's `~/code/infra` (plaintext,
+  clean, worktrees decrypt), and the drill kept its own SSH host keys.
+  One Vault sign-in was not enough: Claude said `Not logged in` for both
+  users until a hand `systemctl start claude-auth-sync@<user>` (the run
+  mints the token but does not start the service; the timer's next run is
+  6 h out), after which a haiku `claude -p` answered for both from their
+  setup-tokens, with nothing written to Vault. emo's `paperless` MCP
+  needed a hand fill because his entry changed after the last capture.
+  Both are MAJOR against the measure (`docs/runbooks/devvm-drill.md`,
+  drill log).

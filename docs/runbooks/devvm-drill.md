@@ -97,10 +97,18 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   -ttl=3h -display-name=devvm-<drill>-admin -field=token`, written straight
   to a 0600 file and copied to the drill's `~wizard/.vault-token`), and
   before the run stop what would write shared state from a second box:
-  `systemctl mask` `claude-auth-sync@wizard` and `@emo` (timer and service:
-  a second holder of the shared Claude OAuth refresh tokens could rotate
-  them under the live box), `systemctl disable --now codex-auth-backup.path
-  codex-auth-backup.timer`. The run also unlocks wizard's `~/code/infra`
+  `systemctl disable --now codex-auth-backup.path codex-auth-backup.timer`,
+  and do not run `codex` there (the shared ChatGPT login rotates its refresh
+  token). `claude-auth-sync` can stay on while every roster user has a
+  `setup_token` in `secret/workstation/claude-users/<user>`: then it only
+  reads that token, writes the user's env file and `.credentials.json`, and
+  never writes Vault or refreshes anything (wizard and emo both, checked
+  2026-11-12; on the live box neither `.credentials.json` holds a refresh
+  token). Check first with `vault kv get -format=json
+  secret/workstation/claude-users/<user> | jq '.data.data | has("setup_token")'`;
+  for a user without one, `systemctl mask` their timer and service, since a
+  second box refreshing that user's rotating OAuth token would log the live
+  box out. The run also unlocks wizard's `~/code/infra`
   with the git-crypt key, but only on 10.0.10.10: a drill keeps the key off
   its disk and logs `not the live devvm: wizard:~/code/infra stays locked`.
   To test the unlock on a drill, opt in before the run with `sudo touch
@@ -259,8 +267,14 @@ through "What to check" above, including the T3 and emo items. That run
 also unlocks wizard's `~/code/infra` (the box is on 10.0.10.10, so no
 opt-in is needed); its log says `unlocked wizard:~/code/infra`, and
 `head -c 10 ~/code/infra/config.tfvars | grep -qa GITCRYPT && echo locked
-|| echo unlocked` prints `unlocked`. Nothing else is done by hand after the
-Vault sign-in.
+|| echo unlocked` prints `unlocked`. Two things still need a hand after
+the Vault sign-in (drill 7, 2026-11-12): Claude answers `Not logged in`
+for every user until `claude-auth-sync@<user>` runs, and the admin run
+does not start it, so run `sudo systemctl start claude-auth-sync@wizard
+claude-auth-sync@emo` (or wait up to 6 h for the timer); and an MCP entry
+that changed after its last capture is left for a hand fill (the run's
+`WARN ... fill by hand` line), which the pre-flight's `mcp_uncaptured=0`
+check above prevents.
 
 The new box keeps the live devvm's SSH host keys, so nobody runs
 `ssh-keygen -R` or `ssh-keyscan`: the Proxmox host's `t3-state-pull` and every
@@ -685,3 +699,99 @@ the nightly devvm-home backup on 2026-11-12.
   (found with `vault token lookup -accessor` over `auth/token/accessors`).
   The snippet was re-rendered (`pve-host.yml --tags snippets`) before the
   build, since the bootstrap changed.
+
+**2026-11-12, seventh drill, round 3** (devvm-drill7, VM 9107, 10.0.10.16,
+drill defaults), built by CI from master (07901f06d) after the
+infra-unlock and host-identity workstreams landed. The measure was
+Viktor's: after the bootstrap, one Vault sign-in (the admin provisioning
+run, here a 3 h child token) and nothing else by hand.
+
+- 08:26 boot, 08:34 playbook, 08:45 terminal-lobby, 08:47 provisioning,
+  09:19 status plain `ok`: 53 minutes. The admin run, started from `/`
+  with the drill opted in to the unlock (`drill-unlock-infra`), took 55 s
+  and ended `reconcile complete`; this time it also applied emo's
+  dotfiles.
+- Infra unlock: the run logged `unlocked wizard:~/code/infra with
+  secret/infra git_crypt_key_b64`. As wizard, `git-crypt status
+  config.tfvars` said `encrypted`, its first bytes were plaintext
+  (`unlocked`), it has 271 lines as on the live clone, the key is 0600,
+  `git status` is clean, both filters carry `--key-file`, and a plain
+  `git worktree add` decrypts. No key temp directory was left in `/tmp`,
+  and the key's base64 is in no journal line and no file under `/var/log`.
+  The key and the unlocked clone went with the VM's disk at the teardown.
+- Host identity: the drill kept its own keys (ED25519
+  `SHA256:sCEBp8mu...`, not the live `r1N+5R/B...`); no host-key step in
+  its bootstrap log and no `99-devvm-host-keys.cfg`. The live path is
+  wired: the module tftest (6 runs, including
+  `live_identity_allowed_when_asked`) passes, the handoff adds
+  `devvm-host-identity` only for `HOST_KEYS=true`, and the token role
+  allows that policy.
+- Claude: both users hold a `setup_token`, and on the live box neither
+  `.credentials.json` holds a refresh token, so `claude-auth-sync` was not
+  masked: in that branch it reads the token and writes only the user's
+  own files. Right after the admin run `claude -p` printed `Not logged in`
+  for wizard and emo: the timer's first run, 10 minutes after boot, had
+  no token, and its next is 6 h later. After `systemctl start
+  claude-auth-sync@wizard claude-auth-sync@emo` (logs `OK long-lived
+  setup-token active`), a haiku `claude -p` returned `AUTH_OK` for both,
+  in a login zsh and with `CLAUDE_CODE_OAUTH_TOKEN` unset (the
+  backfilled `.credentials.json` alone). Nothing was written to Vault and
+  no OAuth token was refreshed.
+- Passed as in drill 6: both T3 serves active and 200 (wizard 1,013 and
+  emo 7 threads, the live counts), credentials (wizard 46, emo 20 files),
+  `kubectl` for both users, `gh`, wizard's SSH to Forgejo, terraform
+  1.15.4 and sops 3.9.4, emo's repos, `~/bin` links, `docker`;
+  `google_workspace` and `playwright` connected for wizard; no rows in the
+  session store beyond the live ingest's own (09:15, 17 rows against the
+  live run's `home_files=17`); nothing from the drill under
+  `job="devvm-journal"`.
+- Tokens: emo's `~/.vault-token`, both `claude-auth-sync` tokens and the
+  child were revoked before the teardown; the bootstrap revoked its own.
+
+Hand steps after the Vault sign-in, against the one-sign-in measure:
+
+- **MAJOR: Claude is not logged in after the admin run.** The run mints
+  each user's `claude-auth-sync` Vault token but does not start the
+  service, so wizard, emo and their T3 serves have no Claude until the
+  timer's next run up to 6 h later, or a hand `systemctl start`. A fix:
+  `install_claude_auth_sync` starts `claude-auth-sync@<user>.service` once
+  (`--no-block`) right after it mints the token. On a drill that is safe
+  only while the user has a `setup_token` (above).
+- **MAJOR, avoidable by the pre-flight: emo's `paperless` MCP server
+  fails.** emo's live entry gained `PAPERLESS_API_VERSION` at 08:51, after
+  the 03:47 capture; the key itself is unchanged. Fill compares whole
+  entries, saw a difference, and left it with `WARN ... fill by hand`, so
+  on the drill `claude mcp list` showed `paperless` `Failed to connect`
+  (no `PAPERLESS_API_KEY`). The live ingest already reports it
+  (`mcp_uncaptured=1`), and the replacement pre-flight's capture covers a
+  planned rebuild; an unplanned one would need the hand fill. Fixes: run
+  `mcp-secrets capture --user emo`, and have fill put the secret fields
+  back when only fields without secrets differ.
+
+Smaller findings:
+
+- MINOR: the host's T3 copy runs a night behind. `t3-state-pull` runs in
+  the nightly chain at about 03:08, before the devvm's own
+  `t3-backup-state` at about 03:43, so the host's newest copy on 11-12 was
+  the 11-11 03:47 snapshot (pulled at 03:08 with 0 bytes new). A box lost
+  without the pre-flight would come back with T3 up to about 48 h old,
+  not 24 h.
+- MINOR, latent: `scripts/workstation/stage-chrome-hubs.sh` passes the
+  chrome hub read and write tokens to `jq --arg`, so they are on that
+  process's command line, which snoopy logs on the live box. It runs only
+  when a hub config is missing; the drill has no snoopy, so nothing was
+  logged here.
+- Note: `/usr/local/bin/claude` links into wizard's home, which is 0750 on
+  a new box, so `claude` in a shell without `~/.local/bin` on its PATH
+  gets `Permission denied` as emo (as in drill 5); his zsh and login bash
+  resolve his own copy.
+
+Not checked: the playbook in check mode against the drill (it needs the
+main checkout), a Claude session started from T3 (the serves started
+before the env file existed, so they rely on the backfilled
+`.credentials.json`, which the `CLAUDE_CODE_OAUTH_TOKEN`-unset run
+proved), Vermont.
+
+Verdict: one Vault sign-in was not enough. The infra unlock and the host
+identity need no hand, but Claude needed one `systemctl start` per user,
+and emo's `paperless` MCP needed a fill because its capture was stale.
