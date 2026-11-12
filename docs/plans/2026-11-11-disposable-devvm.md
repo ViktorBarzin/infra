@@ -163,6 +163,10 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
 - The ClickHouse store's size growth once file-history and remote/ are
   ingested is not measured yet.
 - Which local SSH keys already match the copies in Vault was not checked.
+- wizard's login shell runs a hand-built `~/go/bin/sops` 3.12.1, not the
+  pinned 3.9.4 that CI and every other user run. A rebuild drops it, since
+  the home backup skips `~/go`. Whether to retire it now, or move the pin
+  and CI to 3.12.x, is open.
 
 ## Progress (2026-11-11)
 
@@ -180,6 +184,52 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   restored; MCP server secrets have no kept place; chezmoi applies before the
   `~/.claude` restore; the dotfiles repo is behind the live home; the
   MeshCentral sessionKey is still loose. Steps: `docs/runbooks/devvm-drill.md`.
+- Round 2, MeshCentral: the cluster server in `stacks/meshcentral` was the
+  live user of the loose `~/meshcentral-data` copy (same sessionKey, certs
+  and database keys). Its sessionKey now comes from Vault
+  `secret/meshcentral` through ESO and was replaced with a new key; the
+  devvm folder is deleted (`docs/runbooks/devvm-credentials.md`). Review
+  then showed the copy's `meshcentral.db` login-cookie key still opened an
+  admin session, so the init container now rotates the database keys once
+  per `DB_KEY_GENERATION` label, first run 2026-11-11, and
+  `devvm-home-backup` keeps its generations root-only. The certificate
+  private keys are not re-keyed. A second review found MeshCentral's own
+  nightly zips were plain and readable by the host's uid 1000 (emo), so the
+  rotated keys would have flowed back into a readable store that night:
+  since 2026-11-12 the zips are AES-encrypted with a Vault password, and
+  `pve-host.yml --tags backup-perms` makes `/srv/nfs/meshcentral`,
+  `/mnt/backup/meshcentral` and `/mnt/backup/vzdump` root-only. The `/srv/nfs`
+  export still admits any LAN client as root; that is outside this plan.
+- Round 2, terraform: the playbook now installs the `scripts/tg` toolchain
+  at the live system-wide versions (terraform 1.15.4-1, vault 2.0.1-1,
+  terragrunt 0.77.20, sops 3.9.4), and `scripts/devvm-bootstrap` installs
+  the same vault version, read from the playbook, so the playbook does not
+  fail on a downgrade; not yet drilled.
+- Round 2, claude-state: `~/.claude.json` is kept in the session store as a
+  reduced copy (project trust, user-scope MCP servers, the onboarding flags)
+  and restored, merged into one provisioning wrote first; MCP server secrets
+  have a kept place in Vault `secret/workstation/<user>/mcp`
+  (`homelab claude-sessions mcp-secrets`), filled back by provisioning step
+  4a2 (`docs/architecture/claude-session-store.md`).
+- Round 2, claude-state review fixes: fill runs once per user and box
+  (marker `mcp-filled/<user>`), re-reads a file that changed under it, and
+  names entries Vault keeps that the file lacks. The ingest warns when a
+  live MCP secret is new or changed since the last capture (alert
+  `ClaudeSessionsMCPSecretsUncaptured`). Provisioning step 4a3 installs uv
+  and the phpipam MCP venv the restored config starts. wizard's
+  `google_workspace` OAuth files are in `secret/workstation/wizard/files`.
+  A mount-namespace check with those programs and files hidden got
+  calendars back through the restored config.
+- Open, needs Viktor: the ha-sofia ha-mcp add-on's secret URL path was
+  committed in a round-1 test (c114c7f07, replaced by a fake value in
+  a81d0584a). That commit is on Forgejo and on the public GitHub mirror
+  `ViktorBarzin/infra`, so the value is exposed. The endpoint is a LAN
+  address (192.168.1.8:9583), so using it needs LAN access. Not rotated
+  yet: regenerating the path changes the add-on on ha-sofia. After a
+  rotation, update wizard's and emo's `~/.codex/config.toml` and
+  `secret/openclaw` `ha_sofia_mcp_url`, then run `mcp-secrets capture`
+  again for both users. Rewriting history does not help, because mirrors
+  and caches already hold the commit.
 - intercom-watch moved to ha-sofia on 2026-11-12 as the local add-on
   `local_intercom_watch` (the B4 has no HTTP listener, so it reboots it through
   the SDK); the devvm timer is retired.
@@ -188,4 +238,16 @@ stays (`docs/runbooks/devvm-drill.md`, drill log).
   Rotated 14:25 UTC, old token revoked 14:27; no token in Loki is still valid
   (checked 14 days). The runbooks now read the token inside sudo
   (`docs/agents/secrets.md`).
-
+- Round 2, log masking: the devvm's promtail masks secret-shaped values in
+  every job before shipping (`scripts/devvm-promtail.yaml`, live 22:57 UTC,
+  checked by logging a fake token: it reached Loki as `[REDACTED]`). The
+  older token lines are under Loki delete request `60b1d8a8`.
+- Round 2, provisioning: wizard's dotfiles brought up to the live home
+  (tmux-resurrect and continuum, the memory MCP and old `~/.claude` copies
+  gone; chezmoi keeps only links under `~/.claude` on the devvm); the
+  dotfiles apply never writes a regular file under `~/.claude` or `~/.codex`,
+  so the session store's copies win; emo has `ebarzin/dotfiles` and keeps
+  `docker` (`extra_groups`); his agent-instruction fetch no longer ends up
+  owned by root; and a rebuilt box gets Forgejo's host key, the iOS rig units
+  (live address only), one early skills update, and no failed hourly run
+  before the infra clone (`docs/runbooks/devvm-credentials.md`).

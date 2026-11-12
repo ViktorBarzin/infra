@@ -50,6 +50,14 @@ INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
 FORGEJO_BASE="${FORGEJO_BASE:-https://forgejo.viktorbarzin.me}"
 FORGEJO_INFRA_REMOTE="${FORGEJO_INFRA_REMOTE:-$FORGEJO_BASE/viktor/infra.git}"
 REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-$FORGEJO_BASE/viktor}"
+# Forgejo's SSH host key, pinned (install_forgejo_known_hosts): a new box had
+# none, so the first `git` over SSH asked to trust git.viktorbarzin.me (drill
+# 5). The same RSA key every user here already trusts, checked against an
+# ssh-keyscan on 2026-11-11. Forgejo has no other host key type.
+FORGEJO_SSH_HOST_KEY="git.viktorbarzin.me ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCvYoLmdqeB/92oO1fpVtfGuV0XHr6DHMR/tM5Pl0vzK1rh3TXgEpS0zadC060V87eBZVFbH2FZ1Rgg/Ibsp7yTDfZYXF7H6aA+/DcMdrv6z8RQ7IfZ1Nl2jyqwVDTMJ+hihXQ0DLe0TrrNm+5f138LVuKLZMYGU/0a+OgZscPwP7KBbE5FpWOYSp1j+3ne+SdM7hWycbmMO5cFPQzBLGTD8QwM27ZbN/9iIUy3ikGh4CXW/BK7CatkxtZu7Q+duWJIafbB/IZfs8WoIhvNPu1dU5OhYEQYY7t1C8C6PShWSO2jZZmstzYT6aCwpV+E8sq2rb6yuUwvU0Jyy1DmBaAuQJXO6HrtH4bkfKqv9u1TSPPfPMsSa8gP5CUPXeNukYbp73YMbdtSxwRv3sPuLLy1qyCgpxOtheoIcUFqjejc+DFBwrGwAVszSwfVsAbGObLjkB299+VnWQAvABiIAQGNUBx8Els/hPpCxXTQsl85c268A6c6qu8Lryto8fPLsgx0011XuvAQ0KjjBjB35gY9bLW2RgOO5oS//g6KSMzW3JI7qIu42FEvMt0wQpU3wj8Kha/qa3IxHHu+FSumJ/tehjUlYS/uYOMJKi/Bk5j4Uw/KuvP4oRWb6wom5IMO3PvMqtXoYkyfGSh86YBPgMNpva4vLRhUa+dyimudWgOBHQ=="
+# The live devvm's address. A drill VM has another, and must not act for the
+# live box on shared devices (is_live_devvm).
+LIVE_DEVVM_ADDR="${LIVE_DEVVM_ADDR:-10.0.10.10}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
@@ -612,13 +620,23 @@ install_vault_token_renew() {  # install_vault_token_renew USER
   fi
 }
 
-# The user's dotfiles: `chezmoi init --apply` from the roster row's `dotfiles`
-# Forgejo repo (wizard: viktor/dot_files), ONCE per box: an existing
-# ~/.local/share/chezmoi is the user's live source and is never touched, since
-# a whole-tree apply over a home that drifted from the repo would overwrite
-# work. --exclude=encrypted skips the GPG-encrypted entries, which need a
-# passphrase; on the devvm the files they hold (the admin kubeconfig among
-# them) come from Vault through restore_user_credentials, which runs first.
+# The user's dotfiles: `chezmoi init` from the roster row's `dotfiles`
+# Forgejo repo (wizard: viktor/dot_files, emo: ebarzin/dotfiles), then an
+# apply, ONCE per box: an existing ~/.local/share/chezmoi is the user's live
+# source and is never touched, since a whole-tree apply over a home that
+# drifted from the repo would overwrite work. --exclude=encrypted skips the
+# GPG-encrypted entries, which need a passphrase; on the devvm the files they
+# hold (the admin kubeconfig among them) come from Vault through
+# restore_user_credentials, which runs first.
+#
+# The regular files under ~/.claude and ~/.codex are never written from here:
+# the session store restores them (step 4a), and its copy is the newer one. A
+# chezmoi copy written first would be kept by the restore (tar
+# --skip-old-files) and then sent back to the store by the ingest as the
+# newest, which is how drill 5 got wizard's stale plugin lists. So the apply
+# runs in two parts (dotfiles_apply): every other top-level entry whole, and
+# those two directories with files excluded, so their links (CLAUDE.md,
+# AGENTS.md, skills) and directories still come from the dotfiles.
 # chezmoi itself is installed into ~/.local/bin, pinned, when absent.
 install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
   local user="$1" repo="$2" home uid bin src
@@ -639,15 +657,41 @@ install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
     runuser -u "$user" -- sh -c 'cd "$1" && curl -fsSL https://get.chezmoi.io | sh -s -- -b "$1/.local/bin" -t "$2"' \
       _ "$home" "$CHEZMOI_VERSION" >/dev/null 2>&1 || { log "WARN: could not install chezmoi for $user"; return 0; }
   fi
-  if runuser -u "$user" -- env HOME="$home" "$bin" init --apply --force --no-tty --keep-going --exclude=encrypted \
-       "$(repo_url "$repo")" >/dev/null 2>&1; then
-    log "applied dotfiles $repo -> $user"
-  else
+  # </dev/null throughout: this runs inside step 4's read loop, and a chezmoi
+  # prompt reading stdin would eat the remaining users.
+  if ! runuser -u "$user" -- env HOME="$home" "$bin" init --no-tty "$(repo_url "$repo")" </dev/null >/dev/null 2>&1; then
     log "WARN: chezmoi init --apply $repo for $user finished with errors (some entries may be missing)"
     runuser -u "$user" -- rmdir "$src" 2>/dev/null || true   # nothing cloned: let the next run retry
+  elif dotfiles_apply "$user" "$home" "$bin"; then
+    log "applied dotfiles $repo -> $user"
+  else
+    log "WARN: chezmoi apply of $repo for $user finished with errors (some entries may be missing)"
   fi
   uid="$(id -u "$user" 2>/dev/null)" && \
     runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
+# dotfiles_apply USER HOME BIN: apply the user's initialised chezmoi source in
+# two parts, so the session store's files under ~/.claude and ~/.codex are never
+# overwritten (install_user_dotfiles says why). Returns 1 when either part
+# reported an error; --keep-going applies the rest regardless.
+dotfiles_apply() {
+  local user="$1" home="$2" bin="$3" t rc=0 rest=() agent=()
+  local cz=(runuser -u "$user" -- env HOME="$home" "$bin")
+  while IFS= read -r t; do
+    case "$t" in
+      ""|*/*) ;;
+      .claude|.codex) agent+=("$home/$t") ;;
+      *) rest+=("$home/$t") ;;
+    esac
+  done < <("${cz[@]}" managed --path-style=relative </dev/null 2>/dev/null | sort -u)
+  if (( ${#rest[@]} )); then
+    "${cz[@]}" apply --force --no-tty --keep-going --exclude=encrypted "${rest[@]}" </dev/null >/dev/null 2>&1 || rc=1
+  fi
+  if (( ${#agent[@]} )); then
+    "${cz[@]}" apply --force --no-tty --keep-going --exclude=encrypted,files "${agent[@]}" </dev/null >/dev/null 2>&1 || rc=1
+  fi
+  return "$rc"
 }
 
 # The admin's own infra checkout at ~/code/infra. Non-admins get a locked clone
@@ -1213,31 +1257,38 @@ install_memory() {
 # from AGENTS.md on master of that Forgejo repo, the user's own private one.
 #
 # The fetch lands in one bare repository per user under $AGENTS_FETCH_DIR, a
-# directory owned by the admin infra checkout's owner ($clone_owner, wizard) and
-# closed to everyone else. Every git command runs as that owner, like step 0a's
-# fetch, so it authenticates with that owner's Forgejo credential (viktor, a
-# collaborator on each user's repo) and root never runs git in a repository it
-# does not own. Root only writes what `git show` prints, into a 0700 directory.
-# Only committed master is read; no working tree is involved.
+# directory owned by $agents_owner (resolve_agents_owner: the admin infra
+# checkout's owner, wizard) and closed to everyone else. Every git command runs
+# as that owner, like step 0a's fetch, so it authenticates with that owner's
+# Forgejo credential (viktor, a collaborator on each user's repo) and root
+# never runs git in a repository it does not own. Root only writes what `git
+# show` prints, into a 0700 directory. Only committed master is read; no
+# working tree is involved. A fetch repository owned by anyone else is a cache
+# from an earlier run with another owner, and is made again.
 #
 # Fail safe: a failed fetch, or a master with no AGENTS.md, keeps the last good
 # copy, so the user keeps the instructions they already have, and says so in
 # the journal. Best-effort tail: must return 0.
 fetch_user_agents() {
-  local user="$1" repo="$2" mirror dest sha
+  local user="$1" repo="$2" mirror dest sha owner="${agents_owner:-$clone_owner}" had
   mirror="$AGENTS_FETCH_DIR/$user.git"; dest="$AGENTS_SRC_DIR/$user.md"
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fetch agent instructions for $user from $repo master"; return 0; fi
   install -d -m 0700 "$AGENTS_SRC_DIR"   # root only: one user's file is not another's to read
-  install -d -m 0700 -o "$clone_owner" "$AGENTS_FETCH_DIR" || { log "WARN: cannot create $AGENTS_FETCH_DIR -> agent instructions for $user unchanged"; return 0; }
-  if [[ ! -d "$mirror" ]] && ! runuser -u "$clone_owner" -- git init --quiet --bare "$mirror" >/dev/null 2>&1; then
+  install -d -m 0700 -o "$owner" "$AGENTS_FETCH_DIR" || { log "WARN: cannot create $AGENTS_FETCH_DIR -> agent instructions for $user unchanged"; return 0; }
+  # Drill 5: the first-boot run, from root's /opt clone, made this as root,
+  # and every hourly fetch after it, as wizard, failed on FETCH_HEAD.
+  if [[ -d "$mirror" ]] && had="$(stat -c %U "$mirror" 2>/dev/null)" && [[ "$had" != "$owner" ]]; then
+    rm -rf "$mirror" && log "agent instructions fetch for $user was owned by $had, not $owner -> made again"
+  fi
+  if [[ ! -d "$mirror" ]] && ! runuser -u "$owner" -- git init --quiet --bare "$mirror" >/dev/null 2>&1; then
     log "WARN: cannot create $mirror -> agent instructions for $user unchanged"; return 0
   fi
-  if ! runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git --git-dir="$mirror" \
+  if ! runuser -u "$owner" -- env GIT_TERMINAL_PROMPT=0 git --git-dir="$mirror" \
        fetch --quiet --no-tags "$FORGEJO_BASE/$repo.git" +refs/heads/master:refs/heads/master 2>/dev/null; then
     log "WARN: fetch of $repo failed -> agent instructions for $user unchanged"; return 0
   fi
-  sha="$(runuser -u "$clone_owner" -- git --git-dir="$mirror" rev-parse --short master 2>/dev/null)"
-  if runuser -u "$clone_owner" -- git --git-dir="$mirror" show master:AGENTS.md > "$dest.tmp" 2>/dev/null \
+  sha="$(runuser -u "$owner" -- git --git-dir="$mirror" rev-parse --short master 2>/dev/null)"
+  if runuser -u "$owner" -- git --git-dir="$mirror" show master:AGENTS.md > "$dest.tmp" 2>/dev/null \
      && [[ -s "$dest.tmp" ]]; then
     mv -f "$dest.tmp" "$dest"
     log "agent instructions for $user: $repo master ($sha)"
@@ -1540,9 +1591,120 @@ PYEOF
   return 0
 }
 
+# ---- first boot of a rebuilt box (drill 5 gaps, 2026-11-11) ------------------
+
+# check_workstation_inputs: 0 when the roster and engine are there; 1 when the
+# infra checkout they live in does not exist yet; 2 when it exists without
+# them. 1 is a box still being built: the hourly timer fires during the
+# playbook, before the bootstrap's own run has cloned ~/code/infra, and that
+# run used to fail the unit once on every new box (drills 3 and 5).
+check_workstation_inputs() {
+  [[ -d "$WORKSTATION_DIR" ]] || return 1
+  [[ -f "$ROSTER" && -f "$ENGINE" ]] || return 2
+  return 0
+}
+
+# resolve_agents_owner CLONE_OWNER ADMINS: who runs the agent-instruction
+# fetches (fetch_user_agents). The infra checkout's owner, unless that is
+# root: the bootstrap's run reads its roster from a root-owned clone in /opt,
+# and fetches made as root are ones the admin's hourly runs cannot write to.
+# Then the first admin (ADMINS: /etc/ttyd-admins text) with an account, and
+# root only when there is none.
+resolve_agents_owner() {
+  local u
+  if [[ "$1" != root ]]; then echo "$1"; return 0; fi
+  while IFS= read -r u; do
+    [[ -z "$u" || "$u" == \#* ]] && continue
+    if id "$u" >/dev/null 2>&1; then echo "$u"; return 0; fi
+  done <<<"$2"
+  echo root
+}
+
+# install_forgejo_known_hosts USER: FORGEJO_SSH_HOST_KEY in ~/.ssh/known_hosts
+# when no entry for the host is there (hashed or plain), written as the user.
+install_forgejo_known_hosts() {
+  local user="$1" home kh
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  kh="$home/.ssh/known_hosts"
+  runuser -u "$user" -- ssh-keygen -F git.viktorbarzin.me -f "$kh" </dev/null >/dev/null 2>&1 && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] Forgejo SSH host key -> $user:~/.ssh/known_hosts"; return 0; fi
+  if [[ ! -d "$home/.ssh" ]]; then
+    mkdir_as "$user" 0700 "$home/.ssh" || { log "WARN: could not create $user:~/.ssh"; return 0; }
+  fi
+  if runuser -u "$user" -- sh -c 'umask 022; printf "%s\n" "$2" >> "$1"' _ "$kh" "$FORGEJO_SSH_HOST_KEY"; then
+    log "Forgejo SSH host key -> $user:~/.ssh/known_hosts"
+  else
+    log "WARN: could not write $user:~/.ssh/known_hosts"
+  fi
+  return 0
+}
+
+# start_skills_update_once OS_USER...: start claude-skills-update once per box,
+# as soon as every listed user who has an account has had their agent state
+# restored (step 4a brings back ~/.agents/.skill-lock.json, which the updater
+# installs from). Its timer fires at 05:45, so a rebuilt box had no skills
+# until the next morning (drill 5). The marker in $STATEDIR makes it once.
+start_skills_update_once() {
+  local marker="$STATEDIR/skills-update.started" u
+  [[ -e "$marker" ]] && return 0
+  for u in "$@"; do
+    id "$u" >/dev/null 2>&1 || continue
+    [[ -e "$CLAUDE_SESSIONS_RESTORED_DIR/$u" ]] || return 0
+  done
+  systemctl cat claude-skills-update.service >/dev/null 2>&1 || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] start claude-skills-update once"; return 0; fi
+  if systemctl start --no-block claude-skills-update.service >/dev/null 2>&1; then
+    : > "$marker"
+    log "started claude-skills-update once (skills without waiting for its 05:45 timer)"
+  else
+    log "WARN: could not start claude-skills-update.service"
+  fi
+  return 0
+}
+
+# is_live_devvm: this box holds the live devvm's address. Same test as the
+# session-store ingest's ExecCondition.
+is_live_devvm() {
+  ip -4 -o addr show scope global 2>/dev/null | grep -qF " ${LIVE_DEVVM_ADDR:-10.0.10.10}/"
+}
+
+# install_ios_rig_units USER TIER: the iOS test rig's user units
+# (docs/runbooks/ios-test-rig.md), which only `homelab ios bootstrap
+# --units-only` writes, so a rebuilt box lacked them (drill 5). Run as the
+# user, with an empty environment and their own ~/.vault-token, for an admin
+# whose Vault token reads secret/ios-rig (the rig is configured), when the
+# units are absent, and only on the live box's address: a drill must not hold
+# a second tunnel to the Mac or talk to the phone beside the live box.
+install_ios_rig_units() {
+  local user="$1" tier="$2" home="" uid="" bin="${HOMELAB_BIN:-/usr/local/bin/homelab}" vault_bin out
+  [[ "$tier" == admin ]] || return 0
+  IFS=: read -r _ _ uid _ _ home _ < <(getent passwd "$user") || return 0
+  [[ -n "$home" && -n "$uid" && -d "$home" && -x "$bin" ]] || return 0
+  [[ -e "$home/.config/systemd/user/ios-rig-tunnel.service" ]] && return 0
+  is_live_devvm || return 0
+  [[ -s "$home/.vault-token" ]] || return 0
+  vault_bin="$(command -v vault)" || return 0
+  local envu=(env -i HOME="$home" USER="$user" LOGNAME="$user" PATH=/usr/local/bin:/usr/bin:/bin
+              XDG_RUNTIME_DIR="/run/user/$uid" VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}")
+  timeout 30 runuser -u "$user" -- "${envu[@]}" "$vault_bin" kv get -format=json secret/ios-rig </dev/null >/dev/null 2>&1 || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] homelab ios bootstrap --units-only -> $user"; return 0; fi
+  if out="$(timeout 120 runuser -u "$user" -- "${envu[@]}" "$bin" ios bootstrap --units-only </dev/null 2>&1)"; then
+    log "iOS rig units restored -> $user"
+  else
+    log "WARN: homelab ios bootstrap --units-only failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+  return 0
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
-[[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
+inputs_rc=0; check_workstation_inputs || inputs_rc=$?
+if (( inputs_rc == 1 )); then
+  log "the infra checkout at ${WORKSTATION_DIR%/scripts/workstation} is not there yet (a box still being built) -> nothing to reconcile"
+  exit 0
+fi
+(( inputs_rc == 0 )) || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
 
 # 0a) run what is COMMITTED, not what happens to be in a working tree.
 #
@@ -1860,6 +2022,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     restore_user_credentials "$os_user"    # an existing account was done in 3d
   fi
   install_user_dotfiles "$os_user" "$dotfiles"
+  install_forgejo_known_hosts "$os_user"
   [[ "$tier" == admin ]] && install_admin_infra_clone "$os_user"
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
@@ -1895,6 +2058,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
   install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
   install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
+  install_ios_rig_units "$os_user" "$tier"   # admins, live box only, when the rig is configured
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
 
 # --- session-store (disposable devvm, 2026-11-11) ---
@@ -1931,6 +2095,92 @@ for u in $( { jq -r '.accounts[].os_user' "$desired_file"; for h in /home/*/; do
   [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && restore_agent_state "$u"
 done
 # --- end session-store ---
+
+# --- claude-state (disposable devvm, 2026-11-11) ---
+# 4a2) MCP server secrets from Vault. The store keeps ~/.claude.json and
+# ~/.codex/config.toml without their MCP secrets (header values, env keys,
+# the ha server's secret URL path); `mcp-secrets fill` puts them back from
+# secret/workstation/<user>/mcp into an entry that is exactly the store's
+# redacted copy of the Vault one, so the live box's files are never touched.
+# Admin token only (the hourly run skips this quietly); prints nothing when
+# there is nothing to fill. The token reaches homelab in its environment, and
+# homelab writes as the user with that environment emptied.
+# Once per user per box: a marker in CLAUDE_SESSIONS_MCP_FILLED_DIR records a
+# fill that ran, so a later pass cannot put back a secret the user removed
+# since (dropping just an API key leaves the stripped form fill matches).
+# A failed fill leaves no marker and runs again on the next admin pass.
+CLAUDE_SESSIONS_MCP_FILLED_DIR="${CLAUDE_SESSIONS_MCP_FILLED_DIR:-/var/lib/claude-sessions-ingest/mcp-filled}"
+fill_mcp_secrets() {  # fill_mcp_secrets USER
+  local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
+  [[ -x "$bin" ]] || return 0
+  agent_state_restored "$user" || return 0
+  [[ -e "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fill MCP server secrets from Vault -> $user"; return 0; fi
+  vault_admin token lookup >/dev/null 2>&1 || return 0
+  if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" "$bin" claude-sessions mcp-secrets fill --user "$user" 2>&1)"; then
+    [[ -z "$out" ]] || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+    mkdir -p -m 0700 "$CLAUDE_SESSIONS_MCP_FILLED_DIR" && date -u +%FT%TZ > "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user"
+  else
+    log "WARN: MCP secret fill failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+# 4a3) The home-local programs a restored MCP config starts. The session
+# store brings back ~/.claude.json and ~/.codex/config.toml, but not the
+# programs they name under ~/.local: wizard's google_workspace server runs
+# ~/.local/bin/uvx, his Codex phpipam server a venv in
+# ~/.local/share/phpipam-mcp. Each is installed, as the user and pinned, only
+# when a config names it and it is absent, so a live home is never touched.
+# Their OAuth files come from Vault with the other credential files
+# (workstation-creds). No admin token needed; quiet when there is nothing to do.
+MCP_UV_VERSION="0.11.19"   # the version wizard's live ~/.local/bin/uv is, and the playbook's ios_rig_uv_version
+MCP_UV_SHA256="7035608168e106375b36d0c818d537a889c51a8625fe7f8f7cad5e62b947c368"
+MCP_PHPIPAM_VERSION="0.2.1"
+# The live venv's packages, exact: 0.2.1 pins mcp but not what mcp pulls in,
+# and a fresh resolve (Nov 2026) gets versions its import fails on.
+MCP_PHPIPAM_PINS="annotated-types==0.7.0 anyio==4.13.0 attrs==26.1.0 certifi==2026.2.25 charset-normalizer==3.4.7 click==8.3.2 h11==0.16.0 httpcore==1.0.9 httpx==0.28.1 httpx-sse==0.4.3 idna==3.11 jsonschema==4.26.0 jsonschema-specifications==2025.9.1 mcp==1.14.1 pydantic==2.12.5 pydantic-core==2.41.5 pydantic-settings==2.13.1 python-dotenv==1.2.2 python-multipart==0.0.25 referencing==0.37.0 requests==2.32.5 rpds-py==0.30.0 sse-starlette==3.3.4 starlette==1.0.0 typing-extensions==4.15.0 typing-inspection==0.4.2 urllib3==2.6.3 uvicorn==0.44.0"
+install_mcp_tools() {  # install_mcp_tools USER
+  local user="$1" home cfgs=() f uv ipam
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  agent_state_restored "$user" || return 0
+  for f in "$home/.claude.json" "$home/.codex/config.toml"; do [[ -f "$f" && ! -L "$f" ]] && cfgs+=("$f"); done
+  (( ${#cfgs[@]} )) || return 0
+  uv="$home/.local/bin/uvx" ipam="$home/.local/share/phpipam-mcp/bin/phpipam-mcp-server"
+  local sane=(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$home" LANG=C.UTF-8)
+  local need_uv=0
+  [[ ! -x "$uv" ]] && grep -qF '.local/bin/uv' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  # The phpipam venv is made with uv.
+  [[ ! -x "$ipam" && ! -x "$home/.local/bin/uv" ]] && grep -qF '.local/share/phpipam-mcp/' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  if (( need_uv )); then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install uv $MCP_UV_VERSION -> $user ~/.local/bin"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; umask 022; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT
+        curl -fsSL -o "$d/uv.tgz" "$1"; echo "$2  $d/uv.tgz" | sha256sum -c --quiet
+        tar -xzf "$d/uv.tgz" -C "$d" --strip-components=1; mkdir -p "$HOME/.local/bin"
+        for b in uv uvx; do [ -e "$HOME/.local/bin/$b" ] || cp "$d/$b" "$HOME/.local/bin/$b"; done' \
+        _ "https://github.com/astral-sh/uv/releases/download/$MCP_UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" "$MCP_UV_SHA256" \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed uv $MCP_UV_VERSION into ~/.local/bin for the restored MCP config"
+    else
+      log "WARN: could not install uv for $user (the MCP servers that run ~/.local/bin/uvx will not start)"
+    fi
+  fi
+  if [[ ! -x "$ipam" ]] && grep -qF '.local/share/phpipam-mcp/bin/phpipam-mcp-server' "${cfgs[@]}" 2>/dev/null; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install phpipam-mcp-server $MCP_PHPIPAM_VERSION -> $user ~/.local/share/phpipam-mcp"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; v="$HOME/.local/share/phpipam-mcp"
+        "$HOME/.local/bin/uv" venv --quiet --allow-existing --python /usr/bin/python3 "$v"
+        "$HOME/.local/bin/uv" pip install --quiet --python "$v/bin/python" "$@"' _ "phpipam-mcp-server==$MCP_PHPIPAM_VERSION" $MCP_PHPIPAM_PINS \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed phpipam-mcp-server $MCP_PHPIPAM_VERSION into ~/.local/share/phpipam-mcp for the restored MCP config"
+    else
+      log "WARN: could not install phpipam-mcp-server for $user (the Codex phpipam MCP server will not start)"
+    fi
+  fi
+  return 0
+}
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && install_mcp_tools "$u" && fill_mcp_secrets "$u"
+done
+# --- end claude-state ---
 
 # --- emo-jobs (disposable devvm, 2026-11-11) ---
 # 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
@@ -2051,6 +2301,7 @@ done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$des
 #     Retires the old shared rules in every home that has its own file. Personal
 #     slot created once, never rewritten. Pruned first, so a user whose
 #     agents_repo was removed is not installed again this run.
+agents_owner="$(resolve_agents_owner "$clone_owner" "$(jq -r '.ttyd_admins' "$desired_file")")"
 prune_user_agents "$(jq -r '.accounts[] | select(.agents_repo != null) | .os_user' "$desired_file")"
 while IFS=$'\t' read -r os_user agents_repo; do
   id "$os_user" >/dev/null 2>&1 || continue
@@ -2185,5 +2436,9 @@ if [[ "$DRY_RUN" == 1 ]]; then
 else
   install -m 0644 "$ROSTER" "$applied_snapshot"
 fi
+
+# 8) skills on a rebuilt box: claude-skills-update once, after every user's
+#    agent state is back (start_skills_update_once).
+start_skills_update_once $(jq -r '.accounts[].os_user' "$desired_file")
 
 log "reconcile complete ($([[ "$DRY_RUN" == 1 ]] && echo DRY-RUN || echo applied))"

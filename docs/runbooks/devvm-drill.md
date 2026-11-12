@@ -115,7 +115,14 @@ new Vault path, add it to the policy, or a fresh build fails at that task.
   user once provisioning step 4a has restored them, and `claude --resume` as
   each user lists their sessions. `~/.claude/settings.json` is the user's own
   (statusLine, enabledPlugins, env flags) with the memory keys filled from
-  Vault, not a hooks-only skeleton. The drill must read the store and never
+  Vault, not a hooks-only skeleton. `jq '.mcpServers | keys' ~/.claude.json` lists the
+  user's MCP servers, `claude mcp list` shows them connected after the admin
+  run's `mcp-secrets fill` (`sudo ls /var/lib/claude-sessions-ingest/mcp-filled/`
+  lists each user it ran for), wizard's `~/.local/bin/uvx` and
+  `~/.local/share/phpipam-mcp/bin/phpipam-mcp-server` exist (step 4a3), a
+  `google_workspace` tool call such as `list_calendars` returns data, and
+  `claude` in a project the user trusted on the
+  live box starts without the trust prompt. The drill must read the store and never
   write to it: no `/etc/claude-sessions/ingest.env`,
   `claude-sessions-ingest.timer` disabled, and after the drill no rows from
   its time window that the live ingest's journal does not account for:
@@ -186,7 +193,9 @@ comes back:
 2. On the devvm: `sudo systemctl start t3-backup-state.service`, then
    `sudo systemctl start claude-sessions-ingest.service`; both journals end
    with a success line. Re-capture any credential rotated since its last
-   capture (`devvm-credentials.md`, "Add or refresh a credential").
+   capture (`devvm-credentials.md`, "Add or refresh a credential"), and each
+   user's MCP server secrets (`devvm-credentials.md`, "MCP server secrets");
+  `journalctl -u claude-sessions-ingest -n 1` shows `mcp_uncaptured=0`.
 3. On the host: `systemctl start t3-state-pull.service devvm-home-backup.service`;
    `ls -l /mnt/backup/t3-state/*/` shows a snapshot from the last hour per
    user.
@@ -320,6 +329,16 @@ Found in review of drill 3, fixed afterwards:
   installed t3 and the bootstrap does not run it. The databases were
   restored but nothing served them. `t3-autoupdate` now does a first install
   on a box with no t3, and `playbooks/devvm.yml` runs it once.
+- Rehearsing that first install on the live box set off a false page. The
+  run used a scratch `T3_LINK` but read the live `/usr/bin/t3` as its own
+  version, so at 17:11 it logged `rolling back` and `ROLLBACK FAILED` into
+  the live journal: `T3AutoUpdateRollbackFailed` paged and
+  `T3AutoUpdateRolledBack` would have stayed firing through the 0.1.9 bump the
+  next morning. The live state was untouched (`last-good` 0.1.8,
+  `/usr/bin/t3` on 0.1.8, no freeze file, no 0.1.9 pre-bump backups). A
+  scratch link now reads its own version and never runs `npm -g` or restarts
+  a serve, and the three rules count only lines from the t3 systemd units
+  (`docs/runbooks/t3-version-bump.md`).
 - Its journal still drove live alerts: the host label was its own, but every
   rule selects on `job`. `WorkstationClaudeAuthInvalid` fired for wizard and
   emo from drill FAIL lines (drill 2 at 14:22, 15:02 and 15:43 as
@@ -414,39 +433,70 @@ Gaps it found, none fixed in the drill itself:
 - **MAJOR: no terraform.** The playbook declares the HashiCorp apt source
   but installs only Docker and kubectl from the third-party sources; the
   live box's terraform 1.15.4 was installed by hand. `homelab tf` and
-  `scripts/tg` cannot run on a rebuilt box.
+  `scripts/tg` cannot run on a rebuilt box. Fixed 2026-11-11 after the
+  drill: the playbook installs terraform 1.15.4-1 and vault 2.0.1-1 from
+  that source and fetches terragrunt 0.77.20 and sops 3.9.4 by checksum,
+  the versions installed system-wide on the live box (`devvm_terraform_version`
+  and the lines after it). wizard's login shell resolves a hand-built
+  `~/go/bin/sops` 3.12.1 ahead of `/usr/local/bin/sops`; the home backup
+  skips `~/go`, so a rebuilt box runs 3.9.4, CI's version, for everyone.
+  Round 2 review: `scripts/devvm-bootstrap` installed the newest vault
+  (2.2.1-1) before the playbook, and the playbook's `vault=2.0.1-1` then
+  failed on the downgrade. The bootstrap now installs the version it reads
+  from `devvm_vault_version` in the cloned playbook. Not yet drilled.
 - **MAJOR: emo's agent instructions never come back.** The bootstrap's
   provisioning run creates `/var/lib/t3-provision/agent-repos/emo.git`
   before the admin infra clone exists, so as root; every later fetch runs
   as wizard, gets `Permission denied` on `FETCH_HEAD`, and logs `fetch of
   ebarzin/agents failed` every hour. `~emo/.agents/AGENTS.md` (62 KB on the
   live box, the target of his `~/.claude/CLAUDE.md`) stays missing.
+  Fixed after the drill: the fetches belong to the first admin when the
+  run's clone is root's (`resolve_agents_owner`), and a fetch owned by
+  anyone else is made again.
 - **MAJOR: emo's shell setup has no kept place.** His roster row has no
   dotfiles repo, so `.zshrc`, `.zshenv`, `.zprofile`, `.tmux.conf.local`
   and `.tmux` are lost. Without his `.zshrc`, `~/.local/bin` is not on his
   zsh PATH, `claude` resolves to `/usr/local/bin/claude`, a link into
   wizard's home, and that home is 0750 on a new box (0751 on the live one),
   so his shell prints `permission denied: claude`. T3 is unaffected: its
-  unit's PATH falls through to `~/.local/bin`.
+  unit's PATH falls through to `~/.local/bin`. Fixed after the drill: his
+  row has `dotfiles: ebarzin/dotfiles` (`devvm-credentials.md`, "Dotfiles").
 - **MAJOR, known: `~/.claude.json` is not restored.** wizard loses the
   `google_workspace` MCP server and 454 project entries, emo the
   `paperless` MCP server; the first `claude` shows the onboarding and the
-  folder trust prompt.
+  folder trust prompt. Fixed after this drill: the store keeps a reduced
+  `~/.claude.json` (project trust, user-scope MCP servers, the onboarding
+  flags), restore writes it back or merges it into one provisioning wrote
+  first, and the MCP secrets it leaves out come back from Vault
+  `secret/workstation/<user>/mcp` in provisioning step 4a2
+  (`claude-session-store.md`). Checked on the live box into scratch homes
+  (`devvm-credentials.md`, "MCP server secrets"); not yet drilled on a VM.
+  A review then found that `google_workspace` and the Codex `phpipam`
+  server start programs under `~/.local` and read OAuth files that nothing
+  kept. Step 4a3 now installs those programs, the OAuth files are in Vault,
+  and a mount-namespace check with all of them hidden got calendars back
+  through the restored config.
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
-  group is root-equivalent.
+  group is root-equivalent. Viktor decided he keeps it: his row has
+  `extra_groups: [docker]`.
 - MINOR: skills come back only when `claude-skills-update.timer` fires
   (05:45 daily); provisioning does not start it. After a manual run wizard
   still lacks `unslop` and emo `cluster-health` and his 20
-  `~/.agents/skills` folders.
+  `~/.agents/skills` folders. Since the drill provisioning starts it once
+  per box, when every user's `~/.claude` is back; the missing skills are a
+  separate gap.
 - MINOR: wizard's `ios-rig-doctor.timer`, `ios-rig-tunnel.service` and
   `ios-rig-wifi.service` come back only through `homelab ios bootstrap
-  --units-only` (`ios-test-rig.md`), which no rebuild step runs.
+  --units-only` (`ios-test-rig.md`), which no rebuild step runs. Since the
+  drill provisioning runs it for an admin whose token reads
+  `secret/ios-rig`, on the live box's address only, so a drill never does.
 - MINOR: no known_hosts entry for Forgejo on a new box, so wizard's first
-  `git` over SSH asks to trust `git.viktorbarzin.me`.
+  `git` over SSH asks to trust `git.viktorbarzin.me`. Since the drill
+  provisioning writes Forgejo's pinned host key for every user.
 - MINOR, as in drill 3: the hourly `t3-provision-users.service` fires
   during the playbook and fails once before the infra clone exists; the
-  next run succeeds.
+  next run succeeds. Since the drill that run exits 0 and logs why.
 - ancamilea gets no account (her roster row is parked). Her state is
   kept: 200 `home_files` and 2 sessions in the store, 7 credential files in
   Vault, her T3 copy on the host.

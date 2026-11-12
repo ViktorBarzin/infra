@@ -27,7 +27,7 @@ no() { if "${@:2}"; then fail=$((fail+1)); echo "FAIL: $1"; else pass=$((pass+1)
 extract() {
   awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{" {on=1} on {print} on && /^}/ {exit}' "$SCRIPT"
 }
-for fn in take_admin_vault_token vault_admin mkdir_as write_as repo_url restore_user_credentials install_vault_token_renew install_user_dotfiles install_agent_api_keys install_admin_infra_clone stage_shared_auth; do
+for fn in take_admin_vault_token vault_admin mkdir_as write_as repo_url restore_user_credentials install_vault_token_renew install_user_dotfiles dotfiles_apply install_agent_api_keys install_admin_infra_clone stage_shared_auth; do
   eval "$(extract "$fn")"
   declare -F "$fn" >/dev/null || { echo "FAIL: $fn not found in $SCRIPT"; exit 1; }
 done
@@ -78,7 +78,7 @@ echo "curl $*" >> "$CALLS"
 # source with a .git in it, as a real clone does
 cat <<'SH'
 while [ $# -gt 0 ]; do case "$1" in -b) b="$2"; shift;; esac; shift; done
-mkdir -p "$b"; printf '#!/bin/sh\necho "chezmoi $*" >> "$CALLS"\nmkdir -p "$HOME/.local/share/chezmoi/.git"\n' > "$b/chezmoi"; chmod +x "$b/chezmoi"
+mkdir -p "$b"; printf '#!/bin/sh\necho "chezmoi $*" >> "$CALLS"\nmkdir -p "$HOME/.local/share/chezmoi/.git"\n[ "$1" = managed ] && printf ".zshrc\\n.claude\\n.claude/settings.json\\n.claude/CLAUDE.md\\n"\nexit 0\n' > "$b/chezmoi"; chmod +x "$b/chezmoi"
 SH
 EOF
 chmod +x "$tmp/bin/"*
@@ -170,8 +170,13 @@ eq "no dotfiles repo, nothing happens" "" "$(cat "$CALLS")"
 install_user_dotfiles "$me" viktor/dot_files
 ok "chezmoi is installed at the pinned version when missing" grep -q '^curl ' "$CALLS"
 ok "the binary lands in ~/.local/bin" test -x "$home/.local/bin/chezmoi"
-ok "init --apply runs from the roster repo, skipping encrypted entries" \
-  grep -qF "chezmoi init --apply --force --no-tty --keep-going --exclude=encrypted https://forgejo.example.invalid/viktor/dot_files.git" "$CALLS"
+ok "init clones the roster repo without applying it" \
+  grep -qxF "chezmoi init --no-tty https://forgejo.example.invalid/viktor/dot_files.git" "$CALLS"
+ok "everything outside ~/.claude and ~/.codex is applied, skipping encrypted entries" \
+  grep -qxF "chezmoi apply --force --no-tty --keep-going --exclude=encrypted $home/.zshrc" "$CALLS"
+ok "inside ~/.claude only links and directories are applied: the session store restores its files" \
+  grep -qxF "chezmoi apply --force --no-tty --keep-going --exclude=encrypted,files $home/.claude" "$CALLS"
+no "~/.codex is not named when the source has nothing there" grep -qF "$home/.codex" "$CALLS"
 ok "the user manager reloads the new units" grep -q 'systemctl --user daemon-reload' "$CALLS"
 
 : > "$CALLS"

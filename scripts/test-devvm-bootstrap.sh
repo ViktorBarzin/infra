@@ -52,7 +52,9 @@ case "$*" in
     [ -z "${SEED_VAULT_FAIL:-}" ] || exit 2
     printf "{\"data\":{\"data\":{\"private_key\":\"PRIVKEY-SECRET\",\"known_hosts\":\"192.168.1.127 ssh-ed25519 AAAAhostkey\"}}}" ;;
 esac'
-  stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n[ -e \"\$DEVVM_BOOTSTRAP_T3_HOLD\" ] && echo provisioner-held >>\"$LOG\"\nexit 0\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
+  # The clone carries the real playbook, so the vault version the bootstrap
+  # installs is checked against the one the playbook pins.
+  stub git 'case "$1" in clone) mkdir -p "${@: -1}/scripts/workstation" "${@: -1}/playbooks"; cp "'"$DIR"'/../playbooks/devvm.yml" "${@: -1}/playbooks/devvm.yml"; [ -z "${NO_VAULT_PIN:-}" ] || sed -i "/devvm_vault_version:/d" "${@: -1}/playbooks/devvm.yml"; printf "#!/bin/sh\necho provisioner \"\$WORKSTATION_DIR\" >>\"$LOG\"\n[ -e \"\$DEVVM_BOOTSTRAP_T3_HOLD\" ] && echo provisioner-held >>\"$LOG\"\nexit 0\n" >"${@: -1}/scripts/t3-provision-users.sh" ;; esac'
   stub ansible-playbook 'echo "playbook VAULT_TOKEN=$VAULT_TOKEN HOME=${HOME:-unset} cwd=$PWD" >>"$LOG.env"; [ -e "$DEVVM_BOOTSTRAP_T3_HOLD" ] && echo "hold present at playbook" >>"$LOG.env"; exit "${PLAYBOOK_RC:-0}"'
   # rsync records the key and known_hosts files its ssh was given, then
   # "copies" one snapshot into a destination that arrives root-only, as the
@@ -65,6 +67,8 @@ d="${@: -1}"; mkdir -p "$d/wizard"; chmod 0700 "$d"; echo snap >"$d/wizard/state
 exit "${RSYNC_RC:-0}"'
   stub install 'cp "${@: -2:1}" "${@: -1}" && chmod +x "${@: -1}"'
   stub apt-get 'exit 0'
+  # dpkg-query reports the installed vault: none on a blank box.
+  stub dpkg-query 'printf "%s" "${VAULT_INSTALLED:-}"; [ -n "${VAULT_INSTALLED:-}" ]'
 }
 
 run_bootstrap() {
@@ -76,9 +80,11 @@ run_bootstrap() {
     DEVVM_BOOTSTRAP_PROVISIONER="$SB/t3-provision-users" \
     DEVVM_BOOTSTRAP_T3_DIR="$SB/t3" \
     DEVVM_BOOTSTRAP_T3_HOLD="$SB/hold/awaiting-snapshots" \
+    DEVVM_BOOTSTRAP_HASHICORP_KEYRING="$SB/hashicorp.asc" \
+    DEVVM_BOOTSTRAP_HASHICORP_LIST="$SB/hashicorp.list" \
     DEVVM_BOOTSTRAP_WAIT="${WAIT:-2}" \
     DEVVM_BOOTSTRAP_POLL=1 \
-    bash "$BOOTSTRAP" >"$SB/log/out" 2>&1
+    bash "$BOOTSTRAP" </dev/null >"$SB/log/out" 2>&1
 }
 
 # 1. Happy path: unwrap, clone the asked ref, playbook, provisioning, revoke.
@@ -125,6 +131,31 @@ eq "snapshot directory stays 755 for the users' own nightly copies" "755" "$(sta
 eq "snapshots arrived" "snap" "$(cat "$SB/t3/wizard/state-20261111-034710.sqlite.gz" 2>/dev/null)"
 if [[ "$(grep -nE '^rsync' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^provisioner' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "the copy comes before provisioning"; fi
 if [[ "$(grep -nE '^apt-get install -y -qq terminal-lobby' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^rsync' "$LOG" | cut -d: -f1)" ]]; then ok; else bad "the copy comes after the playbook and the lobby"; fi
+
+# 1d. The vault CLI is the version the playbook pins. The playbook installs
+# vault=<that version> and apt refuses to downgrade, so a bootstrap that
+# installed the newest vault would fail the playbook on every new box.
+pin="$(sed -n 's/^ *devvm_vault_version: *"\(.*\)"$/\1/p' "$DIR/../playbooks/devvm.yml")"
+[[ -n "$pin" ]] && ok || bad "the playbook pins devvm_vault_version"
+has "installs the playbook's vault version" "$LOG" "^apt-get install -y -qq vault=$pin\$"
+hasnt "never installs an unpinned vault" "$LOG" '^apt-get install -y -qq vault$'
+has "adds the HashiCorp source the playbook declares" "$SB/hashicorp.list" "^deb \\[signed-by=$SB/hashicorp\\.asc\\] https://apt\\.releases\\.hashicorp\\.com jammy main\$"
+if [[ "$(grep -nE '^git clone' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^apt-get install -y -qq vault=' "$LOG" | cut -d: -f1)" && \
+      "$(grep -nE '^apt-get install -y -qq vault=' "$LOG" | cut -d: -f1)" -lt "$(grep -nE '^ansible-playbook' "$LOG" | cut -d: -f1)" ]]; then ok
+else bad "vault is installed after the clone and before the playbook"; fi
+
+new_sandbox; bootstrap_stubs
+printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master"}' >"$SB/handoff.json"
+VAULT_INSTALLED="$pin" run_bootstrap; rc=$?
+eq "vault already at the pin: exits 0" 0 "$rc"
+hasnt "vault already at the pin: no reinstall" "$LOG" '^apt-get install -y -qq vault'
+
+new_sandbox; bootstrap_stubs
+printf '{"wrapped_token":"hvs.wrapped","infra_ref":"master"}' >"$SB/handoff.json"
+NO_VAULT_PIN=1 run_bootstrap; rc=$?
+eq "no pin in the playbook exits non-zero" 1 "$rc"
+has "status names the missing pin" "$SB/state/status" '^failed: .*devvm_vault_version'
+hasnt "no playbook without a vault pin" "$LOG" '^ansible-playbook'
 
 # 1c. A copy that fails does not stop the build: users still get their
 # accounts, the hold stays so no empty T3 starts, and the status says so.
