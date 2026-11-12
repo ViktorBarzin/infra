@@ -556,6 +556,35 @@ proxy, `BASE_URL` on a new grey-cloud host, proxy on for the base config,
 `proxiedServices: ["realdebrid"]`, a two-stream connection cap, and a `sofia`
 variant that keeps emo direct.
 
+## Decision and first results (2026-11-12)
+
+Viktor chose the proxy route as a trial: London playback goes through Sofia
+so Real-Debrid sees one IP. He was told of the RD terms risk above and
+accepted it.
+
+Applied: infra `6003cd933` and `2e52d9ea9` (section 7 as drafted, with an
+`# auth = "app":` comment the CI lint requires). Viktor's config now has
+`proxy = {enabled: true, id: builtin, proxiedServices: [realdebrid]}` and a
+`sofia` variant (`disable proxy`, addon name "AIOStreams (Sofia)") for emo.
+
+Measured from the London Flint 2 (`192.168.8.1`), fetching one proxied RD
+link (a 1080p Comet result for Inception) with range requests [measured]:
+
+| Test | Result |
+|---|---|
+| First 50 MB, cold | HTTP 206, 4.2 s to first byte (includes RD resolve) |
+| Seek to 1 GB | HTTP 206, 0.49 s to first byte |
+| 100 MB over IPv4 | about 10.8 MB/s, so about 87 Mbit/s, twice |
+| 100 MB over IPv6 | 5.6 to 7.9 MB/s, so about 45 to 63 Mbit/s |
+| aiostreams pod during the test | 96m CPU, 216Mi memory |
+
+Stream lists from the base config carry
+`https://aiostreams-direct.viktorbarzin.me/api/v1/proxy/...` for RD results
+and leave P2P results untouched; the `sofia` variant returns the direct
+Comet and Torrentio resolve links. Not yet observed: real playback on the
+London projector, behaviour at the two-stream cap, and whether RD shows a
+single IP on its devices page after a few days of use.
+
 ## Sources
 
 - AIOStreams `v2.37.0`, commit `ed8b085f` (2026-10-23),
