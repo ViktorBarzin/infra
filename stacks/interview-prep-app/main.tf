@@ -53,6 +53,19 @@ resource "kubernetes_deployment" "interview-prep-app" {
           image_pull_policy = "IfNotPresent"
           name              = "interview-prep-app"
           port { container_port = 80 } # Dockerfile EXPOSEs 80 (nginx)
+          # Browser telemetry (telemetry.tf, infra ADR-0041): nginx serves the
+          # write key at /api/telemetry. Optional, so the pod starts before
+          # the Secret exists; without it the browser sends no events.
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
           resources {
             requests = { cpu = "10m", memory = "32Mi" }
             limits   = { memory = "64Mi" }
