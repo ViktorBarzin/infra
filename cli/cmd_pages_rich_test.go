@@ -171,3 +171,102 @@ func TestPagesShareVerbsRegistered(t *testing.T) {
 		t.Fatalf("not registered: %v", want)
 	}
 }
+
+func TestPagesPublishExpiresFlagAndPrintsExpiryAndWarnings(t *testing.T) {
+	p, body := recordServer(t, `{"url":"u","path":"wizard/x.html","expires":"2027-02-10","warnings":["700 prose words outside the blocks; the plan budget is 600."]}`)
+	fp := writeTempMD(t, "x.md", "# X")
+	var out string
+	errOut := captureStderr(t, func() {
+		var err error
+		out, err = captureStdout(t, func() error { return pagesPublish([]string{fp, "--expires", "30d"}) })
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if *p != "/publish" || (*body)["expires"] != "30d" {
+		t.Fatalf("path %q body %v", *p, *body)
+	}
+	if !strings.Contains(out, "expires: 2027-02-10") {
+		t.Fatalf("out = %q", out)
+	}
+	if !strings.Contains(errOut, "warning: 700 prose words") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
+func TestPagesPublishExpiresNeverOnADir(t *testing.T) {
+	_, body := recordServer(t, `{"url":"u","path":"wizard/d","expires":null}`)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("x"), 0o644)
+	if _, err := captureStdout(t, func() error { return pagesPublish([]string{dir, "--expires", "never"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if (*body)["expires"] != "never" {
+		t.Fatalf("body = %v", *body)
+	}
+}
+
+func TestPagesPublishWithoutExpiresSendsNone(t *testing.T) {
+	_, body := recordServer(t, `{"url":"u","path":"p"}`)
+	fp := writeTempMD(t, "y.md", "# Y")
+	if _, err := captureStdout(t, func() error { return pagesPublish([]string{fp}) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := (*body)["expires"]; ok {
+		t.Fatalf("expires must be left out so the server applies its rule: %v", *body)
+	}
+}
+
+func TestPagesUnpublish(t *testing.T) {
+	p, body := recordServer(t, `{"removed":"wizard/2026-11-12-x.html","links":1}`)
+	out, err := captureStdout(t, func() error { return pagesUnpublish([]string{"https://pages.viktorbarzin.me/2026-11-12-x.html"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *p != "/unpublish" || (*body)["page"] != "https://pages.viktorbarzin.me/2026-11-12-x.html" {
+		t.Fatalf("path %q body %v", *p, *body)
+	}
+	if !strings.Contains(out, "removed wizard/2026-11-12-x.html and 1 public link") {
+		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestPagesShareExpires(t *testing.T) {
+	_, body := recordServer(t, `{"url":"https://pages.viktorbarzin.me/p/t/","expires":"2026-12-12"}`)
+	out, err := captureStdout(t, func() error { return pagesShare([]string{"x.html", "--expires", "30d"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if (*body)["expires"] != "30d" || !strings.Contains(out, "expires: 2026-12-12") {
+		t.Fatalf("body %v out %q", *body, out)
+	}
+}
+
+func TestPagesUnpublishRegistered(t *testing.T) {
+	for _, c := range pagesCommands() {
+		if strings.Join(c.Path, " ") == "pages unpublish" && c.Tier == TierWrite {
+			return
+		}
+	}
+	t.Fatal("pages unpublish not registered as write")
+}
+
+// captureStderr swaps os.Stderr while fn runs and returns what it printed.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	outC := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		outC <- string(b)
+	}()
+	fn()
+	w.Close()
+	os.Stderr = old
+	return <-outC
+}

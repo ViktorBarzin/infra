@@ -32,6 +32,7 @@ p.add_argument("--pages-dir"); p.add_argument("--status", default="draft")
 p.add_argument("--source-name"); p.add_argument("--out-name")
 p.add_argument("--no-index", action="store_true"); p.add_argument("--bundle", action="store_true")
 p.add_argument("--index-href", default="index.html"); p.add_argument("--index-only", action="store_true")
+p.add_argument("--ttl"); p.add_argument("--default-ttl")
 a = p.parse_args()
 d = a.pages_dir
 os.makedirs(d, exist_ok=True)
@@ -54,9 +55,21 @@ if out is None:
                 out = n
 if out is None:
     out = (stem if re.match(r"\d{4}-\d{2}-\d{2}-", stem) else "2026-11-12-" + stem) + ".html"
+prior = {}
+if os.path.exists(os.path.join(d, out)):
+    prior = dict(re.findall(r'<meta name="plan-(\w+)" content="([^"]*)"', open(os.path.join(d, out)).read(4096)))
+    ttl = a.ttl or prior.get("ttl", "")
+else:
+    ttl = a.ttl or a.default_ttl or ""
+exp = ""
+if ttl and ttl != "never":
+    exp = (datetime.date(2026, 11, 12) + datetime.timedelta(days=int(ttl[:-1]))).isoformat()
+meta = (f'<meta name="plan-ttl" content="{ttl}">' if ttl else "") + (f'<meta name="plan-expires" content="{exp}">' if exp else "")
+if "LONGPLAN" in src:
+    print("warning: 700 prose words outside the blocks; the plan budget is 600.", file=sys.stderr)
 open(os.path.join(d, out), "w").write(
     f'<html><head><title>{html.escape(stem)}</title>'
-    f'<meta name="plan-source" content="{html.escape(name)}"></head>'
+    f'<meta name="plan-source" content="{html.escape(name)}">{meta}</head>'
     f'<body data-bundle="{a.bundle}" data-index="{a.index_href}">{html.escape(src)}</body></html>')
 if not a.no_index:
     index()
@@ -475,3 +488,134 @@ def test_second_large_publish_while_one_runs_is_429(site, monkeypatch):
         assert r.status_code == 429
     finally:
         app.state.large_in_flight.release()
+
+
+# ---- unpublish and expiry (Viktor, 2026-11-12) --------------------------------
+
+
+def head_meta(path):
+    return dict(re.findall(r'<meta name="plan-(\w+)" content="([^"]*)"', path.read_text()[:4096]))
+
+
+def test_new_markdown_page_expires_in_90_days_by_default(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "e.md"})
+    assert r.json()["expires"] == "2027-02-10"
+    assert head_meta(site.view() / r.json()["path"])["ttl"] == "90d"
+
+
+def test_expires_never_and_custom(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "n.md", "expires": "never"})
+    assert r.json()["expires"] is None
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "t.md", "expires": "30d"})
+    assert r.json()["expires"] == "2026-12-12"
+
+
+@pytest.mark.parametrize("bad", ["soon", "90", "-1d", "99999d"])
+def test_bad_expires_is_400(api, bad):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "b.md", "expires": bad})
+    assert r.status_code == 400
+
+
+def test_html_page_and_bundle_carry_their_expiry(site, api):
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "h.html", "files": [f("h.html", "<title>H</title>")]})
+    assert r.json()["expires"] == "2027-02-10"
+    assert head_meta(site.view() / r.json()["path"])["expires"] == "2027-02-10"
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "b", "files": bundle_files(), "expires": "never"})
+    assert r.json()["expires"] is None
+    marker = json.loads((site.view() / r.json()["path"] / ".pages-bundle.json").read_text())
+    assert marker["ttl"] == "never" and marker.get("expires") is None
+
+
+def test_republish_keeps_the_ttl_and_restarts_the_clock(site, api, monkeypatch):
+    api.post("/publish-bundle", headers=AUTH_V, json={"name": "b", "files": bundle_files(), "expires": "30d"})
+    monkeypatch.setattr(bundles, "today", lambda: "2026-12-01")
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "b", "files": bundle_files()})
+    assert r.json()["expires"] == "2026-12-31"
+
+
+def test_a_bundle_from_before_expiry_stays_without_one(site, api):
+    api.post("/publish-bundle", headers=AUTH_V, json={"name": "old", "files": bundle_files()})
+    v = site.view()
+    marker = v / "wizard/2026-11-12-old/.pages-bundle.json"
+    data = json.loads(marker.read_text())
+    data.pop("ttl"); data.pop("expires", None)
+    marker.write_text(json.dumps(data))
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "legacy", cwd=v)
+    git("push", "-q", "origin", "master", cwd=v)
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "old", "files": bundle_files()})
+    assert r.json()["expires"] is None
+
+
+def test_public_link_expires_in_90_days_and_can_be_kept(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "l.md", "expires": "never"})
+    s = api.post("/share", headers=AUTH_V, json={"page": os.path.basename(r.json()["path"])})
+    assert s.json()["expires"] == "2027-02-10"
+    s2 = api.post("/share", headers=AUTH_V, json={"page": os.path.basename(r.json()["path"]), "expires": "never"})
+    assert s2.json()["url"] == s.json()["url"] and s2.json()["expires"] is None
+
+
+def test_unpublish_removes_the_page_its_links_and_its_bundle_url(site, api):
+    r = api.post("/publish-bundle", headers=AUTH_V, json={"name": "gone", "files": bundle_files(), "public": True})
+    v = site.view()
+    cap = json.loads((v / r.json()["path"] / ".pages-bundle.json").read_text())["cap"]
+    tok = re.search(r"/p/([0-9a-f]{32})/", r.json()["public_url"]).group(1)
+    u = api.post("/unpublish", headers=AUTH_V, json={"page": r.json()["url"]})
+    assert u.status_code == 200, u.text
+    assert u.json()["removed"] == "wizard/2026-11-12-gone"
+    assert u.json()["links"] == 1
+    v = site.view()
+    assert not (v / "wizard/2026-11-12-gone").exists()
+    assert not os.path.lexists(v / "c" / cap)
+    assert not os.path.lexists(v / "p" / tok)
+    assert "2026-11-12-gone" not in (v / "wizard/index.html").read_text()
+
+
+def test_unpublish_a_markdown_page(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "md1.md"})
+    u = api.post("/unpublish", headers=AUTH_V, json={"page": "md1.md"})
+    assert u.status_code == 200
+    assert not (site.view() / r.json()["path"]).exists()
+
+
+def test_cannot_unpublish_another_users_page(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "mine2.md"})
+    assert api.post("/unpublish", headers=AUTH_E, json={"page": os.path.basename(r.json()["path"])}).status_code == 404
+    assert (site.view() / r.json()["path"]).exists()
+
+
+def test_sweep_deletes_what_has_expired_and_nothing_else(site, api, monkeypatch):
+    keep = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "keep.md", "expires": "never"}).json()
+    short = api.post("/publish", headers=AUTH_V, json={"content": "x", "filename": "short.md", "expires": "1d"}).json()
+    bun = api.post("/publish-bundle", headers=AUTH_E, json={"name": "eb", "files": bundle_files(), "expires": "1d"}).json()
+    link = api.post("/share", headers=AUTH_V, json={"page": os.path.basename(keep["path"]), "expires": "1d"}).json()
+    long_link = api.post("/share", headers=AUTH_V, json={"page": os.path.basename(keep["path"]), "expires": "90d"}).json()
+    assert link["url"] == long_link["url"]  # one link per page; the re-share gave it 90 days
+
+    summary = bundles.expire(site, today="2026-11-14")
+    assert summary == {"pages": 2, "links": 0}
+    v = site.view()
+    assert (v / keep["path"]).exists()
+    assert not (v / short["path"]).exists()
+    assert not (v / bun["path"]).exists()
+
+    summary = bundles.expire(site, today="2027-03-01")
+    assert summary == {"pages": 0, "links": 1}
+    tok = re.search(r"/p/([0-9a-f]{32})/", link["url"]).group(1)
+    assert not os.path.lexists(site.view() / "p" / tok)
+    assert (site.view() / keep["path"]).exists()
+
+
+def test_sweep_leaves_pages_without_expiry_alone(site, api):
+    v = site.view()
+    (v / "wizard" / "2020-01-01-ancient.html").write_text('<meta name="plan-source" content="ancient.md">')
+    git("add", "-A", cwd=v)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "old page", cwd=v)
+    git("push", "-q", "origin", "master", cwd=v)
+    assert bundles.expire(site, today="2030-01-01") == {"pages": 0, "links": 0}
+    assert (site.view() / "wizard" / "2020-01-01-ancient.html").exists()
+
+
+def test_publish_returns_the_renderers_warnings(site, api):
+    r = api.post("/publish", headers=AUTH_V, json={"content": "LONGPLAN", "filename": "long.md"})
+    assert r.status_code == 200
+    assert any("budget" in w for w in r.json()["warnings"])

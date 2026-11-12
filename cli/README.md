@@ -624,6 +624,14 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 
+### v0.39 — pages: expiry, unpublish, plan warnings
+
+`homelab pages publish` and `pages share` take `--expires 30d|90d|never`
+(pages and links from 2026-11-12 on expire after 90 days by default) and print
+`expires: <date>`; `publish` prints the renderer's warnings on stderr, such as a
+plan over its 600-word prose budget. `homelab pages unpublish <page URL | name>
+[--shared]` deletes a page or Bundle with its public links.
+
 ### v0.38 verbs — pages: HTML, Bundles and public links
 
 `homelab pages publish` takes `<doc.md | page.html | dir/>` since v0.38.0. A

@@ -513,6 +513,14 @@ _Avoid_: "wrapper page", "viewer".
 The unguessable `/c/<cap>/` address a multi-file Bundle's files are also served at, because inside the Sandbox they load without the sign-in cookie. Only the Shell uses it; it changes on every publish of the Bundle. Not a Public link: nobody hands it out.
 _Avoid_: "cap link", "private link".
 
+**Plan block**:
+A fenced YAML block in a plan that the renderer draws: a topology of the change, a decision card, a config diff, before and after numbers, or a timeline. A plan carries about 600 words of prose outside its Plan blocks (`https://pages.viktorbarzin.me/assets/plan-template.md`).
+_Avoid_: "widget", "diagram" for the non-graph blocks.
+
+**Expiry**:
+The date after which the publish service deletes a Page, Bundle or Public link, 90 days after its last publish or share unless its author set another lifetime or `never`. Items from before 2026-11-12 have none. Deleted items stay in git history.
+_Avoid_: "TTL" in prose meant for users (it is the field name only).
+
 **Public link**:
 An unguessable URL that opens one Page without signing in. It lasts until its author revokes it; the Page itself stays in its Space.
 _Avoid_: "public page" (the Page is not moved or copied), "share link" (the shared Space is a different thing).

@@ -113,6 +113,25 @@ homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
   link is returned.
 - `POST /unshare` (Bearer): same body, or a `/p/<token>/` URL for one link →
   `{removed, page}`.
+- `POST /unpublish` (Bearer): `{page, shared?}` → `{removed, links}`. Deletes a
+  page or Bundle from the caller's Space or `shared/`, with its public links
+  and Bundle URL. git history keeps a copy.
+- Every publish and share takes `expires`: `<N>d` (up to 9999) or `never`, and
+  answers with the `expires` date (or null). `/publish` also returns
+  `warnings`: render.py's notes, such as a plan over its 600-word prose budget.
+
+## Expiry (since 2026-11-12)
+
+Viktor's rule: pages, Bundles and public links published or shared from
+2026-11-12 on expire after 90 days unless `expires` says otherwise; anything
+from before has no expiry and keeps none on republish. A republish or re-share
+keeps the item's own lifetime and restarts the clock. Pages carry
+`plan-ttl`/`plan-expires` meta (render.py `--ttl`/`--default-ttl`), Bundles
+`ttl`/`expires` in their marker, links an entry in `p/.links.json`. Every
+`PAGES_EXPIRY_INTERVAL` seconds (default 21600; 0 turns it off) the service
+deletes what is past its date and commits `pages: expire N page(s) and M
+public link(s)` as `pages-publish`. Restore one with `git revert` or by
+republishing it.
 
 ## What a page can do (the sandbox)
 
