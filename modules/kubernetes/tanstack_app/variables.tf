@@ -112,6 +112,17 @@ variable "extra_env" {
   description = "Plain env vars appended after the platform env. A list because env order is part of the pod spec."
 }
 
+variable "secret_env" {
+  type = list(object({
+    name     = string
+    secret   = string
+    key      = string
+    optional = optional(bool, true)
+  }))
+  default     = []
+  description = "Env vars read one key at a time from a Kubernetes Secret the stack owns (secret_key_ref), appended after extra_env. For values that do not live in secret/<vault_kv_name>, e.g. the telemetry Write key and DSN (docs/runbooks/product-analytics.md). optional defaults to true, so the pod starts before the Secret exists. Reloader restarts the pod when one of these Secrets changes."
+}
+
 variable "volumes" {
   type = list(object({
     name       = string

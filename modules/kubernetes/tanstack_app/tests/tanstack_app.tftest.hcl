@@ -51,7 +51,7 @@ run "ports_signup_pullsecret" {
     image_pull_secrets = ["ghcr-credentials"]
   }
   assert {
-    condition = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.name}=${e.value}" if contains(["PORT", "METRICS_PORT", "SIGNUP_MODE"], e.name)] == ["PORT=8080", "METRICS_PORT=9100", "SIGNUP_MODE=open"]
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.name}=${e.value}" if contains(["PORT", "METRICS_PORT", "SIGNUP_MODE"], e.name)] == ["PORT=8080", "METRICS_PORT=9100", "SIGNUP_MODE=open"]
     error_message = "settings env"
   }
   assert {
@@ -112,5 +112,27 @@ run "nfs_volume_mounts_without_rechowning" {
   assert {
     condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].security_context[0].fs_group_change_policy == "OnRootMismatch"
     error_message = "OnRootMismatch, or the kubelet re-owns every file on the volume at each pod start"
+  }
+}
+
+run "secret_env_reads_single_keys_and_restarts_on_change" {
+  command = plan
+  variables {
+    secret_env = [
+      { name = "TELEMETRY_WRITE_KEY", secret = "demo-one-telemetry", key = "write_key" },
+      { name = "SENTRY_DSN", secret = "demo-one-telemetry", key = "sentry_dsn", optional = false },
+    ]
+  }
+  assert {
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : e.name if e.value_from != null && length(e.value_from) > 0] == ["TELEMETRY_WRITE_KEY", "SENTRY_DSN"]
+    error_message = "secret env comes after the plain env, in order"
+  }
+  assert {
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.value_from[0].secret_key_ref[0].name}/${e.value_from[0].secret_key_ref[0].key}/${e.value_from[0].secret_key_ref[0].optional}" if e.value_from != null && length(e.value_from) > 0] == ["demo-one-telemetry/write_key/true", "demo-one-telemetry/sentry_dsn/false"]
+    error_message = "secret_key_ref name, key and optional (default true)"
+  }
+  assert {
+    condition     = contains(split(",", kubernetes_deployment.this.metadata[0].annotations["secret.reloader.stakater.com/reload"]), "demo-one-telemetry")
+    error_message = "Reloader restarts the pod when the telemetry Secret changes"
   }
 }
