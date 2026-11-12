@@ -7524,6 +7524,22 @@ serverFiles:
             annotations:
               summary: "qBittorrent is disconnected from the network"
 
+      - name: aiostreams
+        rules:
+          # Metric source: the rd-blocked-names sidecar in the aiostreams pod
+          # (stacks/servarr/aiostreams/files/rd_blocked_names.py). It refreshes
+          # every 6h and keeps serving the last good list when a refresh fails,
+          # so Stremio keeps working; this says the list has stopped following
+          # Real-Debrid's changes.
+          - alert: RdBlockedNamesStale
+            expr: (time() - max(rd_blocked_names_last_success_timestamp_seconds)) > 3 * 86400 or absent(rd_blocked_names_last_success_timestamp_seconds)
+            for: 1h
+            labels:
+              severity: info
+            annotations:
+              summary: "Real-Debrid blocked-names list has not refreshed for 3 days; AIOStreams is using the last good copy"
+              description: "Logs: kubectl -n aiostreams logs deploy/aiostreams -c rd-blocked-names. Usual causes: Debrid Media Manager renamed the RD_BLOCKED_* constants in src/utils/deInfringe.ts, or a new list failed the safety check."
+
       - name: Headscale VPN
         rules:
           - alert: HeadscaleDown
