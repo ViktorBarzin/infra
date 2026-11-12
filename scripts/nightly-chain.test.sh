@@ -30,7 +30,21 @@ echo "kubectl $*" >>"$CALLS"
 case "$*" in
   "get --raw /readyz") [ "${API_DOWN:-0}" = 1 ] && exit 1; echo ok ;;
   "get cronjobs -A -o json") cat "$CRONJOBS_FILE" ;;
-  create\ job*) exit 0 ;;
+  create\ job*)
+    # create job -n <ns> <job> --from=...; CREATE_FAIL=<cronjob>:<n> fails the
+    # first n creates of that CronJob's Job (API unreachable, as 2026-11-12).
+    # GHOST=1 makes a failed create still leave the Job behind, as an etcd
+    # timeout can after the write landed.
+    job=$5
+    if [ -n "${CREATE_FAIL:-}" ] && [[ "$job" == "${CREATE_FAIL%%:*}-chain-"* ]]; then
+      n=$(($(cat "$WORK_DIR/fails" 2>/dev/null || echo 0) + 1)); echo "$n" >"$WORK_DIR/fails"
+      if [ "$n" -le "${CREATE_FAIL##*:}" ]; then
+        [ "${GHOST:-0}" = 1 ] && echo "$job" >>"$WORK_DIR/created"
+        echo 'Unable to connect to the server: dial tcp 10.0.20.100:6443: i/o timeout' >&2; exit 1
+      fi
+    fi
+    grep -qx "$job" "$WORK_DIR/created" 2>/dev/null && { echo "jobs.batch \"$job\" already exists" >&2; exit 1; }
+    echo "$job" >>"$WORK_DIR/created"; exit 0 ;;
   get\ cronjob\ -n*)
     # lastSuccessfulTime after (GONE_OK=1) or before the dump started
     if [ "${GONE_OK:-0}" = 1 ]; then t=2099-01-01T00:00:00Z; else t=2000-01-01T00:00:00Z; fi
@@ -38,6 +52,7 @@ case "$*" in
   get\ job*)
     case "$*" in
       *"${GONE_JOB:-none}"*) echo 'Error from server (NotFound): jobs.batch not found' >&2; exit 1 ;;
+      *) grep -qx "$5" "$WORK_DIR/created" 2>/dev/null || { echo 'Error from server (NotFound): jobs.batch not found' >&2; exit 1; } ;;&
       *"${FAIL_JOB:-none}"*) echo '{"status":{"conditions":[{"type":"Failed","status":"True"}]}}' ;;
       *) echo '{"status":{"conditions":[{"type":"Complete","status":"True"}]}}' ;;
     esac ;;
@@ -60,9 +75,10 @@ chmod +x "$WORK/kubectl" "$WORK/systemctl" "$WORK/curl"
 run_chain() { # [args...] -> prints the log; leaves $CALLS and $WORK_METRICS
   : >"$CALLS"
   : >"$WORK_METRICS"
+  rm -f "$WORK/fails" "$WORK/created"
   (
-    export PATH="$WORK:$PATH" CALLS WORK_METRICS CRONJOBS_FILE
-    export NIGHTLY_CHAIN_POLL=0 NIGHTLY_CHAIN_LOCK_LIB=/dev/null NIGHTLY_CHAIN_SOURCE_ONLY=1
+    export PATH="$WORK:$PATH" CALLS WORK_METRICS CRONJOBS_FILE WORK_DIR=$WORK
+    export NIGHTLY_CHAIN_POLL=0 NIGHTLY_CHAIN_RETRY_DELAY=0 NIGHTLY_CHAIN_LOCK_LIB=/dev/null NIGHTLY_CHAIN_SOURCE_ONLY=1
     # shellcheck source=nightly-chain.sh
     . "$HERE/nightly-chain.sh"
     kured_lock_acquire() { echo "lock acquire $1" >>"$CALLS"; return "${LOCK_RC:-0}"; }
@@ -136,6 +152,32 @@ out=$(NIGHTLY_CHAIN_DOW=3 GONE_JOB=backup-etcd GONE_OK=1 run_chain)
 grep -q 'nightly_chain_step_ok{step="default/backup-etcd"} 1' "$WORK_METRICS" && ok "a Job deleted by its TTL after succeeding counts as done" || bad "gone ok: $(cat "$WORK_METRICS") $out"
 out=$(NIGHTLY_CHAIN_DOW=3 GONE_JOB=backup-etcd GONE_OK=0 run_chain)
 grep -q 'nightly_chain_step_ok{step="default/backup-etcd"} 0' "$WORK_METRICS" && ok "a Job that vanished without a success counts as failed" || bad "gone failed: $(cat "$WORK_METRICS") $out"
+
+# 2026-11-12: the host lost its route to the API from 00:01:56 to ~00:06 and
+# eight dumps were skipped for good, because a failed start was final. A start
+# that fails is now retried, NIGHTLY_CHAIN_START_TRIES times in all.
+out=$(NIGHTLY_CHAIN_DOW=3 CREATE_FAIL=postgresql-backup:2 run_chain)
+[ "$(grep -c 'create job -n dbaas postgresql-backup-chain' "$CALLS")" = 3 ] \
+  && ok "a dump that fails to start is tried again until it starts" || bad "retry count: $(grep create "$CALLS")"
+grep -q 'nightly_chain_step_ok{step="dbaas/postgresql-backup"} 1' "$WORK_METRICS" \
+  && ok "a dump started on a retry is reported done" || bad "retry metric: $(cat "$WORK_METRICS") $out"
+[ "$(tail -1 <<<"$out")" = "rc=0" ] && ok "a night saved by a retry exits 0" || bad "retry rc: $out"
+grep -q 'dump start failed, retrying' <<<"$out" && ok "a failed start that will be retried is logged" || bad "retry log: $out"
+
+out=$(NIGHTLY_CHAIN_DOW=3 NIGHTLY_CHAIN_START_TRIES=3 CREATE_FAIL=postgresql-backup:99 run_chain)
+[ "$(grep -c 'create job -n dbaas postgresql-backup-chain' "$CALLS")" = 3 ] \
+  && ok "a start is given up after NIGHTLY_CHAIN_START_TRIES tries" || bad "give up: $(grep create "$CALLS")"
+grep -q 'nightly_chain_step_ok{step="dbaas/postgresql-backup"} 0' "$WORK_METRICS" \
+  && ok "a dump that never started is reported failed" || bad "never started metric: $(cat "$WORK_METRICS")"
+grep -q 'create job -n default backup-etcd-chain' "$CALLS" && grep -q 'systemctl start --wait nfs-mirror' "$CALLS" \
+  && ok "the other dumps and the host steps still run" || bad "others after give-up: $(cat "$CALLS")"
+[ "$(tail -1 <<<"$out")" = "rc=1" ] && ok "a dump that never started fails the night" || bad "give-up rc: $out"
+
+out=$(NIGHTLY_CHAIN_DOW=3 GHOST=1 CREATE_FAIL=postgresql-backup:1 run_chain)
+[ "$(grep -c 'create job -n dbaas postgresql-backup-chain' "$CALLS")" = 1 ] \
+  && ok "a create that errored but made the Job is not repeated" || bad "ghost creates: $(grep create "$CALLS")"
+grep -q 'nightly_chain_step_ok{step="dbaas/postgresql-backup"} 1' "$WORK_METRICS" \
+  && ok "that Job is followed to completion" || bad "ghost metric: $(cat "$WORK_METRICS") $out"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi
