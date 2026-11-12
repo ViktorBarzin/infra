@@ -162,7 +162,11 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
     # 09:37 UTC daily; the script then sleeps a random 0-60 min
     # (JITTER_SECONDS) so the WHOOP request does not land on a predictable
     # boundary.
-    schedule                      = "37 9 * * *"
+    schedule = "37 9 * * *"
+    # Paused 2026-11-12: WHOOP rejects the stored password (401 "Authentication
+    # Failed") since about midnight, so each run would only add failed logins
+    # to Anca's account. Unpause once secret/whoop-anca has her current password.
+    suspend                       = true
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
