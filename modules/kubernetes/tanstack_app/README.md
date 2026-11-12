@@ -134,6 +134,15 @@ The app container gets, in this order:
 | env, only when not the default | `PORT` (`http_port` other than 3000), `METRICS_PORT` (`metrics_port` other than 9090), `SIGNUP_MODE=open` |
 | env, when `emit_group_env` | `AUTH_USERS_GROUP`, `AUTH_ADMINS_GROUP`, `AUTH_AGENTS_GROUP` (when `agents_group` is set) |
 | env | `extra_env`, in list order |
+| env, `secret_key_ref` | `secret_env`, in list order: one key each from a Secret the stack owns, `optional` by default. Reloader restarts the pod when one of those Secrets changes |
+
+Telemetry (infra ADR-0041, app-kit ADR-0002) uses `secret_env`: the stack's
+`telemetry.tf` writes a `<name>-telemetry` Secret from `secret/rybbit`
+`write_keys` and `secret/glitchtip` `dsn_<name>`, and passes
+`TELEMETRY_WRITE_KEY`, `SENTRY_DSN` (the in-cluster GlitchTip Service) and
+`SENTRY_BROWSER_DSN` (the app host's `/_t/x/` path) through it, with
+`TELEMETRY_HOST` and `TELEMETRY_ENVIRONMENT` in `extra_env`. `stacks/tasks`
+and `stacks/alexa-assistant` show the shape.
 
 The `migrate` init container gets `DATABASE_URL` and `DATABASE_PASSWORD_FILE`
 and runs `entrypoints/migrate.js`. `DEV_USER` is never set.

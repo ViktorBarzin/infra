@@ -68,6 +68,7 @@ Vector reads its secrets from files (`/etc/vector/secrets`, the mounted `rybbit-
    ```
 
 4. Wire the app with the shared telemetry library (design, "Client libraries").
+5. Give the pod the key and DSN. Most stacks write a `<app>-telemetry` Secret in a `telemetry.tf` (`stacks/offline-reader`). An app on `modules/kubernetes/tanstack_app` passes it through the module's `secret_env`, with `TELEMETRY_HOST` and `TELEMETRY_ENVIRONMENT` in `extra_env` and the public DSN as `SENTRY_BROWSER_DSN` for the browser (`stacks/tasks/telemetry.tf`).
 
 ### An app outside the cluster
 

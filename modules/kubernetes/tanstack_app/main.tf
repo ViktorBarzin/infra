@@ -108,7 +108,7 @@ resource "kubernetes_deployment" "this" {
       # Restart on a change to any Secret read through env. <name>-db-creds is
       # left out on purpose: the app reads the password file on every new
       # connection, so the Vault rotation needs no restart.
-      "secret.reloader.stakater.com/reload" = join(",", local.env_from_secrets)
+      "secret.reloader.stakater.com/reload" = join(",", distinct(concat(local.env_from_secrets, [for e in var.secret_env : e.secret])))
     }
   }
 
@@ -212,6 +212,21 @@ resource "kubernetes_deployment" "this" {
             content {
               name  = env.value.name
               value = env.value.value
+            }
+          }
+
+          # var.secret_env: single keys from Secrets the stack owns.
+          dynamic "env" {
+            for_each = var.secret_env
+            content {
+              name = env.value.name
+              value_from {
+                secret_key_ref {
+                  name     = env.value.secret
+                  key      = env.value.key
+                  optional = env.value.optional
+                }
+              }
             }
           }
 
