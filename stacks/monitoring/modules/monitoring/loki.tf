@@ -31,7 +31,7 @@ resource "helm_release" "loki" {
   # manifests differ only in the chart label. 2026-11-10: chart 20.0.0 made
   # the values schema reject unknown top-level keys, so loki.yaml dropped the
   # inert minio and bloomCompactor keys (21.0.0 and 21.1.0 had failed on them).
-  version = "21.2.1"
+  version = "21.2.3"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
@@ -73,7 +73,7 @@ resource "helm_release" "alloy" {
   chart      = "alloy"
   # Pinned 2026-10-10 (was unpinned, so any apply floated to the newest chart).
   # Keep in step with helm_release.alloy_syslog below.
-  version = "1.15.0"
+  version = "1.16.0"
 
   values          = [file("${path.module}/alloy.yaml")]
   atomic          = true
@@ -93,7 +93,7 @@ resource "helm_release" "alloy_syslog" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
-  version    = "1.15.0"
+  version    = "1.16.0"
 
   values          = [file("${path.module}/alloy-syslog.yaml")]
   atomic          = true

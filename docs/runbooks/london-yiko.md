@@ -60,6 +60,57 @@ kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0
 This is a transient step; the Terraform state ignores the replica count, so
 nothing reverts it.
 
+### Send Yiko to one room, for example to take a photo there
+
+Use the HA London script `script.yiko_photo` (fields `room`, `shots`). The
+home-assistant skill shows the call and how to fetch the photos from
+`/media/yiko/<room>-<n>.jpg`. The script is in `/config/scripts.yaml`
+(ha-london-config `38734dd`). It does these steps:
+
+1. Sets `select.yiko_work_mode` to `vacuum`, so the floor stays dry.
+2. Starts a clean of the room with a raw `clean_V2` command (table below).
+3. Turns on `input_boolean.yiko_camera`.
+4. Waits up to 60 s for `sensor.yiko_area_cleaned` to change. A new job resets
+   it to 0, so no change means the robot rejected the start.
+5. Waits up to 4 min for that sensor to reach 1 m². The robot cleans only the
+   target room, so this means it is inside the room.
+6. Waits for `binary_sensor.yiko_camera_ready`, then for each photo: pause,
+   `camera.snapshot`, resume, 8 s.
+7. Stops the job, sends Yiko to the dock, restores the work mode and turns the
+   camera off. It returns `{room, job_started, arrived, camera_ready, files}`.
+
+Measured 2026-11-13: about 70 s from the start to inside the corridor, and
+2 min 20 s for a whole run with 6 photos.
+
+Raw commands (`vacuum.send_command`, command `clean_V2`). HA's own `spot_area`
+does not work on firmware 1.134.0: the robot answers `20011 unknown type` to
+the `spotArea` clean type.
+
+| Action | `params` |
+|---|---|
+| Clean one room | `{"act":"start","content":{"type":"freeClean","value":"1,<room id>"}}` |
+| Pause | `{"act":"pause","content":{"type":""}}` |
+| Resume | `{"act":"resume"}` |
+| Stop | `{"act":"stop","content":{"type":""}}`, then `vacuum.return_to_base` |
+
+- Room ids are in the `rooms` attribute of `vacuum.yiko` (corridor 1, balcony 3,
+  kitchen 4, bedroom1 6, kids_room 7). The dock is in the living room.
+- In an HA template, render `params` as one dict
+  (`{{ {'act': 'start', 'content': {...}} }}`). A template that renders the
+  bare text `1,1` becomes a list, and the robot answers `20011 format error`.
+- During a `freeClean` job HA can show `docked` or `idle`. The raw command
+  `getWorkState` gives the real state (`robotState.state`, `paused`). HA shows
+  raw replies only with `logger.set_level` `deebot_client: debug`, in
+  `docker logs homeassistant`.
+- `getPos` always answers `invalid: 1`, and the `mapPoint` go-to command answers
+  `ok` but the robot does not move.
+- Photos taken while the robot moves are blurred and show its laser lines.
+  Photos taken while it is paused are sharp.
+- A start sent while the robot docks and empties its bin did nothing. Wait about
+  30 s after it docks.
+- The camera failed with `20303` while the robot was idle on the dock. The
+  stream started once the robot was out cleaning.
+
 ### HA London: Ecovacs integration says "Device verification required"
 
 Ecovacs sometimes asks a known client to verify again by email (it happened to
