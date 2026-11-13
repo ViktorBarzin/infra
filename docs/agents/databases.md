@@ -16,26 +16,39 @@ Cloud (Forgejo `viktor/cloud`, plan `docs/plans/2026-11-12-cloud-v1-and-operator
 
 | Piece | What it is |
 |---|---|
-| `cloud_projects` | NOLOGIN group. Every Project role is a member |
-| `cloud_provisioner` | LOGIN, CREATEDB, CREATEROLE, CONNECTION LIMIT 5, ADMIN OPTION (not INHERIT or SET) on `cloud_projects`, SET on parameter `temp_file_limit`. Vault static role `pg-cloud-provisioner` |
-| `cloud_state` | LOGIN, CONNECTION LIMIT 10, owns database `cloud_state` (the reconciler's OpenTofu state, one schema per Project). CONNECT revoked from PUBLIC. Vault static role `pg-cloud-state`. No grant on `terraform_state` |
+| `cloud_projects` | NOLOGIN group. Every Project role is a member. It holds grants only; pg_hba matches Project roles by name |
+| `cloud_provisioner` | LOGIN, CREATEDB, CREATEROLE, CONNECTION LIMIT 5, ADMIN OPTION (not INHERIT or SET) on `cloud_projects`, SET on parameter `temp_file_limit`. Created with `PASSWORD NULL`; Vault static role `pg-cloud-provisioner` sets the password |
+| `cloud_state` | LOGIN, CONNECTION LIMIT 10, created with `PASSWORD NULL`, owns database `cloud_state` (the reconciler's OpenTofu state, one schema per Project). CONNECT revoked from PUBLIC. Vault static role `pg-cloud-state`. No grant on `terraform_state` |
 | `cloud` | Cloud's console database, a normal `app_databases` entry with Vault role `pg-cloud` |
 
-**PG 16+ CREATEROLE (live: 18.6).** `cloud_provisioner` can alter, drop and grant only roles it holds ADMIN OPTION on: the ones it created, plus `cloud_projects`. It cannot change any existing app's role or password, drop its database, or create SUPERUSER, REPLICATION or BYPASSRLS roles. To create a database owned by a Project role it first grants itself SET on that role (`GRANT p_x TO cloud_provisioner WITH SET TRUE`). `tests/cloud-postgres.test.sh` checks all of this on PostgreSQL 18.6. One gap remains: ADMIN OPTION on `cloud_projects` lets it add any existing role to the group, which would confine that role to a database of its own name. That is a denial of service on one app, not a privilege gain.
+**PG 16+ CREATEROLE (live: 18.6).** `cloud_provisioner` can alter, drop and grant only roles it holds ADMIN OPTION on: the ones it created, plus `cloud_projects`. It cannot change any existing app's role or password, drop its database, or create SUPERUSER, REPLICATION or BYPASSRLS roles. To create a database owned by a Project role it first grants itself SET on that role (`GRANT p_x TO cloud_provisioner WITH SET TRUE`). `tests/cloud-postgres.test.sh` checks all of this on PostgreSQL 18.6. ADMIN OPTION on `cloud_projects` lets it add any existing role, `postgres` included, to the group. That changes nothing, because pg_hba matches Project roles by name and the group carries no network rule.
 
-**pg_hba.** `.spec.postgresql.pg_hba` on `pg-cluster-v18` carries five rules, which CNPG places after its fixed rules and before `host all all all scram-sha-256`. The first match wins:
+**pg_hba.** `.spec.postgresql.pg_hba` on `pg-cluster-v18` carries seven rules, which CNPG places after its fixed rules and before `host all all all scram-sha-256`. The first match wins:
 
 ```
-host all cloud_provisioner all scram-sha-256      # before the reject: ADMIN OPTION counts as membership
+host postgres cloud_provisioner all scram-sha-256
+host "/^p_[a-z0-9_]+$" cloud_provisioner all scram-sha-256   # Project databases
+host all cloud_provisioner all reject
 host cloud_state cloud_state all scram-sha-256
 host all cloud_state all reject
-host sameuser +cloud_projects all scram-sha-256   # a Project role reaches only its own database
-host all +cloud_projects all reject
+host sameuser "/^p_[a-z0-9_]+$" all scram-sha-256           # a Project role reaches only its own database
+host all "/^p_" all reject
 ```
 
-No other role matches these lines (checked live on 2026-11-13: no `cloud*` role existed), so no existing app changes. CNPG reloads Postgres on a `pg_hba` change; nothing restarts. The rules reach the cluster through `null_resource.pg_cluster_v18`, whose `pg_hba` trigger reruns its `kubectl apply`. A server-side dry run on 2026-11-13 showed that apply adds only `pg_hba` to the live Cluster. **`pg-cluster`, the PG16 rollback copy, does not carry these rules.** A rollback to it must add them before Cloud's roles move with it.
+Project roles are matched by name (PG 16+ regex), not by membership of `cloud_projects`, so a grant of that group cannot change any role's access. **The reconciler must name every Project role and database `p_<name>`, create each role `IN ROLE cloud_projects`, and refuse a name that matches an existing role or database.** Postgres cannot enforce that: a role it created under another name falls through to `host all all all` and can connect to any database that grants CONNECT to PUBLIC. On 2026-11-13 that includes `crowdsec_metabase`, `dawarich_queue` and `prowlarr_log`, which have no role of their own name. No live role or database name started with `p_` and no `cloud*` role existed, so no existing app changes. CNPG reloads Postgres on a `pg_hba` change; nothing restarts. The rules reach the cluster through `null_resource.pg_cluster_v18`, whose `pg_hba` trigger reruns its `kubectl apply`. A server-side dry run on 2026-11-13 showed that apply adds only `pg_hba` to the live Cluster. **`pg-cluster`, the PG16 rollback copy, does not carry these rules.** A rollback to it must add them before Cloud's roles move with it.
 
-**Connection ceiling.** `max_connections` is 200, and the primary held 145 connections on 2026-11-13 (41 of them Authentik). Cloud's own roles can hold 15 more (`cloud_provisioner` 5, `cloud_state` 10), plus the console's pool. **The reconciler keeps the sum of the CONNECTION LIMITs of all `cloud_projects` members at or below 40**, and refuses a Project change that would exceed it. Postgres cannot enforce a total across roles, so this check lives in the reconciler only. Raise it only after re-measuring the primary's peak.
+**Connection ceiling: 20.** The reconciler keeps the sum of the CONNECTION LIMITs of all Project roles at or below 20, and refuses a Project change that would exceed it. Postgres cannot enforce a total across roles, so this check lives in the reconciler only. The arithmetic, at full Cloud load:
+
+| | Connections |
+|---|---|
+| `max_connections` 200 minus `superuser_reserved_connections` 3 | 197 |
+| Peak client backends on the primary, 2026-11-06 to 11-13 (`max_over_time(sum(cnpg_backends_total{pod=~"pg-cluster-v18-.*"})[7d:1m])`; median over the cluster's 12 days of history: 111) | -150 |
+| `cloud_provisioner` 5 + `cloud_state` 10 | -15 |
+| Cloud console pool (M4 must cap it at 10) | -10 |
+| Left for Project roles | 22 |
+| **Project ceiling** | **20**, leaving 2 spare at the peak |
+
+To give Projects more, raise `max_connections` together with the primary's memory (Viktor's call), or put Project roles behind a pooler. Re-measure the peak over at least a week before changing the number.
 
 **Per-Project limits.** `temp_file_limit` is superuser-only, so `cloud_provisioner` sets it on Project roles through its SET grant, and a Project role cannot lift it. `statement_timeout` and `idle_in_transaction_session_timeout` can be set per role too, but any role can change them in its own session, so for a Project they are defaults, not limits.
 
