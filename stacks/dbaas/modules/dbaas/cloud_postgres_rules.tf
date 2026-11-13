@@ -92,6 +92,37 @@ locals {
      WHERE r.rolname != 'cloud_projects' AND r.rolname !~ '^p_[a-z0-9_]+$'
   SQL
 
+  # The audit behind alerts CloudProjectRoleUnlimited and
+  # CloudProjectConnectionsOverCeiling (stacks/monitoring), M2 contract point
+  # 9. Postgres cannot cap the sum of CONNECTION LIMITs across roles, so the
+  # Cloud-wide ceiling of 20 lives in the reconciler; this detects when it
+  # does not hold. Over the LOGIN roles cloud_provisioner administers
+  # (directly or through a role it administers, cloud_projects excluded):
+  #   unlimited       how many have CONNECTION LIMIT -1 (none) or above 8, the
+  #                   largest Size's limit (medium); a stolen provisioner
+  #                   credential could otherwise open connections until the
+  #                   cluster's non-superuser slots run out
+  #   connlimit_sum   the sum of their CONNECTION LIMITs, -1 counted as 0
+  #                   (the first gauge catches it)
+  # Detection, not enforcement. Exported by the CNPG exporter from the primary
+  # as cnpg_cloud_provisioner_role_limits_unlimited and
+  # cnpg_cloud_provisioner_role_limits_connlimit_sum.
+  cloud_role_limits_audit_sql = <<-SQL
+    WITH RECURSIVE administered AS (
+      SELECT m.roleid FROM pg_catalog.pg_auth_members m
+        JOIN pg_catalog.pg_roles p ON p.oid = m.member
+       WHERE p.rolname = 'cloud_provisioner' AND m.admin_option
+      UNION
+      SELECT m.roleid FROM pg_catalog.pg_auth_members m
+        JOIN administered a ON a.roleid = m.member
+       WHERE m.admin_option
+    )
+    SELECT count(*) FILTER (WHERE r.rolconnlimit < 0 OR r.rolconnlimit > 8) AS unlimited,
+           coalesce(sum(greatest(r.rolconnlimit, 0)), 0) AS connlimit_sum
+      FROM administered a JOIN pg_catalog.pg_roles r ON r.oid = a.roleid
+     WHERE r.rolname != 'cloud_projects' AND r.rolcanlogin
+  SQL
+
   cloud_roles_sql = <<-SQL
     DO $$
     BEGIN

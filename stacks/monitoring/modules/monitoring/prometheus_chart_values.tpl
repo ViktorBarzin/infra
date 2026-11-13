@@ -5371,6 +5371,32 @@ serverFiles:
               notify: page
             annotations:
               summary: "PostgreSQL {{ $labels.cnpg_cluster }}: cloud_provisioner administers {{ $value }} role(s) not named p_*, which pg_hba does not confine. List them on the primary: WITH RECURSIVE a AS (SELECT roleid FROM pg_auth_members WHERE member='cloud_provisioner'::regrole AND admin_option UNION SELECT m.roleid FROM pg_auth_members m JOIN a ON a.roleid=m.member WHERE m.admin_option) SELECT rolname FROM a JOIN pg_roles r ON r.oid=a.roleid WHERE rolname !~ '^p_' AND rolname != 'cloud_projects'; then rotate pg-cloud-provisioner in Vault and drop them."
+          - alert: CloudProjectRoleUnlimited
+            # A LOGIN role that Cloud's cloud_provisioner administers has no
+            # CONNECTION LIMIT or one above 8, the largest Size's. Cloud never
+            # renders one (MAX_ROLE_CONNECTIONS in the cloud repo), so either
+            # the reconciler has a bug or its credential is in someone else's
+            # hands, and the role can use up the cluster's connection slots
+            # (stacks/dbaas cloud_postgres_rules.tf, the role-limits audit).
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_role_limits_unlimited) > 0
+            for: 2m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: {{ $value }} Cloud role(s) with CONNECTION LIMIT -1 or above 8. List them on the primary: WITH RECURSIVE a AS (SELECT roleid FROM pg_auth_members WHERE member='cloud_provisioner'::regrole AND admin_option UNION SELECT m.roleid FROM pg_auth_members m JOIN a ON a.roleid=m.member WHERE m.admin_option) SELECT rolname, rolconnlimit FROM a JOIN pg_roles r ON r.oid=a.roleid WHERE rolcanlogin AND (rolconnlimit < 0 OR rolconnlimit > 8); set a limit (ALTER ROLE ... CONNECTION LIMIT 2) and rotate pg-cloud-provisioner in Vault if Cloud did not make it."
+          - alert: CloudProjectConnectionsOverCeiling
+            # The CONNECTION LIMITs of Cloud's roles add up to more than the
+            # Cloud-wide ceiling of 20 (POSTGRES_CONNECTION_CEILING in the
+            # cloud repo; change both together). Postgres cannot enforce a sum,
+            # so the reconciler does and this checks it.
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_role_limits_connlimit_sum) > 20
+            for: 5m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: Cloud's roles may hold {{ $value }} connections, above the ceiling of 20. Either the reconciler let a Plan through it should have refused, or its provisioner credential is in someone else's hands. List them: SELECT rolname, rolconnlimit FROM pg_roles WHERE rolname ~ '^p_' ORDER BY rolconnlimit DESC;"
       - name: Cluster
         rules:
           - alert: NodeDown

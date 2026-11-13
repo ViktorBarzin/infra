@@ -22,7 +22,10 @@
 #   the audit query behind alert CloudProvisionerForeignRole counts every
 #     role cloud_provisioner administers that is not named p_*, also after a
 #     rename, a revoke of its own ADMIN OPTION, or through a p_* role it gave
-#     CREATEROLE.
+#     CREATEROLE;
+#   the audit behind alerts CloudProjectRoleUnlimited and
+#     CloudProjectConnectionsOverCeiling counts LOGIN roles cloud_provisioner
+#     administers with CONNECTION LIMIT -1 or above 8, and sums their limits.
 # Needs docker and the postgres:18 image.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,7 +40,8 @@ trap cleanup EXIT
 cp "$SRC" "$TMP/" || { echo "FAIL: cannot copy $SRC"; exit 1; }
 if ! (cd "$TMP" && echo 'local.cloud_roles_sql' | terraform console >"$TMP/sql.raw" 2>"$TMP/err" \
   && echo 'jsonencode(local.cloud_pg_hba)' | terraform console >"$TMP/hba.raw" 2>>"$TMP/err" \
-  && echo 'local.cloud_provisioner_audit_sql' | terraform console >"$TMP/audit.raw" 2>>"$TMP/err"); then
+  && echo 'local.cloud_provisioner_audit_sql' | terraform console >"$TMP/audit.raw" 2>>"$TMP/err" \
+  && echo 'local.cloud_role_limits_audit_sql' | terraform console >"$TMP/limits.raw" 2>>"$TMP/err"); then
   echo "FAIL: terraform console could not evaluate $SRC (it must hold only locals)"; cat "$TMP/err"; exit 1
 fi
 # terraform console prints a multi-line string as <<EOT ... EOT and a
@@ -57,6 +61,7 @@ def heredoc(name):
     return json.loads(raw)
 (d / "cloud.sql").write_text(heredoc("sql.raw"))
 (d / "audit.sql").write_text(heredoc("audit.raw"))
+(d / "limits.sql").write_text(heredoc("limits.raw"))
 hba = json.loads(json.loads((d / "hba.raw").read_text()))
 (d / "rules.json").write_text(json.dumps(hba))
 PY
@@ -208,6 +213,25 @@ expect_ok "provisioner creates p_maker with CREATEROLE" \
   as cloud_provisioner postgres -c "CREATE ROLE p_maker NOLOGIN CREATEROLE IN ROLE cloud_projects"
 expect_ok "p_maker creates sneaky2" sup -c "SET ROLE p_maker" -c "CREATE ROLE sneaky2 LOGIN"
 n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a role made by a role the provisioner made" || bad "audit through p_maker: $n"
+
+# --- the audit behind CloudProjectRoleUnlimited and CloudProjectConnectionsOverCeiling
+# What the CNPG exporter runs (local.cloud_role_limits_audit_sql): over the
+# LOGIN roles cloud_provisioner administers, how many have CONNECTION LIMIT -1
+# or above 8, and the sum of their limits. Printed as "<unlimited> <sum>".
+limits() { docker exec -i "$NAME" psql -U postgres -X -q -tA -F ' ' -f - <"$TMP/limits.sql"; }
+sup -c "DROP ROLE sneaky2" -c "ALTER ROLE p_dawarich_queue CONNECTION LIMIT 2" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 5" ] && ok "limits audit: no unlimited role, sum 5 (p_demo 3, p_dawarich_queue 2; NOLOGIN p_maker not counted)" || bad "limits audit baseline: $l"
+expect_ok "provisioner creates p_wide with no CONNECTION LIMIT" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_wide LOGIN CONNECTION LIMIT -1 IN ROLE cloud_projects"
+l="$(limits 2>&1)"; [ "$l" = "1 5" ] && ok "limits audit counts a role with CONNECTION LIMIT -1" || bad "limits audit after p_wide -1: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 9" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "1 14" ] && ok "limits audit counts a role above 8 and adds it to the sum" || bad "limits audit after p_wide 9: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 8" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 13" ] && ok "limits audit accepts 8, the largest Size" || bad "limits audit after p_wide 8: $l"
+as cloud_provisioner postgres -c "CREATE ROLE p_more LOGIN CONNECTION LIMIT 8 IN ROLE cloud_projects" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit sum passes the ceiling of 20 (21)" || bad "limits audit sum: $l"
+sup -c "CREATE ROLE outsider LOGIN CONNECTION LIMIT -1" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit ignores a role cloud_provisioner does not administer" || bad "limits audit with outsider: $l"
 
 # --- nothing else changed ----------------------------------------------------
 expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'
