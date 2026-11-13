@@ -1859,6 +1859,9 @@ resource "null_resource" "pg_cluster_v18" {
     affinity       = "required-hostname-v1"
     monitoring     = "custom-queries-v1"
     probes         = "isolation-check-relaxed-v1"
+    # Cloud's pg_hba rules (cloud_postgres_rules.tf). CNPG reloads on a
+    # pg_hba change; it does not restart an instance.
+    pg_hba = sha1(jsonencode(local.cloud_pg_hba))
   }
 
   provisioner "local-exec" {
@@ -1936,6 +1939,11 @@ resource "null_resource" "pg_cluster_v18" {
         # Parameters, preload libraries and resources match pg-cluster above; the
         # reasoning for each value lives in that resource's comments.
         postgresql:
+          # Cloud: cloud_* roles and members of cloud_projects stay in their
+          # own databases (cloud_postgres_rules.tf). JSON is valid YAML here.
+          # pg-cluster (the PG16 rollback copy) does not carry these rules: a
+          # rollback must add them there before Cloud's roles move with it.
+          pg_hba: ${jsonencode(local.cloud_pg_hba)}
           shared_preload_libraries:
             - pg_prewarm
           parameters:
