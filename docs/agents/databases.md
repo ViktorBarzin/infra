@@ -44,7 +44,7 @@ Project roles are matched by name (PG 16+ regex), not by membership of `cloud_pr
 | `max_connections` 200 minus `superuser_reserved_connections` 3 | 197 |
 | Peak client backends on the primary, 2026-11-06 to 11-13 (`max_over_time(sum(cnpg_backends_total{pod=~"pg-cluster-v18-.*"})[7d:1m])`; median over the cluster's 12 days of history: 111) | -150 |
 | `cloud_provisioner` 5 + `cloud_state` 10 | -15 |
-| Cloud console pool (M4 must cap it at 10) | -10 |
+| Role `cloud`: console pool 4 + LISTEN 1, reconciler pool 4, `migrate` 1 (`docs/architecture/cloud.md`) | -10 |
 | Left for Project roles | 22 |
 | **Project ceiling** | **20**, leaving 2 spare at the peak |
 

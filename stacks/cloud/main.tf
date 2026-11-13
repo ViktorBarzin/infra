@@ -7,27 +7,21 @@
 # tests/cloud-calico.test.sh). Cloud's Postgres roles are in stacks/dbaas
 # (cloud_postgres.tf), its Vault roles in stacks/vault (cloud.tf), and the
 # shared Authentik client for private Apps in stacks/authentik (cloud-apps.tf).
-# The console and reconciler Deployments arrive here in milestone M4.
+# Milestone M4 adds the console (console.tf, one tanstack_app call), the
+# reconciler Deployment (reconciler.tf), the CLI's sign-in client
+# (cli_sign_in.tf); what they read is in deploy_rules.tf (tested by
+# tests/cloud-deploy.test.sh). docs/architecture/cloud.md describes the whole.
 #
 # Scope: Project namespaces (p-*) and everything in them, the Project roles and
 # databases on the shared CNPG cluster and secret/cloud/<namespace>/* belong
 # to Cloud's database, not this repo (AGENTS.md, "Cloud-owned objects").
 
-# Same labels and lifecycle as modules/kubernetes/tanstack_app, so the console's
-# module call in M4 can take this namespace over with one `moved` block
-# (to = module.<name>.kubernetes_namespace.this) and plan zero changes.
-resource "kubernetes_namespace" "cloud" {
-  metadata {
-    name = local.cloud_namespace
-    labels = {
-      tier              = local.tiers.aux
-      "istio-injection" = "disabled"
-    }
-  }
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label.
-    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
-  }
+# The namespace `cloud` is the console module's (console.tf) since M4. M2
+# created it here with the module's labels and lifecycle, so the move plans
+# zero changes.
+moved {
+  from = kubernetes_namespace.cloud
+  to   = module.console.kubernetes_namespace.this
 }
 
 # The reconciler talks to the API server, Vault (Kubernetes auth role
@@ -35,17 +29,16 @@ resource "kubernetes_namespace" "cloud" {
 resource "kubernetes_service_account" "cloud_reconciler" {
   metadata {
     name      = local.cloud_reconciler_sa
-    namespace = kubernetes_namespace.cloud.metadata[0].name
+    namespace = module.console.namespace
   }
 }
 
-# The console needs no Kubernetes API access, so its pods get no token.
-resource "kubernetes_service_account" "cloud_console" {
-  metadata {
-    name      = "cloud-console"
-    namespace = kubernetes_namespace.cloud.metadata[0].name
-  }
-  automount_service_account_token = false
+# The console's service account is the module's since M4 (console.tf). M2 made
+# it without a token; M4 mounts one for TakenHosts, so the move updates it in
+# place.
+moved {
+  from = kubernetes_service_account.cloud_console
+  to   = module.console.kubernetes_service_account.this[0]
 }
 
 resource "kubernetes_cluster_role" "cloud_reconciler" {
@@ -66,7 +59,7 @@ resource "kubernetes_cluster_role_binding" "cloud_reconciler" {
   subject {
     kind      = "ServiceAccount"
     name      = kubernetes_service_account.cloud_reconciler.metadata[0].name
-    namespace = kubernetes_namespace.cloud.metadata[0].name
+    namespace = module.console.namespace
   }
   role_ref {
     api_group = "rbac.authorization.k8s.io"
