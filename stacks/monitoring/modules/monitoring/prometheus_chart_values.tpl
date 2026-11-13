@@ -8391,9 +8391,11 @@ serverFiles:
             # cloud_reconcile_total series, hence `unless` over `== 0`.
             # prom-client creates a labelled series at its first increment, so
             # the first job after a restart starts its series at 1, which
-            # increase() cannot see; the `offset` clause counts a series that
-            # is newer than the window as a finished job.
-            expr: max(cloud_reconcile_queue_depth) > 0 unless on() (sum(increase(cloud_reconcile_total[30m])) > 0 or sum(cloud_reconcile_total unless cloud_reconcile_total offset 30m) > 0)
+            # increase() cannot see; the `last_over_time` clause counts a
+            # series with no sample in the hour before the window as a
+            # finished job. A scrape gap under an hour does not make an old
+            # series look new.
+            expr: max(cloud_reconcile_queue_depth) > 0 unless on() (sum(increase(cloud_reconcile_total[30m])) > 0 or sum(cloud_reconcile_total unless last_over_time(cloud_reconcile_total[1h] offset 30m)) > 0)
             for: 30m
             labels:
               severity: critical
@@ -8407,10 +8409,13 @@ serverFiles:
             # alone stay quiet. A failed job is not retried (a failed destroy
             # is queued again after an hour), so one failure must fire: no
             # `for`, and the alert stays up while the failure is inside the
-            # 15-minute window. The `offset` clause catches the first failure
-            # after a restart, whose series starts at 1 where increase() sees
-            # nothing.
-            expr: sum(increase(cloud_reconcile_total{result="failed"}[15m])) > 0 or sum(cloud_reconcile_total{result="failed"} unless cloud_reconcile_total{result="failed"} offset 15m) > 0
+            # 15-minute window. The `last_over_time` clause catches the first
+            # failure after a restart, whose series starts at 1 where
+            # increase() sees nothing: a series with no sample in the hour
+            # before the window is new. A restarted pod has a new instance
+            # label, so its series is new. A scrape gap under an hour does not
+            # make an old failure fire again.
+            expr: sum(increase(cloud_reconcile_total{result="failed"}[15m])) > 0 or sum(cloud_reconcile_total{result="failed"} unless last_over_time(cloud_reconcile_total{result="failed"}[1h] offset 15m)) > 0
             labels:
               severity: warning
               subsystem: cloud
