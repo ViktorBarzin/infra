@@ -39,10 +39,11 @@
 #     publish any internal host; LoadBalancer, NodePort and externalIPs open
 #     the node or the LAN.
 #   cloud-managed-ingress  class traefik; every host is one label under
-#     viktorbarzin.me (no wildcard, no host-less rule, no defaultBackend) and
-#     not a reserved App name from the Cloud v1 plan ("Configuration":
-#     reserved App names); every backend is a Kubernetes Service port named
-#     edge. No tls.secretName: Traefik's default TLSStore serves the
+#     viktorbarzin.me (no wildcard, no host-less rule, no defaultBackend), not
+#     a reserved App name from the Cloud v1 plan ("Configuration": reserved
+#     App names) and not a host the homelab already routes (its parameter,
+#     ConfigMap cloud/cloud-taken-hosts from taken_hosts.tf); every backend is
+#     a Kubernetes Service port named edge. No tls.secretName: Traefik's default TLSStore serves the
 #     wildcard, and a Project certificate would go into Traefik's global
 #     store, where an exact SAN match beats the wildcard for every host. The
 #     only annotations are the two Cloud renders: router.entrypoints
@@ -63,9 +64,18 @@
 #     containers, service account other than default, or priority class
 #     other than tier-4-aux; requests no GPU or other extended resource; and
 #     only a container named cookie-strip running the pinned Caddy image may
-#     declare a port named edge. Every Deployment is a Cloud App or an App's
+#     declare a port named edge. cookie-strip runs exactly as Cloud renders
+#     it: the fixed args and env, no command, envFrom, lifecycle hook or exec
+#     probe, a strip-* ConfigMap at /etc/caddy and its own emptyDir at
+#     /run/caddy, and its own runAsUser, which no other container shares. No
+#     shared process namespace. Every Deployment is a Cloud App or an App's
 #     oauth2-proxy (label cloud.viktorbarzin.me/component), and an App's pod
 #     template holds the cookie-strip container with port edge.
+#   cloud-managed-strip-config  a ConfigMap named strip-* holds only the key
+#     Caddyfile, and that file is the one Cloud renders (local
+#     cloud_caddyfile_lines): only the App port, the host, the cookie list and
+#     the App's own oauth2-proxy vary, and the list strips at least the
+#     homelab's cookies.
 #   cloud-managed-secretstore  a SecretStore is the in-cluster Vault, KV v2 at
 #     secret/, Kubernetes auth role cloud-project as service account
 #     cloud-secrets, and nothing else. Any other provider would let the ESO
@@ -78,9 +88,11 @@
 # request reaches the App. The policies above make it the only way in:
 # Traefik reaches a Project only through an Ingress, the Ingress names only a
 # Kubernetes Service port named edge, that port targets the container port
-# named edge, and only cookie-strip may have one. What cookie-strip strips is
-# its Caddyfile (ConfigMap strip-<app>), which no policy here reads; Cloud's
-# own test (cookie-proxy.test.ts) and M4's live cookie test check it.
+# named edge, and only cookie-strip may have one. What cookie-strip does is
+# fixed too: cloud-managed-pod and cloud-managed-deployment fix how it runs
+# and what it mounts, and cloud-managed-strip-config fixes its Caddyfile.
+# Cloud's own test (cookie-strip.test.ts) runs that Caddyfile in the pinned
+# image; M4's live cookie test checks it end to end.
 #
 # Network. Calico tier "cloud" (main.tf) sits before the default tier and
 # holds one infra-owned GlobalNetworkPolicy for every managed namespace,
@@ -99,13 +111,13 @@
 # storage class, and no in-tree nfs, iscsi or rbd volume, which the kubelet
 # mounts from the node's network.
 #
-# Not here, by necessity: "an Ingress host in a managed namespace must not equal
-# a host routed outside managed namespaces". A ValidatingAdmissionPolicy sees
-# only the object in the request, its namespace and fixed parameter objects; it
-# cannot list other Ingresses or IngressRoutes. The reconciler checks this
-# before it applies, using its cluster-wide read on both. The static part of
-# the rule (host shape, reserved names) is cloud-managed-ingress. The gap
-# left is recorded in docs/agents/security.md.
+# Taken hosts. A ValidatingAdmissionPolicy sees only the object in the
+# request, its namespace and a parameter object; it cannot list other
+# Ingresses or IngressRoutes. So taken_hosts.tf writes the homelab's hosts
+# into a ConfigMap at plan time, and cloud-managed-ingress refuses them. A
+# host added after the last cloud apply is missing until the next one; the
+# reconciler checks taken hosts itself before it applies, with its
+# cluster-wide read on both kinds.
 #
 # Calico NetworkPolicies are served by the Calico API server, an aggregated
 # API, so kube-apiserver admission policies do not see them. For those, the
@@ -210,6 +222,94 @@ locals {
   cloud_edge_container      = "cookie-strip"
   cloud_cookie_strip_image  = "docker.io/library/caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee"
   cloud_workload_components = ["app", "oauth2-proxy"]
+
+  # How cookie-strip runs (the cloud repo's modules/app/main.tf). Anything
+  # else would let the reconciler change what it strips without touching its
+  # Caddyfile: a command or exec hook starts another process under
+  # cookie-strip's uid, which can share port edge (SO_REUSEPORT) and take
+  # requests unstripped; env and mounts can point Caddy at another config.
+  cloud_cookie_strip_args = ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+  cloud_cookie_strip_env = {
+    XDG_CONFIG_HOME = "/run/caddy/config"
+    XDG_DATA_HOME   = "/run/caddy/data"
+  }
+  cloud_cookie_strip_config_dir = "/etc/caddy"
+  cloud_cookie_strip_run_dir    = "/run/caddy"
+  cloud_strip_config_prefix     = "strip-"
+
+  # The Caddyfile cookie-strip runs (ConfigMap strip-<app>, key Caddyfile),
+  # line by line, from the cloud repo's modules/app/Caddyfile.tftpl. The
+  # policy cloud-managed-strip-config accepts only this file: leading comment
+  # lines, then these lines in order with any indentation, a private App's
+  # two oauth2-proxy blocks or neither. Placeholders:
+  #   @APP@, @NS@  the App (the ConfigMap's name after strip-) and the
+  #                namespace, filled in by the policy, so the only upstream
+  #                besides the App is this App's own oauth2-proxy
+  #   @HOST@       one label under the base domain (the sign-in redirect)
+  #   @PORT@       the App's port on 127.0.0.1
+  #   @COOKIES@    the cookie alternation; cloud_strip_cookies_required must
+  #                each be in it
+  cloud_caddyfile_lines = {
+    head = [
+      "{", "admin off", "auto_https off", "persist_config off", "servers {",
+      "trusted_proxies static private_ranges", "}", "}", ":8080 {",
+    ]
+    signin = [
+      "handle /oauth2/* {", "reverse_proxy auth-@APP@.@NS@.svc.cluster.local:80 {",
+      "header_up X-Real-IP {client_ip}", "header_up X-Forwarded-Uri {uri}", "}", "}",
+    ]
+    handle = ["handle {"]
+    forward_auth = [
+      "forward_auth auth-@APP@.@NS@.svc.cluster.local:80 {", "uri /oauth2/auth",
+      "header_up X-Real-IP {client_ip}", "@signin status 401", "handle_response @signin {",
+      "redir * /oauth2/sign_in?rd=https://@HOST@{uri} 302", "}", "}",
+    ]
+    tail = [
+      "reverse_proxy 127.0.0.1:@PORT@ {",
+      "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
+      "header_up Cookie `^;\\s*` \"\"",
+      "header_up -X-Authentik-*", "header_up -X_Authentik_*", "}", "}", "}",
+    ]
+  }
+  # Each line as a regex: metacharacters escaped, any indentation, a newline.
+  cloud_caddyfile_line_re = { for k, ls in local.cloud_caddyfile_lines : k => join("", [
+    for l in ls : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"
+  ]) }
+  # One cookie in the alternation: a name (a dot only escaped), optionally
+  # followed by [^=;]* for a prefix.
+  cloud_strip_cookie_re = "(?:[A-Za-z0-9_-]|\\\\[.])+(?:\\[\\^=;\\]\\*)?"
+  cloud_caddyfile_re = replace(replace(replace(join("", [
+    "^(?:[\\t ]*(?:#[^\\n]*)?\\n)*",
+    local.cloud_caddyfile_line_re.head,
+    "(?:",
+    local.cloud_caddyfile_line_re.signin, local.cloud_caddyfile_line_re.handle, local.cloud_caddyfile_line_re.forward_auth,
+    "|",
+    local.cloud_caddyfile_line_re.handle,
+    ")",
+    local.cloud_caddyfile_line_re.tail,
+    "(?:[\\t ]*\\n)*$",
+    ]),
+    "@HOST@", "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.${local.cloud_base_domain_re}"),
+    "@PORT@", "[0-9]{1,5}"),
+  "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
+  # The homelab's cookies scoped to viktorbarzin.me, in Cloud's strip_cookies
+  # form (a trailing * is a prefix): Authentik's forward-auth session, the
+  # Turnstile gate and Anubis. Cloud's list may hold more, never fewer.
+  cloud_strip_cookies_required = ["authentik_proxy_*", "tsgate*", "anubis*"]
+  # The same, as each appears in the Caddyfile's alternation, escaped.
+  cloud_strip_cookies_required_re = [for c in local.cloud_strip_cookies_required : replace(
+    endswith(c, "*") ? "${trimsuffix(c, "*")}[^=;]*" : c, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0"
+  )]
+
+  # Hosts the homelab already routes (taken_hosts.tf collects them from every
+  # Ingress and IngressRoute outside managed namespaces): one ConfigMap key
+  # per host. cloud-managed-ingress reads it as its parameter and refuses a
+  # Project Ingress for any of them; without it the policy refuses every
+  # Ingress in managed namespaces.
+  cloud_taken_hosts = {
+    name      = "cloud-taken-hosts"
+    namespace = local.cloud_namespace
+  }
 
   # The only priority class a Project pod may carry; Kyverno injects it from
   # the namespace's tier=4-aux label when a pod has none.
@@ -409,6 +509,27 @@ locals {
       expression = "@S.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.name) || p.name != '${local.cloud_edge_port_name}') || (c.name == '${local.cloud_edge_container}' && c.image.startsWith('${local.cloud_cookie_strip_image}')))"
       message    = "in a Cloud namespace, only a container named ${local.cloud_edge_container} running ${local.cloud_cookie_strip_image} may declare a port named ${local.cloud_edge_port_name}"
     },
+    {
+      # The App container could otherwise see Caddy's process.
+      expression = "!has(@S.shareProcessNamespace) || !@S.shareProcessNamespace"
+      message    = "in a Cloud namespace, a pod may not share its process namespace"
+    },
+    {
+      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (!has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_cookie_strip_args)} && !has(c.envFrom) && (!has(c.env) || c.env.all(e, e.name in ${jsonencode(local.cloud_cookie_strip_env)} && has(e.value) && !has(e.valueFrom) && e.value == ${jsonencode(local.cloud_cookie_strip_env)}[e.name])) && !has(c.lifecycle) && (!has(c.livenessProbe) || !has(c.livenessProbe.exec)) && (!has(c.readinessProbe) || !has(c.readinessProbe.exec)) && (!has(c.startupProbe) || !has(c.startupProbe.exec))))"
+      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container runs as Cloud renders it: args ${join(" ", local.cloud_cookie_strip_args)}, env only ${join(" and ", keys(local.cloud_cookie_strip_env))}, and no command, envFrom, lifecycle hook or exec probe"
+    },
+    {
+      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (has(c.volumeMounts) && size(c.volumeMounts) == 2 && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_cookie_strip_config_dir}') && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_cookie_strip_run_dir}') && c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && ((m.mountPath == '${local.cloud_cookie_strip_config_dir}' && has(m.readOnly) && m.readOnly && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name.startsWith('${local.cloud_strip_config_prefix}') && !has(v.configMap.items))) || (m.mountPath == '${local.cloud_cookie_strip_run_dir}' && @S.volumes.exists(v, v.name == m.name && has(v.emptyDir)) && @S.containers.all(o, o.name == c.name || !has(o.volumeMounts) || o.volumeMounts.all(om, om.name != m.name)))))))"
+      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container mounts only a ${local.cloud_strip_config_prefix}* ConfigMap, read-only and whole, at ${local.cloud_cookie_strip_config_dir}, and an emptyDir no other container mounts at ${local.cloud_cookie_strip_run_dir}"
+    },
+    {
+      # Two sockets share a port (SO_REUSEPORT) only under the same effective
+      # uid, so App code under cookie-strip's uid could take a share of port
+      # edge unstripped. Each container's uid is its own runAsUser, else the
+      # pod's; an image's USER is invisible here, so every container sets one.
+      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (has(c.securityContext) && has(c.securityContext.runAsUser) && @S.containers.all(o, o.name == c.name || (has(o.securityContext) && has(o.securityContext.runAsUser) ? o.securityContext.runAsUser : (has(@S.securityContext) && has(@S.securityContext.runAsUser) ? @S.securityContext.runAsUser : c.securityContext.runAsUser)) != c.securityContext.runAsUser)))"
+      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container sets its own runAsUser, and every other container runs as another uid, set on the container or the pod"
+    },
   ]
 
   cloud_managed_binding = {
@@ -597,6 +718,8 @@ locals {
       metadata   = { name = "cloud-managed-ingress" }
       spec = {
         failurePolicy = "Fail"
+        # local.cloud_taken_hosts, bound below.
+        paramKind = { apiVersion = "v1", kind = "ConfigMap" }
         matchConstraints = {
           resourceRules = [{
             apiGroups   = ["networking.k8s.io"]
@@ -655,6 +778,13 @@ locals {
             reason     = "Forbidden"
           },
           {
+            # Traefik ranks routers by rule length, so a Project rule for a
+            # homelab host with a longer path would win on that path.
+            expression = "!has(params.data) || ((!has(object.spec.rules) || object.spec.rules.all(r, !has(r.host) || !(r.host in params.data))) && (!has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) || t.hosts.all(h, !(h in params.data)))))"
+            message    = "in a Cloud namespace, an Ingress may not use a host the homelab already routes (ConfigMap ${local.cloud_taken_hosts.namespace}/${local.cloud_taken_hosts.name})"
+            reason     = "Forbidden"
+          },
+          {
             expression = "!has(object.spec.rules) || object.spec.rules.all(r, !has(r.http) || r.http.paths.all(p, has(p.backend.service) && has(p.backend.service.port) && has(p.backend.service.port.name) && p.backend.service.port.name == '${local.cloud_edge_port_name}' && !has(p.backend.service.port.number)))"
             message    = "in a Cloud namespace, every Ingress backend is a Kubernetes Service port named ${local.cloud_edge_port_name}"
             reason     = "Forbidden"
@@ -666,7 +796,65 @@ locals {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicyBinding"
       metadata   = { name = "cloud-managed-ingress" }
-      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-ingress" })
+      spec = merge(local.cloud_managed_binding, {
+        policyName = "cloud-managed-ingress"
+        # Fail closed: without the list, every Ingress in managed namespaces
+        # is refused.
+        paramRef = {
+          name                    = local.cloud_taken_hosts.name
+          namespace               = local.cloud_taken_hosts.namespace
+          parameterNotFoundAction = "Deny"
+        }
+      })
+    }
+    managed_strip_config = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-strip-config" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = [""]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["configmaps"]
+          }]
+        }
+        matchConditions = [{
+          name       = "is-strip-config"
+          expression = "object.metadata.name.startsWith('${local.cloud_strip_config_prefix}')"
+        }]
+        variables = [
+          { name = "caddyfile", expression = "has(object.data) && 'Caddyfile' in object.data ? object.data['Caddyfile'] : ''" },
+          # The one header_up Cookie line that strips cookies (a comment line
+          # starts with #, so it cannot match).
+          { name = "cookieLine", expression = "size(variables.caddyfile) <= 8192 ? variables.caddyfile.find(r'\\n[\\t ]*header_up Cookie `[^`\\n]*`') : ''" },
+        ]
+        validations = [
+          {
+            expression = "has(object.data) && size(object.data) == 1 && 'Caddyfile' in object.data && !has(object.binaryData)"
+            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}* ConfigMap holds only the key Caddyfile"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "size(variables.caddyfile) <= 8192 && variables.caddyfile.matches(r'${local.cloud_caddyfile_re}'.replace('@APP@', object.metadata.name.substring(${length(local.cloud_strip_config_prefix)})).replace('@NS@', request.namespace))"
+            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}<app> Caddyfile is the one Cloud renders (modules/app/Caddyfile.tftpl), with only the App port, the host, the strip list and this App's oauth2-proxy filled in"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "${join(" && ", [for c in local.cloud_strip_cookies_required_re : "variables.cookieLine.matches(r'[:|]${c}[|)]')"])}"
+            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}<app> Caddyfile strips at least ${join(", ", local.cloud_strip_cookies_required)}"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    managed_strip_config_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-strip-config" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-strip-config" })
     }
     managed_middleware = {
       apiVersion = "admissionregistration.k8s.io/v1"

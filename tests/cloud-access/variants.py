@@ -22,6 +22,7 @@ dump, out, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.ar
 out.mkdir(parents=True, exist_ok=True)
 
 namespace = json.loads((dump / "namespace.json").read_text())
+SOURCE_NS = namespace["metadata"]["name"]
 objects = json.loads((dump / "objects.json").read_text())["items"]
 
 SERVER_FIELDS = ["uid", "resourceVersion", "creationTimestamp", "managedFields", "generation", "selfLink", "ownerReferences"]
@@ -46,6 +47,10 @@ def clean(obj):
     if o["kind"] == "Service":
         for f in ["clusterIP", "clusterIPs"]:
             o["spec"].pop(f, None)
+    # A private App's Caddyfile names its oauth2-proxy by namespace, which
+    # cloud-managed-strip-config checks; follow the move.
+    if o["kind"] == "ConfigMap" and md["name"].startswith("strip-"):
+        o["data"]["Caddyfile"] = o["data"]["Caddyfile"].replace(f".{SOURCE_NS}.svc.", f".{target}.svc.")
     if o["kind"] != "Namespace":
         md["namespace"] = target
     return o
@@ -125,6 +130,23 @@ case("deploy-no-component", "kr", "are labelled cloud.viktorbarzin.me/component"
      variant(proxy, drop_component))
 
 
+RUNS = "container runs as Cloud renders it"
+MOUNTS = "container mounts only a strip-"
+UID = "sets its own runAsUser"
+
+
+def strip(s):
+    return [c for c in s["containers"] if c["name"] == "cookie-strip"][0]
+
+
+def app_c(s):
+    return [c for c in s["containers"] if c["name"] == "app"][0]
+
+
+def run_volume(s):
+    return [m["name"] for m in strip(s)["volumeMounts"] if m["mountPath"] == "/run/caddy"][0]
+
+
 def init_container(s):
     c = s["containers"][0]
     s["initContainers"] = [{"name": "init", "image": c["image"], "securityContext": c.get("securityContext", {}), "resources": c.get("resources", {})}]
@@ -151,6 +173,26 @@ POD_RULES = [
     ("serviceaccount", lambda s: s.update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
     ("init", init_container, "may not have init containers"),
     ("edge-on-app", lambda s: [c.update({"ports": [{"name": EDGE, "containerPort": 3001}]}) for c in s["containers"] if c["name"] == "app"], "only a container named cookie-strip"),
+    ("share-pid", lambda s: s.update({"shareProcessNamespace": True}), "may not share its process namespace"),
+    # cookie-strip as Cloud renders it, and nothing else.
+    ("strip-command", lambda s: strip(s).update({"command": ["/bin/sh", "-c", "caddy reverse-proxy --from :8080 --to 127.0.0.1:3000"]}), RUNS),
+    ("strip-args", lambda s: strip(s).update({"args": ["caddy", "run", "--config", "/run/caddy/Caddyfile", "--adapter", "caddyfile"]}), RUNS),
+    ("strip-env", lambda s: strip(s)["env"].append({"name": "CADDY_ADMIN", "value": "0.0.0.0:2019"}), RUNS),
+    ("strip-env-from", lambda s: strip(s)["env"].append({"name": "XDG_CONFIG_HOME", "valueFrom": {"configMapKeyRef": {"name": "x", "key": "y"}}}), RUNS),
+    ("strip-envfrom", lambda s: strip(s).update({"envFrom": [{"configMapRef": {"name": "x"}}]}), RUNS),
+    ("strip-poststart", lambda s: strip(s).update({"lifecycle": {"postStart": {"exec": {"command": ["/bin/sh", "-c", "nc -lk -p 8080"]}}}}), RUNS),
+    ("strip-exec-probe", lambda s: strip(s).update({"livenessProbe": {"exec": {"command": ["/bin/sh", "-c", "true"]}}}), RUNS),
+    ("strip-config-emptydir", lambda s: (s["volumes"].append({"name": "shared", "emptyDir": {}}),
+                                         [m.update({"name": "shared"}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"]), MOUNTS),
+    ("strip-config-other-cm", lambda s: [v["configMap"].update({"name": "auth-recipes"}) for v in s["volumes"] if "configMap" in v and v["configMap"]["name"].startswith("strip-")], MOUNTS),
+    ("strip-config-items", lambda s: [v["configMap"].update({"items": [{"key": "Caddyfile", "path": "Caddyfile"}]}) for v in s["volumes"] if "configMap" in v], MOUNTS),
+    ("strip-config-subpath", lambda s: [m.update({"subPath": "Caddyfile"}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"], MOUNTS),
+    ("strip-config-writable", lambda s: [m.update({"readOnly": False}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"], MOUNTS),
+    ("strip-extra-mount", lambda s: strip(s)["volumeMounts"].append({"name": "tmp", "mountPath": "/tmp"}), MOUNTS),
+    ("strip-run-shared", lambda s: app_c(s).setdefault("volumeMounts", []).append({"name": run_volume(s), "mountPath": "/run/caddy"}), MOUNTS),
+    ("strip-no-uid", lambda s: strip(s)["securityContext"].pop("runAsUser"), UID),
+    ("strip-app-uid", lambda s: strip(s)["securityContext"].update({"runAsUser": app_c(s)["securityContext"]["runAsUser"]}), UID),
+    ("app-pod-uid-is-strip", lambda s: (app_c(s)["securityContext"].pop("runAsUser"), s["securityContext"].update({"runAsUser": strip(s)["securityContext"]["runAsUser"]})), UID),
 ]
 for name, change, expect in POD_RULES:
     case(f"deploy-{name}", "kr", expect, f"App Deployment with {name}", variant(app, lambda o, ch=change: ch(spec_of(o))))
@@ -215,6 +257,63 @@ case("ing-tls-secret", "kr", "tls.secretName", "Ingress with tls.secretName",
      variant(ing, lambda o: [t.update({"secretName": "tls-secret"}) for t in o["spec"]["tls"]]))
 case("ing-reserved", "kr", "reserved name", "Ingress for vault.viktorbarzin.me",
      variant(ing, lambda o: ([r.update({"host": "vault.viktorbarzin.me"}) for r in o["spec"]["rules"]], [t.update({"hosts": ["vault.viktorbarzin.me"]}) for t in o["spec"]["tls"]])))
+case("ing-taken", "kr", "already routes", "Ingress for nextcloud.viktorbarzin.me, a homelab host",
+     variant(ing, lambda o: ([r.update({"host": "nextcloud.viktorbarzin.me"}) for r in o["spec"]["rules"]], [t.update({"hosts": ["nextcloud.viktorbarzin.me"]}) for t in o["spec"]["tls"]])))
+case("ing-taken-path", "kr", "already routes", "Ingress for nextcloud.viktorbarzin.me/login, a longer rule than the homelab's",
+     variant(ing, lambda o: ([r.update({"host": "nextcloud.viktorbarzin.me"}) for r in o["spec"]["rules"]], [p.update({"path": "/login"}) for p in paths(o)], o["spec"].pop("tls"))))
+
+# --- the cookie-strip Caddyfile (ConfigMap strip-<app>) -----------------------------
+private_strip = one("ConfigMap", "strip-recipes")
+public_strip = one("ConfigMap", "strip-menu")
+CADDY = "Caddyfile"
+assert "forward_auth auth-recipes." + target + ".svc." in private_strip["data"][CADDY], "the private App's Caddyfile names its oauth2-proxy"
+
+
+def edit(old, new):
+    def f(o):
+        assert old in o["data"][CADDY], f"not in the Caddyfile: {old}"
+        o["data"][CADDY] = o["data"][CADDY].replace(old, new, 1)
+    return f
+
+
+COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|_oauth2_proxy[^=;]*"
+RENDERED = "Caddyfile is the one Cloud renders"
+case("strip-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
+     variant(public_strip, edit(COOKIE_LIST, "_oauth2_proxy[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
+case("strip-cm-comment", "kr", "ok", "Caddyfile with another comment line", variant(public_strip, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
+for cookie in ["authentik_proxy_[^=;]*", "tsgate[^=;]*", "anubis[^=;]*"]:
+    case("strip-cm-keep-" + cookie.split("[")[0].rstrip("_"), "kr", "strips at least", f"Caddyfile that keeps {cookie.split('[')[0]}* cookies",
+         variant(private_strip, edit(COOKIE_LIST, "|".join(c for c in COOKIE_LIST.split("|") if c != cookie))))
+case("strip-cm-exact-tsgate", "kr", "strips at least", "Caddyfile that strips tsgate but not tsgate_fb",
+     variant(public_strip, edit("tsgate[^=;]*", "tsgate")))
+case("strip-cm-extra-key", "kr", "holds only the key Caddyfile", "strip ConfigMap with a second key",
+     variant(public_strip, lambda o: o["data"].update({"evil": "x"})))
+case("strip-cm-binary", "kr", "holds only the key Caddyfile", "strip ConfigMap with binaryData",
+     variant(public_strip, lambda o: o.update({"binaryData": {"x": "eA=="}})))
+case("strip-cm-no-cookie-line", "kr", RENDERED, "Caddyfile without the Cookie rule",
+     variant(public_strip, lambda o: o["data"].update({CADDY: "\n".join(l for l in o["data"][CADDY].split("\n") if "header_up Cookie `(?:" not in l)})))
+case("strip-cm-other-upstream", "kr", RENDERED, "Caddyfile proxying to Vault",
+     variant(public_strip, edit("reverse_proxy 127.0.0.1:", "reverse_proxy vault-active.vault.svc.cluster.local:")))
+case("strip-cm-extra-route", "kr", RENDERED, "Caddyfile with an extra route before the App",
+     variant(public_strip, edit("\thandle {", "\thandle /x {\n\t\treverse_proxy 127.0.0.1:3000\n\t}\n\thandle {")))
+case("strip-cm-comment-trick", "kr", RENDERED, "Caddyfile with a directive after a comment",
+     variant(public_strip, edit(":8080 {", ":8080 {\n# x\n\troute { header_up +Cookie x }")))
+case("strip-cm-admin", "kr", RENDERED, "Caddyfile with the admin API on",
+     variant(public_strip, edit("admin off", "admin 0.0.0.0:2019")))
+case("strip-cm-other-ns-proxy", "kr", RENDERED, "private Caddyfile asking another namespace's oauth2-proxy",
+     variant(private_strip, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace(f"auth-recipes.{target}.svc.", "auth-recipes.p-other.svc.")})))
+case("strip-cm-other-app-proxy", "kr", RENDERED, "private Caddyfile asking another App's oauth2-proxy",
+     variant(private_strip, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace("auth-recipes.", "auth-menu.")})))
+
+
+def drop_forward_auth(o):
+    t = o["data"][CADDY]
+    o["data"][CADDY] = t[:t.index("\t\tforward_auth")] + t[t.index("\t\treverse_proxy 127.0.0.1"):]
+
+
+case("strip-cm-half-private", "kr", RENDERED, "private Caddyfile without forward_auth (sign-in route only)", variant(private_strip, drop_forward_auth))
+case("strip-cm-admin-user", "ka", RENDERED, "admin is refused another Caddyfile too",
+     variant(public_strip, edit("admin off", "admin 0.0.0.0:2019")))
 
 # --- ResourceQuota and LimitRange -------------------------------------------------------
 quota = one("ResourceQuota", "cloud-quota")
@@ -226,10 +325,14 @@ case("quota-renamed", "kr", "may write only ResourceQuota cloud-quota", "a secon
      variant(quota, lambda o: o["metadata"].update({"name": "extra"})))
 case("quota-tier", "kr", "may write only ResourceQuota cloud-quota", "a quota named tier-quota, as Kyverno's",
      variant(quota, lambda o: (o["metadata"].update({"name": "tier-quota"}), o["metadata"]["labels"].pop(MANAGED_BY))))
-# The API server allows a scope only on a quota of pod resources, so the
-# scoped variant also drops the PersistentVolumeClaim and Service keys.
+# The API server allows a PriorityClass scope only on a quota of pod CPU,
+# memory and count, so the scoped variant drops every other key
+# (PersistentVolumeClaims, Services, ephemeral storage).
+SCOPABLE = {"pods", "cpu", "memory", "requests.cpu", "requests.memory", "limits.cpu", "limits.memory"}
+
+
 def scoped(o):
-    for k in ["persistentvolumeclaims", "services.loadbalancers", "services.nodeports"]:
+    for k in [k for k in o["spec"]["hard"] if k not in SCOPABLE]:
         o["spec"]["hard"].pop(k)
     o["spec"]["scopeSelector"] = {"matchExpressions": [{"scopeName": "PriorityClass", "operator": "In", "values": ["tier-0-core"]}]}
 
