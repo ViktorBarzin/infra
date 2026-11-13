@@ -80,11 +80,17 @@ resource "authentik_stage_prompt" "signup_passkey_prompt" {
 # becomes a working account. Its own stage rather than
 # default-source-enrollment-write, which creates users ACTIVE (correct there —
 # a provider has already verified the address).
+#
+# user_path_template marks the account as one whose email a link proved:
+# Cloud's cloud-apps-active-users policy (cloud-apps.tf) admits accounts on
+# that path, because Cloud's private Apps trust the email. Authentik sets the
+# path only when the stage creates the user.
 resource "authentik_stage_user_write" "signup_passkey_write" {
   name                     = "signup-passkey-write"
   create_users_as_inactive = true
   user_creation_mode       = "always_create"
   user_type                = "internal"
+  user_path_template       = local.cloud_apps_verified_path
 }
 
 # --- Email verification ------------------------------------------------------

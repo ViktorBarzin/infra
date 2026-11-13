@@ -10,13 +10,18 @@
 # core_default_app_access off (system-settings.tf) an unbound application
 # admits nobody. So the binding lives here, once.
 #
-# Who gets through Authentik: every active, signed-in account except service
-# accounts and the public tier's `guest` (policy below). That includes accounts
-# made by open signup. Authentik is not the gate here: each App's oauth2-proxy
-# admits only the email allowlist Cloud renders (the owner plus the App's
-# `allow`). The allowlist trusts the email in Authentik's token, which holds
-# while users cannot change their own email (default_user_change_email =
-# false in system-settings.tf).
+# Who gets through Authentik: active, signed-in people whose email something
+# has vouched for (policy below). Each App's oauth2-proxy then admits only the
+# email allowlist Cloud renders (the owner plus the App's `allow`), so the
+# allowlist trusts the email in Authentik's token. Two things keep that email
+# true:
+#   - users cannot change their own email (default_user_change_email = false
+#     in system-settings.tf);
+#   - the policy admits only accounts whose email was vouched for when the
+#     account was made. The invitation-enrollment flow (proxy-enrollment.tf)
+#     asks for an email and never checks it, and Authentik does not require
+#     emails to be unique, so an invitee could otherwise enroll as
+#     victim@example.com and pass every allowlist naming that address.
 #
 # Redirect URIs: regex mode, one label under viktorbarzin.me, path
 # /oauth2/callback only. Authentik matches regex redirect URIs with
@@ -46,6 +51,9 @@ locals {
   # One DNS label under the base domain, then /oauth2/callback; the same
   # label rule as a Cloud App name.
   cloud_apps_redirect_re = "^https://[a-z][a-z0-9-]{0,29}[a-z0-9]\\.viktorbarzin\\.me/oauth2/callback$"
+  # The Authentik user path of accounts whose email a verification link
+  # proved (signup-passkey.tf); cloud-apps-active-users admits them.
+  cloud_apps_verified_path = "users/email-verified"
 }
 
 # Without a signing key Authentik signs HS256 and publishes an empty JWKS;
@@ -122,9 +130,25 @@ resource "authentik_application" "cloud_apps" {
   meta_description   = "Sign-in for Cloud's private Apps. Each App admits only its own email allowlist."
 }
 
-# Every active, signed-in account, except service accounts (API tokens, not
-# people) and `guest`, whom the public tier signs in automatically
-# (guest.tf). An anonymous request has is_authenticated False.
+# Admits an active, signed-in account only when its email is vouched for:
+#   - goauthentik.io/user/sources is set: Authentik's user write stage records
+#     the social source (Google, GitHub, Facebook) that enrolled the account,
+#     and the email came from that provider. Linking a source to an existing
+#     account later writes no such record (core/sources/flow_manager.py, LINK).
+#   - path users/email-verified: the passkey signup's write stage
+#     (signup-passkey.tf) puts its accounts there; they stay inactive until the
+#     emailed link is followed.
+#   - attributes.cloud_apps_email_vouched is true: an admin sets it on an
+#     account whose email they know, for example one made before Authentik
+#     recorded sources. Users cannot write top-level attributes (the user
+#     settings flow writes only attributes.settings).
+# It refuses service accounts (API tokens, not people), `guest`, whom the
+# public tier signs in automatically (guest.tf), and accounts carrying
+# attributes.proxy_only: the proxy invitation on invitation-enrollment stamps
+# it, also onto a signed-in account that reruns that flow and rewrites its
+# own email there. Any other invitation on invitation-enrollment must carry
+# attributes.proxy_only too (proxy-enrollment.tf). An anonymous request has
+# is_authenticated False.
 resource "authentik_policy_expression" "cloud_apps_active_users" {
   name       = "cloud-apps-active-users"
   expression = <<-EOT
@@ -133,7 +157,16 @@ resource "authentik_policy_expression" "cloud_apps_active_users" {
         return False
     if user.username == "guest":
         return False
-    return str(user.type) not in ("service_account", "internal_service_account")
+    if str(user.type) in ("service_account", "internal_service_account"):
+        return False
+    attrs = user.attributes or {}
+    if attrs.get("proxy_only"):
+        return False
+    if attrs.get("goauthentik.io/user/sources"):
+        return True
+    if user.path == "${local.cloud_apps_verified_path}":
+        return True
+    return attrs.get("cloud_apps_email_vouched") is True
   EOT
 }
 
