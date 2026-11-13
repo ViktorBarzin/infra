@@ -10,9 +10,10 @@
 #   cloud_provisioner  LOGIN CREATEDB CREATEROLE, CONNECTION LIMIT 5, ADMIN
 #                      OPTION on cloud_projects. Vault static role
 #                      pg-cloud-provisioner. The reconciler stays within 5:
-#                      OpenTofu -parallelism=2 with a provider pool of 2 (4),
-#                      plus its database-size loop (1); databases.md has
-#                      the budget. A second replica needs a higher limit.
+#                      OpenTofu -parallelism=2, each operation holding at
+#                      most 2 of a provider pool of 3 (4), plus its
+#                      database-size loop (1); databases.md has the budget.
+#                      A second replica needs a higher limit.
 #   cloud_state        LOGIN, CONNECTION LIMIT 10, owns database cloud_state
 #                      (the reconciler's OpenTofu state, one schema per
 #                      Project). Vault static role pg-cloud-state. It has no
@@ -21,8 +22,10 @@
 # Cloud's console database (`cloud`) is the standard app_databases entry.
 #
 # Connection ceiling: the reconciler keeps the sum of the CONNECTION LIMITs of
-# all Project roles at or under 20; docs/agents/databases.md ("Cloud on the
-# shared CNPG cluster") shows the arithmetic.
+# all Project roles at or under 20, each 2, 4 or 8 by Size;
+# docs/agents/databases.md ("Cloud on the shared CNPG cluster") shows the
+# arithmetic. Postgres cannot enforce a sum, so an audit pages when it does not
+# hold (local.cloud_role_limits_audit_sql in cloud_postgres_rules.tf).
 #
 # The script reruns whenever the SQL text changes. It is idempotent and sets no
 # password, so a rerun never undoes a Vault rotation.

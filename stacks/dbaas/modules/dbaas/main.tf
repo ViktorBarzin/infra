@@ -1827,6 +1827,12 @@ variable "pg_cluster_v18_instances" {
 # (cloud_postgres_rules.tf, local.cloud_provisioner_audit_sql). Alert
 # CloudProvisionerForeignRole (stacks/monitoring) pages above 0.
 #
+# cloud_provisioner_role_limits (Cloud, 2026-11-13): over the LOGIN roles Cloud's
+# provisioner administers, how many have no CONNECTION LIMIT or one above 8, and
+# the sum of their limits (local.cloud_role_limits_audit_sql). Alerts
+# CloudProjectRoleUnlimited (above 0) and CloudProjectConnectionsOverCeiling
+# (sum above 20) page.
+#
 # The cnpg.io/reload label makes the instances reload a changed ConfigMap without a
 # restart or a re-apply of the Cluster.
 resource "kubernetes_config_map" "pg_custom_queries" {
@@ -1853,6 +1859,16 @@ resource "kubernetes_config_map" "pg_custom_queries" {
           - count:
               usage: "GAUGE"
               description: "Roles that Cloud's cloud_provisioner administers and whose name is not p_*; pg_hba does not confine them. Should be 0."
+      cloud_provisioner_role_limits:
+        query: ${jsonencode(join(" ", [for l in split("\n", trimspace(local.cloud_role_limits_audit_sql)) : trimspace(l)]))}
+        primary: true
+        metrics:
+          - unlimited:
+              usage: "GAUGE"
+              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 8. Should be 0."
+          - connlimit_sum:
+              usage: "GAUGE"
+              description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 20."
     EOT
   }
 }
