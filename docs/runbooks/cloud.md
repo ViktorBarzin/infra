@@ -129,6 +129,63 @@ Both ghcr packages are private; Kyverno copies `ghcr-credentials` into
 reports the reconciler's rollout without waiting for it, because the old pod
 may first finish a job of up to 3780 s.
 
+## Apply M5
+
+Apply in this order, from the main checkout: `homelab tf apply vault` (the
+reconciler's `patch` on `secret/data/cloud/p-*`), `homelab tf apply authentik`
+(`secret/cloud/system` keeps the hand-written keys), then
+`homelab tf apply cloud` (the email mapping, the two ExternalSecrets and the
+new env). Builds stay off.
+
+After the `authentik` apply, check that the key pair is still there:
+`vault kv get -format=json secret/cloud/system | jq '.data.data | keys'`
+lists `secrets_private_key` and `secrets_public_key`. After the `cloud`
+apply, `kubectl -n cloud get externalsecret cloud-reconciler-system
+cloud-console-system` shows both `SecretSynced`, and the console has
+`SECRETS_PUBLIC_KEY`:
+`kubectl -n cloud exec deploy/cloud -c cloud -- bun -e 'console.log(!!process.env.SECRETS_PUBLIC_KEY)'`
+prints `true`.
+
+## Turn on builds
+
+1. Make the tokens in docs/build/m5-infra.md in the cloud repo (table
+   "Vault `secret/cloud/system`") and store each one. The value goes in on
+   stdin (`key=-`), never as an argument, because the devvm is shared:
+
+   ```sh
+   vault login -method=oidc
+   for k in github_dispatch_token github_owner_read_token forgejo_read_token forgejo_admin_token; do
+     printf '%s: ' "$k"; read -rs v; echo
+     printf '%s' "$v" | vault kv patch secret/cloud/system "$k=-"
+   done
+   unset v
+   ```
+
+   `vault kv patch` keeps the other keys. Optional, for the console's
+   private-repo check: `github_api_token`, a GitHub token with no
+   permissions, the same way. A key not in
+   `local.cloud_system_carried_keys` (`stacks/authentik/cloud-apps.tf`) is
+   deleted by the next `authentik` apply that changes the secret; add a new
+   key there first.
+2. Run `scripts/publish-builder.sh` in the cloud repo (m5-infra.md, "Builder
+   repo").
+3. Force the copies:
+   `kubectl -n cloud annotate externalsecret cloud-reconciler-system cloud-console-system force-sync=$(date +%s) --overwrite`.
+   Reloader restarts both pods; the reconciler finishes its running job
+   first.
+4. Set `default = true` on `variable "builds_enabled"` in
+   `stacks/cloud/deploy_rules.tf`, commit and apply `cloud`.
+
+To stop builds (the M5 rollback), set it back to `false` and apply. Branch
+polling and dispatch stop; Projects, Deploys already made and App secrets
+keep working.
+
+An owner whose Forgejo account is local (not made by an Authentik sign-in)
+matches only by a verified email on both sides. If Authentik has no social
+source or verified path for that person, an admin sets
+`cloud_apps_email_vouched: true` in the user's attributes in Authentik, only
+for an email they know is that person's.
+
 ## Restart
 
 The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:

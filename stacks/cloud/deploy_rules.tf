@@ -1,9 +1,19 @@
-# What the console and the reconciler Deployments get (milestone M4): the
-# console's cluster role, the env both processes read and the reconciler's
-# credential files. Locals only (plus var.postgresql_host), so
+# What the console and the reconciler Deployments get (milestones M4 and M5):
+# the console's cluster role, the env both processes read and the
+# reconciler's credential files. Locals only (plus var.postgresql_host and
+# var.builds_enabled, which have no other inputs), so
 # tests/cloud-deploy.test.sh checks them offline against the cloud repo's
 # src/server/env.server.ts. console.tf and reconciler.tf turn them into
 # resources; docs/architecture/cloud.md has the credentials table.
+
+# The M5 switch for builds and Deploys (buildsConfig() in the cloud code).
+# Off until Viktor has made the GitHub tokens (docs/runbooks/cloud.md,
+# "Turn on builds"). Off is also the M5 rollback: the reconciler stops
+# polling branches and dispatching builds, and everything else keeps working.
+variable "builds_enabled" {
+  type    = bool
+  default = false
+}
 
 locals {
   # One name each, defined in access_rules.tf: the console module's name is
@@ -47,6 +57,71 @@ locals {
     # "Agent sign-in").
     { name = "AGENT_OIDC_CLIENT_ID", value = local.cloud_cli_client_id },
     { name = "AGENT_OIDC_DISCOVERY_URL", value = "${local.cloud_authentik_url}/application/o/${local.cloud_cli_client_id}/.well-known/openid-configuration" },
+    # M5: the Metrics tab and the logs tab. In-cluster, no auth; the console
+    # reaches both through the tier 4-aux egress allow (docs/architecture/
+    # cloud.md, "Network").
+    { name = "PROMETHEUS_URL", value = local.cloud_prometheus_url },
+    { name = "LOKI_URL", value = local.cloud_loki_url },
+  ]
+
+  cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"
+  cloud_loki_url       = "http://loki.monitoring.svc.cluster.local:3100"
+  # Forgejo's Service in namespace forgejo (port 80), and its Authentik login
+  # source: `forgejo admin auth list` shows 1 "Authentik" (checked
+  # 2026-11-13; the source is disabled for new sign-ins, and the accounts it
+  # made still carry it).
+  cloud_forgejo_url            = "http://forgejo.forgejo.svc.cluster.local"
+  cloud_forgejo_auth_source_id = 1
+
+  # secret/cloud/system keys copied into the console's Secret, by env name.
+  # buildApiSettings() reads both inline:
+  #   SECRETS_PUBLIC_KEY  the X25519 public key (SPKI PEM) the API seals App
+  #                       secrets with; the reconciler holds the private key
+  #   GITHUB_API_TOKEN    optional, a GitHub token with no permissions, so
+  #                       the private-repo check is not rate limited to 60
+  #                       requests an hour
+  # Never secrets_private_key: the console only seals.
+  cloud_console_system_keys = {
+    SECRETS_PUBLIC_KEY = "secrets_public_key"
+    GITHUB_API_TOKEN   = "github_api_token"
+  }
+  cloud_console_system_secret = "${local.cloud_console_name}-console-system"
+
+  # The secret/cloud/system overrides the reconciler gets as files
+  # (systemSecretsFromEnv() in the cloud code). Without them it reads the same
+  # keys from Vault with its own token (src/reconciler/system-secrets.ts,
+  # every 5 minutes), so the files are a copy that keeps working while Vault
+  # does not answer. An empty file counts as unset and falls back to Vault.
+  cloud_reconciler_system_keys = {
+    GITHUB_DISPATCH_TOKEN   = "github_dispatch_token"
+    GITHUB_OWNER_READ_TOKEN = "github_owner_read_token"
+    FORGEJO_READ_TOKEN      = "forgejo_read_token"
+    FORGEJO_ADMIN_TOKEN     = "forgejo_admin_token"
+    SECRETS_PRIVATE_KEY     = "secrets_private_key"
+  }
+  cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
+
+  # The ExternalSecrets read all of secret/cloud/system (dataFrom extract) and
+  # write only these keys. ESO renders templates with missingkey=error, so
+  # `{{ .github_dispatch_token }}` would fail the whole sync until Viktor
+  # stores that token; `index` renders a missing key as "" instead. The
+  # Secret key is the Vault key with dashes.
+  cloud_reconciler_system_template = {
+    for env, key in local.cloud_reconciler_system_keys : replace(key, "_", "-") => "{{ index . \"${key}\" }}"
+  }
+  cloud_console_system_template = {
+    for env, key in local.cloud_console_system_keys : replace(key, "_", "-") => "{{ index . \"${key}\" }}"
+  }
+
+  # Env from Secret keys (the module's secret_env). Optional, so the pod
+  # starts before the Secret exists; an empty value counts as unset.
+  cloud_console_secret_env = [
+    for env, key in local.cloud_console_system_keys : {
+      name     = env
+      secret   = local.cloud_console_system_secret
+      key      = replace(key, "_", "-")
+      optional = true
+    }
   ]
 
   # The reconciler's credentials, each a file in a mounted Secret, read again
@@ -59,16 +134,29 @@ locals {
   #                    OpenTofu pg backend and the state-schema drop
   #   POSTGRES_PROVISIONER_PASSWORD  cloud_provisioner (pg-cloud-provisioner)
   #   REGISTRY_TOKEN   the read:packages ghcr token from secret/cloud/system
-  #                    (ghcr_pull_token), copied into each Project
+  #                    (ghcr_pull_token), copied into each Project; M5 also
+  #                    reads the digest a build pushed with it
+  #   GITHUB_DISPATCH_TOKEN, GITHUB_OWNER_READ_TOKEN, FORGEJO_READ_TOKEN,
+  #   FORGEJO_ADMIN_TOKEN, SECRETS_PRIVATE_KEY  M5, from secret/cloud/system
+  #                    (local.cloud_reconciler_system_keys). These are read
+  #                    once at start, so Reloader's restart is what brings a
+  #                    rotated value in.
   # Cloud's own database password is the console's cloud-db-creds, read by
   # @viktorbarzin/pg on every new connection like the console does, so it
   # needs no restart (reload = false).
-  cloud_reconciler_files = {
-    DATABASE_PASSWORD             = { secret = "${local.cloud_console_name}-db-creds", secret_key = "DB_PASSWORD", key = "password", mount = "/secrets/db", reload = false }
-    CLOUD_STATE_URL               = { secret = "${local.cloud_reconciler}-postgres", secret_key = "state-url", key = "state-url", mount = "/secrets/postgres", reload = true }
-    POSTGRES_PROVISIONER_PASSWORD = { secret = "${local.cloud_reconciler}-postgres", secret_key = "provisioner-password", key = "provisioner-password", mount = "/secrets/postgres", reload = true }
-    REGISTRY_TOKEN                = { secret = "${local.cloud_reconciler}-registry", secret_key = "token", key = "token", mount = "/secrets/registry", reload = true }
-  }
+  cloud_reconciler_files = merge(
+    {
+      DATABASE_PASSWORD             = { secret = "${local.cloud_console_name}-db-creds", secret_key = "DB_PASSWORD", key = "password", mount = "/secrets/db", reload = false }
+      CLOUD_STATE_URL               = { secret = "${local.cloud_reconciler}-postgres", secret_key = "state-url", key = "state-url", mount = "/secrets/postgres", reload = true }
+      POSTGRES_PROVISIONER_PASSWORD = { secret = "${local.cloud_reconciler}-postgres", secret_key = "provisioner-password", key = "provisioner-password", mount = "/secrets/postgres", reload = true }
+      REGISTRY_TOKEN                = { secret = "${local.cloud_reconciler}-registry", secret_key = "token", key = "token", mount = "/secrets/registry", reload = true }
+    },
+    {
+      for env, key in local.cloud_reconciler_system_keys : env => {
+        secret = local.cloud_reconciler_system_secret, secret_key = replace(key, "_", "-"), key = replace(key, "_", "-"), mount = "/secrets/system", reload = true
+      }
+    },
+  )
 
   cloud_reconciler_reload = sort(distinct([for f in local.cloud_reconciler_files : f.secret if f.reload]))
 
@@ -85,6 +173,11 @@ locals {
       # filesystem is read-only.
       { name = "RECONCILER_WORK_DIR", value = "/tmp" },
       { name = "HOME", value = "/tmp" },
+      # M5 (buildsConfig()). The builder repo, the GitHub owner and the
+      # minutes allowance stay at the code's defaults.
+      { name = "BUILDS_ENABLED", value = tostring(var.builds_enabled) },
+      { name = "FORGEJO_URL", value = local.cloud_forgejo_url },
+      { name = "FORGEJO_AUTH_SOURCE_ID", value = tostring(local.cloud_forgejo_auth_source_id) },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

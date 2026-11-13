@@ -67,10 +67,6 @@ data "authentik_property_mapping_provider_scope" "cli_profile" {
   managed = "goauthentik.io/providers/oauth2/scope-profile"
 }
 
-data "authentik_property_mapping_provider_scope" "cli_email" {
-  managed = "goauthentik.io/providers/oauth2/scope-email"
-}
-
 # offline_access makes Authentik issue a refresh token (as in stacks/tripit).
 data "authentik_property_mapping_provider_scope" "cli_offline_access" {
   scope_name = "offline_access"
@@ -101,7 +97,8 @@ resource "authentik_provider_oauth2" "cloud_cli" {
   property_mappings = [
     data.authentik_property_mapping_provider_scope.cli_openid.id,
     data.authentik_property_mapping_provider_scope.cli_profile.id,
-    data.authentik_property_mapping_provider_scope.cli_email.id,
+    # Cloud's own email mapping (email_claim.tf), as on the console.
+    authentik_property_mapping_provider_scope.cloud_email.id,
     data.authentik_property_mapping_provider_scope.cli_offline_access.id,
   ]
 
