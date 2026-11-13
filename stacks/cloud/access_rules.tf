@@ -352,6 +352,10 @@ locals {
     "{", "admin off", "auto_https off", "persist_config off", "servers {",
     "trusted_proxies static private_ranges", "max_header_size 64KB", "}", "}",
     ":8080 {",
+    # Every path under /oauth2/ gets 404, so the App's server never receives
+    # a cloud-apps callback (Cloud final fixes, 2026-11-13). A private App's
+    # oauth2-proxy answers /oauth2/* before the edge.
+    "respond /oauth2/* 404",
     "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {",
     "transport http {", "max_response_header 64KB", "}",
     "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",

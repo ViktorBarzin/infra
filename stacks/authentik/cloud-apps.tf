@@ -85,7 +85,11 @@ resource "authentik_provider_oauth2" "cloud_apps" {
   client_type   = "confidential"
   client_secret = random_password.cloud_apps_client_secret.result
 
-  authorization_flow = data.authentik_flow.default_authorization_implicit_consent.id
+  # Explicit consent: a visitor sees a screen before Authentik issues a code,
+  # so a hostile public App cannot silently collect one in a frame or popup.
+  # It narrows, but does not close, code capture through the shared client
+  # (cloud repo docs/build/final-infra.md, "The code capture stays open").
+  authorization_flow = data.authentik_flow.default_authorization_explicit_consent.id
   invalidation_flow  = data.authentik_flow.default_provider_invalidation.id
 
   # redirect_uri_type is set on every entry: provider 2026.x reads it back,
