@@ -73,6 +73,15 @@ variable "image_pull_secrets" {
   description = "Pull secrets for a private image, e.g. [\"ghcr-credentials\"] (a ghcr package pushed from a private GitHub repo is private). The namespace must also be on the Kyverno ghcr_private_namespaces allowlist, which copies that Secret in."
 }
 
+variable "service_account" {
+  type = object({
+    name            = string
+    automount_token = optional(bool, false)
+  })
+  default     = null
+  description = "A service account of the module's own for the pod. null means the namespace's default service account and the provider's pod defaults, as before. automount_token = true mounts an API token, for an app that reads the Kubernetes API with RBAC the stack binds to this account."
+}
+
 variable "resources" {
   type = object({
     requests = map(string)
