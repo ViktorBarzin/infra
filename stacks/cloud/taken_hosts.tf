@@ -12,9 +12,10 @@
 # Computed from the live Ingresses and IngressRoutes at plan time, the way
 # stacks/traefik crs-hosts.tf computes its host list. A host added to the
 # homelab after the last cloud apply is missing until the next one; the nightly
-# drift plan shows it as a change to cloud-managed-ingress, and the
-# reconciler's own taken-host check (its cluster-wide read on both kinds)
-# covers the gap.
+# drift plan shows it as a change to cloud-managed-ingress. Kyverno
+# ValidatingPolicy cloud-ingress-live-hosts (access_rules.tf,
+# local.cloud_live_host_guard) looks the hosts up at admission time and
+# covers the gap, and the reconciler checks taken hosts itself too.
 #
 # Only hosts a Project could ask for are kept (one label under the base
 # domain, cloud-managed-ingress refuses the rest), and managed namespaces
