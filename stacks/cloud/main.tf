@@ -19,13 +19,9 @@
 # databases on the shared CNPG cluster and secret/cloud/<namespace>/* belong
 # to Cloud's database, not this repo (AGENTS.md, "Cloud-owned objects").
 
-# The namespace `cloud` is the console module's (console.tf) since M4. M2
-# created it here with the module's labels and lifecycle, so the move plans
-# zero changes.
-moved {
-  from = kubernetes_namespace.cloud
-  to   = module.console.kubernetes_namespace.this
-}
+# The namespace `cloud` and the console's service account belong to the
+# console module (console.tf) since M4; the moved blocks that took them over
+# from M2 were applied on 2026-11-13 and removed afterwards.
 
 # The reconciler talks to the API server, Vault (Kubernetes auth role
 # cloud-reconciler) and Postgres with this identity.
@@ -36,13 +32,7 @@ resource "kubernetes_service_account" "cloud_reconciler" {
   }
 }
 
-# The console's service account is the module's since M4 (console.tf). M2 made
-# it without a token; M4 mounts one for TakenHosts, so the move updates it in
-# place.
-moved {
-  from = kubernetes_service_account.cloud_console
-  to   = module.console.kubernetes_service_account.this[0]
-}
+
 
 resource "kubernetes_cluster_role" "cloud_reconciler" {
   metadata { name = "cloud-reconciler" }
