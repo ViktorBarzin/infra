@@ -85,6 +85,10 @@ locals {
     # stacks/terminal module.ingress_assets): the manifest fetch is
     # credential-less by spec and OS icon fetchers carry no session cookies.
     "terminal-pwa-assets" = "https://terminal.viktorbarzin.me/manifest.webmanifest"
+    # offline-reader static PWA shell (auth="none", stacks/offline-reader
+    # module.ingress, ADR-0008): the installed app's service worker updates by
+    # fetching this file. An Authentik 302 here strands an expired session.
+    "offline-reader-shell" = "https://offline-reader.viktorbarzin.me/service-worker.js"
     # pages.viktorbarzin.me login-free paths (stacks/learn, ADR-0042, added
     # 2026-11-12): the stylesheet and vendored libraries, Bundle URLs and
     # public links. A sandboxed page loads all three without the sign-in
