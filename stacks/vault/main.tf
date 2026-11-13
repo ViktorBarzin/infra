@@ -742,6 +742,12 @@ resource "vault_policy" "ci" {
     path "secret/data/platform" {
       capabilities = ["create", "read", "update"]
     }
+    # stacks/authentik writes the Cloud reconciler's Authentik token here
+    # (cloud-reconciler.tf). Only this one path; the rest of secret/cloud/*
+    # belongs to Cloud's reconciler.
+    path "secret/data/cloud/system" {
+      capabilities = ["create", "read", "update"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {
@@ -1348,6 +1354,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-paperless-ngx",
     "pg-tv",
     "pg-verify-probe",
+    # Cloud's reconciler (cloud.tf).
+    "pg-cloud-provisioner", "pg-cloud-state",
     ], [
     # App databases from app_db_roles.tf. distinct() keeps the first
     # occurrence, so roles already listed above keep their place and a new
@@ -1388,6 +1396,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
 #   10:12 mysql-uptimekuma   10:13 pg-prowlarr (app_db_roles.tf; owns prowlarr and prowlarr_log)
 #   10:14 mysql-nextcloud   10:15 pg-reels (app_db_roles.tf)   10:16 mysql-speedtest
+#   10:17 Cloud: pg-cloud (app_db_roles.tf), pg-cloud-provisioner and
+#         pg-cloud-state (cloud.tf)
 #   10:18 mysql-wrongmove
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
