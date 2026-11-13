@@ -177,7 +177,8 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 }
 
 # The reconciler reads secret/cloud/system (read-only for it, stacks/vault
-# cloud_policies.tf). Terraform is the only writer of this secret:
+# cloud_policies.tf). Terraform writes these keys, and carries over the
+# hand-written ones listed below:
 #   cloud_apps_client_id      the client id above.
 #   cloud_apps_client_secret  the client secret above.
 #   ghcr_pull_token           a read:packages-only GitHub token for pulling
@@ -190,6 +191,46 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 #                             empty as "not set".
 # CI writes this path through its own policy grant (stacks/vault, policy ci),
 # so stacks/vault must be applied before this file's first CI apply.
+#
+# Keys Terraform carries over: Cloud's M5 keys (cloud repo,
+# docs/build/m5-infra.md), which Viktor writes by hand with `vault kv patch`
+# because Terraform cannot make them (an X25519 key pair, GitHub and Forgejo
+# tokens). A write of data_json replaces the whole secret (the vault
+# provider PUTs data_json alone), so without this the next change to the
+# three keys above would delete them, and losing secrets_private_key makes
+# every App secret Cloud has sealed unreadable. Each key is read back from
+# the live secret and written again unchanged; a key not set yet stays absent.
+#   secrets_private_key, secrets_public_key  the App secrets key pair
+#   github_dispatch_token, github_owner_read_token, forgejo_read_token,
+#   forgejo_admin_token                      the reconciler's build tokens
+#   github_api_token                         the console's private-repo check
+locals {
+  cloud_system_carried_keys = [
+    "secrets_private_key",
+    "secrets_public_key",
+    "github_dispatch_token",
+    "github_owner_read_token",
+    "forgejo_read_token",
+    "forgejo_admin_token",
+    "github_api_token",
+  ]
+  cloud_system_live = length(data.vault_kv_secret_v2.cloud_system_live) > 0 ? data.vault_kv_secret_v2.cloud_system_live[0].data : {}
+}
+
+# Lists secret/cloud/ so a first apply, before cloud/system exists, reads
+# nothing instead of failing. The provider marks the names sensitive; whether
+# one is "system" is not.
+data "vault_kv_secrets_list_v2" "cloud" {
+  mount = "secret"
+  name  = "cloud"
+}
+
+data "vault_kv_secret_v2" "cloud_system_live" {
+  count = nonsensitive(contains(data.vault_kv_secrets_list_v2.cloud.names, "system")) ? 1 : 0
+  mount = "secret"
+  name  = "cloud/system"
+}
+
 data "vault_kv_secret_v2" "viktor_cloud" {
   mount = "secret"
   name  = "viktor"
@@ -198,9 +239,12 @@ data "vault_kv_secret_v2" "viktor_cloud" {
 resource "vault_kv_secret_v2" "cloud_system" {
   mount = "secret"
   name  = "cloud/system"
-  data_json = jsonencode({
-    cloud_apps_client_id     = authentik_provider_oauth2.cloud_apps.client_id
-    cloud_apps_client_secret = random_password.cloud_apps_client_secret.result
-    ghcr_pull_token          = lookup(data.vault_kv_secret_v2.viktor_cloud.data, "cloud_ghcr_pull_token", "")
-  })
+  data_json = jsonencode(merge(
+    { for k in local.cloud_system_carried_keys : k => lookup(local.cloud_system_live, k, null) if lookup(local.cloud_system_live, k, null) != null },
+    {
+      cloud_apps_client_id     = authentik_provider_oauth2.cloud_apps.client_id
+      cloud_apps_client_secret = random_password.cloud_apps_client_secret.result
+      ghcr_pull_token          = lookup(data.vault_kv_secret_v2.viktor_cloud.data, "cloud_ghcr_pull_token", "")
+    },
+  ))
 }
