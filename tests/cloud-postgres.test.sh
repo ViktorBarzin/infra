@@ -17,6 +17,9 @@
 #     database without a role of its own name;
 #   granting cloud_projects to an existing role (tasks, postgres) changes
 #     nothing about where it can connect;
+#   a Project database owner cannot make cloud_provisioner run a function it
+#     planted (a database search_path plus a shadowing
+#     pg_advisory_xact_lock), so it cannot reset another Project role;
 #   cloud_state reaches only the cloud_state database;
 #   an existing app role (tasks) still reaches its own database;
 #   the audit query behind alert CloudProvisionerForeignRole counts every
@@ -173,6 +176,45 @@ expect_fail "Project role is refused cloud_state" "pg_hba.conf rejects|no pg_hba
 expect_fail "Project role cannot lift its temp_file_limit" "permission denied" as p_demo p_demo -c "SET temp_file_limit = -1"
 lim="$(as p_demo p_demo -c 'show temp_file_limit' 2>&1)"
 [ "$lim" = "256MB" ] && ok "Project role session carries temp_file_limit=256MB" || bad "temp_file_limit in session: $lim"
+
+# --- a Project database cannot shadow functions cloud_provisioner calls ----
+# The reconciler's postgresql_grant resources connect into a Project database
+# as cloud_provisioner and run an unqualified
+# `SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname=$1`
+# (provider 1.27.0, pgLockDatabase), then commit. The database owner plants a
+# function of that name and a database search_path that finds it first.
+# cloud_provisioner's own search_path (cloud_roles_sql) must keep it out.
+sp="$(sup -tAc "select array_to_string(setconfig, ',') from pg_db_role_setting where setdatabase = 0 and setrole = 'cloud_provisioner'::regrole")"
+[ "$sp" = "search_path=pg_catalog, pg_temp" ] && ok "cloud_provisioner carries search_path=pg_catalog, pg_temp" || bad "cloud_provisioner role settings: $sp"
+expect_ok "provisioner creates p_att and p_vic, each with its database" \
+  as cloud_provisioner postgres \
+    -c "CREATE ROLE p_att LOGIN PASSWORD 'pw-p_att' CONNECTION LIMIT 2 IN ROLE cloud_projects" \
+    -c "CREATE ROLE p_vic LOGIN PASSWORD 'pw-p_vic' CONNECTION LIMIT 2 IN ROLE cloud_projects" \
+    -c "GRANT p_att TO cloud_provisioner WITH SET TRUE" -c "GRANT p_vic TO cloud_provisioner WITH SET TRUE" \
+    -c "CREATE DATABASE p_att OWNER p_att" -c "CREATE DATABASE p_vic OWNER p_vic"
+expect_ok "p_att plants public.pg_advisory_xact_lock(bigint) and a database search_path" \
+  as p_att p_att \
+    -c 'CREATE FUNCTION public.pg_advisory_xact_lock(bigint) RETURNS void LANGUAGE plpgsql AS $f$ BEGIN EXECUTE $q$ALTER ROLE p_vic PASSWORD $p$pwned$p$$q$; END $f$' \
+    -c 'ALTER DATABASE p_att SET search_path = public, pg_catalog'
+# Positive control: a role with no search_path of its own (the superuser here)
+# does run the planted function, so the trap is real.
+sup -d p_att -tAc "SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname = 'p_att'" >/dev/null 2>&1
+if docker exec -e PGPASSWORD=pwned "$NAME" psql -h 127.0.0.1 -U p_vic -d p_vic -tAc 'select 1' >/dev/null 2>&1; then
+  ok "control: without a role search_path the planted function runs and resets p_vic's password"
+else
+  bad "control: the planted function did not run for a role without a search_path, so the trap below proves nothing"
+fi
+sup -c "ALTER ROLE p_vic PASSWORD 'pw-p_vic'" >/dev/null
+sp="$(as cloud_provisioner p_att -c 'show search_path' 2>&1)"
+[ "$sp" = "pg_catalog, pg_temp" ] && ok "in p_att, cloud_provisioner's search_path is its own, not the database's" || bad "cloud_provisioner search_path in p_att: $sp"
+expect_ok "provisioner runs the provider's lock statement in p_att and commits" \
+  as cloud_provisioner p_att -c "BEGIN" -c "SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname = 'p_att'" -c "COMMIT"
+expect_fail "p_vic's password is unchanged after the trap" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=pwned $NAME psql -h 127.0.0.1 -U p_vic -d p_vic -tAc 'select 1'"
+expect_ok "p_vic still signs in with its own password" as p_vic p_vic -c 'select 1'
+expect_fail "p_att cannot give cloud_provisioner a search_path in its database" "permission denied|must have admin" \
+  as p_att p_att -c "ALTER ROLE cloud_provisioner IN DATABASE p_att SET search_path = public, pg_catalog"
+sup -c "DROP DATABASE p_att" -c "DROP DATABASE p_vic" -c "DROP ROLE p_att" -c "DROP ROLE p_vic" >/dev/null
 
 # --- cloud_state -------------------------------------------------------------
 expect_ok "cloud_state reaches cloud_state and creates a schema" \

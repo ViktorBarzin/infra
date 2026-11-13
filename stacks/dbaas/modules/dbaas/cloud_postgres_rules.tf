@@ -67,6 +67,19 @@ locals {
   # Project role, and a Project role cannot lift one it was given.
   # statement_timeout needs no grant, but any role can SET it in its own
   # session, so for Project roles it is a default, not a limit.
+  #
+  # search_path = pg_catalog, pg_temp on cloud_provisioner: it connects into
+  # Project databases (the reconciler's postgresql_grant resources do, and
+  # their provider runs unqualified pg_advisory_xact_lock, pg_roles and
+  # pg_database there). A Project role owns its database, so it can run
+  # ALTER DATABASE <own> SET search_path = public, pg_catalog and plant
+  # public.pg_advisory_xact_lock(bigint); the next statement cloud_provisioner
+  # runs there would call it with cloud_provisioner's rights, which include
+  # changing every other p_* role's password. A role setting outranks a
+  # database setting, and only a role with ADMIN on cloud_provisioner (the
+  # superuser) can set one for it per database, so the planted function is
+  # never found. tests/cloud-postgres.test.sh plants that trap. Any other role
+  # that ever connects into a p_* database needs the same setting.
   # The audit behind alert CloudProvisionerForeignRole (stacks/monitoring):
   # how many roles cloud_provisioner administers, directly or through a role
   # it administers, whose name is not p_*. pg_hba confines only p_* names, so
@@ -142,6 +155,7 @@ locals {
     ALTER ROLE cloud_state LOGIN NOCREATEDB NOCREATEROLE CONNECTION LIMIT 10;
     GRANT cloud_projects TO cloud_provisioner WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
     GRANT SET ON PARAMETER temp_file_limit TO cloud_provisioner;
+    ALTER ROLE cloud_provisioner SET search_path = pg_catalog, pg_temp;
     SELECT 'CREATE DATABASE cloud_state OWNER cloud_state'
       WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = 'cloud_state')
     \gexec
