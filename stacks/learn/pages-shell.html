@@ -59,13 +59,47 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
   var here = location.origin;
   var frame = document.createElement("iframe");
   frame.setAttribute("sandbox", SANDBOX);
-  frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay");
+  frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay; geolocation");
   frame.setAttribute("allowfullscreen", "");
   frame.title = "Page";
   // rr-block: session replay records this element as a blank box, so a
   // Bundle URL in its src never lands in a replay.
   frame.className = "rr-block";
   document.body.appendChild(frame);
+
+  // Location bridge. WebKit, the engine of every iPhone browser, gives no
+  // location to a sandboxed page: its origin is opaque, and the allow list
+  // above does not change that (found 2026-11-13). So a page asks the shell,
+  // which runs as the real origin and so gets the browser's own prompt:
+  //   parent.postMessage({type: "pages:geo", op: "watch" | "get" | "stop"}, "*")
+  // The shell answers {type: "pages:geo", ok: true, lat, lon, accuracy, ts}
+  // or {type: "pages:geo", ok: false, code, message}. Only the framed page
+  // can ask, and only its window gets the answer.
+  var geoWatch = null;
+  function geoStop() {
+    if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
+    geoWatch = null;
+  }
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (e.source !== frame.contentWindow || !d || d.type !== "pages:geo") return;
+    var win = frame.contentWindow;
+    function ok(p) {
+      win.postMessage({ type: "pages:geo", ok: true, lat: p.coords.latitude,
+        lon: p.coords.longitude, accuracy: p.coords.accuracy, ts: p.timestamp }, "*");
+    }
+    function fail(err) {
+      win.postMessage({ type: "pages:geo", ok: false, code: err.code,
+        message: String(err.message || "") }, "*");
+    }
+    if (!navigator.geolocation) { fail({ code: 2, message: "No geolocation here" }); return; }
+    var opts = { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 };
+    if (d.op === "stop") geoStop();
+    else if (d.op === "watch") { geoStop(); geoWatch = navigator.geolocation.watchPosition(ok, fail, opts); }
+    else navigator.geolocation.getCurrentPosition(ok, fail, opts);
+  });
+  // A new page in the frame starts with no watch running.
+  frame.addEventListener("load", geoStop);
 
   function setTitle(text) {
     // Parsed in an inert document and read back as text: the title is a

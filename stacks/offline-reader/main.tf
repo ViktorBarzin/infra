@@ -264,20 +264,52 @@ resource "kubernetes_manifest" "offline_reader_secrets" {
   depends_on = [kubernetes_namespace.offline_reader]
 }
 
+# The static PWA shell on "/" is public, and every data route sits under the
+# owner-only /api ingress below (offline-reader ADR-0008). The shell must load
+# signed out: the installed app's service worker updates by fetching
+# /service-worker.js and its precache, and a forward-auth 302 on those fetches
+# left an expired session with no way back in on 2026-11-13.
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required" # owner-only Authentik forward-auth; app trusts X-Authentik-Username
-  allowed_groups  = ["Home Server Admins"]
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": serves only the built SPA (HTML, JS, CSS, icons, manifest),
+  # which holds no captures and no secrets. /api and /metrics are gated by
+  # module.ingress_api; strip-auth-headers keeps forged X-Authentik-* out.
+  auth             = "none"
+  anti_ai_scraping = false # installable PWA; an Anubis challenge would break the worker's fetches
+  # turnstile = false: the installed iOS app opens navigations in its own sheet,
+  # and the shell has no content to protect, so a challenge page would only
+  # stand between the owner and the app (same reason as immich and nextcloud).
+  turnstile       = false
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.offline_reader.metadata[0].name
   name            = "offline-reader"
   homepage_group  = "Productivity"
   port            = 8000
   tls_secret_name = var.tls_secret_name
+  extra_middlewares = [
+    "traefik-strip-auth-headers@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/icon"        = "mdi-book-arrow-down"
     "gethomepage.dev/description" = "Saved articles for offline reading"
   }
+}
+
+# Owner-only Authentik forward-auth on the data routes and metrics; the app
+# trusts X-Authentik-Username. /api/ingest keeps its own longer-prefix carve-out.
+module "ingress_api" {
+  source           = "../../modules/kubernetes/ingress_factory"
+  auth             = "required"
+  allowed_groups   = ["Home Server Admins"]
+  dns_type         = "none" # DNS already created by module.ingress
+  namespace        = kubernetes_namespace.offline_reader.metadata[0].name
+  name             = "offline-reader-api"
+  homepage_enabled = false
+  host             = "offline-reader"
+  service_name     = kubernetes_service.offline_reader.metadata[0].name
+  port             = 8000
+  ingress_path     = ["/api", "/metrics"]
+  tls_secret_name  = var.tls_secret_name
 }
 
 # Auth-bypass carve-out for /api/ingest only: gated by INGEST_TOKEN INSIDE the app

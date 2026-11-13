@@ -107,7 +107,7 @@ resource "kubernetes_deployment" "cache_proxy" {
       spec {
         container {
           name  = "nginx"
-          image = "library/nginx:alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11"
+          image = "library/nginx:alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72"
           port {
             container_port = 80
           }
