@@ -19,16 +19,36 @@
 # cluster runs 1.35) then limit every write the reconciler makes:
 #   cloud-reconciler-scope  writes only in namespaces labelled
 #     cloud.viktorbarzin.me/managed=true; namespaces it creates, changes or
-#     deletes must be named p-*, carry that label and tier=4-aux.
-#   cloud-externalsecret-store  in managed namespaces, an ExternalSecret may
-#     use only a namespaced SecretStore, never the vault-kv or vault-database
-#     ClusterSecretStore (which read all of secret/*), for anyone.
+#     deletes must be named p-*, carry that label, tier=4-aux and Pod Security
+#     enforce=baseline or restricted, and no label outside a short allowlist;
+#     RoleBindings it writes may bind only the project role to itself.
+# and, for anyone, in managed namespaces:
+#   cloud-externalsecret-store  an ExternalSecret may use only a namespaced
+#     SecretStore, never the vault-kv or vault-database ClusterSecretStore
+#     (which read all of secret/*).
+#   cloud-managed-service  a Service is ClusterIP with no externalIPs. Traefik
+#     follows ExternalName Services (allowExternalNameServices in
+#     stacks/traefik), so an ExternalName Service plus an Ingress would
+#     publish any internal host; LoadBalancer, NodePort and externalIPs open
+#     the node or the LAN.
+#   cloud-managed-ingress  every host is one label under viktorbarzin.me (no
+#     wildcard, no host-less rule, no defaultBackend) and not a reserved App
+#     name from the Cloud v1 plan ("Configuration": reserved App names).
+#
+# Pod Security. The reconciler's pods could otherwise mount the node's / with
+# hostPath: Kyverno's privileged and host-namespace policies fail open
+# (failurePolicy Ignore) and no Kyverno policy covers hostPath. The Pod
+# Security Admission label the reconciler must set makes the built-in,
+# fail-closed PSA controller refuse those pods. Baseline blocks hostPath,
+# host namespaces, host ports, privileged and added capabilities; restricted
+# also requires non-root. The reconciler chooses per Project.
 #
 # Not here, by necessity: "an Ingress host in a managed namespace must not equal
 # a host routed outside managed namespaces". A ValidatingAdmissionPolicy sees
 # only the object in the request, its namespace and fixed parameter objects; it
 # cannot list other Ingresses or IngressRoutes. The reconciler checks this
-# before it applies, using its cluster-wide read on both.
+# before it applies, using its cluster-wide read on both. The static part of
+# the rule (host shape, reserved names) is cloud-managed-ingress.
 #
 # Calico NetworkPolicies are served by the Calico API server, an aggregated
 # API, so kube-apiserver admission policies may not see them. For those, the
@@ -42,7 +62,28 @@ locals {
   cloud_reconciler_user   = "system:serviceaccount:cloud:cloud-reconciler"
   cloud_project_role_name = "cloud-reconciler-project"
 
+  cloud_base_domain_re = "viktorbarzin[.]me"
+
   cloud_write_verbs = ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # The only label keys the reconciler may set on a namespace. A key someone
+  # else already set (Kyverno, an admin) may stay as it is. Anything else is
+  # refused: labels select NetworkPolicies and Kyverno policies, for example
+  # chrome-service.viktorbarzin.me/client=true opens Chrome DevTools (port
+  # 9222) and resource-governance/custom-quota=true drops the tier quota.
+  cloud_namespace_label_keys = [
+    local.cloud_managed_label,
+    "tier",
+    "kubernetes.io/metadata.name",
+    "pod-security.kubernetes.io/enforce",
+    "pod-security.kubernetes.io/warn",
+    "pod-security.kubernetes.io/audit",
+  ]
+
+  # One DNS label under the base domain (ADR-0004 in the cloud repo: the free
+  # certificate covers one level), and the plan's reserved App names.
+  cloud_ingress_host_re     = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?[.]${local.cloud_base_domain_re}$"
+  cloud_ingress_reserved_re = "^(auth[a-z0-9-]*|login|sso|account|mail|vault|admin|api|www|status|cloud)[.]${local.cloud_base_domain_re}$"
 
   # Bound cluster-wide (ClusterRoleBinding cloud-reconciler).
   cloud_reconciler_cluster_rules = [
@@ -96,6 +137,8 @@ locals {
         variables = [
           { name = "isNamespace", expression = "request.resource.group == '' && request.resource.resource == 'namespaces'" },
           { name = "ns", expression = "request.operation == 'DELETE' ? oldObject : object" },
+          { name = "nsLabels", expression = "has(variables.ns.metadata.labels) ? variables.ns.metadata.labels : {}" },
+          { name = "isRoleBinding", expression = "request.resource.group == 'rbac.authorization.k8s.io' && request.resource.resource == 'rolebindings'" },
         ]
         validations = [
           {
@@ -104,8 +147,26 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "!variables.isNamespace || (variables.ns.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "variables.ns", "variables.ns", "variables.ns")} && 'tier' in variables.ns.metadata.labels && variables.ns.metadata.labels['tier'] == '4-aux')"
+            expression = "!variables.isNamespace || (variables.ns.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "variables.ns", "variables.ns", "variables.ns")} && 'tier' in variables.nsLabels && variables.nsLabels['tier'] == '4-aux')"
             message    = "cloud-reconciler may manage only namespaces named p-* labelled ${local.cloud_managed_label}=true and tier=4-aux"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!variables.isNamespace || request.operation == 'DELETE' || ('pod-security.kubernetes.io/enforce' in variables.nsLabels && variables.nsLabels['pod-security.kubernetes.io/enforce'] in ['baseline', 'restricted'])"
+            message    = "cloud-reconciler namespaces must carry pod-security.kubernetes.io/enforce=baseline or restricted"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!variables.isNamespace || request.operation == 'DELETE' || variables.nsLabels.all(k, k in ${jsonencode(local.cloud_namespace_label_keys)} || (request.operation == 'UPDATE' && has(oldObject.metadata.labels) && k in oldObject.metadata.labels && oldObject.metadata.labels[k] == variables.nsLabels[k]))"
+            message    = "cloud-reconciler may set only these namespace labels: ${join(", ", local.cloud_namespace_label_keys)}"
+            reason     = "Forbidden"
+          },
+          {
+            # RBAC already stops it binding a role stronger than its own; this
+            # stops it handing the project role to anyone else, such as
+            # another Project's service account or system:authenticated.
+            expression = "!variables.isRoleBinding || request.operation == 'DELETE' || (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == '${local.cloud_project_role_name}' && has(object.subjects) && size(object.subjects) == 1 && object.subjects.all(s, s.kind == 'ServiceAccount' && s.name == '${local.cloud_reconciler_sa}' && has(s.namespace) && s.namespace == '${local.cloud_namespace}'))"
+            message    = "cloud-reconciler may bind only ClusterRole ${local.cloud_project_role_name}, and only to service account ${local.cloud_namespace}/${local.cloud_reconciler_sa}"
             reason     = "Forbidden"
           },
           {
@@ -166,6 +227,96 @@ locals {
       metadata   = { name = "cloud-externalsecret-store" }
       spec = {
         policyName        = "cloud-externalsecret-store"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { (local.cloud_managed_label) = "true" } }
+        }
+      }
+    }
+    managed_service = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-service" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = [""]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["services"]
+          }]
+        }
+        validations = [
+          {
+            expression = "!has(object.spec.type) || object.spec.type == 'ClusterIP'"
+            message    = "in a Cloud namespace, a Service must be type ClusterIP (no ExternalName, NodePort or LoadBalancer)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0"
+            message    = "in a Cloud namespace, a Service may not set externalIPs"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    managed_service_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-service" }
+      spec = {
+        policyName        = "cloud-managed-service"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { (local.cloud_managed_label) = "true" } }
+        }
+      }
+    }
+    managed_ingress = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-ingress" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["networking.k8s.io"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["ingresses"]
+          }]
+        }
+        validations = [
+          {
+            expression = "!has(object.spec.defaultBackend)"
+            message    = "in a Cloud namespace, an Ingress may not set defaultBackend (it catches every host)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!has(object.spec.rules) || object.spec.rules.all(r, has(r.host) && r.host.matches('${local.cloud_ingress_host_re}'))"
+            message    = "in a Cloud namespace, every Ingress rule needs a host of the form <name>.viktorbarzin.me (one label, no wildcard)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) || t.hosts.all(h, h.matches('${local.cloud_ingress_host_re}')))"
+            message    = "in a Cloud namespace, every Ingress TLS host must be of the form <name>.viktorbarzin.me (one label, no wildcard)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(!has(object.spec.rules) || object.spec.rules.all(r, !has(r.host) || !r.host.matches('${local.cloud_ingress_reserved_re}'))) && (!has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) || t.hosts.all(h, !h.matches('${local.cloud_ingress_reserved_re}'))))"
+            message    = "in a Cloud namespace, an Ingress may not use a reserved name (auth*, login, sso, account, mail, vault, admin, api, www, status, cloud)"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    managed_ingress_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-ingress" }
+      spec = {
+        policyName        = "cloud-managed-ingress"
         validationActions = ["Deny"]
         matchResources = {
           namespaceSelector = { matchLabels = { (local.cloud_managed_label) = "true" } }
