@@ -23,6 +23,8 @@ flowchart LR
   R -->|roles, databases| PG[("pg-cluster-v18<br/>role cloud_provisioner")]
   R -->|login cloud-reconciler,<br/>write secret/cloud/p-*| V[Vault]
   R -->|apply| P["p-* namespaces<br/>(Cloud-owned)"]
+  R -->|M5: dispatch builds,<br/>read repos| GH["api.github.com,<br/>ghcr.io, Forgejo"]
+  C -->|M5: Metrics, logs| M["Prometheus, Loki<br/>ns monitoring"]
   A[Authentik] -. sign-in .- C
   P -. oauth2-proxy .- A
 ```
@@ -34,7 +36,7 @@ flowchart LR
 | Env and credential files of both | locals | `stacks/cloud/deploy_rules.tf` |
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
-| Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf` |
+| Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators`; both providers send scope mapping `cloud: email (verified when vouched for)` instead of the managed `scope-email` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf`, `stacks/cloud/email_claim.tf` |
 | Private Apps' sign-in | Authentik application `cloud-apps`, shared by every private App's oauth2-proxy | `stacks/authentik/cloud-apps.tf` (M2) |
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
@@ -58,12 +60,34 @@ Kuma monitor `[External] cloud` by itself.
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
 | `cloud_apps_client_id`, `cloud_apps_client_secret` | Vault KV `secret/cloud/system` | read by the reconciler's OpenTofu through Vault | Vault policy `cloud-reconciler` |
+| M5: `GITHUB_DISPATCH_TOKEN`, `GITHUB_OWNER_READ_TOKEN`, `FORGEJO_READ_TOKEN`, `FORGEJO_ADMIN_TOKEN`, `SECRETS_PRIVATE_KEY` | Vault KV `secret/cloud/system` keys `github_dispatch_token`, `github_owner_read_token`, `forgejo_read_token`, `forgejo_admin_token`, `secrets_private_key`, written by hand | reconciler | ExternalSecret `cloud-reconciler-system`, files `/secrets/system/<key with dashes>`; the reconciler also reads the same keys from Vault itself |
+| M5: `SECRETS_PUBLIC_KEY`, `GITHUB_API_TOKEN` (optional) | Vault KV `secret/cloud/system` keys `secrets_public_key`, `github_api_token`, written by hand | console | ExternalSecret `cloud-console-system` (env, optional) |
+
+The two M5 ExternalSecrets read all of `secret/cloud/system` (`dataFrom`
+`extract`) and write only their own keys, through a template that uses
+`{{ index . "key" }}`. ESO renders templates with `missingkey=error`, so
+`{{ .key }}` or a `data` entry would fail the whole sync while one token is
+not in Vault yet. A missing key becomes an empty file or an empty variable,
+which the cloud code treats as unset; the reconciler then falls back to
+reading Vault itself. The console holds no Vault token and gets only the
+public key and the GitHub API token, never `secrets_private_key`. The
+reconciler's Vault policy has `patch` on `secret/data/cloud/p-*`, because
+App secrets are written as KV v2 merge patches; `secret/cloud/system` stays
+read-only for it.
+
+`secret/cloud/system` is written by stacks/authentik (`cloud-apps.tf`), and a
+write replaces the whole secret. That stack reads the hand-written M5 keys
+back and writes them again (`local.cloud_system_carried_keys`), so changing
+`ghcr_pull_token` or rotating the client secret keeps them. A new
+hand-written key must be added to that list.
 
 The reconciler holds no Authentik credential. The three Postgres passwords
 rotate on Tuesdays (10:17 for `pg-cloud`, `pg-cloud-state` and
 `pg-cloud-provisioner`). The reconciler reads its files again on every job, and
-Reloader restarts it when `cloud-reconciler-postgres` or
-`cloud-reconciler-registry` changes. On such a restart, a pod delete or a CI
+Reloader restarts it when `cloud-reconciler-postgres`,
+`cloud-reconciler-registry` or `cloud-reconciler-system` changes. The M5
+files are read once at start, so that restart is what brings in a rotated
+token. On such a restart, a pod delete or a CI
 rollout the pod finishes its running job first (grace period 3780 s, the
 longest a job can run). A node drain or eviction with a shorter grace period
 cuts the job (the automated node upgrade drains with `--grace-period=300`);
@@ -123,6 +147,19 @@ discovery URLs (`OIDC_DISCOVERY_URL` with audience `cloud`,
 `agentSettings()`, and add `offline_access` to the CLI's scopes.
 `tests/cloud-deploy.test.sh` fails once the code reads the two `AGENT_OIDC_*`
 names, as a reminder to drop them from its pending list.
+
+**Email claim.** Authentik's managed `scope-email` mapping sends
+`email_verified: false` for every account. Cloud's owner check (M5) finds a
+Project owner's Forgejo account by an email both sides verified, so the
+console's provider (module input `email_scope_mapping_id`) and `cloud-cli`
+send `cloud: email (verified when vouched for)` instead
+(`stacks/cloud/email_claim.tf`). It sends `email_verified: true` only for an
+account the `cloud-apps-active-users` policy in `stacks/authentik/cloud-apps.tf`
+admits: active, not `guest`, not a service account, not proxy-only, and
+enrolled by a social source, on path `users/email-verified`, or carrying
+`attributes.cloud_apps_email_vouched: true`. The two expressions are copies;
+`tests/cloud-deploy.test.sh` runs both on the same accounts and fails when
+they disagree.
 
 **Device-code phishing.** Anyone can start a device authorization on the
 public `cloud-cli` client, and Authentik returns a link
@@ -187,6 +224,29 @@ Project or one database. `CloudProvisionerForeignRole`,
 `CloudProjectRoleUnlimited` and `CloudProjectConnectionsOverCeiling` (M2, the
 PostgreSQL group) cover the provisioner audit. `tests/cloud-deploy.test.sh`
 runs promtool unit tests on the group.
+
+## Builds and network (M5)
+
+Builds and Deploys run in the reconciler; one switch turns them on:
+`variable "builds_enabled"` in `stacks/cloud/deploy_rules.tf`, passed as
+`BUILDS_ENABLED`. It is `false` until the GitHub tokens exist (runbook,
+"Turn on builds"); `false` is also the M5 rollback. The reconciler also gets
+`FORGEJO_URL=http://forgejo.forgejo.svc.cluster.local` and
+`FORGEJO_AUTH_SOURCE_ID=1`. `forgejo admin auth list` shows source 1
+"Authentik" as disabled (checked 2026-11-13): it makes no new accounts, and
+the accounts it made still carry it, which is what the owner check matches
+on. The console gets `PROMETHEUS_URL=http://prometheus-server.monitoring.svc.cluster.local`
+(Metrics tab) and `LOKI_URL=http://loki.monitoring.svc.cluster.local:3100`
+(logs tab).
+
+Network: neither Deployment has an egress NetworkPolicy, and namespace
+`cloud` carries `tier=4-aux`, so Calico's `wave1-egress-observe-tier34`
+(order 2000, Allow) passes all its egress. Namespaces `forgejo` and
+`monitoring` have no ingress policy. Checked on 2026-11-13 from the running
+pods: the reconciler reached Forgejo, Prometheus, Loki, `api.github.com`,
+`github.com` and `ghcr.io`; the console reached Prometheus and Loki. If
+tier 4-aux egress is ever restricted, namespace `cloud` needs these allowed
+first. The Calico tier `cloud` applies to `p-*` namespaces only.
 
 ## Connections on the shared primary
 

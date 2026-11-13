@@ -62,6 +62,14 @@ module "console" {
   grant_types = ["authorization_code", "urn:ietf:params:oauth:grant-type:device_code"]
 
   extra_env = local.cloud_console_env
+  # M5: SECRETS_PUBLIC_KEY and GITHUB_API_TOKEN from Secret
+  # cloud-console-system (below), optional.
+  secret_env = local.cloud_console_secret_env
+
+  # email_verified true only for accounts whose email something vouched for
+  # (email_claim.tf), so the owner check can match a Forgejo account by a
+  # verified email. The managed mapping sends false.
+  email_scope_mapping_id = authentik_property_mapping_provider_scope.cloud_email.id
 
   initial_user_pks = [data.authentik_user.viktor.id]
   admin_user_pks   = [data.authentik_user.viktor.id]
@@ -97,5 +105,44 @@ resource "kubernetes_cluster_role_binding" "cloud_console" {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role.cloud_console.metadata[0].name
+  }
+}
+
+# M5: the console's copy of two secret/cloud/system keys
+# (local.cloud_console_system_keys in deploy_rules.tf): the public key for
+# sealing App secrets, which exists, and the optional GitHub API token, which
+# may not. dataFrom extract plus `index` renders a missing key as an empty
+# value instead of failing the sync. The console has no Vault token of its
+# own; External Secrets reads Vault, and only these two keys reach the Secret.
+resource "kubernetes_manifest" "console_system" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = local.cloud_console_system_secret
+      namespace = module.console.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = local.cloud_console_system_secret
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = local.cloud_console_system_template
+        }
+      }
+      dataFrom = [{ extract = { key = "cloud/system" } }]
+    }
   }
 }

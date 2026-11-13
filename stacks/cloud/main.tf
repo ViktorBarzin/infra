@@ -10,7 +10,10 @@
 # Milestone M4 adds the console (console.tf, one tanstack_app call), the
 # reconciler Deployment (reconciler.tf), the CLI's sign-in client
 # (cli_sign_in.tf); what they read is in deploy_rules.tf (tested by
-# tests/cloud-deploy.test.sh). docs/architecture/cloud.md describes the whole.
+# tests/cloud-deploy.test.sh). M5 adds the email scope mapping both sign-in
+# clients send (email_claim.tf), the secret/cloud/system copies and the
+# builds switch (deploy_rules.tf). docs/architecture/cloud.md describes the
+# whole.
 #
 # Scope: Project namespaces (p-*) and everything in them, the Project roles and
 # databases on the shared CNPG cluster and secret/cloud/<namespace>/* belong

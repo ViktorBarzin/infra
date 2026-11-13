@@ -113,6 +113,47 @@ resource "kubernetes_manifest" "reconciler_registry" {
   depends_on = [module.console]
 }
 
+# M5: GITHUB_DISPATCH_TOKEN, GITHUB_OWNER_READ_TOKEN, FORGEJO_READ_TOKEN,
+# FORGEJO_ADMIN_TOKEN and SECRETS_PRIVATE_KEY from secret/cloud/system
+# (local.cloud_reconciler_system_keys in deploy_rules.tf). The tokens do not
+# exist until Viktor makes them (docs/runbooks/cloud.md, "Turn on builds"):
+# dataFrom extract reads whatever the secret holds, and the template renders
+# a missing key as an empty file, which the reconciler treats as unset. A
+# `data` entry per key would fail the whole sync while one key is missing.
+resource "kubernetes_manifest" "reconciler_system" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = local.cloud_reconciler_system_secret
+      namespace = module.console.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = local.cloud_reconciler_system_secret
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = local.cloud_reconciler_system_template
+        }
+      }
+      dataFrom = [{ extract = { key = "cloud/system" } }]
+    }
+  }
+  depends_on = [module.console]
+}
+
 resource "kubernetes_deployment" "reconciler" {
   # CI owns rollouts (CI_SETS_IMAGE); the first apply may come before the
   # first image.
@@ -123,9 +164,10 @@ resource "kubernetes_deployment" "reconciler" {
     namespace = module.console.namespace
     labels    = merge(local.cloud_reconciler_labels, { tier = local.tiers.aux })
     annotations = {
-      # A rotated cloud_state or cloud_provisioner password or pull token
-      # restarts the pod, which finishes its running job first. The files are
-      # also read again on every job. cloud-db-creds is left out, as in the
+      # A rotated cloud_state or cloud_provisioner password, pull token or
+      # secret/cloud/system key restarts the pod, which finishes its running
+      # job first. The Postgres and registry files are also read again on
+      # every job. cloud-db-creds is left out, as in the
       # console: the pool reads the password file on every new connection.
       "secret.reloader.stakater.com/reload" = join(",", local.cloud_reconciler_reload)
     }
@@ -263,6 +305,7 @@ resource "kubernetes_deployment" "reconciler" {
   depends_on = [
     kubernetes_manifest.reconciler_postgres,
     kubernetes_manifest.reconciler_registry,
+    kubernetes_manifest.reconciler_system,
     kubernetes_cluster_role_binding.cloud_reconciler,
   ]
 }
