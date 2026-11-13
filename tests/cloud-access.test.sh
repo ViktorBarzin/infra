@@ -12,28 +12,34 @@
 #
 # It also renders a Project with Cloud's own renderer and applies Cloud's real
 # OpenTofu modules (the cloud repo's modules/) into the kind cluster as the
-# reconciler, with real Kubernetes and mocked Vault, Authentik, Postgres and
-# random providers (`tofu test`). So the objects checked are the ones Cloud
+# reconciler, with real Kubernetes and mocked Vault, Postgres and random
+# providers (`tofu test`). So the objects checked are the ones Cloud
 # writes, through the reconciler's own RBAC and every admission policy.
 #
 # What it proves:
-#   - Cloud's renderer and infra agree on the cookie-strip image and the
-#     egress exclusions, and the egress floor mixes no IP families in a rule,
-#     allows DNS both ways, and ends in Deny;
+#   - Cloud's renderer and infra agree on the edge and oauth2-proxy images,
+#     the strip list, the Authentik slug and the egress exclusions; the egress
+#     floor mixes no IP families in a rule, allows DNS both ways, and ends in
+#     Deny; the ingress floor lets Traefik reach only edge and oauth2-proxy
+#     pods, App pods only edge pods, and ends in Deny;
 #   - Cloud's modules apply a private App, a public App and a Postgres Service
 #     as the reconciler, every Deployment's pod is admitted (Pod Security
 #     restricted, cloud-managed-pod), and the destroy succeeds;
 #   - each rendered object is admitted again as a dry run, and each variant
 #     the M2 contract forbids is refused with its rule's message: namespace
 #     labels, volumes other than emptyDir/configMap/secret/projected/
-#     downwardAPI, runtimeClassName, nodeName, nodeSelector, affinity,
-#     tolerations, host network, priority, GPU, service account, init
-#     containers, the cookie-strip container (its args, env, mounts, hooks,
-#     probes and own uid) and the edge port chain, its Caddyfile (structure,
-#     upstreams and the homelab cookies it must strip), Ingress annotations,
-#     entrypoints, middlewares, class, backends and homelab hosts, quota and
-#     limit range labels, names and scope, SecretStore and ExternalSecret
-#     stores, and any Traefik Middleware;
+#     downwardAPI, emptyDirs without a sizeLimit, containers without an
+#     ephemeral-storage limit, runtimeClassName, nodeName, nodeSelector,
+#     affinity, tolerations, host network, priority, GPU, service account,
+#     init containers, probe hosts, prometheus.io annotations, the component
+#     label, the edge pod (image, args, env, port number, readiness probe,
+#     mounts, a second container) and its Caddyfile (structure, upstream and
+#     the homelab cookies it must strip), the oauth2-proxy pod (image, args,
+#     upstream, client id, env, port, mounts), edge and oauth2-proxy Services
+#     (selector, ports), Ingress annotations, entrypoints, middlewares, class,
+#     backends and homelab hosts, quota and limit range labels, names, scope
+#     and ephemeral storage, SecretStore and ExternalSecret stores, and any
+#     Traefik Middleware;
 #   - the reconciler cannot read Secrets outside a Project namespace;
 #   - it creates only p-* namespaces carrying the contract's labels, cannot
 #     label or delete other namespaces, and writes only in managed namespaces,
@@ -46,10 +52,12 @@
 #   - Kyverno's copy condition skips managed namespaces;
 #   - Vault's cloud-project role admits only service account cloud-secrets in a
 #     labelled namespace, only once Vault may read namespaces, and its token
-#     reads only secret/cloud/<its namespace>/*, Services and _cloud/ alike;
+#     reads only secret/cloud/<its namespace>/*, Services and _cloud/ alike,
+#     never secret/cloud/system;
 #   - the cloud-reconciler policy writes secret/cloud/p-*, nothing else under
-#     secret/cloud, reads but cannot change secret/cloud/system, and reads
-#     only its two database credentials.
+#     secret/cloud, reads but cannot change secret/cloud/system (the shared
+#     Cloud Apps client), and reads only its two database credentials;
+#   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
 # Needs docker, kind, kubectl, helm (for the External Secrets and Traefik
 # CRDs), curl (Calico's CRDs), vault, python3 with PyYAML, bun, and a cloud repo checkout with its
@@ -103,7 +111,7 @@ render() { # <src file> <expression> <out>
   fi
 }
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, egress = local.cloud_egress_excluded, cookie_strip = local.cloud_cookie_strip_image, taken_hosts = local.cloud_taken_hosts})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, taken_hosts = local.cloud_taken_hosts})' \
   "$TMP/k8s.raw"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -167,8 +175,17 @@ docs = [
 # The contract between Cloud's renderer and infra, and the floor's shape.
 # Calico is not in kind, so the floor is checked as data.
 problems = []
-if contract["images"]["cookieStrip"] != k["cookie_strip"]:
-    problems.append(f"cookie-strip image: Cloud renders {contract['images']['cookieStrip']}, infra requires {k['cookie_strip']}")
+if contract["images"]["edge"] != k["edge"]["image"]:
+    problems.append(f"edge image: Cloud renders {contract['images']['edge']}, infra requires {k['edge']['image']}")
+if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
+    problems.append(f"oauth2-proxy image: Cloud renders {contract['images']['oauth2Proxy']}, infra requires {k['oauth2_proxy']['image']}")
+missing = set(k["strip_required"]) - set(contract["stripCookies"])
+if missing:
+    problems.append(f"Cloud's strip list {contract['stripCookies']} lacks {sorted(missing)}")
+if contract["authentik"]["appSlug"] != "cloud-apps" or f"/application/o/{contract['authentik']['appSlug']}/" not in " ".join(k["oauth2_proxy"]["args"]):
+    problems.append(f"Authentik slug: Cloud uses {contract['authentik']['appSlug']}, infra's oauth2-proxy pin expects cloud-apps")
+if f"--client-id={k['client_id']}" not in k["oauth2_proxy"]["args"]:
+    problems.append(f"oauth2-proxy pin does not use client id {k['client_id']}")
 for fam in ["ipv4", "ipv6"]:
     if sorted(contract["egressExcluded"][fam]) != sorted(k["egress"][fam]):
         problems.append(f"egress exclusions ({fam}): Cloud {sorted(contract['egressExcluded'][fam])}, infra {sorted(k['egress'][fam])}")
@@ -188,6 +205,23 @@ if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or no
     problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
 if any(r.get("action") == "Allow" and r.get("destination", {}).get("nets", [None])[0] in ("0.0.0.0/0", "::/0") for r in egress):
     problems.append("floor: an Allow to the internet would stop the Project policy narrowing it")
+# The ingress floor: Traefik reaches only edge and oauth2-proxy pods, App pods
+# accept only edge pods, and everything else is denied.
+ing = k["ingress_floor"]["spec"]
+if ing.get("types") != ["Ingress"] or ing.get("tier") != "cloud" or ing["ingress"][-1] != {"action": "Deny"}:
+    problems.append(f"ingress floor: not an Ingress policy in tier cloud ending in Deny: {ing}")
+comp = "cloud.viktorbarzin.me/component"
+for r in ing["ingress"][:-1]:
+    if r["action"] != "Pass":
+        problems.append(f"ingress floor: a rule other than Pass before the Deny: {r}")
+    dst = r.get("destination", {}).get("selector", "")
+    src = r.get("source", {})
+    if "'app'" in dst and src.get("selector") != f"{comp} == 'edge'":
+        problems.append(f"ingress floor: App pods reachable from something other than edge pods: {r}")
+    if "traefik" in src.get("namespaceSelector", "") and ("'app'" in dst or not dst):
+        problems.append(f"ingress floor: Traefik reaches App pods: {r}")
+if not any("traefik" in r.get("source", {}).get("namespaceSelector", "") and "'edge'" in r["destination"]["selector"] and "'oauth2-proxy'" in r["destination"]["selector"] for r in ing["ingress"][:-1]):
+    problems.append("ingress floor: Traefik cannot reach edge and oauth2-proxy pods")
 (d / "contract-problems.txt").write_text("\n".join(problems))
 
 vdocs = [
@@ -299,7 +333,7 @@ apply_as() { local who="$1"; shift; "$who" apply --server-side --force-conflicts
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
 if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every ESO Vault auth method is allowed or refused"; fi
-if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the cookie-strip image and egress exclusions; the floor's rules are well formed"; fi
+if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug and egress exclusions; both floors are well formed"; fi
 
 ns_doc() { # name managed tier [pod-security level, default restricted; "-" for none] [extra label line] [no-governance]
   printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n' "$1"
@@ -446,7 +480,7 @@ expect_ok   "an ExternalName Kubernetes Service outside managed namespaces is un
 
 # --- Ingress hosts ------------------------------------------------------------------
 ing_doc() { # ns name host [tls-host]
-  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\n  annotations:\n    traefik.ingress.kubernetes.io/router.entrypoints: websecure\nspec:\n  ingressClassName: traefik\n  rules: [{host: "%s", http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: app-x, port: {name: edge}}}}]}}]\n' "$2" "$1" "$3"
+  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\n  annotations:\n    traefik.ingress.kubernetes.io/router.entrypoints: websecure\nspec:\n  ingressClassName: traefik\n  rules: [{host: "%s", http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: edge-x, port: {name: edge}}}}]}}]\n' "$2" "$1" "$3"
   [ -n "${4:-}" ] && printf '  tls: [{hosts: ["%s"]}]\n' "$4"
   true
 }
@@ -460,7 +494,7 @@ expect_fail "auth-prefixed names are refused in p-demo" "reserved name" apply_as
 expect_fail "a host-less Ingress rule is refused in p-demo" "needs a host" \
   apply_as kr --dry-run=server < <(ing_doc p-demo nohost x.viktorbarzin.me | sed 's/{host: "x.viktorbarzin.me", /{/')
 expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" \
-  apply_as kr --dry-run=server < <(ing_doc p-demo defb demo.viktorbarzin.me; printf '  defaultBackend: {service: {name: app-x, port: {name: edge}}}\n')
+  apply_as kr --dry-run=server < <(ing_doc p-demo defb demo.viktorbarzin.me; printf '  defaultBackend: {service: {name: edge-x, port: {name: edge}}}\n')
 expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka --dry-run=server < <(ing_doc default wild '*.viktorbarzin.me')
 expect_fail "a homelab host (Ingress) is refused in p-demo, even from admin" "already routes" apply_as ka --dry-run=server < <(ing_doc p-demo nc nextcloud.viktorbarzin.me)
 expect_fail "a homelab host (IngressRoute) is refused as a TLS host in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo t3 demo.viktorbarzin.me t3.viktorbarzin.me)
@@ -500,13 +534,17 @@ cat >"$TMP/tofu/zz_dump.tf.json" <<'EOF'
 }}}}
 EOF
 cat >"$TMP/tofu/cloud-access.tftest.hcl" <<'EOF'
-mock_provider "vault" {}
 mock_provider "postgresql" {}
 mock_provider "random" {}
-# Authentik ids are numeric strings (protocol_provider converts one).
-mock_provider "authentik" {
-  mock_resource "authentik_provider_oauth2" {
-    defaults = { id = "42" }
+# The shared Cloud Apps client stacks/authentik writes to secret/cloud/system.
+mock_provider "vault" {
+  mock_data "vault_kv_secret_v2" {
+    defaults = {
+      data = {
+        cloud_apps_client_id     = "cloud-apps"
+        cloud_apps_client_secret = "s3cret"
+      }
+    }
   }
 }
 run "apply" {
@@ -593,7 +631,7 @@ vault kv put secret/cloud/p-demo/app a=demo >/dev/null
 vault kv put secret/cloud/p-demo/_cloud/registry server=ghcr.io username=u password=p >/dev/null
 vault kv put secret/cloud/p-other/app a=other >/dev/null
 vault kv put secret/cloud/p-other/_cloud/registry server=ghcr.io username=u password=p >/dev/null
-vault kv put secret/cloud/system authentik_token=t ghcr_pull_token=g >/dev/null
+vault kv put secret/cloud/system cloud_apps_client_id=cloud-apps cloud_apps_client_secret=s ghcr_pull_token=g >/dev/null
 vault kv put secret/viktor x=y >/dev/null
 
 login() { # role namespace sa
@@ -622,8 +660,8 @@ expect_ok   "reconciler writes a Service entry" vtok "$RT" kv put secret/cloud/p
 expect_ok   "reconciler writes a _cloud/ entry" vtok "$RT" kv put secret/cloud/p-demo/_cloud/recipes-oauth2-proxy client_secret=c cookie_secret=k
 expect_ok   "reconciler deletes a Project secret with all versions" vtok "$RT" kv metadata delete secret/cloud/p-demo/new
 expect_fail "reconciler cannot write outside the p-* trees" "permission denied" vtok "$RT" kv put secret/cloud/homelab/x a=1
-expect_ok   "reconciler reads secret/cloud/system" vtok "$RT" kv get -field=authentik_token secret/cloud/system
-expect_fail "reconciler cannot change secret/cloud/system" "permission denied" vtok "$RT" kv put secret/cloud/system authentik_token=x
+expect_ok   "reconciler reads the shared client from secret/cloud/system" vtok "$RT" kv get -field=cloud_apps_client_secret secret/cloud/system
+expect_fail "reconciler cannot change secret/cloud/system" "permission denied" vtok "$RT" kv put secret/cloud/system cloud_apps_client_secret=x
 expect_fail "reconciler cannot delete secret/cloud/system" "permission denied" vtok "$RT" kv metadata delete secret/cloud/system
 expect_fail "reconciler cannot read secret/viktor" "permission denied" vtok "$RT" kv get secret/viktor
 expect_fail "reconciler cannot write a Vault policy" "permission denied" vtok "$RT" policy write x "$TMP/project.hcl"
@@ -632,6 +670,14 @@ caps() { vtok "$RT" token capabilities "$1" 2>&1; }
 [ "$(caps database/static-creds/pg-cloud-provisioner)" = "read" ] && ok "reconciler reads pg-cloud-provisioner" || bad "pg-cloud-provisioner caps"
 [ "$(caps database/static-creds/pg-terraform-state)" = "deny" ] && ok "reconciler cannot read pg-terraform-state" || bad "pg-terraform-state caps: $(caps database/static-creds/pg-terraform-state)"
 [ "$(caps auth/kubernetes/role/cloud-project)" = "deny" ] && ok "reconciler cannot touch auth roles" || bad "auth role caps"
+
+# The client id the oauth2-proxy pin expects is the one stacks/authentik
+# gives the shared provider (not a locals-only file, so read as text).
+want_id="$(python3 -c 'import json,sys; print(json.loads(json.loads(open(sys.argv[1]).read()))["client_id"])' "$TMP/k8s.raw")"
+grep -qE "^\s*cloud_apps_client_id\s*=\s*\"$want_id\"" "$HERE/stacks/authentik/cloud-apps.tf" \
+  && grep -qE "^\s*client_id\s*=\s*local.cloud_apps_client_id" "$HERE/stacks/authentik/cloud-apps.tf" \
+  && ok "stacks/authentik gives the shared client the id the oauth2-proxy pin expects ($want_id)" \
+  || bad "stacks/authentik/cloud-apps.tf does not set client_id \"$want_id\""
 
 [ "$(token_sum)" = "$TOKEN_BEFORE" ] && ok "~/.vault-token untouched" || bad "~/.vault-token CHANGED by this test"
 

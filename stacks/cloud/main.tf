@@ -4,14 +4,13 @@
 # This stack holds the Kubernetes identity and limits of Cloud's reconciler.
 # What the reconciler may do is in access_rules.tf (tested by
 # tests/cloud-access.test.sh). Cloud's Postgres roles are in stacks/dbaas
-# (cloud_postgres.tf), its Vault roles in stacks/vault (cloud.tf), and its
-# Authentik service account in stacks/authentik (cloud-reconciler.tf). The
-# console and reconciler Deployments arrive here in milestone M4.
+# (cloud_postgres.tf), its Vault roles in stacks/vault (cloud.tf), and the
+# shared Authentik client for private Apps in stacks/authentik (cloud-apps.tf).
+# The console and reconciler Deployments arrive here in milestone M4.
 #
 # Scope: Project namespaces (p-*) and everything in them, the Project roles and
-# databases on the shared CNPG cluster, the Authentik objects the reconciler
-# creates and secret/cloud/<namespace>/* belong to Cloud's database, not this
-# repo (AGENTS.md, "Cloud-owned objects").
+# databases on the shared CNPG cluster and secret/cloud/<namespace>/* belong
+# to Cloud's database, not this repo (AGENTS.md, "Cloud-owned objects").
 
 # Same labels and lifecycle as modules/kubernetes/tanstack_app, so the console's
 # module call in M4 can take this namespace over with one `moved` block
@@ -104,13 +103,13 @@ resource "kubernetes_manifest" "cloud_admission_policy_binding" {
 }
 
 # Network floor for every Project, owned by this repo: Calico tier "cloud" and
-# its one GlobalNetworkPolicy, local.cloud_project_egress_floor in
-# access_rules.tf (the rules and why). The reconciler writes each Project's own
-# Calico policy in the default tier (Cloud v1 plan: order below 2000, ending in
-# Deny). Tier "cloud" runs first, so that policy can only narrow what the
-# floor passes. The reconciler holds `get` on tier default only
-# (access_rules.tf), so it cannot read or write this tier. Ingress to Project
-# pods is not limited here; the Project policy does that.
+# its two GlobalNetworkPolicies, local.cloud_project_egress_floor and
+# local.cloud_project_ingress_floor in access_rules.tf (the rules and why).
+# The reconciler writes each Project's own Calico policy in the default tier
+# (Cloud v1 plan: order below 2000, ending in Deny). Tier "cloud" runs first,
+# so that policy can only narrow what the floor passes. The reconciler holds
+# `get` on tier default only (access_rules.tf), so it cannot read or write
+# this tier.
 resource "kubectl_manifest" "cloud_tier" {
   yaml_body = yamlencode({
     apiVersion = "projectcalico.org/v3"
@@ -127,5 +126,10 @@ resource "kubectl_manifest" "cloud_tier" {
 
 resource "kubectl_manifest" "cloud_project_egress_floor" {
   yaml_body  = yamlencode(local.cloud_project_egress_floor)
+  depends_on = [kubectl_manifest.cloud_tier]
+}
+
+resource "kubectl_manifest" "cloud_project_ingress_floor" {
+  yaml_body  = yamlencode(local.cloud_project_ingress_floor)
   depends_on = [kubectl_manifest.cloud_tier]
 }

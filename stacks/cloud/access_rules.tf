@@ -27,24 +27,28 @@
 #     label outside a short allowlist; RoleBindings it writes may bind only
 #     the project role to itself; the ResourceQuota and LimitRange it writes
 #     are cloud-quota and cloud-limits, labelled
-#     app.kubernetes.io/managed-by=cloud, and the quota counts every pod.
+#     app.kubernetes.io/managed-by=cloud, and the quota counts every pod's
+#     CPU, memory and ephemeral storage.
 # and, for anyone, in managed namespaces:
 #   cloud-externalsecret-store  an ExternalSecret may use only a namespaced
 #     SecretStore, never the vault-kv or vault-database ClusterSecretStore
 #     (which read all of secret/*).
 #   cloud-managed-service  a Kubernetes Service is ClusterIP with no
-#     externalIPs, and a port named edge targets the container port named
-#     edge. Traefik follows ExternalName Kubernetes Services
-#     (allowExternalNameServices in stacks/traefik), so an ExternalName
-#     Kubernetes Service plus an Ingress would
-#     publish any internal host; LoadBalancer, NodePort and externalIPs open
-#     the node or the LAN.
+#     externalIPs and no prometheus.io/* annotation. An edge Service (edge-*)
+#     selects only that App's edge pods and has one port, edge, targeting the
+#     container port edge; an oauth2-proxy Service (auth-*) selects only that
+#     App's oauth2-proxy pods on port http. Traefik follows ExternalName
+#     Kubernetes Services (allowExternalNameServices in stacks/traefik), so an
+#     ExternalName Kubernetes Service plus an Ingress would publish any
+#     internal host; LoadBalancer, NodePort and externalIPs open the node or
+#     the LAN.
 #   cloud-managed-ingress  class traefik; every host is one label under
 #     viktorbarzin.me (no wildcard, no host-less rule, no defaultBackend), not
 #     a reserved App name from the Cloud v1 plan ("Configuration": reserved
 #     App names) and not a host the homelab already routes (its parameter,
 #     ConfigMap cloud/cloud-taken-hosts from taken_hosts.tf); every backend is
-#     a Kubernetes Service port named edge. No tls.secretName: Traefik's default TLSStore serves the
+#     an edge Service on port edge or an oauth2-proxy Service on port http,
+#     by port name. No tls.secretName: Traefik's default TLSStore serves the
 #     wildcard, and a Project certificate would go into Traefik's global
 #     store, where an exact SAN match beats the wildcard for every host. The
 #     only annotations are the two Cloud renders: router.entrypoints
@@ -59,48 +63,57 @@
 #     (errors, chain, plugin, forwardAuth, buffering) could reach another
 #     namespace or hold request bodies in Traefik's memory.
 #   cloud-managed-pod and cloud-managed-deployment  a pod, and a Deployment's
-#     pod template, uses only emptyDir, configMap, secret, projected and
-#     downwardAPI volumes; sets no runtimeClassName, nodeName, nodeSelector,
-#     affinity, extra tolerations, host network, PID or IPC, init
-#     containers, service account other than default, or priority class
-#     other than tier-4-aux; requests no GPU or other extended resource; and
-#     only a container named cookie-strip running the pinned Caddy image may
-#     declare a port named edge. cookie-strip runs exactly as Cloud renders
-#     it: the fixed args and env, no command, envFrom, lifecycle hook or exec
-#     probe, a strip-* ConfigMap at /etc/caddy and its own emptyDir at
-#     /run/caddy, and its own runAsUser, which no other container shares. No
-#     shared process namespace. Every Deployment is a Cloud App or an App's
-#     oauth2-proxy (label cloud.viktorbarzin.me/component), and an App's pod
-#     template holds the cookie-strip container with port edge.
-#   cloud-managed-strip-config  a ConfigMap named strip-* holds only the key
+#     pod template, uses only emptyDir (each with a sizeLimit), configMap,
+#     secret, projected and downwardAPI volumes; sets no runtimeClassName,
+#     nodeName, nodeSelector, affinity, extra tolerations, host network, PID
+#     or IPC, init containers, shared process namespace, service account other
+#     than default, priority class other than tier-4-aux, or prometheus.io/*
+#     annotation; requests no GPU or other extended resource; and limits the
+#     ephemeral storage of every container. Every pod is labelled
+#     cloud.viktorbarzin.me/component app, edge or oauth2-proxy. An edge pod
+#     runs exactly the edge Cloud renders and an oauth2-proxy pod exactly the
+#     oauth2-proxy Cloud renders (local.cloud_edge, local.cloud_oauth2_proxy):
+#     one container, the pinned image, fixed args and env, no command, hook or
+#     exec probe, fixed ports and mounts, and for the edge its readiness
+#     probe. App pods are free, within the rules above.
+#   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is the one Cloud renders (local
-#     cloud_caddyfile_lines): only the App port, the host, the cookie list and
-#     the App's own oauth2-proxy vary, and the list strips at least the
-#     homelab's cookies.
+#     cloud_caddyfile_lines): only the cookie list and the App's own
+#     upstream vary, and the list strips at least the homelab's cookies.
 #   cloud-managed-secretstore  a SecretStore is the in-cluster Vault, KV v2 at
 #     secret/, Kubernetes auth role cloud-project as service account
 #     cloud-secrets, and nothing else. Any other provider would let the ESO
 #     controller fetch a URL or a secret store of the reconciler's choosing
 #     and write the answer into a Project Secret.
 #
-# The edge chain. The homelab's forward-auth cookies (authentik_proxy_*,
-# tsgate, anubis) are scoped to viktorbarzin.me, so every Project host
-# receives them. Cloud's cookie-strip container removes them before a
-# request reaches the App. The policies above make it the only way in:
-# Traefik reaches a Project only through an Ingress, the Ingress names only a
-# Kubernetes Service port named edge, that port targets the container port
-# named edge, and only cookie-strip may have one. What cookie-strip does is
-# fixed too: cloud-managed-pod and cloud-managed-deployment fix how it runs
-# and what it mounts, and cloud-managed-strip-config fixes its Caddyfile.
-# Cloud's own test (cookie-strip.test.ts) runs that Caddyfile in the pinned
-# image; M4's live cookie test checks it end to end.
+# The edge chain (M2 contract, Addendum v2 point 8). The homelab's
+# forward-auth cookies (authentik_proxy_*, tsgate, Anubis's
+# techaro.lol-anubis-auth) are scoped to viktorbarzin.me, so every Project
+# host receives them. Cloud's edge, a pinned Caddy in its own Deployment
+# edge-<app>, removes them before a request reaches the App, and removes every
+# Set-Cookie with a Domain attribute on the way back. The policies above make
+# it the only way in:
+#   public:  Traefik -> Service edge-<app>:edge -> edge pod -> App
+#   private: Traefik -> Service auth-<app>:http -> oauth2-proxy pod, whose
+#            only upstream is http://edge-<app>.<ns>.svc.cluster.local:80/
+#            -> edge pod -> App
+# Traefik reaches a Project only through an Ingress; the Ingress names only
+# an edge-* or auth-* Service; those Services select only edge or
+# oauth2-proxy pods; and those pods run only Cloud's pinned images, args and
+# config. No App code runs in an edge or oauth2-proxy pod, so App code can
+# never own the edge's socket. The Calico floor below lets App pods accept
+# connections only from edge pods, edge pods only from Traefik and
+# oauth2-proxy pods, and oauth2-proxy pods only from Traefik; Cloud's Project
+# policy narrows that to the App's own pods. Cloud's edge.test.ts runs the
+# Caddyfile in the pinned image; M4's live cookie test checks it end to end.
 #
 # Network. Calico tier "cloud" (main.tf) sits before the default tier and
-# holds one infra-owned GlobalNetworkPolicy for every managed namespace,
-# local.cloud_project_egress_floor below. The reconciler has no right in that
-# tier, so a Project policy it writes in the default tier can only narrow
-# access, never open the LAN, Vault or another namespace's Kubernetes
-# Service.
+# holds two infra-owned GlobalNetworkPolicies for every managed namespace,
+# local.cloud_project_egress_floor and local.cloud_project_ingress_floor
+# below. The reconciler has no right in that tier, so a Project policy it
+# writes in the default tier can only narrow access, never open the LAN,
+# Vault or another namespace's Kubernetes Service, and never let Traefik reach
+# App pods directly.
 #
 # Pod Security. The reconciler must label each namespace
 # pod-security.kubernetes.io/enforce=restricted, so the built-in, fail-closed
@@ -111,6 +124,13 @@
 # volumes, which cloud-managed-pod refuses: no PersistentVolumeClaim on any
 # storage class, and no in-tree nfs, iscsi or rbd volume, which the kubelet
 # mounts from the node's network.
+#
+# Disk and metrics. Every container limits its ephemeral storage and every
+# emptyDir has a sizeLimit, and the quota counts ephemeral storage, so a
+# Project cannot fill a worker's disk and push it into DiskPressure. No
+# Service or pod may carry a prometheus.io/* annotation: the homelab's
+# annotation-driven scrape jobs keep the target's own labels (honor_labels),
+# so a Project endpoint could otherwise write series under homelab labels.
 #
 # Taken hosts. A ValidatingAdmissionPolicy sees only the object in the
 # request, its namespace and a parameter object; it cannot list other
@@ -137,6 +157,7 @@ locals {
   cloud_namespace         = "cloud"
   cloud_managed_label     = "cloud.viktorbarzin.me/managed"
   cloud_component_label   = "cloud.viktorbarzin.me/component"
+  cloud_service_label     = "cloud.viktorbarzin.me/service"
   cloud_reconciler_sa     = "cloud-reconciler"
   cloud_reconciler_user   = "system:serviceaccount:cloud:cloud-reconciler"
   cloud_project_role_name = "cloud-reconciler-project"
@@ -169,8 +190,9 @@ locals {
   ])
 
   # The namespace's only ResourceQuota and LimitRange, written by the
-  # reconciler. The quota must count requests and limits of CPU and memory
-  # and pods, so no pod escapes it, and must allow no PersistentVolumeClaim,
+  # reconciler. The quota must count requests and limits of CPU, memory and
+  # ephemeral storage, and pods, so no pod escapes it (quota admission then
+  # refuses a pod without those limits), and must allow no PersistentVolumeClaim,
   # LoadBalancer or NodePort. Kyverno's generated tier-quota and
   # tier-defaults carry no managed-by label, so the reconciler can neither
   # change nor delete them.
@@ -179,7 +201,7 @@ locals {
     value          = "cloud"
     quota_name     = "cloud-quota"
     limits_name    = "cloud-limits"
-    quota_required = ["requests.cpu", "requests.memory", "limits.cpu", "limits.memory", "pods"]
+    quota_required = ["requests.cpu", "requests.memory", "requests.ephemeral-storage", "limits.cpu", "limits.memory", "limits.ephemeral-storage", "pods"]
     quota_zero     = ["persistentvolumeclaims", "services.loadbalancers", "services.nodeports"]
   }
 
@@ -215,91 +237,135 @@ locals {
     "traefik-retry@kubernetescrd",
   ]
 
-  # The App's way in (the edge chain in the header). The image is
-  # IMAGES.cookieStrip in the cloud repo's src/reconciler/render.ts, which
-  # renders it unchanged; tests/cloud-access.test.sh applies Cloud's real
-  # modules, so a mismatch fails the test. Change both together.
-  cloud_edge_port_name      = "edge"
-  cloud_edge_container      = "cookie-strip"
-  cloud_cookie_strip_image  = "docker.io/library/caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee"
-  cloud_workload_components = ["app", "oauth2-proxy"]
+  # The edge and the oauth2-proxy, as Cloud renders them (the cloud repo's
+  # modules/app/edge.tf and auth.tf; names in its
+  # docs/build/m2-contract-rendered.md). The images are IMAGES.edge and
+  # IMAGES.oauth2Proxy in its src/reconciler/render.ts;
+  # tests/cloud-access.test.sh applies Cloud's real modules, so a mismatch
+  # fails the test. Change both repos together.
+  cloud_workload_components = ["app", "edge", "oauth2-proxy"]
 
-  # How cookie-strip runs (the cloud repo's modules/app/main.tf). Anything
-  # else would let the reconciler change what it strips without touching its
-  # Caddyfile: a command or exec hook starts another process under
-  # cookie-strip's uid, which can share port edge (SO_REUSEPORT) and take
-  # requests unstripped; env and mounts can point Caddy at another config.
-  cloud_cookie_strip_args = ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
-  cloud_cookie_strip_env = {
-    XDG_CONFIG_HOME = "/run/caddy/config"
-    XDG_DATA_HOME   = "/run/caddy/data"
+  # Anything looser would let the reconciler change what the edge strips
+  # without touching its Caddyfile: a command or exec hook runs another
+  # program, env and mounts can point Caddy at another config, another port
+  # number lets the Service's targetPort name reach a socket Caddy does not
+  # own.
+  cloud_edge = {
+    component    = "edge"
+    container    = "edge"
+    image        = "docker.io/library/caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee"
+    prefix       = "edge-"
+    port_name    = "edge"
+    port         = 8080
+    service_port = 80
+    args         = ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    env = {
+      XDG_CONFIG_HOME = "/run/caddy/config"
+      XDG_DATA_HOME   = "/run/caddy/data"
+    }
+    config_dir = "/etc/caddy"
+    run_dir    = "/run/caddy"
   }
-  cloud_cookie_strip_config_dir = "/etc/caddy"
-  cloud_cookie_strip_run_dir    = "/run/caddy"
-  cloud_strip_config_prefix     = "strip-"
 
-  # The Caddyfile cookie-strip runs (ConfigMap strip-<app>, key Caddyfile),
-  # line by line, from the cloud repo's modules/app/Caddyfile.tftpl. The
-  # policy cloud-managed-strip-config accepts only this file: leading comment
-  # lines, then these lines in order with any indentation, a private App's
-  # two oauth2-proxy blocks or neither. Placeholders:
-  #   @APP@, @NS@  the App (the ConfigMap's name after strip-) and the
-  #                namespace, filled in by the policy, so the only upstream
-  #                besides the App is this App's own oauth2-proxy
-  #   @HOST@       one label under the base domain (the sign-in redirect)
-  #   @PORT@       the App's port on 127.0.0.1
+  # The shared Authentik client (stacks/authentik cloud-apps.tf, the same
+  # literal there). Pinned so an oauth2-proxy pod signs in only through it.
+  cloud_apps_client_id = "cloud-apps"
+
+  # The oauth2-proxy pins its upstream to the App's own edge Service, so a
+  # signed-in request never reaches App code unstripped, and fixes every
+  # other flag: the issuer, the endpoints, the email allowlist file as the
+  # only gate, no --skip-jwt-bearer-tokens, no --email-domain, a cookie bound
+  # to the App's host. @APP@ is the pod's cloud.viktorbarzin.me/service
+  # label and @NS@ its namespace, filled in by the policy; the App's host is
+  # @APP@.viktorbarzin.me. Its component label is also the Calico source
+  # selector that reaches the Authentik server pods, so nothing but this
+  # program may carry it.
+  cloud_oauth2_proxy = {
+    component  = "oauth2-proxy"
+    container  = "oauth2-proxy"
+    image      = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.6@sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048"
+    prefix     = "auth-"
+    port_name  = "http"
+    port       = 4180
+    emails_dir = "/etc/oauth2-proxy"
+    args = [
+      "--provider=oidc",
+      "--client-id=${local.cloud_apps_client_id}",
+      "--redirect-url=https://@APP@.viktorbarzin.me/oauth2/callback",
+      "--oidc-issuer-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/",
+      "--skip-oidc-discovery=true",
+      "--login-url=https://authentik.viktorbarzin.me/application/o/authorize/",
+      "--redeem-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/token/",
+      "--oidc-jwks-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/jwks/",
+      "--profile-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/userinfo/",
+      "--scope=openid profile email",
+      "--code-challenge-method=S256",
+      "--authenticated-emails-file=/etc/oauth2-proxy/emails",
+      "--insecure-oidc-allow-unverified-email=true",
+      "--upstream=http://edge-@APP@.@NS@.svc.cluster.local:80/",
+      "--pass-basic-auth=false",
+      "--pass-user-headers=false",
+      "--pass-access-token=false",
+      "--whitelist-domain=@APP@.viktorbarzin.me",
+      "--http-address=0.0.0.0:4180",
+      "--reverse-proxy=true",
+      "--cookie-name=_oauth2_proxy",
+      "--cookie-domain=@APP@.viktorbarzin.me",
+      "--cookie-secure=true",
+      "--cookie-expire=1h",
+      "--ping-path=/oauth2/ping",
+      "--ready-path=/oauth2/ready",
+      "--skip-provider-button=true",
+      "--silence-ping-logging=true",
+    ]
+  }
+
+  # The edge's Caddyfile (ConfigMap edge-<app>, key Caddyfile), line by line,
+  # from the cloud repo's modules/app/Caddyfile.tftpl. The policy
+  # cloud-managed-edge-config accepts only this file: optional leading
+  # comment lines, then these lines in order with any indentation.
+  # Placeholders:
+  #   @APP@, @NS@  the App (the ConfigMap's name after edge-) and the
+  #                namespace, filled in by the policy, so the only upstream is
+  #                this App's own Service app-<app>
   #   @COOKIES@    the cookie alternation; cloud_strip_cookies_required must
   #                each be in it
-  cloud_caddyfile_lines = {
-    head = [
-      "{", "admin off", "auto_https off", "persist_config off", "servers {",
-      "trusted_proxies static private_ranges", "}", "}", ":8080 {",
-    ]
-    signin = [
-      "handle /oauth2/* {", "reverse_proxy auth-@APP@.@NS@.svc.cluster.local:80 {",
-      "header_up X-Real-IP {client_ip}", "header_up X-Forwarded-Uri {uri}", "}", "}",
-    ]
-    handle = ["handle {"]
-    forward_auth = [
-      "forward_auth auth-@APP@.@NS@.svc.cluster.local:80 {", "uri /oauth2/auth",
-      "header_up X-Real-IP {client_ip}", "@signin status 401", "handle_response @signin {",
-      "redir * /oauth2/sign_in?rd=https://@HOST@{uri} 302", "}", "}",
-    ]
-    tail = [
-      "reverse_proxy 127.0.0.1:@PORT@ {",
-      "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
-      "header_up Cookie `^;\\s*` \"\"",
-      "header_up -X-Authentik-*", "header_up -X_Authentik_*", "}", "}", "}",
-    ]
-  }
+  # The header caps (64KB both ways) are fixed: without the response cap a
+  # few App responses with huge headers OOM-kill Caddy.
+  cloud_caddyfile_lines = [
+    "{", "admin off", "auto_https off", "persist_config off", "servers {",
+    "trusted_proxies static private_ranges", "max_header_size 64KB", "}", "}",
+    ":8080 {",
+    "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {",
+    "transport http {", "max_response_header 64KB", "}",
+    "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
+    "header_up Cookie `^;\\s*` \"\"",
+    "header_up -X-Authentik-*", "header_up -X_Authentik_*",
+    "header_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` \"\"",
+    "}", "}",
+  ]
   # Each line as a regex: metacharacters escaped, any indentation, a newline.
-  cloud_caddyfile_line_re = { for k, ls in local.cloud_caddyfile_lines : k => join("", [
-    for l in ls : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"
-  ]) }
+  cloud_caddyfile_line_re = join("", [
+    for l in local.cloud_caddyfile_lines : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"
+  ])
   # One cookie in the alternation: a name (a dot only escaped), optionally
   # followed by [^=;]* for a prefix.
   cloud_strip_cookie_re = "(?:[A-Za-z0-9_-]|\\\\[.])+(?:\\[\\^=;\\]\\*)?"
-  cloud_caddyfile_re = replace(replace(replace(join("", [
+  cloud_caddyfile_re = replace(join("", [
     "^(?:[\\t ]*(?:#[^\\n]*)?\\n)*",
-    local.cloud_caddyfile_line_re.head,
-    "(?:",
-    local.cloud_caddyfile_line_re.signin, local.cloud_caddyfile_line_re.handle, local.cloud_caddyfile_line_re.forward_auth,
-    "|",
-    local.cloud_caddyfile_line_re.handle,
-    ")",
-    local.cloud_caddyfile_line_re.tail,
+    local.cloud_caddyfile_line_re,
     "(?:[\\t ]*\\n)*$",
-    ]),
-    "@HOST@", "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.${local.cloud_base_domain_re}"),
-    "@PORT@", "[0-9]{1,5}"),
-  "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
+  ]), "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
   # The homelab's cookies scoped to viktorbarzin.me, in Cloud's strip_cookies
   # form (a trailing * is a prefix): Authentik's forward-auth session, the
-  # Turnstile gate and Anubis. Cloud's list may hold more, never fewer.
-  cloud_strip_cookies_required = ["authentik_proxy_*", "tsgate*", "anubis*"]
-  # The same, as each appears in the Caddyfile's alternation, escaped.
+  # Turnstile gate and Anubis's pass (techaro.lol-anubis-auth since
+  # 2026-10-15; anubis* covers older names). Cloud's list may hold more,
+  # never fewer.
+  cloud_strip_cookies_required = ["authentik_proxy_*", "tsgate*", "anubis*", "techaro.lol-anubis-*"]
+  # The same, as each appears in the Caddyfile's alternation (a dot escaped
+  # as \., a trailing * as [^=;]*), then escaped again as a regex.
   cloud_strip_cookies_required_re = [for c in local.cloud_strip_cookies_required : replace(
-    endswith(c, "*") ? "${trimsuffix(c, "*")}[^=;]*" : c, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0"
+    endswith(c, "*") ? "${replace(trimsuffix(c, "*"), ".", "\\.")}[^=;]*" : replace(c, ".", "\\."), "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0"
   )]
 
   # Hosts the homelab already routes (taken_hosts.tf collects them from every
@@ -447,17 +513,67 @@ locals {
     }
   }
 
+  # Who may connect to a Project pod (M2 contract, Addendum v2 point 8). The
+  # edge is the only way to App code, so App pods accept connections only
+  # from edge pods, edge pods only from Traefik and oauth2-proxy pods, and
+  # oauth2-proxy pods only from Traefik. Everything else is denied here,
+  # before the default tier, so a Project policy cannot let Traefik, another
+  # namespace or the LAN reach App pods directly. A GlobalNetworkPolicy
+  # cannot say "the same namespace", so the edge and oauth2-proxy rules pass
+  # any managed namespace's pods to the default tier, where Cloud's Project
+  # policy keeps each App's own. The kubelet's probes come from the node and
+  # are not subject to Calico policy.
+  cloud_project_ingress_floor = {
+    apiVersion = "projectcalico.org/v3"
+    kind       = "GlobalNetworkPolicy"
+    metadata   = { name = "cloud.project-ingress-floor" }
+    spec = {
+      tier              = "cloud"
+      order             = 110
+      selector          = "all()"
+      namespaceSelector = "${local.cloud_managed_label} == 'true'"
+      types             = ["Ingress"]
+      ingress = [
+        {
+          action      = "Pass"
+          source      = { namespaceSelector = "projectcalico.org/name == 'traefik'" }
+          destination = { selector = "${local.cloud_component_label} in {'${local.cloud_edge.component}', '${local.cloud_oauth2_proxy.component}'}" }
+        },
+        {
+          action      = "Pass"
+          source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_oauth2_proxy.component}'" }
+          destination = { selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
+        },
+        {
+          action      = "Pass"
+          source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
+          destination = { selector = "${local.cloud_component_label} == 'app'" }
+        },
+        { action = "Deny" },
+      ]
+    }
+  }
+
   cloud_governance_labelled = "has(%s.metadata.labels) && '${local.cloud_governance.label}' in %s.metadata.labels && %s.metadata.labels['${local.cloud_governance.label}'] == '${local.cloud_governance.value}'"
   cloud_label_is_true       = "has(%s.metadata.labels) && '${local.cloud_managed_label}' in %s.metadata.labels && %s.metadata.labels['${local.cloud_managed_label}'] == 'true'"
 
   # The pod rules, written once against @S (the pod spec) and used by
   # cloud-managed-pod (S = object.spec) and cloud-managed-deployment
   # (S = object.spec.template.spec), so a Deployment the reconciler writes
-  # fails at apply time, not later in its ReplicaSet. The API server returns
-  # the message of the first rule that fails, so GPU comes before priority:
-  # Kyverno's inject-gpu-workload-priority gives a GPU pod priority class
-  # gpu-workload before admission runs.
-  cloud_pod_rules = [
+  # fails at apply time, not later in its ReplicaSet. Both policies define
+  # the variables component, service and podAnnotations from the pod's own
+  # metadata or the template's. The API server returns the message of the
+  # first rule that fails, so GPU comes before priority: Kyverno's
+  # inject-gpu-workload-priority gives a GPU pod priority class gpu-workload
+  # before admission runs.
+  #
+  # @EDGE and @AUTH below stand for "this pod is not an edge pod, or" and the
+  # same for oauth2-proxy; each pinned rule applies to its component only.
+  cloud_pod_rules = [for r in [
+    {
+      expression = "variables.component in ${jsonencode(local.cloud_workload_components)}"
+      message    = "in a Cloud namespace, a pod is labelled ${local.cloud_component_label} ${join(", ", local.cloud_workload_components)}"
+    },
     {
       expression = "!has(@S.initContainers) || size(@S.initContainers) == 0"
       message    = "in a Cloud namespace, a pod may not have init containers"
@@ -467,8 +583,21 @@ locals {
       message    = "in a Cloud namespace, a container may request only ${join(", ", local.cloud_pod_resources)}: no GPU or other extended resource"
     },
     {
+      # The kubelet enforces the limit, the quota counts it, and a container
+      # without one could fill the node's disk.
+      # dyn(): the API server's type checker has no schema for
+      # resources.limits or emptyDir.sizeLimit (quantities), though both
+      # evaluate.
+      expression = "@S.containers.all(c, has(c.resources) && has(dyn(c.resources).limits) && 'ephemeral-storage' in dyn(c.resources).limits)"
+      message    = "in a Cloud namespace, every container sets an ephemeral-storage limit"
+    },
+    {
       expression = "!has(@S.volumes) || @S.volumes.all(v, ${join(" || ", [for t in local.cloud_pod_volume_types : "has(v.${t})"])})"
       message    = "in a Cloud namespace, a pod may use only ${join(", ", local.cloud_pod_volume_types)} volumes"
+    },
+    {
+      expression = "!has(@S.volumes) || @S.volumes.all(v, !has(v.emptyDir) || has(dyn(v.emptyDir).sizeLimit))"
+      message    = "in a Cloud namespace, every emptyDir sets a sizeLimit"
     },
     {
       expression = "!has(@S.runtimeClassName) || @S.runtimeClassName == ''"
@@ -507,30 +636,74 @@ locals {
       message    = "in a Cloud namespace, a pod runs as service account default"
     },
     {
-      expression = "@S.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.name) || p.name != '${local.cloud_edge_port_name}') || (c.name == '${local.cloud_edge_container}' && c.image.startsWith('${local.cloud_cookie_strip_image}')))"
-      message    = "in a Cloud namespace, only a container named ${local.cloud_edge_container} running ${local.cloud_cookie_strip_image} may declare a port named ${local.cloud_edge_port_name}"
-    },
-    {
-      # The App container could otherwise see Caddy's process.
       expression = "!has(@S.shareProcessNamespace) || !@S.shareProcessNamespace"
       message    = "in a Cloud namespace, a pod may not share its process namespace"
     },
     {
-      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (!has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_cookie_strip_args)} && !has(c.envFrom) && (!has(c.env) || c.env.all(e, e.name in ${jsonencode(local.cloud_cookie_strip_env)} && has(e.value) && !has(e.valueFrom) && e.value == ${jsonencode(local.cloud_cookie_strip_env)}[e.name])) && !has(c.lifecycle) && (!has(c.livenessProbe) || !has(c.livenessProbe.exec)) && (!has(c.readinessProbe) || !has(c.readinessProbe.exec)) && (!has(c.startupProbe) || !has(c.startupProbe.exec))))"
-      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container runs as Cloud renders it: args ${join(" ", local.cloud_cookie_strip_args)}, env only ${join(" and ", keys(local.cloud_cookie_strip_env))}, and no command, envFrom, lifecycle hook or exec probe"
+      # The kubelet runs probes and hooks from the node's network, past the
+      # Calico floor. Pod Security restricted refuses a host on a pod (1.34+);
+      # this refuses it on a Deployment at apply time too.
+      expression = "@S.containers.all(c, ${join(" && ", concat(
+        [for pr in ["livenessProbe", "readinessProbe", "startupProbe"] : "(!has(c.${pr}) || ((!has(c.${pr}.httpGet) || !has(c.${pr}.httpGet.host) || c.${pr}.httpGet.host == '') && (!has(c.${pr}.tcpSocket) || !has(c.${pr}.tcpSocket.host) || c.${pr}.tcpSocket.host == '')))"],
+        [for h in ["postStart", "preStop"] : "(!has(c.lifecycle) || !has(c.lifecycle.${h}) || ((!has(c.lifecycle.${h}.httpGet) || !has(c.lifecycle.${h}.httpGet.host) || c.lifecycle.${h}.httpGet.host == '') && (!has(c.lifecycle.${h}.tcpSocket) || !has(c.lifecycle.${h}.tcpSocket.host) || c.lifecycle.${h}.tcpSocket.host == '')))"],
+      ))})"
+      message = "in a Cloud namespace, a probe or lifecycle hook may not name a host"
     },
     {
-      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (has(c.volumeMounts) && size(c.volumeMounts) == 2 && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_cookie_strip_config_dir}') && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_cookie_strip_run_dir}') && c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && ((m.mountPath == '${local.cloud_cookie_strip_config_dir}' && has(m.readOnly) && m.readOnly && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name.startsWith('${local.cloud_strip_config_prefix}') && !has(v.configMap.items))) || (m.mountPath == '${local.cloud_cookie_strip_run_dir}' && @S.volumes.exists(v, v.name == m.name && has(v.emptyDir)) && @S.containers.all(o, o.name == c.name || !has(o.volumeMounts) || o.volumeMounts.all(om, om.name != m.name)))))))"
-      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container mounts only a ${local.cloud_strip_config_prefix}* ConfigMap, read-only and whole, at ${local.cloud_cookie_strip_config_dir}, and an emptyDir no other container mounts at ${local.cloud_cookie_strip_run_dir}"
+      expression = "variables.podAnnotations.all(k, !k.startsWith('prometheus.io/'))"
+      message    = "in a Cloud namespace, a pod may not carry prometheus.io/* annotations"
+    },
+    # The edge (local.cloud_edge).
+    {
+      expression = "@EDGE (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_edge.container}' && @S.containers[0].image == '${local.cloud_edge.image}')"
+      message    = "in a Cloud namespace, an edge pod has one container, ${local.cloud_edge.container}, running ${local.cloud_edge.image}"
     },
     {
-      # Two sockets share a port (SO_REUSEPORT) only under the same effective
-      # uid, so App code under cookie-strip's uid could take a share of port
-      # edge unstripped. Each container's uid is its own runAsUser, else the
-      # pod's; an image's USER is invisible here, so every container sets one.
-      expression = "@S.containers.all(c, c.name != '${local.cloud_edge_container}' || (has(c.securityContext) && has(c.securityContext.runAsUser) && @S.containers.all(o, o.name == c.name || (has(o.securityContext) && has(o.securityContext.runAsUser) ? o.securityContext.runAsUser : (has(@S.securityContext) && has(@S.securityContext.runAsUser) ? @S.securityContext.runAsUser : c.securityContext.runAsUser)) != c.securityContext.runAsUser)))"
-      message    = "in a Cloud namespace, the ${local.cloud_edge_container} container sets its own runAsUser, and every other container runs as another uid, set on the container or the pod"
+      expression = "@EDGE @S.containers.all(c, !has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_edge.args)} && !has(c.envFrom) && has(c.env) && size(c.env) == ${length(local.cloud_edge.env)} && c.env.all(e, e.name in ${jsonencode(local.cloud_edge.env)} && has(e.value) && !has(e.valueFrom) && e.value == ${jsonencode(local.cloud_edge.env)}[e.name]) && !has(c.lifecycle) && !has(c.livenessProbe) && !has(c.startupProbe))"
+      message    = "in a Cloud namespace, the edge runs as Cloud renders it: args ${join(" ", local.cloud_edge.args)}, env only ${join(" and ", keys(local.cloud_edge.env))}, and no command, envFrom, lifecycle hook, liveness or startup probe"
     },
+    {
+      expression = "@EDGE @S.containers.all(c, has(c.ports) && size(c.ports) == 1 && c.ports.all(p, has(p.name) && p.name == '${local.cloud_edge.port_name}' && p.containerPort == ${local.cloud_edge.port} && (!has(p.protocol) || p.protocol == 'TCP') && !has(p.hostPort) && !has(p.hostIP)))"
+      message    = "in a Cloud namespace, the edge has one port, ${local.cloud_edge.port_name} = ${local.cloud_edge.port}/TCP, and no host port"
+    },
+    {
+      # Only an edge that listens gets traffic. The probe checks the edge's
+      # own port, which no App code can bind: it runs in another pod.
+      expression = "@EDGE @S.containers.all(c, has(c.readinessProbe) && has(c.readinessProbe.tcpSocket) && string(c.readinessProbe.tcpSocket.port) in ['${local.cloud_edge.port_name}', '${local.cloud_edge.port}'])"
+      message    = "in a Cloud namespace, the edge has a tcpSocket readiness probe on port ${local.cloud_edge.port_name}"
+    },
+    {
+      expression = "@EDGE @S.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 2 && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_edge.config_dir}') && c.volumeMounts.exists(m, m.mountPath == '${local.cloud_edge.run_dir}') && c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && ((m.mountPath == '${local.cloud_edge.config_dir}' && has(m.readOnly) && m.readOnly && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name == '${local.cloud_edge.prefix}' + variables.service && !has(v.configMap.items))) || (m.mountPath == '${local.cloud_edge.run_dir}' && @S.volumes.exists(v, v.name == m.name && has(v.emptyDir))))))"
+      message    = "in a Cloud namespace, the edge mounts only ConfigMap ${local.cloud_edge.prefix}<its App>, read-only and whole, at ${local.cloud_edge.config_dir}, and an emptyDir at ${local.cloud_edge.run_dir}"
+    },
+    # The oauth2-proxy (local.cloud_oauth2_proxy).
+    {
+      expression = "@AUTH (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_oauth2_proxy.container}' && @S.containers[0].image == '${local.cloud_oauth2_proxy.image}')"
+      message    = "in a Cloud namespace, an oauth2-proxy pod has one container, ${local.cloud_oauth2_proxy.container}, running ${local.cloud_oauth2_proxy.image}"
+    },
+    {
+      expression = "@AUTH @S.containers.all(c, !has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_oauth2_proxy.args)}.map(a, a.replace('@APP@', variables.service).replace('@NS@', request.namespace)) && !has(c.env) && has(c.envFrom) && size(c.envFrom) == 1 && c.envFrom.all(e, has(e.secretRef) && e.secretRef.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service && !has(e.configMapRef) && (!has(e.prefix) || e.prefix == '')) && !has(c.lifecycle) && ${join(" && ", [for pr in ["livenessProbe", "readinessProbe", "startupProbe"] : "(!has(c.${pr}) || !has(c.${pr}.exec))"])})"
+      message    = "in a Cloud namespace, the oauth2-proxy runs as Cloud renders it: the fixed args with its own App's host and edge, Secret ${local.cloud_oauth2_proxy.prefix}<its App> as its only env, and no command, lifecycle hook or exec probe"
+    },
+    {
+      expression = "@AUTH @S.containers.all(c, has(c.ports) && size(c.ports) == 1 && c.ports.all(p, has(p.name) && p.name == '${local.cloud_oauth2_proxy.port_name}' && p.containerPort == ${local.cloud_oauth2_proxy.port} && !has(p.hostPort) && !has(p.hostIP)))"
+      message    = "in a Cloud namespace, the oauth2-proxy has one port, ${local.cloud_oauth2_proxy.port_name} = ${local.cloud_oauth2_proxy.port}, and no host port"
+    },
+    {
+      expression = "@AUTH @S.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.mountPath == '${local.cloud_oauth2_proxy.emails_dir}' && has(m.readOnly) && m.readOnly && (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service)))"
+      message    = "in a Cloud namespace, the oauth2-proxy mounts only ConfigMap ${local.cloud_oauth2_proxy.prefix}<its App>, read-only, at ${local.cloud_oauth2_proxy.emails_dir}"
+    },
+    ] : {
+    expression = replace(replace(r.expression, "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || ")
+    message    = r.message
+  }]
+
+  # The variables cloud_pod_rules use, from the pod's metadata (@M).
+  cloud_pod_variables = [
+    { name = "podLabels", expression = "has(@M.labels) ? @M.labels : {}" },
+    { name = "podAnnotations", expression = "has(@M.annotations) ? @M.annotations : {}" },
+    { name = "component", expression = "'${local.cloud_component_label}' in variables.podLabels ? variables.podLabels['${local.cloud_component_label}'] : ''" },
+    { name = "service", expression = "'${local.cloud_service_label}' in variables.podLabels ? variables.podLabels['${local.cloud_service_label}'] : ''" },
   ]
 
   cloud_managed_binding = {
@@ -688,6 +861,10 @@ locals {
             resources   = ["services"]
           }]
         }
+        variables = [
+          { name = "anns", expression = "has(object.metadata.annotations) ? object.metadata.annotations : {}" },
+          { name = "selector", expression = "has(object.spec.selector) ? object.spec.selector : {}" },
+        ]
         validations = [
           {
             expression = "!has(object.spec.type) || object.spec.type == 'ClusterIP'"
@@ -700,8 +877,20 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "!has(object.spec.ports) || object.spec.ports.all(p, !has(p.name) || p.name != '${local.cloud_edge_port_name}' || (has(p.targetPort) && string(p.targetPort) == '${local.cloud_edge_port_name}'))"
-            message    = "in a Cloud namespace, a Kubernetes Service port named ${local.cloud_edge_port_name} must target the container port named ${local.cloud_edge_port_name}"
+            expression = "variables.anns.all(k, !k.startsWith('prometheus.io/'))"
+            message    = "in a Cloud namespace, a Kubernetes Service may not carry prometheus.io/* annotations"
+            reason     = "Forbidden"
+          },
+          {
+            # Traefik reaches the edge through this Service, so it must select
+            # only the edge pods of the App it is named after.
+            expression = "!object.metadata.name.startsWith('${local.cloud_edge.prefix}') || ('${local.cloud_component_label}' in variables.selector && variables.selector['${local.cloud_component_label}'] == '${local.cloud_edge.component}' && '${local.cloud_service_label}' in variables.selector && variables.selector['${local.cloud_service_label}'] == object.metadata.name.substring(${length(local.cloud_edge.prefix)}) && has(object.spec.ports) && size(object.spec.ports) == 1 && object.spec.ports.all(p, has(p.name) && p.name == '${local.cloud_edge.port_name}' && has(p.targetPort) && string(p.targetPort) == '${local.cloud_edge.port_name}'))"
+            message    = "in a Cloud namespace, a Kubernetes Service ${local.cloud_edge.prefix}<app> selects ${local.cloud_component_label}=${local.cloud_edge.component} and ${local.cloud_service_label}=<app>, with one port ${local.cloud_edge.port_name} targeting the container port ${local.cloud_edge.port_name}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!object.metadata.name.startsWith('${local.cloud_oauth2_proxy.prefix}') || ('${local.cloud_component_label}' in variables.selector && variables.selector['${local.cloud_component_label}'] == '${local.cloud_oauth2_proxy.component}' && '${local.cloud_service_label}' in variables.selector && variables.selector['${local.cloud_service_label}'] == object.metadata.name.substring(${length(local.cloud_oauth2_proxy.prefix)}) && has(object.spec.ports) && size(object.spec.ports) == 1 && object.spec.ports.all(p, has(p.name) && p.name == '${local.cloud_oauth2_proxy.port_name}' && has(p.targetPort) && string(p.targetPort) == '${local.cloud_oauth2_proxy.port_name}'))"
+            message    = "in a Cloud namespace, a Kubernetes Service ${local.cloud_oauth2_proxy.prefix}<app> selects ${local.cloud_component_label}=${local.cloud_oauth2_proxy.component} and ${local.cloud_service_label}=<app>, with one port ${local.cloud_oauth2_proxy.port_name} targeting the container port ${local.cloud_oauth2_proxy.port_name}"
             reason     = "Forbidden"
           },
         ]
@@ -786,8 +975,10 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "!has(object.spec.rules) || object.spec.rules.all(r, !has(r.http) || r.http.paths.all(p, has(p.backend.service) && has(p.backend.service.port) && has(p.backend.service.port.name) && p.backend.service.port.name == '${local.cloud_edge_port_name}' && !has(p.backend.service.port.number)))"
-            message    = "in a Cloud namespace, every Ingress backend is a Kubernetes Service port named ${local.cloud_edge_port_name}"
+            # The way in is the edge (public App) or the App's oauth2-proxy,
+            # whose only upstream is the edge (private App); never App pods.
+            expression = "!has(object.spec.rules) || object.spec.rules.all(r, !has(r.http) || r.http.paths.all(p, has(p.backend.service) && has(p.backend.service.port) && has(p.backend.service.port.name) && !has(p.backend.service.port.number) && ((p.backend.service.name.startsWith('${local.cloud_edge.prefix}') && p.backend.service.port.name == '${local.cloud_edge.port_name}') || (p.backend.service.name.startsWith('${local.cloud_oauth2_proxy.prefix}') && p.backend.service.port.name == '${local.cloud_oauth2_proxy.port_name}'))))"
+            message    = "in a Cloud namespace, every Ingress backend is an edge Service (${local.cloud_edge.prefix}<app>, port ${local.cloud_edge.port_name}) or an oauth2-proxy Service (${local.cloud_oauth2_proxy.prefix}<app>, port ${local.cloud_oauth2_proxy.port_name}), named by port name"
             reason     = "Forbidden"
           },
         ]
@@ -808,10 +999,10 @@ locals {
         }
       })
     }
-    managed_strip_config = {
+    managed_edge_config = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicy"
-      metadata   = { name = "cloud-managed-strip-config" }
+      metadata   = { name = "cloud-managed-edge-config" }
       spec = {
         failurePolicy = "Fail"
         matchConstraints = {
@@ -823,8 +1014,8 @@ locals {
           }]
         }
         matchConditions = [{
-          name       = "is-strip-config"
-          expression = "object.metadata.name.startsWith('${local.cloud_strip_config_prefix}')"
+          name       = "is-edge-config"
+          expression = "object.metadata.name.startsWith('${local.cloud_edge.prefix}')"
         }]
         variables = [
           { name = "caddyfile", expression = "has(object.data) && 'Caddyfile' in object.data ? object.data['Caddyfile'] : ''" },
@@ -835,27 +1026,27 @@ locals {
         validations = [
           {
             expression = "has(object.data) && size(object.data) == 1 && 'Caddyfile' in object.data && !has(object.binaryData)"
-            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}* ConfigMap holds only the key Caddyfile"
+            message    = "in a Cloud namespace, a ${local.cloud_edge.prefix}* ConfigMap holds only the key Caddyfile"
             reason     = "Forbidden"
           },
           {
-            expression = "size(variables.caddyfile) <= 8192 && variables.caddyfile.matches(r'${local.cloud_caddyfile_re}'.replace('@APP@', object.metadata.name.substring(${length(local.cloud_strip_config_prefix)})).replace('@NS@', request.namespace))"
-            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}<app> Caddyfile is the one Cloud renders (modules/app/Caddyfile.tftpl), with only the App port, the host, the strip list and this App's oauth2-proxy filled in"
+            expression = "size(variables.caddyfile) <= 8192 && variables.caddyfile.matches(r'${local.cloud_caddyfile_re}'.replace('@APP@', object.metadata.name.substring(${length(local.cloud_edge.prefix)})).replace('@NS@', request.namespace))"
+            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile is the one Cloud renders (modules/app/Caddyfile.tftpl), with only the strip list filled in and app-<app> in this namespace as its upstream"
             reason     = "Forbidden"
           },
           {
             expression = "${join(" && ", [for c in local.cloud_strip_cookies_required_re : "variables.cookieLine.matches(r'[:|]${c}[|)]')"])}"
-            message    = "in a Cloud namespace, a ${local.cloud_strip_config_prefix}<app> Caddyfile strips at least ${join(", ", local.cloud_strip_cookies_required)}"
+            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile strips at least ${join(", ", local.cloud_strip_cookies_required)}"
             reason     = "Forbidden"
           },
         ]
       }
     }
-    managed_strip_config_binding = {
+    managed_edge_config_binding = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicyBinding"
-      metadata   = { name = "cloud-managed-strip-config" }
-      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-strip-config" })
+      metadata   = { name = "cloud-managed-edge-config" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-edge-config" })
     }
     managed_middleware = {
       apiVersion = "admissionregistration.k8s.io/v1"
@@ -900,6 +1091,7 @@ locals {
             resources   = ["pods"]
           }]
         }
+        variables = [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.metadata") }]
         validations = [for r in local.cloud_pod_rules : {
           expression = replace(r.expression, "@S", "object.spec")
           message    = r.message
@@ -927,29 +1119,12 @@ locals {
             resources   = ["deployments"]
           }]
         }
-        variables = [
-          { name = "podLabels", expression = "has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) ? object.spec.template.metadata.labels : {}" },
-          { name = "component", expression = "'${local.cloud_component_label}' in variables.podLabels ? variables.podLabels['${local.cloud_component_label}'] : ''" },
-        ]
-        validations = concat(
-          [
-            {
-              expression = "variables.component in ${jsonencode(local.cloud_workload_components)}"
-              message    = "in a Cloud namespace, a Deployment's pods are labelled ${local.cloud_component_label} ${join(" or ", local.cloud_workload_components)}"
-              reason     = "Forbidden"
-            },
-            {
-              expression = "variables.component != 'app' || object.spec.template.spec.containers.exists(c, c.name == '${local.cloud_edge_container}' && c.image.startsWith('${local.cloud_cookie_strip_image}') && has(c.ports) && c.ports.exists(p, has(p.name) && p.name == '${local.cloud_edge_port_name}'))"
-              message    = "in a Cloud namespace, an App Deployment holds a container named ${local.cloud_edge_container} running ${local.cloud_cookie_strip_image} with a port named ${local.cloud_edge_port_name}"
-              reason     = "Forbidden"
-            },
-          ],
-          [for r in local.cloud_pod_rules : {
-            expression = replace(r.expression, "@S", "object.spec.template.spec")
-            message    = r.message
-            reason     = "Forbidden"
-          }],
-        )
+        variables = [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }]
+        validations = [for r in local.cloud_pod_rules : {
+          expression = replace(r.expression, "@S", "object.spec.template.spec")
+          message    = r.message
+          reason     = "Forbidden"
+        }]
       }
     }
     managed_deployment_binding = {

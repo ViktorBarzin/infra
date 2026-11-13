@@ -8,8 +8,9 @@
  *   main.tf.json           the root module, without the pg backend (the test
  *                          runs `tofu test`, which keeps state in memory)
  *   terraform.tfvars.json  the Project's variables
- *   contract.json          the names infra matches: the sidecar images, the
- *                          egress exclusions and the namespace
+ *   contract.json          the names infra matches: the edge and
+ *                          oauth2-proxy images, the egress exclusions, the
+ *                          strip list, the Authentik slug and the namespace
  *
  * The Project holds a private App, a public App connected to a Postgres
  * Service, and the Postgres Service, so every object kind Cloud renders
@@ -59,6 +60,8 @@ await writeFile(
 			namespace: rendered.namespace,
 			images: renderer.IMAGES,
 			egressExcluded: renderer.EGRESS_EXCLUDED,
+			stripCookies: fixtures.INSTANCE.stripCookies,
+			authentik: fixtures.INSTANCE.authentik,
 			apps: Object.keys(rendered.tfvarsJson.apps),
 			postgres: Object.keys(rendered.tfvarsJson.postgres),
 		},
