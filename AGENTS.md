@@ -52,6 +52,16 @@ Terminal Lobby's own files ship in its Debian package.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `docs/agents/*.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
 
+## Cloud-owned objects (scope rule)
+
+Cloud (Forgejo `viktor/cloud`) keeps each Project's desired state in its own database and applies it with its own reconciler, one OpenTofu state per Project (ADR-0003 in the cloud repo, approved by Viktor 2026-11-12). **These belong to Cloud's database, not this repo:**
+- every object in a `p-*` namespace, and the namespaces themselves;
+- Postgres roles and databases that are members of `cloud_projects` (this repo owns only `cloud_projects`, `cloud_provisioner`, `cloud_state` and the `cloud_state` and `cloud` databases);
+- the OAuth2 providers, applications, `cloud-*` groups and policy bindings that `svc-cloud-reconciler` creates in Authentik;
+- Vault `secret/cloud/<namespace>/*` (this repo writes only `secret/cloud/system`).
+
+Do not import, recreate or "fix" them from Terraform, and keep the nightly drift plan blind to them: no stack may manage them, so they never appear in a plan. Name no new homelab namespace `p-*`. What this repo does own for Cloud is listed in `.claude/reference/service-catalog.md` (row `cloud`); details in `docs/agents/terraform.md`.
+
 ## Secrets Management — Vault KV
 - **Vault is the sole source of truth** for secrets.
 - **`secret/viktor`** — go-to path for ALL personal secrets (135 keys). Contains every API key, token, password, SSH key, and config from the old terraform.tfvars. Check here first: `vault kv get -field=KEY secret/viktor`.
