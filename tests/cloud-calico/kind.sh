@@ -47,7 +47,9 @@ EOF
     sleep 3
   done
   kubectl wait --for=condition=Established crd/installations.operator.tigera.io crd/apiservers.operator.tigera.io --timeout=60s >/dev/null \
-    || { echo "FAIL: tigera-operator did not install its CRDs"; kubectl get pods -A; return 1; }
+    || { echo "FAIL: tigera-operator did not install its CRDs"; kubectl get pods -A
+         kubectl logs -n tigera-operator deploy/tigera-operator --tail=5 2>&1; kubectl logs -n kube-system -l k8s-app=kube-proxy --tail=5 2>&1
+         echo "(\"too many open files\" above means the host's fs.inotify.max_user_instances is used up, often by other kind clusters)"; return 1; }
   cat <<'EOF' | kubectl apply -f - >/dev/null || { echo "FAIL: Installation and APIServer"; return 1; }
 apiVersion: operator.tigera.io/v1
 kind: Installation
