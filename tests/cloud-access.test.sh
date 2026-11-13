@@ -72,9 +72,10 @@
 #     labelled namespace, only once Vault may read namespaces, and its token
 #     reads only secret/cloud/<its namespace>/*, Services and _cloud/ alike,
 #     never secret/cloud/system;
-#   - the cloud-reconciler policy writes secret/cloud/p-*, nothing else under
-#     secret/cloud, reads but cannot change secret/cloud/system (the shared
-#     Cloud Apps client), and reads only its two database credentials;
+#   - the cloud-reconciler policy writes and patches secret/cloud/p-*, nothing
+#     else under secret/cloud, reads but cannot change secret/cloud/system
+#     (the shared Cloud Apps client), and reads only its two database
+#     credentials;
 #   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
 # Needs docker, kind, kubectl, helm (Calico's operator, Kyverno, the External
@@ -903,6 +904,12 @@ expect_ok   "reconciler writes a Service entry" vtok "$RT" kv put secret/cloud/p
 expect_ok   "reconciler writes a _cloud/ entry" vtok "$RT" kv put secret/cloud/p-demo/_cloud/recipes-oauth2-proxy client_secret=c cookie_secret=k
 expect_ok   "reconciler deletes a Project secret with all versions" vtok "$RT" kv metadata delete secret/cloud/p-demo/new
 expect_fail "reconciler cannot write outside the p-* trees" "permission denied" vtok "$RT" kv put secret/cloud/homelab/x a=1
+# M5: App secrets are KV v2 merge patches (HTTP PATCH), so other keys stay.
+# -method=patch: the CLI's default falls back to read-then-write on a 403.
+expect_ok   "reconciler patches an App secret (M5)" vtok "$RT" kv patch -method=patch secret/cloud/p-demo/app b=2
+[ "$(vtok "$RT" kv get -field=a secret/cloud/p-demo/app 2>&1)" = "demo" ] && ok "the patch keeps the App secret's other keys" || bad "the patch dropped key a of secret/cloud/p-demo/app"
+expect_fail "reconciler cannot patch secret/cloud/system" "permission denied" vtok "$RT" kv patch -method=patch secret/cloud/system ghcr_pull_token=x
+expect_fail "reconciler cannot patch outside the p-* trees" "permission denied" vtok "$RT" kv patch -method=patch secret/cloud/homelab/x a=1
 expect_ok   "reconciler reads the shared client from secret/cloud/system" vtok "$RT" kv get -field=cloud_apps_client_secret secret/cloud/system
 expect_fail "reconciler cannot change secret/cloud/system" "permission denied" vtok "$RT" kv put secret/cloud/system cloud_apps_client_secret=x
 expect_fail "reconciler cannot delete secret/cloud/system" "permission denied" vtok "$RT" kv metadata delete secret/cloud/system

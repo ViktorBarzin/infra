@@ -4,11 +4,13 @@
 # them are in cloud.tf.
 #
 # Paths (the M2 contract, point 6):
-#   secret/cloud/system         written only by Terraform
+#   secret/cloud/system         written by Terraform
 #                               (stacks/authentik/cloud-apps.tf): the shared
 #                               Authentik client for private Apps
 #                               (cloud_apps_client_id, cloud_apps_client_secret)
-#                               and ghcr_pull_token. The reconciler reads it and
+#                               and ghcr_pull_token, plus M5 keys Viktor writes
+#                               by hand and Terraform carries over (App secrets
+#                               key pair, build tokens). The reconciler reads it and
 #                               cannot change it; no Project's SecretStore can
 #                               read it, since it sits outside every p-* tree.
 #   secret/cloud/<namespace>/<service>
@@ -32,10 +34,12 @@ locals {
   # namespace cloud). Write on the Project trees (secret/cloud/p-*), read on
   # secret/cloud/system and on its two database credentials, nothing else: no
   # policy, auth role or other secret path. It deletes through the metadata
-  # path (delete_all_versions in Cloud's modules).
+  # path (delete_all_versions in Cloud's modules). `patch` (M5): App secrets
+  # are written as KV v2 merge patches, so the keys a write does not name
+  # stay. Only on the Project trees; secret/cloud/system stays read-only.
   cloud_reconciler_policy = <<-EOT
     path "secret/data/cloud/p-*" {
-      capabilities = ["create", "read", "update", "delete"]
+      capabilities = ["create", "read", "update", "patch", "delete"]
     }
     path "secret/metadata/cloud/p-*" {
       capabilities = ["create", "read", "update", "delete"]
