@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Checks the Kubernetes and Vault boundaries of Cloud's reconciler and of
 # Project namespaces against a real API server (kind, Kubernetes 1.35 like the
-# cluster) and a dev Vault, using exactly the rules Terraform applies:
-#   stacks/cloud/access_rules.tf  ClusterRoles, ValidatingAdmissionPolicies and
-#                                 the Calico egress floor
+# cluster, with the Calico and calico-apiserver stacks/calico pins) and a dev
+# Vault, using exactly the rules Terraform applies:
+#   stacks/cloud/access_rules.tf  ClusterRoles, ValidatingAdmissionPolicies,
+#                                 the Calico tier and both floors
 #   stacks/vault/cloud_policies.tf  Vault policies, the namespace selector and
 #                                   the namespace-reader rule for Vault
 #   stacks/kyverno/modules/kyverno/generate-conditions.tf  which namespaces get
@@ -17,6 +18,13 @@
 # writes, through the reconciler's own RBAC and every admission policy.
 #
 # What it proves:
+#   - calico-apiserver stays available with every admission policy applied
+#     (it runs them too, and a policy with a parameter made it unready), after
+#     each Project apply and each destroy; no policy takes a parameter, and a
+#     control policy that does is seen to take the API down;
+#   - calico-apiserver applies cloud-reconciler-scope to Calico policies: the
+#     reconciler writes one in a managed p-* namespace and is refused one in a
+#     namespace where only RBAC would allow it;
 #   - Cloud's renderer and infra agree on the edge and oauth2-proxy images,
 #     the strip list, the Authentik slug and the egress exclusions; the egress
 #     floor mixes no IP families in a rule, allows DNS both ways, and ends in
@@ -48,8 +56,9 @@
 #     label or delete other namespaces, and writes only in managed namespaces,
 #     even where RBAC would let it;
 #   - it cannot change or delete Kyverno's tier-quota;
-#   - cloud-managed-ingress refuses every Ingress while its taken-hosts
-#     parameter is missing;
+#   - cloud-managed-ingress refuses the homelab's hosts with 600 of them
+#     written in, and the API server refuses the policy itself if the hosts
+#     were never written in (the marker left in place);
 #   - it can bind the project role, only to itself, and no stronger role;
 #   - every Vault auth method in the ESO CRD is refused except Kubernetes;
 #   - Kyverno's copy condition skips managed namespaces;
@@ -62,15 +71,19 @@
 #     Cloud Apps client), and reads only its two database credentials;
 #   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
-# Needs docker, kind, kubectl, helm (for the External Secrets and Traefik
-# CRDs), curl (Calico's CRDs), vault, python3 with PyYAML, bun, and a cloud repo checkout with its
-# pinned OpenTofu and provider mirror (.tools/, see its README). CLOUD_REPO
-# names the checkout; otherwise the first of ~/code/cloud and the M2
-# worktree ~/code/cloud/.worktrees/v1-m2-reconciler that holds modules/project
-# is used (the modules reach the cloud repo's master with M2). Takes about
-# four minutes.
+# Needs docker, kind, kubectl, helm (Calico's operator, the External Secrets
+# and Traefik CRDs), vault, python3 with PyYAML, bun, and a cloud repo
+# checkout with its pinned OpenTofu and provider mirror (.tools/, see its
+# README). CLOUD_REPO names the checkout; otherwise the first of ~/code/cloud
+# and the M2 worktree ~/code/cloud/.worktrees/v1-m2-reconciler that holds
+# modules/project is used (the modules reach the cloud repo's master with
+# M2). The kind cluster and Calico come from tests/cloud-calico/kind.sh, which
+# refuses to start when too many other kind clusters hold inotify instances.
+# Takes about ten minutes.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=cloud-calico/kind.sh
+. "$HERE/tests/cloud-calico/kind.sh"
 KIND_IMAGE="${CLOUD_ACCESS_KIND_IMAGE:-kindest/node:v1.35.0}"
 # The External Secrets chart version the cluster runs, read from its stack.
 ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/external-secrets/main.tf")}"
@@ -89,6 +102,7 @@ fi
 TOFU="${TOFU_BIN:-$CLOUD_REPO/.tools/tofu}"
 TOFU_PLUGINS="${TOFU_PLUGIN_DIR:-$CLOUD_REPO/.tools/providers}"
 [ -x "$TOFU" ] && [ -d "$TOFU_PLUGINS" ] || { echo "FAIL: no pinned OpenTofu at $TOFU or provider mirror at $TOFU_PLUGINS (cloud repo README, \"Reconciler\")"; exit 1; }
+cloud_calico_preflight || exit 1
 CLUSTER="cloud-access-$$"
 TMP="$(mktemp -d)"
 VAULT_PID=""
@@ -106,16 +120,26 @@ TOKEN_FILE="$HOME/.vault-token"
 token_sum() { [ -f "$TOKEN_FILE" ] && sha256sum "$TOKEN_FILE" | cut -d' ' -f1 || echo absent; }
 TOKEN_BEFORE="$(token_sum)"
 
-render() { # <src file> <expression> <out>
+render() { # <src file> <expression> <out> [extra file]
   local d; d="$(mktemp -d -p "$TMP")"
   cp "$1" "$d/" || { echo "FAIL: cannot copy $1"; exit 1; }
+  [ -n "${4:-}" ] && cp "$4" "$d/"
   if ! (cd "$d" && echo "$2" | terraform console >"$3" 2>"$d/err"); then
     echo "FAIL: terraform console could not evaluate $1 (it must hold only locals)"; cat "$d/err"; exit 1
   fi
 }
+# The taken hosts taken_hosts.tf would read from the cluster: two real ones
+# and 600 more, about three times the homelab's count, so the policy is
+# checked at a size the cluster can reach.
+python3 - "$TMP/taken_hosts_stub.tf" <<'PY'
+import json, sys
+hosts = {"nextcloud.viktorbarzin.me": "ingress nextcloud/nextcloud", "t3.viktorbarzin.me": "ingressroute t3code/t3-native"}
+hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-{i:03d}" for i in range(600)})
+open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
+PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, taken_hosts = local.cloud_taken_hosts})' \
-  "$TMP/k8s.raw"
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required})' \
+  "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
   "$TMP/vault.raw"
@@ -153,13 +177,13 @@ docs = [
     {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": {"name": "cloud-reconciler"},
      "subjects": [sa("cloud-reconciler", "cloud")],
      "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cloud-reconciler"}},
-    # cloud-managed-ingress's parameter, as stacks/cloud taken_hosts.tf
-    # writes it: hosts the homelab routes.
-    {"apiVersion": "v1", "kind": "ConfigMap", "metadata": k["taken_hosts"],
-     "data": {"nextcloud.viktorbarzin.me": "ingress nextcloud/nextcloud", "t3.viktorbarzin.me": "ingressroute t3code/t3-native"}},
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
+# cloud-managed-ingress as it would be applied without the taken hosts.
+(d / "vap-ingress-unfilled.yaml").write_text(yaml.safe_dump(k["raw_policies"]["managed_ingress"]))
+(d / "tier.yaml").write_text(yaml.safe_dump(k["tier"]))
+(d / "floors.yaml").write_text(yaml.safe_dump_all([k["floor"], k["ingress_floor"]]))
 (d / "types.json").write_text(json.dumps({"auth_refused": k["auth_refused"]}))
 # Kyverno's copy condition on a real API server: a probe policy refuses a
 # namespace labelled kyverno-probe exactly when Kyverno would copy the Secrets.
@@ -176,9 +200,19 @@ docs = [
 (d / "project_role").write_text(k["project_role"])
 
 # The contract between Cloud's renderer and infra, and the floor's shape.
-# Calico is not in this kind cluster, so the floor is checked as data here;
-# tests/cloud-calico.test.sh runs it on a real Calico.
+# The floors are applied through calico-apiserver below;
+# tests/cloud-calico.test.sh also runs them through Felix.
 problems = []
+# calico-apiserver runs every admission policy in the cluster; a paramKind
+# starts an informer it may not have the RBAC for (access_rules.tf).
+for name, pol in k["policies"].items():
+    if "paramKind" in pol.get("spec", {}) or "paramRef" in pol.get("spec", {}):
+        problems.append(f"{name} takes a parameter, which makes calico-apiserver unready")
+raw, applied = json.dumps(k["raw_policies"]), json.dumps(k["policies"])
+if raw.count(k["marker"]) != 1 or k["marker"] not in json.dumps(k["raw_policies"]["managed_ingress"]):
+    problems.append(f"the taken-hosts marker {k['marker']} should appear once, in cloud-managed-ingress")
+if k["marker"] in applied or "homelab-host-599.viktorbarzin.me" not in applied:
+    problems.append("cloud_admission_policies_applied does not write the taken hosts in place of the marker")
 if contract["images"]["edge"] != k["edge"]["image"]:
     problems.append(f"edge image: Cloud renders {contract['images']['edge']}, infra requires {k['edge']['image']}")
 if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
@@ -276,30 +310,12 @@ for ver in eso["spec"]["versions"]:
 (d / "tripwire.txt").write_text("\n".join(problems))
 PY
 
-# Calico's v3 API is an aggregated API server on the cluster. kind gets a
-# stand-in: Calico's own NetworkPolicy CRD for the version stacks/calico
-# pins, moved from crd.projectcalico.org/v1 to projectcalico.org/v3, so Cloud's
-# kubernetes_manifest sees the same typed schema it sees on the cluster.
-curl -sfL -o "$TMP/calico-crds.yaml" "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/crds.yaml" \
-  || { echo "FAIL: fetch Calico $CALICO_VERSION CRDs"; exit 1; }
-python3 - "$TMP" <<'PY' || exit 1
-import sys, pathlib, yaml
-d = pathlib.Path(sys.argv[1])
-crd = [c for c in yaml.safe_load_all(open(d / "calico-crds.yaml")) if c and c["metadata"]["name"] == "networkpolicies.crd.projectcalico.org"][0]
-crd["metadata"] = {"name": "networkpolicies.projectcalico.org"}
-crd["spec"]["group"] = "projectcalico.org"
-for v in crd["spec"]["versions"]:
-    v["name"] = "v3"
-(d / "calico-crd.yaml").write_text(yaml.safe_dump(crd))
-PY
-
 export KUBECONFIG="$TMP/kubeconfig"
-kind create cluster --name "$CLUSTER" --image "$KIND_IMAGE" --kubeconfig "$KUBECONFIG" --wait 120s >"$TMP/kind.log" 2>&1 \
-  || { echo "FAIL: kind create cluster"; tail -20 "$TMP/kind.log"; exit 1; }
+cloud_calico_kind_up "$CLUSTER" "$KIND_IMAGE" "$CALICO_VERSION" "$TMP" || exit 1
 
 ka() { kubectl "$@"; }
 kr() { kubectl --as="system:serviceaccount:cloud:cloud-reconciler" "$@"; }
-ka apply --server-side -f "$TMP/eso-crds.yaml" -f "$TMP/traefik-crds.yaml" -f "$TMP/calico-crd.yaml" >/dev/null \
+ka apply --server-side -f "$TMP/eso-crds.yaml" -f "$TMP/traefik-crds.yaml" >/dev/null \
   && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null || { echo "FAIL: CRDs"; exit 1; }
 # The priority classes the cluster has (stacks/kyverno resource-governance.tf
 # and the GPU class Kyverno's inject-gpu-workload-priority sets).
@@ -312,6 +328,8 @@ done | ka apply -f - >/dev/null || { echo "FAIL: priority classes"; exit 1; }
 printf 'apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: nvidia\nhandler: nvidia\n' | ka apply -f - >/dev/null \
   || { echo "FAIL: runtime class"; exit 1; }
 ka apply -f "$TMP/rbac.yaml" >/dev/null || { echo "FAIL: RBAC"; exit 1; }
+ka apply -f "$TMP/tier.yaml" >"$TMP/tier.out" 2>&1 && ka apply -f "$TMP/floors.yaml" >>"$TMP/tier.out" 2>&1 \
+  || { echo "FAIL: calico-apiserver refused tier cloud or a floor"; cat "$TMP/tier.out"; exit 1; }
 ka apply -f "$TMP/vap.yaml" -f "$TMP/kyverno-probe.yaml" >"$TMP/vap.out" 2>&1 || { echo "FAIL: admission policies"; cat "$TMP/vap.out"; exit 1; }
 # A policy is enforced only once the API server has compiled it.
 for _ in $(seq 1 60); do
@@ -337,7 +355,18 @@ apply_as() { local who="$1"; shift; "$who" apply --server-side --force-conflicts
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
 if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every ESO Vault auth method is allowed or refused"; fi
-if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug and egress exclusions; both floors are well formed"; fi
+if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug and egress exclusions; both floors are well formed; no policy takes a parameter; the taken hosts are written in"; fi
+# calico-apiserver fails its readiness check some seconds after a policy it
+# cannot serve arrives, so the API is sampled for a minute.
+calico_api_steady() { # <what>
+  local i
+  for i in $(seq 1 12); do
+    cloud_calico_api_available || { bad "$1: v3.projectcalico.org went unavailable: $(kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions}') $(kubectl logs -n calico-system -l k8s-app=calico-apiserver --tail=5 2>&1)"; return; }
+    sleep 5
+  done
+  ok "$1: v3.projectcalico.org stays available for a minute"
+}
+calico_api_steady "calico-apiserver with tier cloud, both floors and every admission policy applied"
 
 ns_doc() { # name managed tier [pod-security level, default restricted; "-" for none] [extra label line] [no-governance]
   printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n' "$1"
@@ -502,12 +531,22 @@ expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" \
 expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka --dry-run=server < <(ing_doc default wild '*.viktorbarzin.me')
 expect_fail "a homelab host (Ingress) is refused in p-demo, even from admin" "already routes" apply_as ka --dry-run=server < <(ing_doc p-demo nc nextcloud.viktorbarzin.me)
 expect_fail "a homelab host (IngressRoute) is refused as a TLS host in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo t3 demo.viktorbarzin.me t3.viktorbarzin.me)
-ka -n cloud get configmap cloud-taken-hosts -o json >"$TMP/taken-hosts.json"
-ka -n cloud delete configmap cloud-taken-hosts >/dev/null
-expect_fail "without the taken-hosts list, every Ingress in p-demo is refused" "not found|paramRef|params|no params" apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me)
-python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); [o["metadata"].pop(f, None) for f in ["uid","resourceVersion","creationTimestamp","managedFields"]]; print(json.dumps(o))' "$TMP/taken-hosts.json" | ka create -f - >/dev/null
-for _ in $(seq 1 15); do apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me) >/dev/null 2>&1 && break; sleep 1; done
-expect_ok   "with the list back, demo.viktorbarzin.me is admitted again" apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me demo.viktorbarzin.me)
+expect_fail "the 600th taken host is refused in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo h599 homelab-host-599.viktorbarzin.me)
+# The policy as it would be applied if the hosts were never written in: the
+# API server compiles it and refuses it, so the apply fails and the policy in
+# place stays.
+expect_fail "the API server refuses cloud-managed-ingress with the taken-hosts marker left in" "compilation failed" ka apply -f "$TMP/vap-ingress-unfilled.yaml"
+expect_fail "after that refusal a homelab host is still refused in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo nc nextcloud.viktorbarzin.me)
+
+# --- Calico policies through calico-apiserver ----------------------------------------
+# calico-apiserver runs the cluster's admission policies itself, so
+# cloud-reconciler-scope reaches Calico writes, not only RBAC.
+cnp_doc() { # ns
+  printf 'apiVersion: projectcalico.org/v3\nkind: NetworkPolicy\nmetadata:\n  name: default.scope-probe\n  namespace: %s\nspec:\n  tier: default\n  order: 1\n  selector: all()\n  types: [Ingress]\n' "$1"
+}
+expect_ok   "reconciler writes a Calico policy in p-demo (dry run)" kr create --dry-run=server -f - < <(cnp_doc p-demo)
+expect_fail "calico-apiserver refuses the reconciler a Calico policy in p-adopt, where only RBAC allows it" "cloud-reconciler may write only" \
+  kr create --dry-run=server -f - < <(cnp_doc p-adopt)
 pod_prio() { # ns priorityClassName
   ka run "prio-$2" -n "$1" --image=busybox --dry-run=server --overrides="{\"spec\":{\"priorityClassName\":\"$2\",\"containers\":[{\"name\":\"c\",\"image\":\"busybox\"}]}}"
 }
@@ -601,6 +640,16 @@ else
   bad "Cloud's modules did not apply and destroy cleanly as the reconciler: $(grep -v '^\s*$' "$TMP/tofu-test.log" | tail -40)"
 fi
 
+# dump.sh records the APIService while the Project exists; check it again
+# now that the destroy has run.
+api_after() { # <dump dir> <what>
+  if [ "$(cat "$1/apiservice.txt" 2>/dev/null)" = "True" ] && cloud_calico_api_available; then
+    ok "$2: v3.projectcalico.org available after the apply and after the destroy"
+  else
+    bad "$2: v3.projectcalico.org after the apply: $(cat "$1/apiservice.txt" 2>/dev/null || echo unknown), after the destroy: $(kubectl get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}')"
+  fi
+}
+api_after "$TMP/dump" "combined Project"
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
   check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.
@@ -636,6 +685,7 @@ for i in $(seq 0 $((n_fx - 1))); do
   else
     bad "fixture \"$fx_name\": did not apply and destroy cleanly: $(grep -v '^\s*$' "$TOFU_DIR/test.log" | tail -30)"; continue
   fi
+  api_after "$DUMP_DIR" "fixture \"$fx_name\""
   if [ -s "$DUMP_DIR/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$DUMP_DIR" "$TMP/cases-fx$i" p-demo admitted-only >"$TMP/variants-fx$i.log" 2>&1; then
     check="$(pods_check "$DUMP_DIR" "$TMP/cases-fx$i")" && ok "fixture \"$fx_name\": every Deployment's pods were admitted: $check" || bad "fixture \"$fx_name\": $check"
     run_cases "$TMP/cases-fx$i"
@@ -646,6 +696,43 @@ done
 TOFU_DIR="$TMP/tofu" DUMP_DIR="$TMP/dump"
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
+
+# --- control: a policy with a parameter takes calico-apiserver down -------------------
+# Shows the APIService checks above can see the failure they guard against.
+# calico-apiserver's service account may not list ConfigMaps, so a ConfigMap
+# parameter leaves its informer unsynced and its readiness check failing.
+ka apply -f - >/dev/null <<'YAML'
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: probe-param
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: ConfigMap}
+  matchConstraints:
+    resourceRules: [{apiGroups: ["probe.example.com"], apiVersions: ["*"], operations: ["CREATE"], resources: ["*"]}]
+  validations: [{expression: "true"}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: probe-param
+spec:
+  policyName: probe-param
+  validationActions: [Deny]
+  paramRef: {name: probe, namespace: default, parameterNotFoundAction: Deny}
+YAML
+down=""
+for _ in $(seq 1 36); do cloud_calico_api_available || { down=1; break; }; sleep 5; done
+[ -n "$down" ] && ok "control: a ConfigMap parameter makes v3.projectcalico.org unavailable" \
+  || bad "control: v3.projectcalico.org stayed available with a ConfigMap parameter for 3 minutes, so the checks above may be blind"
+# Deleting the policy is not enough: the informer stays in calico-apiserver,
+# which did not recover in 5 minutes on 2026-11-13. A restart clears it.
+ka delete validatingadmissionpolicybinding probe-param >/dev/null; ka delete validatingadmissionpolicy probe-param >/dev/null
+ka get pods -n calico-system -o name | grep calico-apiserver | xargs -r kubectl delete -n calico-system --wait=false >/dev/null
+for _ in $(seq 1 60); do cloud_calico_api_available && break; sleep 5; done
+cloud_calico_api_available && ok "control: v3.projectcalico.org is available again once that policy is gone and calico-apiserver restarts" \
+  || bad "control: v3.projectcalico.org did not recover after the parameter policy was deleted and calico-apiserver restarted"
 
 # --- Vault -------------------------------------------------------------------
 VPORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"

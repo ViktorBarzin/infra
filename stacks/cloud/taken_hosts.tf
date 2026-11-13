@@ -1,15 +1,20 @@
 # Hosts the homelab already routes, for cloud-managed-ingress (access_rules.tf,
-# local.cloud_taken_hosts). Traefik ranks routers by rule length, so a Project
-# Ingress for nextcloud.viktorbarzin.me with a longer path would take that path
-# from the homelab router, and with it the domain-wide forward-auth cookies. A
-# ValidatingAdmissionPolicy cannot list other objects, so this ConfigMap is its
-# parameter: one key per host, the value naming where the host is routed.
+# local.cloud_taken_hosts_marker). Traefik ranks routers by rule length, so a
+# Project Ingress for nextcloud.viktorbarzin.me with a longer path would take
+# that path from the homelab router, and with it the domain-wide forward-auth
+# cookies. A ValidatingAdmissionPolicy cannot list other objects, so
+# local.cloud_taken_hosts (one key per host, the value naming where the host is
+# routed) is written into the policy itself as a CEL map literal. Not a
+# ConfigMap parameter: calico-apiserver runs every admission policy too, and a
+# paramKind policy makes it unready (access_rules.tf, "No policy here takes a
+# parameter").
 #
 # Computed from the live Ingresses and IngressRoutes at plan time, the way
 # stacks/traefik crs-hosts.tf computes its host list. A host added to the
 # homelab after the last cloud apply is missing until the next one; the nightly
-# drift plan shows it as a change to this ConfigMap, and the reconciler's own
-# taken-host check (its cluster-wide read on both kinds) covers the gap.
+# drift plan shows it as a change to cloud-managed-ingress, and the
+# reconciler's own taken-host check (its cluster-wide read on both kinds)
+# covers the gap.
 #
 # Only hosts a Project could ask for are kept (one label under the base
 # domain, cloud-managed-ingress refuses the rest), and managed namespaces
@@ -60,12 +65,7 @@ locals {
     for row in local._cloud_route_rows : row.host => row.from...
     if can(regex(local.cloud_ingress_host_re, row.host))
   }
-}
 
-resource "kubernetes_config_map_v1" "cloud_taken_hosts" {
-  metadata {
-    name      = local.cloud_taken_hosts.name
-    namespace = kubernetes_namespace.cloud.metadata[0].name
-  }
-  data = { for host, from in local.cloud_taken_host_sources : host => join(", ", sort(distinct(from))) }
+  # Read by local.cloud_admission_policies_applied in access_rules.tf.
+  cloud_taken_hosts = { for host, from in local.cloud_taken_host_sources : host => join(", ", sort(distinct(from))) }
 }

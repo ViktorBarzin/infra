@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Checks that Calico enforces Cloud's network isolation, on a real Calico
 # (the version stacks/calico pins, installed by its tigera-operator chart) in
-# kind with the default CNI turned off. tests/cloud-access.test.sh checks the
-# floors only as data; this test runs them through calico-apiserver and Felix.
+# kind with the default CNI turned off. tests/cloud-access.test.sh runs on
+# the same Calico with every admission policy applied (calico-apiserver runs
+# them too) and checks the API stays available; this test runs the floors
+# through Felix with probe pods, so it applies no admission policies (the
+# probe pods carry Cloud's labels without Cloud's pinned images).
 #
 #   1. Tier `cloud` and both floors (stacks/cloud access_rules.tf, read with
 #      `terraform console`) are applied through the real calico-apiserver.
@@ -26,13 +29,12 @@
 # provider mirror (.tools/). CLOUD_REPO as in cloud-access.test.sh. Set
 # CLOUD_CALICO_INTERNET=1 where pods can reach 1.1.1.1:443.
 #
-# Calico's pods need inotify instances. kind nodes all run as root on the
-# host, so other kind clusters on the same machine share
-# fs.inotify.max_user_instances (128 on the devvm); with two other clusters
-# up, kube-proxy and tigera-operator crashloop with "too many open files".
-# The test checks for that before it starts.
+# The kind cluster and Calico come from tests/cloud-calico/kind.sh, which
+# refuses to start when too many other kind clusters hold inotify instances.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=cloud-calico/kind.sh
+. "$HERE/tests/cloud-calico/kind.sh"
 KIND_IMAGE="${CLOUD_CALICO_KIND_IMAGE:-kindest/node:v1.35.0}"
 CALICO_VERSION="${CLOUD_CALICO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\Kv[0-9.]+' "$HERE/stacks/calico/main.tf")}"
 ESO_VERSION="${CLOUD_CALICO_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/external-secrets/main.tf")}"
@@ -49,12 +51,7 @@ TOFU="${TOFU_BIN:-$CLOUD_REPO/.tools/tofu}"
 TOFU_PLUGINS="${TOFU_PLUGIN_DIR:-$CLOUD_REPO/.tools/providers}"
 [ -x "$TOFU" ] && [ -d "$TOFU_PLUGINS" ] || { echo "FAIL: no pinned OpenTofu at $TOFU or provider mirror at $TOFU_PLUGINS"; exit 1; }
 
-max="$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 0)"
-nodes="$(docker ps -q --filter label=io.x-k8s.kind.cluster 2>/dev/null | grep -c .)"
-if [ "$max" -lt 512 ] && [ "$nodes" -ge 3 ]; then
-  echo "FAIL: $nodes kind nodes already run and fs.inotify.max_user_instances is $max; Calico would crashloop with 'too many open files'. Run this where fewer kind clusters run, or with a higher limit."
-  exit 1
-fi
+cloud_calico_preflight || exit 1
 
 CLUSTER="cloud-calico-$$"
 TMP="$(mktemp -d)"
@@ -68,6 +65,9 @@ bad() { echo "FAIL - $1"; FAILS=$((FAILS + 1)); }
 
 # --- what infra applies ------------------------------------------------------------
 d="$TMP/console"; mkdir -p "$d"; cp "$HERE/stacks/cloud/access_rules.tf" "$d/"
+# access_rules.tf reads the taken hosts from taken_hosts.tf, which needs a
+# cluster; this test uses none of the policies.
+printf 'locals {\n  cloud_taken_hosts = {}\n}\n' >"$d/taken_hosts_stub.tf"
 (cd "$d" && echo 'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, project_role = local.cloud_project_role_name, tier = local.cloud_tier, floors = [local.cloud_project_egress_floor, local.cloud_project_ingress_floor]})' \
   | terraform console >"$TMP/k8s.raw" 2>"$d/err") || { echo "FAIL: terraform console on access_rules.tf"; cat "$d/err"; exit 1; }
 (cd "$CLOUD_REPO" && HOME="$TMP/home" "$BUN" "$HERE/tests/cloud-access/render.ts" "$CLOUD_REPO" "$TMP/tofu") >"$TMP/render.log" 2>&1 \
@@ -108,58 +108,7 @@ PY
 
 # --- kind with Calico -----------------------------------------------------------------
 export KUBECONFIG="$TMP/kubeconfig"
-cat >"$TMP/kind.yaml" <<'EOF'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  disableDefaultCNI: true
-  podSubnet: 10.244.0.0/16
-  serviceSubnet: 10.96.0.0/16
-EOF
-kind create cluster --name "$CLUSTER" --image "$KIND_IMAGE" --config "$TMP/kind.yaml" --kubeconfig "$KUBECONFIG" >"$TMP/kind.log" 2>&1 \
-  || { echo "FAIL: kind create cluster"; tail -20 "$TMP/kind.log"; exit 1; }
-# From 3.32 the chart ships no CRDs; the operator installs them on start
-# (stacks/calico). So the chart installs only the operator, and the
-# Installation and APIServer resources follow once their CRDs exist.
-helm install calico tigera-operator --repo https://docs.tigera.io/calico/charts --version "$CALICO_VERSION" \
-  --namespace tigera-operator --create-namespace --kubeconfig "$KUBECONFIG" \
-  --set installation.enabled=false --set apiServer.enabled=false --set goldmane.enabled=false --set whisker.enabled=false >"$TMP/helm.log" 2>&1 \
-  || { echo "FAIL: helm install tigera-operator $CALICO_VERSION"; tail -20 "$TMP/helm.log"; exit 1; }
-for _ in $(seq 1 60); do
-  kubectl get crd installations.operator.tigera.io apiservers.operator.tigera.io >/dev/null 2>&1 && break
-  sleep 3
-done
-kubectl wait --for=condition=Established crd/installations.operator.tigera.io crd/apiservers.operator.tigera.io --timeout=60s >/dev/null \
-  || { echo "FAIL: tigera-operator did not install its CRDs"; kubectl get pods -n tigera-operator; exit 1; }
-cat <<'EOF' | kubectl apply -f - >/dev/null || { echo "FAIL: Installation and APIServer"; exit 1; }
-apiVersion: operator.tigera.io/v1
-kind: Installation
-metadata:
-  name: default
-spec:
-  calicoNetwork:
-    ipPools:
-    - cidr: 10.244.0.0/16
-      encapsulation: VXLAN
-      natOutgoing: Enabled
----
-apiVersion: operator.tigera.io/v1
-kind: APIServer
-metadata:
-  name: default
-spec: {}
-EOF
-for _ in $(seq 1 120); do
-  kubectl get tiers.projectcalico.org default >/dev/null 2>&1 \
-    && [ "$(kubectl get tigerastatus calico -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)" = "True" ] \
-    && [ "$(kubectl get tigerastatus apiserver -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)" = "True" ] && break
-  sleep 5
-done
-if ! kubectl get tiers.projectcalico.org default >/dev/null 2>&1; then
-  echo "FAIL: Calico $CALICO_VERSION and its API server did not become available"
-  kubectl get tigerastatus 2>&1; kubectl get pods -A 2>&1 | grep -v Running; exit 1
-fi
-kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || { echo "FAIL: node not Ready"; exit 1; }
+cloud_calico_kind_up "$CLUSTER" "$KIND_IMAGE" "$CALICO_VERSION" "$TMP" || exit 1
 ok "Calico $CALICO_VERSION and calico-apiserver run in kind"
 
 kubectl apply --server-side -f "$TMP/eso-crds.yaml" >/dev/null && kubectl wait --for=condition=Established crd --all --timeout=60s >/dev/null \
