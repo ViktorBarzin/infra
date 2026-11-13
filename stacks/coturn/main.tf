@@ -162,7 +162,7 @@ resource "kubernetes_deployment" "coturn" {
       spec {
         container {
           name  = "coturn"
-          image = "coturn/coturn:4.18.0-r0"
+          image = "coturn/coturn:4.19.0-r0"
           args  = ["-c", "/etc/turnserver/turnserver.conf"]
 
           # STUN/TURN signaling port
