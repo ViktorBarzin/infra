@@ -34,8 +34,9 @@
 #     (which read all of secret/*).
 #   cloud-managed-service  a Kubernetes Service is ClusterIP with no
 #     externalIPs, and a port named edge targets the container port named
-#     edge. Traefik follows ExternalName Services (allowExternalNameServices
-#     in stacks/traefik), so an ExternalName Service plus an Ingress would
+#     edge. Traefik follows ExternalName Kubernetes Services
+#     (allowExternalNameServices in stacks/traefik), so an ExternalName
+#     Kubernetes Service plus an Ingress would
 #     publish any internal host; LoadBalancer, NodePort and externalIPs open
 #     the node or the LAN.
 #   cloud-managed-ingress  class traefik; every host is one label under

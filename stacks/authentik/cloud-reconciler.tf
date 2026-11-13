@@ -43,10 +43,22 @@
 #
 # app-access-guard.tf requires a binding on every application, except a
 # Cloud application with no binding at all (slug cloud-*, name "Cloud: *",
-# provider cloud-*). With core_default_app_access off (system-settings.tf) an
-# application with no binding admits nobody, Cloud's included, so sign-in to
-# a private App fails until Viktor chooses how its application admits users
-# (docs/agents/security.md, "Cloud").
+# provider cloud-*).
+#
+# BLOCKED: private App sign-in does not work as built. With
+# core_default_app_access off (system-settings.tf) an application with no
+# binding admits nobody, Cloud's included, so every private App's sign-in
+# stops at Authentik's authorize step. It fails closed. Viktor chooses one of:
+#   1. one infra-owned OAuth2 provider and application, bound here and shared
+#      by all private Apps; this role then drops every grant;
+#   2. a narrowly scoped binding right for the reconciler, which Authentik
+#      RBAC does not offer today (see 2. above);
+#   3. core_default_app_access back on, with app-access-guard.tf detecting
+#      unbound applications after the fact.
+# Until then Cloud's Plan warns on every private App (PRIVATE_SIGN_IN_BLOCKED)
+# and the M2 sign-off states that private Apps are unreachable. The choice is
+# recorded in contract point 1, here, and in docs/agents/security.md
+# ("Cloud", point 13) together.
 #
 # data.http.cloud_reconciler_permissions below reads the role back from the
 # live API on every plan, including the nightly drift plan, and fails if its
