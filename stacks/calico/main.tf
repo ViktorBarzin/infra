@@ -162,7 +162,7 @@ resource "helm_release" "tigera_operator" {
   create_namespace = false
   repository       = "https://docs.tigera.io/calico/charts"
   chart            = "tigera-operator"
-  version          = "v3.33.0"
+  version          = "v3.33.1"
   atomic           = true
   cleanup_on_fail  = true
 
