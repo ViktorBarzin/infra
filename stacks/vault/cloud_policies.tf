@@ -4,9 +4,13 @@
 # them are in cloud.tf.
 #
 # Paths (the M2 contract, point 6):
-#   secret/cloud/system         the reconciler's own credentials, written by
-#                               Terraform (stacks/authentik/cloud-reconciler.tf);
-#                               the reconciler reads it and cannot change it.
+#   secret/cloud/system         written only by Terraform
+#                               (stacks/authentik/cloud-apps.tf): the shared
+#                               Authentik client for private Apps
+#                               (cloud_apps_client_id, cloud_apps_client_secret)
+#                               and ghcr_pull_token. The reconciler reads it and
+#                               cannot change it; no Project's SecretStore can
+#                               read it, since it sits outside every p-* tree.
 #   secret/cloud/<namespace>/<service>
 #                               a Service's secrets: an App's own (created empty
 #                               by the reconciler, filled through Cloud's API)
@@ -14,8 +18,10 @@
 #   secret/cloud/<namespace>/_cloud/...
 #                               Cloud's own entries for the Project: the
 #                               registry pull token and each private App's
-#                               oauth2-proxy secrets. A Service name starts
-#                               with a letter, so it never collides.
+#                               oauth2-proxy secrets (a copy of the shared
+#                               client secret and the App's own cookie secret).
+#                               A Service name starts with a letter, so it
+#                               never collides.
 # <namespace> is p-<project>. The reconciler writes only under p-*; each
 # namespace's SecretStore reads only its own tree. Both trees are owned by
 # Cloud, not this repo (AGENTS.md, "Cloud-owned objects"), except
