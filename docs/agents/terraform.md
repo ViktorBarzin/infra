@@ -46,6 +46,21 @@ When bringing a live cluster/Vault/Cloudflare resource under Terraform managemen
 | `cloudflare_dns_record` (provider v5; `cloudflare_record` on v4) | `<zone-id>/<record-id>` | `abc123/def456` |
 | `cloudflare_zone_setting` | `<zone-id>/<setting-id>` | `abc123/http3` |
 
+## Objects Terraform must not own: Cloud's Projects
+
+Cloud's reconciler (Forgejo `viktor/cloud`, ADR-0003 there, approved by Viktor on 2026-11-12) creates and destroys Projects on this cluster with its own OpenTofu, one state per Project in the `cloud_state` database, never in `terraform_state`. Its objects are owned by Cloud's database:
+
+| Where | Cloud-owned | Owned by this repo |
+|---|---|---|
+| Kubernetes | `p-*` namespaces and everything in them, including the RoleBinding to `cloud-reconciler-project` | `stacks/cloud`: namespace `cloud`, its service accounts, both ClusterRoles, the admission policies |
+| Postgres (`pg-cluster-v18`) | members of `cloud_projects` and their databases | `stacks/dbaas`: `cloud_projects`, `cloud_provisioner`, `cloud_state`, databases `cloud_state` and `cloud`, the pg_hba rules |
+| Authentik | providers, applications, `cloud-*` groups and policy bindings created by `svc-cloud-reconciler` | `stacks/authentik/cloud-reconciler.tf`: the service account, its group, role, initial permissions and token |
+| Vault | `secret/cloud/<namespace>/*` | `stacks/vault/cloud.tf`, and `secret/cloud/system` from `stacks/authentik` |
+
+Rules: never write an `import {}` block, a data source loop or a resource for a Cloud-owned object; never delete one by hand to "clean up drift" (Cloud would recreate it, or a Project would break). The nightly drift plan ignores them because no state holds them, so keep it that way. A cluster-wide audit that lists live objects must skip the `cloud.viktorbarzin.me/managed=true` namespaces. No homelab namespace may be named `p-*`, because the reconciler's admission policy treats that prefix as Cloud's.
+
+Apply order for the Cloud pieces from a fresh start: `dbaas` (roles must exist before Vault's static roles rotate them), then `vault` (static roles, policies, and CI's write grant on `secret/cloud/system`), then `authentik` and `cloud`.
+
 ## Terraform State — Two-Tier Backend
 - **Tier 0 (bootstrap)**: Local state, SOPS-encrypted in git. Stacks: `infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`. These must exist before PG is reachable.
 - **Tier 1 (everything else)**: PostgreSQL backend (`pg`) on CNPG cluster at `pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`. Native `pg_advisory_lock` for concurrent safety. Each stack gets its own PG schema. **Lock contention is non-fatal**: `scripts/tg` passes `-lock-timeout` (default `5m`) so a contended lock waits rather than hard-failing — this was the #1 cause of infra CI failures (a Woodpecker-killed run's unreaped PG lock, a concurrent local apply, or the daily drift `plan`; Tier-1 stacks have no Vault advisory-lock skip to fall back on, unlike Tier-0).
