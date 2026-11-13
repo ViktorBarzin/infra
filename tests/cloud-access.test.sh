@@ -1,40 +1,59 @@
 #!/usr/bin/env bash
 # Checks the Kubernetes and Vault boundaries of Cloud's reconciler and of
-# Project secrets against a real API server (kind, Kubernetes 1.35 like the
+# Project namespaces against a real API server (kind, Kubernetes 1.35 like the
 # cluster) and a dev Vault, using exactly the rules Terraform applies:
-#   stacks/cloud/access_rules.tf  ClusterRoles and ValidatingAdmissionPolicies
+#   stacks/cloud/access_rules.tf  ClusterRoles, ValidatingAdmissionPolicies and
+#                                 the Calico egress floor
 #   stacks/vault/cloud_policies.tf  Vault policies, the namespace selector and
 #                                   the namespace-reader rule for Vault
 #   stacks/kyverno/modules/kyverno/generate-conditions.tf  which namespaces get
 #                                   Kyverno's tls-secret and registry copies
 # All three hold only locals, so `terraform console` reads them offline.
 #
+# It also renders a Project with Cloud's own renderer and applies Cloud's real
+# OpenTofu modules (the cloud repo's modules/) into the kind cluster as the
+# reconciler, with real Kubernetes and mocked Vault, Authentik, Postgres and
+# random providers (`tofu test`). So the objects checked are the ones Cloud
+# writes, through the reconciler's own RBAC and every admission policy.
+#
 # What it proves:
+#   - Cloud's renderer and infra agree on the cookie-strip image and the
+#     egress exclusions, and the egress floor mixes no IP families in a rule,
+#     allows DNS both ways, and ends in Deny;
+#   - Cloud's modules apply a private App, a public App and a Postgres Service
+#     as the reconciler, every Deployment's pod is admitted (Pod Security
+#     restricted, cloud-managed-pod), and the destroy succeeds;
+#   - each rendered object is admitted again as a dry run, and each variant
+#     the M2 contract forbids is refused with its rule's message: namespace
+#     labels, volumes other than emptyDir/configMap/secret/projected/
+#     downwardAPI, runtimeClassName, nodeName, nodeSelector, affinity,
+#     tolerations, host network, priority, GPU, service account, init
+#     containers, the cookie-strip container and the edge port chain, Ingress
+#     annotations, entrypoints, middlewares, class and backends, quota and
+#     limit range labels, names and scope, SecretStore and ExternalSecret
+#     stores, and any Traefik Middleware;
 #   - the reconciler cannot read Secrets outside a Project namespace;
-#   - it creates only p-* namespaces carrying the managed label, tier 4-aux and
-#     Pod Security baseline or restricted, sets no other label (keys others
-#     set may stay), cannot label or delete other namespaces, and writes only
-#     in managed namespaces, even where RBAC would let it;
-#   - Pod Security then refuses a hostPath pod in a Project namespace;
+#   - it creates only p-* namespaces carrying the contract's labels, cannot
+#     label or delete other namespaces, and writes only in managed namespaces,
+#     even where RBAC would let it;
+#   - it cannot change or delete Kyverno's tier-quota;
 #   - it can bind the project role, only to itself, and no stronger role;
-#   - in managed namespaces an ExternalSecret cannot use a ClusterSecretStore,
-#     a SecretStore is only the cloud-project Vault store, a Service is
-#     ClusterIP without externalIPs, an Ingress host is one unreserved label
-#     under viktorbarzin.me with no tls.secretName and names only its own or
-#     the shared Traefik middlewares, a Middleware cannot reach another
-#     namespace (errors, chain, plugin, tap, foreign forwardAuth), and a pod
-#     cannot take a priority class above tier-4-aux;
-#   - every Traefik Middleware type in the pinned chart's CRD is either
-#     allowed or refused, and every Vault auth method in the ESO CRD is
-#     refused except Kubernetes;
+#   - every Vault auth method in the ESO CRD is refused except Kubernetes;
 #   - Kyverno's copy condition skips managed namespaces;
 #   - Vault's cloud-project role admits only service account cloud-secrets in a
 #     labelled namespace, only once Vault may read namespaces, and its token
-#     reads only secret/cloud/<its namespace>/*;
-#   - the cloud-reconciler policy writes secret/cloud/*, reads but cannot
-#     change secret/cloud/system, and reads only its two database credentials.
-# Needs docker, kind, kubectl, helm (for the External Secrets and Traefik CRDs), vault and
-# python3 with PyYAML. Takes about two minutes.
+#     reads only secret/cloud/<its namespace>/*, Services and _cloud/ alike;
+#   - the cloud-reconciler policy writes secret/cloud/p-*, nothing else under
+#     secret/cloud, reads but cannot change secret/cloud/system, and reads
+#     only its two database credentials.
+#
+# Needs docker, kind, kubectl, helm (for the External Secrets and Traefik
+# CRDs), curl (Calico's CRDs), vault, python3 with PyYAML, bun, and a cloud repo checkout with its
+# pinned OpenTofu and provider mirror (.tools/, see its README). CLOUD_REPO
+# names the checkout; otherwise the first of ~/code/cloud and the M2
+# worktree ~/code/cloud/.worktrees/v1-m2-reconciler that holds modules/project
+# is used (the modules reach the cloud repo's master with M2). Takes about
+# four minutes.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 KIND_IMAGE="${CLOUD_ACCESS_KIND_IMAGE:-kindest/node:v1.35.0}"
@@ -42,6 +61,19 @@ KIND_IMAGE="${CLOUD_ACCESS_KIND_IMAGE:-kindest/node:v1.35.0}"
 ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/external-secrets/main.tf")}"
 # The Traefik chart version the cluster runs, read from its stack.
 TRAEFIK_VERSION="${CLOUD_ACCESS_TRAEFIK_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/traefik/modules/traefik/main.tf")}"
+# The Calico version the cluster runs, read from its stack.
+CALICO_VERSION="${CLOUD_ACCESS_CALICO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\Kv[0-9.]+' "$HERE/stacks/calico/main.tf")}"
+BUN="${BUN:-/usr/local/bin/bun}"
+if [ -z "${CLOUD_REPO:-}" ]; then
+  for c in "$HOME/code/cloud" "$HOME/code/cloud/.worktrees/v1-m2-reconciler"; do
+    [ -f "$c/modules/project/main.tf" ] && CLOUD_REPO="$c" && break
+  done
+fi
+[ -n "${CLOUD_REPO:-}" ] && [ -f "$CLOUD_REPO/modules/project/main.tf" ] && [ -f "$CLOUD_REPO/src/reconciler/render.ts" ] \
+  || { echo "FAIL: no cloud repo with modules/project and src/reconciler/render.ts; set CLOUD_REPO"; exit 1; }
+TOFU="${TOFU_BIN:-$CLOUD_REPO/.tools/tofu}"
+TOFU_PLUGINS="${TOFU_PLUGIN_DIR:-$CLOUD_REPO/.tools/providers}"
+[ -x "$TOFU" ] && [ -d "$TOFU_PLUGINS" ] || { echo "FAIL: no pinned OpenTofu at $TOFU or provider mirror at $TOFU_PLUGINS (cloud repo README, \"Reconciler\")"; exit 1; }
 CLUSTER="cloud-access-$$"
 TMP="$(mktemp -d)"
 VAULT_PID=""
@@ -51,6 +83,13 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+# Nothing here may write to the real home directory: the dev Vault's token
+# helper, OpenTofu's plugin cache and bun all get this one.
+mkdir -p "$TMP/home"
+
+TOKEN_FILE="$HOME/.vault-token"
+token_sum() { [ -f "$TOKEN_FILE" ] && sha256sum "$TOKEN_FILE" | cut -d' ' -f1 || echo absent; }
+TOKEN_BEFORE="$(token_sum)"
 
 render() { # <src file> <expression> <out>
   local d; d="$(mktemp -d -p "$TMP")"
@@ -60,7 +99,7 @@ render() { # <src file> <expression> <out>
   fi
 }
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, mw_allowed = local.cloud_middleware_types_allowed, mw_refused = local.cloud_middleware_types_refused, auth_refused = local.cloud_secretstore_auth_refused})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, egress = local.cloud_egress_excluded, cookie_strip = local.cloud_cookie_strip_image})' \
   "$TMP/k8s.raw"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -69,12 +108,17 @@ render "$HERE/stacks/kyverno/modules/kyverno/generate-conditions.tf" \
   'jsonencode({condition = local.generate_skip_system_namespaces})' \
   "$TMP/kyverno.raw"
 
+# Cloud's renderer, run from its own checkout.
+(cd "$CLOUD_REPO" && HOME="$TMP/home" "$BUN" "$HERE/tests/cloud-access/render.ts" "$CLOUD_REPO" "$TMP/tofu") >"$TMP/render.log" 2>&1 \
+  || { echo "FAIL: Cloud's renderer ($CLOUD_REPO)"; cat "$TMP/render.log"; exit 1; }
+
 python3 - "$TMP" <<'PY' || exit 1
 import json, sys, pathlib, yaml
 d = pathlib.Path(sys.argv[1])
 k = json.loads(json.loads((d / "k8s.raw").read_text()))
 v = json.loads(json.loads((d / "vault.raw").read_text()))
 kc = json.loads(json.loads((d / "kyverno.raw").read_text()))["condition"]
+contract = json.loads((d / "tofu" / "contract.json").read_text())
 
 def rules(rs):
     out = []
@@ -97,7 +141,7 @@ docs = [
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
-(d / "types.json").write_text(json.dumps({"mw_allowed": k["mw_allowed"], "mw_refused": k["mw_refused"], "auth_refused": k["auth_refused"]}))
+(d / "types.json").write_text(json.dumps({"auth_refused": k["auth_refused"]}))
 # Kyverno's copy condition on a real API server: a probe policy refuses a
 # namespace labelled kyverno-probe exactly when Kyverno would copy the Secrets.
 (d / "kyverno-probe.yaml").write_text(yaml.safe_dump_all([
@@ -111,6 +155,32 @@ docs = [
      "spec": {"policyName": "probe-kyverno-copy", "validationActions": ["Deny"]}},
 ]))
 (d / "project_role").write_text(k["project_role"])
+
+# The contract between Cloud's renderer and infra, and the floor's shape.
+# Calico is not in kind, so the floor is checked as data.
+problems = []
+if contract["images"]["cookieStrip"] != k["cookie_strip"]:
+    problems.append(f"cookie-strip image: Cloud renders {contract['images']['cookieStrip']}, infra requires {k['cookie_strip']}")
+for fam in ["ipv4", "ipv6"]:
+    if sorted(contract["egressExcluded"][fam]) != sorted(k["egress"][fam]):
+        problems.append(f"egress exclusions ({fam}): Cloud {sorted(contract['egressExcluded'][fam])}, infra {sorted(k['egress'][fam])}")
+egress = k["floor"]["spec"]["egress"]
+for i, r in enumerate(egress):
+    nets = r.get("destination", {}).get("nets", []) + r.get("destination", {}).get("notNets", [])
+    if len({":" in n for n in nets}) > 1:
+        problems.append(f"floor rule {i} mixes IPv4 and IPv6 (Calico refuses it): {r}")
+if egress[-1] != {"action": "Deny"}:
+    problems.append(f"floor does not end in Deny: {egress[-1]}")
+for fam, net in [("ipv4", "0.0.0.0/0"), ("ipv6", "::/0")]:
+    internet = [r for r in egress if r.get("destination", {}).get("nets") == [net]]
+    if len(internet) != 1 or internet[0]["action"] != "Pass" or sorted(internet[0]["destination"].get("notNets", [])) != sorted(k["egress"][fam]):
+        problems.append(f"floor: no single Pass to {net} minus the {fam} exclusions: {internet}")
+dns = [r for r in egress if r.get("action") == "Allow" and 53 in r.get("destination", {}).get("ports", [])]
+if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or not any("kube-dns" in r["destination"].get("selector", "") for r in dns):
+    problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
+if any(r.get("action") == "Allow" and r.get("destination", {}).get("nets", [None])[0] in ("0.0.0.0/0", "::/0") for r in egress):
+    problems.append("floor: an Allow to the internet would stop the Project policy narrowing it")
+(d / "contract-problems.txt").write_text("\n".join(problems))
 
 vdocs = [
     {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "vault"}},
@@ -128,6 +198,7 @@ vdocs = [
 (d / "reconciler.hcl").write_text(v["reconciler"])
 (d / "project.hcl.tpl").write_text(v["project"])
 (d / "selector.json").write_text(v["selector"])
+
 PY
 
 helm template eso external-secrets --repo https://charts.external-secrets.io --version "$ESO_VERSION" \
@@ -150,12 +221,6 @@ assert len(crds) == 2, [c["metadata"]["name"] for c in crds]
 (d / "traefik-crds.yaml").write_text(yaml.safe_dump_all(crds))
 t = json.loads((d / "types.json").read_text())
 problems = []
-mw = next(c for c in crds if c["metadata"]["name"] == "middlewares.traefik.io")
-for ver in mw["spec"]["versions"]:
-    have = set(ver["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"])
-    known = set(t["mw_allowed"]) | set(t["mw_refused"])
-    if have - known: problems.append(f"Middleware {ver['name']} types in neither list in access_rules.tf: {sorted(have - known)}")
-    if known - have: problems.append(f"Middleware {ver['name']} lists name types the CRD lacks: {sorted(known - have)}")
 eso = [c for c in yaml.safe_load_all(open(d / "eso-crds.yaml")) if c["metadata"]["name"] == "secretstores.external-secrets.io"][0]
 for ver in eso["spec"]["versions"]:
     if not ver.get("served"): continue
@@ -165,21 +230,41 @@ for ver in eso["spec"]["versions"]:
 (d / "tripwire.txt").write_text("\n".join(problems))
 PY
 
+# Calico's v3 API is an aggregated API server on the cluster. kind gets a
+# stand-in: Calico's own NetworkPolicy CRD for the version stacks/calico
+# pins, moved from crd.projectcalico.org/v1 to projectcalico.org/v3, so Cloud's
+# kubernetes_manifest sees the same typed schema it sees on the cluster.
+curl -sfL -o "$TMP/calico-crds.yaml" "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/crds.yaml" \
+  || { echo "FAIL: fetch Calico $CALICO_VERSION CRDs"; exit 1; }
+python3 - "$TMP" <<'PY' || exit 1
+import sys, pathlib, yaml
+d = pathlib.Path(sys.argv[1])
+crd = [c for c in yaml.safe_load_all(open(d / "calico-crds.yaml")) if c and c["metadata"]["name"] == "networkpolicies.crd.projectcalico.org"][0]
+crd["metadata"] = {"name": "networkpolicies.projectcalico.org"}
+crd["spec"]["group"] = "projectcalico.org"
+for v in crd["spec"]["versions"]:
+    v["name"] = "v3"
+(d / "calico-crd.yaml").write_text(yaml.safe_dump(crd))
+PY
+
 export KUBECONFIG="$TMP/kubeconfig"
 kind create cluster --name "$CLUSTER" --image "$KIND_IMAGE" --kubeconfig "$KUBECONFIG" --wait 120s >"$TMP/kind.log" 2>&1 \
   || { echo "FAIL: kind create cluster"; tail -20 "$TMP/kind.log"; exit 1; }
 
 ka() { kubectl "$@"; }
 kr() { kubectl --as="system:serviceaccount:cloud:cloud-reconciler" "$@"; }
-ka apply --server-side -f "$TMP/eso-crds.yaml" >/dev/null && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null \
-  || { echo "FAIL: ESO CRDs"; exit 1; }
-ka apply --server-side -f "$TMP/traefik-crds.yaml" >/dev/null && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null \
-  || { echo "FAIL: Traefik CRDs"; exit 1; }
-# The priority classes the cluster has (stacks/kyverno resource-governance.tf).
-for pc in tier-0-core:1000000:PreemptLowerPriority tier-4-aux:200000:Never; do
+ka apply --server-side -f "$TMP/eso-crds.yaml" -f "$TMP/traefik-crds.yaml" -f "$TMP/calico-crd.yaml" >/dev/null \
+  && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null || { echo "FAIL: CRDs"; exit 1; }
+# The priority classes the cluster has (stacks/kyverno resource-governance.tf
+# and the GPU class Kyverno's inject-gpu-workload-priority sets).
+for pc in tier-0-core:1000000:PreemptLowerPriority tier-4-aux:200000:Never gpu-workload:1200000:PreemptLowerPriority; do
   IFS=: read -r name value policy <<<"$pc"
   printf 'apiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n  name: %s\nvalue: %s\npreemptionPolicy: %s\n---\n' "$name" "$value" "$policy"
 done | ka apply -f - >/dev/null || { echo "FAIL: priority classes"; exit 1; }
+# One of the cluster's GPU runtime classes, so a pod naming it reaches the
+# admission policies instead of failing RuntimeClass admission first.
+printf 'apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: nvidia\nhandler: nvidia\n' | ka apply -f - >/dev/null \
+  || { echo "FAIL: runtime class"; exit 1; }
 ka apply -f "$TMP/rbac.yaml" >/dev/null || { echo "FAIL: RBAC"; exit 1; }
 ka apply -f "$TMP/vap.yaml" -f "$TMP/kyverno-probe.yaml" >"$TMP/vap.out" 2>&1 || { echo "FAIL: admission policies"; cat "$TMP/vap.out"; exit 1; }
 # A policy is enforced only once the API server has compiled it.
@@ -188,11 +273,9 @@ for _ in $(seq 1 60); do
     && ! kr create namespace probe-not-p --dry-run=server >/dev/null 2>&1 && break
   sleep 1
 done
+sleep 2
 warn="$(ka get validatingadmissionpolicy -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.status.typeChecking.expressionWarnings}{"\n"}{end}')"
 
-TOKEN_FILE="$HOME/.vault-token"
-token_sum() { [ -f "$TOKEN_FILE" ] && sha256sum "$TOKEN_FILE" | cut -d' ' -f1 || echo absent; }
-TOKEN_BEFORE="$(token_sum)"
 FAILS=0
 ok()  { echo "ok   - $1"; }
 bad() { echo "FAIL - $1"; FAILS=$((FAILS + 1)); }
@@ -202,16 +285,20 @@ expect_fail() { local what="$1" pattern="$2"; shift 2
   elif grep -qiE "$pattern" <<<"$out"; then ok "$what"; else bad "$what: wrong error: $out"; fi; }
 can()    { [ "$(kr auth can-i "$@" 2>/dev/null)" = "yes" ]; }
 cannot() { ! can "$@"; }
-apply_as() { local who="$1"; shift; "$who" apply -f - "$@"; }
+# Server-side apply: client-side apply would add the last-applied annotation,
+# which cloud-managed-ingress refuses like any other unrendered annotation.
+apply_as() { local who="$1"; shift; "$who" apply --server-side --force-conflicts --field-manager=cloud-access-test -f - "$@"; }
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
-if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every Traefik Middleware type and ESO Vault auth method is allowed or refused"; fi
+if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every ESO Vault auth method is allowed or refused"; fi
+if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the cookie-strip image and egress exclusions; the floor's rules are well formed"; fi
 
-ns_doc() { # name managed tier [pod-security level, default baseline; "-" for none] [extra label line]
+ns_doc() { # name managed tier [pod-security level, default restricted; "-" for none] [extra label line] [no-governance]
   printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n' "$1"
   [ -n "$2" ] && printf '    cloud.viktorbarzin.me/managed: "%s"\n' "$2"
   [ -n "$3" ] && printf '    tier: "%s"\n' "$3"
-  [ "${4:-baseline}" != "-" ] && printf '    pod-security.kubernetes.io/enforce: "%s"\n' "${4:-baseline}"
+  [ "${4:-restricted}" != "-" ] && printf '    pod-security.kubernetes.io/enforce: "%s"\n' "${4:-restricted}"
+  [ -z "${6:-}" ] && printf '    resource-governance/custom-quota: "true"\n    resource-governance/custom-limitrange: "true"\n'
   [ -n "${5:-}" ] && printf '    %s\n' "$5"
   true
 }
@@ -231,8 +318,8 @@ can list ingressroutes.traefik.io --all-namespaces && ok "reconciler lists Ingre
 cannot create ingresses.networking.k8s.io -n default && ok "reconciler cannot write Ingresses outside its namespaces" || bad "reconciler writes Ingresses anywhere"
 
 # --- namespaces --------------------------------------------------------------
-expect_ok   "reconciler creates p-demo (managed, tier 4-aux)" apply_as kr < <(ns_doc p-demo true 4-aux)
-expect_ok   "reconciler creates p-other (managed, tier 4-aux)" apply_as kr < <(ns_doc p-other true 4-aux)
+expect_ok   "reconciler creates p-demo (the contract's labels)" apply_as kr < <(ns_doc p-demo true 4-aux)
+expect_ok   "reconciler creates p-other (the contract's labels)" apply_as kr < <(ns_doc p-other true 4-aux)
 expect_fail "reconciler cannot create p-bare without the managed label" "cloud-reconciler may manage only" apply_as kr < <(ns_doc p-bare "" 4-aux)
 expect_fail "reconciler cannot create a managed namespace not named p-*" "cloud-reconciler may manage only" apply_as kr < <(ns_doc demo true 4-aux)
 expect_fail "reconciler cannot give its namespace another tier" "cloud-reconciler may manage only" apply_as kr < <(ns_doc p-core true 0-core)
@@ -241,15 +328,16 @@ expect_ok   "admin creates homelab-app, a namespace Cloud does not own" ka creat
 expect_fail "reconciler cannot delete homelab-app" "cloud-reconciler may manage only" kr delete namespace homelab-app --wait=false
 expect_ok   "admin creates p-adopt without the label" apply_as ka < <(ns_doc p-adopt "" 4-aux)
 expect_fail "reconciler cannot adopt p-adopt by labelling it" "may not label an existing namespace" kr label namespace p-adopt cloud.viktorbarzin.me/managed=true
-expect_fail "reconciler cannot create p-nopsa without a Pod Security label" "pod-security.kubernetes.io/enforce=baseline or restricted" apply_as kr < <(ns_doc p-nopsa true 4-aux -)
-expect_fail "reconciler cannot create p-priv with Pod Security privileged" "pod-security.kubernetes.io/enforce=baseline or restricted" apply_as kr < <(ns_doc p-priv true 4-aux privileged)
+expect_fail "reconciler cannot create p-nopsa without a Pod Security label" "must carry" apply_as kr < <(ns_doc p-nopsa true 4-aux -)
+expect_fail "reconciler cannot create p-base with Pod Security baseline" "must carry" apply_as kr < <(ns_doc p-base true 4-aux baseline)
+expect_fail "reconciler cannot create p-gov without the resource-governance labels" "must carry" apply_as kr < <(ns_doc p-gov true 4-aux restricted "" no-governance)
 expect_fail "reconciler cannot create p-x with chrome-service.viktorbarzin.me/client=true" "may set only these namespace labels" \
-  apply_as kr < <(ns_doc p-x true 4-aux baseline 'chrome-service.viktorbarzin.me/client: "true"')
-expect_fail "reconciler cannot add resource-governance/custom-quota=true to p-demo" "may set only these namespace labels" kr label namespace p-demo resource-governance/custom-quota=true
-expect_fail "reconciler cannot drop the Pod Security label from p-demo" "pod-security.kubernetes.io/enforce=baseline or restricted" kr label namespace p-demo pod-security.kubernetes.io/enforce-
-expect_ok   "reconciler raises p-demo to restricted" kr label --overwrite namespace p-demo pod-security.kubernetes.io/enforce=restricted
+  apply_as kr < <(ns_doc p-x true 4-aux restricted 'chrome-service.viktorbarzin.me/client: "true"')
+expect_fail "reconciler cannot drop the Pod Security label from p-demo" "must carry" kr label namespace p-demo pod-security.kubernetes.io/enforce-
+expect_fail "reconciler cannot lower p-demo to baseline" "must carry" kr label --overwrite namespace p-demo pod-security.kubernetes.io/enforce=baseline
+expect_fail "reconciler cannot drop resource-governance/custom-quota from p-demo" "must carry" kr label namespace p-demo resource-governance/custom-quota-
 expect_ok   "admin stamps a label on p-demo (as Kyverno does)" ka label namespace p-demo goldilocks.fairwinds.com/vpa-update-mode=off
-expect_ok   "reconciler updates p-demo while keeping that label" kr label --overwrite namespace p-demo pod-security.kubernetes.io/enforce=baseline
+expect_ok   "reconciler updates p-demo while keeping that label" kr label --overwrite namespace p-demo pod-security.kubernetes.io/warn=restricted
 expect_fail "reconciler cannot change the label someone else set" "may set only these namespace labels" kr label --overwrite namespace p-demo goldilocks.fairwinds.com/vpa-update-mode=auto
 expect_fail "Pod Security refuses a hostPath pod in p-demo, even from admin" "violates PodSecurity" \
   ka run hostpath -n p-demo --image=busybox --dry-run=server --overrides='{"spec":{"volumes":[{"name":"root","hostPath":{"path":"/"}}],"containers":[{"name":"hostpath","image":"busybox","volumeMounts":[{"name":"root","mountPath":"/host"}]}]}}'
@@ -285,6 +373,17 @@ expect_ok   "admin creates homelab-labelled, labelled managed though not named p
 expect_ok   "admin binds the project role in homelab-labelled (a mistake)" apply_as ka < <(rb_doc homelab-labelled "$PROJECT_ROLE")
 expect_fail "admission stops the reconciler writing in a labelled namespace not named p-*" "namespaces named p-\\*" apply_as kr < <(cm_doc homelab-labelled)
 
+# --- Kyverno's tier-quota --------------------------------------------------------
+# Kyverno generates tier-quota without Cloud's managed-by label wherever
+# custom-quota is not true; one stands in for it here.
+expect_ok   "admin creates tier-quota in p-demo, as Kyverno would" \
+  apply_as ka < <(printf 'apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: tier-quota\n  namespace: p-demo\nspec:\n  hard:\n    pods: "20"\n')
+expect_fail "reconciler cannot raise tier-quota" "may write only ResourceQuota cloud-quota" \
+  kr patch resourcequota tier-quota -n p-demo --type=merge -p '{"spec":{"hard":{"pods":"2000"}}}'
+expect_fail "reconciler cannot label tier-quota as its own" "may write only ResourceQuota cloud-quota" \
+  kr label resourcequota tier-quota -n p-demo app.kubernetes.io/managed-by=cloud
+expect_fail "reconciler cannot delete tier-quota" "may write only ResourceQuota cloud-quota" kr delete resourcequota tier-quota -n p-demo
+
 # --- ExternalSecrets ---------------------------------------------------------
 es_doc() { # ns kind [data-kind]
   cat <<EOF
@@ -309,8 +408,7 @@ EOF
   true
 }
 expect_ok   "an ExternalSecret on a SecretStore is admitted in p-demo" apply_as kr < <(es_doc p-demo SecretStore)
-expect_fail "an ExternalSecret on a ClusterSecretStore is refused in p-demo" "must be a SecretStore" apply_as kr < <(es_doc p-demo ClusterSecretStore)
-expect_fail "admin is refused the same in p-demo" "must be a SecretStore" apply_as ka < <(es_doc p-demo ClusterSecretStore)
+expect_fail "admin is refused an ExternalSecret on a ClusterSecretStore in p-demo" "must be a SecretStore" apply_as ka < <(es_doc p-demo ClusterSecretStore)
 expect_fail "a data[] sourceRef to a ClusterSecretStore is refused in p-demo" "data\\[\\]" apply_as kr < <(es_doc p-demo SecretStore ClusterSecretStore)
 expect_ok   "a ClusterSecretStore reference outside managed namespaces is untouched" apply_as ka < <(es_doc default ClusterSecretStore)
 
@@ -322,87 +420,127 @@ vault_ss() { # server role auth-extra
   printf '{vault: {server: "%s", path: secret, version: v2, auth: {kubernetes: {mountPath: kubernetes, role: %s, serviceAccountRef: {name: cloud-secrets}}%s}}}' "$1" "$2" "${3:-}"
 }
 VS="http://vault-active.vault.svc.cluster.local:8200"
-expect_ok   "the cloud-project Vault SecretStore is admitted in p-demo" apply_as kr < <(ss_doc p-demo store "$(vault_ss "$VS" cloud-project)")
 expect_fail "a webhook SecretStore is refused in p-demo" "must use provider vault" \
   apply_as kr < <(ss_doc p-demo hook '{webhook: {url: "http://vault.vault.svc:8200/v1/secret/data/viktor", result: {jsonPath: "$"}}}')
 expect_fail "a SecretStore on another Vault server is refused in p-demo" "must use provider vault" apply_as kr < <(ss_doc p-demo other "$(vault_ss http://evil.example.com:8200 cloud-project)")
-expect_fail "a SecretStore with Vault role eso is refused in p-demo" "role cloud-project" apply_as kr < <(ss_doc p-demo eso "$(vault_ss "$VS" eso)")
 expect_fail "a SecretStore with a token Secret is refused in p-demo" "only with Kubernetes auth" \
   apply_as kr < <(ss_doc p-demo tok "$(vault_ss "$VS" cloud-project ', tokenSecretRef: {name: t, key: token}')")
 
-# --- Services -----------------------------------------------------------------
+# --- Kubernetes Services ----------------------------------------------------------
 svc_doc() { # ns name spec-yaml
   printf 'apiVersion: v1\nkind: Service\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
 }
-expect_ok   "a ClusterIP Service is admitted in p-demo" apply_as kr < <(svc_doc p-demo web '{ports: [{port: 80}], selector: {app: web}}')
-expect_fail "an ExternalName Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo ext '{type: ExternalName, externalName: vault.vault.svc.cluster.local}')
-expect_fail "a LoadBalancer Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo lb '{type: LoadBalancer, ports: [{port: 80}]}')
-expect_fail "a NodePort Service is refused in p-demo, even from admin" "must be type ClusterIP" apply_as ka < <(svc_doc p-demo np '{type: NodePort, ports: [{port: 80}]}')
+expect_ok   "a ClusterIP Kubernetes Service is admitted in p-demo" apply_as kr < <(svc_doc p-demo web '{ports: [{port: 80}], selector: {app: web}}')
+expect_fail "an ExternalName Kubernetes Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo ext '{type: ExternalName, externalName: vault.vault.svc.cluster.local}')
+expect_fail "a LoadBalancer Kubernetes Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo lb '{type: LoadBalancer, ports: [{port: 80}]}')
 expect_fail "externalIPs are refused in p-demo" "externalIPs" apply_as kr < <(svc_doc p-demo eip '{ports: [{port: 80}], externalIPs: [192.168.1.10]}')
-expect_ok   "an ExternalName Service outside managed namespaces is untouched" apply_as ka < <(svc_doc default ext '{type: ExternalName, externalName: example.com}')
+expect_ok   "an ExternalName Kubernetes Service outside managed namespaces is untouched" apply_as ka < <(svc_doc default ext '{type: ExternalName, externalName: example.com}')
 
-# --- Ingresses ----------------------------------------------------------------
-ing_doc() { # ns name spec-yaml
-  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
+# --- Ingress hosts ------------------------------------------------------------------
+ing_doc() { # ns name host [tls-host]
+  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\n  annotations:\n    traefik.ingress.kubernetes.io/router.entrypoints: websecure\nspec:\n  ingressClassName: traefik\n  rules: [{host: "%s", http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: app-x, port: {name: edge}}}}]}}]\n' "$2" "$1" "$3"
+  [ -n "${4:-}" ] && printf '  tls: [{hosts: ["%s"]}]\n' "$4"
+  true
 }
-rule() { printf '{host: "%s", http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}}' "$1"; }
-expect_ok   "an Ingress for demo.viktorbarzin.me is admitted in p-demo" apply_as kr < <(ing_doc p-demo ok "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: [demo.viktorbarzin.me]}]}")
-expect_fail "a wildcard Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo wild "{rules: [$(rule '*.viktorbarzin.me')]}")
-expect_fail "a two-level Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo deep "{rules: [$(rule a.b.viktorbarzin.me)]}")
-expect_fail "an Ingress host on another domain is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo other "{rules: [$(rule demo.example.com)]}")
-expect_fail "a wildcard TLS host is refused in p-demo" "TLS host" apply_as kr < <(ing_doc p-demo wildtls "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: ['*.viktorbarzin.me']}]}")
+expect_ok   "an Ingress for demo.viktorbarzin.me is admitted in p-demo" apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me demo.viktorbarzin.me)
+expect_fail "a wildcard Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr --dry-run=server < <(ing_doc p-demo wild '*.viktorbarzin.me')
+expect_fail "a two-level Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr --dry-run=server < <(ing_doc p-demo deep a.b.viktorbarzin.me)
+expect_fail "an Ingress host on another domain is refused in p-demo" "one label, no wildcard" apply_as kr --dry-run=server < <(ing_doc p-demo other demo.example.com)
+expect_fail "a wildcard TLS host is refused in p-demo" "TLS host" apply_as kr --dry-run=server < <(ing_doc p-demo wildtls demo.viktorbarzin.me '*.viktorbarzin.me')
+expect_fail "the reserved name cloud is refused in p-demo, even from admin" "reserved name" apply_as ka --dry-run=server < <(ing_doc p-demo cloud cloud.viktorbarzin.me)
+expect_fail "auth-prefixed names are refused in p-demo" "reserved name" apply_as kr --dry-run=server < <(ing_doc p-demo authx authx.viktorbarzin.me)
 expect_fail "a host-less Ingress rule is refused in p-demo" "needs a host" \
-  apply_as kr < <(ing_doc p-demo nohost '{rules: [{http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}}]}')
-expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" apply_as kr < <(ing_doc p-demo defb '{defaultBackend: {service: {name: web, port: {number: 80}}}}')
-expect_fail "the reserved name vault is refused in p-demo" "reserved name" apply_as kr < <(ing_doc p-demo vault "{rules: [$(rule vault.viktorbarzin.me)]}")
-expect_fail "the reserved name cloud is refused in p-demo, even from admin" "reserved name" apply_as ka < <(ing_doc p-demo cloud "{rules: [$(rule cloud.viktorbarzin.me)]}")
-expect_fail "auth-prefixed names are refused in p-demo" "reserved name" apply_as kr < <(ing_doc p-demo authx "{rules: [$(rule authx.viktorbarzin.me)]}")
-expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka < <(ing_doc default wild "{rules: [$(rule '*.viktorbarzin.me')]}")
-expect_fail "an Ingress tls.secretName is refused in p-demo" "tls.secretName" \
-  apply_as kr < <(ing_doc p-demo tlssecret "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: [demo.viktorbarzin.me], secretName: tls-secret}]}")
-ing_mw_doc() { # ns name annotation-key annotation-value
-  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\n  annotations:\n    %s: "%s"\nspec: {rules: [%s]}\n' "$2" "$1" "$3" "$4" "$(rule demo.viktorbarzin.me)"
+  apply_as kr --dry-run=server < <(ing_doc p-demo nohost x.viktorbarzin.me | sed 's/{host: "x.viktorbarzin.me", /{/')
+expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo defb demo.viktorbarzin.me; printf '  defaultBackend: {service: {name: app-x, port: {name: edge}}}\n')
+expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka --dry-run=server < <(ing_doc default wild '*.viktorbarzin.me')
+pod_prio() { # ns priorityClassName
+  ka run "prio-$2" -n "$1" --image=busybox --dry-run=server --overrides="{\"spec\":{\"priorityClassName\":\"$2\",\"containers\":[{\"name\":\"c\",\"image\":\"busybox\"}]}}"
 }
-MWA="traefik.ingress.kubernetes.io/router.middlewares"
-expect_ok   "an Ingress naming its own and a shared middleware is admitted in p-demo" \
-  apply_as kr < <(ing_mw_doc p-demo mwok "$MWA" "p-demo-auth@kubernetescrd, traefik-strip-client-identity@kubernetescrd")
-expect_fail "an Ingress naming another namespace's middleware is refused in p-demo" "router.middlewares may name only" \
-  apply_as kr < <(ing_mw_doc p-demo mwx "$MWA" "terminal-tl-proxy-secret@kubernetescrd")
-expect_fail "an Ingress naming a middleware of a namespace that extends p-demo's name is refused" "router.middlewares may name only" \
-  apply_as kr < <(ing_mw_doc p-demo mwext "$MWA" "p-demo-x-secret@kubernetescrd")
-expect_fail "an Ingress naming a file-provider middleware is refused in p-demo" "router.middlewares may name only" \
-  apply_as kr < <(ing_mw_doc p-demo mwfile "$MWA" "authentik-forward-auth@file")
-expect_fail "another Traefik annotation is refused in p-demo" "only Traefik annotations" \
-  apply_as kr < <(ing_mw_doc p-demo prio traefik.ingress.kubernetes.io/router.priority "100000")
-expect_ok   "router.entrypoints websecure is admitted in p-demo" \
-  apply_as kr < <(ing_mw_doc p-demo ep traefik.ingress.kubernetes.io/router.entrypoints "websecure")
-
-# --- Middlewares -----------------------------------------------------------------
-mw_doc() { # ns name spec-yaml
-  printf 'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
-}
-expect_ok   "a forwardAuth Middleware to a Service in p-demo is admitted" apply_as kr < <(mw_doc p-demo auth '{forwardAuth: {address: "http://oauth2proxy.p-demo.svc.cluster.local:4180/oauth2/auth"}}')
-expect_ok   "a headers Middleware is admitted in p-demo" apply_as kr < <(mw_doc p-demo hdr '{headers: {customResponseHeaders: {X-Frame-Options: DENY}}}')
-expect_fail "a forwardAuth Middleware to another namespace is refused in p-demo" "forwardAuth.address" apply_as kr < <(mw_doc p-demo fa '{forwardAuth: {address: "http://vault.vault.svc.cluster.local:8200/v1/sys/health"}}')
-expect_fail "a forwardAuth address with userinfo is refused in p-demo" "forwardAuth.address" apply_as kr < <(mw_doc p-demo faui '{forwardAuth: {address: "http://x.p-demo.svc@vault.vault.svc:8200/"}}')
-expect_fail "an errors Middleware on a Service in namespace vault is refused in p-demo" "may not be of type" \
-  apply_as kr < <(mw_doc p-demo err '{errors: {status: ["500-599"], query: "/", service: {name: vault, namespace: vault, port: 8200}}}')
-expect_fail "a chain Middleware is refused in p-demo" "may not be of type" apply_as kr < <(mw_doc p-demo chn '{chain: {middlewares: [{name: tl-proxy-secret, namespace: terminal}]}}')
-expect_fail "a plugin Middleware is refused in p-demo" "may not be of type" apply_as kr < <(mw_doc p-demo plg '{plugin: {sablier: {group: x}}}')
-expect_fail "a Middleware name with a dash is refused in p-demo" "letters and digits only" apply_as kr < <(mw_doc p-demo x-secret '{headers: {customResponseHeaders: {A: b}}}')
-expect_ok   "an errors Middleware outside managed namespaces is untouched" apply_as ka < <(mw_doc default err '{errors: {status: ["500"], query: "/", service: {name: vault, namespace: vault, port: 8200}}}')
-
-# --- Pod priority ------------------------------------------------------------------
-pod_prio() { # ns [priorityClassName]
-  local o='{"spec":{"containers":[{"name":"c","image":"busybox"}]}}'
-  [ -n "${2:-}" ] && o="{\"spec\":{\"priorityClassName\":\"$2\",\"containers\":[{\"name\":\"c\",\"image\":\"busybox\"}]}}"
-  ka run "prio-${2:-none}" -n "$1" --image=busybox --dry-run=server --overrides="$o"
-}
-expect_fail "a pod with priority class tier-0-core is refused in p-demo" "only priority class tier-4-aux" pod_prio p-demo tier-0-core
-expect_fail "a pod with system-node-critical is refused in p-demo" "only priority class tier-4-aux" pod_prio p-demo system-node-critical
-expect_ok   "a pod with tier-4-aux is admitted in p-demo" pod_prio p-demo tier-4-aux
-expect_ok   "a pod with no priority class is admitted in p-demo" pod_prio p-demo
 expect_ok   "a tier-0-core pod outside managed namespaces is untouched" pod_prio default tier-0-core
+
+# --- Cloud's real modules, applied as the reconciler ----------------------------
+# render.ts wrote the root module and variables into $TMP/tofu. tofu test
+# applies them with the real Kubernetes provider (the reconciler's token) and
+# mocks for the rest, runs dump.sh before the destroy, then destroys.
+NS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["namespace"])' "$TMP/tofu/contract.json")"
+SERVER="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
+CA_DATA="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+cat >"$TMP/reconciler.kubeconfig" <<EOF
+apiVersion: v1
+kind: Config
+clusters: [{name: kind, cluster: {server: "$SERVER", certificate-authority-data: "$CA_DATA"}}]
+users: [{name: cloud-reconciler, user: {token: "$(ka create token cloud-reconciler -n cloud --duration=1h)"}}]
+contexts: [{name: cloud-reconciler, context: {cluster: kind, user: cloud-reconciler}}]
+current-context: cloud-reconciler
+EOF
+mkdir -p "$TMP/dump"
+ln -s "$CLOUD_REPO/modules" "$TMP/tofu/modules"
+: >"$TMP/tofu/tofurc"
+cat >"$TMP/tofu/zz_dump.tf.json" <<'EOF'
+{"resource": {"terraform_data": {"cloud_access_dump": {
+  "depends_on": ["module.project", "module.app", "module.postgres"],
+  "provisioner": [{"local-exec": {"command": "bash \"$CLOUD_DUMP_SCRIPT\""}}]
+}}}}
+EOF
+cat >"$TMP/tofu/cloud-access.tftest.hcl" <<'EOF'
+mock_provider "vault" {}
+mock_provider "postgresql" {}
+mock_provider "random" {}
+# Authentik ids are numeric strings (protocol_provider converts one).
+mock_provider "authentik" {
+  mock_resource "authentik_provider_oauth2" {
+    defaults = { id = "42" }
+  }
+}
+run "apply" {
+  command = apply
+}
+EOF
+tofu() {
+  (cd "$TMP/tofu" && env HOME="$TMP/home" TF_CLI_CONFIG_FILE="$TMP/tofu/tofurc" TF_IN_AUTOMATION=1 \
+    KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
+    CLOUD_DUMP_DIR="$TMP/dump" CLOUD_DUMP_SCRIPT="$HERE/tests/cloud-access/dump.sh" "$TOFU" "$@")
+}
+if ! tofu init -backend=false -input=false -no-color -plugin-dir="$TOFU_PLUGINS" >"$TMP/tofu-init.log" 2>&1; then
+  bad "tofu init of Cloud's modules: $(tail -20 "$TMP/tofu-init.log")"
+elif tofu test -no-color >"$TMP/tofu-test.log" 2>&1 && grep -q "1 passed, 0 failed" "$TMP/tofu-test.log"; then
+  ok "Cloud's modules apply and destroy a private App, a public App and a Postgres Service in $NS as the reconciler"
+else
+  bad "Cloud's modules did not apply and destroy cleanly as the reconciler: $(grep -v '^\s*$' "$TMP/tofu-test.log" | tail -40)"
+fi
+
+if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
+  check="$(python3 - "$TMP" <<'PY'
+import json, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+s = json.loads((d / "cases" / "summary.json").read_text())
+events = json.loads((d / "dump" / "events.json").read_text())["items"]
+failed = [e["message"] for e in events if e.get("reason") == "FailedCreate"]
+want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
+problems = []
+if failed: problems.append("pods refused: " + " | ".join(failed))
+if len(s["pods"]) < len(s["deployments"]): problems.append(f"{len(s['pods'])} pods for {len(s['deployments'])} Deployments {s['deployments']}")
+if want - set(s["kinds"]): problems.append(f"kinds missing from the render: {sorted(want - set(s['kinds']))}")
+print("; ".join(problems) if problems else f"{len(s['pods'])} pods for Deployments {', '.join(s['deployments'])}")
+sys.exit(1 if problems else 0)
+PY
+)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
+  # The SecretStore's service account must exist for a pod to name it.
+  ka create serviceaccount cloud-secrets -n p-demo >/dev/null 2>&1
+  n=0
+  while IFS=$'\t' read -r -u 3 file who expect what; do
+    n=$((n + 1))
+    if [ "$expect" = "ok" ]; then
+      expect_ok "admitted: $what" "$who" create --dry-run=server -f "$TMP/cases/$file"
+    else
+      expect_fail "refused: $what" "$expect" "$who" create --dry-run=server -f "$TMP/cases/$file"
+    fi
+  done 3<"$TMP/cases/cases.tsv"
+  [ "$n" -gt 80 ] && ok "$n cases built from Cloud's real objects" || bad "only $n cases built from Cloud's real objects"
+else
+  bad "no objects from Cloud's modules to check: $(cat "$TMP/variants.log" 2>/dev/null)"
+fi
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
 
@@ -412,7 +550,6 @@ export VAULT_ADDR="http://127.0.0.1:$VPORT" VAULT_TOKEN="root-$$"
 # A dev server writes its root token to the token helper, ~/.vault-token by
 # default, which on the devvm holds the user's real Vault token. Never let it:
 # -dev-no-store-token, and every vault call runs with HOME in the temp dir.
-mkdir -p "$TMP/home"
 vault() { HOME="$TMP/home" command vault "$@"; }
 vtok() { local t="$1"; shift; HOME="$TMP/home" VAULT_TOKEN="$t" command vault "$@"; }
 # `command`, not the function, so $! is Vault's own pid and cleanup stops it.
@@ -422,10 +559,9 @@ for _ in $(seq 1 30); do vault status >/dev/null 2>&1 && break; sleep 1; done
 vault status >/dev/null 2>&1 || { echo "FAIL: dev vault did not start"; tail "$TMP/vault.log"; exit 1; }
 
 ka apply -f "$TMP/vault-sa.yaml" >/dev/null || { echo "FAIL: vault service account"; exit 1; }
-for n in p-demo p-adopt default; do ka create serviceaccount cloud-secrets -n "$n" >/dev/null; done
+for n in p-demo p-adopt default; do ka create serviceaccount cloud-secrets -n "$n" >/dev/null 2>&1; done
 ka create serviceaccount other -n p-demo >/dev/null
 kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"$TMP/ca.crt"
-SERVER="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
 vault auth enable kubernetes >/dev/null
 vault write auth/kubernetes/config kubernetes_host="$SERVER" kubernetes_ca_cert=@"$TMP/ca.crt" \
   token_reviewer_jwt="$(ka create token vault -n vault --duration=1h)" disable_local_ca_jwt=true >/dev/null
@@ -434,11 +570,13 @@ sed "s/@@KUBERNETES_ACCESSOR@@/$ACCESSOR/" "$TMP/project.hcl.tpl" >"$TMP/project
 vault policy write cloud-project "$TMP/project.hcl" >/dev/null
 vault policy write cloud-reconciler "$TMP/reconciler.hcl" >/dev/null
 vault write auth/kubernetes/role/cloud-project bound_service_account_names=cloud-secrets \
-  bound_service_account_namespace_selector="$(cat "$TMP/selector.json")" token_policies=cloud-project token_ttl=3600 >/dev/null
+  bound_service_account_namespace_selector="$(cat "$TMP/selector.json")" token_policies=cloud-project token_ttl=3600 >/dev/null 2>&1
 vault write auth/kubernetes/role/cloud-reconciler bound_service_account_names=cloud-reconciler \
-  bound_service_account_namespaces=cloud token_policies=cloud-reconciler token_ttl=3600 >/dev/null
+  bound_service_account_namespaces=cloud token_policies=cloud-reconciler token_ttl=3600 >/dev/null 2>&1
 vault kv put secret/cloud/p-demo/app a=demo >/dev/null
+vault kv put secret/cloud/p-demo/_cloud/registry server=ghcr.io username=u password=p >/dev/null
 vault kv put secret/cloud/p-other/app a=other >/dev/null
+vault kv put secret/cloud/p-other/_cloud/registry server=ghcr.io username=u password=p >/dev/null
 vault kv put secret/cloud/system authentik_token=t ghcr_pull_token=g >/dev/null
 vault kv put secret/viktor x=y >/dev/null
 
@@ -454,18 +592,23 @@ expect_fail "cloud-project login refused from default" "namespace|not authorized
 expect_fail "cloud-project login refused for another service account" "service account|not authorized|permission denied" login cloud-project p-demo other
 
 PT="$(login cloud-project p-demo cloud-secrets 2>/dev/null)"
-expect_ok   "p-demo token reads secret/cloud/p-demo/app" vtok "$PT" kv get -field=a secret/cloud/p-demo/app
+expect_ok   "p-demo token reads a Service entry, secret/cloud/p-demo/app" vtok "$PT" kv get -field=a secret/cloud/p-demo/app
+expect_ok   "p-demo token reads Cloud's entry secret/cloud/p-demo/_cloud/registry" vtok "$PT" kv get -field=server secret/cloud/p-demo/_cloud/registry
 expect_fail "p-demo token cannot read secret/cloud/p-other/app" "permission denied" vtok "$PT" kv get secret/cloud/p-other/app
+expect_fail "p-demo token cannot read secret/cloud/p-other/_cloud/registry" "permission denied" vtok "$PT" kv get secret/cloud/p-other/_cloud/registry
 expect_fail "p-demo token cannot read secret/cloud/system" "permission denied" vtok "$PT" kv get secret/cloud/system
 expect_fail "p-demo token cannot read secret/viktor" "permission denied" vtok "$PT" kv get secret/viktor
 expect_fail "p-demo token cannot write its own tree" "permission denied" vtok "$PT" kv put secret/cloud/p-demo/app a=x
 
 RT="$(login cloud-reconciler cloud cloud-reconciler 2>/dev/null)"
 [ -n "$RT" ] && ok "cloud-reconciler logs in from namespace cloud" || bad "cloud-reconciler login"
-expect_ok   "reconciler writes a Project secret" vtok "$RT" kv put secret/cloud/p-demo/new a=1
-expect_ok   "reconciler deletes a Project secret" vtok "$RT" kv metadata delete secret/cloud/p-demo/new
+expect_ok   "reconciler writes a Service entry" vtok "$RT" kv put secret/cloud/p-demo/new a=1
+expect_ok   "reconciler writes a _cloud/ entry" vtok "$RT" kv put secret/cloud/p-demo/_cloud/recipes-oauth2-proxy client_secret=c cookie_secret=k
+expect_ok   "reconciler deletes a Project secret with all versions" vtok "$RT" kv metadata delete secret/cloud/p-demo/new
+expect_fail "reconciler cannot write outside the p-* trees" "permission denied" vtok "$RT" kv put secret/cloud/homelab/x a=1
 expect_ok   "reconciler reads secret/cloud/system" vtok "$RT" kv get -field=authentik_token secret/cloud/system
 expect_fail "reconciler cannot change secret/cloud/system" "permission denied" vtok "$RT" kv put secret/cloud/system authentik_token=x
+expect_fail "reconciler cannot delete secret/cloud/system" "permission denied" vtok "$RT" kv metadata delete secret/cloud/system
 expect_fail "reconciler cannot read secret/viktor" "permission denied" vtok "$RT" kv get secret/viktor
 expect_fail "reconciler cannot write a Vault policy" "permission denied" vtok "$RT" policy write x "$TMP/project.hcl"
 caps() { vtok "$RT" token capabilities "$1" 2>&1; }
@@ -477,4 +620,4 @@ caps() { vtok "$RT" token capabilities "$1" 2>&1; }
 [ "$(token_sum)" = "$TOKEN_BEFORE" ] && ok "~/.vault-token untouched" || bad "~/.vault-token CHANGED by this test"
 
 echo
-if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud reconciler and Project secret boundaries"; else echo "FAIL: $FAILS check(s)"; exit 1; fi
+if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud reconciler, Project namespaces and Project secret boundaries"; else echo "FAIL: $FAILS check(s)"; exit 1; fi

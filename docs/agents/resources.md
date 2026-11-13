@@ -3,7 +3,7 @@
 Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CLAUDE.md`) on 2026-09-22, when the two merged into one root `AGENTS.md`. Related as-built docs: `docs/architecture/compute.md`, `docs/architecture/multi-tenancy.md`.
 
 ## Resource Management Patterns
-- **CPU**: All CPU limits removed cluster-wide (CFS throttling). Only set CPU requests based on actual usage.
+- **CPU**: All CPU limits removed cluster-wide (CFS throttling; Kyverno `strip-cpu-limits`). Only set CPU requests based on actual usage. Exception: Cloud's Project namespaces (`cloud.viktorbarzin.me/managed=true`) keep CPU limits, because Cloud's own ResourceQuota there counts `limits.cpu` (`docs/agents/security.md`, Cloud).
 - **Memory**: Set explicit `requests=limits` based on VPA upperBound. Target: upperBound x 1.2 for stable services, x 1.3 for GPU/volatile workloads.
 - **Right-sizing**: VPA/Goldilocks was **REMOVED 2026-06-12** (etcd-load-reduction — 349 VPAs all ran `updateMode=Off`, costing ~800 etcd objects + continuous recommender writes + a pod-creation admission webhook for dashboard-only value). Right-size **on demand with `krr`** (Robusta, Dockerized from the devvm — no cluster install, no admission webhook, no eviction risk; reads Prometheus). Set container resources explicitly in TF from krr output.
 - **LimitRange**: Tier-based defaults silently apply to pods with `resources: {}`. Always set explicit resources on containers needing more than defaults. Tier 3-edge and 4-aux now use Burstable QoS (request < limit) to reduce scheduler pressure.
