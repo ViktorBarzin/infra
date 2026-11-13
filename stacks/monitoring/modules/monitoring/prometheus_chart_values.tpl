@@ -5357,6 +5357,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "PostgreSQL {{ $labels.cnpg_cluster }}: NOTIFY queue {{ $value | humanizePercentage }} full. At 100% every NOTIFY on the cluster fails. Find the listener holding it: SELECT pid, datname, usename, application_name, xact_start FROM pg_stat_activity WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;"
+          - alert: CloudProvisionerForeignRole
+            # Cloud's cloud_provisioner (CREATEROLE) administers a role whose
+            # name is not p_*. pg_hba confines only p_* Project roles, so such
+            # a role reaches every database that grants CONNECT to PUBLIC
+            # (stacks/dbaas cloud_postgres_rules.tf, the audit query). Either
+            # the reconciler has a bug or its credential is in someone else's
+            # hands. Series from the pg-custom-queries ConfigMap, primary only.
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_foreign_roles_count) > 0
+            for: 2m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: cloud_provisioner administers {{ $value }} role(s) not named p_*, which pg_hba does not confine. List them on the primary: WITH RECURSIVE a AS (SELECT roleid FROM pg_auth_members WHERE member='cloud_provisioner'::regrole AND admin_option UNION SELECT m.roleid FROM pg_auth_members m JOIN a ON a.roleid=m.member WHERE m.admin_option) SELECT rolname FROM a JOIN pg_roles r ON r.oid=a.roleid WHERE rolname !~ '^p_' AND rolname != 'cloud_projects'; then rotate pg-cloud-provisioner in Vault and drop them."
       - name: Cluster
         rules:
           - alert: NodeDown

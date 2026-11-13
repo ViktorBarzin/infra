@@ -67,6 +67,31 @@ locals {
   # Project role, and a Project role cannot lift one it was given.
   # statement_timeout needs no grant, but any role can SET it in its own
   # session, so for Project roles it is a default, not a limit.
+  # The audit behind alert CloudProvisionerForeignRole (stacks/monitoring):
+  # how many roles cloud_provisioner administers, directly or through a role
+  # it administers, whose name is not p_*. pg_hba confines only p_* names, so
+  # a role it created under another name (or renamed) falls through to
+  # `host all all all scram-sha-256` and reaches every database that grants
+  # CONNECT to PUBLIC. Postgres records the creator of a role as holding
+  # ADMIN OPTION on it, granted by the bootstrap superuser, so the creator
+  # cannot revoke that record to hide a role. cloud_projects is excluded:
+  # this repo grants it. Exported by the CNPG exporter from the primary as
+  # cnpg_cloud_provisioner_foreign_roles_count (pg_custom_queries in main.tf).
+  cloud_provisioner_audit_sql = <<-SQL
+    WITH RECURSIVE administered AS (
+      SELECT m.roleid FROM pg_catalog.pg_auth_members m
+        JOIN pg_catalog.pg_roles p ON p.oid = m.member
+       WHERE p.rolname = 'cloud_provisioner' AND m.admin_option
+      UNION
+      SELECT m.roleid FROM pg_catalog.pg_auth_members m
+        JOIN administered a ON a.roleid = m.member
+       WHERE m.admin_option
+    )
+    SELECT count(*) AS count
+      FROM administered a JOIN pg_catalog.pg_roles r ON r.oid = a.roleid
+     WHERE r.rolname != 'cloud_projects' AND r.rolname !~ '^p_[a-z0-9_]+$'
+  SQL
+
   cloud_roles_sql = <<-SQL
     DO $$
     BEGIN
