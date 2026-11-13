@@ -33,6 +33,15 @@
 #     pending page without signing them in (f1-stream ADR-0042, 2026-10-18).
 #     The match is by name, so it guards against an accidental binding, not
 #     against an admin who names another policy that way.
+#   - one exemption: a Cloud application with no binding at all. Cloud's
+#     reconciler (cloud-reconciler.tf) creates one OAuth2 provider and
+#     application per private App and may create no binding; the App's
+#     oauth2-proxy admits only its email allowlist. A Cloud application is
+#     slug "cloud-*", name "Cloud: *" and provider "cloud-*", as the
+#     reconciler renders them. Once anything binds to one, the rules above
+#     apply to it like any other application. With core_default_app_access
+#     off an unbound application admits nobody, so this exemption opens
+#     nothing.
 #
 # To fix a failure, bind the application to the groups that should reach it:
 # here for UI-managed applications, or next to the application resource in
@@ -165,8 +174,12 @@ locals {
   # named user, and enabled bindings of any other kind.
   live_app_access = {
     for app in local.live_apps : "${app.name} (${app.slug})" => {
-      slug = app.slug
-      mode = app.policy_engine_mode
+      slug  = app.slug
+      mode  = app.policy_engine_mode
+      cloud = startswith(app.slug, "cloud-") && startswith(app.name, "Cloud: ") && startswith(try(app.provider_obj.name, ""), "cloud-")
+      bindings = length([
+        for b in local.live_bindings : b if b.target == app.pbm_uuid
+      ])
       membership = length([
         for b in local.live_bindings : b
         if b.target == app.pbm_uuid && b.enabled && !b.negate && b.policy == null && (b.group != null || b.user != null)
@@ -184,7 +197,7 @@ locals {
       ? "has no enabled group or user binding"
       : "uses policy_engine_mode \"any\" with a policy or negated binding, which can admit an account outside its groups"
     )
-    if !contains(keys(local.app_access_exempt), a.slug) && (a.membership == 0 || (a.mode == "any" && a.other > 0))
+    if !contains(keys(local.app_access_exempt), a.slug) && !(a.cloud && a.bindings == 0) && (a.membership == 0 || (a.mode == "any" && a.other > 0))
   }
 }
 
