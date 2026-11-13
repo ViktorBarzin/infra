@@ -9,7 +9,10 @@
 #                      name, not this group.
 #   cloud_provisioner  LOGIN CREATEDB CREATEROLE, CONNECTION LIMIT 5, ADMIN
 #                      OPTION on cloud_projects. Vault static role
-#                      pg-cloud-provisioner.
+#                      pg-cloud-provisioner. The reconciler stays within 5:
+#                      OpenTofu -parallelism=2 with a provider pool of 2 (4),
+#                      plus its database-size loop (1); databases.md has
+#                      the budget. A second replica needs a higher limit.
 #   cloud_state        LOGIN, CONNECTION LIMIT 10, owns database cloud_state
 #                      (the reconciler's OpenTofu state, one schema per
 #                      Project). Vault static role pg-cloud-state. It has no
