@@ -45,8 +45,8 @@
 #   cloud-managed-ingress  class traefik; every host is one label under
 #     viktorbarzin.me (no wildcard, no host-less rule, no defaultBackend), not
 #     a reserved App name from the Cloud v1 plan ("Configuration": reserved
-#     App names) and not a host the homelab already routes (its parameter,
-#     ConfigMap cloud/cloud-taken-hosts from taken_hosts.tf); every backend is
+#     App names) and not a host the homelab already routes (written into the
+#     policy itself, see "Taken hosts" below); every backend is
 #     an edge Service on port edge or an oauth2-proxy Service on port http,
 #     by port name. No tls.secretName: Traefik's default TLSStore serves the
 #     wildcard, and a Project certificate would go into Traefik's global
@@ -134,16 +134,30 @@
 #
 # Taken hosts. A ValidatingAdmissionPolicy sees only the object in the
 # request, its namespace and a parameter object; it cannot list other
-# Ingresses or IngressRoutes. So taken_hosts.tf writes the homelab's hosts
-# into a ConfigMap at plan time, and cloud-managed-ingress refuses them. A
-# host added after the last cloud apply is missing until the next one; the
-# reconciler checks taken hosts itself before it applies, with its
-# cluster-wide read on both kinds.
+# Ingresses or IngressRoutes. So taken_hosts.tf collects the homelab's hosts
+# at plan time, and local.cloud_admission_policies_applied writes them into
+# cloud-managed-ingress as a CEL map literal in place of
+# local.cloud_taken_hosts_marker. A host added after the last cloud apply is
+# missing until the next one; the reconciler checks taken hosts itself
+# before it applies, with its cluster-wide read on both kinds.
 #
-# Calico NetworkPolicies are served by the Calico API server, an aggregated
-# API, so kube-apiserver admission policies do not see them. For those, the
-# RoleBinding is the boundary: the reconciler can write them only in a
-# namespace where it has bound the project role, and only in the default
+# No policy here takes a parameter (paramKind). calico-apiserver, the
+# aggregated API server for projectcalico.org, is built on k8s.io/apiserver
+# and runs the ValidatingAdmissionPolicy plugin itself, over every policy in
+# the cluster. A policy with paramKind makes it start a cluster-wide informer
+# for that kind; calico-apiserver's service account may not list ConfigMaps,
+# so the informer never synced, its readyz failed and v3.projectcalico.org
+# went unavailable (found 2026-11-13 in kind with the real Calico). That
+# stops every Calico policy write and leaves deleted namespaces Terminating,
+# cluster-wide, and deleting the policy does not heal it: calico-apiserver
+# keeps the informer until its pods restart. tests/cloud-access.test.sh runs
+# on the real Calico and checks the APIService after every step.
+#
+# Calico NetworkPolicies are served by calico-apiserver. For the same reason
+# the policies above apply to them there: cloud-reconciler-scope keeps the
+# reconciler's Calico writes in managed p-* namespaces (the test checks it).
+# The RoleBinding is the boundary too: the reconciler can write them only in
+# a namespace where it has bound the project role, and only in the default
 # tier, which Calico evaluates after tier "cloud".
 #
 # Kyverno (stacks/kyverno, generate-conditions.tf) does not copy tls-secret
@@ -368,15 +382,14 @@ locals {
     endswith(c, "*") ? "${replace(trimsuffix(c, "*"), ".", "\\.")}[^=;]*" : replace(c, ".", "\\."), "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0"
   )]
 
-  # Hosts the homelab already routes (taken_hosts.tf collects them from every
-  # Ingress and IngressRoute outside managed namespaces): one ConfigMap key
-  # per host. cloud-managed-ingress reads it as its parameter and refuses a
-  # Project Ingress for any of them; without it the policy refuses every
-  # Ingress in managed namespaces.
-  cloud_taken_hosts = {
-    name      = "cloud-taken-hosts"
-    namespace = local.cloud_namespace
-  }
+  # Hosts the homelab already routes (local.cloud_taken_hosts in
+  # taken_hosts.tf, from every Ingress and IngressRoute outside managed
+  # namespaces). cloud-managed-ingress holds this marker where the hosts go;
+  # local.cloud_admission_policies_applied below replaces it with a CEL map
+  # literal, host to router. The marker alone is not valid CEL, so the API
+  # server refuses a policy applied without the hosts ("compilation failed")
+  # and the apply fails.
+  cloud_taken_hosts_marker = "@TAKEN_HOSTS@"
 
   # The only priority class a Project pod may carry; Kyverno injects it from
   # the namespace's tier=4-aux label when a pod has none.
@@ -921,8 +934,6 @@ locals {
       metadata   = { name = "cloud-managed-ingress" }
       spec = {
         failurePolicy = "Fail"
-        # local.cloud_taken_hosts, bound below.
-        paramKind = { apiVersion = "v1", kind = "ConfigMap" }
         matchConstraints = {
           resourceRules = [{
             apiGroups   = ["networking.k8s.io"]
@@ -933,6 +944,8 @@ locals {
         }
         variables = [
           { name = "anns", expression = "has(object.metadata.annotations) ? object.metadata.annotations : {}" },
+          # Host -> router, filled in by cloud_admission_policies_applied.
+          { name = "takenHosts", expression = local.cloud_taken_hosts_marker },
         ]
         validations = [
           {
@@ -983,8 +996,8 @@ locals {
           {
             # Traefik ranks routers by rule length, so a Project rule for a
             # homelab host with a longer path would win on that path.
-            expression = "!has(params.data) || ((!has(object.spec.rules) || object.spec.rules.all(r, !has(r.host) || !(r.host in params.data))) && (!has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) || t.hosts.all(h, !(h in params.data)))))"
-            message    = "in a Cloud namespace, an Ingress may not use a host the homelab already routes (ConfigMap ${local.cloud_taken_hosts.namespace}/${local.cloud_taken_hosts.name})"
+            expression = "(!has(object.spec.rules) || object.spec.rules.all(r, !has(r.host) || !(r.host in variables.takenHosts))) && (!has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) || t.hosts.all(h, !(h in variables.takenHosts))))"
+            message    = "in a Cloud namespace, an Ingress may not use a host the homelab already routes (stacks/cloud taken_hosts.tf)"
             reason     = "Forbidden"
           },
           {
@@ -1001,16 +1014,7 @@ locals {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicyBinding"
       metadata   = { name = "cloud-managed-ingress" }
-      spec = merge(local.cloud_managed_binding, {
-        policyName = "cloud-managed-ingress"
-        # Fail closed: without the list, every Ingress in managed namespaces
-        # is refused.
-        paramRef = {
-          name                    = local.cloud_taken_hosts.name
-          namespace               = local.cloud_taken_hosts.namespace
-          parameterNotFoundAction = "Deny"
-        }
-      })
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-ingress" })
     }
     managed_edge_config = {
       apiVersion = "admissionregistration.k8s.io/v1"
@@ -1187,5 +1191,16 @@ locals {
       metadata   = { name = "cloud-managed-secretstore" }
       spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-secretstore" })
     }
+  }
+
+  # What main.tf applies: the policies above with the taken hosts written
+  # into cloud-managed-ingress. jsonencode twice and trim, so the CEL map
+  # literal lands JSON-escaped inside the JSON string that held the marker.
+  cloud_admission_policies_applied = {
+    for k, p in local.cloud_admission_policies : k => jsondecode(replace(
+      jsonencode(p),
+      local.cloud_taken_hosts_marker,
+      trim(jsonencode(jsonencode(local.cloud_taken_hosts)), "\""),
+    ))
   }
 }

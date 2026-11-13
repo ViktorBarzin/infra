@@ -90,17 +90,16 @@ resource "kubernetes_cluster_role" "cloud_reconciler_project" {
   }
 }
 
+# The policies with the homelab's taken hosts written in (taken_hosts.tf).
 resource "kubernetes_manifest" "cloud_admission_policy" {
-  for_each = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicy" }
+  for_each = { for k, v in local.cloud_admission_policies_applied : k => v if v.kind == "ValidatingAdmissionPolicy" }
   manifest = each.value
 }
 
 resource "kubernetes_manifest" "cloud_admission_policy_binding" {
-  for_each = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicyBinding" }
-  manifest = each.value
-  # cloud-managed-ingress's binding names the taken-hosts ConfigMap and
-  # refuses every Ingress in managed namespaces while it is missing.
-  depends_on = [kubernetes_manifest.cloud_admission_policy, kubernetes_config_map_v1.cloud_taken_hosts]
+  for_each   = { for k, v in local.cloud_admission_policies_applied : k => v if v.kind == "ValidatingAdmissionPolicyBinding" }
+  manifest   = each.value
+  depends_on = [kubernetes_manifest.cloud_admission_policy]
 }
 
 # Network floor for every Project, owned by this repo: Calico tier "cloud" and
