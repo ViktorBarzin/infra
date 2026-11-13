@@ -12,9 +12,16 @@
  *                          oauth2-proxy images, the egress exclusions, the
  *                          strip list, the Authentik slug and the namespace
  *
- * The Project holds a private App, a public App connected to a Postgres
- * Service, and the Postgres Service, so every object kind Cloud renders
- * appears at least once.
+ *   fixtures/<n>/          the same two files for each of Cloud's snapshot
+ *                          fixtures (render.fixtures.ts FIXTURES), and
+ *   fixtures.json          [{dir, name, namespace}] listing them in order
+ *
+ * The combined Project holds a private App, a public App connected to a
+ * Postgres Service, and the Postgres Service, so every object kind Cloud
+ * renders appears at least once; the forbidden variants are built from it.
+ * The fixtures are the shapes Cloud's own tests render (a Postgres-only
+ * Project, a single App, a Service removed, hostile env values), so each one
+ * is applied as well and its objects must be admitted as they are.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -43,16 +50,30 @@ const spec = {
 	},
 };
 
-const rendered = renderer.render(spec, fixtures.CTX);
-const main = structuredClone(rendered.mainTfJson);
-delete main.terraform.backend;
+async function writeRoot(dir: string, projectFile: unknown) {
+	const r = renderer.render(projectFile, fixtures.CTX);
+	const main = structuredClone(r.mainTfJson);
+	delete main.terraform.backend;
+	await mkdir(dir, { recursive: true });
+	await writeFile(join(dir, "main.tf.json"), JSON.stringify(main, null, 2));
+	await writeFile(
+		join(dir, "terraform.tfvars.json"),
+		JSON.stringify(r.tfvarsJson, null, 2),
+	);
+	return r;
+}
 
-await mkdir(out, { recursive: true });
-await writeFile(join(out, "main.tf.json"), JSON.stringify(main, null, 2));
-await writeFile(
-	join(out, "terraform.tfvars.json"),
-	JSON.stringify(rendered.tfvarsJson, null, 2),
-);
+const rendered = await writeRoot(out, spec);
+
+const list: { dir: string; name: string; namespace: string }[] = [];
+for (const [i, [name, projectFile]] of Object.entries(
+	fixtures.FIXTURES as Record<string, unknown>,
+).entries()) {
+	const dir = join("fixtures", String(i));
+	const r = await writeRoot(join(out, dir), projectFile);
+	list.push({ dir, name, namespace: r.namespace });
+}
+await writeFile(join(out, "fixtures.json"), JSON.stringify(list, null, 2));
 await writeFile(
 	join(out, "contract.json"),
 	JSON.stringify(

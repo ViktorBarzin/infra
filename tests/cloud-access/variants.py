@@ -1,6 +1,6 @@
 """Variants of the objects Cloud's modules really wrote, for cloud-access.test.sh.
 
-Usage: python3 variants.py <dump dir> <out dir> <target namespace>
+Usage: python3 variants.py <dump dir> <out dir> <target namespace> [admitted-only]
 
 Reads namespace.json and objects.json (dump.sh), strips what the API server
 added, moves every namespaced object into <target namespace>, and writes one
@@ -11,6 +11,11 @@ JSON file per case into <out dir> plus cases.tsv, one line per case:
 kr is the reconciler, ka is admin. Each object as rendered must be admitted;
 each variant changes one thing the M2 contract forbids and must be refused
 with that rule's message. The test sends every case as a server-side dry run.
+
+admitted-only writes only the cases that must be admitted: the namespace,
+every rendered object, and a pod made from each Deployment's template. The
+test uses it for Cloud's snapshot fixtures, which need not hold every kind
+(a Postgres-only Project has no Deployment).
 """
 
 import copy
@@ -19,6 +24,7 @@ import pathlib
 import sys
 
 dump, out, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+admitted_only = sys.argv[4:] == ["admitted-only"]
 out.mkdir(parents=True, exist_ok=True)
 
 namespace = json.loads((dump / "namespace.json").read_text())
@@ -79,6 +85,29 @@ def one(kind, name):
     return found[0]
 
 
+def as_pod(d, name):
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": target, "labels": d["spec"]["template"]["metadata"]["labels"],
+                     "annotations": d["spec"]["template"]["metadata"].get("annotations", {})},
+        "spec": copy.deepcopy(d["spec"]["template"]["spec"]),
+    }
+
+
+def finish():
+    with open(out / "cases.tsv", "w") as f:
+        for c in cases:
+            f.write("\t".join(c) + "\n")
+    # What the real apply produced, for the test's own checks.
+    summary = {
+        "deployments": sorted(o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"),
+        "pods": sorted(o["metadata"]["labels"].get("cloud.viktorbarzin.me/service", "") + "/" + o["metadata"]["labels"].get(COMPONENT, "") for o in objects if o["kind"] == "Pod"),
+        "kinds": sorted({o["kind"] for o in objects}),
+    }
+    (out / "summary.json").write_text(json.dumps(summary))
+
+
 def variant(obj, change):
     o = copy.deepcopy(obj)
     change(o)
@@ -90,13 +119,14 @@ ns = clean(namespace)
 ns["metadata"]["name"] = "p-variant"
 ns["metadata"]["labels"].pop("kubernetes.io/metadata.name", None)
 case("ns", "kr", "ok", "the rendered namespace (as p-variant)", ns)
-case("ns-baseline", "kr", "must carry", "namespace with Pod Security enforce=baseline",
-     variant(ns, lambda o: o["metadata"]["labels"].update({"pod-security.kubernetes.io/enforce": "baseline"})))
-for key in ["resource-governance/custom-quota", "resource-governance/custom-limitrange", "pod-security.kubernetes.io/enforce"]:
-    case("ns-no-" + key.split("/")[-1], "kr", "must carry", f"namespace without {key}",
-         variant(ns, lambda o, k=key: o["metadata"]["labels"].pop(k)))
-case("ns-extra-label", "kr", "may set only these namespace labels", "namespace with chrome-service.viktorbarzin.me/client=true",
-     variant(ns, lambda o: o["metadata"]["labels"].update({"chrome-service.viktorbarzin.me/client": "true"})))
+if not admitted_only:
+    case("ns-baseline", "kr", "must carry", "namespace with Pod Security enforce=baseline",
+         variant(ns, lambda o: o["metadata"]["labels"].update({"pod-security.kubernetes.io/enforce": "baseline"})))
+    for key in ["resource-governance/custom-quota", "resource-governance/custom-limitrange", "pod-security.kubernetes.io/enforce"]:
+        case("ns-no-" + key.split("/")[-1], "kr", "must carry", f"namespace without {key}",
+             variant(ns, lambda o, k=key: o["metadata"]["labels"].pop(k)))
+    case("ns-extra-label", "kr", "may set only these namespace labels", "namespace with chrome-service.viktorbarzin.me/client=true",
+         variant(ns, lambda o: o["metadata"]["labels"].update({"chrome-service.viktorbarzin.me/client": "true"})))
 
 # --- every object as rendered, admitted --------------------------------------
 KINDS = ["ConfigMap", "Service", "Deployment", "Ingress", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding"]
@@ -104,6 +134,12 @@ MANAGED = {"cloud.viktorbarzin.me/managed": "true"}
 for kind in KINDS:
     for o in of_kind(kind, **MANAGED):
         case(f"{kind.lower()}-{o['metadata']['name']}", "kr", "ok", f"rendered {kind} {o['metadata']['name']}", o)
+
+if admitted_only:
+    for d in of_kind("Deployment", **MANAGED):
+        case(f"pod-of-{d['metadata']['name']}", "ka", "ok", f"a pod from the rendered {d['metadata']['name']} template", as_pod(d, f"rendered-{d['metadata']['name']}"))
+    finish()
+    sys.exit(0)
 
 # --- Deployments ----------------------------------------------------------------
 apps = of_kind("Deployment", **{COMPONENT: "app"})
@@ -190,15 +226,6 @@ POD_RULES = [
 for name, change, expect in POD_RULES:
     case(f"deploy-{name}", "kr", expect, f"App Deployment with {name}", variant(app, lambda o, ch=change: ch(spec_of(o))))
 
-
-def as_pod(d, name):
-    return {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {"name": name, "namespace": target, "labels": d["spec"]["template"]["metadata"]["labels"],
-                     "annotations": d["spec"]["template"]["metadata"].get("annotations", {})},
-        "spec": copy.deepcopy(d["spec"]["template"]["spec"]),
-    }
 
 
 pod = as_pod(app, "rendered-app-pod")
@@ -478,14 +505,4 @@ case("mw-buffering-admin", "ka", "no Traefik Middleware", "a buffering Middlewar
 case("mw-headers-admin", "ka", "no Traefik Middleware", "a headers Middleware from admin",
      dict(mw, spec={"headers": {"customResponseHeaders": {"X-Frame-Options": "DENY"}}}))
 
-with open(out / "cases.tsv", "w") as f:
-    for c in cases:
-        f.write("\t".join(c) + "\n")
-
-# What the real apply produced, for the test's own checks.
-summary = {
-    "deployments": sorted(o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"),
-    "pods": sorted(o["metadata"]["labels"].get("cloud.viktorbarzin.me/service", "") + "/" + o["metadata"]["labels"].get(COMPONENT, "") for o in objects if o["kind"] == "Pod"),
-    "kinds": sorted({o["kind"] for o in objects}),
-}
-(out / "summary.json").write_text(json.dumps(summary))
+finish()
