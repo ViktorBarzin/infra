@@ -137,16 +137,14 @@ and is one User.
 
 The console's env carries `API_TOKEN_AUDIENCES=cloud,cloud-cli`,
 `AGENT_OIDC_CLIENT_ID=cloud-cli` and `AGENT_OIDC_DISCOVERY_URL` (the
-`cloud-cli` discovery document). As of 2026-11-13 the cloud code reads only the
-first: it verifies tokens against the console's own issuer, so a `cloud-cli`
-token passes the audience check and fails the issuer check. The code change
-for the API to accept `cloud-cli` tokens: verify bearer tokens against both
-discovery URLs (`OIDC_DISCOVERY_URL` with audience `cloud`,
-`AGENT_OIDC_DISCOVERY_URL` with audience `cloud-cli`), point the CLI's
-`cloud login` and the MCP Protected Resource Metadata at `AGENT_OIDC_*` in
-`agentSettings()`, and add `offline_access` to the CLI's scopes.
-`tests/cloud-deploy.test.sh` fails once the code reads the two `AGENT_OIDC_*`
-names, as a reminder to drop them from its pending list.
+`cloud-cli` discovery document). The API verifies a bearer JWT against two
+providers: the console's (`OIDC_DISCOVERY_URL`, audiences from
+`API_TOKEN_AUDIENCES`) and the agent's (`AGENT_OIDC_DISCOVERY_URL`, audience
+`AGENT_OIDC_CLIENT_ID`). Both map to one User by `sub`. `cloud login` and the
+MCP Protected Resource Metadata use the agent client; the CLI asks for
+`offline_access` and renews its sign-in with the refresh token.
+`tests/cloud-deploy.test.sh` fails if the stack sets an env name the cloud
+code does not read.
 
 **Email claim.** Authentik's managed `scope-email` mapping sends
 `email_verified: false` for every account. Cloud's owner check (M5) finds a
@@ -160,6 +158,18 @@ enrolled by a social source, on path `users/email-verified`, or carrying
 `attributes.cloud_apps_email_vouched: true`. The two expressions are copies;
 `tests/cloud-deploy.test.sh` runs both on the same accounts and fails when
 they disagree.
+
+**Follow-up: private App sign-in.** `cloud-apps` still uses the managed
+`scope-email`, so every private App's oauth2-proxy runs with
+`--insecure-oidc-allow-unverified-email=true` (`stacks/cloud/access_rules.tf`
+and the cloud repo's `modules/app/auth.tf`). The gate holds because
+`cloud-apps-active-users` admits only vouched-for accounts and users cannot
+change their email. The deferred change, in order: give `cloud_apps` the
+vouching `email` mapping (a third copy, covered by the same test), check that
+a vouched-for account's ID token carries `email_verified: true`, then drop
+the flag from both files in one change window. Dropping the flag first locks
+every private App. Steps: the cloud repo's `docs/build/m7-infra.md`,
+"Private App sign-in".
 
 **Device-code phishing.** Anyone can start a device authorization on the
 public `cloud-cli` client, and Authentik returns a link
@@ -191,20 +201,25 @@ so the Postgres series keep their own `service` label, the Cloud Service name.
 |---|---|---|
 | `cloud_reconcile_total{result}`, `cloud_reconcile_duration_seconds{kind}`, `cloud_reconcile_queue_depth` | reconciler | `CloudReconcileQueueStuck`, `CloudReconcileFailing` |
 | `cloud_postgres_database_bytes`, `cloud_postgres_database_limit_bytes`, `cloud_postgres_database_unmeasured` `{project,service}` | reconciler | `CloudPostgresDatabaseNearSize`, `CloudPostgresDatabaseUnmeasured` |
-| `cloud_project_converging_seconds{project}` | not yet exported: the reconciler, after the cloud code change below | `CloudProjectStuckConverging` |
+| `cloud_postgres_database_read_only{project,service}` | reconciler: 1 when the role is read-only because the database reached its Size's disk | `CloudPostgresReadOnly` |
+| `cloud_postgres_disk_enforcement_failed{project,service}` | reconciler: 1 while the last size pass did not enforce the disk limit | `CloudPostgresDiskEnforcementFailed` |
+| `cloud_project_converging_seconds{project}` | reconciler | `CloudProjectStuckConverging` |
 | `cloud_build_minutes_used`, `cloud_build_minutes_allowance` | not yet exported (M5, builds) | `CloudBuildMinutesHigh` |
 | `up{namespace="cloud",service="cloud-reconciler"}` | Prometheus | `CloudReconcilerDown` |
 
-**Code change for `cloud_project_converging_seconds`.** As of 2026-11-13 no
-process exports it, so `CloudProjectStuckConverging` has no input and stays
-quiet. The reconciler should export it, because it already reads desired and
-applied versions: a gauge in `src/reconciler/metrics.ts` with label `project`
-(the slug), set on each pass of the worker loop to the seconds since the
-oldest `queued` or `running` `reconcile_jobs` row whose `desired_version` is
-above its Project's `applied_version`, and removed (or 0) when there is none.
-It is scraped with the other reconciler series (`service="cloud-reconciler"`,
-the label `tests/cloud-deploy/alerts.test.yml` uses). No infra change is
-needed when it lands; `cloud_.+` is already kept.
+`cloud_project_converging_seconds` is the seconds since the oldest `queued`
+or `running` `reconcile_jobs` row whose `desired_version` is above its
+Project's `applied_version`. If a converging Project has no such job, the
+count starts at its oldest job above the applied version, else at the
+Project's creation. A Project that is not converging has no series.
+
+`cloud_postgres_disk_enforcement_failed` is 1 when the last size pass could
+not switch a role to read-only, change its CONNECT or end its sessions.
+Postgres refused or timed out, often because a Project's own session holds a
+lock on its role row and the 5 s `lock_timeout` expires. If the roles could
+not be listed at all, it is 1 for every database over its disk or already
+read-only or blocked. The pass runs every 10 minutes, so the alert's
+`for: 30m` is three failed passes.
 
 `CloudReconcileFailing` has no `for`: a failed job is not retried, so one
 failure fires the warning, which stays up while the failure is inside the
@@ -219,8 +234,8 @@ same clause for finished jobs. Zero-initialised result labels in
 `src/reconciler/metrics.ts` would let both rules drop the clause.
 
 Only `CloudReconcilerDown` and `CloudReconcileQueueStuck` page: then no Project
-change applies until an Operator acts. The other alerts are warnings about one
-Project or one database. `CloudProvisionerForeignRole`,
+change applies until an Operator acts. The other alerts are about one Project
+or one database: warnings, and `CloudPostgresReadOnly` is info. `CloudProvisionerForeignRole`,
 `CloudProjectRoleUnlimited` and `CloudProjectConnectionsOverCeiling` (M2, the
 PostgreSQL group) cover the provisioner audit. `tests/cloud-deploy.test.sh`
 runs promtool unit tests on the group.
@@ -229,7 +244,9 @@ runs promtool unit tests on the group.
 
 Builds and Deploys run in the reconciler; one switch turns them on:
 `variable "builds_enabled"` in `stacks/cloud/deploy_rules.tf`, passed as
-`BUILDS_ENABLED`. It is `false` until the GitHub tokens exist (runbook,
+`BUILDS_ENABLED` to the reconciler and the console. The console answers
+`GET /api/v1/builds` from it, so the Deploys tab and the Add Service wizard
+say that pushes do not deploy while it is `false`. It is `false` until the GitHub tokens exist (runbook,
 "Turn on builds"); `false` is also the M5 rollback. The reconciler also gets
 `FORGEJO_URL=http://forgejo.forgejo.svc.cluster.local` and
 `FORGEJO_AUTH_SOURCE_ID=1`. `forgejo admin auth list` shows source 1

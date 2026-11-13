@@ -194,14 +194,13 @@ tests:
         exp_alerts: []
 
   # A Project 30 minutes behind its desired version: warning per Project.
-  # The series is the reconciler's once the code exports it (docs/architecture/
-  # cloud.md, "Metrics").
+  # A Project that is not converging has no series.
   - interval: 2m
     input_series:
       - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="slow"}'
         values: '1500+120x10'
       - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="fine"}'
-        values: '0x10'
+        values: '60+120x10'
     alert_rule_test:
       - eval_time: 3m
         alertname: CloudProjectStuckConverging
@@ -246,6 +245,41 @@ tests:
         alertname: CloudPostgresDatabaseUnmeasured
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
+
+  # A database whose disk limit the reconciler could not enforce for three
+  # passes (30 minutes): warning per database. One failed pass that the next
+  # one fixes stays quiet.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_postgres_disk_enforcement_failed{namespace="cloud", project="a", service="x"}'
+        values: '1x25'
+      - series: 'cloud_postgres_disk_enforcement_failed{namespace="cloud", project="b", service="y"}'
+        values: '0x4 1x5 0x15'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: CloudPostgresDiskEnforcementFailed
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: CloudPostgresDiskEnforcementFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
+
+  # A database at its Size's disk and read-only for 10 minutes: info per
+  # database, no page.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_postgres_database_read_only{namespace="cloud", project="a", service="x"}'
+        values: '1x15'
+      - series: 'cloud_postgres_database_read_only{namespace="cloud", project="b", service="y"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CloudPostgresReadOnly
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: CloudPostgresReadOnly
+        exp_alerts:
+          - exp_labels: {severity: info, subsystem: cloud, project: a, service: x}
 
   # Build minutes past 70% of the account allowance: warning.
   - interval: 2m

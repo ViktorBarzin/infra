@@ -329,8 +329,10 @@ stuck Project".
 | `CloudReconcilerDown` | yes | "Restart"; look at the pod events and logs |
 | `CloudReconcileQueueStuck` | yes | "Drain the queue", then the reconciler logs for the running job |
 | `CloudReconcileFailing` | no | "Recover from a failed apply" |
-| `CloudProjectStuckConverging` | no | "Debug a stuck Project". Its metric is not exported yet ([architecture](../architecture/cloud.md), "Metrics"), so it cannot fire until the cloud code adds it |
+| `CloudProjectStuckConverging` | no | "Debug a stuck Project" |
 | `CloudPostgresDatabaseNearSize` | no | the owner picks a larger Size or deletes data |
 | `CloudPostgresDatabaseUnmeasured` | no | `log_excerpt` and the reconciler log line "measuring Cloud databases failed" |
+| `CloudPostgresDiskEnforcementFailed` | no | on the primary, find the Project session that holds a lock on its role (`SELECT pid, usename, state, query FROM pg_stat_activity WHERE usename LIKE 'p\_%' AND (state = 'idle in transaction' OR wait_event_type = 'Lock');`) and end it with `pg_terminate_backend(pid)`; the next pass, within 10 minutes, enforces the limit. The reconciler log lines are in the alert's description |
+| `CloudPostgresReadOnly` | no | none: the owner sees why in the console, and write access returns when usage drops or the Size grows |
 | `CloudBuildMinutesHigh` | no | GitHub billing page; Cloud builds stop at the Budget |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
