@@ -59,7 +59,7 @@ iframe { display: block; border: 0; width: 100%; height: 100%; }
   var here = location.origin;
   var frame = document.createElement("iframe");
   frame.setAttribute("sandbox", SANDBOX);
-  frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay");
+  frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay; geolocation");
   frame.setAttribute("allowfullscreen", "");
   frame.title = "Page";
   // rr-block: session replay records this element as a blank box, so a
