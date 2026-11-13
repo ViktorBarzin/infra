@@ -52,9 +52,9 @@ locals {
     # Bearer tokens from both Authentik clients: the console's own (device
     # code on the confidential client) and cloud-cli (public, refreshable).
     { name = "API_TOKEN_AUDIENCES", value = join(",", [local.cloud_console_name, local.cloud_cli_client_id]) },
-    # Not read by the code yet: M6 points the CLI, MCP discovery and the
-    # token verifier at cloud-cli with these (docs/architecture/cloud.md,
-    # "Agent sign-in").
+    # The agent client: the API verifies cloud-cli tokens against it, and
+    # `cloud login` and the MCP Protected Resource Metadata use it
+    # (docs/architecture/cloud.md, "Agent sign-in").
     { name = "AGENT_OIDC_CLIENT_ID", value = local.cloud_cli_client_id },
     { name = "AGENT_OIDC_DISCOVERY_URL", value = "${local.cloud_authentik_url}/application/o/${local.cloud_cli_client_id}/.well-known/openid-configuration" },
     # M5: the Metrics tab and the logs tab. In-cluster, no auth; the console
@@ -62,6 +62,10 @@ locals {
     # cloud.md, "Network").
     { name = "PROMETHEUS_URL", value = local.cloud_prometheus_url },
     { name = "LOKI_URL", value = local.cloud_loki_url },
+    # The same switch as the reconciler's: GET /api/v1/builds answers from
+    # it, and the Deploys tab and the Add Service wizard say pushes do not
+    # deploy while it is false. Unset, the console counts builds as on.
+    { name = "BUILDS_ENABLED", value = tostring(var.builds_enabled) },
   ]
 
   cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"

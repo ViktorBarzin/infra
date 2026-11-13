@@ -12,8 +12,9 @@
 #      Secret, and Reloader restarts it when one of those Secrets changes.
 #      M5: the reconciler gets every secret/cloud/system override
 #      systemSecretsFromEnv() reads as a file, builds are off unless the
-#      stack's builds_enabled says otherwise, and the console gets what
-#      buildApiSettings() and the logs tab read. The ExternalSecrets that
+#      stack's builds_enabled says otherwise, the console gets the same
+#      switch, and the console gets what buildApiSettings() and the logs
+#      tab read. The ExternalSecrets that
 #      copy secret/cloud/system render a key Vault does not hold yet as an
 #      empty value instead of failing the sync.
 #   3. The Cloud alert group in stacks/monitoring (prometheus_chart_values.tpl)
@@ -117,9 +118,8 @@ read |= set(re.findall(r'runtimeEnv\.([A-Z0-9_]+)', src))
 # Read outside env.server.ts: @viktorbarzin/pg (pgSettingsFromEnv) reads the
 # database pair, and the OS reads HOME.
 read |= {"DATABASE_URL", "DATABASE_PASSWORD_FILE", "HOME"}
-# Set ahead of the code (docs/architecture/cloud.md, "Agent sign-in"): M6
-# reads them once the API verifies cloud-cli tokens.
-pending = {"AGENT_OIDC_CLIENT_ID", "AGENT_OIDC_DISCOVERY_URL"}
+# Names set ahead of the code; none now.
+pending = set()
 
 def names(env):
     return [e["name"] for e in env]
@@ -181,8 +181,11 @@ for n in ("SECRETS_PUBLIC_KEY", "GITHUB_API_TOKEN"):
         bad.append(f"the console does not get {n} from {loc['console_system_secret']}")
     elif e.get("optional") is False:
         bad.append(f"the console's {n} must be optional")
-if "BUILDS_ENABLED" in cenv:
-    bad.append("the console gets BUILDS_ENABLED; only the reconciler reads it (buildsConfig)")
+# One switch for both processes: the console answers GET /api/v1/builds
+# from it, and counts builds as on when it is unset.
+cbuilds = {e["name"]: e["value"] for e in loc["console_env"]}.get("BUILDS_ENABLED")
+if cbuilds != renv.get("BUILDS_ENABLED"):
+    bad.append(f"the console's BUILDS_ENABLED is {cbuilds!r}, want the reconciler's {renv.get('BUILDS_ENABLED')!r}")
 # ESO renders templates with missingkey=error: `{{ .key }}` fails the whole
 # sync while the key is missing from Vault, `{{ index . "key" }}` renders "".
 for who, tpl, keys in (("reconciler", loc["reconciler_system_template"], loc["reconciler_system_keys"]),

@@ -8425,9 +8425,8 @@ serverFiles:
           - alert: CloudProjectStuckConverging
             # cloud_project_converging_seconds{project}: seconds since the
             # oldest queued or running job for a version above the Project's
-            # applied version, 0 when none. To be exported by the reconciler,
-            # a cloud code change not yet made (docs/architecture/cloud.md,
-            # "Metrics"); until then this rule has no input and stays quiet.
+            # applied version (docs/architecture/cloud.md, "Metrics"). A
+            # Project that is not converging has no series.
             expr: max by (project) (cloud_project_converging_seconds) > 1800
             for: 5m
             labels:
@@ -8459,6 +8458,27 @@ serverFiles:
             annotations:
               summary: "Cloud cannot measure Postgres {{ $labels.project }}/{{ $labels.service }}"
               description: "The reconciler could not measure this database for 15 minutes, so the 80% alert cannot see it. Its owner may have revoked CONNECT from cloud_provisioner, or the database is missing. Reconciler log line: measuring Cloud databases failed."
+          - alert: CloudPostgresDiskEnforcementFailed
+            # cloud_postgres_disk_enforcement_failed: 1 while the reconciler's last
+            # size pass did not enforce this database's disk (src/reconciler/disk-limits.ts).
+            # A pass runs every 10 minutes, so 30m is three failed passes.
+            expr: max by (project, service) (cloud_postgres_disk_enforcement_failed) == 1
+            for: 30m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud cannot enforce the disk limit of Postgres {{ $labels.project }}/{{ $labels.service }}"
+              description: "For 30 minutes the reconciler could not switch this database's role to read-only, change its CONNECT, or end its sessions. The usual cause is a session of the Project's own database holding a lock on its role row, which makes the 5 s lock_timeout expire. While this lasts, the database can grow past its Size. Reconciler log lines: changing a Cloud role's write access failed, changing a Cloud role's CONNECT failed, ending a Cloud role's sessions failed, reading Cloud roles' write access failed. Find the blocking session on the primary: SELECT pid, usename, state, query FROM pg_stat_activity WHERE usename LIKE 'p\\_%' AND (state = 'idle in transaction' OR wait_event_type = 'Lock'); then end it with pg_terminate_backend(pid). The next pass enforces the limit. Runbook: docs/runbooks/cloud.md, \"Alerts\"."
+          - alert: CloudPostgresReadOnly
+            expr: max by (project, service) (cloud_postgres_database_read_only) == 1
+            for: 10m
+            labels:
+              severity: info
+              subsystem: cloud
+            annotations:
+              summary: "Cloud Postgres {{ $labels.project }}/{{ $labels.service }} is full and read-only"
+              description: "The database reached its Size's disk, so its role is read-only. The owner sees why in the console. Write access returns when usage drops or the Size grows."
           - alert: CloudBuildMinutesHigh
             # cloud_build_minutes_used and cloud_build_minutes_allowance: the
             # GitHub Actions minutes this month and the account's allowance.
