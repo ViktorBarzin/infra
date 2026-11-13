@@ -103,7 +103,7 @@ if got != want:
 
 # 2. Env contract. Names the code reads: env("X"), list("X"), the number
 # helpers, and secret("X") / required("X"), which also read X_FILE.
-read = set(re.findall(r'\b(?:env|list|wholeNumber|positiveNumber)\("([A-Z0-9_]+)"', src))
+read = set(re.findall(r'\b(?:env|list|wholeNumber|positiveNumber|pinnedImage)\("([A-Z0-9_]+)"', src))
 secrets = set(re.findall(r'\b(?:secret|required)\("([A-Z0-9_]+)"', src))
 required = set(re.findall(r'\brequired\("([A-Z0-9_]+)"', src))
 # systemSecretsFromEnv() reads its names from a table: ["key", "NAME"].
