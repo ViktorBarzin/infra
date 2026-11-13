@@ -1822,6 +1822,11 @@ variable "pg_cluster_v18_instances" {
 # queue fills, and once it is full every NOTIFY on the cluster fails at COMMIT.
 # Alert PGNotifyQueueHigh (stacks/monitoring) fires above 0.5 for 5m.
 #
+# cloud_provisioner_foreign_roles (Cloud, 2026-11-13): the number of roles Cloud's
+# provisioner administers whose name is not p_*, which pg_hba does not confine
+# (cloud_postgres_rules.tf, local.cloud_provisioner_audit_sql). Alert
+# CloudProvisionerForeignRole (stacks/monitoring) pages above 0.
+#
 # The cnpg.io/reload label makes the instances reload a changed ConfigMap without a
 # restart or a re-apply of the Cluster.
 resource "kubernetes_config_map" "pg_custom_queries" {
@@ -1841,6 +1846,13 @@ resource "kubernetes_config_map" "pg_custom_queries" {
           - usage:
               usage: "GAUGE"
               description: "Fraction of the cluster-wide NOTIFY queue in use (0 to 1). NOTIFY fails at COMMIT once it reaches 1."
+      cloud_provisioner_foreign_roles:
+        query: ${jsonencode(join(" ", [for l in split("\n", trimspace(local.cloud_provisioner_audit_sql)) : trimspace(l)]))}
+        primary: true
+        metrics:
+          - count:
+              usage: "GAUGE"
+              description: "Roles that Cloud's cloud_provisioner administers and whose name is not p_*; pg_hba does not confine them. Should be 0."
     EOT
   }
 }

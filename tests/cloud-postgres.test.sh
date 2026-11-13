@@ -18,7 +18,11 @@
 #   granting cloud_projects to an existing role (tasks, postgres) changes
 #     nothing about where it can connect;
 #   cloud_state reaches only the cloud_state database;
-#   an existing app role (tasks) still reaches its own database.
+#   an existing app role (tasks) still reaches its own database;
+#   the audit query behind alert CloudProvisionerForeignRole counts every
+#     role cloud_provisioner administers that is not named p_*, also after a
+#     rename, a revoke of its own ADMIN OPTION, or through a p_* role it gave
+#     CREATEROLE.
 # Needs docker and the postgres:18 image.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,7 +36,8 @@ trap cleanup EXIT
 
 cp "$SRC" "$TMP/" || { echo "FAIL: cannot copy $SRC"; exit 1; }
 if ! (cd "$TMP" && echo 'local.cloud_roles_sql' | terraform console >"$TMP/sql.raw" 2>"$TMP/err" \
-  && echo 'jsonencode(local.cloud_pg_hba)' | terraform console >"$TMP/hba.raw" 2>>"$TMP/err"); then
+  && echo 'jsonencode(local.cloud_pg_hba)' | terraform console >"$TMP/hba.raw" 2>>"$TMP/err" \
+  && echo 'local.cloud_provisioner_audit_sql' | terraform console >"$TMP/audit.raw" 2>>"$TMP/err"); then
   echo "FAIL: terraform console could not evaluate $SRC (it must hold only locals)"; cat "$TMP/err"; exit 1
 fi
 # terraform console prints a multi-line string as <<EOT ... EOT and a
@@ -40,17 +45,18 @@ fi
 python3 - "$TMP" <<'PY' || exit 1
 import json, sys, pathlib
 d = pathlib.Path(sys.argv[1])
-raw = (d / "sql.raw").read_text().rstrip("\n")
-lines = raw.splitlines()
-if lines and lines[0].startswith("<<"):
-    marker = lines[0].lstrip("<-")
-    body = lines[1:]
-    if body and body[-1].strip() == marker:
-        body = body[:-1]
-    sql = "\n".join(body) + "\n"
-else:
-    sql = json.loads(raw)
-(d / "cloud.sql").write_text(sql)
+def heredoc(name):
+    raw = (d / name).read_text().rstrip("\n")
+    lines = raw.splitlines()
+    if lines and lines[0].startswith("<<"):
+        marker = lines[0].lstrip("<-")
+        body = lines[1:]
+        if body and body[-1].strip() == marker:
+            body = body[:-1]
+        return "\n".join(body) + "\n"
+    return json.loads(raw)
+(d / "cloud.sql").write_text(heredoc("sql.raw"))
+(d / "audit.sql").write_text(heredoc("audit.raw"))
 hba = json.loads(json.loads((d / "hba.raw").read_text()))
 (d / "rules.json").write_text(json.dumps(hba))
 PY
@@ -181,6 +187,27 @@ expect_ok "provisioner grants cloud_projects to tasks and postgres (ADMIN OPTION
 expect_ok "tasks, now in cloud_projects, still reaches tasks" as tasks tasks -c 'select 1'
 expect_ok "tasks, now in cloud_projects, still reaches dawarich_queue" as tasks dawarich_queue -c 'select 1'
 expect_ok "postgres, now in cloud_projects, still reaches tasks over TCP" as postgres tasks -c 'select 1'
+
+# --- the audit behind CloudProvisionerForeignRole -----------------------------
+# What the CNPG exporter runs (local.cloud_provisioner_audit_sql): roles that
+# cloud_provisioner administers, directly or through a role it administers,
+# whose name is not p_*.
+audit() { docker exec -i "$NAME" psql -U postgres -X -q -tA -f - <"$TMP/audit.sql"; }
+n="$(audit 2>&1)"; [ "$n" = "0" ] && ok "audit counts 0 with only p_* Project roles" || bad "audit with only p_* roles: $n"
+expect_ok "provisioner creates evil, a LOGIN role not named p_*" \
+  as cloud_provisioner postgres -c "CREATE ROLE evil LOGIN PASSWORD 'pw-evil'"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts evil" || bad "audit after evil: $n"
+as cloud_provisioner postgres -c "REVOKE ADMIN OPTION FOR evil FROM cloud_provisioner" >/dev/null 2>&1
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "provisioner cannot hide evil by revoking its own ADMIN OPTION" || bad "audit after the revoke: $n"
+expect_ok "provisioner drops evil" as cloud_provisioner postgres -c "DROP ROLE evil"
+expect_ok "provisioner creates p_ren and renames it to sneaky" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_ren NOLOGIN IN ROLE cloud_projects" -c "ALTER ROLE p_ren RENAME TO sneaky"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a Project role renamed away from p_*" || bad "audit after the rename: $n"
+as cloud_provisioner postgres -c "DROP ROLE sneaky" >/dev/null
+expect_ok "provisioner creates p_maker with CREATEROLE" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_maker NOLOGIN CREATEROLE IN ROLE cloud_projects"
+expect_ok "p_maker creates sneaky2" sup -c "SET ROLE p_maker" -c "CREATE ROLE sneaky2 LOGIN"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a role made by a role the provisioner made" || bad "audit through p_maker: $n"
 
 # --- nothing else changed ----------------------------------------------------
 expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'
