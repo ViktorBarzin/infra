@@ -176,7 +176,8 @@ docs = [
 (d / "project_role").write_text(k["project_role"])
 
 # The contract between Cloud's renderer and infra, and the floor's shape.
-# Calico is not in kind, so the floor is checked as data.
+# Calico is not in this kind cluster, so the floor is checked as data here;
+# tests/cloud-calico.test.sh runs it on a real Calico.
 problems = []
 if contract["images"]["edge"] != k["edge"]["image"]:
     problems.append(f"edge image: Cloud renders {contract['images']['edge']}, infra requires {k['edge']['image']}")
