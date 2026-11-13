@@ -20,7 +20,7 @@ resource "authentik_system_settings" "settings" {
   avatars                  = "gravatar,initials"
   default_user_change_name = true
   # Keep false: Cloud's private Apps admit users by the email in Authentik's
-  # token (oauth2-proxy allowlist, cloud-reconciler.tf), so a user who could
+  # token (oauth2-proxy allowlist, cloud-apps.tf), so a user who could
   # set their own email could sign in as anyone on an allowlist.
   default_user_change_email    = false
   default_user_change_username = false

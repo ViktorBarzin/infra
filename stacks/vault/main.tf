@@ -742,8 +742,8 @@ resource "vault_policy" "ci" {
     path "secret/data/platform" {
       capabilities = ["create", "read", "update"]
     }
-    # stacks/authentik writes the Cloud reconciler's Authentik token here
-    # (cloud-reconciler.tf). Only this one path; the rest of secret/cloud/*
+    # stacks/authentik writes the shared Cloud Apps client here
+    # (cloud-apps.tf). Only this one path; the rest of secret/cloud/*
     # belongs to Cloud's reconciler.
     path "secret/data/cloud/system" {
       capabilities = ["create", "read", "update"]
