@@ -133,6 +133,16 @@ consent stage asks every time (`always_require`) and names "Cloud CLI": the
 person must confirm before any token is issued. The stock explicit-consent
 flow remembers consent for weeks, so it would not stop a second link.
 
+The consent screen in authentik 2026.8 shows "You're about to sign into Cloud
+CLI." and the scopes, but not the user code or who started the sign-in. The
+flow title is the heading of that screen, so it carries the warning:
+"Continue only if you ran cloud login yourself in the last few minutes.
+Whoever started this sign-in gets your Cloud access." The remaining risk is a
+person who clicks Allow on a link they did not start: the link fills in the
+code, so one click still grants that person's 30-day refresh token to the
+sender. To make the code typed by hand, a Traefik middleware could strip the
+`code` query parameter from authentik's `/device`; that is not in place.
+
 ## Metrics
 
 The reconciler serves `/metrics` on 9090; Kubernetes Service `cloud-reconciler` carries
@@ -162,10 +172,14 @@ needed when it lands; `cloud_.+` is already kept.
 `CloudReconcileFailing` has no `for`: a failed job is not retried, so one
 failure fires the warning, which stays up while the failure is inside the
 15-minute window. prom-client creates the `result="failed"` series at its
-first increment, which `increase()` cannot see; the rule's `offset` clause
-counts a series newer than the window as a failure, so the first failure after
-a restart fires too. `CloudReconcileQueueStuck` uses the same clause for
-finished jobs.
+first increment, which `increase()` cannot see. The rule's
+`last_over_time(...[1h] offset 15m)` clause counts a series with no sample in
+the hour before the window as new, so the first failure after a restart fires
+too: a restarted pod has a new `instance` label. A scrape gap shorter than an
+hour, such as a Prometheus restart, does not make an old failure look new; a
+longer gap can fire one false warning. `CloudReconcileQueueStuck` uses the
+same clause for finished jobs. Zero-initialised result labels in
+`src/reconciler/metrics.ts` would let both rules drop the clause.
 
 Only `CloudReconcilerDown` and `CloudReconcileQueueStuck` page: then no Project
 change applies until an Operator acts. The other alerts are warnings about one

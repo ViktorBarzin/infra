@@ -65,14 +65,39 @@ a running build) and
 2026-11-13 run the full test suite and build and deploy only the console, so
 the reconciler would stay in `ImagePullBackOff`.
 
-1. In a clean clone of `viktor/cloud` on master, copy them in and stage them,
-   without committing:
-   `cp ~/code/infra/docs/architecture/cloud-ci/build.yml .github/workflows/build.yml`,
-   `cp ~/code/infra/docs/architecture/cloud-ci/deploy.yml .woodpecker/deploy.yml`,
-   `git add .github/workflows/build.yml .woodpecker/deploy.yml`.
-2. Register the repo. `--keep-workflows` keeps the two files from step 1, and
-   the script commits what is staged and pushes it only after Woodpecker knows
-   the repo, so the first build can trigger the deploy:
+The onboarding script refuses a clone with uncommitted or staged files, and
+with `--keep-workflows` it commits nothing. So register first, then commit the
+two files yourself. The mirror is made with Actions off, so the script's first
+mirror sync of the old files runs no build.
+
+1. Make the mirror and turn its Actions off. `gh` acts as the PAT's owner, as
+   the script does:
+
+```sh
+vault login -method=oidc
+export GH_TOKEN="$(vault kv get -field=github_pat secret/viktor)"
+gh repo create ViktorBarzin/cloud --private \
+  --description "One-way mirror of forgejo viktor/cloud. Do NOT commit here (ADR-0002)"
+gh api -X PUT repos/ViktorBarzin/cloud/actions/permissions -F enabled=false
+```
+
+2. Give the clone an https Forgejo remote. The script finds the remote whose
+   URL has `forgejo.viktorbarzin.me` and takes the token from it or from
+   `~/.git-credentials`; an `origin` of `git@git.viktorbarzin.me:...` does not
+   match. Then bring the clone to a clean, current master:
+
+```sh
+cd ~/code/cloud
+git remote get-url forgejo >/dev/null 2>&1 || \
+  git remote add forgejo https://forgejo.viktorbarzin.me/viktor/cloud.git
+git switch master && git status --porcelain   # must print nothing
+```
+
+3. Register the repo. It finds the mirror and keeps it private, sets
+   `WOODPECKER_TOKEN`, `FORGEJO_GIT_TOKEN` and `SLACK_WEBHOOK`, adds the
+   Forgejo push mirror and syncs it, registers the mirror in Woodpecker, and
+   sets `WOODPECKER_REPO_ID` and `FORGEJO_REPO`. It ends with "no changes to
+   commit — SKIP", which is expected here:
 
 ```sh
 cd ~/code/infra
@@ -81,12 +106,25 @@ scripts/offinfra-onboard cloud --clone ~/code/cloud --visibility private \
   --deploy "cloud-reconciler=reconciler" --keep-workflows
 ```
 
-It makes the private GitHub mirror, sets `WOODPECKER_TOKEN`,
-`FORGEJO_GIT_TOKEN` and `SLACK_WEBHOOK`, registers the mirror in Woodpecker and
-sets `WOODPECKER_REPO_ID` and `FORGEJO_REPO`, then commits and pushes master,
-which starts the first build. Both ghcr packages are private;
-Kyverno copies `ghcr-credentials` into `cloud`. Watch the first run end to end:
-GitHub Actions run, Woodpecker deploy, then
+4. Turn Actions back on, then commit the two files and push master. The push
+   starts the first build of both images, and Woodpecker already knows the
+   repo, so the build triggers the deploy:
+
+```sh
+gh api -X PUT repos/ViktorBarzin/cloud/actions/permissions -F enabled=true
+cd ~/code/cloud
+cp ~/code/infra/docs/architecture/cloud-ci/build.yml .github/workflows/build.yml
+cp ~/code/infra/docs/architecture/cloud-ci/deploy.yml .woodpecker/deploy.yml
+git add .github/workflows/build.yml .woodpecker/deploy.yml
+git commit -m "Build both images on master pushes and deploy both"
+git push forgejo master
+unset GH_TOKEN
+```
+
+The push changes no file under `cli/`, so `cli-release.yml` does not run.
+Both ghcr packages are private; Kyverno copies `ghcr-credentials` into
+`cloud`. Watch the first run end to end: `gh run list -R ViktorBarzin/cloud
+--limit 3`, the Woodpecker deploy, then
 `kubectl -n cloud get deploy cloud cloud-reconciler -o wide`. The deploy
 reports the reconciler's rollout without waiting for it, because the old pod
 may first finish a job of up to 3780 s.

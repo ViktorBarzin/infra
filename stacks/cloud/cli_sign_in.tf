@@ -27,7 +27,11 @@
 # a link and get the Operator's tokens. This flow always shows a consent
 # screen that names "Cloud CLI", every time: the stock explicit-consent flow's
 # stage remembers consent for weeks (mode expiring, checked live 2026-11-13),
-# which would make every later link one click again.
+# which would make every later link one click again. The consent screen shows
+# neither the user code nor who started the sign-in, so the flow title, the
+# heading of that screen, tells the person when to stop. A prefilled link
+# still needs only the one Allow click (docs/architecture/cloud.md,
+# "Device-code phishing").
 resource "authentik_stage_consent" "cloud_cli" {
   name = "cloud-cli-consent"
   mode = "always_require"
@@ -36,7 +40,7 @@ resource "authentik_stage_consent" "cloud_cli" {
 resource "authentik_flow" "cloud_cli_authorization" {
   name           = "Cloud CLI authorization"
   slug           = "cloud-cli-authorization"
-  title          = "Allow Cloud CLI to act as you"
+  title          = "Continue only if you ran cloud login yourself in the last few minutes. Whoever started this sign-in gets your Cloud access."
   designation    = "authorization"
   authentication = "require_authenticated"
 }

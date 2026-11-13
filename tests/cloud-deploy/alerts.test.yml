@@ -88,6 +88,19 @@ tests:
       - eval_time: 35m
         alertname: CloudReconcileQueueStuck
         exp_alerts: []
+  # A 10-minute scrape gap (40m to 50m) does not make the old series count
+  # as a finished job: the queue, stuck since 20m, still pages.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
+        values: '0x10 3x10 _x5 3x60'
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
+        values: '5x20 _x5 5x60'
+    alert_rule_test:
+      - eval_time: 1h40m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts:
+          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
 
   # A job failed after all its attempts: warning, no page, for as long as the
   # failure is inside the 15-minute window. Retries alone are quiet.
@@ -166,6 +179,19 @@ tests:
         alertname: CloudReconcileFailing
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud}
+  # An old failure, then a 10-minute scrape gap (40m to 50m) with no new
+  # failure: quiet, before and after the gap.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '1x20 _x5 1x30'
+    alert_rule_test:
+      - eval_time: 1h4m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+      - eval_time: 1h20m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
 
   # A Project 30 minutes behind its desired version: warning per Project.
   # The series is the reconciler's once the code exports it (docs/architecture/
