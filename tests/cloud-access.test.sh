@@ -9,11 +9,15 @@
 #
 # What it proves:
 #   - the reconciler cannot read Secrets outside a Project namespace;
-#   - it creates only p-* namespaces carrying the managed label and tier 4-aux,
-#     cannot label or delete other namespaces, and writes only in managed
-#     namespaces, even where RBAC would let it;
-#   - it can bind the project role in its namespaces and no stronger role;
-#   - in managed namespaces an ExternalSecret cannot use a ClusterSecretStore;
+#   - it creates only p-* namespaces carrying the managed label, tier 4-aux and
+#     Pod Security baseline or restricted, sets no other label (keys others
+#     set may stay), cannot label or delete other namespaces, and writes only
+#     in managed namespaces, even where RBAC would let it;
+#   - Pod Security then refuses a hostPath pod in a Project namespace;
+#   - it can bind the project role, only to itself, and no stronger role;
+#   - in managed namespaces an ExternalSecret cannot use a ClusterSecretStore,
+#     a Service is ClusterIP without externalIPs, and an Ingress host is one
+#     unreserved label under viktorbarzin.me;
 #   - Vault's cloud-project role admits only service account cloud-secrets in a
 #     labelled namespace, only once Vault may read namespaces, and its token
 #     reads only secret/cloud/<its namespace>/*;
@@ -24,7 +28,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 KIND_IMAGE="${CLOUD_ACCESS_KIND_IMAGE:-kindest/node:v1.35.0}"
-ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-2.12.0}"
+# The External Secrets chart version the cluster runs, read from its stack.
+ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/external-secrets/main.tf")}"
 CLUSTER="cloud-access-$$"
 TMP="$(mktemp -d)"
 VAULT_PID=""
@@ -161,10 +166,12 @@ apply_as() { local who="$1"; shift; "$who" apply -f - "$@"; }
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION CRDs"; fi
 
-ns_doc() { # name managed tier
+ns_doc() { # name managed tier [pod-security level, default baseline; "-" for none] [extra label line]
   printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n' "$1"
   [ -n "$2" ] && printf '    cloud.viktorbarzin.me/managed: "%s"\n' "$2"
   [ -n "$3" ] && printf '    tier: "%s"\n' "$3"
+  [ "${4:-baseline}" != "-" ] && printf '    pod-security.kubernetes.io/enforce: "%s"\n' "${4:-baseline}"
+  [ -n "${5:-}" ] && printf '    %s\n' "$5"
   true
 }
 rb_doc() { # namespace clusterrole
@@ -193,11 +200,32 @@ expect_ok   "admin creates homelab-app, a namespace Cloud does not own" ka creat
 expect_fail "reconciler cannot delete homelab-app" "cloud-reconciler may manage only" kr delete namespace homelab-app --wait=false
 expect_ok   "admin creates p-adopt without the label" apply_as ka < <(ns_doc p-adopt "" 4-aux)
 expect_fail "reconciler cannot adopt p-adopt by labelling it" "may not label an existing namespace" kr label namespace p-adopt cloud.viktorbarzin.me/managed=true
+expect_fail "reconciler cannot create p-nopsa without a Pod Security label" "pod-security.kubernetes.io/enforce=baseline or restricted" apply_as kr < <(ns_doc p-nopsa true 4-aux -)
+expect_fail "reconciler cannot create p-priv with Pod Security privileged" "pod-security.kubernetes.io/enforce=baseline or restricted" apply_as kr < <(ns_doc p-priv true 4-aux privileged)
+expect_fail "reconciler cannot create p-x with chrome-service.viktorbarzin.me/client=true" "may set only these namespace labels" \
+  apply_as kr < <(ns_doc p-x true 4-aux baseline 'chrome-service.viktorbarzin.me/client: "true"')
+expect_fail "reconciler cannot add resource-governance/custom-quota=true to p-demo" "may set only these namespace labels" kr label namespace p-demo resource-governance/custom-quota=true
+expect_fail "reconciler cannot drop the Pod Security label from p-demo" "pod-security.kubernetes.io/enforce=baseline or restricted" kr label namespace p-demo pod-security.kubernetes.io/enforce-
+expect_ok   "reconciler raises p-demo to restricted" kr label --overwrite namespace p-demo pod-security.kubernetes.io/enforce=restricted
+expect_ok   "admin stamps a label on p-demo (as Kyverno does)" ka label namespace p-demo goldilocks.fairwinds.com/vpa-update-mode=off
+expect_ok   "reconciler updates p-demo while keeping that label" kr label --overwrite namespace p-demo pod-security.kubernetes.io/enforce=baseline
+expect_fail "reconciler cannot change the label someone else set" "may set only these namespace labels" kr label --overwrite namespace p-demo goldilocks.fairwinds.com/vpa-update-mode=auto
+expect_fail "Pod Security refuses a hostPath pod in p-demo, even from admin" "violates PodSecurity" \
+  ka run hostpath -n p-demo --image=busybox --dry-run=server --overrides='{"spec":{"volumes":[{"name":"root","hostPath":{"path":"/"}}],"containers":[{"name":"hostpath","image":"busybox","volumeMounts":[{"name":"root","mountPath":"/host"}]}]}}'
+expect_fail "Pod Security refuses a privileged pod in p-demo" "violates PodSecurity" \
+  ka run priv -n p-demo --image=busybox --dry-run=server --overrides='{"spec":{"containers":[{"name":"priv","image":"busybox","securityContext":{"privileged":true}}]}}'
 
 # --- RoleBindings and writes inside namespaces -------------------------------
 expect_ok   "reconciler binds the project role in p-demo" apply_as kr < <(rb_doc p-demo "$PROJECT_ROLE")
 expect_fail "reconciler cannot bind admin in p-demo" "forbidden" apply_as kr < <(rb_doc p-demo admin)
 expect_fail "reconciler cannot bind the project role in default" "cloud-reconciler may write only" apply_as kr < <(rb_doc default "$PROJECT_ROLE")
+rb_subject_doc() { # namespace subject-yaml
+  printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: probe-subject\n  namespace: %s\nsubjects:\n- %s\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: %s\n' "$1" "$2" "$PROJECT_ROLE"
+}
+expect_fail "reconciler cannot bind the project role to another namespace's service account" "may bind only" \
+  apply_as kr < <(rb_subject_doc p-demo '{kind: ServiceAccount, name: default, namespace: p-other}')
+expect_fail "reconciler cannot bind the project role to system:authenticated" "may bind only" \
+  apply_as kr < <(rb_subject_doc p-demo '{kind: Group, apiGroup: rbac.authorization.k8s.io, name: "system:authenticated"}')
 expect_ok   "reconciler writes a ConfigMap in p-demo" apply_as kr < <(cm_doc p-demo)
 expect_ok   "reconciler reads Secrets in p-demo" kr get secrets -n p-demo
 expect_fail "reconciler cannot write in p-other before binding there" "forbidden" apply_as kr < <(cm_doc p-other)
@@ -232,6 +260,35 @@ expect_fail "an ExternalSecret on a ClusterSecretStore is refused in p-demo" "mu
 expect_fail "admin is refused the same in p-demo" "must be a SecretStore" apply_as ka < <(es_doc p-demo ClusterSecretStore)
 expect_fail "a data[] sourceRef to a ClusterSecretStore is refused in p-demo" "data\\[\\]" apply_as kr < <(es_doc p-demo SecretStore ClusterSecretStore)
 expect_ok   "a ClusterSecretStore reference outside managed namespaces is untouched" apply_as ka < <(es_doc default ClusterSecretStore)
+
+# --- Services -----------------------------------------------------------------
+svc_doc() { # ns name spec-yaml
+  printf 'apiVersion: v1\nkind: Service\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
+}
+expect_ok   "a ClusterIP Service is admitted in p-demo" apply_as kr < <(svc_doc p-demo web '{ports: [{port: 80}], selector: {app: web}}')
+expect_fail "an ExternalName Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo ext '{type: ExternalName, externalName: vault.vault.svc.cluster.local}')
+expect_fail "a LoadBalancer Service is refused in p-demo" "must be type ClusterIP" apply_as kr < <(svc_doc p-demo lb '{type: LoadBalancer, ports: [{port: 80}]}')
+expect_fail "a NodePort Service is refused in p-demo, even from admin" "must be type ClusterIP" apply_as ka < <(svc_doc p-demo np '{type: NodePort, ports: [{port: 80}]}')
+expect_fail "externalIPs are refused in p-demo" "externalIPs" apply_as kr < <(svc_doc p-demo eip '{ports: [{port: 80}], externalIPs: [192.168.1.10]}')
+expect_ok   "an ExternalName Service outside managed namespaces is untouched" apply_as ka < <(svc_doc default ext '{type: ExternalName, externalName: example.com}')
+
+# --- Ingresses ----------------------------------------------------------------
+ing_doc() { # ns name spec-yaml
+  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
+}
+rule() { printf '{host: "%s", http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}}' "$1"; }
+expect_ok   "an Ingress for demo.viktorbarzin.me is admitted in p-demo" apply_as kr < <(ing_doc p-demo ok "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: [demo.viktorbarzin.me]}]}")
+expect_fail "a wildcard Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo wild "{rules: [$(rule '*.viktorbarzin.me')]}")
+expect_fail "a two-level Ingress host is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo deep "{rules: [$(rule a.b.viktorbarzin.me)]}")
+expect_fail "an Ingress host on another domain is refused in p-demo" "one label, no wildcard" apply_as kr < <(ing_doc p-demo other "{rules: [$(rule demo.example.com)]}")
+expect_fail "a wildcard TLS host is refused in p-demo" "TLS host" apply_as kr < <(ing_doc p-demo wildtls "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: ['*.viktorbarzin.me']}]}")
+expect_fail "a host-less Ingress rule is refused in p-demo" "needs a host" \
+  apply_as kr < <(ing_doc p-demo nohost '{rules: [{http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}}]}')
+expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" apply_as kr < <(ing_doc p-demo defb '{defaultBackend: {service: {name: web, port: {number: 80}}}}')
+expect_fail "the reserved name vault is refused in p-demo" "reserved name" apply_as kr < <(ing_doc p-demo vault "{rules: [$(rule vault.viktorbarzin.me)]}")
+expect_fail "the reserved name cloud is refused in p-demo, even from admin" "reserved name" apply_as ka < <(ing_doc p-demo cloud "{rules: [$(rule cloud.viktorbarzin.me)]}")
+expect_fail "auth-prefixed names are refused in p-demo" "reserved name" apply_as kr < <(ing_doc p-demo authx "{rules: [$(rule authx.viktorbarzin.me)]}")
+expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka < <(ing_doc default wild "{rules: [$(rule '*.viktorbarzin.me')]}")
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
 
