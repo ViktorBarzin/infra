@@ -19,6 +19,14 @@ spec:
         apiVersions: [v1]
         operations: [CREATE]
         resources: [pods]
+    # Cloud's Project namespaces keep their CPU limits: Cloud's ResourceQuota
+    # there counts limits.cpu, and quota admission refuses a pod with no CPU
+    # limit (stacks/cloud access_rules.tf).
+    namespaceSelector:
+      matchExpressions:
+        - key: cloud.viktorbarzin.me/managed
+          operator: NotIn
+          values: ["true"]
   matchConditions:
     - name: has-a-cpu-limit
       expression: >-

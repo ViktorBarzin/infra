@@ -344,6 +344,11 @@ resource "kubectl_manifest" "cleanup_failed_pods" {
 # nvidia gpu-operator) still ship CPU limits — this strips them declaratively
 # so we don't have to fork values.yaml per chart.
 #
+# Cloud's Project namespaces (label cloud.viktorbarzin.me/managed=true) are
+# skipped: Cloud's own ResourceQuota there counts limits.cpu, so a pod whose CPU
+# limit was stripped would be refused by quota admission, which runs after this
+# mutation. Projects keep the CPU limit of their Size.
+#
 # Scope: admission-time only. Existing pods keep their limits until restarted
 # naturally (Helm upgrade, node drain, rollout). No mutateExistingOnPolicyUpdate.
 #
