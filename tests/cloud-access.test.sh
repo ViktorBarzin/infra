@@ -24,7 +24,10 @@
 #     pods, App pods only edge pods, and ends in Deny;
 #   - Cloud's modules apply a private App, a public App and a Postgres Service
 #     as the reconciler, every Deployment's pod is admitted (Pod Security
-#     restricted, cloud-managed-pod), and the destroy succeeds;
+#     restricted, cloud-managed-pod), and the destroy succeeds; then the same
+#     for each of Cloud's snapshot fixtures (render.fixtures.ts FIXTURES: one
+#     App, one Postgres with no pods, a Service removed, hostile env values
+#     and the rest), each object and a pod from each template admitted again;
 #   - each rendered object is admitted again as a dry run, and each variant
 #     the M2 contract forbids is refused with its rule's message: namespace
 #     labels, volumes other than emptyDir/configMap/secret/projected/
@@ -551,10 +554,43 @@ run "apply" {
   command = apply
 }
 EOF
+# TOFU_DIR is the root module to run, DUMP_DIR where dump.sh saves its objects.
+TOFU_DIR="$TMP/tofu" DUMP_DIR="$TMP/dump"
 tofu() {
-  (cd "$TMP/tofu" && env HOME="$TMP/home" TF_CLI_CONFIG_FILE="$TMP/tofu/tofurc" TF_IN_AUTOMATION=1 \
+  (cd "$TOFU_DIR" && env HOME="$TMP/home" TF_CLI_CONFIG_FILE="$TMP/tofu/tofurc" TF_IN_AUTOMATION=1 \
     KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
-    CLOUD_DUMP_DIR="$TMP/dump" CLOUD_DUMP_SCRIPT="$HERE/tests/cloud-access/dump.sh" "$TOFU" "$@")
+    CLOUD_DUMP_DIR="$DUMP_DIR" CLOUD_DUMP_SCRIPT="$HERE/tests/cloud-access/dump.sh" "$TOFU" "$@")
+}
+# What the dump of one apply shows: no pod refused, a pod for every
+# Deployment, and (with all-kinds) every kind the combined Project has.
+pods_check() { # <dump dir> <cases dir> [all-kinds]
+  python3 - "$1" "$2" "${3:-}" <<'PY2'
+import json, sys, pathlib
+dump, cases, all_kinds = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3] == "all-kinds"
+s = json.loads((cases / "summary.json").read_text())
+events = json.loads((dump / "events.json").read_text())["items"]
+failed = [e["message"] for e in events if e.get("reason") == "FailedCreate"]
+want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
+problems = []
+if failed: problems.append("pods refused: " + " | ".join(failed))
+if len(s["pods"]) < len(s["deployments"]): problems.append(f"{len(s['pods'])} pods for {len(s['deployments'])} Deployments {s['deployments']}")
+if all_kinds and want - set(s["kinds"]): problems.append(f"kinds missing from the render: {sorted(want - set(s['kinds']))}")
+print("; ".join(problems) if problems else f"{len(s['pods'])} pods for Deployments {', '.join(s['deployments']) or '(none)'}")
+sys.exit(1 if problems else 0)
+PY2
+}
+# Sends every case variants.py wrote as a server-side dry run; sets CASES_RUN.
+run_cases() { # <cases dir>
+  local file who expect what n=0
+  while IFS=$'\t' read -r -u 3 file who expect what; do
+    n=$((n + 1))
+    if [ "$expect" = "ok" ]; then
+      expect_ok "admitted: $what" "$who" create --dry-run=server -f "$1/$file"
+    else
+      expect_fail "refused: $what" "$expect" "$who" create --dry-run=server -f "$1/$file"
+    fi
+  done 3<"$1/cases.tsv"
+  CASES_RUN=$n
 }
 if ! tofu init -backend=false -input=false -no-color -plugin-dir="$TOFU_PLUGINS" >"$TMP/tofu-init.log" 2>&1; then
   bad "tofu init of Cloud's modules: $(tail -20 "$TMP/tofu-init.log")"
@@ -565,36 +601,48 @@ else
 fi
 
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
-  check="$(python3 - "$TMP" <<'PY'
-import json, sys, pathlib
-d = pathlib.Path(sys.argv[1])
-s = json.loads((d / "cases" / "summary.json").read_text())
-events = json.loads((d / "dump" / "events.json").read_text())["items"]
-failed = [e["message"] for e in events if e.get("reason") == "FailedCreate"]
-want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
-problems = []
-if failed: problems.append("pods refused: " + " | ".join(failed))
-if len(s["pods"]) < len(s["deployments"]): problems.append(f"{len(s['pods'])} pods for {len(s['deployments'])} Deployments {s['deployments']}")
-if want - set(s["kinds"]): problems.append(f"kinds missing from the render: {sorted(want - set(s['kinds']))}")
-print("; ".join(problems) if problems else f"{len(s['pods'])} pods for Deployments {', '.join(s['deployments'])}")
-sys.exit(1 if problems else 0)
-PY
-)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
+  check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.
   ka create serviceaccount cloud-secrets -n p-demo >/dev/null 2>&1
-  n=0
-  while IFS=$'\t' read -r -u 3 file who expect what; do
-    n=$((n + 1))
-    if [ "$expect" = "ok" ]; then
-      expect_ok "admitted: $what" "$who" create --dry-run=server -f "$TMP/cases/$file"
-    else
-      expect_fail "refused: $what" "$expect" "$who" create --dry-run=server -f "$TMP/cases/$file"
-    fi
-  done 3<"$TMP/cases/cases.tsv"
-  [ "$n" -gt 80 ] && ok "$n cases built from Cloud's real objects" || bad "only $n cases built from Cloud's real objects"
+  run_cases "$TMP/cases"
+  [ "$CASES_RUN" -gt 80 ] && ok "$CASES_RUN cases built from Cloud's real objects" || bad "only $CASES_RUN cases built from Cloud's real objects"
 else
   bad "no objects from Cloud's modules to check: $(cat "$TMP/variants.log" 2>/dev/null)"
 fi
+
+# --- Cloud's snapshot fixtures, each applied as the reconciler -----------------
+# The shapes Cloud's own tests render (render.fixtures.ts FIXTURES): one App,
+# one Postgres (quota pods 0, no Deployment), an App connected to Postgres, a
+# private App with an allow list, a public App, a Service removed, hostile env
+# values. Each is applied and destroyed in turn in the same namespace, and its
+# objects and a pod from each Deployment template are admitted again in p-demo.
+n_fx="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$TMP/tofu/fixtures.json")"
+[ "$n_fx" -ge 7 ] && ok "Cloud has $n_fx snapshot fixtures to apply" || bad "only $n_fx snapshot fixtures in Cloud's render.fixtures.ts"
+for i in $(seq 0 $((n_fx - 1))); do
+  IFS=$'\t' read -r fx_dir fx_name fx_ns < <(python3 -c 'import json,sys; f=json.load(open(sys.argv[1]))[int(sys.argv[2])]; print(f["dir"], f["name"], f["namespace"], sep="\t")' "$TMP/tofu/fixtures.json" "$i")
+  # The previous destroy deletes the namespace; a new one with the same name
+  # cannot be created while it terminates.
+  ka wait --for=delete "namespace/$fx_ns" --timeout=300s >/dev/null 2>&1
+  TOFU_DIR="$TMP/tofu/$fx_dir" DUMP_DIR="$TMP/dump-fx$i" NS="$fx_ns"
+  mkdir -p "$DUMP_DIR"
+  ln -s "$CLOUD_REPO/modules" "$TOFU_DIR/modules"
+  cp "$TMP/tofu/zz_dump.tf.json" "$TMP/tofu/cloud-access.tftest.hcl" "$TOFU_DIR/"
+  if ! tofu init -backend=false -input=false -no-color -plugin-dir="$TOFU_PLUGINS" >"$TOFU_DIR/init.log" 2>&1; then
+    bad "fixture \"$fx_name\": tofu init: $(tail -20 "$TOFU_DIR/init.log")"; continue
+  fi
+  if tofu test -no-color >"$TOFU_DIR/test.log" 2>&1 && grep -q "1 passed, 0 failed" "$TOFU_DIR/test.log"; then
+    ok "fixture \"$fx_name\": Cloud's modules apply and destroy it in $fx_ns as the reconciler"
+  else
+    bad "fixture \"$fx_name\": did not apply and destroy cleanly: $(grep -v '^\s*$' "$TOFU_DIR/test.log" | tail -30)"; continue
+  fi
+  if [ -s "$DUMP_DIR/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$DUMP_DIR" "$TMP/cases-fx$i" p-demo admitted-only >"$TMP/variants-fx$i.log" 2>&1; then
+    check="$(pods_check "$DUMP_DIR" "$TMP/cases-fx$i")" && ok "fixture \"$fx_name\": every Deployment's pods were admitted: $check" || bad "fixture \"$fx_name\": $check"
+    run_cases "$TMP/cases-fx$i"
+  else
+    bad "fixture \"$fx_name\": no objects to check: $(cat "$TMP/variants-fx$i.log" 2>/dev/null)"
+  fi
+done
+TOFU_DIR="$TMP/tofu" DUMP_DIR="$TMP/dump"
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
 
