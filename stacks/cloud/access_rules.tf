@@ -449,9 +449,16 @@ locals {
   # address and the homelab's public IPv6 prefixes. Cloud's own Project
   # policy excludes the same list (EGRESS_EXCLUDED in render.ts; the test
   # compares them).
-  #   176.12.22.76/32  the home WAN IP. pfSense forwards WAN :443 to
-  #     Traefik, so a pod reaching it hairpins into Traefik, and CrowdSec
-  #     whitelists it (stacks/crowdsec). Same address as there.
+  #   176.12.22.76/32  the home WAN IP, as a destination: pfSense forwards
+  #     WAN :443 to Traefik, so a pod reaching it would hairpin into Traefik.
+  #     Same address as in stacks/crowdsec.
+  #     This covers the destination only. Project traffic to the internet is
+  #     SNATed and leaves as 176.12.22.76 too, and homelab controls trust that
+  #     source: CrowdSec whitelists it (so a Project request through
+  #     Cloudflare to a homelab host, which Traefik sees by Cf-Connecting-Ip,
+  #     is never banned), and the backup MX VM's OCI security list admits it
+  #     on 22 (SSH, key only) and 9100 (node_exporter) (stacks/backup-mx).
+  #     Viktor decides the fix (docs/agents/security.md, "Open risk").
   #   2001:470:...     Hurricane Electric prefixes; same list as the crowdsec
   #     allowlist in stacks/crowdsec.
   cloud_egress_excluded = {
