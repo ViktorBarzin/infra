@@ -1,0 +1,171 @@
+# promtool unit tests for the Cloud alert group (stacks/monitoring
+# prometheus_chart_values.tpl, "- name: Cloud"). tests/cloud-deploy.test.sh
+# cuts the group out into cloud.rules.yml and runs these with promtool.
+# Labels on the scraped series are the ones the kubernetes-service-endpoints
+# job adds (namespace, service). That job sets honor_labels: true, so the
+# Postgres series keep their own `service` label (the Cloud Service name)
+# over the Kubernetes Service name.
+rule_files:
+  - cloud.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The reconciler is down, or never came up (no series at all): page.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler", instance="10.0.0.1:9090"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudReconcilerDown
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CloudReconcilerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+  - interval: 1m
+    input_series:
+      - series: 'up{job="kubernetes-service-endpoints", namespace="monitoring", service="other", instance="10.0.0.2:9090"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudReconcilerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+  - interval: 1m
+    input_series:
+      - series: 'up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler", instance="10.0.0.1:9090"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: CloudReconcilerDown
+        exp_alerts: []
+
+  # Jobs wait and none finishes: page. Jobs finishing: quiet, even with a
+  # queue. A reconciler that never finished a job has no
+  # cloud_reconcile_total series at all, and still pages.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts:
+          - exp_labels: {severity: critical, notify: page, subsystem: cloud}
+  - interval: 1m
+    input_series:
+      - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
+        values: '3x40'
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts: []
+
+  # Failed jobs for 15 minutes: warning, no page. Retries alone are quiet.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '0+1x40'
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="retry"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+  - interval: 1m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="retry"}'
+        values: '0+1x40'
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+
+  # A Project 30 minutes behind its desired version: warning per Project.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="slow"}'
+        values: '1500+60x20'
+      - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="fine"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CloudProjectStuckConverging
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: CloudProjectStuckConverging
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, project: slow}
+
+  # A database past 80% of its Size for 15 minutes: warning per database.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_postgres_database_bytes{namespace="cloud", project="a", service="x"}'
+        values: '900x30'
+      - series: 'cloud_postgres_database_limit_bytes{namespace="cloud", project="a", service="x"}'
+        values: '1000x30'
+      - series: 'cloud_postgres_database_bytes{namespace="cloud", project="b", service="y"}'
+        values: '500x30'
+      - series: 'cloud_postgres_database_limit_bytes{namespace="cloud", project="b", service="y"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudPostgresDatabaseNearSize
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CloudPostgresDatabaseNearSize
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
+
+  # A database the reconciler cannot measure for 15 minutes: warning.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_postgres_database_unmeasured{namespace="cloud", project="a", service="x"}'
+        values: '1x30'
+      - series: 'cloud_postgres_database_unmeasured{namespace="cloud", project="b", service="y"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CloudPostgresDatabaseUnmeasured
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: CloudPostgresDatabaseUnmeasured
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
+
+  # Build minutes past 70% of the account allowance: warning.
+  - interval: 1m
+    input_series:
+      - series: 'cloud_build_minutes_used{namespace="cloud", service="cloud"}'
+        values: '1300+20x20'
+      - series: 'cloud_build_minutes_allowance{namespace="cloud", service="cloud"}'
+        values: '2000x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CloudBuildMinutesHigh
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: CloudBuildMinutesHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
