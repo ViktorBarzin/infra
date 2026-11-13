@@ -398,7 +398,7 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 - **HA Version**: 2026.5.2 on **Home Assistant OS** (HAOS — managed appliance, NOT a `docker run` container). Latest is 2026.6.4 (update available, deliberately not applied).
 - **Location**: London, UK
 - **Platform**: Raspberry Pi 4, HA OS
-- **Access from the Sofia devvm**: london is **remote** — `homelab ha ssh --instance london` generally WON'T connect (ADR-0012). Drive it via the API: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
+- **Access from the Sofia devvm**: london is **remote**, over the site-to-site WireGuard tunnel. `homelab ha ssh --instance london` connects (verified 2026-11-13; ADR-0012 expected it not to). The API is still the main way to drive it: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
 - **SSH (only from the London LAN)**: `ssh hassio@192.168.8.103` (requires `sudo` for file access)
 - **Config path**: `/config/`
 - **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
@@ -463,6 +463,36 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Projector + debug bridge: unavailable (Tapo plug off)
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
+
+#### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
+To photograph something in a room ("take a photo of my bike in the corridor"),
+run the HA script. Do not drive the robot by hand:
+
+```bash
+T=$(homelab ha token --instance london)
+curl -s -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
+  -X POST https://ha-london.viktorbarzin.me/api/services/script/turn_on \
+  -d '{"entity_id":"script.yiko_photo","variables":{"room":"corridor","shots":6}}'
+# poll until script.yiko_photo is "off" (about 2-3 min), then fetch the photos:
+homelab ha ssh --instance london -- "sudo base64 /media/yiko/corridor-1.jpg" | grep -v '^Warning' | base64 -d > corridor-1.jpg
+```
+
+- Rooms: `corridor`, `balcony`, `kitchen`, `bedroom1`, `kids_room`. The dock is in the living room.
+- The script turns mopping off, starts a clean of that room, waits until Yiko
+  is cleaning inside it, then pauses for each photo and moves on for 8 s between
+  photos. Then it sends Yiko home and restores the work mode. Read the photos and
+  pick the best one: Yiko's heading at each stop is random, and rooms are dark
+  in the evening.
+- Use `script/turn_on`, not a blocking `script/yiko_photo` call: the proxy in
+  front of HA closes a request after about 30 s.
+- If Yiko has just docked, wait about 30 s (it empties its bin) before you start.
+- A run overwrites the photos from the last run of that room. Check the times
+  with `sudo ls -l --full-time /media/yiko/`. No new files means the run failed: the
+  script's trace (`script.yiko_photo`, Traces in the HA UI, or WS
+  `trace/list` and `trace/get` with domain `script`) shows `job_started`,
+  `arrived` and `camera_ready`.
+- Why the script is built this way, and the raw commands: infra
+  `docs/runbooks/london-yiko.md`, "Send Yiko to one room".
 
 ### Custom Components (HACS integrations)
 - **cowboy** (`elsbrock/cowboy-ha` v1.2.0): Cowboy e-bike — revived 2026-06-24. The old `jdejaegh/home-assistant-cowboy` repo is **dead (404)**; don't chase it.
