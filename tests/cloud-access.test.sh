@@ -5,7 +5,9 @@
 #   stacks/cloud/access_rules.tf  ClusterRoles and ValidatingAdmissionPolicies
 #   stacks/vault/cloud_policies.tf  Vault policies, the namespace selector and
 #                                   the namespace-reader rule for Vault
-# Both files hold only locals, so `terraform console` reads them offline.
+#   stacks/kyverno/modules/kyverno/generate-conditions.tf  which namespaces get
+#                                   Kyverno's tls-secret and registry copies
+# All three hold only locals, so `terraform console` reads them offline.
 #
 # What it proves:
 #   - the reconciler cannot read Secrets outside a Project namespace;
@@ -16,20 +18,30 @@
 #   - Pod Security then refuses a hostPath pod in a Project namespace;
 #   - it can bind the project role, only to itself, and no stronger role;
 #   - in managed namespaces an ExternalSecret cannot use a ClusterSecretStore,
-#     a Service is ClusterIP without externalIPs, and an Ingress host is one
-#     unreserved label under viktorbarzin.me;
+#     a SecretStore is only the cloud-project Vault store, a Service is
+#     ClusterIP without externalIPs, an Ingress host is one unreserved label
+#     under viktorbarzin.me with no tls.secretName and names only its own or
+#     the shared Traefik middlewares, a Middleware cannot reach another
+#     namespace (errors, chain, plugin, tap, foreign forwardAuth), and a pod
+#     cannot take a priority class above tier-4-aux;
+#   - every Traefik Middleware type in the pinned chart's CRD is either
+#     allowed or refused, and every Vault auth method in the ESO CRD is
+#     refused except Kubernetes;
+#   - Kyverno's copy condition skips managed namespaces;
 #   - Vault's cloud-project role admits only service account cloud-secrets in a
 #     labelled namespace, only once Vault may read namespaces, and its token
 #     reads only secret/cloud/<its namespace>/*;
 #   - the cloud-reconciler policy writes secret/cloud/*, reads but cannot
 #     change secret/cloud/system, and reads only its two database credentials.
-# Needs docker, kind, kubectl, helm (for the External Secrets CRDs), vault and
+# Needs docker, kind, kubectl, helm (for the External Secrets and Traefik CRDs), vault and
 # python3 with PyYAML. Takes about two minutes.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 KIND_IMAGE="${CLOUD_ACCESS_KIND_IMAGE:-kindest/node:v1.35.0}"
 # The External Secrets chart version the cluster runs, read from its stack.
 ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/external-secrets/main.tf")}"
+# The Traefik chart version the cluster runs, read from its stack.
+TRAEFIK_VERSION="${CLOUD_ACCESS_TRAEFIK_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/traefik/modules/traefik/main.tf")}"
 CLUSTER="cloud-access-$$"
 TMP="$(mktemp -d)"
 VAULT_PID=""
@@ -48,17 +60,21 @@ render() { # <src file> <expression> <out>
   fi
 }
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, mw_allowed = local.cloud_middleware_types_allowed, mw_refused = local.cloud_middleware_types_refused, auth_refused = local.cloud_secretstore_auth_refused})' \
   "$TMP/k8s.raw"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
   "$TMP/vault.raw"
+render "$HERE/stacks/kyverno/modules/kyverno/generate-conditions.tf" \
+  'jsonencode({condition = local.generate_skip_system_namespaces})' \
+  "$TMP/kyverno.raw"
 
 python3 - "$TMP" <<'PY' || exit 1
 import json, sys, pathlib, yaml
 d = pathlib.Path(sys.argv[1])
 k = json.loads(json.loads((d / "k8s.raw").read_text()))
 v = json.loads(json.loads((d / "vault.raw").read_text()))
+kc = json.loads(json.loads((d / "kyverno.raw").read_text()))["condition"]
 
 def rules(rs):
     out = []
@@ -81,6 +97,19 @@ docs = [
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
+(d / "types.json").write_text(json.dumps({"mw_allowed": k["mw_allowed"], "mw_refused": k["mw_refused"], "auth_refused": k["auth_refused"]}))
+# Kyverno's copy condition on a real API server: a probe policy refuses a
+# namespace labelled kyverno-probe exactly when Kyverno would copy the Secrets.
+(d / "kyverno-probe.yaml").write_text(yaml.safe_dump_all([
+    {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicy", "metadata": {"name": "probe-kyverno-copy"},
+     "spec": {"failurePolicy": "Fail",
+              "matchConstraints": {"resourceRules": [{"apiGroups": [""], "apiVersions": ["v1"], "operations": ["CREATE"], "resources": ["namespaces"]}]},
+              "matchConditions": [{"name": "probe", "expression": "has(object.metadata.labels) && 'kyverno-probe' in object.metadata.labels"},
+                                  {"name": "target-namespace", "expression": kc}],
+              "validations": [{"expression": "false", "message": "kyverno would copy tls-secret and registry-credentials here"}]}},
+    {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicyBinding", "metadata": {"name": "probe-kyverno-copy"},
+     "spec": {"policyName": "probe-kyverno-copy", "validationActions": ["Deny"]}},
+]))
 (d / "project_role").write_text(k["project_role"])
 
 vdocs = [
@@ -110,6 +139,31 @@ crds = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d.get("kind") 
 assert len(crds) == 3, [c["metadata"]["name"] for c in crds]
 open(sys.argv[2], "w").write(yaml.safe_dump_all(crds))
 PY
+helm template traefik traefik --repo https://traefik.github.io/charts --version "$TRAEFIK_VERSION" --kube-version 1.35.0 \
+  --include-crds >"$TMP/traefik.yaml" 2>"$TMP/helm.err" || { echo "FAIL: helm template traefik"; cat "$TMP/helm.err"; exit 1; }
+python3 - "$TMP" <<'PY' || exit 1
+import json, sys, pathlib, yaml
+d = pathlib.Path(sys.argv[1])
+want = {"middlewares.traefik.io", "ingressroutes.traefik.io"}
+crds = [c for c in yaml.safe_load_all(open(d / "traefik.yaml")) if c and c.get("kind") == "CustomResourceDefinition" and c["metadata"]["name"] in want]
+assert len(crds) == 2, [c["metadata"]["name"] for c in crds]
+(d / "traefik-crds.yaml").write_text(yaml.safe_dump_all(crds))
+t = json.loads((d / "types.json").read_text())
+problems = []
+mw = next(c for c in crds if c["metadata"]["name"] == "middlewares.traefik.io")
+for ver in mw["spec"]["versions"]:
+    have = set(ver["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"])
+    known = set(t["mw_allowed"]) | set(t["mw_refused"])
+    if have - known: problems.append(f"Middleware {ver['name']} types in neither list in access_rules.tf: {sorted(have - known)}")
+    if known - have: problems.append(f"Middleware {ver['name']} lists name types the CRD lacks: {sorted(known - have)}")
+eso = [c for c in yaml.safe_load_all(open(d / "eso-crds.yaml")) if c["metadata"]["name"] == "secretstores.external-secrets.io"][0]
+for ver in eso["spec"]["versions"]:
+    if not ver.get("served"): continue
+    auth = set(ver["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["provider"]["properties"]["vault"]["properties"]["auth"]["properties"])
+    extra = auth - set(t["auth_refused"]) - {"kubernetes"}
+    if extra: problems.append(f"ESO {ver['name']} Vault auth methods not refused: {sorted(extra)}")
+(d / "tripwire.txt").write_text("\n".join(problems))
+PY
 
 export KUBECONFIG="$TMP/kubeconfig"
 kind create cluster --name "$CLUSTER" --image "$KIND_IMAGE" --kubeconfig "$KUBECONFIG" --wait 120s >"$TMP/kind.log" 2>&1 \
@@ -119,29 +173,15 @@ ka() { kubectl "$@"; }
 kr() { kubectl --as="system:serviceaccount:cloud:cloud-reconciler" "$@"; }
 ka apply --server-side -f "$TMP/eso-crds.yaml" >/dev/null && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null \
   || { echo "FAIL: ESO CRDs"; exit 1; }
-# Stand-ins for the Traefik CRDs, so discovery knows the resources RBAC names.
-for kind in IngressRoute Middleware; do
-  plural="$(tr '[:upper:]' '[:lower:]' <<<"$kind")s"
-  cat <<EOF
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: $plural.traefik.io
-spec:
-  group: traefik.io
-  scope: Namespaced
-  names: {kind: $kind, plural: $plural, singular: $(tr '[:upper:]' '[:lower:]' <<<"$kind")}
-  versions:
-  - name: v1alpha1
-    served: true
-    storage: true
-    schema:
-      openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}
----
-EOF
-done | ka apply -f - >/dev/null && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null || { echo "FAIL: Traefik CRDs"; exit 1; }
+ka apply --server-side -f "$TMP/traefik-crds.yaml" >/dev/null && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null \
+  || { echo "FAIL: Traefik CRDs"; exit 1; }
+# The priority classes the cluster has (stacks/kyverno resource-governance.tf).
+for pc in tier-0-core:1000000:PreemptLowerPriority tier-4-aux:200000:Never; do
+  IFS=: read -r name value policy <<<"$pc"
+  printf 'apiVersion: scheduling.k8s.io/v1\nkind: PriorityClass\nmetadata:\n  name: %s\nvalue: %s\npreemptionPolicy: %s\n---\n' "$name" "$value" "$policy"
+done | ka apply -f - >/dev/null || { echo "FAIL: priority classes"; exit 1; }
 ka apply -f "$TMP/rbac.yaml" >/dev/null || { echo "FAIL: RBAC"; exit 1; }
-ka apply -f "$TMP/vap.yaml" >"$TMP/vap.out" 2>&1 || { echo "FAIL: admission policies"; cat "$TMP/vap.out"; exit 1; }
+ka apply -f "$TMP/vap.yaml" -f "$TMP/kyverno-probe.yaml" >"$TMP/vap.out" 2>&1 || { echo "FAIL: admission policies"; cat "$TMP/vap.out"; exit 1; }
 # A policy is enforced only once the API server has compiled it.
 for _ in $(seq 1 60); do
   ka get validatingadmissionpolicy cloud-reconciler-scope -o jsonpath='{.status.typeChecking}' >/dev/null 2>&1 \
@@ -164,7 +204,8 @@ can()    { [ "$(kr auth can-i "$@" 2>/dev/null)" = "yes" ]; }
 cannot() { ! can "$@"; }
 apply_as() { local who="$1"; shift; "$who" apply -f - "$@"; }
 
-if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION CRDs"; fi
+if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
+if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every Traefik Middleware type and ESO Vault auth method is allowed or refused"; fi
 
 ns_doc() { # name managed tier [pod-security level, default baseline; "-" for none] [extra label line]
   printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n' "$1"
@@ -215,6 +256,15 @@ expect_fail "Pod Security refuses a hostPath pod in p-demo, even from admin" "vi
 expect_fail "Pod Security refuses a privileged pod in p-demo" "violates PodSecurity" \
   ka run priv -n p-demo --image=busybox --dry-run=server --overrides='{"spec":{"containers":[{"name":"priv","image":"busybox","securityContext":{"privileged":true}}]}}'
 
+# --- Kyverno copies ------------------------------------------------------------
+# The probe policy refuses exactly the namespaces Kyverno would copy tls-secret
+# and registry-credentials into (a dry run, so nothing is created).
+probe_ns() { ns_doc "$@" | sed 's/^  labels:$/  labels:\n    kyverno-probe: "1"/'; }
+for _ in $(seq 1 30); do ! apply_as ka --dry-run=server < <(probe_ns probe-wait "" "") >/dev/null 2>&1 && break; sleep 1; done
+expect_fail "Kyverno copies the wildcard key and registry token into an ordinary namespace" "kyverno would copy" \
+  apply_as ka --dry-run=server < <(probe_ns homelab-probe "" 4-aux)
+expect_ok   "Kyverno copies neither into a new managed p-* namespace" apply_as ka --dry-run=server < <(probe_ns p-probe true 4-aux)
+
 # --- RoleBindings and writes inside namespaces -------------------------------
 expect_ok   "reconciler binds the project role in p-demo" apply_as kr < <(rb_doc p-demo "$PROJECT_ROLE")
 expect_fail "reconciler cannot bind admin in p-demo" "forbidden" apply_as kr < <(rb_doc p-demo admin)
@@ -231,6 +281,9 @@ expect_ok   "reconciler reads Secrets in p-demo" kr get secrets -n p-demo
 expect_fail "reconciler cannot write in p-other before binding there" "forbidden" apply_as kr < <(cm_doc p-other)
 expect_ok   "admin binds the project role in unlabelled p-adopt (a mistake)" apply_as ka < <(rb_doc p-adopt "$PROJECT_ROLE")
 expect_fail "admission still stops the reconciler writing in p-adopt" "cloud-reconciler may write only" apply_as kr < <(cm_doc p-adopt)
+expect_ok   "admin creates homelab-labelled, labelled managed though not named p-* (a mistake)" apply_as ka < <(ns_doc homelab-labelled true 4-aux)
+expect_ok   "admin binds the project role in homelab-labelled (a mistake)" apply_as ka < <(rb_doc homelab-labelled "$PROJECT_ROLE")
+expect_fail "admission stops the reconciler writing in a labelled namespace not named p-*" "namespaces named p-\\*" apply_as kr < <(cm_doc homelab-labelled)
 
 # --- ExternalSecrets ---------------------------------------------------------
 es_doc() { # ns kind [data-kind]
@@ -261,6 +314,22 @@ expect_fail "admin is refused the same in p-demo" "must be a SecretStore" apply_
 expect_fail "a data[] sourceRef to a ClusterSecretStore is refused in p-demo" "data\\[\\]" apply_as kr < <(es_doc p-demo SecretStore ClusterSecretStore)
 expect_ok   "a ClusterSecretStore reference outside managed namespaces is untouched" apply_as ka < <(es_doc default ClusterSecretStore)
 
+# --- SecretStores --------------------------------------------------------------
+ss_doc() { # ns name provider-yaml
+  printf 'apiVersion: external-secrets.io/v1\nkind: SecretStore\nmetadata:\n  name: %s\n  namespace: %s\nspec:\n  provider: %s\n' "$2" "$1" "$3"
+}
+vault_ss() { # server role auth-extra
+  printf '{vault: {server: "%s", path: secret, version: v2, auth: {kubernetes: {mountPath: kubernetes, role: %s, serviceAccountRef: {name: cloud-secrets}}%s}}}' "$1" "$2" "${3:-}"
+}
+VS="http://vault-active.vault.svc.cluster.local:8200"
+expect_ok   "the cloud-project Vault SecretStore is admitted in p-demo" apply_as kr < <(ss_doc p-demo store "$(vault_ss "$VS" cloud-project)")
+expect_fail "a webhook SecretStore is refused in p-demo" "must use provider vault" \
+  apply_as kr < <(ss_doc p-demo hook '{webhook: {url: "http://vault.vault.svc:8200/v1/secret/data/viktor", result: {jsonPath: "$"}}}')
+expect_fail "a SecretStore on another Vault server is refused in p-demo" "must use provider vault" apply_as kr < <(ss_doc p-demo other "$(vault_ss http://evil.example.com:8200 cloud-project)")
+expect_fail "a SecretStore with Vault role eso is refused in p-demo" "role cloud-project" apply_as kr < <(ss_doc p-demo eso "$(vault_ss "$VS" eso)")
+expect_fail "a SecretStore with a token Secret is refused in p-demo" "only with Kubernetes auth" \
+  apply_as kr < <(ss_doc p-demo tok "$(vault_ss "$VS" cloud-project ', tokenSecretRef: {name: t, key: token}')")
+
 # --- Services -----------------------------------------------------------------
 svc_doc() { # ns name spec-yaml
   printf 'apiVersion: v1\nkind: Service\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
@@ -289,6 +358,51 @@ expect_fail "the reserved name vault is refused in p-demo" "reserved name" apply
 expect_fail "the reserved name cloud is refused in p-demo, even from admin" "reserved name" apply_as ka < <(ing_doc p-demo cloud "{rules: [$(rule cloud.viktorbarzin.me)]}")
 expect_fail "auth-prefixed names are refused in p-demo" "reserved name" apply_as kr < <(ing_doc p-demo authx "{rules: [$(rule authx.viktorbarzin.me)]}")
 expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka < <(ing_doc default wild "{rules: [$(rule '*.viktorbarzin.me')]}")
+expect_fail "an Ingress tls.secretName is refused in p-demo" "tls.secretName" \
+  apply_as kr < <(ing_doc p-demo tlssecret "{rules: [$(rule demo.viktorbarzin.me)], tls: [{hosts: [demo.viktorbarzin.me], secretName: tls-secret}]}")
+ing_mw_doc() { # ns name annotation-key annotation-value
+  printf 'apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: %s\n  namespace: %s\n  annotations:\n    %s: "%s"\nspec: {rules: [%s]}\n' "$2" "$1" "$3" "$4" "$(rule demo.viktorbarzin.me)"
+}
+MWA="traefik.ingress.kubernetes.io/router.middlewares"
+expect_ok   "an Ingress naming its own and a shared middleware is admitted in p-demo" \
+  apply_as kr < <(ing_mw_doc p-demo mwok "$MWA" "p-demo-auth@kubernetescrd, traefik-strip-client-identity@kubernetescrd")
+expect_fail "an Ingress naming another namespace's middleware is refused in p-demo" "router.middlewares may name only" \
+  apply_as kr < <(ing_mw_doc p-demo mwx "$MWA" "terminal-tl-proxy-secret@kubernetescrd")
+expect_fail "an Ingress naming a middleware of a namespace that extends p-demo's name is refused" "router.middlewares may name only" \
+  apply_as kr < <(ing_mw_doc p-demo mwext "$MWA" "p-demo-x-secret@kubernetescrd")
+expect_fail "an Ingress naming a file-provider middleware is refused in p-demo" "router.middlewares may name only" \
+  apply_as kr < <(ing_mw_doc p-demo mwfile "$MWA" "authentik-forward-auth@file")
+expect_fail "another Traefik annotation is refused in p-demo" "only Traefik annotations" \
+  apply_as kr < <(ing_mw_doc p-demo prio traefik.ingress.kubernetes.io/router.priority "100000")
+expect_ok   "router.entrypoints websecure is admitted in p-demo" \
+  apply_as kr < <(ing_mw_doc p-demo ep traefik.ingress.kubernetes.io/router.entrypoints "websecure")
+
+# --- Middlewares -----------------------------------------------------------------
+mw_doc() { # ns name spec-yaml
+  printf 'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: %s\n  namespace: %s\nspec: %s\n' "$2" "$1" "$3"
+}
+expect_ok   "a forwardAuth Middleware to a Service in p-demo is admitted" apply_as kr < <(mw_doc p-demo auth '{forwardAuth: {address: "http://oauth2proxy.p-demo.svc.cluster.local:4180/oauth2/auth"}}')
+expect_ok   "a headers Middleware is admitted in p-demo" apply_as kr < <(mw_doc p-demo hdr '{headers: {customResponseHeaders: {X-Frame-Options: DENY}}}')
+expect_fail "a forwardAuth Middleware to another namespace is refused in p-demo" "forwardAuth.address" apply_as kr < <(mw_doc p-demo fa '{forwardAuth: {address: "http://vault.vault.svc.cluster.local:8200/v1/sys/health"}}')
+expect_fail "a forwardAuth address with userinfo is refused in p-demo" "forwardAuth.address" apply_as kr < <(mw_doc p-demo faui '{forwardAuth: {address: "http://x.p-demo.svc@vault.vault.svc:8200/"}}')
+expect_fail "an errors Middleware on a Service in namespace vault is refused in p-demo" "may not be of type" \
+  apply_as kr < <(mw_doc p-demo err '{errors: {status: ["500-599"], query: "/", service: {name: vault, namespace: vault, port: 8200}}}')
+expect_fail "a chain Middleware is refused in p-demo" "may not be of type" apply_as kr < <(mw_doc p-demo chn '{chain: {middlewares: [{name: tl-proxy-secret, namespace: terminal}]}}')
+expect_fail "a plugin Middleware is refused in p-demo" "may not be of type" apply_as kr < <(mw_doc p-demo plg '{plugin: {sablier: {group: x}}}')
+expect_fail "a Middleware name with a dash is refused in p-demo" "letters and digits only" apply_as kr < <(mw_doc p-demo x-secret '{headers: {customResponseHeaders: {A: b}}}')
+expect_ok   "an errors Middleware outside managed namespaces is untouched" apply_as ka < <(mw_doc default err '{errors: {status: ["500"], query: "/", service: {name: vault, namespace: vault, port: 8200}}}')
+
+# --- Pod priority ------------------------------------------------------------------
+pod_prio() { # ns [priorityClassName]
+  local o='{"spec":{"containers":[{"name":"c","image":"busybox"}]}}'
+  [ -n "${2:-}" ] && o="{\"spec\":{\"priorityClassName\":\"$2\",\"containers\":[{\"name\":\"c\",\"image\":\"busybox\"}]}}"
+  ka run "prio-${2:-none}" -n "$1" --image=busybox --dry-run=server --overrides="$o"
+}
+expect_fail "a pod with priority class tier-0-core is refused in p-demo" "only priority class tier-4-aux" pod_prio p-demo tier-0-core
+expect_fail "a pod with system-node-critical is refused in p-demo" "only priority class tier-4-aux" pod_prio p-demo system-node-critical
+expect_ok   "a pod with tier-4-aux is admitted in p-demo" pod_prio p-demo tier-4-aux
+expect_ok   "a pod with no priority class is admitted in p-demo" pod_prio p-demo
+expect_ok   "a tier-0-core pod outside managed namespaces is untouched" pod_prio default tier-0-core
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
 
