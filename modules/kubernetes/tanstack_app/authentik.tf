@@ -32,7 +32,10 @@ data "authentik_property_mapping_provider_scope" "profile" {
   managed = "goauthentik.io/providers/oauth2/scope-profile"
 }
 
+# Authentik's managed email mapping sends email_verified false for everyone.
+# An app that needs a true claim passes its own (var.email_scope_mapping_id).
 data "authentik_property_mapping_provider_scope" "email" {
+  count   = var.email_scope_mapping_id == null ? 1 : 0
   managed = "goauthentik.io/providers/oauth2/scope-email"
 }
 
@@ -76,7 +79,7 @@ resource "authentik_provider_oauth2" "this" {
   property_mappings = [
     data.authentik_property_mapping_provider_scope.openid.id,
     data.authentik_property_mapping_provider_scope.profile.id,
-    data.authentik_property_mapping_provider_scope.email.id,
+    coalesce(var.email_scope_mapping_id, one(data.authentik_property_mapping_provider_scope.email[*].id)),
   ]
 
   # Authentik 2026.x creates a provider with an empty list, which refuses every
