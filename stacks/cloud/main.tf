@@ -123,3 +123,37 @@ resource "kubectl_manifest" "cloud_project_ingress_floor" {
   yaml_body  = yamlencode(local.cloud_project_ingress_floor)
   depends_on = [kubectl_manifest.cloud_tier]
 }
+
+# The live host guard: Kyverno ValidatingPolicy cloud-ingress-live-hosts,
+# the second check on Project Ingress hosts next to cloud-managed-ingress
+# (local.cloud_live_host_guard in access_rules.tf, the rules and why). Here,
+# not in stacks/kyverno, because it is part of Cloud's admission boundary:
+# it uses this stack's labels and host rules, and tests/cloud-access.test.sh
+# applies it from the same locals as the other policies.
+resource "kubernetes_cluster_role" "cloud_live_host_guard_kyverno" {
+  metadata {
+    name   = local.cloud_live_host_guard_kyverno_role.name
+    labels = local.cloud_live_host_guard_kyverno_role.labels
+  }
+  dynamic "rule" {
+    for_each = local.cloud_live_host_guard_kyverno_role.rules
+    content {
+      api_groups     = rule.value.api_groups
+      resources      = rule.value.resources
+      verbs          = rule.value.verbs
+      resource_names = rule.value.resource_names
+    }
+  }
+}
+
+resource "kubectl_manifest" "cloud_live_host_guard" {
+  yaml_body = yamlencode(local.cloud_live_host_guard)
+  # Kyverno must be able to read IngressRoutes before the policy admits
+  # anything.
+  depends_on = [kubernetes_cluster_role.cloud_live_host_guard_kyverno]
+  # As in stacks/kyverno: a replacement is created before the old policy
+  # goes, so admission is never uncovered.
+  lifecycle {
+    create_before_destroy = true
+  }
+}

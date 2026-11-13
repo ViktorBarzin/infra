@@ -59,6 +59,12 @@
 #   - cloud-managed-ingress refuses the homelab's hosts with 600 of them
 #     written in, and the API server refuses the policy itself if the hosts
 #     were never written in (the marker left in place);
+#   - the live host guard (Kyverno ValidatingPolicy cloud-ingress-live-hosts,
+#     on the cluster's Kyverno chart and forceFailurePolicyIgnore setting)
+#     refuses a Project Ingress host that a homelab Ingress or IngressRoute
+#     took after the static map was written, admits a fresh host and an
+#     update of the Project's own Ingress, leaves homelab namespaces alone,
+#     and Kyverno's admission controller can read what it looks up;
 #   - it can bind the project role, only to itself, and no stronger role;
 #   - every Vault auth method in the ESO CRD is refused except Kubernetes;
 #   - Kyverno's copy condition skips managed namespaces;
@@ -71,8 +77,8 @@
 #     Cloud Apps client), and reads only its two database credentials;
 #   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
-# Needs docker, kind, kubectl, helm (Calico's operator, the External Secrets
-# and Traefik CRDs), vault, python3 with PyYAML, bun, and a cloud repo
+# Needs docker, kind, kubectl, helm (Calico's operator, Kyverno, the External
+# Secrets and Traefik CRDs), vault, python3 with PyYAML, bun, and a cloud repo
 # checkout with its pinned OpenTofu and provider mirror (.tools/, see its
 # README). CLOUD_REPO names the checkout; otherwise the first of ~/code/cloud
 # and the M2 worktree ~/code/cloud/.worktrees/v1-m2-reconciler that holds
@@ -91,6 +97,11 @@ ESO_VERSION="${CLOUD_ACCESS_ESO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0
 TRAEFIK_VERSION="${CLOUD_ACCESS_TRAEFIK_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/traefik/modules/traefik/main.tf")}"
 # The Calico version the cluster runs, read from its stack.
 CALICO_VERSION="${CLOUD_ACCESS_CALICO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\Kv[0-9.]+' "$HERE/stacks/calico/main.tf")}"
+# The Kyverno chart version the cluster runs, and whether its
+# forceFailurePolicyIgnore feature is on, read from its stack.
+KYVERNO_VERSION="${CLOUD_ACCESS_KYVERNO_VERSION:-$(grep -m1 -oP '^\s*version\s*=\s*"\K[0-9.]+' "$HERE/stacks/kyverno/modules/kyverno/main.tf")}"
+KYVERNO_FORCE_IGNORE="$(grep -A1 -P '^\s*forceFailurePolicyIgnore\s*=\s*\{' "$HERE/stacks/kyverno/modules/kyverno/main.tf" | grep -oP 'enabled\s*=\s*\K(true|false)')"
+[ -n "$KYVERNO_VERSION" ] && [ -n "$KYVERNO_FORCE_IGNORE" ] || { echo "FAIL: cannot read the Kyverno chart version or forceFailurePolicyIgnore from stacks/kyverno"; exit 1; }
 BUN="${BUN:-/usr/local/bin/bun}"
 if [ -z "${CLOUD_REPO:-}" ]; then
   for c in "$HOME/code/cloud" "$HOME/code/cloud/.worktrees/v1-m2-reconciler"; do
@@ -138,7 +149,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -198,6 +209,13 @@ docs = [
      "spec": {"policyName": "probe-kyverno-copy", "validationActions": ["Deny"]}},
 ]))
 (d / "project_role").write_text(k["project_role"])
+# The live host guard: Kyverno's ValidatingPolicy and the ClusterRole that
+# lets Kyverno's admission controller read IngressRoutes.
+lr = k["live_guard_role"]
+(d / "kyverno-guard-role.yaml").write_text(yaml.safe_dump(
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": lr["name"], "labels": lr["labels"]}, "rules": rules(lr["rules"])}))
+(d / "kyverno-guard.yaml").write_text(yaml.safe_dump(k["live_guard"]))
+(d / "kyverno-guard-name").write_text(k["live_guard"]["metadata"]["name"])
 
 # The contract between Cloud's renderer and infra, and the floor's shape.
 # The floors are applied through calico-apiserver below;
@@ -322,6 +340,25 @@ ka() { kubectl "$@"; }
 kr() { kubectl --as="system:serviceaccount:cloud:cloud-reconciler" "$@"; }
 ka apply --server-side -f "$TMP/eso-crds.yaml" -f "$TMP/traefik-crds.yaml" >/dev/null \
   && ka wait --for=condition=Established crd --all --timeout=60s >/dev/null || { echo "FAIL: CRDs"; exit 1; }
+# Kyverno, for the live host guard: the cluster's chart version and
+# forceFailurePolicyIgnore setting, admission controller only. It installs
+# in the background while the checks before the guard's run.
+cat >"$TMP/kyverno-values.yaml" <<EOF
+features:
+  forceFailurePolicyIgnore: {enabled: $KYVERNO_FORCE_IGNORE}
+  policyReports: {enabled: false}
+  admissionReports: {enabled: false}
+  aggregateReports: {enabled: false}
+  backgroundScan: {enabled: false}
+admissionController: {replicas: 1}
+backgroundController: {enabled: false}
+cleanupController: {enabled: false}
+reportsController: {enabled: false}
+EOF
+helm install kyverno kyverno --repo https://kyverno.github.io/kyverno/ --version "$KYVERNO_VERSION" \
+  --namespace kyverno --create-namespace --values "$TMP/kyverno-values.yaml" --wait --timeout 8m \
+  >"$TMP/kyverno-install.log" 2>&1 &
+KYVERNO_PID=$!
 # The priority classes the cluster has (stacks/kyverno resource-governance.tf
 # and the GPU class Kyverno's inject-gpu-workload-priority sets).
 for pc in tier-0-core:1000000:PreemptLowerPriority tier-4-aux:200000:Never gpu-workload:1200000:PreemptLowerPriority; do
@@ -542,6 +579,71 @@ expect_fail "the 600th taken host is refused in p-demo" "already routes" apply_a
 # place stays.
 expect_fail "the API server refuses cloud-managed-ingress with the taken-hosts marker left in" "compilation failed" ka apply -f "$TMP/vap-ingress-unfilled.yaml"
 expect_fail "after that refusal a homelab host is still refused in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo nc nextcloud.viktorbarzin.me)
+
+# --- Live host guard (Kyverno) ------------------------------------------------------
+# Homelab hosts added after the last cloud apply, so not in the static map:
+# an Ingress (rule and TLS host) and IngressRoutes (one host, and two in one
+# Host() clause) in homelab-app, which is not managed.
+if wait "$KYVERNO_PID"; then ok "Kyverno $KYVERNO_VERSION installs (forceFailurePolicyIgnore=$KYVERNO_FORCE_IGNORE, as stacks/kyverno)"
+else bad "Kyverno $KYVERNO_VERSION did not install: $(tail -20 "$TMP/kyverno-install.log")"; fi
+KSA="system:serviceaccount:kyverno:kyverno-admission-controller"
+[ "$(ka auth can-i list ingressroutes.traefik.io -A --as="$KSA" 2>/dev/null)" = "no" ] \
+  && ok "without the guard's ClusterRole Kyverno cannot list IngressRoutes" || bad "Kyverno lists IngressRoutes without the guard's ClusterRole"
+ka apply -f "$TMP/kyverno-guard-role.yaml" >/dev/null || bad "the guard's ClusterRole was refused"
+for _ in $(seq 1 30); do [ "$(ka auth can-i list ingressroutes.traefik.io -A --as="$KSA" 2>/dev/null)" = "yes" ] && break; sleep 1; done
+for r in ingressroutes.traefik.io ingresses.networking.k8s.io namespaces; do
+  [ "$(ka auth can-i list "$r" -A --as="$KSA" 2>/dev/null)" = "yes" ] && ok "Kyverno's admission controller lists $r cluster-wide" || bad "Kyverno's admission controller cannot list $r cluster-wide"
+done
+ka apply -f - >/dev/null <<'EOF' || bad "could not create the late homelab routes"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: late, namespace: homelab-app}
+spec:
+  rules: [{host: late-ingress.viktorbarzin.me, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}}]
+  tls: [{hosts: [late-tls.viktorbarzin.me]}]
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: {name: late, namespace: homelab-app}
+spec:
+  entryPoints: [websecure]
+  routes:
+  - {kind: Rule, match: "Host(`late-route.viktorbarzin.me`) && PathPrefix(`/api`)", services: [{name: web, port: 80}]}
+  - {kind: Rule, match: "Host(`late-a.viktorbarzin.me`, `Late-B.viktorbarzin.me`)", services: [{name: web, port: 80}]}
+EOF
+GUARD="$(cat "$TMP/kyverno-guard-name")"
+ka apply -f "$TMP/kyverno-guard.yaml" >/dev/null || bad "Kyverno refused ValidatingPolicy $GUARD"
+# Ready, then registered in Kyverno's webhook: wait for the first refusal.
+for _ in $(seq 1 120); do
+  ! apply_as kr --dry-run=server < <(ing_doc p-demo g0 late-ingress.viktorbarzin.me) >/dev/null 2>&1 && break
+  sleep 1
+done
+[ "$(ka get validatingpolicies.policies.kyverno.io "$GUARD" -o jsonpath='{.status.conditionStatus.ready}' 2>/dev/null)" = "true" ] \
+  && ok "ValidatingPolicy $GUARD is Ready" || bad "ValidatingPolicy $GUARD is not Ready: $(ka get validatingpolicies.policies.kyverno.io "$GUARD" -o jsonpath='{.status}' 2>&1)"
+expect_fail "the guard refuses a host a homelab Ingress took after the last apply" "homelab routes now: late-ingress.viktorbarzin.me" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo g1 late-ingress.viktorbarzin.me)
+expect_fail "the guard refuses a homelab Ingress's TLS host" "homelab routes now: late-tls.viktorbarzin.me" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo g2 late-tls.viktorbarzin.me)
+expect_fail "the guard refuses a host in an IngressRoute's Host() match" "homelab routes now: late-route.viktorbarzin.me" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo g3 late-route.viktorbarzin.me)
+expect_fail "the guard refuses the second host of a Host() clause, compared without case" "homelab routes now: late-b.viktorbarzin.me" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo g4 late-b.viktorbarzin.me)
+expect_fail "the guard refuses a homelab host as the TLS host of a Project Ingress" "homelab routes now: late-a.viktorbarzin.me" \
+  apply_as kr --dry-run=server < <(ing_doc p-demo g5 fresh-app.viktorbarzin.me late-a.viktorbarzin.me)
+expect_fail "the guard refuses admin too" "homelab routes now" apply_as ka --dry-run=server < <(ing_doc p-demo g6 late-ingress.viktorbarzin.me)
+expect_ok   "the guard admits a fresh host in p-demo" apply_as kr < <(ing_doc p-demo fresh fresh-app.viktorbarzin.me fresh-app.viktorbarzin.me)
+expect_ok   "the guard admits an update of that Ingress (its own host does not clash)" \
+  apply_as kr < <(ing_doc p-demo fresh fresh-app.viktorbarzin.me fresh-app.viktorbarzin.me | sed 's|path: /,|path: /v2,|')
+expect_ok   "the guard leaves homelab namespaces alone (a second homelab Ingress on a homelab host)" \
+  apply_as ka --dry-run=server < <(ing_doc homelab-app late2 late-ingress.viktorbarzin.me)
+kr delete ingress fresh -n p-demo >/dev/null 2>&1
+# Kyverno's webhook for the guard: Fail as the policy says, unless the chart
+# forces every policy to Ignore (stacks/kyverno forceFailurePolicyIgnore).
+fp="$(ka get validatingwebhookconfiguration kyverno-resource-validating-webhook-cfg -o json \
+  | python3 -c 'import json,sys; g=sys.argv[1]; print(" ".join(sorted({w["failurePolicy"] for w in json.load(sys.stdin)["webhooks"] if g in w["clientConfig"]["service"].get("path", "")})))' "$GUARD")"
+want="$([ "$KYVERNO_FORCE_IGNORE" = "true" ] && echo Ignore || echo Fail)"
+[ "$fp" = "$want" ] && ok "Kyverno registers the guard with failurePolicy $fp (forceFailurePolicyIgnore=$KYVERNO_FORCE_IGNORE)" \
+  || bad "Kyverno registers the guard with failurePolicy '$fp', expected $want (forceFailurePolicyIgnore=$KYVERNO_FORCE_IGNORE)"
 
 # --- Calico policies through calico-apiserver ----------------------------------------
 # calico-apiserver runs the cluster's admission policies itself, so

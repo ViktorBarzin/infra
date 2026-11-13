@@ -138,8 +138,10 @@
 # at plan time, and local.cloud_admission_policies_applied writes them into
 # cloud-managed-ingress as a CEL map literal in place of
 # local.cloud_taken_hosts_marker. A host added after the last cloud apply is
-# missing until the next one; the reconciler checks taken hosts itself
-# before it applies, with its cluster-wide read on both kinds.
+# missing until the next one. Kyverno ValidatingPolicy
+# cloud-ingress-live-hosts (local.cloud_live_host_guard below) covers that
+# gap with a live lookup at admission time, and the reconciler checks taken
+# hosts itself before it applies.
 #
 # No policy here takes a parameter (paramKind). calico-apiserver, the
 # aggregated API server for projectcalico.org, is built on k8s.io/apiserver
@@ -1204,6 +1206,97 @@ locals {
       metadata   = { name = "cloud-managed-secretstore" }
       spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-secretstore" })
     }
+  }
+
+  # The live host guard (Kyverno ValidatingPolicy cloud-ingress-live-hosts,
+  # applied by main.tf). cloud-managed-ingress knows only the hosts that were
+  # routed when this stack was last applied. A homelab host added after that
+  # is missing from it until the next apply, and a stolen reconciler token
+  # could claim it in the meantime. This policy asks the API server at
+  # admission time instead: it refuses an Ingress in a managed namespace when
+  # one of its rule or TLS hosts is also a host of an Ingress, or appears in
+  # a Host(`...`) match of an IngressRoute, in any namespace not labelled
+  # managed. A ValidatingAdmissionPolicy cannot list objects, so Kyverno runs
+  # it. Its own namespace is managed, so updating an Ingress never clashes
+  # with itself. HostRegexp hosts cannot be compared, as in taken_hosts.tf.
+  #
+  # failurePolicy Fail: if a lookup fails, the write is refused. While the
+  # Kyverno chart runs with features.forceFailurePolicyIgnore
+  # (stacks/kyverno), Kyverno treats every policy as Ignore, this one too,
+  # so a failed lookup or an unavailable Kyverno admits the Ingress; then
+  # cloud-managed-ingress, which needs nothing at runtime, is the only
+  # layer. docs/agents/security.md, "Live host guard".
+  cloud_live_host_guard_name = "cloud-ingress-live-hosts"
+  cloud_live_host_guard = {
+    apiVersion = "policies.kyverno.io/v1"
+    kind       = "ValidatingPolicy"
+    metadata = {
+      name = local.cloud_live_host_guard_name
+      annotations = {
+        "policies.kyverno.io/title"       = "Cloud: no homelab host in a Project Ingress"
+        "policies.kyverno.io/category"    = "Cloud"
+        "policies.kyverno.io/severity"    = "high"
+        "policies.kyverno.io/description" = "In namespaces labelled ${local.cloud_managed_label}=true, refuse an Ingress whose host is routed by an Ingress or IngressRoute outside those namespaces, looked up at admission time (stacks/cloud access_rules.tf)."
+      }
+    }
+    spec = {
+      validationActions = ["Deny"]
+      failurePolicy     = "Fail"
+      # Admission only. Background scans are off on this cluster, and each
+      # evaluation lists every Ingress and IngressRoute.
+      evaluation = { background = { enabled = false } }
+      matchConstraints = {
+        resourceRules = [{
+          apiGroups   = ["networking.k8s.io"]
+          apiVersions = ["v1"]
+          operations  = ["CREATE", "UPDATE"]
+          resources   = ["ingresses"]
+        }]
+        namespaceSelector = { matchLabels = { (local.cloud_managed_label) = "true" } }
+      }
+      variables = [
+        {
+          name       = "managedNamespaces"
+          expression = "dyn(resource.List('v1', 'namespaces', '').items).filter(n, '${local.cloud_managed_label}' in n.metadata.?labels.orValue({}) && n.metadata.labels['${local.cloud_managed_label}'] == 'true').map(n, n.metadata.name)"
+        },
+        {
+          name       = "requested"
+          expression = "(object.spec.?rules.orValue([]).filter(r, has(r.host)).map(r, r.host) + object.spec.?tls.orValue([]).map(t, t.?hosts.orValue([])).flatten()).map(h, h.lowerAscii())"
+        },
+        {
+          name       = "ingressHosts"
+          expression = "dyn(resource.List('networking.k8s.io/v1', 'ingresses', '').items).filter(i, !(i.metadata.namespace in variables.managedNamespaces)).map(i, i.spec.?rules.orValue([]).filter(r, has(r.host)).map(r, r.host) + i.spec.?tls.orValue([]).map(t, t.?hosts.orValue([])).flatten()).flatten().map(h, h.lowerAscii())"
+        },
+        {
+          # Host(`a`) and Host(`a`, `b`) in each route's match, as in
+          # taken_hosts.tf.
+          name       = "routeHosts"
+          expression = "dyn(resource.List('traefik.io/v1alpha1', 'ingressroutes', '').items).filter(r, !(r.metadata.namespace in variables.managedNamespaces)).map(r, r.spec.?routes.orValue([]).map(rt, rt.?match.orValue('').findAll('Host[(][^)]*[)]').map(c, c.findAll('`[^`]+`')).flatten()).flatten()).flatten().map(q, q.replace('`', '').lowerAscii())"
+        },
+        {
+          name       = "taken"
+          expression = "variables.requested.filter(h, h in variables.ingressHosts || h in variables.routeHosts)"
+        },
+      ]
+      validations = [{
+        expression        = "size(variables.taken) == 0"
+        message           = "in a Cloud namespace, an Ingress may not use a host the homelab routes"
+        messageExpression = "'in a Cloud namespace, an Ingress may not use a host the homelab routes now: ' + variables.taken.join(', ')"
+      }]
+    }
+  }
+
+  # Kyverno's admission controller runs the lookups above with its own
+  # service account. The chart binds it to `view`, which covers Ingresses,
+  # and its core role reads namespaces; neither covers Traefik's CRDs. The
+  # chart's ClusterRole kyverno:admission-controller aggregates every
+  # ClusterRole with this label (Kyverno docs, "Customizing permissions").
+  cloud_live_host_guard_kyverno_role = {
+    name   = "kyverno:admission-controller:cloud-ingressroutes"
+    labels = { "rbac.kyverno.io/aggregate-to-admission-controller" = "true" }
+    rules = [
+      { api_groups = ["traefik.io"], resources = ["ingressroutes"], verbs = ["get", "list", "watch"], resource_names = [] },
+    ]
   }
 
   # What main.tf applies: the policies above with the taken hosts written
