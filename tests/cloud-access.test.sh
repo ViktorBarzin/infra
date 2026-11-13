@@ -244,7 +244,8 @@ export VAULT_ADDR="http://127.0.0.1:$VPORT" VAULT_TOKEN="root-$$"
 mkdir -p "$TMP/home"
 vault() { HOME="$TMP/home" command vault "$@"; }
 vtok() { local t="$1"; shift; HOME="$TMP/home" VAULT_TOKEN="$t" command vault "$@"; }
-vault server -dev -dev-no-store-token -dev-root-token-id="$VAULT_TOKEN" -dev-listen-address="127.0.0.1:$VPORT" >"$TMP/vault.log" 2>&1 &
+# `command`, not the function, so $! is Vault's own pid and cleanup stops it.
+HOME="$TMP/home" command vault server -dev -dev-no-store-token -dev-root-token-id="$VAULT_TOKEN" -dev-listen-address="127.0.0.1:$VPORT" >"$TMP/vault.log" 2>&1 &
 VAULT_PID=$!
 for _ in $(seq 1 30); do vault status >/dev/null 2>&1 && break; sleep 1; done
 vault status >/dev/null 2>&1 || { echo "FAIL: dev vault did not start"; tail "$TMP/vault.log"; exit 1; }
