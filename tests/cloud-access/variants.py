@@ -29,6 +29,7 @@ SERVER_FIELDS = ["uid", "resourceVersion", "creationTimestamp", "managedFields",
 SERVER_ANNOTATIONS = ["deployment.kubernetes.io/revision"]
 COMPONENT = "cloud.viktorbarzin.me/component"
 EDGE = "edge"
+SERVICE = "cloud.viktorbarzin.me/service"
 
 cases = []
 
@@ -47,10 +48,15 @@ def clean(obj):
     if o["kind"] == "Service":
         for f in ["clusterIP", "clusterIPs"]:
             o["spec"].pop(f, None)
-    # A private App's Caddyfile names its oauth2-proxy by namespace, which
-    # cloud-managed-strip-config checks; follow the move.
-    if o["kind"] == "ConfigMap" and md["name"].startswith("strip-"):
+    # The edge's Caddyfile names its App's Service by namespace, and the
+    # oauth2-proxy's args name its edge Service by namespace; the policies
+    # check both against the namespace, so follow the move.
+    if o["kind"] == "ConfigMap" and md["name"].startswith("edge-"):
         o["data"]["Caddyfile"] = o["data"]["Caddyfile"].replace(f".{SOURCE_NS}.svc.", f".{target}.svc.")
+    if o["kind"] == "Deployment":
+        for c in o["spec"]["template"]["spec"]["containers"]:
+            if "args" in c:
+                c["args"] = [a.replace(f".{SOURCE_NS}.svc.", f".{target}.svc.") for a in c["args"]]
     if o["kind"] != "Namespace":
         md["namespace"] = target
     return o
@@ -101,55 +107,59 @@ for kind in KINDS:
 
 # --- Deployments ----------------------------------------------------------------
 apps = of_kind("Deployment", **{COMPONENT: "app"})
+edges = of_kind("Deployment", **{COMPONENT: "edge"})
 proxies = of_kind("Deployment", **{COMPONENT: "oauth2-proxy"})
-assert apps and proxies, "the render needs an App and a private App's oauth2-proxy"
+assert apps and edges and proxies, "the render needs an App, its edge and a private App's oauth2-proxy"
 app = apps[0]
+edge = edges[0]
 proxy = proxies[0]
-assert any(c["name"] == "cookie-strip" for c in app["spec"]["template"]["spec"]["containers"])
+assert all(c["name"] != "cookie-strip" for o in apps for c in o["spec"]["template"]["spec"]["containers"]), "the edge runs in its own pod"
 
 
 def spec_of(o):
     return o["spec"]["template"]["spec"] if o["kind"] == "Deployment" else o["spec"]
 
 
-def containers(o, name):
-    return [c for c in spec_of(o)["containers"] if c["name"] == name]
+def meta_of(o):
+    return o["spec"]["template"]["metadata"] if o["kind"] == "Deployment" else o["metadata"]
 
 
-case("deploy-no-strip", "kr", "holds a container named cookie-strip", "App Deployment without the cookie-strip container",
-     variant(app, lambda o: spec_of(o).update({"containers": [c for c in spec_of(o)["containers"] if c["name"] != "cookie-strip"]})))
-case("deploy-strip-image", "kr", "holds a container named cookie-strip", "App Deployment whose cookie-strip runs caddy:latest",
-     variant(app, lambda o: containers(o, "cookie-strip")[0].update({"image": "docker.io/library/caddy:latest"})))
+def relabel(component):
+    def f(o):
+        for m in ([o["metadata"], o["spec"]["template"]["metadata"]] + ([{"labels": o["spec"]["selector"]["matchLabels"]}] if o["kind"] == "Deployment" else [])):
+            m["labels"][COMPONENT] = component
+    return f
+
+
 def drop_component(o):
     o["spec"]["template"]["metadata"]["labels"].pop(COMPONENT)
     o["spec"]["selector"]["matchLabels"].pop(COMPONENT)
     o["metadata"]["labels"].pop(COMPONENT)
 
 
-case("deploy-no-component", "kr", "are labelled cloud.viktorbarzin.me/component", "Deployment whose pods carry no component label",
-     variant(proxy, drop_component))
+COMPONENT_MSG = "a pod is labelled cloud.viktorbarzin.me/component"
+case("deploy-no-component", "kr", COMPONENT_MSG, "Deployment whose pods carry no component label", variant(proxy, drop_component))
+case("deploy-component-other", "kr", COMPONENT_MSG, "Deployment whose pods are component=worker", variant(app, relabel("worker")))
 
 
-RUNS = "container runs as Cloud renders it"
-MOUNTS = "container mounts only a strip-"
-UID = "sets its own runAsUser"
+def app_container_alone():
+    """The App's container without its volume mounts, to add to another pod."""
+    c = copy.deepcopy(app_c(spec_of(app)))
+    c.pop("volumeMounts", None)
+    return c
 
 
-def strip(s):
-    return [c for c in s["containers"] if c["name"] == "cookie-strip"][0]
+def init_container(s):
+    c = s["containers"][0]
+    s["initContainers"] = [{"name": "init", "image": c["image"], "securityContext": c.get("securityContext", {}), "resources": c.get("resources", {})}]
 
 
 def app_c(s):
     return [c for c in s["containers"] if c["name"] == "app"][0]
 
 
-def run_volume(s):
-    return [m["name"] for m in strip(s)["volumeMounts"] if m["mountPath"] == "/run/caddy"][0]
-
-
-def init_container(s):
-    c = s["containers"][0]
-    s["initContainers"] = [{"name": "init", "image": c["image"], "securityContext": c.get("securityContext", {}), "resources": c.get("resources", {})}]
+def probe_host(s):
+    app_c(s)["livenessProbe"] = {"httpGet": {"host": "192.168.1.1", "path": "/", "port": 80}}
 
 
 # Pod-level rules, checked on the App Deployment and on a pod made from its
@@ -162,6 +172,8 @@ POD_RULES = [
     ("csi", lambda s: s["volumes"].append({"name": "x", "csi": {"driver": "nfs.csi.k8s.io"}}), "may use only emptyDir"),
     ("pvc", lambda s: s["volumes"].append({"name": "x", "persistentVolumeClaim": {"claimName": "data"}}), "may use only emptyDir"),
     ("hostpath", lambda s: s["volumes"].append({"name": "x", "hostPath": {"path": "/"}}), "may use only emptyDir|violates PodSecurity"),
+    ("emptydir-unbounded", lambda s: [v["emptyDir"].pop("sizeLimit") for v in s["volumes"] if "emptyDir" in v], "every emptyDir sets a sizeLimit"),
+    ("no-ephemeral-limit", lambda s: app_c(s)["resources"]["limits"].pop("ephemeral-storage"), "sets an ephemeral-storage limit"),
     ("runtimeclass", lambda s: s.update({"runtimeClassName": "nvidia"}), "may not set runtimeClassName"),
     ("nodename", lambda s: s.update({"nodeName": "k8s-master"}), "may not set nodeName"),
     ("nodeselector", lambda s: s.update({"nodeSelector": {"kubernetes.io/hostname": "k8s-node1"}}), "may not set nodeSelector"),
@@ -172,39 +184,27 @@ POD_RULES = [
     ("gpu", lambda s: s["containers"][0].setdefault("resources", {}).setdefault("limits", {}).update({"nvidia.com/gpu": "1"}), "no GPU or other extended resource"),
     ("serviceaccount", lambda s: s.update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
     ("init", init_container, "may not have init containers"),
-    ("edge-on-app", lambda s: [c.update({"ports": [{"name": EDGE, "containerPort": 3001}]}) for c in s["containers"] if c["name"] == "app"], "only a container named cookie-strip"),
     ("share-pid", lambda s: s.update({"shareProcessNamespace": True}), "may not share its process namespace"),
-    # cookie-strip as Cloud renders it, and nothing else.
-    ("strip-command", lambda s: strip(s).update({"command": ["/bin/sh", "-c", "caddy reverse-proxy --from :8080 --to 127.0.0.1:3000"]}), RUNS),
-    ("strip-args", lambda s: strip(s).update({"args": ["caddy", "run", "--config", "/run/caddy/Caddyfile", "--adapter", "caddyfile"]}), RUNS),
-    ("strip-env", lambda s: strip(s)["env"].append({"name": "CADDY_ADMIN", "value": "0.0.0.0:2019"}), RUNS),
-    ("strip-env-from", lambda s: strip(s)["env"].append({"name": "XDG_CONFIG_HOME", "valueFrom": {"configMapKeyRef": {"name": "x", "key": "y"}}}), RUNS),
-    ("strip-envfrom", lambda s: strip(s).update({"envFrom": [{"configMapRef": {"name": "x"}}]}), RUNS),
-    ("strip-poststart", lambda s: strip(s).update({"lifecycle": {"postStart": {"exec": {"command": ["/bin/sh", "-c", "nc -lk -p 8080"]}}}}), RUNS),
-    ("strip-exec-probe", lambda s: strip(s).update({"livenessProbe": {"exec": {"command": ["/bin/sh", "-c", "true"]}}}), RUNS),
-    ("strip-config-emptydir", lambda s: (s["volumes"].append({"name": "shared", "emptyDir": {}}),
-                                         [m.update({"name": "shared"}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"]), MOUNTS),
-    ("strip-config-other-cm", lambda s: [v["configMap"].update({"name": "auth-recipes"}) for v in s["volumes"] if "configMap" in v and v["configMap"]["name"].startswith("strip-")], MOUNTS),
-    ("strip-config-items", lambda s: [v["configMap"].update({"items": [{"key": "Caddyfile", "path": "Caddyfile"}]}) for v in s["volumes"] if "configMap" in v], MOUNTS),
-    ("strip-config-subpath", lambda s: [m.update({"subPath": "Caddyfile"}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"], MOUNTS),
-    ("strip-config-writable", lambda s: [m.update({"readOnly": False}) for m in strip(s)["volumeMounts"] if m["mountPath"] == "/etc/caddy"], MOUNTS),
-    ("strip-extra-mount", lambda s: strip(s)["volumeMounts"].append({"name": "tmp", "mountPath": "/tmp"}), MOUNTS),
-    ("strip-run-shared", lambda s: app_c(s).setdefault("volumeMounts", []).append({"name": run_volume(s), "mountPath": "/run/caddy"}), MOUNTS),
-    ("strip-no-uid", lambda s: strip(s)["securityContext"].pop("runAsUser"), UID),
-    ("strip-app-uid", lambda s: strip(s)["securityContext"].update({"runAsUser": app_c(s)["securityContext"]["runAsUser"]}), UID),
-    ("app-pod-uid-is-strip", lambda s: (app_c(s)["securityContext"].pop("runAsUser"), s["securityContext"].update({"runAsUser": strip(s)["securityContext"]["runAsUser"]})), UID),
+    ("probe-host", probe_host, "may not name a host|violates PodSecurity"),
 ]
 for name, change, expect in POD_RULES:
     case(f"deploy-{name}", "kr", expect, f"App Deployment with {name}", variant(app, lambda o, ch=change: ch(spec_of(o))))
 
-pod = {
-    "apiVersion": "v1",
-    "kind": "Pod",
-    "metadata": {"name": "rendered-app-pod", "namespace": target, "labels": app["spec"]["template"]["metadata"]["labels"],
-                 "annotations": app["spec"]["template"]["metadata"].get("annotations", {})},
-    "spec": copy.deepcopy(app["spec"]["template"]["spec"]),
-}
+
+def as_pod(d, name):
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": target, "labels": d["spec"]["template"]["metadata"]["labels"],
+                     "annotations": d["spec"]["template"]["metadata"].get("annotations", {})},
+        "spec": copy.deepcopy(d["spec"]["template"]["spec"]),
+    }
+
+
+pod = as_pod(app, "rendered-app-pod")
 case("pod", "ka", "ok", "a pod from the rendered App template (Pod Security restricted and cloud-managed-pod)", pod)
+case("pod-edge", "ka", "ok", "a pod from the rendered edge template", as_pod(edge, "rendered-edge-pod"))
+case("pod-proxy", "ka", "ok", "a pod from the rendered oauth2-proxy template", as_pod(proxy, "rendered-proxy-pod"))
 for name, change, expect in POD_RULES:
     case(f"pod-{name}", "ka", expect, f"pod with {name}", variant(pod, lambda o, ch=change: ch(spec_of(o))))
 # Kyverno's inject-gpu-workload-priority gives a GPU pod priority class
@@ -212,21 +212,134 @@ for name, change, expect in POD_RULES:
 case("pod-gpu-kyverno", "ka", "no GPU or other extended resource", "GPU pod after Kyverno set priority class gpu-workload",
      variant(pod, lambda o: (o["spec"]["containers"][0].setdefault("resources", {}).setdefault("limits", {}).update({"nvidia.com/gpu": "1"}),
                              o["spec"].update({"priorityClassName": "gpu-workload"}))))
+PROM = "prometheus.io/\\* annotations"
+case("deploy-prometheus", "kr", PROM, "App Deployment whose pods ask to be scraped",
+     variant(app, lambda o: meta_of(o).setdefault("annotations", {}).update({"prometheus.io/scrape": "true", "prometheus.io/port": "3000"})))
+case("pod-prometheus", "ka", PROM, "pod asking to be scraped",
+     variant(pod, lambda o: meta_of(o).setdefault("annotations", {}).update({"prometheus.io/scrape": "true"})))
+
+# --- the edge Deployment ------------------------------------------------------------
+E_ONE = "an edge pod has one container, edge"
+E_RUNS = "the edge runs as Cloud renders it"
+E_PORT = "the edge has one port, edge = 8080"
+E_PROBE = "the edge has a tcpSocket readiness probe"
+E_MOUNTS = "the edge mounts only ConfigMap edge-"
+
+
+def ec(s):
+    return s["containers"][0]
+
+
+def mount(s, path):
+    return [m for m in ec(s)["volumeMounts"] if m["mountPath"] == path][0]
+
+
+EDGE_RULES = [
+    ("image", lambda s: ec(s).update({"image": "docker.io/library/caddy:latest"}), E_ONE),
+    ("renamed", lambda s: ec(s).update({"name": "caddy"}), E_ONE),
+    ("app-image", lambda s: ec(s).update({"image": app_c(spec_of(app))["image"]}), E_ONE),
+    ("second-container", lambda s: s["containers"].append(app_container_alone()), E_ONE),
+    ("command", lambda s: ec(s).update({"command": ["/bin/sh", "-c", "caddy reverse-proxy --from :8080 --to app-x:80"]}), E_RUNS),
+    ("args", lambda s: ec(s).update({"args": ["caddy", "run", "--config", "/run/caddy/Caddyfile", "--adapter", "caddyfile"]}), E_RUNS),
+    ("env", lambda s: ec(s)["env"].append({"name": "CADDY_ADMIN", "value": "0.0.0.0:2019"}), E_RUNS),
+    ("env-from", lambda s: ec(s)["env"][0].update({"valueFrom": {"configMapKeyRef": {"name": "x", "key": "y"}}, "value": None}) or ec(s)["env"][0].pop("value"), E_RUNS),
+    ("envfrom", lambda s: ec(s).update({"envFrom": [{"configMapRef": {"name": "x"}}]}), E_RUNS),
+    ("poststart", lambda s: ec(s).update({"lifecycle": {"postStart": {"exec": {"command": ["/bin/sh", "-c", "true"]}}}}), E_RUNS),
+    ("liveness", lambda s: ec(s).update({"livenessProbe": {"exec": {"command": ["/bin/sh", "-c", "true"]}}}), E_RUNS),
+    ("port-9090", lambda s: ec(s)["ports"][0].update({"containerPort": 9090}), E_PORT),
+    ("port-renamed", lambda s: ec(s)["ports"][0].update({"name": "web"}), E_PORT),
+    ("second-port", lambda s: ec(s)["ports"].append({"name": "admin", "containerPort": 2019}), E_PORT),
+    ("no-probe", lambda s: ec(s).pop("readinessProbe"), E_PROBE),
+    ("exec-probe", lambda s: ec(s).update({"readinessProbe": {"exec": {"command": ["/bin/true"]}, "periodSeconds": 5}}), E_PROBE),
+    ("probe-other-port", lambda s: ec(s)["readinessProbe"]["tcpSocket"].update({"port": 9090}), E_PROBE),
+    ("config-emptydir", lambda s: (s["volumes"].append({"name": "shared", "emptyDir": {"sizeLimit": "1Mi"}}), mount(s, "/etc/caddy").update({"name": "shared"})), E_MOUNTS),
+    ("config-other-cm", lambda s: [v["configMap"].update({"name": "edge-other"}) for v in s["volumes"] if "configMap" in v], E_MOUNTS),
+    ("config-emails-cm", lambda s: [v["configMap"].update({"name": "auth-recipes"}) for v in s["volumes"] if "configMap" in v], E_MOUNTS),
+    ("config-items", lambda s: [v["configMap"].update({"items": [{"key": "Caddyfile", "path": "Caddyfile"}]}) for v in s["volumes"] if "configMap" in v], E_MOUNTS),
+    ("config-subpath", lambda s: mount(s, "/etc/caddy").update({"subPath": "Caddyfile"}), E_MOUNTS),
+    ("config-writable", lambda s: mount(s, "/etc/caddy").update({"readOnly": False}), E_MOUNTS),
+    ("extra-mount", lambda s: (s["volumes"].append({"name": "tmp", "emptyDir": {"sizeLimit": "1Mi"}}), ec(s)["volumeMounts"].append({"name": "tmp", "mountPath": "/tmp"})), E_MOUNTS),
+]
+for name, change, expect in EDGE_RULES:
+    case(f"edge-{name}", "kr", expect, f"edge Deployment with {name}", variant(edge, lambda o, ch=change: ch(spec_of(o))))
+case("edge-pod-port-9090", "ka", E_PORT, "edge pod with port edge = 9090", variant(as_pod(edge, "edge-9090"), lambda o: ec(spec_of(o))["ports"][0].update({"containerPort": 9090})))
+case("app-as-edge", "kr", E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
+
+# --- the oauth2-proxy Deployment -----------------------------------------------------
+A_ONE = "an oauth2-proxy pod has one container, oauth2-proxy"
+A_RUNS = "the oauth2-proxy runs as Cloud renders it"
+A_PORT = "the oauth2-proxy has one port, http = 4180"
+A_MOUNTS = "the oauth2-proxy mounts only ConfigMap auth-"
+
+
+def arg(prefix, value):
+    def f(s):
+        args = ec(s)["args"]
+        i = [n for n, a in enumerate(args) if a.startswith(prefix + "=")]
+        assert len(i) == 1, f"no single {prefix} in {args}"
+        args[i[0]] = f"{prefix}={value}"
+    return f
+
+
+PROXY_RULES = [
+    ("image", lambda s: ec(s).update({"image": "quay.io/oauth2-proxy/oauth2-proxy:latest"}), A_ONE),
+    ("app-image", lambda s: ec(s).update({"image": app_c(spec_of(app))["image"]}), A_ONE),
+    ("second-container", lambda s: s["containers"].append(app_container_alone()), A_ONE),
+    ("command", lambda s: ec(s).update({"command": ["/bin/oauth2-proxy"]}), A_RUNS),
+    ("upstream-app", arg("--upstream", f"http://app-recipes.{target}.svc.cluster.local:80/"), A_RUNS),
+    ("upstream-other-ns", arg("--upstream", "http://edge-recipes.p-other.svc.cluster.local:80/"), A_RUNS),
+    ("upstream-vault", arg("--upstream", "http://vault-active.vault.svc.cluster.local:8200/"), A_RUNS),
+    ("client-id", arg("--client-id", "kubernetes"), A_RUNS),
+    ("cookie-domain-parent", arg("--cookie-domain", ".viktorbarzin.me"), A_RUNS),
+    ("other-host", arg("--redirect-url", "https://menu.viktorbarzin.me/oauth2/callback"), A_RUNS),
+    ("issuer", arg("--oidc-issuer-url", "https://evil.example.com/"), A_RUNS),
+    ("skip-jwt", lambda s: ec(s)["args"].append("--skip-jwt-bearer-tokens=true"), A_RUNS),
+    ("email-domain", lambda s: ec(s)["args"].append("--email-domain=*"), A_RUNS),
+    ("env", lambda s: ec(s).update({"env": [{"name": "OAUTH2_PROXY_EMAIL_DOMAINS", "value": "*"}]}), A_RUNS),
+    ("envfrom-other", lambda s: ec(s)["envFrom"][0]["secretRef"].update({"name": "env-recipes"}), A_RUNS),
+    ("envfrom-cm", lambda s: ec(s)["envFrom"].append({"configMapRef": {"name": "auth-recipes"}}), A_RUNS),
+    ("exec-probe", lambda s: ec(s).update({"livenessProbe": {"exec": {"command": ["/bin/true"]}}}), A_RUNS),
+    ("port", lambda s: ec(s)["ports"][0].update({"containerPort": 8080}), A_PORT),
+    ("second-port", lambda s: ec(s)["ports"].append({"name": "metrics", "containerPort": 44180}), A_PORT),
+    ("emails-other-cm", lambda s: [v["configMap"].update({"name": "auth-menu"}) for v in s["volumes"] if "configMap" in v], A_MOUNTS),
+    ("emails-writable", lambda s: ec(s)["volumeMounts"][0].update({"readOnly": False}), A_MOUNTS),
+]
+for name, change, expect in PROXY_RULES:
+    case(f"proxy-{name}", "kr", expect, f"oauth2-proxy Deployment with {name}", variant(proxy, lambda o, ch=change: ch(spec_of(o))))
+case("app-as-proxy", "kr", A_ONE, "App Deployment labelled component=oauth2-proxy (Calico lets those reach Authentik)", variant(app, relabel("oauth2-proxy")))
 
 # --- Kubernetes Services ----------------------------------------------------------
-svc = [s for s in of_kind("Service", **{COMPONENT: "app"})][0]
-case("svc-edge-number", "kr", "must target the container port named edge", "edge Service port targeting a number",
-     variant(svc, lambda o: [p.update({"targetPort": 3000}) for p in o["spec"]["ports"] if p["name"] == EDGE]))
-case("svc-edge-other", "kr", "must target the container port named edge", "edge Service port targeting port app",
-     variant(svc, lambda o: [p.update({"targetPort": "app"}) for p in o["spec"]["ports"] if p["name"] == EDGE]))
+edge_svc = one("Service", "edge-recipes")
+auth_svc = one("Service", "auth-recipes")
+E_SVC = "Service edge-<app> selects"
+A_SVC = "Service auth-<app> selects"
+case("svc-edge-selects-app", "kr", E_SVC, "edge Service selecting the App pods",
+     variant(edge_svc, lambda o: o["spec"]["selector"].update({COMPONENT: "app"})))
+case("svc-edge-no-component", "kr", E_SVC, "edge Service selecting the App's pods of every component",
+     variant(edge_svc, lambda o: o["spec"]["selector"].pop(COMPONENT)))
+case("svc-edge-other-app", "kr", E_SVC, "edge Service selecting another App's edge",
+     variant(edge_svc, lambda o: o["spec"]["selector"].update({SERVICE: "menu"})))
+case("svc-edge-number", "kr", E_SVC, "edge Service port targeting a number",
+     variant(edge_svc, lambda o: o["spec"]["ports"][0].update({"targetPort": 8080})))
+case("svc-edge-second-port", "kr", E_SVC, "edge Service with a second port",
+     variant(edge_svc, lambda o: o["spec"]["ports"].append({"name": "app", "port": 3000, "targetPort": "app"})))
+case("svc-auth-selects-app", "kr", A_SVC, "oauth2-proxy Service selecting the App pods",
+     variant(auth_svc, lambda o: o["spec"]["selector"].update({COMPONENT: "app"})))
+case("svc-auth-port", "kr", A_SVC, "oauth2-proxy Service port targeting app",
+     variant(auth_svc, lambda o: o["spec"]["ports"][0].update({"targetPort": "app"})))
 case("svc-nodeport", "kr", "must be type ClusterIP", "NodePort Service",
-     variant(svc, lambda o: o["spec"].update({"type": "NodePort"})))
+     variant(edge_svc, lambda o: o["spec"].update({"type": "NodePort"})))
+case("svc-prometheus", "kr", PROM, "Service asking to be scraped",
+     variant(one("Service", "app-menu"), lambda o: o["metadata"].setdefault("annotations", {}).update({"prometheus.io/scrape": "true", "prometheus.io/port": "3000"})))
 
 # --- Ingresses ----------------------------------------------------------------------
 ingresses = of_kind("Ingress")
 public = [i for i in ingresses if "traefik.ingress.kubernetes.io/router.middlewares" in i["metadata"].get("annotations", {})]
 assert public, "the render needs a public App"
 ing = public[0]
+private_ing = one("Ingress", "app-recipes")
+assert private_ing["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"] == {"name": "auth-recipes", "port": {"name": "http"}}, "a private App's Ingress names its oauth2-proxy"
+assert ing["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"].startswith("edge-"), "a public App's Ingress names its edge"
 
 
 def annotate(k, v):
@@ -247,10 +360,15 @@ case("ing-own-middleware", "kr", "router.middlewares may name only", "Ingress na
      variant(ing, annotate("traefik.ingress.kubernetes.io/router.middlewares", f"{target}-buffer@kubernetescrd")))
 case("ing-foreign-middleware", "kr", "router.middlewares may name only", "Ingress naming another namespace's Middleware",
      variant(ing, annotate("traefik.ingress.kubernetes.io/router.middlewares", "terminal-tl-proxy-secret@kubernetescrd")))
-case("ing-port-number", "kr", "backend is a Kubernetes Service port named edge", "Ingress backend by port number",
+BACKEND = "every Ingress backend is an edge Service"
+case("ing-port-number", "kr", BACKEND, "Ingress backend by port number",
      variant(ing, lambda o: [p["backend"]["service"].update({"port": {"number": 80}}) for p in paths(o)]))
-case("ing-port-http", "kr", "backend is a Kubernetes Service port named edge", "Ingress backend on port http (oauth2-proxy)",
-     variant(ing, lambda o: [p["backend"]["service"].update({"name": "auth-recipes", "port": {"name": "http"}}) for p in paths(o)]))
+case("ing-app-service", "kr", BACKEND, "Ingress backend on the App's own Service, skipping the edge",
+     variant(ing, lambda o: [p["backend"]["service"].update({"name": "app-menu", "port": {"name": "app"}}) for p in paths(o)]))
+case("ing-app-service-edge-port", "kr", BACKEND, "Ingress backend on Service app-menu port edge",
+     variant(ing, lambda o: [p["backend"]["service"].update({"name": "app-menu"}) for p in paths(o)]))
+case("ing-auth-edge-port", "kr", BACKEND, "Ingress backend on Service auth-recipes port edge",
+     variant(private_ing, lambda o: [p["backend"]["service"].update({"port": {"name": "edge"}}) for p in paths(o)]))
 case("ing-no-class", "kr", "ingressClassName traefik", "Ingress without ingressClassName",
      variant(ing, lambda o: o["spec"].pop("ingressClassName")))
 case("ing-tls-secret", "kr", "tls.secretName", "Ingress with tls.secretName",
@@ -262,11 +380,11 @@ case("ing-taken", "kr", "already routes", "Ingress for nextcloud.viktorbarzin.me
 case("ing-taken-path", "kr", "already routes", "Ingress for nextcloud.viktorbarzin.me/login, a longer rule than the homelab's",
      variant(ing, lambda o: ([r.update({"host": "nextcloud.viktorbarzin.me"}) for r in o["spec"]["rules"]], [p.update({"path": "/login"}) for p in paths(o)], o["spec"].pop("tls"))))
 
-# --- the cookie-strip Caddyfile (ConfigMap strip-<app>) -----------------------------
-private_strip = one("ConfigMap", "strip-recipes")
-public_strip = one("ConfigMap", "strip-menu")
+# --- the edge's Caddyfile (ConfigMap edge-<app>) ------------------------------------
+private_cf = one("ConfigMap", "edge-recipes")
+public_cf = one("ConfigMap", "edge-menu")
 CADDY = "Caddyfile"
-assert "forward_auth auth-recipes." + target + ".svc." in private_strip["data"][CADDY], "the private App's Caddyfile names its oauth2-proxy"
+assert f"reverse_proxy app-recipes.{target}.svc.cluster.local:80" in private_cf["data"][CADDY], "the edge proxies to its App's Service"
 
 
 def edit(old, new):
@@ -276,44 +394,43 @@ def edit(old, new):
     return f
 
 
-COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|_oauth2_proxy[^=;]*"
+COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|techaro\\.lol-anubis-[^=;]*|_oauth2_proxy[^=;]*"
 RENDERED = "Caddyfile is the one Cloud renders"
-case("strip-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
-     variant(public_strip, edit(COOKIE_LIST, "_oauth2_proxy[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
-case("strip-cm-comment", "kr", "ok", "Caddyfile with another comment line", variant(public_strip, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
-for cookie in ["authentik_proxy_[^=;]*", "tsgate[^=;]*", "anubis[^=;]*"]:
-    case("strip-cm-keep-" + cookie.split("[")[0].rstrip("_"), "kr", "strips at least", f"Caddyfile that keeps {cookie.split('[')[0]}* cookies",
-         variant(private_strip, edit(COOKIE_LIST, "|".join(c for c in COOKIE_LIST.split("|") if c != cookie))))
-case("strip-cm-exact-tsgate", "kr", "strips at least", "Caddyfile that strips tsgate but not tsgate_fb",
-     variant(public_strip, edit("tsgate[^=;]*", "tsgate")))
-case("strip-cm-extra-key", "kr", "holds only the key Caddyfile", "strip ConfigMap with a second key",
-     variant(public_strip, lambda o: o["data"].update({"evil": "x"})))
-case("strip-cm-binary", "kr", "holds only the key Caddyfile", "strip ConfigMap with binaryData",
-     variant(public_strip, lambda o: o.update({"binaryData": {"x": "eA=="}})))
-case("strip-cm-no-cookie-line", "kr", RENDERED, "Caddyfile without the Cookie rule",
-     variant(public_strip, lambda o: o["data"].update({CADDY: "\n".join(l for l in o["data"][CADDY].split("\n") if "header_up Cookie `(?:" not in l)})))
-case("strip-cm-other-upstream", "kr", RENDERED, "Caddyfile proxying to Vault",
-     variant(public_strip, edit("reverse_proxy 127.0.0.1:", "reverse_proxy vault-active.vault.svc.cluster.local:")))
-case("strip-cm-extra-route", "kr", RENDERED, "Caddyfile with an extra route before the App",
-     variant(public_strip, edit("\thandle {", "\thandle /x {\n\t\treverse_proxy 127.0.0.1:3000\n\t}\n\thandle {")))
-case("strip-cm-comment-trick", "kr", RENDERED, "Caddyfile with a directive after a comment",
-     variant(public_strip, edit(":8080 {", ":8080 {\n# x\n\troute { header_up +Cookie x }")))
-case("strip-cm-admin", "kr", RENDERED, "Caddyfile with the admin API on",
-     variant(public_strip, edit("admin off", "admin 0.0.0.0:2019")))
-case("strip-cm-other-ns-proxy", "kr", RENDERED, "private Caddyfile asking another namespace's oauth2-proxy",
-     variant(private_strip, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace(f"auth-recipes.{target}.svc.", "auth-recipes.p-other.svc.")})))
-case("strip-cm-other-app-proxy", "kr", RENDERED, "private Caddyfile asking another App's oauth2-proxy",
-     variant(private_strip, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace("auth-recipes.", "auth-menu.")})))
-
-
-def drop_forward_auth(o):
-    t = o["data"][CADDY]
-    o["data"][CADDY] = t[:t.index("\t\tforward_auth")] + t[t.index("\t\treverse_proxy 127.0.0.1"):]
-
-
-case("strip-cm-half-private", "kr", RENDERED, "private Caddyfile without forward_auth (sign-in route only)", variant(private_strip, drop_forward_auth))
-case("strip-cm-admin-user", "ka", RENDERED, "admin is refused another Caddyfile too",
-     variant(public_strip, edit("admin off", "admin 0.0.0.0:2019")))
+case("edge-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
+     variant(public_cf, edit(COOKIE_LIST, "_oauth2_proxy[^=;]*|techaro\\.lol-anubis-[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
+case("edge-cm-comment", "kr", "ok", "Caddyfile with a comment line before it", variant(public_cf, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
+for cookie in COOKIE_LIST.split("|")[:4]:
+    short = cookie.split("[")[0].rstrip("_").replace("\\.", ".")
+    case("edge-cm-keep-" + short.replace(".", "-"), "kr", "strips at least", f"Caddyfile that keeps {short}* cookies",
+         variant(private_cf, edit(COOKIE_LIST, "|".join(c for c in COOKIE_LIST.split("|") if c != cookie))))
+case("edge-cm-exact-tsgate", "kr", "strips at least", "Caddyfile that strips tsgate but not tsgate_fb",
+     variant(public_cf, edit("tsgate[^=;]*", "tsgate")))
+case("edge-cm-extra-key", "kr", "holds only the key Caddyfile", "edge ConfigMap with a second key",
+     variant(public_cf, lambda o: o["data"].update({"evil": "x"})))
+case("edge-cm-binary", "kr", "holds only the key Caddyfile", "edge ConfigMap with binaryData",
+     variant(public_cf, lambda o: o.update({"binaryData": {"x": "eA=="}})))
+case("edge-cm-no-cookie-line", "kr", RENDERED, "Caddyfile without the Cookie rule",
+     variant(public_cf, lambda o: o["data"].update({CADDY: "\n".join(l for l in o["data"][CADDY].split("\n") if "header_up Cookie `(?:" not in l)})))
+case("edge-cm-no-set-cookie", "kr", RENDERED, "Caddyfile that lets parent-domain Set-Cookie through",
+     variant(public_cf, lambda o: o["data"].update({CADDY: "\n".join(l for l in o["data"][CADDY].split("\n") if "header_down Set-Cookie" not in l)})))
+case("edge-cm-no-response-cap", "kr", RENDERED, "Caddyfile without the response header cap",
+     variant(public_cf, edit("max_response_header 64KB", "max_response_header 10MB")))
+case("edge-cm-no-request-cap", "kr", RENDERED, "Caddyfile with a 1MB request header cap",
+     variant(public_cf, edit("max_header_size 64KB", "max_header_size 1MB")))
+case("edge-cm-vault", "kr", RENDERED, "Caddyfile proxying to Vault",
+     variant(public_cf, edit("reverse_proxy app-menu.", "reverse_proxy vault-active.vault.")))
+case("edge-cm-other-app", "kr", RENDERED, "Caddyfile proxying to another App's Service",
+     variant(public_cf, edit("reverse_proxy app-menu.", "reverse_proxy app-recipes.")))
+case("edge-cm-other-ns", "kr", RENDERED, "Caddyfile proxying to another namespace's App",
+     variant(public_cf, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace(f"app-menu.{target}.svc.", "app-menu.p-other.svc.")})))
+case("edge-cm-extra-route", "kr", RENDERED, "Caddyfile with an extra site block",
+     variant(public_cf, lambda o: o["data"].update({CADDY: o["data"][CADDY] + ":8081 {\n\treverse_proxy app-menu:80\n}\n"})))
+case("edge-cm-comment-trick", "kr", RENDERED, "Caddyfile with a directive after a comment",
+     variant(public_cf, edit(":8080 {", ":8080 {\n# x\n\troute { header_up +Cookie x }")))
+case("edge-cm-admin", "kr", RENDERED, "Caddyfile with the admin API on",
+     variant(public_cf, edit("admin off", "admin 0.0.0.0:2019")))
+case("edge-cm-admin-user", "ka", RENDERED, "admin is refused another Caddyfile too",
+     variant(public_cf, edit("admin off", "admin 0.0.0.0:2019")))
 
 # --- ResourceQuota and LimitRange -------------------------------------------------------
 quota = one("ResourceQuota", "cloud-quota")
@@ -338,7 +455,7 @@ def scoped(o):
 
 
 case("quota-scoped", "kr", "must have no scopes", "quota that counts only tier-0-core pods", variant(quota, scoped))
-for key in ["limits.cpu", "pods"]:
+for key in ["limits.cpu", "pods", "requests.ephemeral-storage", "limits.ephemeral-storage"]:
     case(f"quota-no-{key}", "kr", "must have no scopes", f"quota without {key}", variant(quota, lambda o, k=key: o["spec"]["hard"].pop(k)))
 case("quota-pvc", "kr", "must have no scopes", "quota allowing PersistentVolumeClaims",
      variant(quota, lambda o: o["spec"]["hard"].update({"persistentvolumeclaims": "5"})))
