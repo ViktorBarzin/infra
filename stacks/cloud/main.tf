@@ -1,0 +1,102 @@
+# Cloud: the homelab's self-hosted cloud (code: Forgejo viktor/cloud; plan
+# docs/plans/2026-11-12-cloud-v1-and-operator.md and ADR-0003 there).
+#
+# This stack holds the Kubernetes identity and limits of Cloud's reconciler.
+# What the reconciler may do is in access_rules.tf (tested by
+# tests/cloud-access.test.sh). Cloud's Postgres roles are in stacks/dbaas
+# (cloud_postgres.tf), its Vault roles in stacks/vault (cloud.tf), and its
+# Authentik service account in stacks/authentik (cloud-reconciler.tf). The
+# console and reconciler Deployments arrive here in milestone M4.
+#
+# Scope: Project namespaces (p-*) and everything in them, the Project roles and
+# databases on the shared CNPG cluster, the Authentik objects the reconciler
+# creates and secret/cloud/<namespace>/* belong to Cloud's database, not this
+# repo (AGENTS.md, "Cloud-owned objects").
+
+# Same labels and lifecycle as modules/kubernetes/tanstack_app, so the console's
+# module call in M4 can take this namespace over with one `moved` block
+# (to = module.<name>.kubernetes_namespace.this) and plan zero changes.
+resource "kubernetes_namespace" "cloud" {
+  metadata {
+    name = local.cloud_namespace
+    labels = {
+      tier              = local.tiers.aux
+      "istio-injection" = "disabled"
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label.
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# The reconciler talks to the API server, Vault (Kubernetes auth role
+# cloud-reconciler) and Postgres with this identity.
+resource "kubernetes_service_account" "cloud_reconciler" {
+  metadata {
+    name      = local.cloud_reconciler_sa
+    namespace = kubernetes_namespace.cloud.metadata[0].name
+  }
+}
+
+# The console needs no Kubernetes API access, so its pods get no token.
+resource "kubernetes_service_account" "cloud_console" {
+  metadata {
+    name      = "cloud-console"
+    namespace = kubernetes_namespace.cloud.metadata[0].name
+  }
+  automount_service_account_token = false
+}
+
+resource "kubernetes_cluster_role" "cloud_reconciler" {
+  metadata { name = "cloud-reconciler" }
+  dynamic "rule" {
+    for_each = local.cloud_reconciler_cluster_rules
+    content {
+      api_groups     = rule.value.api_groups
+      resources      = rule.value.resources
+      verbs          = rule.value.verbs
+      resource_names = rule.value.resource_names
+    }
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "cloud_reconciler" {
+  metadata { name = "cloud-reconciler" }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.cloud_reconciler.metadata[0].name
+    namespace = kubernetes_namespace.cloud.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.cloud_reconciler.metadata[0].name
+  }
+}
+
+# Not bound here. The reconciler binds it to itself with a RoleBinding in each
+# Project namespace it creates; RBAC lets it bind this role and no other.
+resource "kubernetes_cluster_role" "cloud_reconciler_project" {
+  metadata { name = local.cloud_project_role_name }
+  dynamic "rule" {
+    for_each = local.cloud_reconciler_project_rules
+    content {
+      api_groups     = rule.value.api_groups
+      resources      = rule.value.resources
+      verbs          = rule.value.verbs
+      resource_names = rule.value.resource_names
+    }
+  }
+}
+
+resource "kubernetes_manifest" "cloud_admission_policy" {
+  for_each = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicy" }
+  manifest = each.value
+}
+
+resource "kubernetes_manifest" "cloud_admission_policy_binding" {
+  for_each   = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicyBinding" }
+  manifest   = each.value
+  depends_on = [kubernetes_manifest.cloud_admission_policy]
+}
