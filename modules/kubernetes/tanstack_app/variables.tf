@@ -310,6 +310,12 @@ variable "oidc_callback_path" {
   description = "Better Auth 1.7 callback for providerId \"authentik\" (<basePath>/callback/<providerId>)."
 }
 
+variable "email_scope_mapping_id" {
+  type        = string
+  default     = null
+  description = "ID of an OAuth2 scope mapping for scope `email` that the provider sends in place of Authentik's managed scope-email. null means the managed one, which always sends email_verified false. stacks/cloud passes one that sends email_verified true for vouched accounts."
+}
+
 variable "access_token_validity" {
   type        = string
   default     = "minutes=15"

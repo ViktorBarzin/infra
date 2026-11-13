@@ -186,3 +186,26 @@ run "own_service_account_without_token_by_default" {
     error_message = "the pod mounts no token"
   }
 }
+
+run "managed_email_mapping_by_default" {
+  command = plan
+  assert {
+    condition     = length(authentik_provider_oauth2.this.property_mappings) == 3 && contains(authentik_provider_oauth2.this.property_mappings, data.authentik_property_mapping_provider_scope.email[0].id)
+    error_message = "openid, profile and Authentik's managed scope-email, as before"
+  }
+}
+
+run "own_email_mapping_replaces_the_managed_one" {
+  command = plan
+  variables {
+    email_scope_mapping_id = "custom-email-mapping"
+  }
+  assert {
+    condition     = length(authentik_provider_oauth2.this.property_mappings) == 3 && contains(authentik_provider_oauth2.this.property_mappings, "custom-email-mapping")
+    error_message = "the app's own email mapping takes the managed one's place"
+  }
+  assert {
+    condition     = length(data.authentik_property_mapping_provider_scope.email) == 0
+    error_message = "the managed scope-email is not looked up, so it cannot be sent beside the app's own"
+  }
+}

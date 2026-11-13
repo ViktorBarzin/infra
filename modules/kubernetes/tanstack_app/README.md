@@ -104,6 +104,7 @@ module "app" {
 | `access_token_validity` | `minutes=15` | ADR-0001: removing someone from a group takes effect within 15 minutes. |
 | `grant_types` | `["authorization_code"]` | Authentik 2026.x creates a provider with an empty list otherwise, which refuses every authorize request. No `offline_access`, no refresh tokens. |
 | `bind_home_server_admins` | `true` | As for every other app here. |
+| `email_scope_mapping_id` | `null` | Authentik's managed `scope-email` mapping, which sends `email_verified: false` for every account. An app that matches people by a verified email passes its own mapping here (stacks/cloud uses `cloud-email-vouched` from stacks/authentik). |
 
 The Deployment sets `wait_for_rollout = false`: CI owns rollouts. A new app's
 stack is applied before its first image exists, so the pod sits in
