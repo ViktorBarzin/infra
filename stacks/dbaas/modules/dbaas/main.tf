@@ -2648,7 +2648,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "docker.io/library/postgres:18.6-trixie"
+              image = "docker.io/library/postgres:18.7-trixie"
               env {
                 name = "PGPASSWORD"
                 value_from {
