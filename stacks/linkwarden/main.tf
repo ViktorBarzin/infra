@@ -197,7 +197,7 @@ resource "kubernetes_job" "db_owner" {
         restart_policy = "Never"
         container {
           name    = "owner"
-          image   = "docker.io/library/postgres:18.6-alpine"
+          image   = "docker.io/library/postgres:18.7-alpine"
           command = ["sh", "-c", "psql -v ON_ERROR_STOP=1 -f /sql/owner.sql && echo 'linkwarden owns its database'"]
           env {
             name  = "PGHOST"
