@@ -136,3 +136,53 @@ run "secret_env_reads_single_keys_and_restarts_on_change" {
     error_message = "Reloader restarts the pod when the telemetry Secret changes"
   }
 }
+
+run "no_service_account_by_default" {
+  command = plan
+  assert {
+    condition     = length(kubernetes_service_account.this) == 0
+    error_message = "no service account unless asked for, so existing apps render unchanged"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == null || kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == true
+    error_message = "the pod spec keeps the provider default"
+  }
+}
+
+run "own_service_account_with_api_token" {
+  command = plan
+  variables {
+    service_account = { name = "demo-one-console", automount_token = true }
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].metadata[0].name == "demo-one-console"
+    error_message = "service account name"
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].automount_service_account_token == true
+    error_message = "service account mounts its token"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].service_account_name == "demo-one-console"
+    error_message = "the pod runs as the module's service account"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == true
+    error_message = "the pod mounts the token"
+  }
+}
+
+run "own_service_account_without_token_by_default" {
+  command = plan
+  variables {
+    service_account = { name = "demo-one" }
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].automount_service_account_token == false
+    error_message = "no token unless asked for"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == false
+    error_message = "the pod mounts no token"
+  }
+}
