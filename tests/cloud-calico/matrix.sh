@@ -103,6 +103,7 @@ cannot "$ns" app-recipes "10.96.0.1:443"                   "App pods do not reac
 node_ip="$(k get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
 cannot "$ns" app-recipes "$node_ip:10250"                  "App pods do not reach the node's kubelet ($node_ip, a private address)"
 cannot "$ns" app-recipes "176.12.22.76:443"                "App pods do not reach the home WAN IP 176.12.22.76"
+cannot "$ns" app-recipes "92.5.132.215:9100"               "App pods do not reach backup-mx 92.5.132.215 (node_exporter, admitted from the home WAN IP)"
 if [ "${CALICO_INTERNET:-0}" = "1" ]; then
   can "$ns" app-recipes "1.1.1.1:443"                      "App pods reach the internet (1.1.1.1:443)"
 fi

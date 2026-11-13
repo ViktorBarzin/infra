@@ -446,9 +446,9 @@ locals {
 
   # Egress from every Project (M2 contract point 2, Viktor's decision): the
   # internet directly, minus every private and special range, the home WAN
-  # address and the homelab's public IPv6 prefixes. Cloud's own Project
-  # policy excludes the same list (EGRESS_EXCLUDED in render.ts; the test
-  # compares them).
+  # address, backup-mx and the homelab's public IPv6 prefixes. Cloud's own
+  # Project policy excludes the same list (EGRESS_EXCLUDED in render.ts; the
+  # test compares them).
   #   176.12.22.76/32  the home WAN IP, as a destination: pfSense forwards
   #     WAN :443 to Traefik, so a pod reaching it would hairpin into Traefik.
   #     Same address as in stacks/crowdsec.
@@ -456,13 +456,19 @@ locals {
   #     SNATed and leaves as 176.12.22.76 too, and homelab controls trust that
   #     source: CrowdSec whitelists it (so a Project request through
   #     Cloudflare to a homelab host, which Traefik sees by Cf-Connecting-Ip,
-  #     is never banned), and the backup MX VM's OCI security list admits it
-  #     on 22 (SSH, key only) and 9100 (node_exporter) (stacks/backup-mx).
-  #     Viktor decides the fix (docs/agents/security.md, "Open risk").
+  #     is never banned), and backup-mx admits it (next entry). Viktor
+  #     decides the CrowdSec part (docs/agents/security.md, "Open risk").
+  #   92.5.132.215/32  backup-mx (mx2) on OCI, docs/runbooks/backup-mx.md. Its
+  #     OCI security list (stacks/backup-mx) admits the home WAN IP on 22
+  #     (break-glass SSH, key only) and 9100 (node_exporter). A Project pod
+  #     leaves as that address, so without this entry it would pass both
+  #     source checks: it could scrape node_exporter and try SSH logins. The
+  #     cost: Project pods cannot reach status.viktorbarzin.me or the backup
+  #     MX on 25, which they do not need.
   #   2001:470:...     Hurricane Electric prefixes; same list as the crowdsec
   #     allowlist in stacks/crowdsec.
   cloud_egress_excluded = {
-    ipv4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8", "176.12.22.76/32"]
+    ipv4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8", "176.12.22.76/32", "92.5.132.215/32"]
     ipv6 = ["fc00::/7", "fe80::/10", "::1/128", "2001:470:5a7f::/48", "2001:470:6f:43d::/64", "2001:470:6e:43d::/64"]
   }
 
