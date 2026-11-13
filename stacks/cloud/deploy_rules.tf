@@ -182,6 +182,13 @@ locals {
       { name = "BUILDS_ENABLED", value = tostring(var.builds_enabled) },
       { name = "FORGEJO_URL", value = local.cloud_forgejo_url },
       { name = "FORGEJO_AUTH_SOURCE_ID", value = tostring(local.cloud_forgejo_auth_source_id) },
+      # The images every Project's edge and oauth2-proxy run, from the same
+      # locals the admission policies pin (access_rules.tf), so a Renovate
+      # bump here moves the rendered image and the policy together. A second
+      # pin in the cloud repo drifted on 2026-11-13 and every edge pod was
+      # refused.
+      { name = "EDGE_IMAGE", value = local.cloud_edge.image },
+      { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )
