@@ -9,10 +9,14 @@
 # does (fixed rules, then .spec.postgresql.pg_hba, then the default
 # `host all all all scram-sha-256`), runs the SQL twice as the superuser, and
 # then checks what each role can and cannot do over TCP:
+#   neither LOGIN role accepts a password before Vault sets one;
 #   cloud_provisioner creates a Project role in cloud_projects and its
-#     database, sets a temp_file_limit on it, and cannot touch an existing
-#     app's role or database or read terraform_state;
-#   a Project role reaches only the database named after it;
+#     database, sets a temp_file_limit on it, reaches only postgres and p_*
+#     databases, and cannot touch an existing app's role or database;
+#   a p_* role reaches only the database named after it, never an app
+#     database without a role of its own name;
+#   granting cloud_projects to an existing role (tasks, postgres) changes
+#     nothing about where it can connect;
 #   cloud_state reaches only the cloud_state database;
 #   an existing app role (tasks) still reaches its own database.
 # Needs docker and the postgres:18 image.
@@ -91,10 +95,13 @@ expect_fail() { local what="$1" pattern="$2"; shift 2
   elif grep -qiE "$pattern" <<<"$out"; then ok "$what"; else bad "$what: wrong error: $out"; fi; }
 
 # The stand-ins for what already lives on the cluster: one app with its own
-# database, and the infra Terraform state.
+# database, an app database with no role of its own name (like the live
+# dawarich_queue, which PUBLIC may CONNECT to), and the infra Terraform state.
 sup <<'SQL' || { echo "FAIL: fixture setup"; exit 1; }
+ALTER ROLE postgres PASSWORD 'pw-postgres';
 CREATE ROLE tasks LOGIN PASSWORD 'pw-tasks';
 CREATE DATABASE tasks OWNER tasks;
+CREATE DATABASE dawarich_queue OWNER tasks;
 CREATE ROLE terraform_state LOGIN PASSWORD 'pw-terraform_state';
 CREATE DATABASE terraform_state OWNER terraform_state;
 SQL
@@ -103,6 +110,10 @@ as terraform_state terraform_state -c 'CREATE SCHEMA dbaas; CREATE TABLE dbaas.s
 
 expect_ok "role SQL runs as the superuser" sup -f - <"$TMP/cloud.sql"
 expect_ok "role SQL runs again (idempotent)" sup -f - <"$TMP/cloud.sql"
+expect_fail "cloud_provisioner has no password before Vault sets one" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=changeme-vault-will-rotate $NAME psql -h 127.0.0.1 -U cloud_provisioner -d postgres -tAc 'select 1'"
+expect_fail "cloud_state has no password before Vault sets one" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=changeme-vault-will-rotate $NAME psql -h 127.0.0.1 -U cloud_state -d cloud_state -tAc 'select 1'"
 # Vault's static roles set the real passwords; stand in for them here.
 sup -c "ALTER ROLE cloud_provisioner PASSWORD 'pw-cloud_provisioner'; ALTER ROLE cloud_state PASSWORD 'pw-cloud_state';"
 
@@ -134,8 +145,11 @@ expect_fail "provisioner cannot drop an existing app database" "must be owner" \
   as cloud_provisioner postgres -c "DROP DATABASE tasks"
 expect_fail "provisioner cannot create a superuser" "permission denied|must be superuser|only roles with the SUPERUSER" \
   as cloud_provisioner postgres -c "CREATE ROLE p_root SUPERUSER"
-expect_fail "provisioner cannot read terraform_state" "permission denied" \
+expect_fail "provisioner is refused terraform_state" "pg_hba.conf rejects|no pg_hba.conf entry" \
   as cloud_provisioner terraform_state -c "select * from dbaas.states"
+expect_fail "provisioner is refused an app database" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as cloud_provisioner tasks -c 'select 1'
+expect_ok "provisioner reaches a Project database" as cloud_provisioner p_demo -c 'select 1'
 expect_fail "provisioner cannot grant itself the superuser role" "permission denied|must have admin" \
   as cloud_provisioner postgres -c "GRANT postgres TO cloud_provisioner"
 
@@ -154,8 +168,19 @@ expect_ok "cloud_state reaches cloud_state and creates a schema" \
   as cloud_state cloud_state -c 'CREATE SCHEMA p_demo; CREATE TABLE p_demo.states (id int)'
 expect_fail "cloud_state is refused terraform_state" "pg_hba.conf rejects|no pg_hba.conf entry" as cloud_state terraform_state -c 'select 1'
 expect_fail "cloud_state is refused the postgres database" "pg_hba.conf rejects|no pg_hba.conf entry" as cloud_state postgres -c 'select 1'
-expect_fail "provisioner cannot read Project state in cloud_state" "permission denied" \
+expect_fail "provisioner is refused cloud_state" "pg_hba.conf rejects|no pg_hba.conf entry" \
   as cloud_provisioner cloud_state -c 'select * from p_demo.states'
+
+# --- names, not group membership ---------------------------------------------
+expect_ok "provisioner creates p_dawarich_queue, named after an app database" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_dawarich_queue LOGIN PASSWORD 'pw-p_dawarich_queue' IN ROLE cloud_projects"
+expect_fail "p_dawarich_queue is refused the dawarich_queue database" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as p_dawarich_queue dawarich_queue -c 'select 1'
+expect_ok "provisioner grants cloud_projects to tasks and postgres (ADMIN OPTION allows it)" \
+  as cloud_provisioner postgres -c "GRANT cloud_projects TO tasks" -c "GRANT cloud_projects TO postgres"
+expect_ok "tasks, now in cloud_projects, still reaches tasks" as tasks tasks -c 'select 1'
+expect_ok "tasks, now in cloud_projects, still reaches dawarich_queue" as tasks dawarich_queue -c 'select 1'
+expect_ok "postgres, now in cloud_projects, still reaches tasks over TCP" as postgres tasks -c 'select 1'
 
 # --- nothing else changed ----------------------------------------------------
 expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'

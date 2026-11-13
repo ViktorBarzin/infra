@@ -4,8 +4,9 @@
 # rules reach the cluster through null_resource.pg_cluster_v18 in main.tf.
 #
 #   cloud_projects     NOLOGIN group; every Project role the reconciler creates
-#                      is a member, and pg_hba keeps each one in the database
-#                      of its own name.
+#                      is a member, for grants only. pg_hba keeps each p_*
+#                      role in the database of its own name by matching the
+#                      name, not this group.
 #   cloud_provisioner  LOGIN CREATEDB CREATEROLE, CONNECTION LIMIT 5, ADMIN
 #                      OPTION on cloud_projects. Vault static role
 #                      pg-cloud-provisioner.
@@ -17,7 +18,8 @@
 # Cloud's console database (`cloud`) is the standard app_databases entry.
 #
 # Connection ceiling: the reconciler keeps the sum of the CONNECTION LIMITs of
-# all cloud_projects members at or under 40 (docs/agents/databases.md, "Cloud").
+# all Project roles at or under 20; docs/agents/databases.md ("Cloud on the
+# shared CNPG cluster") shows the arithmetic.
 #
 # The script reruns whenever the SQL text changes. It is idempotent and sets no
 # password, so a rerun never undoes a Vault rotation.

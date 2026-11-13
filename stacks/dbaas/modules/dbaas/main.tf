@@ -1939,8 +1939,8 @@ resource "null_resource" "pg_cluster_v18" {
         # Parameters, preload libraries and resources match pg-cluster above; the
         # reasoning for each value lives in that resource's comments.
         postgresql:
-          # Cloud: cloud_* roles and members of cloud_projects stay in their
-          # own databases (cloud_postgres_rules.tf). JSON is valid YAML here.
+          # Cloud: cloud_* roles and p_* Project roles stay in their own
+          # databases (cloud_postgres_rules.tf). JSON is valid YAML here.
           # pg-cluster (the PG16 rollback copy) does not carry these rules: a
           # rollback must add them there before Cloud's roles move with it.
           pg_hba: ${jsonencode(local.cloud_pg_hba)}
