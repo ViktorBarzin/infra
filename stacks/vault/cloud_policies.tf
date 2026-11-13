@@ -3,27 +3,35 @@
 # policy text into a dev Vault wired to a kind cluster. The resources that use
 # them are in cloud.tf.
 #
-# Paths:
+# Paths (the M2 contract, point 6):
 #   secret/cloud/system         the reconciler's own credentials, written by
 #                               Terraform (stacks/authentik/cloud-reconciler.tf);
 #                               the reconciler reads it and cannot change it.
-#   secret/cloud/<namespace>/*  one tree per Project namespace (p-<project>),
-#                               written by the reconciler, read by that
-#                               namespace's SecretStore and by nothing else.
-# Both trees are owned by Cloud, not this repo (AGENTS.md, "Cloud-owned
-# objects"), except secret/cloud/system.
+#   secret/cloud/<namespace>/<service>
+#                               a Service's secrets: an App's own (created empty
+#                               by the reconciler, filled through Cloud's API)
+#                               or a Postgres Service's credentials.
+#   secret/cloud/<namespace>/_cloud/...
+#                               Cloud's own entries for the Project: the
+#                               registry pull token and each private App's
+#                               oauth2-proxy secrets. A Service name starts
+#                               with a letter, so it never collides.
+# <namespace> is p-<project>. The reconciler writes only under p-*; each
+# namespace's SecretStore reads only its own tree. Both trees are owned by
+# Cloud, not this repo (AGENTS.md, "Cloud-owned objects"), except
+# secret/cloud/system.
 
 locals {
   # Kubernetes auth role cloud-reconciler (service account cloud-reconciler in
-  # namespace cloud). Write on the Cloud tree, read on its two database
-  # credentials, nothing else: no policy, auth role or other secret path.
-  # The exact secret/cloud/system paths are more specific than the globs, so
-  # Vault applies their read-only grant there.
+  # namespace cloud). Write on the Project trees (secret/cloud/p-*), read on
+  # secret/cloud/system and on its two database credentials, nothing else: no
+  # policy, auth role or other secret path. It deletes through the metadata
+  # path (delete_all_versions in Cloud's modules).
   cloud_reconciler_policy = <<-EOT
-    path "secret/data/cloud/*" {
+    path "secret/data/cloud/p-*" {
       capabilities = ["create", "read", "update", "delete"]
     }
-    path "secret/metadata/cloud/*" {
+    path "secret/metadata/cloud/p-*" {
       capabilities = ["create", "read", "update", "delete"]
     }
     path "secret/data/cloud/system" {
@@ -42,7 +50,8 @@ locals {
 
   # Kubernetes auth role cloud-project: one templated policy for every Project.
   # The token of service account cloud-secrets in namespace p-x reads
-  # secret/cloud/p-x/* and nothing else. The namespace comes from the
+  # secret/cloud/p-x/* (its Services' entries and its _cloud/ entries; the
+  # glob crosses "/") and nothing else. The namespace comes from the
   # Kubernetes auth alias metadata that Vault filled in at login, so a pod
   # cannot choose it. cloud.tf replaces @@KUBERNETES_ACCESSOR@@ with the
   # accessor of the kubernetes auth mount.
