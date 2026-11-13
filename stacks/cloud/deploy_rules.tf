@@ -6,9 +6,17 @@
 # resources; docs/architecture/cloud.md has the credentials table.
 
 locals {
-  cloud_console_name = "cloud"
+  # One name each, defined in access_rules.tf: the console module's name is
+  # the namespace the admission policies name, and the reconciler's objects
+  # carry its service account's name.
+  cloud_console_name = local.cloud_namespace
   cloud_console_sa   = "cloud-console"
-  cloud_reconciler   = "cloud-reconciler"
+  cloud_reconciler   = local.cloud_reconciler_sa
+
+  # The console's DATABASE_URL, which the reconciler shares. Written out here
+  # so tests/cloud-deploy.test.sh can evaluate it offline; a precondition on
+  # the reconciler Deployment checks it against module.console.database_url.
+  cloud_database_url = "postgres://${local.cloud_console_name}@${var.postgresql_host}:5432/${local.cloud_console_name}"
 
   # The second Authentik client, for the CLI and MCP sign-in (cli_sign_in.tf).
   cloud_cli_client_id = "cloud-cli"
@@ -68,7 +76,7 @@ locals {
   # cloud repo's src/app.config.ts (`reconciler`), which name this cluster.
   cloud_reconciler_env = concat(
     [
-      { name = "DATABASE_URL", value = "postgres://cloud@${var.postgresql_host}:5432/cloud" },
+      { name = "DATABASE_URL", value = local.cloud_database_url },
       # The address the SecretStores it renders must carry; admission refuses
       # any other (M2 spike: a VAULT_ADDR from the shell was refused).
       { name = "VAULT_ADDR", value = local.cloud_secretstore_vault_server },

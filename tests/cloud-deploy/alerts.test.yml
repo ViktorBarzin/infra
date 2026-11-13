@@ -4,7 +4,8 @@
 # Labels on the scraped series are the ones the kubernetes-service-endpoints
 # job adds (namespace, service). That job sets honor_labels: true, so the
 # Postgres series keep their own `service` label (the Cloud Service name)
-# over the Kubernetes Service name.
+# over the Kubernetes Service name. Series are 2 minutes apart, the global
+# scrape_interval, and rules are evaluated every minute, as in production.
 rule_files:
   - cloud.rules.yml
 
@@ -12,7 +13,7 @@ evaluation_interval: 1m
 
 tests:
   # The reconciler is down, or never came up (no series at all): page.
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler", instance="10.0.0.1:9090"}'
         values: '0x30'
@@ -24,7 +25,7 @@ tests:
         alertname: CloudReconcilerDown
         exp_alerts:
           - exp_labels: {severity: critical, notify: page, subsystem: cloud}
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'up{job="kubernetes-service-endpoints", namespace="monitoring", service="other", instance="10.0.0.2:9090"}'
         values: '1x30'
@@ -33,7 +34,7 @@ tests:
         alertname: CloudReconcilerDown
         exp_alerts:
           - exp_labels: {severity: critical, notify: page, subsystem: cloud}
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler", instance="10.0.0.1:9090"}'
         values: '1x30'
@@ -45,10 +46,10 @@ tests:
   # Jobs wait and none finishes: page. Jobs finishing: quiet, even with a
   # queue. A reconciler that never finished a job has no
   # cloud_reconcile_total series at all, and still pages.
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
-        values: '3x40'
+        values: '3x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: CloudReconcileQueueStuck
@@ -57,78 +58,144 @@ tests:
         alertname: CloudReconcileQueueStuck
         exp_alerts:
           - exp_labels: {severity: critical, notify: page, subsystem: cloud}
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
-        values: '3x40'
+        values: '3x30'
       - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
-        values: '0+1x40'
+        values: '0+1x30'
     alert_rule_test:
       - eval_time: 35m
         alertname: CloudReconcileQueueStuck
         exp_alerts: []
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
-        values: '0x40'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: CloudReconcileQueueStuck
+        exp_alerts: []
+  # The first job after a restart finishes at 20m and its series starts at 1:
+  # that counts as a finished job, so the pending alert resets.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_queue_depth{namespace="cloud", service="cloud-reconciler"}'
+        values: '3x30'
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
+        values: '_x9 1x20'
     alert_rule_test:
       - eval_time: 35m
         alertname: CloudReconcileQueueStuck
         exp_alerts: []
 
-  # Failed jobs for 15 minutes: warning, no page. Retries alone are quiet.
-  - interval: 1m
+  # A job failed after all its attempts: warning, no page, for as long as the
+  # failure is inside the 15-minute window. Retries alone are quiet.
+  - interval: 2m
     input_series:
       - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
-        values: '0+1x40'
+        values: '0+1x20'
       - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="retry"}'
-        values: '0+1x40'
+        values: '0+1x20'
     alert_rule_test:
-      - eval_time: 10m
-        alertname: CloudReconcileFailing
-        exp_alerts: []
-      - eval_time: 35m
+      - eval_time: 5m
         alertname: CloudReconcileFailing
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud}
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="retry"}'
-        values: '0+1x40'
+        values: '0+1x20'
       - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="done"}'
-        values: '0+1x40'
+        values: '0+1x20'
     alert_rule_test:
       - eval_time: 35m
         alertname: CloudReconcileFailing
         exp_alerts: []
+  # One failure at 10m fires at once and clears once it leaves the window.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '0x4 1x25'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+      - eval_time: 20m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+      - eval_time: 30m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+  # The first failure after a restart: the series starts at 1 at 12m.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '_x6 1x23'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+      - eval_time: 20m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+      - eval_time: 30m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+  # Failures 20 minutes apart (10m and 30m) fire each time.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_reconcile_total{namespace="cloud", service="cloud-reconciler", result="failed"}'
+        values: '0x4 1x9 2x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+      - eval_time: 28m
+        alertname: CloudReconcileFailing
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: CloudReconcileFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
 
   # A Project 30 minutes behind its desired version: warning per Project.
-  - interval: 1m
+  # The series is the reconciler's once the code exports it (docs/architecture/
+  # cloud.md, "Metrics").
+  - interval: 2m
     input_series:
       - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="slow"}'
-        values: '1500+60x20'
+        values: '1500+120x10'
       - series: 'cloud_project_converging_seconds{namespace="cloud", service="cloud-reconciler", project="fine"}'
-        values: '0x20'
+        values: '0x10'
     alert_rule_test:
       - eval_time: 3m
         alertname: CloudProjectStuckConverging
         exp_alerts: []
-      - eval_time: 12m
+      - eval_time: 14m
         alertname: CloudProjectStuckConverging
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud, project: slow}
 
   # A database past 80% of its Size for 15 minutes: warning per database.
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_postgres_database_bytes{namespace="cloud", project="a", service="x"}'
-        values: '900x30'
+        values: '900x15'
       - series: 'cloud_postgres_database_limit_bytes{namespace="cloud", project="a", service="x"}'
-        values: '1000x30'
+        values: '1000x15'
       - series: 'cloud_postgres_database_bytes{namespace="cloud", project="b", service="y"}'
-        values: '500x30'
+        values: '500x15'
       - series: 'cloud_postgres_database_limit_bytes{namespace="cloud", project="b", service="y"}'
-        values: '1000x30'
+        values: '1000x15'
     alert_rule_test:
       - eval_time: 10m
         alertname: CloudPostgresDatabaseNearSize
@@ -139,12 +206,12 @@ tests:
           - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
 
   # A database the reconciler cannot measure for 15 minutes: warning.
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_postgres_database_unmeasured{namespace="cloud", project="a", service="x"}'
-        values: '1x30'
+        values: '1x15'
       - series: 'cloud_postgres_database_unmeasured{namespace="cloud", project="b", service="y"}'
-        values: '0x30'
+        values: '0x15'
     alert_rule_test:
       - eval_time: 10m
         alertname: CloudPostgresDatabaseUnmeasured
@@ -155,12 +222,12 @@ tests:
           - exp_labels: {severity: warning, subsystem: cloud, project: a, service: x}
 
   # Build minutes past 70% of the account allowance: warning.
-  - interval: 1m
+  - interval: 2m
     input_series:
       - series: 'cloud_build_minutes_used{namespace="cloud", service="cloud"}'
-        values: '1300+20x20'
+        values: '1300+40x10'
       - series: 'cloud_build_minutes_allowance{namespace="cloud", service="cloud"}'
-        values: '2000x20'
+        values: '2000x10'
     alert_rule_test:
       - eval_time: 2m
         alertname: CloudBuildMinutesHigh

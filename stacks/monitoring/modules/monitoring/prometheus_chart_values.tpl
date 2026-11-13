@@ -8380,36 +8380,49 @@ serverFiles:
               summary: "Cloud reconciler is down: no Project change applies"
               description: "Prometheus has not scraped cloud-reconciler for 15 minutes. Project changes queue up and none applies. Check the pod (kubectl -n cloud get pods -l app=cloud-reconciler) and its logs (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"}'). Runbook: docs/runbooks/cloud.md, \"Restart\"."
           - alert: CloudReconcileQueueStuck
-            # Jobs waited for 30 minutes and none finished. A reconciler that
-            # never finished a job has no cloud_reconcile_total series, hence
-            # `unless` over `== 0`. Retries wait seconds to minutes; a failed
-            # destroy is queued again only after an hour, so it never waits
-            # this long in the queue.
-            expr: max(cloud_reconcile_queue_depth) > 0 unless on() sum(increase(cloud_reconcile_total[30m])) > 0
+            # Jobs wait and no job finished in the last 30 minutes, for 30
+            # minutes: it fires 30 minutes after a job is queued on an idle
+            # reconciler, and up to 60 minutes after the last finished job.
+            # Most jobs take minutes. A job longer than 30 minutes (three
+            # OpenTofu steps of up to 20 minutes each,
+            # RECONCILE_STEP_TIMEOUT_SECONDS) started on an idle reconciler
+            # with another job behind it can page while it still works.
+            # A reconciler that never finished a job has no
+            # cloud_reconcile_total series, hence `unless` over `== 0`.
+            # prom-client creates a labelled series at its first increment, so
+            # the first job after a restart starts its series at 1, which
+            # increase() cannot see; the `offset` clause counts a series that
+            # is newer than the window as a finished job.
+            expr: max(cloud_reconcile_queue_depth) > 0 unless on() (sum(increase(cloud_reconcile_total[30m])) > 0 or sum(cloud_reconcile_total unless cloud_reconcile_total offset 30m) > 0)
             for: 30m
             labels:
               severity: critical
               notify: page
               subsystem: cloud
             annotations:
-              summary: "Cloud reconcile queue is stuck: {{ $value }} job(s) waiting, none finished in 30 minutes"
-              description: "The reconciler is up but has not finished a job in 30 minutes while jobs wait. Usually a hung OpenTofu step, a lost Postgres or Vault connection, or a job it cannot claim. Logs: homelab logs query '{namespace=\"cloud\", container=\"reconciler\"}'. Runbook: docs/runbooks/cloud.md, \"Drain the queue\"."
+              summary: "Cloud reconcile queue is stuck: {{ $value }} job(s) waiting, none finished for at least 30 minutes"
+              description: "Jobs have waited for 30 minutes and the reconciler finished none in that time or the 30 minutes before. Usually a hung OpenTofu step, a lost Postgres or Vault connection, or a job it cannot claim. Logs: homelab logs query '{namespace=\"cloud\", container=\"reconciler\"}'. Runbook: docs/runbooks/cloud.md, \"Drain the queue\"."
           - alert: CloudReconcileFailing
             # result="failed" is a job that used all its attempts; retries
-            # alone stay quiet.
-            expr: sum(increase(cloud_reconcile_total{result="failed"}[15m])) > 0
-            for: 15m
+            # alone stay quiet. A failed job is not retried (a failed destroy
+            # is queued again after an hour), so one failure must fire: no
+            # `for`, and the alert stays up while the failure is inside the
+            # 15-minute window. The `offset` clause catches the first failure
+            # after a restart, whose series starts at 1 where increase() sees
+            # nothing.
+            expr: sum(increase(cloud_reconcile_total{result="failed"}[15m])) > 0 or sum(cloud_reconcile_total{result="failed"} unless cloud_reconcile_total{result="failed"} offset 15m) > 0
             labels:
               severity: warning
               subsystem: cloud
             annotations:
-              summary: "Cloud reconcile jobs keep failing"
-              description: "Reconcile jobs have failed after all attempts for 15 minutes. One Project with a bad change shows its error in the console; many failing points at a broken credential or an unreachable Postgres, Vault or API server. Failed jobs and their log excerpts: SELECT id, project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Recover from a failed apply\"."
+              summary: "A Cloud reconcile job failed after all its attempts"
+              description: "At least one reconcile job failed after all its attempts in the last 15 minutes. One Project with a bad change shows its error in the console; many failing points at a broken credential or an unreachable Postgres, Vault or API server. Failed jobs and their log excerpts: SELECT id, project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Recover from a failed apply\"."
           - alert: CloudProjectStuckConverging
-            # cloud_project_converging_seconds: seconds since the Project's
-            # desired version moved past its applied version, 0 when applied.
-            # Exported by the console from M4's code follow-up
-            # (docs/architecture/cloud.md, "Metrics").
+            # cloud_project_converging_seconds{project}: seconds since the
+            # oldest queued or running job for a version above the Project's
+            # applied version, 0 when none. To be exported by the reconciler,
+            # a cloud code change not yet made (docs/architecture/cloud.md,
+            # "Metrics"); until then this rule has no input and stays quiet.
             expr: max by (project) (cloud_project_converging_seconds) > 1800
             for: 5m
             labels:

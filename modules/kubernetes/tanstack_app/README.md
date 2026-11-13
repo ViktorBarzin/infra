@@ -193,7 +193,7 @@ pulls ghcr anonymously. For a private app, add its namespace to
 ## Outputs
 
 `namespace`, `deployment_name`, `service_name`, `host`, `public_origins`,
-`client_id`, `application_slug`, `issuer_url`, `discovery_url`,
+`database_url`, `client_id`, `application_slug`, `issuer_url`, `discovery_url`,
 `users_group_id`, `users_group_name`, `admins_group_id`, `agents_group_id`
 (null without agents), `approver_username` (null in open mode).
 

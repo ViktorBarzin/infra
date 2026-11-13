@@ -21,7 +21,11 @@ locals {
   cloud_reconciler_metrics_port = 9090
   # A job runs init, plan and apply, each up to RECONCILE_STEP_TIMEOUT_SECONDS
   # (1200), then the rollout check (180). On SIGTERM the reconciler finishes
-  # the running job, so a restart never cuts an apply short.
+  # the running job, so a Reloader restart, a pod delete or a CI rollout never
+  # cuts an apply short. A drain or eviction with a shorter grace period does
+  # (the automated node upgrade drains with --grace-period=300): the job stays
+  # `running` until RECONCILE_STALE_SECONDS, is requeued and resumes from the
+  # OpenTofu state.
   cloud_reconciler_grace_seconds = 3 * 1200 + 180
 }
 
@@ -250,6 +254,10 @@ resource "kubernetes_deployment" "reconciler" {
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by the cloud repo's CI
     ]
+    precondition {
+      condition     = local.cloud_database_url == module.console.database_url
+      error_message = "The reconciler's DATABASE_URL (local.cloud_database_url) differs from the console's (module.console.database_url)."
+    }
   }
 
   depends_on = [
