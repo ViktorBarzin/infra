@@ -57,7 +57,7 @@ Terminal Lobby's own files ship in its Debian package.
 Cloud (Forgejo `viktor/cloud`) keeps each Project's desired state in its own database and applies it with its own reconciler, one OpenTofu state per Project (ADR-0003 in the cloud repo, approved by Viktor 2026-11-12). **These belong to Cloud's database, not this repo:**
 - every object in a `p-*` namespace, and the namespaces themselves;
 - Postgres `p_*` Project roles (members of `cloud_projects`) and their databases (this repo owns only `cloud_projects`, `cloud_provisioner`, `cloud_state` and the `cloud_state` and `cloud` databases);
-- the OAuth2 providers and applications that `svc-cloud-reconciler` creates in Authentik;
+- any OAuth2 providers and applications that `svc-cloud-reconciler` creates in Authentik (its role creates none until Viktor picks the sign-in design in `stacks/authentik/cloud-reconciler.tf`);
 - Vault `secret/cloud/<namespace>/*` (this repo writes only `secret/cloud/system`).
 
 Do not import, recreate or "fix" them from Terraform: no stack may manage them, so no plan proposes changes to them. One check reads them: Authentik's access guard (`stacks/authentik/app-access-guard.tf`) fails the authentik plan and the nightly drift plan while a Cloud application has no group binding; the recovery is in `docs/agents/terraform.md`. Name no new homelab namespace `p-*`. What this repo does own for Cloud is listed in `.claude/reference/service-catalog.md` (row `cloud`); details in `docs/agents/terraform.md`.
