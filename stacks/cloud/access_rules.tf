@@ -175,7 +175,7 @@ locals {
   cloud_component_label   = "cloud.viktorbarzin.me/component"
   cloud_service_label     = "cloud.viktorbarzin.me/service"
   cloud_reconciler_sa     = "cloud-reconciler"
-  cloud_reconciler_user   = "system:serviceaccount:cloud:cloud-reconciler"
+  cloud_reconciler_user   = "system:serviceaccount:${local.cloud_namespace}:${local.cloud_reconciler_sa}"
   cloud_project_role_name = "cloud-reconciler-project"
 
   cloud_base_domain_re = "viktorbarzin[.]me"

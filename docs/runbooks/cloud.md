@@ -33,18 +33,21 @@ kubectl exec -it -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d cloud
 `oidc_client_secret`. Not `secret/cloud`: that is the Project subtree. CI's
 Vault role cannot write `secret/*`, so an admin seeds it once, before the first
 apply (the plan reads `oidc_client_secret` for the Authentik provider). The
-values are generated in the command and go only to Vault:
+values are generated in the command and go only to Vault. They reach `vault`
+on stdin, not as arguments: the devvm is shared, and any user can read a
+running process's arguments. `printf` is a shell builtin, so it starts no
+process that would show them:
 
 ```sh
 vault login -method=oidc
 vault kv get secret/cloud-console >/dev/null 2>&1 && echo "already seeded" || \
-  vault kv put secret/cloud-console \
-    better_auth_secret="$(openssl rand -base64 48)" \
-    oidc_client_id=cloud \
-    oidc_client_secret="$(openssl rand -hex 32)"
+  printf '{"better_auth_secret":"%s","oidc_client_id":"cloud","oidc_client_secret":"%s"}' \
+    "$(openssl rand -base64 48)" "$(openssl rand -hex 32)" \
+  | vault kv put secret/cloud-console -
 ```
 
-To rotate the client secret, `vault kv patch secret/cloud-console oidc_client_secret="$(openssl rand -hex 32)"`,
+To rotate the client secret,
+`printf '{"oidc_client_secret":"%s"}' "$(openssl rand -hex 32)" | vault kv patch secret/cloud-console -`,
 then apply `cloud` (the Authentik provider takes the new secret) and wait for
 ESO's hourly refresh of `cloud-auth`, or force it with
 `kubectl -n cloud annotate externalsecret cloud-auth force-sync=$(date +%s) --overwrite`.
@@ -53,8 +56,23 @@ out.
 
 ## Register the repo with CI
 
-From a clean clone of `viktor/cloud` whose master has the two-image
-`.github/workflows/build.yml` and `.woodpecker/deploy.yml`:
+The two workflow files Cloud needs are in this repo, reviewed with the stack:
+[docs/architecture/cloud-ci/build.yml](../architecture/cloud-ci/build.yml)
+(check, typecheck, both images, on pushes to master only, a newer push cancels
+a running build) and
+[docs/architecture/cloud-ci/deploy.yml](../architecture/cloud-ci/deploy.yml)
+(sets `cloud` and then `cloud-reconciler`). The cloud repo's own files on
+2026-11-13 run the full test suite and build and deploy only the console, so
+the reconciler would stay in `ImagePullBackOff`.
+
+1. In a clean clone of `viktor/cloud` on master, copy them in and stage them,
+   without committing:
+   `cp ~/code/infra/docs/architecture/cloud-ci/build.yml .github/workflows/build.yml`,
+   `cp ~/code/infra/docs/architecture/cloud-ci/deploy.yml .woodpecker/deploy.yml`,
+   `git add .github/workflows/build.yml .woodpecker/deploy.yml`.
+2. Register the repo. `--keep-workflows` keeps the two files from step 1, and
+   the script commits what is staged and pushes it only after Woodpecker knows
+   the repo, so the first build can trigger the deploy:
 
 ```sh
 cd ~/code/infra
@@ -65,10 +83,13 @@ scripts/offinfra-onboard cloud --clone ~/code/cloud --visibility private \
 
 It makes the private GitHub mirror, sets `WOODPECKER_TOKEN`,
 `FORGEJO_GIT_TOKEN` and `SLACK_WEBHOOK`, registers the mirror in Woodpecker and
-sets `WOODPECKER_REPO_ID` and `FORGEJO_REPO`. Both ghcr packages are private;
+sets `WOODPECKER_REPO_ID` and `FORGEJO_REPO`, then commits and pushes master,
+which starts the first build. Both ghcr packages are private;
 Kyverno copies `ghcr-credentials` into `cloud`. Watch the first run end to end:
 GitHub Actions run, Woodpecker deploy, then
-`kubectl -n cloud get deploy cloud cloud-reconciler -o wide`.
+`kubectl -n cloud get deploy cloud cloud-reconciler -o wide`. The deploy
+reports the reconciler's rollout without waiting for it, because the old pod
+may first finish a job of up to 3780 s.
 
 ## Restart
 
@@ -77,8 +98,12 @@ The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:
 Recreate, so the new pod starts after the old one is gone. Deleting the pod,
 not `rollout restart`, keeps the pod template equal to Terraform's.
 
-The reconciler finishes its running job before it exits (grace period 3780 s).
-To see whether one runs:
+On a pod delete, a Reloader restart or a CI rollout, the reconciler finishes
+its running job before it exits (grace period 3780 s). A node drain or
+eviction with a shorter grace period cuts the job: the automated node upgrade
+drains with `--grace-period=300`. A terminating pod is not scraped, so if the
+running job takes longer than 15 more minutes, `CloudReconcilerDown` pages;
+silence it before a restart while a long job runs. To see whether one runs:
 `SELECT id, project_id, kind, started_at FROM reconcile_jobs WHERE state = 'running';`
 A job killed mid-apply is `running` until `RECONCILE_STALE_SECONDS` (600 s)
 pass; the next reconciler requeues it, and OpenTofu continues from the state.
@@ -95,7 +120,10 @@ SELECT id, project_id, kind, attempts, run_after, last_error FROM reconcile_jobs
 
 A job for a version that is no longer the Project's desired version is
 skipped when its turn comes. To stop jobs from running, for example while
-Postgres or Vault is down, stop the reconciler for the duration with
+Postgres or Vault is down, stop the reconciler for the duration. First
+silence `CloudReconcilerDown` and `CloudReconcileQueueStuck` in Alertmanager
+for that long: a stopped reconciler has no `up` series, which the first alert
+counts as down, so both page after 15 and 30 minutes. Then
 `kubectl -n cloud scale deploy cloud-reconciler --replicas=0`, and bring it back
 with `--replicas=1` (Terraform's value). Jobs keep queuing in the meantime and
 run when it is back. To drop one job without running it:
@@ -155,8 +183,8 @@ The size loop measures the database again within 5 minutes.
 
 ## Recover from a failed apply
 
-`CloudReconcileFailing` fires when jobs fail after all 3 attempts for 15
-minutes. A failed job keeps `last_error` and `log_excerpt`:
+`CloudReconcileFailing` fires when a job fails after all 3 attempts, and
+stays up for 15 minutes after the last such failure. A failed job keeps `last_error` and `log_excerpt`:
 
 ```sql
 SELECT j.id, p.slug, j.kind, j.attempts, j.last_error, j.log_excerpt
@@ -206,7 +234,7 @@ stuck Project".
 | `CloudReconcilerDown` | yes | "Restart"; look at the pod events and logs |
 | `CloudReconcileQueueStuck` | yes | "Drain the queue", then the reconciler logs for the running job |
 | `CloudReconcileFailing` | no | "Recover from a failed apply" |
-| `CloudProjectStuckConverging` | no | "Debug a stuck Project" |
+| `CloudProjectStuckConverging` | no | "Debug a stuck Project". Its metric is not exported yet ([architecture](../architecture/cloud.md), "Metrics"), so it cannot fire until the cloud code adds it |
 | `CloudPostgresDatabaseNearSize` | no | the owner picks a larger Size or deletes data |
 | `CloudPostgresDatabaseUnmeasured` | no | `log_excerpt` and the reconciler log line "measuring Cloud databases failed" |
 | `CloudBuildMinutesHigh` | no | GitHub billing page; Cloud builds stop at the Budget |

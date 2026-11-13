@@ -19,6 +19,11 @@ output "public_origins" {
   value       = local.public_origins
 }
 
+output "database_url" {
+  description = "The app's DATABASE_URL, without a password. Another process on the same database (a worker) uses it with the same password file."
+  value       = local.database_url
+}
+
 output "client_id" {
   value = authentik_provider_oauth2.this.client_id
 }

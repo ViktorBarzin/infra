@@ -53,10 +53,12 @@ module "console" {
   admins_group = "Cloud Operators"
   signup_mode  = "request"
 
-  # Device code lets an agent sign in on the console's own client (Cloud v1
-  # plan, "How do agents sign in?"). That client is confidential, so its
-  # tokens cannot be refreshed without the secret; the CLI uses cloud-cli
-  # (cli_sign_in.tf) for refreshable sessions.
+  # Device code on the console's own client (Cloud v1 plan, "How do agents
+  # sign in?"). The client is confidential, and Authentik 2026.8 requires its
+  # secret at the token endpoint for this grant (providers/oauth2/token/
+  # base.py), so only a holder of the secret can complete a device sign-in
+  # here and a link from an outsider grants nothing. A CLI cannot hold the
+  # secret: agents sign in on cloud-cli (cli_sign_in.tf).
   grant_types = ["authorization_code", "urn:ietf:params:oauth:grant-type:device_code"]
 
   extra_env = local.cloud_console_env

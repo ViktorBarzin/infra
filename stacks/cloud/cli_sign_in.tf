@@ -17,8 +17,34 @@
 # Who may sign in: the same groups as the console. The API checks Cloud
 # membership again on every request.
 
-data "authentik_flow" "cli_implicit_consent" {
-  slug = "default-provider-authorization-implicit-consent"
+# Device-code phishing. Anyone can start a device authorization for this
+# public client: it needs only the client_id. Authentik answers with
+# verification_uri_complete (/device?code=XXXX), and a signed-in person who
+# opens that link runs this provider's authorization flow, then the device
+# code is granted to whoever started it (DeviceEntryView, CodeValidatorView in
+# authentik 2026.8). With the implicit-consent flow nothing would stand
+# between the click and the grant, so an invited User could send an Operator
+# a link and get the Operator's tokens. This flow always shows a consent
+# screen that names "Cloud CLI", every time: the stock explicit-consent flow's
+# stage remembers consent for weeks (mode expiring, checked live 2026-11-13),
+# which would make every later link one click again.
+resource "authentik_stage_consent" "cloud_cli" {
+  name = "cloud-cli-consent"
+  mode = "always_require"
+}
+
+resource "authentik_flow" "cloud_cli_authorization" {
+  name           = "Cloud CLI authorization"
+  slug           = "cloud-cli-authorization"
+  title          = "Allow Cloud CLI to act as you"
+  designation    = "authorization"
+  authentication = "require_authenticated"
+}
+
+resource "authentik_flow_stage_binding" "cloud_cli_consent" {
+  target = authentik_flow.cloud_cli_authorization.uuid
+  stage  = authentik_stage_consent.cloud_cli.id
+  order  = 0
 }
 
 data "authentik_flow" "cli_invalidation" {
@@ -56,7 +82,7 @@ resource "authentik_provider_oauth2" "cloud_cli" {
   client_id   = local.cloud_cli_client_id
   client_type = "public"
 
-  authorization_flow = data.authentik_flow.cli_implicit_consent.id
+  authorization_flow = authentik_flow.cloud_cli_authorization.uuid
   invalidation_flow  = data.authentik_flow.cli_invalidation.id
 
   # Same as the console's provider (modules/kubernetes/tanstack_app).

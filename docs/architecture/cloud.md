@@ -29,12 +29,12 @@ flowchart LR
 
 | Piece | Where | Defined in |
 |---|---|---|
-| Console and API | Deployment `cloud` (init container `migrate`), Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
-| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate), Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
+| Console and API | Deployment `cloud` (init container `migrate`), Kubernetes Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
+| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
 | Env and credential files of both | locals | `stacks/cloud/deploy_rules.tf` |
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
-| Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token), groups `Cloud Users` and `Cloud Operators` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf` |
+| Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf` |
 | Private Apps' sign-in | Authentik application `cloud-apps`, shared by every private App's oauth2-proxy | `stacks/authentik/cloud-apps.tf` (M2) |
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
@@ -63,8 +63,12 @@ The reconciler holds no Authentik credential. The three Postgres passwords
 rotate on Tuesdays (10:17 for `pg-cloud`, `pg-cloud-state` and
 `pg-cloud-provisioner`). The reconciler reads its files again on every job, and
 Reloader restarts it when `cloud-reconciler-postgres` or
-`cloud-reconciler-registry` changes; the pod finishes its running job first
-(grace period 3780 s, the longest a job can run). `cloud-db-creds` restarts
+`cloud-reconciler-registry` changes. On such a restart, a pod delete or a CI
+rollout the pod finishes its running job first (grace period 3780 s, the
+longest a job can run). A node drain or eviction with a shorter grace period
+cuts the job (the automated node upgrade drains with `--grace-period=300`);
+the job stays `running` until `RECONCILE_STALE_SECONDS` pass, is requeued and
+resumes from the OpenTofu state. `cloud-db-creds` restarts
 nothing: both processes read the password file on each new connection.
 
 ## Data flow of a change
@@ -99,8 +103,11 @@ Two Authentik clients sign agents in:
 | Issuer | `https://authentik.viktorbarzin.me/application/o/cloud/` | `https://authentik.viktorbarzin.me/application/o/cloud-cli/` |
 | Who may sign in | Cloud Users, Cloud Operators, Home Server Admins | the same |
 
-A device-code token from the confidential client cannot be refreshed without
-its secret, so a CLI on it would ask for `cloud login` every 15 minutes. Both
+Authentik 2026.8 requires the client secret at the token endpoint for the
+device code grant on a confidential client (`authentik/providers/oauth2/token/base.py`),
+so only a holder of the console's secret can complete a device sign-in on
+`cloud`, and it could not refresh either. A CLI cannot hold that secret, so
+agents sign in on `cloud-cli`. Both
 clients use `sub_mode = hashed_user_id`, so a person has the same `sub` on both
 and is one User.
 
@@ -117,9 +124,18 @@ discovery URLs (`OIDC_DISCOVERY_URL` with audience `cloud`,
 `tests/cloud-deploy.test.sh` fails once the code reads the two `AGENT_OIDC_*`
 names, as a reminder to drop them from its pending list.
 
+**Device-code phishing.** Anyone can start a device authorization on the
+public `cloud-cli` client, and Authentik returns a link
+(`/device?code=XXXX`) that grants the code to the starter when a signed-in
+person opens it. A hostile User could send that link to an Operator. So
+`cloud-cli` uses its own authorization flow, `cloud-cli-authorization`, whose
+consent stage asks every time (`always_require`) and names "Cloud CLI": the
+person must confirm before any token is issued. The stock explicit-consent
+flow remembers consent for weeks, so it would not stop a second link.
+
 ## Metrics
 
-The reconciler serves `/metrics` on 9090; Service `cloud-reconciler` carries
+The reconciler serves `/metrics` on 9090; Kubernetes Service `cloud-reconciler` carries
 the `prometheus.io` annotations and `cloud_.+` is on the
 `kubernetes-service-endpoints` keep list. The job sets `honor_labels: true`,
 so the Postgres series keep their own `service` label, the Cloud Service name.
@@ -128,9 +144,28 @@ so the Postgres series keep their own `service` label, the Cloud Service name.
 |---|---|---|
 | `cloud_reconcile_total{result}`, `cloud_reconcile_duration_seconds{kind}`, `cloud_reconcile_queue_depth` | reconciler | `CloudReconcileQueueStuck`, `CloudReconcileFailing` |
 | `cloud_postgres_database_bytes`, `cloud_postgres_database_limit_bytes`, `cloud_postgres_database_unmeasured` `{project,service}` | reconciler | `CloudPostgresDatabaseNearSize`, `CloudPostgresDatabaseUnmeasured` |
-| `cloud_project_converging_seconds{project}` | not yet exported (code follow-up) | `CloudProjectStuckConverging` |
+| `cloud_project_converging_seconds{project}` | not yet exported: the reconciler, after the cloud code change below | `CloudProjectStuckConverging` |
 | `cloud_build_minutes_used`, `cloud_build_minutes_allowance` | not yet exported (M5, builds) | `CloudBuildMinutesHigh` |
 | `up{namespace="cloud",service="cloud-reconciler"}` | Prometheus | `CloudReconcilerDown` |
+
+**Code change for `cloud_project_converging_seconds`.** As of 2026-11-13 no
+process exports it, so `CloudProjectStuckConverging` has no input and stays
+quiet. The reconciler should export it, because it already reads desired and
+applied versions: a gauge in `src/reconciler/metrics.ts` with label `project`
+(the slug), set on each pass of the worker loop to the seconds since the
+oldest `queued` or `running` `reconcile_jobs` row whose `desired_version` is
+above its Project's `applied_version`, and removed (or 0) when there is none.
+It is scraped with the other reconciler series (`service="cloud-reconciler"`,
+the label `tests/cloud-deploy/alerts.test.yml` uses). No infra change is
+needed when it lands; `cloud_.+` is already kept.
+
+`CloudReconcileFailing` has no `for`: a failed job is not retried, so one
+failure fires the warning, which stays up while the failure is inside the
+15-minute window. prom-client creates the `result="failed"` series at its
+first increment, which `increase()` cannot see; the rule's `offset` clause
+counts a series newer than the window as a failure, so the first failure after
+a restart fires too. `CloudReconcileQueueStuck` uses the same clause for
+finished jobs.
 
 Only `CloudReconcilerDown` and `CloudReconcileQueueStuck` page: then no Project
 change applies until an Operator acts. The other alerts are warnings about one
@@ -154,14 +189,22 @@ A second replica of either Deployment needs this budget raised first.
 
 ## CI
 
-The cloud repo builds both images on GitHub Actions from its private mirror:
-one job on pushes to master, `bun run check` and `typecheck`, then the console
-image (the Dockerfile's last stage) and the reconciler image (target
-`reconciler`), with a newer push cancelling a running build. The unit, HTTP
+The workflow files are kept here, reviewed with the stack:
+[cloud-ci/build.yml](cloud-ci/build.yml) and [cloud-ci/deploy.yml](cloud-ci/deploy.yml).
+On 2026-11-13 the cloud repo's master still has its first build.yml (the full
+test suite against a Postgres service, the console image only) and a
+deploy.yml that sets only `cloud`; the runbook's "Register the repo with CI"
+copies these two in. Once they are in place, the cloud repo builds both images
+on GitHub Actions from its private mirror: one job on pushes to master,
+`bun run check` and `typecheck`, then the console image (the Dockerfile's last
+stage) and the reconciler image (target `reconciler`), each with its own build
+cache and ghcr retention, with a newer push cancelling a running build. The unit, HTTP
 and e2e suites run locally before a change lands, because private Actions
 minutes are nearly used up. Woodpecker's deploy pipeline sets both images:
-`cloud` (containers `migrate` and `cloud`) and `cloud-reconciler` (container
-`reconciler`). Both Deployments ignore their images in Terraform
+`cloud` (containers `migrate` and `cloud`) first, waiting for its rollout so
+the migrations have run, then `cloud-reconciler` (container `reconciler`). It
+reports the reconciler's rollout without failing on it, since the old pod may
+first finish a job of up to 3780 s. Both Deployments ignore their images in Terraform
 (`CI_SETS_IMAGE`). Registration: [docs/runbooks/cloud.md](../runbooks/cloud.md),
 "Register the repo with CI".
 
