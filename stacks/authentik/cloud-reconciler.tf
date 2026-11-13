@@ -1,18 +1,19 @@
 # Cloud's reconciler in Authentik (Cloud v1 plan in the cloud repo: "How does a
 # private App check sign-in?"). This file gives the reconciler an identity and
-# a deliberately narrow RBAC role. The OAuth2 providers and applications it
+# a deliberately narrow RBAC role. Any OAuth2 providers and applications it
 # creates belong to Cloud's database, not this repo (AGENTS.md, "Cloud-owned
 # objects").
 #
-# The role, as granted:
-#   global   create OAuth2 providers and applications; read users, flows,
-#            certificate key pairs and scope mappings (to configure a
-#            provider). No groups, no policy bindings, no user changes, no
-#            flows, stages, outposts, sources, tokens, roles or settings.
+# The role, as granted until Viktor picks the sign-in design below:
+#   global   read users, flows, certificate key pairs and scope mappings. It
+#            creates nothing: no providers, applications, groups or policy
+#            bindings, no user changes, no flows, stages, outposts, sources,
+#            tokens, roles or settings.
 #   own      view, change and delete only the providers and applications it
-#            created. Authentik grants these through initial permissions: when
-#            a member of this role creates an object, the role gets the listed
-#            permissions on that object alone.
+#            created, through initial permissions: when a member of this role
+#            creates an object, the role gets the listed permissions on that
+#            object alone. Inert while the role cannot create; kept so that
+#            option a below adds only the create grants.
 #
 # WHY NO GROUPS OR BINDINGS. The plan's design gives each private App its own
 # cloud-* group and a policy binding. Authentik RBAC cannot box that in
@@ -30,13 +31,16 @@
 # A stolen token would then reach every homelab admin application. Until
 # Viktor decides, the role holds neither grant.
 #
-# CONSEQUENCE FOR M4. With core_default_app_access off (system-settings.tf),
-# an application with no binding admits nobody, and app-access-guard.tf fails
-# this stack's plan for it. So an application this role creates is closed and
-# flagged until someone binds it. Per-App sign-in needs one of these before
-# M4, and the choice is Viktor's:
-#   a. Accept the risk above: add authentik_core.add_group and
-#      authentik_policies.add_policybinding back (with view/change/delete and
+# WHY NO PROVIDERS OR APPLICATIONS EITHER, FOR NOW. With
+# core_default_app_access off (system-settings.tf), an application with no
+# binding admits nobody, and app-access-guard.tf fails this stack's plan,
+# apply and nightly drift plan for it. Without the binding grant, every
+# application the role created would trip the guard, so it holds no create
+# grant at all. Per-App sign-in needs one of these before M4, and the choice
+# is Viktor's:
+#   a. Accept the risk above: add authentik_providers_oauth2.add_oauth2provider,
+#      authentik_core.add_application, authentik_core.add_group and
+#      authentik_policies.add_policybinding (with view/change/delete and
 #      membership initial permissions), record the acceptance in the cloud
 #      repo's plan or an ADR, and extend app-access-guard.tf to fail on any
 #      cloud-* group with a parent or with a binding on an application Cloud
@@ -44,7 +48,8 @@
 #   b. One OAuth2 provider and application owned by this repo, bound to group
 #      Cloud Users, with a regex redirect URI for the App hosts. Each App's
 #      oauth2-proxy admits an email allowlist the reconciler renders from
-#      Cloud's database. The reconciler then needs no Authentik write access.
+#      Cloud's database. The reconciler then needs no Authentik write access,
+#      and this role can drop its read grants too.
 #
 # data.http.cloud_reconciler_permissions below reads the role back from the
 # live API on every plan, including the nightly drift plan, and fails if its
@@ -53,8 +58,6 @@
 locals {
   # app_label.codename, the form Authentik's global permissions take.
   cloud_reconciler_global_permissions = [
-    "authentik_providers_oauth2.add_oauth2provider",
-    "authentik_core.add_application",
     "authentik_core.view_user",
     "authentik_flows.view_flow",
     "authentik_crypto.view_certificatekeypair",
@@ -105,7 +108,7 @@ resource "authentik_rbac_initial_permissions" "cloud_reconciler" {
 
 # Live read-back of the role. Runs on every plan of this stack and in the
 # nightly drift plan, so a permission added in the UI or by a provider bug
-# fails the plan. 100 rows is far above the 6 global permissions it may hold.
+# fails the plan. 100 rows is far above the 4 global permissions it may hold.
 data "http" "cloud_reconciler_permissions" {
   url             = "${local.authentik_api}/rbac/permissions/?role=${authentik_rbac_role.cloud_reconciler.id}&ordering=codename&page_size=100"
   request_headers = local.authentik_api_headers
@@ -149,7 +152,7 @@ resource "authentik_user" "cloud_reconciler" {
 
   attributes = jsonencode({
     managed_by = "infra/stacks/authentik/cloud-reconciler.tf"
-    purpose    = "Cloud's reconciler creates each private App's OAuth2 provider and application"
+    purpose    = "Cloud's reconciler; Authentik rights wait on the sign-in design in stacks/authentik/cloud-reconciler.tf"
   })
 }
 
