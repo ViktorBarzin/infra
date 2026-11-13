@@ -60,6 +60,32 @@ kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0
 This is a transient step; the Terraform state ignores the replica count, so
 nothing reverts it.
 
+### Send Yiko to one room, for example to take a photo there
+
+HA's `spot_area` command does not work on firmware 1.134.0: the robot answers
+`20011 unknown type` to the `spotArea` clean type. The `freeClean` type works.
+Send it as a raw command (`vacuum.send_command`, command `clean_V2`):
+
+| Action | `params` |
+|---|---|
+| Clean one room | `{"act":"start","content":{"type":"freeClean","value":"1,<room id>"}}` |
+| Pause | `{"act":"pause","content":{"type":""}}` |
+| Stop | `{"act":"stop","content":{"type":""}}`, then `vacuum.return_to_base` |
+
+- Room ids are in the `rooms` attribute of `vacuum.yiko` (corridor 1, balcony 3,
+  kitchen 4, bedroom1 6, kids_room 7).
+- Set `select.yiko_work_mode` to `vacuum` first if the floor must stay dry, and
+  set it back to `vacuum_and_mop` afterwards.
+- During a `freeClean` job HA still shows `docked` or `idle`. The raw command
+  `getWorkState` gives the real state (`robotState.state`, `paused`). HA shows
+  raw replies only with `logger.set_level` `deebot_client: debug`, in
+  `docker logs homeassistant`.
+- `getPos` always answers `invalid: 1`, and the `mapPoint` go-to command answers
+  `ok` but the robot does not move.
+- On 2026-11-13 the camera failed with `20303` while the robot was idle on the
+  dock. The stream started about 2 minutes after the robot left the dock. Pause
+  it in the room, then read `/api/camera_proxy/camera.yiko`.
+
 ### HA London: Ecovacs integration says "Device verification required"
 
 Ecovacs sometimes asks a known client to verify again by email (it happened to
