@@ -31,6 +31,7 @@ Measured on 2026-11-12 (the design doc has the evidence):
 - Every page, Bundle URL and public link is sent `Cache-Control: private, no-cache`, because Cloudflare caches static file types by URL whatever the cookie. `/assets/` alone is publicly cacheable.
 - Anyone holding a Bundle URL can read that one Bundle without signing in. It appears only inside the gated shell's frame, and a viewer can still copy it ("open frame in new tab"). Republishing rotates it.
 - Page scripts lose `localStorage`, `sessionStorage`, `IndexedDB`, cookies and service workers. Five legacy pages in `wizard/` that load files from a sibling directory, or call `localStorage` unguarded, are exempt by path in the Caddyfile until they are republished as Bundles. The four older public carve-outs (`/prep`, `/pe-summit-trip`, `/vietnam`, `/homelab`) keep their own handles and are not sandboxed yet.
+- Page scripts get no direct geolocation in WebKit, which refuses it to an opaque origin; every iPhone browser is WebKit. The shell bridges it (2026-11-13): a page posts `{type: "pages:geo", op: "watch" | "get" | "stop"}` to its parent and gets the position back by message. The browser still asks the viewer first.
 - Rybbit counts the shell, not the page in the frame. Session replay shows the shell with an empty frame.
 - A browser that sends no `Sec-Fetch-Dest` gets the raw page directly: still sandboxed, without analytics.
 - Printing a page from the shell prints only the visible part of the frame; `?raw` prints the whole page.
