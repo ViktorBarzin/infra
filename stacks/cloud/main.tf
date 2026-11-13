@@ -100,3 +100,87 @@ resource "kubernetes_manifest" "cloud_admission_policy_binding" {
   manifest   = each.value
   depends_on = [kubernetes_manifest.cloud_admission_policy]
 }
+
+# Network floor for every Project, owned by this repo. The reconciler writes
+# each Project's own Calico policy in the default tier (Cloud v1 plan: order
+# below 2000, ending in Deny). Calico evaluates tiers by order and the first
+# Allow or Deny wins, so a mistaken or hostile Allow-all from the reconciler
+# would otherwise open Vault, the LAN and every Service without its own
+# NetworkPolicy. Tier "cloud" runs first. Its one policy denies egress from
+# managed namespaces to private and homelab addresses, except DNS and Postgres
+# on pg-cluster-v18, and passes everything else to the default tier, where the
+# Project policy can only narrow it. The reconciler holds `get` on tier
+# default only (access_rules.tf), so it cannot read or write this tier.
+#
+# Consequence for Apps: *.viktorbarzin.me resolves inside the cluster to
+# Traefik's LoadBalancer address (a private address), so Project pods reach no
+# homelab host by name, auth.viktorbarzin.me included. Opening Traefik here
+# would open every LAN-only host too: Traefik sees the pod's 10.10.0.0/16
+# source address, which the local-only and home-lans-only middlewares admit.
+# Ingress to Project pods is not limited here; the Project policy does that.
+resource "kubectl_manifest" "cloud_tier" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "Tier"
+    metadata   = { name = "cloud" }
+    spec = {
+      # After calico-system (100), before the admin tiers (1000) and the
+      # default tier (1000000).
+      order         = 500
+      defaultAction = "Pass"
+    }
+  })
+}
+
+resource "kubectl_manifest" "cloud_project_egress_floor" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "GlobalNetworkPolicy"
+    metadata   = { name = "cloud.project-egress-floor" }
+    spec = {
+      tier              = "cloud"
+      order             = 100
+      selector          = "all()"
+      namespaceSelector = "${local.cloud_managed_label} == 'true'"
+      types             = ["Egress"]
+      egress = [
+        # node-local-dns answers on the kube-dns ClusterIP on every node, so
+        # Calico sees that address, not a CoreDNS pod (stacks/calico,
+        # whisker-allow-dns-clusterip).
+        { action = "Allow", protocol = "UDP", destination = { nets = ["10.96.0.10/32"], ports = [53] } },
+        { action = "Allow", protocol = "TCP", destination = { nets = ["10.96.0.10/32"], ports = [53] } },
+        # Project databases live on pg-cluster-v18; its pg_hba keeps each
+        # Project role in its own database (stacks/dbaas cloud_postgres_rules.tf).
+        {
+          action   = "Allow"
+          protocol = "TCP"
+          destination = {
+            namespaceSelector = "projectcalico.org/name == 'dbaas'"
+            selector          = "cnpg.io/cluster == 'pg-cluster-v18'"
+            ports             = [5432]
+          }
+        },
+        # Pods in this or another Project: the Project policy decides.
+        { action = "Pass", destination = { namespaceSelector = "${local.cloud_managed_label} == 'true'" } },
+        {
+          action = "Deny"
+          destination = {
+            nets = [
+              # RFC 1918 (pods 10.10.0.0/16, Services 10.96.0.0/12, the LAN,
+              # Traefik's LoadBalancer), CGNAT, link-local, loopback.
+              "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8",
+              # IPv6 unique-local (pods and Services, fd62:f088:7d06::/48),
+              # link-local, loopback.
+              "fc00::/7", "fe80::/10", "::1/128",
+              # The homelab's public IPv6 prefixes (Hurricane Electric; same
+              # list as the crowdsec allowlist in stacks/crowdsec).
+              "2001:470:5a7f::/48", "2001:470:6f:43d::/64", "2001:470:6e:43d::/64",
+            ]
+          }
+        },
+        { action = "Pass" },
+      ]
+    }
+  })
+  depends_on = [kubectl_manifest.cloud_tier]
+}

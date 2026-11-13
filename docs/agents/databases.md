@@ -50,6 +50,8 @@ Project roles are matched by name (PG 16+ regex), not by membership of `cloud_pr
 
 To give Projects more, raise `max_connections` together with the primary's memory (Viktor's call), or put Project roles behind a pooler. Re-measure the peak over at least a week before changing the number.
 
+**Project disk use: no limit yet.** Every Project database shares the primary's data volume with every homelab app database: 40 GiB, 23 GiB used and 17 GiB free on `pg-cluster-v18-2` on 2026-11-13, annotated for pvc-autoresizer (grow 20% when under 10% free, up to 100 GiB). Postgres has no per-database quota and `temp_file_limit` covers only temp files, so a User with their Project's credentials can INSERT until the volume is full, and then writes stop for every app on the cluster. `PVPredictedFull` warns about the volume as a whole and names no database. Nothing in M2-infra limits this. Viktor must choose the limit before M4 gives a Project a database: either the reconciler reads `pg_database_size` for each `p_*` database on every run and revokes CONNECT above a per-Project cap, backed by an alert on `cnpg_pg_database_size_bytes{datname=~"p_.*"}`, or Projects move to a small CNPG cluster of their own. The choice is to be recorded in the cloud repo's plan.
+
 **Per-Project limits.** `temp_file_limit` is superuser-only, so `cloud_provisioner` sets it on Project roles through its SET grant, and a Project role cannot lift it. `statement_timeout` and `idle_in_transaction_session_timeout` can be set per role too, but any role can change them in its own session, so for a Project they are defaults, not limits.
 
 ## MySQL
