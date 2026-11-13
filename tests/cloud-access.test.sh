@@ -224,6 +224,11 @@ if contract["authentik"]["appSlug"] != "cloud-apps" or f"/application/o/{contrac
     problems.append(f"Authentik slug: Cloud uses {contract['authentik']['appSlug']}, infra's oauth2-proxy pin expects cloud-apps")
 if f"--client-id={k['client_id']}" not in k["oauth2_proxy"]["args"]:
     problems.append(f"oauth2-proxy pin does not use client id {k['client_id']}")
+# The home WAN IP (hairpin into Traefik) and backup-mx, which admits the home
+# WAN IP on 22 and 9100 (access_rules.tf, cloud_egress_excluded).
+for net in ["176.12.22.76/32", "92.5.132.215/32"]:
+    if net not in k["egress"]["ipv4"]:
+        problems.append(f"egress exclusions: infra's list lacks {net}")
 for fam in ["ipv4", "ipv6"]:
     if sorted(contract["egressExcluded"][fam]) != sorted(k["egress"][fam]):
         problems.append(f"egress exclusions ({fam}): Cloud {sorted(contract['egressExcluded'][fam])}, infra {sorted(k['egress'][fam])}")
