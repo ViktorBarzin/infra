@@ -96,9 +96,11 @@ resource "kubernetes_manifest" "cloud_admission_policy" {
 }
 
 resource "kubernetes_manifest" "cloud_admission_policy_binding" {
-  for_each   = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicyBinding" }
-  manifest   = each.value
-  depends_on = [kubernetes_manifest.cloud_admission_policy]
+  for_each = { for k, v in local.cloud_admission_policies : k => v if v.kind == "ValidatingAdmissionPolicyBinding" }
+  manifest = each.value
+  # cloud-managed-ingress's binding names the taken-hosts ConfigMap and
+  # refuses every Ingress in managed namespaces while it is missing.
+  depends_on = [kubernetes_manifest.cloud_admission_policy, kubernetes_config_map_v1.cloud_taken_hosts]
 }
 
 # Network floor for every Project, owned by this repo: Calico tier "cloud" and

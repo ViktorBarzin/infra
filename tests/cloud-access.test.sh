@@ -28,8 +28,10 @@
 #     labels, volumes other than emptyDir/configMap/secret/projected/
 #     downwardAPI, runtimeClassName, nodeName, nodeSelector, affinity,
 #     tolerations, host network, priority, GPU, service account, init
-#     containers, the cookie-strip container and the edge port chain, Ingress
-#     annotations, entrypoints, middlewares, class and backends, quota and
+#     containers, the cookie-strip container (its args, env, mounts, hooks,
+#     probes and own uid) and the edge port chain, its Caddyfile (structure,
+#     upstreams and the homelab cookies it must strip), Ingress annotations,
+#     entrypoints, middlewares, class, backends and homelab hosts, quota and
 #     limit range labels, names and scope, SecretStore and ExternalSecret
 #     stores, and any Traefik Middleware;
 #   - the reconciler cannot read Secrets outside a Project namespace;
@@ -37,6 +39,8 @@
 #     label or delete other namespaces, and writes only in managed namespaces,
 #     even where RBAC would let it;
 #   - it cannot change or delete Kyverno's tier-quota;
+#   - cloud-managed-ingress refuses every Ingress while its taken-hosts
+#     parameter is missing;
 #   - it can bind the project role, only to itself, and no stronger role;
 #   - every Vault auth method in the ESO CRD is refused except Kubernetes;
 #   - Kyverno's copy condition skips managed namespaces;
@@ -99,7 +103,7 @@ render() { # <src file> <expression> <out>
   fi
 }
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, egress = local.cloud_egress_excluded, cookie_strip = local.cloud_cookie_strip_image})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, floor = local.cloud_project_egress_floor, egress = local.cloud_egress_excluded, cookie_strip = local.cloud_cookie_strip_image, taken_hosts = local.cloud_taken_hosts})' \
   "$TMP/k8s.raw"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -138,6 +142,10 @@ docs = [
     {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": {"name": "cloud-reconciler"},
      "subjects": [sa("cloud-reconciler", "cloud")],
      "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cloud-reconciler"}},
+    # cloud-managed-ingress's parameter, as stacks/cloud taken_hosts.tf
+    # writes it: hosts the homelab routes.
+    {"apiVersion": "v1", "kind": "ConfigMap", "metadata": k["taken_hosts"],
+     "data": {"nextcloud.viktorbarzin.me": "ingress nextcloud/nextcloud", "t3.viktorbarzin.me": "ingressroute t3code/t3-native"}},
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
@@ -454,6 +462,14 @@ expect_fail "a host-less Ingress rule is refused in p-demo" "needs a host" \
 expect_fail "an Ingress defaultBackend is refused in p-demo" "defaultBackend" \
   apply_as kr --dry-run=server < <(ing_doc p-demo defb demo.viktorbarzin.me; printf '  defaultBackend: {service: {name: app-x, port: {name: edge}}}\n')
 expect_ok   "a wildcard Ingress outside managed namespaces is untouched" apply_as ka --dry-run=server < <(ing_doc default wild '*.viktorbarzin.me')
+expect_fail "a homelab host (Ingress) is refused in p-demo, even from admin" "already routes" apply_as ka --dry-run=server < <(ing_doc p-demo nc nextcloud.viktorbarzin.me)
+expect_fail "a homelab host (IngressRoute) is refused as a TLS host in p-demo" "already routes" apply_as kr --dry-run=server < <(ing_doc p-demo t3 demo.viktorbarzin.me t3.viktorbarzin.me)
+ka -n cloud get configmap cloud-taken-hosts -o json >"$TMP/taken-hosts.json"
+ka -n cloud delete configmap cloud-taken-hosts >/dev/null
+expect_fail "without the taken-hosts list, every Ingress in p-demo is refused" "not found|paramRef|params|no params" apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me)
+python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); [o["metadata"].pop(f, None) for f in ["uid","resourceVersion","creationTimestamp","managedFields"]]; print(json.dumps(o))' "$TMP/taken-hosts.json" | ka create -f - >/dev/null
+for _ in $(seq 1 15); do apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me) >/dev/null 2>&1 && break; sleep 1; done
+expect_ok   "with the list back, demo.viktorbarzin.me is admitted again" apply_as kr --dry-run=server < <(ing_doc p-demo ok demo.viktorbarzin.me demo.viktorbarzin.me)
 pod_prio() { # ns priorityClassName
   ka run "prio-$2" -n "$1" --image=busybox --dry-run=server --overrides="{\"spec\":{\"priorityClassName\":\"$2\",\"containers\":[{\"name\":\"c\",\"image\":\"busybox\"}]}}"
 }
