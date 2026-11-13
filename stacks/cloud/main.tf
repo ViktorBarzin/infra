@@ -3,7 +3,8 @@
 #
 # This stack holds the Kubernetes identity and limits of Cloud's reconciler.
 # What the reconciler may do is in access_rules.tf (tested by
-# tests/cloud-access.test.sh). Cloud's Postgres roles are in stacks/dbaas
+# tests/cloud-access.test.sh; the Calico tier and floors also by
+# tests/cloud-calico.test.sh). Cloud's Postgres roles are in stacks/dbaas
 # (cloud_postgres.tf), its Vault roles in stacks/vault (cloud.tf), and the
 # shared Authentik client for private Apps in stacks/authentik (cloud-apps.tf).
 # The console and reconciler Deployments arrive here in milestone M4.
@@ -111,17 +112,7 @@ resource "kubernetes_manifest" "cloud_admission_policy_binding" {
 # `get` on tier default only (access_rules.tf), so it cannot read or write
 # this tier.
 resource "kubectl_manifest" "cloud_tier" {
-  yaml_body = yamlencode({
-    apiVersion = "projectcalico.org/v3"
-    kind       = "Tier"
-    metadata   = { name = "cloud" }
-    spec = {
-      # After calico-system (100), before the admin tiers (1000) and the
-      # default tier (1000000).
-      order         = 500
-      defaultAction = "Pass"
-    }
-  })
+  yaml_body = yamlencode(local.cloud_tier)
 }
 
 resource "kubectl_manifest" "cloud_project_egress_floor" {

@@ -446,6 +446,19 @@ locals {
     ipv6 = ["fc00::/7", "fe80::/10", "::1/128", "2001:470:5a7f::/48", "2001:470:6f:43d::/64", "2001:470:6e:43d::/64"]
   }
 
+  # Calico tier "cloud", which holds both floors below (main.tf applies it).
+  cloud_tier = {
+    apiVersion = "projectcalico.org/v3"
+    kind       = "Tier"
+    metadata   = { name = "cloud" }
+    spec = {
+      # After calico-system (100), before the admin tiers (1000) and the
+      # default tier (1000000).
+      order         = 500
+      defaultAction = "Pass"
+    }
+  }
+
   # The network floor for every Project, owned by this repo (main.tf applies
   # it in Calico tier "cloud"). Calico evaluates tiers by order and the
   # first Allow or Deny wins, so a mistaken or hostile Allow-all from the
