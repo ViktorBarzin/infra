@@ -436,7 +436,7 @@ resource "kubernetes_cron_job_v1" "technitium_pull" {
             restart_policy = "Never"
             container {
               name    = "pull"
-              image   = "clickhouse/clickhouse-server:26.10.3.7"
+              image   = "clickhouse/clickhouse-server:26.10.4.207"
               command = ["/bin/bash", "/scripts/technitium_pull.sh"]
               env {
                 name  = "CH_HOST"
