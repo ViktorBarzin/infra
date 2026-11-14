@@ -26,11 +26,25 @@ resource "authentik_stage_prompt_field" "invite_code" {
 # (fixed_data.code), stash the target group on the flow plan, and set a username
 # (source enrollments provide none). Returns False on a bad/expired code, which
 # rejects the prompt so NO user is created without a valid invite.
+#
+# Cloud's guest codes (cloud-inviter.tf): an invitation that cloud-inviter
+# created counts only in the one shape Cloud makes. Its fixed_data keys are
+# exactly code and target_group, target_group is Cloud App Guests, it is single
+# use, and it expires (expiring set, expires set) at most 7 days from now. An
+# Invitation records no creation time, so "7 days after it was made" is checked
+# as "at most 7 days left when it is used", plus 10 minutes for clock skew. Any
+# other cloud-inviter invitation is skipped as if it did not exist, so a stolen
+# inviter token cannot mint a code for another group, stamp attributes on the
+# new account, or make a code that lasts.
 resource "authentik_policy_expression" "validate_invite_code" {
   name = "validate-invite-code"
   expression = trimspace(<<-EOT
+from datetime import timedelta
 from authentik.stages.invitation.models import Invitation
 from django.utils import timezone
+CLOUD_INVITER_PK = int("${authentik_user.cloud_inviter.id}")
+CLOUD_GUEST_GROUP = "${local.cloud_guest_group_name}"
+CLOUD_INVITE_MAX = timedelta(days=${local.cloud_invite_max_days}, minutes=10)
 # setdefault so our writes to prompt_data persist to the write stage.
 pd = request.context.setdefault("prompt_data", {})
 # Normalize the typed code so matching is forgiving: upper-case, no dashes/spaces.
@@ -43,6 +57,16 @@ inv = None
 for cand in Invitation.objects.filter(fixed_data__code=code):
     if cand.expires and cand.expires < timezone.now():
         continue
+    if cand.created_by_id == CLOUD_INVITER_PK:
+        fd = cand.fixed_data if isinstance(cand.fixed_data, dict) else {}
+        if sorted(fd.keys()) != ["code", "target_group"]:
+            continue
+        if fd.get("target_group") != CLOUD_GUEST_GROUP:
+            continue
+        if cand.single_use is not True or not cand.expiring or cand.expires is None:
+            continue
+        if cand.expires > timezone.now() + CLOUD_INVITE_MAX:
+            continue
     inv = cand
     break
 if inv is None:

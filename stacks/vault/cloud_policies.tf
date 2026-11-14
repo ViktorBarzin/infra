@@ -13,6 +13,13 @@
 #                               key pair, build tokens). The reconciler reads it and
 #                               cannot change it; no Project's SecretStore can
 #                               read it, since it sits outside every p-* tree.
+#   secret/cloud/inviter        written by Terraform
+#                               (stacks/authentik/cloud-inviter.tf): the
+#                               cloud-inviter token, which may only create
+#                               guest invitations. Cloud's console reads it
+#                               through its own ExternalSecret (ESO's reader
+#                               role); the reconciler's policy below and the
+#                               cloud-project policy do not reach it.
 #   secret/cloud/<namespace>/<service>
 #                               a Service's secrets: an App's own (created empty
 #                               by the reconciler, filled through Cloud's API)
@@ -27,7 +34,7 @@
 # <namespace> is p-<project>. The reconciler writes only under p-*; each
 # namespace's SecretStore reads only its own tree. Both trees are owned by
 # Cloud, not this repo (AGENTS.md, "Cloud-owned objects"), except
-# secret/cloud/system.
+# secret/cloud/system and secret/cloud/inviter.
 
 locals {
   # Kubernetes auth role cloud-reconciler (service account cloud-reconciler in

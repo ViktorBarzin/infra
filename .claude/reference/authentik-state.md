@@ -186,6 +186,7 @@ New users can only sign up via invitation link. Admins generate single-use invit
 | Order | Stage | Type | Purpose |
 |-------|-------|------|---------|
 | 10 | invitation-validation | Invitation | Validates `?itoken=` parameter, blocks without valid token |
+| 11 | deny-cloud-guest-invite | Deny | Included only for an invitation made by `cloud-inviter` (Terraform, `stacks/authentik/cloud-inviter.tf`) |
 | 20 | enrollment-identification | Identification | Shows social login (Google/GitHub/Facebook) + passkey |
 | 30 | enrollment-prompt | Prompt | Collects name and email (pre-filled from social login) |
 | 40 | enrollment-user-write | User Write | Creates user in `Allow Login Users` group |

@@ -38,6 +38,8 @@ flowchart LR
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
 | Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators`; both providers send scope mapping `cloud: email (verified when vouched for)` instead of the managed `scope-email` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf`, `stacks/cloud/email_claim.tf` |
 | Apps' sign-in | Authentik application `cloud-apps`, shared by every App's oauth2-proxy, public or private (app-kit K1) | `stacks/authentik/cloud-apps.tf` (M2) |
+| Guest invites | Authentik service account `cloud-inviter` (role `add_invitation` only), group `Cloud App Guests`, the guard in `validate-invite-code` and a deny stage on `invitation-enrollment`; token in `secret/cloud/inviter`, read by the console as `CLOUD_INVITER_TOKEN` through ExternalSecret `cloud-console-inviter` (app-kit K5) | `stacks/authentik/cloud-inviter.tf`, `invite-flow.tf`, `stacks/cloud/console.tf` |
+| The `cloud` CLI on the devvm | `@viktorbarzin/cloud` for every user, pinned (app-kit K4) | `playbooks/devvm.yml`, tag `cloud-cli` |
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
 | Images | `ghcr.io/viktorbarzin/cloud` and `ghcr.io/viktorbarzin/cloud-reconciler`, private; Kyverno copies `ghcr-credentials` into `cloud` | `stacks/kyverno` `ghcr-credentials.tf` |
@@ -83,7 +85,10 @@ back and writes them again (`local.cloud_system_carried_keys`), so changing
 `ghcr_pull_token` or rotating the client secret keeps them. A new
 hand-written key must be added to that list.
 
-The reconciler holds no Authentik credential. The three Postgres passwords
+The reconciler holds no Authentik credential. The console holds the
+`cloud-inviter` token, from its own path `secret/cloud/inviter`, so no
+Project's OpenTofu state and no reconciler token can read it
+(`docs/runbooks/cloud.md`, "Guest invites"). The three Postgres passwords
 rotate on Tuesdays (10:17 for `pg-cloud`, `pg-cloud-state` and
 `pg-cloud-provisioner`). The reconciler reads its files again on every job, and
 Reloader restarts it when `cloud-reconciler-postgres`,
