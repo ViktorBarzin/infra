@@ -88,6 +88,13 @@ anonymously: add the namespace to `ghcr_private_namespaces` in
 
 ## An app owned by a non-admin
 
+Since 2026-11-14 a non-admin's new app goes on **Cloud**, not through this
+page: `cloud new <app>` creates the repo from the template, a Project with a
+Postgres and the App, and a push deploys it. The guide is
+`~/code/app-kit/docs/stack.md`, "Running on Cloud"; Cloud's side is
+`docs/architecture/cloud.md`. The rest of this section describes the infra
+path that emo's apps from before that date still use.
+
 emo (tier `power-user`) builds and ships his own apps on this stack. Five
 things differ from the steps above.
 
