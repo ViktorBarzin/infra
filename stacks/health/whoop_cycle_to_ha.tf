@@ -16,10 +16,12 @@
 # Secret whoop-cycle-to-ha-session and logs in with a code only when that token
 # is missing or expired: about once a month. It writes the cycle anchor into persisted HA helpers
 # (input_datetime.anca_cycle_start, input_number.anca_cycle_length /
-# anca_period_length, input_datetime.anca_cycle_last_sync); the template sensor
-# in ha-london packages/anca_cycle.yaml advances sensor.anca_cycle_phase and
-# sensor.anca_cycle_day LOCALLY every day from those helpers, so the phase stays
-# current on a day the read fails. The script jitters its start time
+# anca_period_length, input_datetime.anca_cycle_last_sync); the ha-london
+# automation "Anca cycle phase (local advance)" computes input_text.anca_cycle_phase
+# and input_number.anca_cycle_day LOCALLY at 00:05 from those helpers, so the
+# phase stays current on a day the read fails. Past the usual cycle length it
+# keeps counting and stays Luteal: Anca logs each period in WHOOP, and only the
+# next sync after that moves the cycle start. The script jitters its start time
 # (JITTER_SECONDS) so the request does not land on a clock boundary, and sends
 # the WHOOP app's own identity headers.
 #

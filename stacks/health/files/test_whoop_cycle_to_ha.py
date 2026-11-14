@@ -97,9 +97,11 @@ class PhaseForDayTests(unittest.TestCase):
             with self.subTest(day=d):
                 self.assertEqual(wc.phase_for_day(d, 28, 5), want)
 
-    def test_wraps_past_cycle_length(self):
-        # day 29 of a 28-day cycle is day 1 again
-        self.assertEqual(wc.phase_for_day(29, 28, 5), "Menstrual")
+    def test_late_cycle_stays_luteal_until_whoop_sees_a_new_period(self):
+        # Anca logs her period in WHOOP, so a cycle past its usual length is a
+        # late period, not a new cycle: day 29 of a 28-day cycle is still luteal.
+        self.assertEqual(wc.phase_for_day(29, 28, 5), "Luteal")
+        self.assertEqual(wc.phase_for_day(31, 28, 5), "Luteal")
 
     def test_short_cycle_keeps_ovulation_after_period(self):
         # cl 18, period 5: cl-14=4 would collide with the period, so clamp to 6

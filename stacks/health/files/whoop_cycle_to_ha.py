@@ -445,12 +445,15 @@ def cycle_start_date(cycle: dict, today: dt.date) -> dt.date | None:
 
 def phase_for_day(cycle_day: int, cycle_length: int, period_length: int) -> str:
     """Map a cycle day to a phase. MUST stay in step with the identical
-    arithmetic in packages/anca_cycle.yaml, which advances the phase daily.
+    arithmetic in the ha-london automation "Anca cycle phase (local advance)",
+    which advances the phase daily.
     Luteal is the ~14 days before the next period, so ovulation sits at
     cycle_length - 14; menstrual spans the period, follicular the days
-    between, with a 1-day window around ovulation."""
+    between, with a 1-day window around ovulation. A day past cycle_length is
+    a late period, still luteal: Anca logs each period in WHOOP, and only
+    that starts a new cycle."""
     cl = max(cycle_length, 1)
-    day = ((cycle_day - 1) % cl) + 1
+    day = max(cycle_day, 1)
     ovulation_day = max(cl - 14, period_length + 1)
     if day <= period_length:
         return "Menstrual"
