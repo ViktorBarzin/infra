@@ -23,6 +23,13 @@
 # (JITTER_SECONDS) so the request does not land on a clock boundary, and sends
 # the WHOOP app's own identity headers.
 #
+# Since 2026-11-12 WHOOP answers a PASSWORD login from the home IPv4 address
+# (176.12.22.76, which the pods use) with 401 "Authentication Failed", and
+# accepts the same password over IPv6. The refresh token works from the pod.
+# So when the saved token expires, the job fails; seed a new one by running the
+# password + code login once from the devvm, which reaches WHOOP over IPv6, and
+# patch the token into whoop-cycle-to-ha-session.
+#
 # Recovery, HRV and sleep reach ha-london separately, through the official
 # API and the HACS integration prankstr/hassio-whoop.
 # Logic and tests: files/whoop_cycle_to_ha.py, files/test_whoop_cycle_to_ha.py.
@@ -163,10 +170,6 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
     # (JITTER_SECONDS) so the WHOOP request does not land on a predictable
     # boundary.
     schedule = "37 9 * * *"
-    # Paused 2026-11-12: WHOOP rejects the stored password (401 "Authentication
-    # Failed") since about midnight, so each run would only add failed logins
-    # to Anca's account. Unpause once secret/whoop-anca has her current password.
-    suspend                       = true
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
