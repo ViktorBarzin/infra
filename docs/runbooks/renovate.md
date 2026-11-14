@@ -148,7 +148,7 @@ A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the
 | What | Where |
 |---|---|
 | Global config, which holds the whole policy (app repos need no `renovate.json`) | `stacks/renovate/files/config-apps.js`, ConfigMap `renovate/renovate-apps` |
-| Repo list | `repositories` in that file: `viktor/tasks` (base branch `master`) since 2026-10-16 |
+| Repo list | `repositories` in that file: `viktor/tasks` (base branch `master`) since 2026-10-16, `viktor/alexa-assistant`, and `viktor/trip-reel` and `viktor/cloud` since 2026-11-14 |
 | Schedule and kill switch | `variable "apps_schedule"` (`47 */6 * * *`, 30 minutes after the infra job) and `variable "apps_suspended"` in `stacks/renovate/main.tf` |
 | Cache (repo clones, lookups, the OSV database, the Bun binary) | PVC `renovate/renovate-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
 | Metrics | Pushgateway `job="renovate"`, `instance="apps"`; no alert reads it yet |

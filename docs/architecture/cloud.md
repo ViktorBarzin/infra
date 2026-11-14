@@ -63,6 +63,7 @@ Kuma monitor `[External] cloud` by itself.
 | `cloud_apps_client_id`, `cloud_apps_client_secret` | Vault KV `secret/cloud/system` | read by the reconciler's OpenTofu through Vault | Vault policy `cloud-reconciler` |
 | M5: `GITHUB_DISPATCH_TOKEN`, `GITHUB_OWNER_READ_TOKEN`, `FORGEJO_READ_TOKEN`, `FORGEJO_ADMIN_TOKEN`, `SECRETS_PRIVATE_KEY` | Vault KV `secret/cloud/system` keys `github_dispatch_token`, `github_owner_read_token`, `forgejo_read_token`, `forgejo_admin_token`, `secrets_private_key`, written by hand | reconciler | ExternalSecret `cloud-reconciler-system`, files `/secrets/system/<key with dashes>`; the reconciler also reads the same keys from Vault itself |
 | M5: `SECRETS_PUBLIC_KEY`, `GITHUB_API_TOKEN` (optional) | Vault KV `secret/cloud/system` keys `secrets_public_key`, `github_api_token`, written by hand | console | ExternalSecret `cloud-console-system` (env, optional) |
+| `TELEMETRY_WRITE_KEY`, `SENTRY_DSN`, `SENTRY_BROWSER_DSN` | Vault KV `secret/rybbit` `write_keys` (key `cloud`) and `secret/glitchtip` `dsn_cloud` | console | Secret `cloud-telemetry` written by Terraform (`telemetry.tf`, env); product events and errors, cloud ADR-0007 |
 
 The two M5 ExternalSecrets read all of `secret/cloud/system` (`dataFrom`
 `extract`) and write only their own keys, through a template that uses

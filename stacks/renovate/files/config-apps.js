@@ -33,6 +33,14 @@ module.exports = {
       repository: 'viktor/alexa-assistant',
       baseBranchPatterns: ['master'],
     },
+    {
+      repository: 'viktor/trip-reel',
+      baseBranchPatterns: ['master'],
+    },
+    {
+      repository: 'viktor/cloud',
+      baseBranchPatterns: ['master'],
+    },
   ],
   autodiscover: false,
 
