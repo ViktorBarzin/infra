@@ -31,8 +31,9 @@
 #   2. ssh root@<nfs host> 'mkdir -p /srv/nfs/immich-memories-<person>/{output,models}
 #      && chown -R 1000:1000 /srv/nfs/immich-memories-<person>
 #      && chmod 750 /srv/nfs/immich-memories-<person>{,/output,/models}'
-#   3. An entry in local.people, then apply. The quota grows with the count.
-#   4. The person creates an Immich API key (permissions in the service
+#   3. vault kv patch secret/immich-memories secret_key_<person>="$(openssl rand -base64 32)"
+#   4. An entry in local.people, then apply. The quota grows with the count.
+#   5. The person creates an Immich API key (permissions in the service
 #      catalog row) and pastes it in Settings > Connection.
 
 variable "tls_secret_name" {
@@ -180,6 +181,34 @@ resource "kubernetes_limit_range" "immich_memories" {
   }
 }
 
+# IMMICH_MEMORIES_SECRET_KEY encrypts the Immich key a person saves in
+# Settings; without it the app refuses to store the key. One per instance in
+# Vault secret/immich-memories, property secret_key_<person>
+# (openssl rand -base64 32), created by hand when the person is added.
+# Changing it makes the saved key unreadable, and the person pastes it again.
+resource "kubernetes_manifest" "secrets" {
+  for_each = local.people
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "${each.value.name}-secrets"
+      namespace = kubernetes_namespace.immich_memories.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef  = { name = "vault-kv", kind = "ClusterSecretStore" }
+      target          = { name = "${each.value.name}-secrets" }
+      data = [
+        { secretKey = "IMMICH_MEMORIES_SECRET_KEY", remoteRef = { key = "immich-memories", property = "secret_key_${each.key}" } },
+      ]
+    }
+  }
+}
+
 # The store (SQLite: the Immich key, people and editing decisions) and the
 # preview cache: face and photo data, so encrypted; SQLite refuses NFS, so
 # block. On the SAS pool to keep preview reads off sdc, which also serves
@@ -320,6 +349,11 @@ resource "kubernetes_deployment" "immich_memories" {
             name           = "http"
             container_port = 8080
           }
+          env_from {
+            secret_ref {
+              name = "${each.value.name}-secrets"
+            }
+          }
           dynamic "env" {
             for_each = local.app_env[each.key]
             content {
@@ -420,7 +454,7 @@ resource "kubernetes_deployment" "immich_memories" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
     ]
   }
-  depends_on = [kubernetes_limit_range.immich_memories]
+  depends_on = [kubernetes_limit_range.immich_memories, kubernetes_manifest.secrets]
 }
 
 resource "kubernetes_service" "immich_memories" {
