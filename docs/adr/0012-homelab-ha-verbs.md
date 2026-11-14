@@ -72,6 +72,9 @@ entity control". It passes the CLI's test of saving reasoning, not typing:
 - `photo` has to wait for `script.yiko_photo` and pick out the photos that this
   run wrote.
 
+v0.41 adds manual driving to the same exception: `ha yiko drive|turn|stop|look`.
+They send the Ecovacs app's own joystick command, which no HA entity exposes.
+
 Also, no `ha` MCP is available for HA London: London does not run HA's MCP
 Server, and the project `.mcp.json` entry needs an `HA_MCP_URL` that wizard's
 environment does not set. Other entities stay out of scope. `ha ssh --instance

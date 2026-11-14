@@ -472,7 +472,18 @@ homelab ha yiko status                      # state, battery, camera, photo scri
 homelab ha yiko photo corridor --shots 6    # ~2 min; prints the downloaded photo paths
 homelab ha yiko clean kitchen               # clean one room in the current work mode
 homelab ha yiko dock                        # stop the job and go home
+homelab ha yiko drive forward 50            # drive straight, no cleaning (~20 cm/s)
+homelab ha yiko turn left 90                # turn on the spot (~50 deg/s, +-25 deg)
+homelab ha yiko look                        # camera frame from where it is; read it
+homelab ha yiko stop                        # stop the wheels
 ```
+
+- To go somewhere by hand: `look`, then `turn`/`drive` in small steps, and
+  `look` after each one. Turns land within about 25 deg. Yiko stops by itself at
+  obstacles. End with `dock`, which also stops it.
+- A camera session lasts 5 min. After it ends, and while Yiko is idle on the
+  dock, the robot refuses video for 3-5 min: drive it off the dock first, and
+  plan a drive within one session.
 
 - Rooms: `corridor`, `balcony`, `kitchen`, `bedroom1`, `kids_room`. The dock is in the living room.
 - `photo` runs HA London's `script.yiko_photo`: mopping off, clean of that room,

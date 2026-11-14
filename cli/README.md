@@ -624,6 +624,22 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 
+### v0.41 verbs — ha yiko drive, turn, stop, look
+
+| Command | Tier | What it does |
+|---|---|---|
+| `ha yiko drive forward\|backward <cm> [--night]` | write | drive straight without cleaning, at about 20 cm/s (1-300 cm); the robot stops by itself at obstacles |
+| `ha yiko turn left\|right [deg] [--night]` | write | turn on the spot (default 90), at about 50 deg/s; lands within about 25 deg, so check with `look` |
+| `ha yiko stop` | write | stop the wheels now |
+| `ha yiko look [--out FILE] [--night]` | write | one frame from Yiko's camera, turning the camera on if needed; restarts it once if the snapshot fails |
+
+These send the raw `move` command the Ecovacs app's joystick sends
+(`{"act": forward|backward|spinLeft|spinRight, "a": 0|90}`, then `stop`),
+found by decompiling the app. Long moves run as start-wait-stop chunks 1.5 s
+apart. A camera session lasts 5 minutes (HA's auto-off), and Yiko refuses
+video for 3-5 minutes after one ends and while it is idle on the dock.
+Runbook: `docs/runbooks/london-yiko.md`, "Drive Yiko by hand".
+
 ### v0.40 verbs — ha yiko (the London robot vacuum)
 
 | Command | Tier | What it does |
