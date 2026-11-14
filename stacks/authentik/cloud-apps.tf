@@ -155,7 +155,9 @@ resource "authentik_application" "cloud_apps" {
 # it, also onto a signed-in account that reruns that flow and rewrites its
 # own email there. Any other invitation on invitation-enrollment must carry
 # attributes.proxy_only too (proxy-enrollment.tf). An anonymous request has
-# is_authenticated False.
+# is_authenticated False. Cloud's guest invites apply the same test to say
+# who needs no code (src/server/homelab-accounts.server.ts, admitted());
+# change both together.
 resource "authentik_policy_expression" "cloud_apps_active_users" {
   name       = "cloud-apps-active-users"
   expression = <<-EOT
