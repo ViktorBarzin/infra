@@ -62,9 +62,12 @@ nothing reverts it.
 
 ### Send Yiko to one room, for example to take a photo there
 
-Use the HA London script `script.yiko_photo` (fields `room`, `shots`). The
-home-assistant skill shows the call and how to fetch the photos from
-`/media/yiko/<room>-<n>.jpg`. The script is in `/config/scripts.yaml`
+Run `homelab ha yiko photo <room>` (v0.40). It starts the HA London script
+`script.yiko_photo` (fields `room`, `shots`), waits for it, and downloads the
+photos this run wrote from `/media/yiko/<room>-<n>.jpg` through HA's
+authenticated `/media/local/` URL. `homelab ha yiko clean <room>` and `dock`
+send the raw commands below. `photo` and `clean` refuse 22:00-08:00 London
+time without `--night`. The script is in `/config/scripts.yaml`
 (ha-london-config `38734dd`). It does these steps:
 
 1. Sets `select.yiko_work_mode` to `vacuum`, so the floor stays dry.
