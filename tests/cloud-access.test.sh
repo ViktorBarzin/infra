@@ -705,8 +705,10 @@ EOF
 # TOFU_DIR is the root module to run, DUMP_DIR where dump.sh saves its objects.
 TOFU_DIR="$TMP/tofu" DUMP_DIR="$TMP/dump"
 tofu() {
+  # The reconciler refuses an apply without a pull token (registry_password
+  # validation), so the test passes a dummy one the way the worker does.
   (cd "$TOFU_DIR" && env HOME="$TMP/home" TF_CLI_CONFIG_FILE="$TMP/tofu/tofurc" TF_IN_AUTOMATION=1 \
-    KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
+    TF_VAR_registry_password=test-pull-token KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
     CLOUD_DUMP_DIR="$DUMP_DIR" CLOUD_DUMP_SCRIPT="$HERE/tests/cloud-access/dump.sh" "$TOFU" "$@")
 }
 # What the dump of one apply shows: no pod refused, a pod for every

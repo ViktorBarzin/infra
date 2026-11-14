@@ -257,6 +257,12 @@ def ec(s):
     return s["containers"][0]
 
 
+# A built App image. Before its first Deploy an App runs the edge's own
+# pinned Caddy (the "Not deployed yet" page), so the rendered App image
+# would equal the edge pin and prove nothing.
+BUILT_APP_IMAGE = "ghcr.io/viktorbarzin/cloud-recipes_recipes@sha256:" + "a" * 64
+
+
 def mount(s, path):
     return [m for m in ec(s)["volumeMounts"] if m["mountPath"] == path][0]
 
@@ -264,7 +270,7 @@ def mount(s, path):
 EDGE_RULES = [
     ("image", lambda s: ec(s).update({"image": "docker.io/library/caddy:latest"}), E_ONE),
     ("renamed", lambda s: ec(s).update({"name": "caddy"}), E_ONE),
-    ("app-image", lambda s: ec(s).update({"image": app_c(spec_of(app))["image"]}), E_ONE),
+    ("app-image", lambda s: ec(s).update({"image": BUILT_APP_IMAGE}), E_ONE),
     ("second-container", lambda s: s["containers"].append(app_container_alone()), E_ONE),
     ("command", lambda s: ec(s).update({"command": ["/bin/sh", "-c", "caddy reverse-proxy --from :8080 --to app-x:80"]}), E_RUNS),
     ("args", lambda s: ec(s).update({"args": ["caddy", "run", "--config", "/run/caddy/Caddyfile", "--adapter", "caddyfile"]}), E_RUNS),
@@ -310,7 +316,7 @@ def arg(prefix, value):
 
 PROXY_RULES = [
     ("image", lambda s: ec(s).update({"image": "quay.io/oauth2-proxy/oauth2-proxy:latest"}), A_ONE),
-    ("app-image", lambda s: ec(s).update({"image": app_c(spec_of(app))["image"]}), A_ONE),
+    ("app-image", lambda s: ec(s).update({"image": BUILT_APP_IMAGE}), A_ONE),
     ("second-container", lambda s: s["containers"].append(app_container_alone()), A_ONE),
     ("command", lambda s: ec(s).update({"command": ["/bin/oauth2-proxy"]}), A_RUNS),
     ("upstream-app", arg("--upstream", f"http://app-recipes.{target}.svc.cluster.local:80/"), A_RUNS),
