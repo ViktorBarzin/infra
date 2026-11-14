@@ -1,20 +1,22 @@
-# The shared sign-in client for Cloud's private Apps (M2 contract, Addendum v2
-# point 7, Viktor's session 2026-11-13; Cloud v1 plan in the cloud repo, "How
-# does a private App check sign-in?").
+# The shared sign-in client for Cloud's Apps, every App, public or private
+# (M2 contract, Addendum v2 point 7, Viktor's session 2026-11-13; Cloud v1
+# plan in the cloud repo, "How does a private App check sign-in?"; app-kit
+# K1, 2026-11-14).
 #
 # One OAuth2 provider and application, `cloud-apps`, owned by this repo and
-# used by every private App's oauth2-proxy. Cloud's reconciler creates no
-# Authentik object and holds no Authentik credential. It was first given an
-# RBAC role to create one provider and application per App, but Authentik
-# RBAC cannot limit group names, binding targets or group parents, and with
-# core_default_app_access off (system-settings.tf) an unbound application
-# admits nobody. So the binding lives here, once.
+# used by the oauth2-proxy of every App, public or private. Cloud's
+# reconciler creates no Authentik object and holds no Authentik credential.
+# It was first given an RBAC role to create one provider and application per
+# App, but Authentik RBAC cannot limit group names, binding targets or group
+# parents, and with core_default_app_access off (system-settings.tf) an
+# unbound application admits nobody. So the binding lives here, once.
 #
 # Who gets through Authentik: active, signed-in people whose email something
-# has vouched for (policy below). Each App's oauth2-proxy then admits only the
-# email allowlist Cloud renders (the owner plus the App's `allow`), so the
-# allowlist trusts the email in Authentik's token. Two things keep that email
-# true:
+# has vouched for (policy below). A private App's oauth2-proxy then admits
+# only the email allowlist Cloud renders (the owner plus the App's `allow`),
+# so the allowlist trusts the email in Authentik's token. A public App's
+# oauth2-proxy admits any account cloud-apps admits. Two things keep that
+# email true:
 #   - users cannot change their own email (default_user_change_email = false
 #     in system-settings.tf);
 #   - the policy admits only accounts whose email was vouched for when the
@@ -31,12 +33,13 @@
 # only if they also control a host that serves /oauth2/callback; Cloud's
 # admission policies (stacks/cloud) keep Project Ingresses off homelab hosts.
 #
-# The client secret is copied into each Project namespace that has a private
-# App (Cloud's secret/cloud/<namespace>/_cloud/<app>-oauth2-proxy, read only by
-# External Secrets and the reconciler; App pods have no API token). With it
-# and a matching host, someone can redeem codes for that host and read the
-# signed-in user's profile and email. It signs nobody in to another App: each
-# oauth2-proxy has its own cookie secret, host-bound cookie and allowlist.
+# The client secret is copied for every App, public or private, into its
+# Project namespace (Cloud's secret/cloud/<namespace>/_cloud/<app>-oauth2-proxy,
+# read only by External Secrets and the reconciler; App pods have no API
+# token). With it and a matching host, someone can redeem codes for that host
+# and read the signed-in user's profile and email. It signs nobody in to
+# another App: each oauth2-proxy has its own cookie secret and host-bound
+# cookie, and a private App's has its own allowlist.
 # Rotate by tainting random_password.cloud_apps_client_secret; the apply
 # rewrites secret/cloud/system and the reconciler copies the new secret on its
 # next run of each Project.
@@ -131,7 +134,7 @@ resource "authentik_application" "cloud_apps" {
   slug               = local.cloud_apps_slug
   protocol_provider  = authentik_provider_oauth2.cloud_apps.id
   policy_engine_mode = "all"
-  meta_description   = "Sign-in for Cloud's private Apps. Each App admits only its own email allowlist."
+  meta_description   = "Sign-in for every Cloud App, public or private. A private App admits only its own email allowlist; a public App admits any account allowed here."
 }
 
 # Admits an active, signed-in account only when its email is vouched for:

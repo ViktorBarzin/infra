@@ -169,12 +169,17 @@ the `migrate` init container. Order:
    a request in that moment fails instead of reaching the App without a
    sign-in.
 3. Watch them settle: `kubectl get ingress -A -l cloud.viktorbarzin.me/managed=true -o json | jq -r '.items[] | select(.spec.rules[0].http.paths[0].backend.service.name | startswith("auth-")) | .metadata.namespace'`
-   lists Projects still on the old Ingress, and
+   lists Projects still on the old Ingress,
    `kubectl get deploy -A -l cloud.viktorbarzin.me/component=edge -o json | jq -r '.items[] | select([.spec.template.spec.containers[0].env[].name] | index("CLOUD_EDGE_SECRET") | not) | .metadata.namespace'`
-   lists edges still on the old shape. Both print nothing when every
-   Project runs the new shape. A Project whose apply failed shows in the
-   console; applying its Project File again retries it.
-4. The follow-up, once both lists are empty: remove what
+   lists edges still on the old shape, and
+   `kubectl get deploy -A -l 'cloud.viktorbarzin.me/component in (edge,oauth2-proxy)' -o json | jq -r '.items[] | select((.status.availableReplicas // 0) < 1) | .metadata.namespace + "/" + .metadata.name'`
+   lists edge and oauth2-proxy Deployments with no available pod. All
+   three print nothing when every Project runs the new shape. Every
+   re-apply waits for each App's edge and oauth2-proxy, so a Project whose
+   new pods never become available fails as `edge_not_ready` and names
+   the App. A failed Project shows in the console; applying its Project
+   File again retries it.
+4. The follow-up, once all three lists are empty: remove what
    `local.cloud_k1_transition` in `stacks/cloud/access_rules.tf` lists (the
    old Caddyfile variant, the edge env without the secret, the oauth2-proxy
    `args_v1`, Ingress backends `auth-<app>` port `http`, and the floor's

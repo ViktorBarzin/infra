@@ -162,7 +162,7 @@ enrolled by a social source, on path `users/email-verified`, or carrying
 they disagree.
 
 **Follow-up: private App sign-in.** `cloud-apps` still uses the managed
-`scope-email`, so every private App's oauth2-proxy runs with
+`scope-email`, so every App's oauth2-proxy, public or private, runs with
 `--insecure-oidc-allow-unverified-email=true` (`stacks/cloud/access_rules.tf`
 and the cloud repo's `modules/app/auth.tf`). The gate holds because
 `cloud-apps-active-users` admits only vouched-for accounts and users cannot
@@ -170,7 +170,7 @@ change their email. The deferred change, in order: give `cloud_apps` the
 vouching `email` mapping (a third copy, covered by the same test), check that
 a vouched-for account's ID token carries `email_verified: true`, then drop
 the flag from both files in one change window. Dropping the flag first locks
-every private App. Steps: the cloud repo's `docs/build/m7-infra.md`,
+every App's sign-in. Steps: the cloud repo's `docs/build/m7-infra.md`,
 "Private App sign-in".
 
 **Device-code phishing.** Anyone can start a device authorization on the

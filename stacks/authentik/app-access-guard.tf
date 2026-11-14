@@ -57,10 +57,11 @@ locals {
     public = "public ingress tier, reachable by anonymous visitors"
     # Cloud's shared sign-in client (cloud-apps.tf, M2 contract point 7). It
     # is bound to a policy that admits every active account but guest and
-    # service accounts; each private App's oauth2-proxy admits only its own
-    # email allowlist. The application belongs to this repo; Cloud creates no
-    # Authentik object.
-    "cloud-apps" = "Cloud's private Apps, gated by each App's email allowlist in oauth2-proxy"
+    # service accounts. Every App, public or private, has an oauth2-proxy on
+    # it: a private App's admits only its own email allowlist, and a public
+    # App's admits any account cloud-apps admits. The application belongs to
+    # this repo; Cloud creates no Authentik object.
+    "cloud-apps" = "Every Cloud App, public or private: a private App's oauth2-proxy admits its email allowlist, a public App's any account cloud-apps admits"
   }
 
   authentik_api = "https://authentik.viktorbarzin.me/api/v3"
