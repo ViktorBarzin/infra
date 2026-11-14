@@ -208,6 +208,9 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 #   github_dispatch_token, github_owner_read_token, forgejo_read_token,
 #   forgejo_admin_token                      the reconciler's build tokens
 #   github_api_token                         the console's private-repo check
+#   ghcr_delete_token                        deletes a gone App's ghcr images
+#                                            (Viktor's github_pat, which has
+#                                            delete:packages; his call 2026-11-14)
 locals {
   cloud_system_carried_keys = [
     "secrets_private_key",
@@ -217,6 +220,7 @@ locals {
     "forgejo_read_token",
     "forgejo_admin_token",
     "github_api_token",
+    "ghcr_delete_token",
   ]
   cloud_system_live = length(data.vault_kv_secret_v2.cloud_system_live) > 0 ? data.vault_kv_secret_v2.cloud_system_live[0].data : {}
 }
