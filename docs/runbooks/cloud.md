@@ -385,10 +385,12 @@ stuck Project".
   `read:packages` and `delete:packages`. With it, the reconciler deletes
   the ghcr packages of Apps that were removed or whose Project was
   destroyed, 10 minutes after the apply (`package_deletions` in Cloud's
-  database). Without it nothing is deleted. Use a dedicated classic PAT
-  with only `read:packages` and `delete:packages` (fine-grained tokens
-  cannot manage packages), not the existing broad PAT: Cloud holds no
-  admin token. The reconciler deletes only repositories named
+  database). Without it nothing is deleted. It holds Viktor's existing
+  `github_pat` (Vault `secret/viktor`), the same token as
+  `ghcr_pull_token`: on 2026-11-14 Viktor chose to reuse it over a
+  dedicated `read:packages` + `delete:packages` PAT. The stacks/authentik
+  apply carries the key (`cloud_system_carried_keys`); after a rotation of
+  `github_pat`, patch it here too. The reconciler deletes only repositories named
   `ghcr.io/<owner>/cloud-<project>_<app>`, so Cloud's own image and infra
   images are never touched.
 
