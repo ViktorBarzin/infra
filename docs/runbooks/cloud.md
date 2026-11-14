@@ -362,7 +362,10 @@ as an admin. Their passwords are random and not stored; nobody signs in as them.
 
 ## Turning builds on
 
-Builds stay off (`builds_enabled = false` in `stacks/cloud`) until these exist:
+Builds are on since 2026-11-14. Viktor chose to use his existing classic PAT
+(`secret/viktor` `github_pat`) for all three GitHub tokens below, so each copy
+carries that token's full scope; replace them with narrow tokens to reduce it.
+Rotating the PAT means re-copying it into the three keys. The keys:
 
 1. `secret/viktor` `cloud_ghcr_pull_token`: a classic GitHub token, `read:packages`
    only, on Viktor's account (Viktor accepted that it reads all his private
