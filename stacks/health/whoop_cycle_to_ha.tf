@@ -26,7 +26,9 @@
 # Since 2026-11-12 WHOOP answers a PASSWORD login from the home IPv4 address
 # (176.12.22.76, which the pods use) with 401 "Authentication Failed", and
 # accepts the same password over IPv6. The refresh token works from the pod.
-# So when the saved token expires, the job fails; seed a new one by running the
+# So when the saved token expires, the job tries ONE password login, trashes
+# the code email WHOOP still sends, and fails with PasswordLoginRejected;
+# CronJobFailingRepeatedly then alerts. Seed a new token by running the
 # password + code login once from the devvm, which reaches WHOOP over IPv6, and
 # patch the token into whoop-cycle-to-ha-session.
 #
@@ -180,7 +182,10 @@ resource "kubernetes_cron_job_v1" "whoop_cycle_to_ha" {
       spec {
         # Must exceed the jitter window (3600s) plus the work.
         active_deadline_seconds    = 4200
-        backoff_limit              = 1
+        # No retry: a failed run usually means a failed WHOOP login, and a
+        # retry adds a second one plus another code email to Anca. The
+        # next daily run is the retry.
+        backoff_limit              = 0
         ttl_seconds_after_finished = 3600
         template {
           metadata {
