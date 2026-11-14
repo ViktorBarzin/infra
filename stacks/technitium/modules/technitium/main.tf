@@ -1079,7 +1079,8 @@ resource "kubernetes_cluster_role_binding" "ingress_dns_sync" {
 # CronJob to sync K8s Ingress hosts -> Technitium CNAME records.
 # Discovers all *.viktorbarzin.me ingress hosts, ensures each has a CNAME
 # pointing to viktorbarzin.me in Technitium's authoritative zone.
-# *.viktorbarzin.lan ingress hosts are external-dns's job (external_dns.tf).
+# *.viktorbarzin.lan ingress hosts are external-dns's job (external_dns.tf),
+# and Cloud App hosts are external-dns-cloud's (same file).
 # Prevents the desync where Cloudflare has the record but internal DNS doesn't.
 resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
   metadata {
@@ -1127,7 +1128,12 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
 
                 EXISTING=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$ZONE&listZone=true" | grep -o '"name":"[^"]*\.viktorbarzin\.me"' | sed 's/"name":"//;s/"//' | sort -u)
 
-                HOSTS=$$(kubectl get ingress -A -o jsonpath='{range .items[*]}{range .spec.rules[*]}{.host}{"\n"}{end}{end}' | grep "\.$$ZONE$$" | grep -v "^$$ZONE$$" | sort -u)
+                # Cloud App Ingresses (label cloud.viktorbarzin.me/managed=true)
+                # are external-dns-cloud's (external_dns.tf): it writes their
+                # CNAME within seconds and deletes it with the App. A CNAME made
+                # here would carry no owner record, so external-dns-cloud could
+                # never delete it.
+                HOSTS=$$(kubectl get ingress -A -l 'cloud.viktorbarzin.me/managed!=true' -o jsonpath='{range .items[*]}{range .spec.rules[*]}{.host}{"\n"}{end}{end}' | grep "\.$$ZONE$$" | grep -v "^$$ZONE$$" | sort -u)
 
                 CREATED=0
                 for HOST in $$HOSTS; do

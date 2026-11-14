@@ -1,8 +1,12 @@
-# RFC 2136 dynamic updates for viktorbarzin.lan and the Kea reverse zones.
+# RFC 2136 dynamic updates for viktorbarzin.lan, the Kea reverse zones and
+# (Cloud App hosts only) viktorbarzin.me.
 #
-# Two writers are allowed, each with its own TSIG key:
+# Three writers are allowed, each with its own TSIG key:
 #   - external-dns (external_dns.tf) creates and deletes the A + TXT records
 #     for *.viktorbarzin.lan Ingress hosts. It talks to the primary directly.
+#   - external-dns-cloud (external_dns.tf) creates and deletes the CNAME + TXT
+#     records for Cloud App hosts in viktorbarzin.me. It talks to the primary
+#     directly, and its key may write only CNAME and TXT there.
 #   - Kea DHCP-DDNS on pfSense registers DHCP leases. It sends to the LB
 #     10.0.20.201, so its updates can land on a replica, which checks the
 #     signature with its own copy of the key and forwards to the primary.
@@ -26,6 +30,12 @@ resource "random_id" "external_dns_tsig" {
   byte_length = 32
 }
 
+# The same for external-dns-cloud. A separate key, so neither instance can
+# write the other's zone.
+resource "random_id" "external_dns_cloud_tsig" {
+  byte_length = 32
+}
+
 locals {
   # pfSense addresses Kea's updates come from (ETP Local on the LB keeps them).
   kea_update_sources = "10.0.20.1,10.0.10.1,192.168.1.2"
@@ -38,6 +48,7 @@ locals {
     "10.0.10.in-addr.arpa kea-ddns|*.10.0.10.in-addr.arpa|ANY",
     "20.0.10.in-addr.arpa kea-ddns|*.20.0.10.in-addr.arpa|ANY",
     "1.168.192.in-addr.arpa kea-ddns|*.1.168.192.in-addr.arpa|ANY",
+    "viktorbarzin.me external-dns-cloud|*.viktorbarzin.me|CNAME,TXT",
   ])
 }
 
@@ -47,10 +58,11 @@ resource "kubernetes_secret_v1" "dynamic_updates" {
     namespace = kubernetes_namespace.technitium.metadata[0].name
   }
   data = {
-    TECH_USER = var.technitium_username
-    TECH_PASS = var.technitium_password
-    KEA_TSIG  = var.kea_ddns_tsig_secret
-    EDNS_TSIG = random_id.external_dns_tsig.b64_std
+    TECH_USER       = var.technitium_username
+    TECH_PASS       = var.technitium_password
+    KEA_TSIG        = var.kea_ddns_tsig_secret
+    EDNS_TSIG       = random_id.external_dns_tsig.b64_std
+    EDNS_CLOUD_TSIG = random_id.external_dns_cloud_tsig.b64_std
   }
 }
 
@@ -85,7 +97,7 @@ resource "kubernetes_cron_job_v1" "technitium_dynamic_updates" {
                 }
               }
               dynamic "env" {
-                for_each = toset(["TECH_USER", "TECH_PASS", "KEA_TSIG", "EDNS_TSIG"])
+                for_each = toset(["TECH_USER", "TECH_PASS", "KEA_TSIG", "EDNS_TSIG", "EDNS_CLOUD_TSIG"])
                 content {
                   name = env.value
                   value_from {
@@ -113,7 +125,7 @@ resource "kubernetes_cron_job_v1" "technitium_dynamic_updates" {
                 PUSHGW="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/technitium-dynamic-updates"
                 RC=0
                 printf '%s\n' "$$ZONES" > /tmp/zones
-                KEYS="kea-ddns|$$KEA_TSIG|hmac-sha256|external-dns|$$EDNS_TSIG|hmac-sha256"
+                KEYS="kea-ddns|$$KEA_TSIG|hmac-sha256|external-dns|$$EDNS_TSIG|hmac-sha256|external-dns-cloud|$$EDNS_CLOUD_TSIG|hmac-sha256"
 
                 for INST in primary secondary tertiary; do
                   case "$$INST" in
@@ -124,12 +136,13 @@ resource "kubernetes_cron_job_v1" "technitium_dynamic_updates" {
                   if [ -z "$$TOKEN" ]; then echo "$$INST: login FAILED"; RC=1; continue; fi
 
                   # TSIG keys: write only when the live list differs from the
-                  # two declared keys (compared without printing secrets).
+                  # three declared keys (compared without printing secrets).
                   LIVE=$$(curl -sf -G "$$URL/api/settings/get" --data-urlencode "token=$$TOKEN" | tr -d ' \n' | sed -n 's/.*"tsigKeys":\[\([^]]*\)\].*/\1/p')
                   N=$$(printf '%s' "$$LIVE" | grep -o '"keyName"' | wc -l)
-                  if [ "$$N" -eq 2 ] \
+                  if [ "$$N" -eq 3 ] \
                     && printf '%s' "$$LIVE" | grep -qF "\"keyName\":\"kea-ddns\",\"sharedSecret\":\"$$KEA_TSIG\"" \
-                    && printf '%s' "$$LIVE" | grep -qF "\"keyName\":\"external-dns\",\"sharedSecret\":\"$$EDNS_TSIG\""; then
+                    && printf '%s' "$$LIVE" | grep -qF "\"keyName\":\"external-dns\",\"sharedSecret\":\"$$EDNS_TSIG\"" \
+                    && printf '%s' "$$LIVE" | grep -qF "\"keyName\":\"external-dns-cloud\",\"sharedSecret\":\"$$EDNS_CLOUD_TSIG\""; then
                     echo "$$INST: tsig keys ok"
                   else
                     R=$$(curl -sf -X POST "$$URL/api/settings/set" --data-urlencode "token=$$TOKEN" --data-urlencode "tsigKeys=$$KEYS")
@@ -143,6 +156,13 @@ resource "kubernetes_cron_job_v1" "technitium_dynamic_updates" {
                         --data-urlencode "update=UseSpecifiedNetworkACL" --data-urlencode "updateNetworkACL=$$KEA_SOURCES,$$POD_CIDR" \
                         --data-urlencode "updateSecurityPolicies=$$POLICIES")
                     else
+                      # Replicas take updates only from Kea, which sends to the
+                      # LB. A zone Kea does not write (viktorbarzin.me) stays
+                      # at the replica default, update=Deny.
+                      case "$$POLICIES" in
+                        *kea-ddns*) ;;
+                        *) echo "$$INST: $$ZONE takes updates on the primary only"; continue ;;
+                      esac
                       R=$$(curl -sf -X POST "$$URL/api/zones/options/set" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" \
                         --data-urlencode "update=UseSpecifiedNetworkACL" --data-urlencode "updateNetworkACL=$$KEA_SOURCES")
                     fi

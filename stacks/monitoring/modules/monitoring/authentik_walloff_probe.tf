@@ -327,6 +327,35 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             }
           }
         }
+        # SOA of a Technitium zone (added 2026-11-14): drives the technitium-soa
+        # scrape job, one target per instance (primary and the two replica DNS
+        # Services). blackbox exports the answer's serial as probe_dns_serial,
+        # and TechnitiumReplicaSerialBehind compares each replica's with the
+        # primary's. One module per zone because query_name is fixed per module.
+        dns_soa_viktorbarzin_me = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "viktorbarzin.me"
+            query_type            = "SOA"
+            valid_rcodes          = ["NOERROR"]
+          }
+        }
+        dns_soa_viktorbarzin_lan = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "viktorbarzin.lan"
+            query_type            = "SOA"
+            valid_rcodes          = ["NOERROR"]
+          }
+        }
         # TCP connect (added 2026-07-08, ADR-0019): drives the backup-mx-smtp
         # scrape job — probes mx2.viktorbarzin.me:25 (the Oracle backup MX) from
         # inside the cluster, i.e. out over the internet to the reserved public

@@ -7479,7 +7479,7 @@ serverFiles:
             annotations:
               summary: "technitium-dynamic-updates has not run in over 2h (last: {{ $value | humanizeDuration }} ago)"
           - alert: ExternalDNSLanSyncStale
-            expr: (time() - external_dns_controller_last_sync_timestamp_seconds) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds)
+            expr: (time() - external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns"}) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns"})
             for: 10m
             labels:
               severity: warning
@@ -7491,14 +7491,14 @@ serverFiles:
           # backstop: the zone holds well over 100 records, so near zero means
           # external-dns reads far fewer records than the zone has.
           - alert: ExternalDNSLanZoneEmpty
-            expr: external_dns_registry_endpoints_total < 20
+            expr: external_dns_registry_endpoints_total{app_kubernetes_io_instance="external-dns"} < 20
             for: 10m
             labels:
               severity: warning
             annotations:
               summary: "external-dns sees only {{ $value | printf \"%.0f\" }} records in viktorbarzin.lan. Its zone transfer from Technitium is probably failing (TSIG key or zoneTransfer policy)"
           - alert: ExternalDNSLanSoftErrors
-            expr: external_dns_controller_consecutive_soft_errors > 0
+            expr: external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns"} > 0
             for: 15m
             labels:
               severity: warning
@@ -7511,6 +7511,47 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CoreDNS forward SERVFAIL/REFUSED rate: {{ $value | printf \"%.2f\" }}/s — upstream DNS (pfSense/public) may be unhealthy"
+      # Internal DNS freshness (2026-11-14). Technitium replicas must follow
+      # the primary within seconds (NOTIFY, set up by technitium-zone-sync),
+      # and Cloud App hosts get their internal CNAME from external-dns-cloud
+      # (stacks/technitium external_dns.tf). tests/technitium-replication.test.sh
+      # runs promtool unit tests on this group.
+      - name: "Internal DNS freshness"
+        rules:
+          # probe_dns_serial is the SOA serial blackbox read from each instance
+          # (job technitium-soa). A replica that missed a NOTIFY catches up on
+          # the SOA refresh (5 min for viktorbarzin.me, 15 min for .lan), so 10
+          # minutes of difference means replication is broken, and new records
+          # NXDOMAIN on a third or two thirds of lookups through 10.0.20.201.
+          - alert: TechnitiumReplicaSerialBehind
+            expr: probe_dns_serial{job="technitium-soa", role!="primary"} != on (zone) group_left () probe_dns_serial{job="technitium-soa", role="primary"}
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Technitium {{ $labels.role }} serves {{ $labels.zone }} at serial {{ $value | printf \"%.0f\" }}, not the primary's. New records are missing on that replica"
+              description: "Check the replica's zone in its web UI (technitium-{{ $labels.role }}-web:5380) and the last technitium-zone-sync job log: it sets the primary's notifyNameServers and the replicas' notifyAllowedNetworks. Run the job by hand to resync."
+          - alert: TechnitiumSOAProbeFailed
+            expr: probe_success{job="technitium-soa"} == 0 or up{job="technitium-soa"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "The SOA probe of {{ $labels.zone }} on Technitium {{ $labels.role }} fails, so replica drift on it goes unseen"
+          - alert: ExternalDNSCloudSyncStale
+            expr: (time() - external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns-cloud"}) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns-cloud"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns-cloud (technitium ns) has not synced in over 15m. New Cloud App hosts get no internal DNS record"
+          - alert: ExternalDNSCloudSoftErrors
+            expr: external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns-cloud"} > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns-cloud has failed {{ $value | printf \"%.0f\" }} consecutive syncs of viktorbarzin.me. Check its log in the technitium namespace"
       - name: qbittorrent
         rules:
           - alert: MAMCookieExpired
@@ -9900,6 +9941,39 @@ extraScrapeConfigs: |
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # SOA serial of each Technitium instance per zone (2026-11-14), for
+  # TechnitiumReplicaSerialBehind. The primary through technitium-primary, each
+  # replica through its own DNS ClusterIP (stacks/technitium ha.tf). Labels:
+  # zone, and role = primary | secondary | tertiary taken from the target.
+  - job_name: 'technitium-soa'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    static_configs:
+      - targets:
+          - technitium-primary.technitium.svc.cluster.local
+          - technitium-secondary-dns.technitium.svc.cluster.local
+          - technitium-tertiary-dns.technitium.svc.cluster.local
+        labels:
+          zone: viktorbarzin.me
+          __param_module: dns_soa_viktorbarzin_me
+      - targets:
+          - technitium-primary.technitium.svc.cluster.local
+          - technitium-secondary-dns.technitium.svc.cluster.local
+          - technitium-tertiary-dns.technitium.svc.cluster.local
+        labels:
+          zone: viktorbarzin.lan
+          __param_module: dns_soa_viktorbarzin_lan
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - source_labels: [__param_target]
+        regex: 'technitium-(primary|secondary|tertiary)[.-].*'
+        target_label: role
       - target_label: __address__
         replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   - job_name: 'internet-egress-dns'
