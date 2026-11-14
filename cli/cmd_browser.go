@@ -77,6 +77,7 @@ injects the same stealth.js the in-cluster callers use, and runs your script.
 USAGE
   homelab browser run <script.js> [--url URL] [--shared-context] [--no-seed] [--viewport WxH | --tall] [--keep-open] [--timeout S]
   homelab browser open <url> [--shared-context] [--timeout S]
+  homelab browser run|open ... --as <user> --reason "<why>"   # as another Authentik user
   homelab browser ls        # list live pool sessions (owner, current URL, age)
   homelab browser bridge <cmd>   # the OTHER browser: the human's own Chrome,
                                  # their logins, their open tabs.
@@ -145,6 +146,17 @@ YOUR HUB (~/.config/chrome-hub/hub.json)
                      so driving an existing tab via context.pages() leaves no
                      blank tab behind.
   Watch live sessions in FleetView: https://chrome-fleet.viktorbarzin.me
+
+AS ANOTHER USER (--as <user> --reason "<why>")
+  See an app as a given Authentik user sees it, without that person. Signs in
+  as the agent account svc-agent (Vault secret/authentik-agent, admins only),
+  impersonates <user> (username, email or pk) and gives a fresh context only
+  that session: no hub cookies. Forward-auth and OIDC apps then sign in as
+  <user>. Authentik records an impersonation_started event with the reason.
+  On exit the session is logged out, which ends the impersonation.
+  Not with --shared-context. Example:
+    homelab browser open https://authentik.viktorbarzin.me/if/user/ \
+      --as alice@example.com --reason "check what alice sees on her apps page"
 
 SCRIPT CONTRACT (run mode)
   Your file's body runs with page, context, browser and log() already in scope
