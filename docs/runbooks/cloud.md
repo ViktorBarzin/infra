@@ -336,3 +336,45 @@ stuck Project".
 | `CloudPostgresReadOnly` | no | none: the owner sees why in the console, and write access returns when usage drops or the Size grows |
 | `CloudBuildMinutesHigh` | no | GitHub billing page; Cloud builds stop at the Budget |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
+
+## Forgejo bot accounts (created 2026-11-14)
+
+Two Forgejo accounts serve Cloud's builds, each with one scoped token in Vault
+`secret/cloud/system` (carried over by the authentik stack's write of that
+secret, `stacks/authentik/cloud-apps.tf`):
+
+| Account | Admin | Token key | Scopes | Used by |
+|---|---|---|---|---|
+| `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret |
+| `cloud-admin-reader` | yes | `forgejo_admin_token` | read:admin, read:repository, read:user | reconciler only (the Project owner's repo-access check); never copied anywhere |
+
+Both were made with the in-pod CLI (the admin REST endpoint cannot mint
+tokens for another user):
+
+```sh
+kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c \
+  "forgejo admin user generate-access-token --username <account> --token-name <name> --scopes '<scopes>' --raw"
+```
+
+To rotate, mint a new token the same way, `vault kv patch secret/cloud/system <key>=-`
+from stdin, then revoke the old one with `DELETE /api/v1/users/<account>/tokens/<name>`
+as an admin. Their passwords are random and not stored; nobody signs in as them.
+
+## Turning builds on
+
+Builds stay off (`builds_enabled = false` in `stacks/cloud`) until these exist:
+
+1. `secret/viktor` `cloud_ghcr_pull_token`: a classic GitHub token, `read:packages`
+   only, on Viktor's account (Viktor accepted that it reads all his private
+   packages). The authentik apply copies it to `secret/cloud/system`.
+2. `secret/cloud/system` `github_dispatch_token`: fine-grained, repository
+   `ViktorBarzin/cloud-builder` only (the repo exists, empty), Actions read and
+   write, Metadata read, plus the account permission "Plan" read.
+3. `secret/cloud/system` `github_owner_read_token`: fine-grained, Contents and
+   Metadata read on the repos Operators build privately (required by
+   `scripts/publish-builder.sh`).
+
+Then: apply `authentik`, run the cloud repo's `scripts/publish-builder.sh
+--forgejo-token secret/cloud/system#forgejo_read_token --owner-token
+secret/cloud/system#github_owner_read_token`, set `builds_enabled = true`,
+apply `cloud`, and run a live build of a public repo.
