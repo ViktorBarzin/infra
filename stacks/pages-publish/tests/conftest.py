@@ -42,7 +42,7 @@ def client(cfg, monkeypatch):
     def fake_ensure_repo(_cfg):
         calls["ensure"] = {}
 
-    def fake_render_page(_cfg, md_path, abs_target, status):
+    def fake_render_page(_cfg, md_path, abs_target, status, source_name=None, **kw):
         with open(md_path, encoding="utf-8") as f:
             content = f.read()
         calls["render"] = {

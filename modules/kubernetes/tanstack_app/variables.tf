@@ -73,6 +73,15 @@ variable "image_pull_secrets" {
   description = "Pull secrets for a private image, e.g. [\"ghcr-credentials\"] (a ghcr package pushed from a private GitHub repo is private). The namespace must also be on the Kyverno ghcr_private_namespaces allowlist, which copies that Secret in."
 }
 
+variable "service_account" {
+  type = object({
+    name            = string
+    automount_token = optional(bool, false)
+  })
+  default     = null
+  description = "A service account of the module's own for the pod. null means the namespace's default service account and the provider's pod defaults, as before. automount_token = true mounts an API token, for an app that reads the Kubernetes API with RBAC the stack binds to this account."
+}
+
 variable "resources" {
   type = object({
     requests = map(string)
@@ -110,6 +119,17 @@ variable "extra_env" {
   }))
   default     = []
   description = "Plain env vars appended after the platform env. A list because env order is part of the pod spec."
+}
+
+variable "secret_env" {
+  type = list(object({
+    name     = string
+    secret   = string
+    key      = string
+    optional = optional(bool, true)
+  }))
+  default     = []
+  description = "Env vars read one key at a time from a Kubernetes Secret the stack owns (secret_key_ref), appended after extra_env. For values that do not live in secret/<vault_kv_name>, e.g. the telemetry Write key and DSN (docs/runbooks/product-analytics.md). optional defaults to true, so the pod starts before the Secret exists. Reloader restarts the pod when one of these Secrets changes."
 }
 
 variable "volumes" {
@@ -288,6 +308,12 @@ variable "oidc_callback_path" {
   type        = string
   default     = "/api/auth/callback/authentik"
   description = "Better Auth 1.7 callback for providerId \"authentik\" (<basePath>/callback/<providerId>)."
+}
+
+variable "email_scope_mapping_id" {
+  type        = string
+  default     = null
+  description = "ID of an OAuth2 scope mapping for scope `email` that the provider sends in place of Authentik's managed scope-email. null means the managed one, which always sends email_verified false. stacks/cloud passes one that sends email_verified true for vouched accounts."
 }
 
 variable "access_token_validity" {

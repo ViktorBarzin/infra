@@ -6,10 +6,8 @@
 # Pods use imagePullSecrets: [{name: registry-credentials}] to pull from
 # registry.viktorbarzin.me (or 10.0.20.10:5050 internally).
 
-locals {
-  # Namespaces the cloned-secret GeneratingPolicies skip (registry and TLS).
-  generate_skip_system_namespaces = "!(object.metadata.name in [\"kube-system\", \"kube-public\", \"kube-node-lease\"])"
-}
+# Which namespaces get a copy: local.generate_skip_system_namespaces in
+# generate-conditions.tf.
 
 data "vault_kv_secret_v2" "viktor" {
   mount = "secret"

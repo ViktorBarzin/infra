@@ -346,7 +346,7 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya, MELCloud, Synology DSM, HP Printer (IPP)
 
 ### Add-ons
-Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client, **Home Assistant Version Control**
+Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client, **Home Assistant Version Control**, **Пазач на домофона В4** (`local_intercom_watch`, local add-on from `ebarzin/vermont-device-configs` `ha-addon/`, deployed with its `deploy.sh`; see `docs/runbooks/cameras-nvr-intercom.md`)
 
 ### Version Control (Git Config Tracking)
 - **Add-on**: Home Assistant Version Control v1.2.0 (slug: `4ab554b2_home-assistant-version-control`)
@@ -398,7 +398,7 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 - **HA Version**: 2026.5.2 on **Home Assistant OS** (HAOS — managed appliance, NOT a `docker run` container). Latest is 2026.6.4 (update available, deliberately not applied).
 - **Location**: London, UK
 - **Platform**: Raspberry Pi 4, HA OS
-- **Access from the Sofia devvm**: london is **remote** — `homelab ha ssh --instance london` generally WON'T connect (ADR-0012). Drive it via the API: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
+- **Access from the Sofia devvm**: london is **remote**, over the site-to-site WireGuard tunnel. `homelab ha ssh --instance london` connects (verified 2026-11-13; ADR-0012 expected it not to). The API is still the main way to drive it: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
 - **SSH (only from the London LAN)**: `ssh hassio@192.168.8.103` (requires `sudo` for file access)
 - **Config path**: `/config/`
 - **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
@@ -463,6 +463,45 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Projector + debug bridge: unavailable (Tapo plug off)
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
+
+#### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
+Control Yiko with `homelab ha yiko`. Do not drive the robot by hand:
+
+```bash
+homelab ha yiko status                      # state, battery, camera, photo script
+homelab ha yiko photo corridor --shots 6    # ~2 min; prints the downloaded photo paths
+homelab ha yiko clean kitchen               # clean one room in the current work mode
+homelab ha yiko dock                        # stop the job and go home
+homelab ha yiko drive forward 50            # drive straight, no cleaning (~20 cm/s)
+homelab ha yiko turn left 90                # turn on the spot (~50 deg/s, +-25 deg)
+homelab ha yiko look                        # camera frame from where it is; read it
+homelab ha yiko stop                        # stop the wheels
+```
+
+- To go somewhere by hand: `look`, then `turn`/`drive` in small steps, and
+  `look` after each one. Turns land within about 25 deg. Yiko stops by itself at
+  obstacles. End with `dock`, which also stops it.
+- Guardrails, keep them: the CLI refuses under 20% battery or on a robot
+  error, sends Yiko home 15 min after the last manual command, and allows 120
+  move commands and 10 camera starts an hour. Never send raw `move` or other
+  probe commands around it; unknown commands are how an account gets noticed.
+- A camera session lasts 10 min. After it ends, and while Yiko is idle on the
+  dock, the robot refuses video for 3-5 min: drive it off the dock first, and
+  plan a drive within one session.
+
+- Rooms: `corridor`, `balcony`, `kitchen`, `bedroom1`, `kids_room`. The dock is in the living room.
+- `photo` runs HA London's `script.yiko_photo`: mopping off, clean of that room,
+  wait until Yiko is inside it, pause for each photo and move on 8 s between
+  photos, then home and the work mode restored. Read every photo and pick the
+  best: Yiko's heading at each stop is random, and rooms are dark at night.
+- `photo` and `clean` refuse 22:00-08:00 London time, when people sleep in the
+  flat. Use `--night` only after Viktor says so for that run.
+- If Yiko has just docked, wait about 30 s (it empties its bin) before you start.
+- An error "no new photos" means Yiko did not reach the room or the camera did
+  not start. The script's trace (`script.yiko_photo`, Traces in the HA UI)
+  shows `job_started`, `arrived` and `camera_ready`.
+- Why it is built this way, and the raw commands: infra
+  `docs/runbooks/london-yiko.md`, "Send Yiko to one room".
 
 ### Custom Components (HACS integrations)
 - **cowboy** (`elsbrock/cowboy-ha` v1.2.0): Cowboy e-bike — revived 2026-06-24. The old `jdejaegh/home-assistant-cowboy` repo is **dead (404)**; don't chase it.

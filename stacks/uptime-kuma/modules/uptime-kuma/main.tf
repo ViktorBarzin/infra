@@ -129,7 +129,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
           # "real-browser" (checked 2026-10-19: http, port, ping, postgres,
           # push, redis, mysql). Adding a real-browser monitor needs the full
           # image back, or a remote browser.
-          image = "louislam/uptime-kuma:2.5.9-slim"
+          image = "louislam/uptime-kuma:2.5.11-slim"
           name  = "uptime-kuma"
 
           env {
@@ -911,7 +911,7 @@ resource "kubernetes_job" "pg_probe_role" {
         restart_policy = "Never"
         container {
           name  = "role"
-          image = "docker.io/library/postgres:18.6-alpine"
+          image = "docker.io/library/postgres:18.7-alpine"
           # psql interpolates the password as a quoted literal (%L); it never
           # appears in the Job spec.
           command = ["sh", "-c",

@@ -28,6 +28,8 @@ func buildRegistry() []Command {
 	reg = append(reg, claudeSessionsCommands()...)
 	reg = append(reg, netsecCommands()...)
 	reg = append(reg, haCommands()...)
+	reg = append(reg, yikoCommands()...)
+	reg = append(reg, yikoDriveCommands()...)
 	reg = append(reg, browserCommands()...)
 	reg = append(reg, messageCommands()...)
 	reg = append(reg, delegateCommands()...)

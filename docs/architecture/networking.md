@@ -142,6 +142,10 @@ Isolated camera segment for owned cameras at the Sofia site (first: `vermont-gar
 
 **Consumers**: cluster Frigate (`/srv/nfs/frigate/config/config.yml` — NOT Terraform) pulls `rtsp://10.0.30.70:554` main+sub as `vermont-garage`; HA integrates via Frigate plus direct hikvision_next for tamper events.
 
+## Proxmox host to the cluster — 2026-11-12
+
+The host (192.168.1.127) routes `10.0.0.0/16` straight to OPNsense at `192.168.1.2`, through an `up ip route replace` line in the `vmbr0` stanza that `playbooks/pve-host.yml` manages (tag `routes`). The OPNsense WAN rule "Proxmox host to the internal VLANs" passes that traffic with reply-to off, so the replies come straight back on `vmbr0` too. Before this change the host sent that traffic to its default gateway, the TP-Link at `192.168.1.1`, which forwarded it to OPNsense on the same bridge. OPNsense's reply-to also sent the replies back through the TP-Link. On 2026-11-11 and 2026-11-12 every connection the host opened to VLAN 20 failed from 00:00 UTC to about 00:06, while cluster-to-host traffic, the devvm and the internet path worked, and the nightly backup chain skipped 8 dumps. The TP-Link's part is inferred from the timing; it keeps no log we can read. Other home-network devices still reach the cluster through the TP-Link: their rule, "Allow all from LAN", keeps reply-to, because replies that skipped the TP-Link would be asymmetric there.
+
 ## R730 uplink redundancy — 2026-10-23 (infra#142)
 
 On 2026-10-23 AX6000 port 1 kept link but stopped forwarding from 05:02 to 10:31 EEST, which cut the whole rack off the LAN. The host now has a second path:

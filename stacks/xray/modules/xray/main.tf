@@ -87,7 +87,7 @@ resource "kubernetes_deployment" "xray" {
       }
       spec {
         container {
-          image = "teddysun/xray:26.10.31"
+          image = "teddysun/xray:26.11.9"
           name  = "xray"
           port {
             container_port = 7443 // reality

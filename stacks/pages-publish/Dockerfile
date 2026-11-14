@@ -11,7 +11,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" "markdown>=3.5"
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" "markdown>=3.5" "pyyaml>=6"
 
 # Non-root runtime user (uid 10001). Nothing is hardcoded to root: the pod
 # securityContext fsGroup (set in the stack) makes the emptyDir /repo writable

@@ -24,6 +24,12 @@ between builds; the gate is what makes auto-tracking safe.
    back at once.
 1. **Freeze gate** — `/etc/t3-autoupdate.freeze` present (or `T3_PIN=<ver>` set) →
    hold at current, do nothing.
+   **First install** (2026-11-11): on a box with no `/usr/bin/t3` and no legacy
+   `npm -g` install, which is a devvm built from `stacks/devvm`, the tracker
+   installs the tracked release (or `T3_PIN`) into `/usr/local/lib/t3/<ver>`,
+   links `/usr/bin/t3` to it, writes last-good and exits. No gate, since no
+   serve is running. `playbooks/devvm.yml` runs it once for that case. A
+   `/usr/bin/t3` that exists but does not run is left alone and the run stops.
 2. **Resolve + downgrade-guard** — `npm view t3@latest version`; proceed only if
    the target is strictly newer than installed (and, on the nightly track, a `-nightly.` build; the tag is
    mutable and can point backward).
@@ -70,6 +76,25 @@ logs every outcome (`paired user=.. endpoint=.. fallback=..`, plus `mint/pairing
 ... failed`) → Loki alerts `T3PairingBroken` / `T3PairFallbackHigh` /
 `T3AutoUpdateRolledBack` / `T3AutoUpdateRollbackFailed` / `T3AutoUpdateFrozen` →
 Alertmanager → Slack.
+
+The three `T3AutoUpdate*` rules count only lines whose Loki `unit` label is
+`agent-update`, `t3-autoupdate`, `t3-migrate-idle` or `t3-watchdog` `.service`.
+Inside a unit every line is logged twice: once by `logger`, which often loses
+its `unit` label because it exits before journald reads its cgroup, and once
+as the unit's stdout, which always has it. A run typed in a shell does not
+alert, because the person running it reads its output. To get the alerts on a
+manual run, start it as a unit (`systemctl start t3-autoupdate.service`,
+below).
+
+**Scratch runs.** A `T3_LINK` other than `/usr/bin/t3` is a scratch install,
+and the lib (`scratch_link`) keeps it away from what the live serves run: the
+version is read from `T3_LINK`, not from `t3` on PATH; a rollback never falls
+back to `npm i -g`; and the canary restarts no `t3-serve@` unit. On 2026-11-11 a
+first-install rehearsal on the live box with a scratch `T3_LINK` read the live
+0.1.8 as its own version, "rolled back" its scratch 0.1.9, tried `npm i -g`,
+and paged `T3AutoUpdateRollbackFailed` and held `T3AutoUpdateRolledBack` for a
+box that was fine. To exercise the script, run `bash scripts/t3-autoupdate.test.sh`
+rather than the installed script with overrides.
 
 ## Idle migrator — draining deferrals  (`scripts/t3-migrate-idle.sh`)
 

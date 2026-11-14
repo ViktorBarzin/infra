@@ -56,5 +56,6 @@ sudo systemctl daemon-reload
 
 … and the corresponding source removal from the infra repo:
 `scripts/t3-cgroup-snap.*`, `tests/t3-cgroup-snap.test.sh`, unwire from
-`scripts/workstation/setup-devvm.sh` §9a and §9d, this runbook, and the
+`scripts/workstation/setup-devvm.sh` §9a and §9d and from `playbooks/devvm.yml`
+section 7a5, this runbook, and the
 post-mortem addendum pointer.

@@ -133,6 +133,8 @@ func TestClassifyTranscriptPath(t *testing.T) {
 		{"-home-emo-code/1111/subagents/agent-ab12.jsonl", pathInfo{Project: "-home-emo-code", Session: "1111", Agent: "agent-ab12", Kind: kindTranscript}, true},
 		{"-home-emo-code/1111/subagents/agent-ab12.meta.json", pathInfo{Project: "-home-emo-code", Session: "1111", Agent: "agent-ab12", Kind: kindSubagentMeta}, true},
 		{"-home-emo-code/1111/tool-results/bx9.txt", pathInfo{Project: "-home-emo-code", Session: "1111", Kind: kindToolResult}, true},
+		{"-home-emo-code/1111/subagents/workflows/wf_1/agent-c3.jsonl", pathInfo{Project: "-home-emo-code", Session: "1111", Agent: "agent-c3", Kind: kindTranscript}, true},
+		{"-home-emo-code/1111/subagents/workflows/wf_1/agent-c3.meta.json", pathInfo{Project: "-home-emo-code", Session: "1111", Agent: "agent-c3", Kind: kindSubagentMeta}, true},
 		{"-home-emo-code/1111/other/x.txt", pathInfo{}, false},
 		{"-home-emo-code/notes.md", pathInfo{}, false},
 	}

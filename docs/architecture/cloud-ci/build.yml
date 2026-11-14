@@ -1,0 +1,175 @@
+name: Build and Push
+
+# Cloud's GitHub Actions build (infra ADR-0002; infra docs/architecture/cloud.md,
+# "CI"). Copy this file to .github/workflows/build.yml in viktor/cloud; the
+# infra repo keeps the reviewed copy in docs/architecture/cloud-ci/.
+#
+# Private Actions minutes are nearly used up, so this runs on pushes to master
+# only, a newer push cancels a running build, and it runs only `bun run check`
+# and `typecheck`. The unit, HTTP, CLI and e2e suites run locally before a
+# change lands. It builds and pushes two images from the one Dockerfile:
+#   ghcr.io/viktorbarzin/cloud            the last stage: console, API, migrate
+#   ghcr.io/viktorbarzin/cloud-reconciler target `reconciler`
+# and then signals the Woodpecker deploy (.woodpecker/deploy.yml), which sets
+# both Deployments in namespace cloud.
+#
+# Committed on the FORGEJO side (the GitHub repo is a one-way mirror).
+# Per-app setup (infra scripts/offinfra-onboard --keep-workflows does it):
+#   repo variables WOODPECKER_REPO_ID and FORGEJO_REPO; secrets WOODPECKER_TOKEN,
+#   FORGEJO_GIT_TOKEN, SLACK_WEBHOOK.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+# Read-only by default; only the build job can push to ghcr.
+permissions:
+  contents: read
+
+env:
+  SVU_VERSION: 3.4.1
+  SVU_SHA256: 7ee8c91998c15109130638dc661a912d5f426e2f8642f6f6c04e6502be920770
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0      # full history + tags so svu sees the last vX.Y.Z
+          fetch-tags: true
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      # vite writes src/routeTree.gen.ts, which typecheck needs.
+      - run: bun run build
+      - run: bun run typecheck
+
+      # Auto-semver (svu): tag-only, pushed to CANONICAL Forgejo (GitHub tags
+      # would be wiped by the next mirror sync). Best-effort: never blocks the
+      # build. The download is checked against a pinned sha256 in a step that
+      # holds no token; only the tag push sees FORGEJO_GIT_TOKEN.
+      - name: Compute the next semver (svu, pinned)
+        id: svu
+        run: |
+          set +e
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          curl -sSLo svu.tgz "https://github.com/caarlos0/svu/releases/download/v${SVU_VERSION}/svu_${SVU_VERSION}_linux_amd64.tar.gz" \
+            && echo "${SVU_SHA256}  svu.tgz" | sha256sum -c - \
+            && tar -xzf svu.tgz svu && rm svu.tgz || { echo "svu download failed (non-blocking)"; exit 0; }
+          CUR=$(./svu current 2>/dev/null)
+          NEXT=$(./svu next 2>/dev/null)
+          rm -f svu
+          echo "svu current=[$CUR] next=[$NEXT]"
+          if [ -n "$NEXT" ] && [ "$NEXT" != "$CUR" ]; then echo "next=$NEXT" >> "$GITHUB_OUTPUT"; fi
+          exit 0
+      - name: Push the semver tag to Forgejo
+        if: steps.svu.outputs.next != ''
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+          FORGEJO_REPO: ${{ vars.FORGEJO_REPO || 'viktor/cloud' }}
+          NEXT: ${{ steps.svu.outputs.next }}
+        run: |
+          set +e
+          git config user.email "ci@viktorbarzin.me"
+          git config user.name "cloud-ci"
+          git tag "$NEXT" 2>/dev/null
+          git push "https://${FORGEJO_REPO%%/*}:${FORGEJO_GIT_TOKEN}@forgejo.viktorbarzin.me/${FORGEJO_REPO}.git" "$NEXT" && echo "pushed tag $NEXT to forgejo" || echo "tag push failed (non-blocking)"
+          exit 0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-8)" >> "$GITHUB_OUTPUT"
+      # Console, API and migrate: the Dockerfile's last stage.
+      - name: Build and push ghcr.io/viktorbarzin/cloud
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          # Single-manifest images (no provenance/SBOM attestation children) so
+          # registry retention can never orphan index children (ADR-0002).
+          provenance: false
+          build-args: |
+            SERVICE_VERSION=${{ steps.meta.outputs.sha }}
+          tags: |
+            ghcr.io/viktorbarzin/cloud:${{ steps.meta.outputs.sha }}
+            ghcr.io/viktorbarzin/cloud:latest
+          cache-from: type=gha,scope=cloud
+          cache-to: type=gha,mode=max,scope=cloud
+      # The reconciler: target `reconciler` (bun, OpenTofu and its providers).
+      - name: Build and push ghcr.io/viktorbarzin/cloud-reconciler
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: reconciler
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          build-args: |
+            SERVICE_VERSION=${{ steps.meta.outputs.sha }}
+          tags: |
+            ghcr.io/viktorbarzin/cloud-reconciler:${{ steps.meta.outputs.sha }}
+            ghcr.io/viktorbarzin/cloud-reconciler:latest
+          cache-from: type=gha,scope=cloud-reconciler
+          cache-to: type=gha,mode=max,scope=cloud-reconciler
+      # Keep the newest ~10 versions of each package (latest rides the newest).
+      - name: ghcr retention, cloud (keep 10)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        continue-on-error: true
+        with:
+          package-name: cloud
+          package-type: container
+          min-versions-to-keep: 10
+      - name: ghcr retention, cloud-reconciler (keep 10)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        continue-on-error: true
+        with:
+          package-name: cloud-reconciler
+          package-type: container
+          min-versions-to-keep: 10
+      # Signal Woodpecker (the GitHub mirror's registration) to run
+      # .woodpecker/deploy.yml: kubectl set image in-cluster, both Deployments.
+      - name: Trigger Woodpecker deploy
+        run: |
+          for attempt in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              "https://ci.viktorbarzin.me/api/repos/${{ vars.WOODPECKER_REPO_ID }}/pipelines" \
+              -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"branch\":\"master\",\"variables\":{\"IMAGE_TAG\":\"${{ steps.meta.outputs.sha }}\"}}")
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+              echo "Woodpecker deploy triggered (HTTP $STATUS)"; exit 0
+            fi
+            echo "Attempt $attempt failed (HTTP $STATUS), retrying in 30s..."; sleep 30
+          done
+          echo "Failed to trigger Woodpecker deploy after 3 attempts"; exit 1
+
+  notify-failure:
+    needs: [build]
+    # A build cancelled by a newer push is not a failure.
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Slack notify
+        run: |
+          curl -sf -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\":rotating_light: cloud build FAILED: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${{ secrets.SLACK_WEBHOOK }}" || true

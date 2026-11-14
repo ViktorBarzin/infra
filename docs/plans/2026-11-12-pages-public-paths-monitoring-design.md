@@ -1,0 +1,148 @@
+---
+status: done
+plan: true
+---
+
+# Uptime probes for the login-free paths on pages.viktorbarzin.me
+
+Today, pages has one check: Uptime Kuma's `[External] pages`. This check follows the 302 to the Authentik login page and accepts any status from 200 to 499. Thus it monitors Authentik, not the learn pod. If the `/p/`, `/c/` or `/assets/` handle breaks, no alert starts. This plan adds five blackbox probes. They test a canary Bundle and the vendored assets. A failure sends an alert to Slack, through the Alertmanager route of `StatusPageDown`.
+
+## In numbers
+
+```numbers
+caption: measured 2026-11-12 from the Uptime Kuma DB and live curl against pages.viktorbarzin.me
+rows:
+  - {label: checks that reach the learn pod on pages, before: "0", after: "5"}
+  - {label: login-free paths probed, before: "0 of 3", after: "3 of 3"}
+  - {label: pages checks bound to a notifier, before: "0", after: "1 alert rule"}
+  - {label: probe requests per hour, before: "12 (Kuma)", after: "162", better: false}
+```
+
+## The system, with the change on it
+
+```topology
+caption: in-cluster probes go straight to Traefik; pages.viktorbarzin.me resolves to 10.0.20.203 inside the cluster
+direction: TD
+groups:
+  - {id: mon, label: monitoring namespace}
+  - {id: edge, label: Traefik}
+  - {id: learn, label: learn pod}
+nodes:
+  - {id: prom, label: Prometheus, note: "new job blackbox-pages-public, alert PagesPublicPathDown", group: mon, state: changed, risk: low}
+  - {id: bb, label: blackbox-exporter, note: 3 new modules, group: mon, state: changed, risk: low}
+  - {id: am, label: Alertmanager to slack-warning, group: mon, state: same}
+  - {id: ing, label: "ingress carve-outs /assets/ /c/ /p/", group: edge, state: same}
+  - {id: caddy, label: Caddy handles, group: learn, state: same}
+  - {id: tree, label: git-sync tree of viktor/pages, group: learn, state: same}
+  - {id: canary, label: canary Bundle, note: "wizard/pages-canary, --public --expires never", group: learn, state: new, risk: low}
+  - {id: kuma, label: "Kuma [External] pages", note: watches the login page only, state: removed, risk: low}
+  - {id: gatus, label: gatus on mx2, note: "3 checks through Cloudflare", state: new, risk: low}
+edges:
+  - {from: prom, to: bb, state: new, label: /probe every 2m}
+  - {from: bb, to: ing, state: new, label: HTTPS GET}
+  - {from: ing, to: caddy}
+  - {from: caddy, to: tree}
+  - {from: tree, to: canary, state: new}
+  - {from: prom, to: am, state: new, label: PagesPublicPathDown}
+  - {from: gatus, to: ing, state: new, label: via Cloudflare}
+  - {from: kuma, to: ing, state: removed}
+checks:
+  - {node: prom, text: "probe_success{job=\"blackbox-pages-public\"} is 1 for all 5 targets; both alert rules load as healthy", status: passed}
+  - {node: bb, text: "in a local blackbox-exporter, 5 good targets pass and 4 broken cases fail (bogus link, wrong module, a redirect, no canary text)", status: passed}
+  - {node: canary, text: "/p/<token>/ and /c/<cap>/canary.json return pages-canary-ok with the sandbox CSP and CORS *", status: passed}
+  - {node: gatus, text: "the 3 gatus checks are green on mx2; a nonexistent link returns 404 without the canary text, so both conditions fail", status: passed}
+  - {node: kuma, text: "the sync deleted [External] pages (1 deleted, 139 unchanged)", status: passed}
+left_out:
+  - Uptime Kuma keyword monitors
+```
+
+What each probe asserts:
+
+| service label | URL | module | passes when |
+|---|---|---|---|
+| pages-assets-css | `/assets/page.css` | `http_pages_asset` | 200, no redirect, `Access-Control-Allow-Origin: *` |
+| pages-assets-lib | `/assets/chart-4.6.1/chart.umd.min.js` | `http_pages_asset` | same |
+| pages-public-link | `/p/<canary token>/` | `http_pages_public` | 200, CSP starts `sandbox `, CORS `*`, body has `pages-canary-ok` |
+| pages-public-shell | `/p/<canary token>/` with `Sec-Fetch-Dest: document` | `http_pages_shell` | 200, body has `SANDBOX =` (the shell, not the page) |
+| pages-bundle | `/c/<canary cap>/canary.json` | `http_pages_public` | as pages-public-link |
+
+Each fault fails a different row:
+
+- a carve-out that asks for a login (302 to Authentik);
+- a missing symlink or an empty git-sync tree (404);
+- a missing sandbox or CORS header;
+- a broken shell.
+
+## Decisions
+
+```decision
+- question: Which tool runs the checks?
+  options:
+    - {name: blackbox-exporter job in Prometheus, chosen: true}
+    - {name: Uptime Kuma keyword monitors, note: "not in Prometheus, cannot assert response headers, the pages monitor notifies nobody today"}
+    - {name: CronJob pushing to Pushgateway, note: per-run installs and disk writes; the pattern that got status-page-pusher disabled}
+  why: the exporter is already deployed in monitoring, takes headers and body regexes per module, and its alerts reach Slack.
+- question: What do the /p/ and /c/ probes fetch?
+  options:
+    - {name: "a dedicated canary Bundle, --public --expires never", chosen: true}
+    - {name: the existing pages-demo link, note: a real page that gets republished and expires 90 days after its last share}
+    - {name: a bogus token expecting 404, note: proves Caddy answers but not that a link resolves}
+  why: a real token is the only way to prove the symlink lookup and sandbox headers work end to end.
+- question: Assert headers, or status codes only?
+  options:
+    - {name: "status, CSP sandbox and CORS headers", chosen: true}
+    - {name: status only, note: a lost sandbox header would stay green while every page loses its isolation}
+  why: the headers are what make these paths safe and usable without a login, so losing one is an outage.
+- question: Where do the probes run from?
+  options:
+    - {name: inside the cluster only, note: a Cloudflare cache or firewall fault goes unseen}
+    - {name: "inside, plus 3 gatus checks on mx2 through Cloudflare", chosen: true}
+    - {name: outside only, note: cannot tell a Cloudflare fault from a pod fault}
+  why: Viktor decided on 2026-11-12; gatus on mx2 is free and sees the path a visitor uses.
+- question: What happens to Uptime Kuma's [External] pages monitor?
+  options:
+    - {name: delete it, chosen: true}
+    - {name: point it at /assets/page.css, note: duplicates the new probes}
+  why: Viktor decided on 2026-11-12; it watches only the login page and notifies nobody.
+```
+
+## Order of work
+
+```timeline
+caption: every step is undone by a revert; no data changes
+steps:
+  - {when: 1. canary, what: "publish wizard/pages-canary/ (index.html + canary.json) with --public --expires never; record token and cap", rollback: homelab pages unpublish pages-canary}
+  - {when: 2. code, what: "stacks/monitoring: 3 modules in blackbox.yml, job blackbox-pages-public, alert PagesPublicPathDown; homelab tf plan", rollback: revert the commit}
+  - {when: 3. apply, what: "homelab tf apply monitoring from the main checkout, or merge and let CI apply", rollback: revert and re-apply}
+  - {when: 4. verify, what: "all 5 targets at probe_success 1; negative /probe calls return 0; alert rule loaded", rollback: n/a}
+  - {when: 5. gatus, what: "3 checks on mx2 for /assets/page.css, /p/<token>/ and /c/<cap>/canary.json; delete the Kuma [External] pages monitor", rollback: revert the commit}
+  - {when: 6. docs, what: "docs/agents/monitoring.md, the /c/ and /p/ comment block in stacks/learn/main.tf, ADR-0042 design doc", rollback: revert}
+```
+
+## Configuration
+
+```config
+- {key: modules.http_pages_asset, where: "stacks/monitoring/.../authentik_walloff_probe.tf blackbox.yml", old: "-", new: "GET, no_follow_redirects, valid_status_codes [200], fail_if_header_not_matches ACAO ^\\*$"}
+- {key: modules.http_pages_public, where: same, old: "-", new: "as above + CSP ^sandbox  + fail_if_body_not_matches_regexp pages-canary-ok"}
+- {key: modules.http_pages_shell, where: same, old: "-", new: "header Sec-Fetch-Dest document, [200], body SANDBOX ="}
+- {key: "job blackbox-pages-public", where: prometheus_chart_values.tpl extraScrapeConfigs, old: "-", new: "5 targets, scrape_interval 2m, __param_module per target"}
+- {key: alert PagesPublicPathDown, where: prometheus_chart_values.tpl alerting rules, old: "-", new: "probe_success{job=\"blackbox-pages-public\"} == 0 for 10m, severity warning, by service"}
+- {key: locals.pages_canary_link_id / pages_canary_cap, where: monitoring module, old: "-", new: "32-hex values from step 1, plaintext: they open a page that says pages-canary-ok"}
+```
+
+The alert description gives the probable cause for each pattern:
+
+- All five rows fail: the learn pod or Traefik is down.
+- Only the two `/p/` rows fail: the link symlink is missing.
+- Only `pages-bundle` fails: a republish of the canary changed its cap. Update `pages_canary_cap`.
+
+## Commands
+
+```sh
+homelab pages publish ~/pages-canary/ --public --expires never
+homelab tf plan monitoring
+homelab tf apply monitoring
+homelab metrics query 'probe_success{job="blackbox-pages-public"}'
+kubectl -n monitoring port-forward svc/blackbox-exporter 19115:9115
+curl -s 'http://127.0.0.1:19115/probe?module=http_pages_public&target=https://pages.viktorbarzin.me/p/00000000000000000000000000000000/' | grep probe_success
+```

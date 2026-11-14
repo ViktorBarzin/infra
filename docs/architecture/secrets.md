@@ -166,6 +166,8 @@ Returns a time-limited service account token and kubeconfig.
 
 The infra apply pipeline logs in to the `ci` role (bound to the `default` SA in `woodpecker`). Its token carries the `ci` and `ci-vault-admin` policies, both in `stacks/vault/main.tf`. `ci-vault-admin` covers the paths the vault stack manages, so CI applies `stacks/vault` like any other stack (since 2026-10-10, ADR-0030 decision 11). Write access to `sys/policies/acl` makes that admin in effect; the software-currency design lists this as an accepted risk. The `ci` role does not carry `terraform-state`, whose deny on `secret/data/vault` would block the vault stack's own read.
 
+The four policies that read all of `secret/data/*` (`ci`, `terraform-state`, `openclaw-k8s`, `eso-reader`) deny `secret/{data,metadata}/workstation/+/files/*` and `.../loose/*` since 2026-11-11. Those paths hold each devvm user's SSH and GPG private keys, Git PATs and the admin kubeconfig, which only an admin restoring a rebuilt devvm reads ([devvm-credentials](../runbooks/devvm-credentials.md)).
+
 **Secret sync CronJob**:
 - Runs every 6h
 - Reads `secret/ci/global` from Vault

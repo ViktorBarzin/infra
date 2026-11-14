@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# Checks the Postgres side of Cloud (Cloud v1 plan, "How does Cloud create
+# Postgres databases?") against a real PostgreSQL 18, the major version of the
+# live pg-cluster-v18.
+#
+# stacks/dbaas/modules/dbaas/cloud_postgres_rules.tf holds only locals, so
+# `terraform console` reads the pg_hba rules and the role SQL without
+# providers, state or credentials. The test builds pg_hba.conf the way CNPG
+# does (fixed rules, then .spec.postgresql.pg_hba, then the default
+# `host all all all scram-sha-256`), runs the SQL twice as the superuser, and
+# then checks what each role can and cannot do over TCP:
+#   neither LOGIN role accepts a password before Vault sets one;
+#   cloud_provisioner creates a Project role in cloud_projects and its
+#     database, sets a temp_file_limit on it, reaches only postgres and p_*
+#     databases, and cannot touch an existing app's role or database;
+#   a p_* role reaches only the database named after it, never an app
+#     database without a role of its own name;
+#   granting cloud_projects to an existing role (tasks, postgres) changes
+#     nothing about where it can connect;
+#   a Project database owner cannot make cloud_provisioner run a function it
+#     planted (a database search_path plus a shadowing
+#     pg_advisory_xact_lock), so it cannot reset another Project role;
+#   cloud_state reaches only the cloud_state database;
+#   an existing app role (tasks) still reaches its own database;
+#   the audit query behind alert CloudProvisionerForeignRole counts every
+#     role cloud_provisioner administers that is not named p_*, also after a
+#     rename, a revoke of its own ADMIN OPTION, or through a p_* role it gave
+#     CREATEROLE;
+#   the audit behind alerts CloudProjectRoleUnlimited and
+#     CloudProjectConnectionsOverCeiling counts LOGIN roles cloud_provisioner
+#     administers with CONNECTION LIMIT -1 or above 8, and sums their limits.
+# Needs docker and the postgres:18 image.
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$HERE/stacks/dbaas/modules/dbaas/cloud_postgres_rules.tf"
+IMAGE="${CLOUD_PG_TEST_IMAGE:-postgres:18}"
+NAME="cloud-pg-test-$$"
+
+TMP="$(mktemp -d)"
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$TMP"; }
+trap cleanup EXIT
+
+cp "$SRC" "$TMP/" || { echo "FAIL: cannot copy $SRC"; exit 1; }
+if ! (cd "$TMP" && echo 'local.cloud_roles_sql' | terraform console >"$TMP/sql.raw" 2>"$TMP/err" \
+  && echo 'jsonencode(local.cloud_pg_hba)' | terraform console >"$TMP/hba.raw" 2>>"$TMP/err" \
+  && echo 'local.cloud_provisioner_audit_sql' | terraform console >"$TMP/audit.raw" 2>>"$TMP/err" \
+  && echo 'local.cloud_role_limits_audit_sql' | terraform console >"$TMP/limits.raw" 2>>"$TMP/err"); then
+  echo "FAIL: terraform console could not evaluate $SRC (it must hold only locals)"; cat "$TMP/err"; exit 1
+fi
+# terraform console prints a multi-line string as <<EOT ... EOT and a
+# single-line one as a quoted HCL string.
+python3 - "$TMP" <<'PY' || exit 1
+import json, sys, pathlib
+d = pathlib.Path(sys.argv[1])
+def heredoc(name):
+    raw = (d / name).read_text().rstrip("\n")
+    lines = raw.splitlines()
+    if lines and lines[0].startswith("<<"):
+        marker = lines[0].lstrip("<-")
+        body = lines[1:]
+        if body and body[-1].strip() == marker:
+            body = body[:-1]
+        return "\n".join(body) + "\n"
+    return json.loads(raw)
+(d / "cloud.sql").write_text(heredoc("sql.raw"))
+(d / "audit.sql").write_text(heredoc("audit.raw"))
+(d / "limits.sql").write_text(heredoc("limits.raw"))
+hba = json.loads(json.loads((d / "hba.raw").read_text()))
+(d / "rules.json").write_text(json.dumps(hba))
+PY
+
+{
+  echo "# FIXED RULES (test copy: the superuser through the socket only)"
+  echo "local all postgres trust"
+  echo "# USER-DEFINED RULES (.spec.postgresql.pg_hba)"
+  python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))))' "$TMP/rules.json"
+  echo "# DEFAULT RULES"
+  echo "host all all all scram-sha-256"
+} >"$TMP/pg_hba.conf"
+
+docker run -d --name "$NAME" -e POSTGRES_PASSWORD=unused -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
+  "$IMAGE" >/dev/null || { echo "FAIL: cannot start $IMAGE"; exit 1; }
+for _ in $(seq 1 60); do
+  docker exec "$NAME" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 && break
+  sleep 1
+done
+docker exec "$NAME" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 || { echo "FAIL: postgres did not start"; docker logs "$NAME" | tail; exit 1; }
+# The image's first start runs initdb and restarts once; wait for the final server.
+sleep 2
+for _ in $(seq 1 30); do
+  docker exec "$NAME" psql -U postgres -tAc 'select 1' >/dev/null 2>&1 && break
+  sleep 1
+done
+docker exec -i "$NAME" sh -c 'cat > "$PGDATA/pg_hba.conf"' <"$TMP/pg_hba.conf" \
+  || { echo "FAIL: cannot install pg_hba.conf"; exit 1; }
+docker exec "$NAME" psql -U postgres -qc 'select pg_reload_conf()' >/dev/null
+
+sup() { docker exec -i "$NAME" psql -U postgres -v ON_ERROR_STOP=1 -X -q "$@"; }
+# A TCP login as role $1 with password pw-$1 to database $2.
+as() { local role="$1" db="$2"; shift 2
+  docker exec -i -e PGPASSWORD="pw-$role" "$NAME" psql -h 127.0.0.1 -U "$role" -d "$db" -v ON_ERROR_STOP=1 -X -q -tA "$@"; }
+
+FAILS=0
+ok()   { echo "ok   - $1"; }
+bad()  { echo "FAIL - $1"; FAILS=$((FAILS + 1)); }
+expect_ok()   { local what="$1"; shift; if out="$("$@" 2>&1)"; then ok "$what"; else bad "$what: $out"; fi; }
+expect_fail() { local what="$1" pattern="$2"; shift 2
+  if out="$("$@" 2>&1)"; then bad "$what: succeeded, expected failure";
+  elif grep -qiE "$pattern" <<<"$out"; then ok "$what"; else bad "$what: wrong error: $out"; fi; }
+
+# The stand-ins for what already lives on the cluster: one app with its own
+# database, an app database with no role of its own name (like the live
+# dawarich_queue, which PUBLIC may CONNECT to), and the infra Terraform state.
+sup <<'SQL' || { echo "FAIL: fixture setup"; exit 1; }
+ALTER ROLE postgres PASSWORD 'pw-postgres';
+CREATE ROLE tasks LOGIN PASSWORD 'pw-tasks';
+CREATE DATABASE tasks OWNER tasks;
+CREATE DATABASE dawarich_queue OWNER tasks;
+CREATE ROLE terraform_state LOGIN PASSWORD 'pw-terraform_state';
+CREATE DATABASE terraform_state OWNER terraform_state;
+SQL
+as terraform_state terraform_state -c 'CREATE SCHEMA dbaas; CREATE TABLE dbaas.states (id int, data text); INSERT INTO dbaas.states VALUES (1, $$secret$$);' >/dev/null \
+  || { echo "FAIL: fixture terraform_state table"; exit 1; }
+
+expect_ok "role SQL runs as the superuser" sup -f - <"$TMP/cloud.sql"
+expect_ok "role SQL runs again (idempotent)" sup -f - <"$TMP/cloud.sql"
+expect_fail "cloud_provisioner has no password before Vault sets one" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=changeme-vault-will-rotate $NAME psql -h 127.0.0.1 -U cloud_provisioner -d postgres -tAc 'select 1'"
+expect_fail "cloud_state has no password before Vault sets one" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=changeme-vault-will-rotate $NAME psql -h 127.0.0.1 -U cloud_state -d cloud_state -tAc 'select 1'"
+# Vault's static roles set the real passwords; stand in for them here.
+sup -c "ALTER ROLE cloud_provisioner PASSWORD 'pw-cloud_provisioner'; ALTER ROLE cloud_state PASSWORD 'pw-cloud_state';"
+
+attrs="$(sup -tAc "select string_agg(rolname||':'||rolcanlogin||':'||rolcreatedb||':'||rolcreaterole||':'||rolconnlimit, ' ' order by rolname) from pg_roles where rolname in ('cloud_projects','cloud_provisioner','cloud_state')")"
+[ "$attrs" = "cloud_projects:false:false:false:-1 cloud_provisioner:true:true:true:5 cloud_state:true:false:false:10" ] \
+  && ok "role attributes ($attrs)" || bad "role attributes: $attrs"
+grant="$(sup -tAc "select admin_option||':'||inherit_option||':'||set_option from pg_auth_members where roleid='cloud_projects'::regrole and member='cloud_provisioner'::regrole")"
+[ "$grant" = "true:false:false" ] && ok "cloud_provisioner holds ADMIN, not INHERIT or SET, on cloud_projects" || bad "membership options: $grant"
+owner="$(sup -tAc "select pg_get_userbyid(datdba) from pg_database where datname='cloud_state'")"
+[ "$owner" = "cloud_state" ] && ok "cloud_state database owned by cloud_state" || bad "cloud_state owner: $owner"
+# A rerun must not reset a password Vault already rotated.
+expect_ok "a rerun keeps the rotated password" bash -c "docker exec -i $NAME psql -U postgres -v ON_ERROR_STOP=1 -X -q -f - <'$TMP/cloud.sql' && docker exec -e PGPASSWORD=pw-cloud_state $NAME psql -h 127.0.0.1 -U cloud_state -d cloud_state -tAc 'select 1'"
+
+# --- cloud_provisioner -------------------------------------------------------
+expect_ok "provisioner reaches the postgres database" as cloud_provisioner postgres -c 'select 1'
+expect_ok "provisioner creates a Project role in cloud_projects" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_demo LOGIN PASSWORD 'pw-p_demo' CONNECTION LIMIT 3 IN ROLE cloud_projects"
+expect_ok "provisioner creates the Project database" \
+  as cloud_provisioner postgres -c "GRANT p_demo TO cloud_provisioner WITH SET TRUE" -c "CREATE DATABASE p_demo OWNER p_demo" -c "REVOKE CONNECT, TEMPORARY ON DATABASE p_demo FROM PUBLIC"
+expect_ok "provisioner sets a temp_file_limit and statement_timeout on its role" \
+  as cloud_provisioner postgres -c "ALTER ROLE p_demo SET temp_file_limit = '256MB'" -c "ALTER ROLE p_demo SET statement_timeout = '60s'"
+expect_ok "provisioner drops what it created" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_gone NOLOGIN IN ROLE cloud_projects" -c "DROP ROLE p_gone"
+expect_fail "provisioner cannot alter an existing app role" "permission denied|must have admin" \
+  as cloud_provisioner postgres -c "ALTER ROLE tasks CONNECTION LIMIT 1"
+expect_fail "provisioner cannot change an existing app role's password" "permission denied|must have admin" \
+  as cloud_provisioner postgres -c "ALTER ROLE tasks PASSWORD 'x'"
+expect_fail "provisioner cannot drop an existing app database" "must be owner" \
+  as cloud_provisioner postgres -c "DROP DATABASE tasks"
+expect_fail "provisioner cannot create a superuser" "permission denied|must be superuser|only roles with the SUPERUSER" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_root SUPERUSER"
+expect_fail "provisioner is refused terraform_state" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as cloud_provisioner terraform_state -c "select * from dbaas.states"
+expect_fail "provisioner is refused an app database" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as cloud_provisioner tasks -c 'select 1'
+expect_ok "provisioner reaches a Project database" as cloud_provisioner p_demo -c 'select 1'
+expect_fail "provisioner cannot grant itself the superuser role" "permission denied|must have admin" \
+  as cloud_provisioner postgres -c "GRANT postgres TO cloud_provisioner"
+
+# --- a Project role ----------------------------------------------------------
+expect_ok "Project role reaches its own database" as p_demo p_demo -c 'create table t (id int); select 1'
+expect_fail "Project role is refused the postgres database" "pg_hba.conf rejects|no pg_hba.conf entry" as p_demo postgres -c 'select 1'
+expect_fail "Project role is refused another app's database" "pg_hba.conf rejects|no pg_hba.conf entry" as p_demo tasks -c 'select 1'
+expect_fail "Project role is refused terraform_state" "pg_hba.conf rejects|no pg_hba.conf entry" as p_demo terraform_state -c 'select 1'
+expect_fail "Project role is refused cloud_state" "pg_hba.conf rejects|no pg_hba.conf entry" as p_demo cloud_state -c 'select 1'
+expect_fail "Project role cannot lift its temp_file_limit" "permission denied" as p_demo p_demo -c "SET temp_file_limit = -1"
+lim="$(as p_demo p_demo -c 'show temp_file_limit' 2>&1)"
+[ "$lim" = "256MB" ] && ok "Project role session carries temp_file_limit=256MB" || bad "temp_file_limit in session: $lim"
+
+# --- a Project database cannot shadow functions cloud_provisioner calls ----
+# The reconciler's postgresql_grant resources connect into a Project database
+# as cloud_provisioner and run an unqualified
+# `SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname=$1`
+# (provider 1.27.0, pgLockDatabase), then commit. The database owner plants a
+# function of that name and a database search_path that finds it first.
+# cloud_provisioner's own search_path (cloud_roles_sql) must keep it out.
+sp="$(sup -tAc "select array_to_string(setconfig, ',') from pg_db_role_setting where setdatabase = 0 and setrole = 'cloud_provisioner'::regrole")"
+[ "$sp" = "search_path=pg_catalog, pg_temp" ] && ok "cloud_provisioner carries search_path=pg_catalog, pg_temp" || bad "cloud_provisioner role settings: $sp"
+expect_ok "provisioner creates p_att and p_vic, each with its database" \
+  as cloud_provisioner postgres \
+    -c "CREATE ROLE p_att LOGIN PASSWORD 'pw-p_att' CONNECTION LIMIT 2 IN ROLE cloud_projects" \
+    -c "CREATE ROLE p_vic LOGIN PASSWORD 'pw-p_vic' CONNECTION LIMIT 2 IN ROLE cloud_projects" \
+    -c "GRANT p_att TO cloud_provisioner WITH SET TRUE" -c "GRANT p_vic TO cloud_provisioner WITH SET TRUE" \
+    -c "CREATE DATABASE p_att OWNER p_att" -c "CREATE DATABASE p_vic OWNER p_vic"
+expect_ok "p_att plants public.pg_advisory_xact_lock(bigint) and a database search_path" \
+  as p_att p_att \
+    -c 'CREATE FUNCTION public.pg_advisory_xact_lock(bigint) RETURNS void LANGUAGE plpgsql AS $f$ BEGIN EXECUTE $q$ALTER ROLE p_vic PASSWORD $p$pwned$p$$q$; END $f$' \
+    -c 'ALTER DATABASE p_att SET search_path = public, pg_catalog'
+# Positive control: a role with no search_path of its own (the superuser here)
+# does run the planted function, so the trap is real.
+sup -d p_att -tAc "SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname = 'p_att'" >/dev/null 2>&1
+if docker exec -e PGPASSWORD=pwned "$NAME" psql -h 127.0.0.1 -U p_vic -d p_vic -tAc 'select 1' >/dev/null 2>&1; then
+  ok "control: without a role search_path the planted function runs and resets p_vic's password"
+else
+  bad "control: the planted function did not run for a role without a search_path, so the trap below proves nothing"
+fi
+sup -c "ALTER ROLE p_vic PASSWORD 'pw-p_vic'" >/dev/null
+sp="$(as cloud_provisioner p_att -c 'show search_path' 2>&1)"
+[ "$sp" = "pg_catalog, pg_temp" ] && ok "in p_att, cloud_provisioner's search_path is its own, not the database's" || bad "cloud_provisioner search_path in p_att: $sp"
+expect_ok "provisioner runs the provider's lock statement in p_att and commits" \
+  as cloud_provisioner p_att -c "BEGIN" -c "SELECT pg_advisory_xact_lock(oid::bigint) FROM pg_database WHERE datname = 'p_att'" -c "COMMIT"
+expect_fail "p_vic's password is unchanged after the trap" "password authentication failed" \
+  bash -c "docker exec -e PGPASSWORD=pwned $NAME psql -h 127.0.0.1 -U p_vic -d p_vic -tAc 'select 1'"
+expect_ok "p_vic still signs in with its own password" as p_vic p_vic -c 'select 1'
+expect_fail "p_att cannot give cloud_provisioner a search_path in its database" "permission denied|must have admin" \
+  as p_att p_att -c "ALTER ROLE cloud_provisioner IN DATABASE p_att SET search_path = public, pg_catalog"
+sup -c "DROP DATABASE p_att" -c "DROP DATABASE p_vic" -c "DROP ROLE p_att" -c "DROP ROLE p_vic" >/dev/null
+
+# --- cloud_state -------------------------------------------------------------
+expect_ok "cloud_state reaches cloud_state and creates a schema" \
+  as cloud_state cloud_state -c 'CREATE SCHEMA p_demo; CREATE TABLE p_demo.states (id int)'
+expect_fail "cloud_state is refused terraform_state" "pg_hba.conf rejects|no pg_hba.conf entry" as cloud_state terraform_state -c 'select 1'
+expect_fail "cloud_state is refused the postgres database" "pg_hba.conf rejects|no pg_hba.conf entry" as cloud_state postgres -c 'select 1'
+expect_fail "provisioner is refused cloud_state" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as cloud_provisioner cloud_state -c 'select * from p_demo.states'
+
+# --- names, not group membership ---------------------------------------------
+expect_ok "provisioner creates p_dawarich_queue, named after an app database" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_dawarich_queue LOGIN PASSWORD 'pw-p_dawarich_queue' IN ROLE cloud_projects"
+expect_fail "p_dawarich_queue is refused the dawarich_queue database" "pg_hba.conf rejects|no pg_hba.conf entry" \
+  as p_dawarich_queue dawarich_queue -c 'select 1'
+expect_ok "provisioner grants cloud_projects to tasks and postgres (ADMIN OPTION allows it)" \
+  as cloud_provisioner postgres -c "GRANT cloud_projects TO tasks" -c "GRANT cloud_projects TO postgres"
+expect_ok "tasks, now in cloud_projects, still reaches tasks" as tasks tasks -c 'select 1'
+expect_ok "tasks, now in cloud_projects, still reaches dawarich_queue" as tasks dawarich_queue -c 'select 1'
+expect_ok "postgres, now in cloud_projects, still reaches tasks over TCP" as postgres tasks -c 'select 1'
+
+# --- the audit behind CloudProvisionerForeignRole -----------------------------
+# What the CNPG exporter runs (local.cloud_provisioner_audit_sql): roles that
+# cloud_provisioner administers, directly or through a role it administers,
+# whose name is not p_*.
+audit() { docker exec -i "$NAME" psql -U postgres -X -q -tA -f - <"$TMP/audit.sql"; }
+n="$(audit 2>&1)"; [ "$n" = "0" ] && ok "audit counts 0 with only p_* Project roles" || bad "audit with only p_* roles: $n"
+expect_ok "provisioner creates evil, a LOGIN role not named p_*" \
+  as cloud_provisioner postgres -c "CREATE ROLE evil LOGIN PASSWORD 'pw-evil'"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts evil" || bad "audit after evil: $n"
+as cloud_provisioner postgres -c "REVOKE ADMIN OPTION FOR evil FROM cloud_provisioner" >/dev/null 2>&1
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "provisioner cannot hide evil by revoking its own ADMIN OPTION" || bad "audit after the revoke: $n"
+expect_ok "provisioner drops evil" as cloud_provisioner postgres -c "DROP ROLE evil"
+expect_ok "provisioner creates p_ren and renames it to sneaky" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_ren NOLOGIN IN ROLE cloud_projects" -c "ALTER ROLE p_ren RENAME TO sneaky"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a Project role renamed away from p_*" || bad "audit after the rename: $n"
+as cloud_provisioner postgres -c "DROP ROLE sneaky" >/dev/null
+expect_ok "provisioner creates p_maker with CREATEROLE" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_maker NOLOGIN CREATEROLE IN ROLE cloud_projects"
+expect_ok "p_maker creates sneaky2" sup -c "SET ROLE p_maker" -c "CREATE ROLE sneaky2 LOGIN"
+n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a role made by a role the provisioner made" || bad "audit through p_maker: $n"
+
+# --- the audit behind CloudProjectRoleUnlimited and CloudProjectConnectionsOverCeiling
+# What the CNPG exporter runs (local.cloud_role_limits_audit_sql): over the
+# LOGIN roles cloud_provisioner administers, how many have CONNECTION LIMIT -1
+# or above 8, and the sum of their limits. Printed as "<unlimited> <sum>".
+limits() { docker exec -i "$NAME" psql -U postgres -X -q -tA -F ' ' -f - <"$TMP/limits.sql"; }
+sup -c "DROP ROLE sneaky2" -c "ALTER ROLE p_dawarich_queue CONNECTION LIMIT 2" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 5" ] && ok "limits audit: no unlimited role, sum 5 (p_demo 3, p_dawarich_queue 2; NOLOGIN p_maker not counted)" || bad "limits audit baseline: $l"
+expect_ok "provisioner creates p_wide with no CONNECTION LIMIT" \
+  as cloud_provisioner postgres -c "CREATE ROLE p_wide LOGIN CONNECTION LIMIT -1 IN ROLE cloud_projects"
+l="$(limits 2>&1)"; [ "$l" = "1 5" ] && ok "limits audit counts a role with CONNECTION LIMIT -1" || bad "limits audit after p_wide -1: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 9" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "1 14" ] && ok "limits audit counts a role above 8 and adds it to the sum" || bad "limits audit after p_wide 9: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 8" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 13" ] && ok "limits audit accepts 8, the largest Size" || bad "limits audit after p_wide 8: $l"
+as cloud_provisioner postgres -c "CREATE ROLE p_more LOGIN CONNECTION LIMIT 8 IN ROLE cloud_projects" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit sum passes the ceiling of 20 (21)" || bad "limits audit sum: $l"
+sup -c "CREATE ROLE outsider LOGIN CONNECTION LIMIT -1" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit ignores a role cloud_provisioner does not administer" || bad "limits audit with outsider: $l"
+
+# --- nothing else changed ----------------------------------------------------
+expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'
+expect_ok "terraform_state still reaches its database" as terraform_state terraform_state -c 'select count(*) from dbaas.states'
+
+echo
+if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud postgres roles and pg_hba"; else echo "FAIL: $FAILS check(s)"; exit 1; fi

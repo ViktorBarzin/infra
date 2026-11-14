@@ -148,7 +148,7 @@ A second CronJob, `renovate/renovate-apps`, updates first-party app repos on the
 | What | Where |
 |---|---|
 | Global config, which holds the whole policy (app repos need no `renovate.json`) | `stacks/renovate/files/config-apps.js`, ConfigMap `renovate/renovate-apps` |
-| Repo list | `repositories` in that file: `viktor/tasks` (base branch `master`) since 2026-10-16 |
+| Repo list | `repositories` in that file: `viktor/tasks` (base branch `master`) since 2026-10-16, `viktor/alexa-assistant`, and `viktor/trip-reel` and `viktor/cloud` since 2026-11-14 |
 | Schedule and kill switch | `variable "apps_schedule"` (`47 */6 * * *`, 30 minutes after the infra job) and `variable "apps_suspended"` in `stacks/renovate/main.tf` |
 | Cache (repo clones, lookups, the OSV database, the Bun binary) | PVC `renovate/renovate-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
 | Metrics | Pushgateway `job="renovate"`, `instance="apps"`; no alert reads it yet |
@@ -158,6 +158,7 @@ Policy, from ADR-0001:
 - The Bun manager runs on a `package.json` with a sibling `bun.lock`. The `dockerfile` and `github-actions` managers are on only for the Bun runtime pins (below); a packageRule disables everything else they find. Other ecosystems in an app repo are left alone, such as the legacy npm frontend and Python backend in `viktor/tasks` before its cutover.
 - Bun comes from `binarySource: "install"`: containerbase installs the version the app pins in `"packageManager": "bun@x.y.z"` into the cache PVC. The 2.6 GB `-full` image would carry whatever Bun its tag ships, not the app's pin.
 - npm releases wait 3 days (`minimumReleaseAge`), except `@viktorbarzin/*`. This matches the app's `bunfig.toml` `install.minimumReleaseAge`.
+- `@viktorbarzin/*` versions are looked up on Forgejo's npm registry (`https://forgejo.viktorbarzin.me/api/packages/viktor/npm/`), where the apps install them from since 2026-11-12 (app-kit ADR-0003). npmjs.org only carries a mirror.
 - Updates land straight on master (`automergeType: branch`, `ignoreTests: true`), majors included. A failed `bun.lock` update blocks the automerge and leaves the branch with an artifact error. Each landed commit starts the app's normal build and deploy.
 - Nothing waits for review (Viktor, 2026-10-18). Until then TanStack Start and Router and the Bun pin were pull requests for a person, and `viktor/tasks` PR #8 was one of them.
 - `@tanstack/*start*` and `@tanstack/*router*` are pinned to exact versions and grouped into one branch, `renovate/tanstack-start-router`, which lands like any other. Start ships breaking changes in minor and patch releases; the app's CI runs lint, typecheck, unit and e2e tests before its deploy job, so a breaking bump stops there and the running version stays up. A red build on master after a TanStack bump is the signal to fix or revert it.

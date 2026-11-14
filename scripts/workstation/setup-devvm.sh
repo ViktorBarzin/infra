@@ -249,6 +249,8 @@ if command -v vault >/dev/null; then
   bash "$HERE/stage-chrome-hubs.sh" || log "WARN: chrome hub staging failed -> browser logins will not sync"
 fi
 
+# 9) service layer. Since 2026-11-11 playbooks/devvm.yml (section 7a5) declares
+#    all of this too, from the same repo files; this copy stays for a hand run.
 # 9) service layer: install + enable the machine-wide systemd units (sources in
 #    infra/scripts/) so a rebuild reproduces them — previously hand-scp'd, they would
 #    NOT survive a fresh box. Per-user t3-serve@ INSTANCES are enabled by the

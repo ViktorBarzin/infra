@@ -125,6 +125,46 @@ CREATE TABLE IF NOT EXISTS claude.files
 ENGINE = ReplacingMergeTree(mtime)
 ORDER BY (os_user, session_id, path);
 
+-- The rest of ~/.claude and ~/.codex (docs/plans/2026-11-11-disposable-devvm.md):
+-- what `homelab claude-sessions restore` writes back after a rebuild.
+-- Credentials and caches are never sent; settings files arrive with secret
+-- values replaced (redacted = 1). path is relative to the home directory.
+-- Whole files, replaced when they change: plans, tasks, teams, todos,
+-- file-history, settings, remote/ logs, Codex config and databases.
+-- encoding: text | base64 (not UTF-8) | omitted (over 32 MiB, no content).
+CREATE TABLE IF NOT EXISTS claude.home_files
+(
+    os_user     LowCardinality(String),
+    path        String,
+    kind        LowCardinality(String),
+    mtime       DateTime64(3, 'UTC'),
+    mode        UInt32,
+    size        UInt64,
+    encoding    LowCardinality(String),
+    redacted    Bool,
+    content     String CODEC(ZSTD(3)),
+    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (os_user, path);
+
+-- Append-only .jsonl files outside the transcripts (history.jsonl, Codex
+-- rollouts and session_index.jsonl), one row per line like claude.lines.
+-- generation changes when the file is read again from the start (replaced
+-- or truncated); restore uses the newest generation only.
+CREATE TABLE IF NOT EXISTS claude.home_lines
+(
+    os_user     LowCardinality(String),
+    path        String,
+    generation  String,
+    byte_offset UInt64,
+    mtime       DateTime64(3, 'UTC'),
+    raw         String CODEC(ZSTD(3)),
+    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY (os_user, path, generation, byte_offset);
+
 -- One row per API request. Claude Code writes one transcript line per content
 -- block and repeats the message's usage on each, so token sums must come from
 -- here, never from summing lines (that inflates them about 2.5x).
@@ -238,7 +278,8 @@ WHERE type = 'system' AND subtype = 'turn_duration';
 -- What the network IDS records (docs/plans/2026-11-10-network-ids.md,
 -- docs/architecture/network-security-monitoring.md). Written by the netsec
 -- Vector (stacks/netsec) as netsec_writer; read by Viktor as netsec_reader.
--- Not in backup.sh on purpose: browsing data stays off NFS and offsite.
+-- backup.sh saves the *_hourly rollups (kept forever) but not the raw tables,
+-- so per-connection detail stays off NFS and offsite (Viktor, 2026-11-11).
 -- Addresses are IPv6 columns; IPv4 arrives as text and is stored mapped.
 CREATE DATABASE IF NOT EXISTS netsec;
 
@@ -387,3 +428,328 @@ PARTITION BY toYYYYMMDD(ts)
 ORDER BY (frontend, toStartOfHour(ts), client_ip, ts)
 TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
+
+-- Hourly rollups, kept forever (no TTL). Raw tables keep 365 days; these keep
+-- the patterns: who talked to whom, on which port, how much, and which
+-- signatures, names, SNIs, JA4s, user agents and SSH versions were seen.
+-- Measured 2026-11-11: about 3.5 GB a year, most of it flows_hourly.
+--
+-- Each table is a SummingMergeTree whose ORDER BY holds every dimension, so
+-- merges add up the counters. Rows for one key can sit in several parts until
+-- a merge: always aggregate with sum() and GROUP BY, never read n directly.
+--
+-- Each materialized view fills its table on insert into the raw table. The
+-- views count only rows with ts >= 2026-11-11 12:05:00 UTC, the moment they
+-- went live; older rows were backfilled once with the same SELECT and
+-- ts < that moment, so nothing is counted twice.
+--
+-- DEFINER = default SQL SECURITY DEFINER, as on claude.blocks_mv: netsec_writer
+-- holds INSERT only, and a view running with its rights fails every raw
+-- insert after writing the raw rows (Vector then logs the batch as dropped).
+-- That happened for 21 minutes on 2026-11-11.
+--
+-- A flow crossing VLAN 10 and 20 is logged on both interfaces, so counts in
+-- the eve_* rollups include both copies, as in netsec.eve.
+
+-- NetFlow, per hour and pair. port is the lower of the two ports: the service
+-- port for client-server traffic, so both directions of one connection share it.
+-- Its view cuts on received (arrival), not ts, from 2026-11-11 12:13:00 UTC:
+-- OPNsense exports a long flow only at its active timeout, so a record can
+-- arrive about 5 minutes after its ts (313 s seen), and a ts cutoff misses it.
+CREATE TABLE IF NOT EXISTS netsec.flows_hourly
+(
+    hour    DateTime('UTC'),
+    src_ip  IPv6,
+    dst_ip  IPv6,
+    port    UInt16,
+    proto   LowCardinality(String),
+    flows   UInt64,
+    bytes   UInt64,
+    packets UInt64
+)
+ENGINE = SummingMergeTree((flows, bytes, packets))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, src_ip, dst_ip, port, proto);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.flows_hourly_mv TO netsec.flows_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, src_ip, dst_ip, least(src_port, dst_port) AS port, proto,
+       count() AS flows, sum(bytes) AS bytes, sum(packets) AS packets
+FROM netsec.flows
+WHERE received >= toDateTime64('2026-11-11 12:13:00', 3, 'UTC')
+GROUP BY hour, src_ip, dst_ip, port, proto;
+
+-- Suricata alerts, per hour, signature and pair.
+CREATE TABLE IF NOT EXISTS netsec.eve_alert_hourly
+(
+    hour         DateTime('UTC'),
+    signature_id UInt32,
+    signature    LowCardinality(String),
+    category     LowCardinality(String),
+    severity     UInt8,
+    src_ip       IPv6,
+    dest_ip      IPv6,
+    dest_port    UInt16,
+    proto        LowCardinality(String),
+    n            UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, signature_id, src_ip, dest_ip, dest_port, proto, signature, category, severity);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_alert_hourly_mv TO netsec.eve_alert_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, signature_id, signature, category, severity,
+       src_ip, dest_ip, dest_port, proto, count() AS n
+FROM netsec.eve
+WHERE event_type = 'alert' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Suricata DNS answers, per hour, client and name. EVE logs a response from
+-- the server, so the client is dest_ip and the resolver is src_ip.
+CREATE TABLE IF NOT EXISTS netsec.eve_dns_hourly
+(
+    hour      DateTime('UTC'),
+    client_ip IPv6,
+    server_ip IPv6,
+    rrname    String,
+    rrtype    LowCardinality(String),
+    rcode     LowCardinality(String),
+    n         UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, rrname, server_ip, rrtype, rcode);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_dns_hourly_mv TO netsec.eve_dns_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, dest_ip AS client_ip, src_ip AS server_ip, dns_rrname AS rrname,
+       JSONExtractString(toString(arrayElement(payload.dns.queries.:`Array(JSON)`, 1)), 'rrtype') AS rrtype,
+       coalesce(payload.dns.rcode.:String, '') AS rcode, count() AS n
+FROM netsec.eve
+WHERE event_type = 'dns' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Suricata TLS handshakes, per hour, pair, SNI and client fingerprint.
+CREATE TABLE IF NOT EXISTS netsec.eve_tls_hourly
+(
+    hour      DateTime('UTC'),
+    src_ip    IPv6,
+    dest_ip   IPv6,
+    dest_port UInt16,
+    sni       String,
+    ja4       LowCardinality(String),
+    version   LowCardinality(String),
+    n         UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, src_ip, sni, dest_ip, dest_port, ja4, version);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_tls_hourly_mv TO netsec.eve_tls_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port, tls_sni AS sni,
+       coalesce(payload.tls.ja4.:String, '') AS ja4, coalesce(payload.tls.version.:String, '') AS version,
+       count() AS n
+FROM netsec.eve
+WHERE event_type = 'tls' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Suricata plaintext HTTP requests, per hour, pair, host and user agent.
+CREATE TABLE IF NOT EXISTS netsec.eve_http_hourly
+(
+    hour       DateTime('UTC'),
+    src_ip     IPv6,
+    dest_ip    IPv6,
+    dest_port  UInt16,
+    hostname   String,
+    user_agent String,
+    n          UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, src_ip, hostname, dest_ip, dest_port, user_agent);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_http_hourly_mv TO netsec.eve_http_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port, http_hostname AS hostname,
+       coalesce(payload.http.http_user_agent.:String, '') AS user_agent, count() AS n
+FROM netsec.eve
+WHERE event_type = 'http' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Suricata SSH sessions, per hour, pair and software versions.
+CREATE TABLE IF NOT EXISTS netsec.eve_ssh_hourly
+(
+    hour            DateTime('UTC'),
+    src_ip          IPv6,
+    dest_ip         IPv6,
+    dest_port       UInt16,
+    client_software LowCardinality(String),
+    server_software LowCardinality(String),
+    n               UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, src_ip, dest_ip, dest_port, client_software, server_software);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.eve_ssh_hourly_mv TO netsec.eve_ssh_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, src_ip, dest_ip, dest_port,
+       coalesce(payload.ssh.client.software_version.:String, '') AS client_software,
+       coalesce(payload.ssh.server.software_version.:String, '') AS server_software,
+       count() AS n
+FROM netsec.eve
+WHERE event_type = 'ssh' AND ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- HAProxy mail connections, per hour, client, port and termination state.
+CREATE TABLE IF NOT EXISTS netsec.haproxy_hourly
+(
+    hour          DateTime('UTC'),
+    client_ip     IPv6,
+    frontend_port UInt16,
+    termination   LowCardinality(String),
+    connections   UInt64,
+    bytes_in      UInt64,
+    bytes_out     UInt64
+)
+ENGINE = SummingMergeTree((connections, bytes_in, bytes_out))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, frontend_port, termination);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.haproxy_hourly_mv TO netsec.haproxy_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, client_ip, frontend_port, termination,
+       count() AS connections, sum(bytes_in) AS bytes_in, sum(bytes_out) AS bytes_out
+FROM netsec.haproxy
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 3, 'UTC')
+GROUP BY ALL;
+
+-- Squid requests from opted-in machines, per hour, client and host.
+CREATE TABLE IF NOT EXISTS netsec.proxy_hourly
+(
+    hour      DateTime('UTC'),
+    client_ip IPv6,
+    host      String,
+    bump_mode LowCardinality(String),
+    requests  UInt64,
+    bytes     UInt64
+)
+ENGINE = SummingMergeTree((requests, bytes))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, host, bump_mode);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.proxy_hourly_mv TO netsec.proxy_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, client_ip, host, bump_mode, count() AS requests, sum(bytes) AS bytes
+FROM netsec.proxy
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 3, 'UTC')
+GROUP BY ALL;
+
+-- Pod DNS lookups, per hour, pod address and name.
+CREATE TABLE IF NOT EXISTS netsec.dns_queries_hourly
+(
+    hour      DateTime('UTC'),
+    client_ip IPv6,
+    qname     String,
+    qtype     LowCardinality(String),
+    rcode     LowCardinality(String),
+    n         UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, qname, qtype, rcode);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.dns_queries_hourly_mv TO netsec.dns_queries_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, client_ip, qname, qtype, rcode, count() AS n
+FROM netsec.dns_queries
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Tetragon, per hour, namespace, binary and destination (pod names change, so
+-- they are left out).
+CREATE TABLE IF NOT EXISTS netsec.tetragon_hourly
+(
+    hour       DateTime('UTC'),
+    node       LowCardinality(String),
+    event_type LowCardinality(String),
+    namespace  LowCardinality(String),
+    binary     String,
+    dst_ip     IPv6,
+    dst_port   UInt16,
+    n          UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, event_type, namespace, binary, dst_ip, dst_port, node);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.tetragon_hourly_mv TO netsec.tetragon_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, node, event_type, namespace, binary, dst_ip, dst_port, count() AS n
+FROM netsec.tetragon
+WHERE ts >= toDateTime64('2026-11-11 12:05:00', 6, 'UTC')
+GROUP BY ALL;
+
+-- Technitium query log (Sofia DNS: home LAN, VLAN 10 and 20, pods through
+-- CoreDNS), copied from Postgres technitium.dns_logs by the netsec-technitium
+-- CronJob (stacks/netsec, files/technitium_pull.sql). The only netsec source
+-- for the home LAN and for VLAN 20 hosts, whose lookups never cross OPNsense,
+-- and the only one that knows whether a lookup was blocked. 365 days; Postgres
+-- keeps its own 90 days for Grafana and dns-digest.
+CREATE TABLE IF NOT EXISTS netsec.technitium
+(
+    ts           DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    dlid         UInt64,
+    instance     LowCardinality(String),
+    server       LowCardinality(String),
+    client_ip    IPv6,
+    protocol     LowCardinality(String),
+    response     LowCardinality(String),
+    blocked      Bool,
+    rcode        LowCardinality(String),
+    qname        String,
+    qtype        LowCardinality(String),
+    response_rtt Float32,
+    answer       String CODEC(ZSTD(3))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(ts)
+ORDER BY (toStartOfHour(ts), client_ip, ts)
+TTL toDateTime(ts) + INTERVAL 365 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
+
+-- Technitium lookups per hour, client and name. Fills on every insert: the
+-- pull job is the only writer and never inserts a dlid twice, so no cutoff.
+CREATE TABLE IF NOT EXISTS netsec.technitium_hourly
+(
+    hour      DateTime('UTC'),
+    instance  LowCardinality(String),
+    client_ip IPv6,
+    qname     String,
+    qtype     LowCardinality(String),
+    rcode     LowCardinality(String),
+    response  LowCardinality(String),
+    n         UInt64
+)
+ENGINE = SummingMergeTree((n))
+PARTITION BY toYYYYMM(hour)
+ORDER BY (hour, client_ip, qname, qtype, rcode, response, instance);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS netsec.technitium_hourly_mv TO netsec.technitium_hourly
+DEFINER = default SQL SECURITY DEFINER
+AS
+SELECT toStartOfHour(ts) AS hour, instance, client_ip, qname, qtype, rcode, response, count() AS n
+FROM netsec.technitium
+GROUP BY ALL;

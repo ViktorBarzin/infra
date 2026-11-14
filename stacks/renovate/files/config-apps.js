@@ -33,6 +33,14 @@ module.exports = {
       repository: 'viktor/alexa-assistant',
       baseBranchPatterns: ['master'],
     },
+    {
+      repository: 'viktor/trip-reel',
+      baseBranchPatterns: ['master'],
+    },
+    {
+      repository: 'viktor/cloud',
+      baseBranchPatterns: ['master'],
+    },
   ],
   autodiscover: false,
 
@@ -91,6 +99,13 @@ module.exports = {
     'Why: upstream released {{depName}} {{newValue}} ({{updateType}}). The renovate-apps job lands app dependency updates per ADR-0001 (Delivery), after a 3-day wait for npm releases; the app build runs afterwards.',
 
   packageRules: [
+    {
+      description:
+        'Our @viktorbarzin/* packages come from Forgejo\'s npm registry, where the apps install them from (app-kit ADR-0003, 2026-11-12); npmjs.org only carries a mirror that can lag',
+      matchDatasources: ['npm'],
+      matchPackageNames: ['@viktorbarzin/**'],
+      registryUrls: ['https://forgejo.viktorbarzin.me/api/packages/viktor/npm/'],
+    },
     {
       description:
         'Wait 3 days before taking a new npm release (ADR-0001). Our own @viktorbarzin/* packages are excluded. Matches the app\'s bunfig.toml install.minimumReleaseAge',

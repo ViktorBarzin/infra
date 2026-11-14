@@ -440,8 +440,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           # Audience for verifying Authentik-issued tokens (api/auth.py passes it
           # to jwt.decode). Empty until now, so every SSO login failed audience
           # validation while passkey login kept working. The Authentik app and
-          # provider already existed and the frontend already pointed at them —
-          # only the backend was missing this. Not a secret: the provider is a
+          # provider are in authentik.tf; keep this value equal to the
+          # provider's client_id there. Not a secret: the provider is a
           # public/PKCE client and the same id ships in the frontend bundle.
           env {
             name  = "OIDC_CLIENT_ID"

@@ -189,6 +189,37 @@ resource "kubernetes_deployment" "plotting-book" {
             name  = "DB_PATH"
             value = "/data/database.sqlite"
           }
+          # Product events and errors (telemetry.tf, infra ADR-0041). Without
+          # TELEMETRY_WRITE_KEY the app sends nothing; optional so the pod
+          # starts before the Secret exists.
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://event-pipeline.rybbit.svc.cluster.local"
+          }
+          env {
+            name  = "TELEMETRY_ENVIRONMENT"
+            value = "production"
+          }
+          env {
+            name = "TELEMETRY_WRITE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.telemetry.metadata[0].name
+                key      = "write_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "SENTRY_DSN"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.telemetry.metadata[0].name
+                key      = "sentry_dsn"
+                optional = true
+              }
+            }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"

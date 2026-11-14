@@ -237,11 +237,13 @@ resource "kubernetes_deployment" "pages_publish" {
               cpu    = "10m"
               memory = "128Mi"
             }
-            # 256Mi: a ~4.5 MB markdown page (base64 three.js and STL)
-            # OOM-killed it at 128Mi on 2026-11-05; the 14-day peak was
-            # 116Mi. Bundles up to MAX_BUNDLE_BYTES (20 MB) may need more.
+            # 768Mi since 2026-11-12: a publish may carry 25 MiB of files
+            # (app/bundles.py), which arrive as ~34 MB of base64 JSON and are
+            # held about three times while parsed and decoded, on top of git.
+            # History: a ~4.5 MB markdown page OOM-killed it at 128Mi on
+            # 2026-11-05 (infra#165); the 14-day peak then was 116Mi.
             limits = {
-              memory = "256Mi"
+              memory = "768Mi"
             }
           }
         }

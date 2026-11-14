@@ -50,11 +50,13 @@ module "app" {
     # Echo); the id in the URL is the only HA credential the app holds.
     HA_WEBHOOK_URL = "ha_webhook_url"
   }
-  extra_env = [
+  extra_env = concat([
     # Pods resolve *.viktorbarzin.me to the Traefik LB, so this reaches
     # agent-api through Traefik's terminal-api routes, as wa-bot does.
     { name = "AGENT_API_URL", value = "https://terminal-api.viktorbarzin.me" },
-  ]
+  ], local.telemetry_env)
+  # TELEMETRY_WRITE_KEY, SENTRY_DSN, SENTRY_BROWSER_DSN (telemetry.tf).
+  secret_env     = local.telemetry_secret_env
   emit_group_env = true
 
   initial_user_pks  = [data.authentik_user.viktor.id]

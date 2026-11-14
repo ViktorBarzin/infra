@@ -87,7 +87,7 @@ graph TB
 |------|------|------|-----|---------|------------|-------|
 | 100 | opnsense | 8 | 8GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20, vmbr0:vlan30 | 10.0.20.1 | Gateway/firewall routing between VLANs; OPNsense 26.7.8 since 2026-11-10, `stacks/opnsense` (ADR-0038) |
 | 101 | pfsense | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | - | Stopped, NICs link-down, onboot 0: the rollback for OPNsense, no removal date |
-| 102 | devvm | 16 | 8GB | vmbr1:vlan10 | - | Development VM |
+| 102 | devvm | 32 | 32GB | vmbr1:vlan10 | - | Development VM |
 | 103 | home-assistant | 8 | 8GB | vmbr0 | - | Home Assistant Sofia instance |
 | 200 | k8s-master | 8 | 16GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
 | 201 | k8s-node1 | 16 | 32GB | vmbr1:vlan20 | - | GPU worker node (Tesla T4 passthrough) |

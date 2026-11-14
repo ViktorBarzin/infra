@@ -61,14 +61,33 @@ PUSH=1
 log() { printf '%s %s\n' "$(date -Is)" "$*"; }
 
 cd "$REPO" || { log "FATAL: no repo at $REPO"; exit 2; }
-log "repo $REPO at $(git rev-parse --short HEAD 2>/dev/null || echo '?') ($(git log -1 --format=%cs 2>/dev/null || echo '?'))"
+
+# ---- 0) judge against origin/master, not the checkout's working tree ---------
+# The default REPO is the shared admin checkout. Since 2026-11-11 nothing keeps
+# its working tree on master (wizard's hourly `git pull` cron was dropped by
+# docs/plans/2026-11-11-disposable-devvm.md), and other sessions leave edits in
+# it. So the check fetches and runs from an export of origin/master: a landed
+# playbook change is what the nodes are compared to within the hour, and the
+# working tree is never touched. A failed fetch uses the last fetched
+# origin/master, which is still committed content; only a repo with no
+# origin/master at all falls back to its working tree, and says so.
+RECAP_FILE=$(mktemp) || exit 2
+WORK=$(mktemp -d) || exit 2
+trap 'rm -rf "$RECAP_FILE" "$WORK"' EXIT
+GIT_TERMINAL_PROMPT=0 git fetch --quiet origin master 2>/dev/null \
+  || log "WARN: git fetch of origin master failed; using the last fetched origin/master"
+if git archive --format=tar origin/master playbooks scripts 2>/dev/null | tar -x -C "$WORK" 2>/dev/null \
+   && [ -f "$WORK/playbooks/k8s-node-tuning.yml" ]; then
+  log "repo $REPO: running origin/master $(git rev-parse --short origin/master) ($(git log -1 --format=%cs origin/master))"
+  cd "$WORK" || exit 2
+else
+  log "WARN: no origin/master to export; running the working tree at $(git rev-parse --short HEAD 2>/dev/null || echo '?') ($(git log -1 --format=%cs 2>/dev/null || echo '?'))"
+fi
 
 # ---- 1) the playbook's own contract: --check --diff must be a no-op ----------
 # Non-no-op output IS the drift signal, the same contract playbooks/devvm.yml
 # has. Parsed from PLAY RECAP rather than from task output, because the recap is
 # the one line per host whose format ansible has kept stable.
-RECAP_FILE=$(mktemp) || exit 2
-trap 'rm -f "$RECAP_FILE"' EXIT
 
 log "--- ansible-playbook --check --diff (six nodes) ---"
 ANSIBLE_FORCE_COLOR=0 timeout 900 ansible-playbook \

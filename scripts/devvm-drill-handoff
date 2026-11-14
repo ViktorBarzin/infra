@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Hand a Terraform-made devvm (modules/proxmox-devvm) the one secret its
+# first-boot build needs: a response-wrapped, short-lived Vault token.
+#
+# Run by the module's terraform_data local-exec on whoever applies the stack
+# (CI or an admin), once per VM:
+#   1. wait until the VM's guest agent answers (cloud-init installs it);
+#   2. mint an orphan token through the Vault token role devvm-bootstrap
+#      (policy devvm-bootstrap, read-only on the paths playbooks/devvm.yml
+#      reads), wrapped for one use;
+#   3. write {wrapped_token, infra_ref} to /run/devvm-bootstrap/handoff.json in
+#      the guest through the Proxmox guest-agent file-write API. The directory
+#      is root-only (cloud-init bootcmd); the agent creates the file 0666.
+# scripts/devvm-bootstrap in the guest picks it up from there. The secret never
+# sits in the VM config, a snippet on the host, or Terraform state.
+#
+# HOST_KEYS=true (modules/proxmox-devvm, the box that replaces the live devvm)
+# adds policy devvm-host-identity to the token, which reads the live devvm's
+# SSH host keys at Vault secret/workstation/devvm/ssh-host-keys, and sets
+# host_keys in the handoff so the guest installs them. Drills get neither.
+#
+# Environment: PVE_ENDPOINT, PVE_NODE, VMID, PVE_API_TOKEN ("user@realm!id=uuid"),
+# INFRA_REF, HOST_KEYS (true|false, default false); optional HANDOFF_WAIT
+# (s, default 1200), HANDOFF_POLL (s, default 5),
+# WRAP_TTL (default 1h), plus the applier's usual VAULT_ADDR / Vault token.
+set -euo pipefail
+
+: "${PVE_ENDPOINT:?}" "${PVE_NODE:?}" "${VMID:?}" "${PVE_API_TOKEN:?}"
+INFRA_REF="${INFRA_REF:-master}"
+HOST_KEYS="${HOST_KEYS:-false}"
+WAIT="${HANDOFF_WAIT:-1200}"
+POLL="${HANDOFF_POLL:-5}"
+WRAP_TTL="${WRAP_TTL:-1h}"
+HANDOFF_PATH="/run/devvm-bootstrap/handoff.json"
+API="${PVE_ENDPOINT%/}/api2/json/nodes/$PVE_NODE/qemu/$VMID/agent"
+
+log() { echo "[devvm-drill-handoff] vm $VMID: $*"; }
+
+[[ "$INFRA_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { log "infra ref '$INFRA_REF' is not a plain git ref"; exit 1; }
+[[ "$HOST_KEYS" == "true" || "$HOST_KEYS" == "false" ]] || { log "HOST_KEYS must be true or false, not '$HOST_KEYS'"; exit 1; }
+policies=(-policy=devvm-bootstrap)
+[[ "$HOST_KEYS" == "false" ]] || policies+=(-policy=devvm-host-identity)
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+chmod 700 "$tmp"
+
+# The PVE token goes in through curl's config on stdin, never argv.
+pve() {  # <agent command> [curl args...]
+  local cmd="$1"; shift
+  printf 'header = "Authorization: PVEAPIToken=%s"\n' "$PVE_API_TOKEN" |
+    curl -fsS -k -K - -X POST "$API/$cmd" "$@" >/dev/null 2>&1
+}
+
+log "waiting for the guest agent (up to ${WAIT}s)"
+waited=0
+until pve ping; do
+  if (( waited >= WAIT )); then log "guest agent never answered; is cloud-init stuck?"; exit 1; fi
+  sleep "$POLL"
+  waited=$((waited + POLL))
+  (( POLL > 0 )) || waited=$((waited + 1))
+done
+
+log "minting a wrapped bootstrap token (wrap TTL $WRAP_TTL, host keys $HOST_KEYS)"
+wrapped="$(vault token create -role=devvm-bootstrap "${policies[@]}" \
+  -wrap-ttl="$WRAP_TTL" -field=wrapping_token)"
+[[ -n "$wrapped" ]] || { log "Vault returned no wrapping token"; exit 1; }
+
+umask 077
+jq -n --arg t "$wrapped" --arg r "$INFRA_REF" --argjson k "$HOST_KEYS" \
+  '{wrapped_token: $t, infra_ref: $r, host_keys: $k}' >"$tmp/handoff.json"
+unset wrapped
+
+log "writing $HANDOFF_PATH through the guest agent"
+tries=0
+until pve file-write --data-urlencode "file=$HANDOFF_PATH" --data-urlencode "content@$tmp/handoff.json"; do
+  tries=$((tries + 1))
+  if (( tries >= 5 )); then log "file-write kept failing"; exit 1; fi
+  sleep "$POLL"
+done
+log "handed over; the guest's build continues on its own (status: /var/lib/devvm-bootstrap/status)"

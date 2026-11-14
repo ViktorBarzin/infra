@@ -296,12 +296,14 @@ write_files:
       OnUnitActiveSec=60s
       [Install]
       WantedBy=timers.target
-  # Gatus config. Two groups with OPPOSITE alerting postures, by design:
+  # Gatus config. Groups with OPPOSITE alerting postures, by design:
   #   * "services" is DISPLAY-ONLY — in-cluster Alertmanager owns per-service
   #     alerting; a second pager here would double-page every app blip.
   #   * "edge" alerts (Slack): "the homelab edge is unreachable from the
   #     internet" is the ONE class in-cluster monitoring can never report,
   #     and exactly what this offsite vantage exists for (ADR-0020).
+  #   * "pages" alerts (Slack): the login-free pages paths through
+  #     Cloudflare, which in-cluster probes cannot see (2026-11-12).
   # Privacy: only hostnames already published in public DNS are probed.
   # NEVER add an outbound :25 probe — Oracle blocks egress 25 tenancy-wide.
   - path: /etc/gatus/config.yaml
@@ -460,6 +462,55 @@ write_files:
           interval: 60s
           conditions:
             - "[CONNECTED] == true"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        # ---- pages: login-free paths through Cloudflare (2026-11-12) ----
+        # The in-cluster blackbox-pages-public probes skip Cloudflare, so a
+        # Cloudflare cache or firewall fault on these paths is seen only from
+        # here (Viktor, docs/plans/2026-11-12-pages-public-paths-monitoring-design.md).
+        # They alert like the edge sentinels: a broken public link is "unreachable
+        # from the internet" for whoever was sent it. The canary token and cap are
+        # in stacks/monitoring authentik_walloff_probe.tf; keep the two in step.
+        - name: "pages: assets"
+          group: pages
+          url: "https://pages.viktorbarzin.me/assets/page.css"
+          interval: 120s
+          client:
+            ignore-redirect: true
+          conditions:
+            - "[STATUS] == 200"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        - name: "pages: public link"
+          group: pages
+          url: "https://pages.viktorbarzin.me/p/175356e76a6571105259d80685dcafd4/"
+          interval: 120s
+          headers:
+            Sec-Fetch-Dest: iframe
+          client:
+            ignore-redirect: true
+          conditions:
+            - "[STATUS] == 200"
+            - "[BODY] == pat(*pages-canary-ok*)"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        - name: "pages: bundle url"
+          group: pages
+          url: "https://pages.viktorbarzin.me/c/e7f2404c377ab41a56c2a0a39d255558/canary.json"
+          interval: 120s
+          headers:
+            Sec-Fetch-Dest: iframe
+          client:
+            ignore-redirect: true
+          conditions:
+            - "[STATUS] == 200"
+            - "[BODY] == pat(*pages-canary-ok*)"
           %{ if alertmanager_slack_api_url != "" }
           alerts:
             - type: slack

@@ -77,6 +77,11 @@ locals {
     # vpn.viktorbarzin.me, spec infra#76). Deployment references the cloned
     # secret; package default-private (GitHub has no visibility API).
     "vpn-portal",
+    # cloud: PRIVATE ghcr.io/viktorbarzin/cloud and cloud-reconciler (Cloud's
+    # console and reconciler, stacks/cloud, 2026-11-13). Not the Project
+    # namespaces (p-*): Cloud makes their pull secret from its own
+    # read:packages token.
+    "cloud",
     # stremio: PRIVATE ghcr.io/viktorbarzin/stremio-nvenc (NVENC Stremio server,
     # infra#80). Deployment references the cloned ghcr-credentials secret.
     "stremio",

@@ -36,7 +36,9 @@ has not been applied.
 
 Routed elsewhere by design: accounts, groups, clones and kubeconfigs come from
 `roster.yaml` via `t3-provision-users.sh` (hourly; infra#88 ports that half),
-and Terminal Lobby's own files ship in its Debian package.
+which also restores each user's credential files from Vault and applies
+dotfiles on a rebuilt box (`docs/runbooks/devvm-credentials.md`), and
+Terminal Lobby's own files ship in its Debian package.
 
 ## Execution
 - **Apply**: Authenticate via `vault login -method=oidc`, then **`homelab tf plan|validate|apply <stack>`** (always the full form — bare `homelab tf` prints `unknown command: "tf"`, which reads as "the verb does not exist"). It wraps `scripts/tg`, which handles state decrypt/encrypt. **Do not run bare `terragrunt`/`terraform`.** On a Tier-1 stack a bare terragrunt dies in "Initializing the backend" with `pq: password authentication failed for user "<your-os-user>"`, because `PG_CONN_STR` is set only by `scripts/tg`. **That error is not a permission-tier limit** — reading it as one led to abandoning local verification for CI and hand-rolling the offline check with plain `terraform init`, 15 times over a month. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
@@ -49,6 +51,15 @@ and Terminal Lobby's own files ship in its Debian package.
 - **Adopting existing resources**: use HCL `import {}` blocks (TF 1.5+), not `terraform import` CLI. Commit stanza → plan-to-zero → apply → delete stanza. Canonical reason: reviewable in PR, plan-safe, idempotent, tier-agnostic. Full rules + per-provider ID formats in `docs/agents/terraform.md` → "Adopting Existing Resources".
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `docs/agents/*.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
+
+## Cloud-owned objects (scope rule)
+
+Cloud (Forgejo `viktor/cloud`) keeps each Project's desired state in its own database and applies it with its own reconciler, one OpenTofu state per Project (ADR-0003 in the cloud repo, approved by Viktor 2026-11-12). **These belong to Cloud's database, not this repo:**
+- every object in a `p-*` namespace, and the namespaces themselves;
+- Postgres `p_*` Project roles (members of `cloud_projects`) and their databases (this repo owns only `cloud_projects`, `cloud_provisioner`, `cloud_state` and the `cloud_state` and `cloud` databases);
+- Vault `secret/cloud/<namespace>/*` (this repo writes only `secret/cloud/system`).
+
+Do not import, recreate or "fix" them from Terraform: no stack may manage them, so no plan proposes changes to them. Cloud creates nothing in Authentik: private Apps sign in through one shared OAuth2 application, `cloud-apps`, which this repo owns (`stacks/authentik/cloud-apps.tf`). Name no new homelab namespace `p-*`. What this repo does own for Cloud is listed in `.claude/reference/service-catalog.md` (row `cloud`); details in `docs/agents/terraform.md`.
 
 ## Secrets Management — Vault KV
 - **Vault is the sole source of truth** for secrets.

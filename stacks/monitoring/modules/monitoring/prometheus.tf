@@ -53,7 +53,7 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
   # version    = "15.0.2"
-  version = "29.47.1"
+  version = "29.47.2"
 
   # wait=false: do NOT block the apply on the slow Recreate + WAL-replay roll.
   # Blocking held an ~15-min in-flight `helm upgrade` that Woodpecker's
@@ -100,6 +100,7 @@ resource "helm_release" "prometheus" {
       templatefile("${path.module}/prometheus_chart_values.tpl", {
         authentik_walloff_targets         = local.authentik_walloff_targets
         authentik_walloff_options_targets = local.authentik_walloff_options_targets
+        pages_public_targets              = local.pages_public_targets
       }),
       "@@ALERTMANAGER_MAIL_PASS@@", var.alertmanager_account_password),
       "@@ALERTMANAGER_SLACK_API_URL@@", var.alertmanager_slack_api_url),

@@ -202,6 +202,73 @@ def test_agents_repo_is_carried_into_the_desired_state_json():
     assert d["accounts"]["wizard"]["agents_repo"] is None
 
 
+# --------------------------------------------------------------------------
+# dotfiles: the Forgejo repo chezmoi applies on a new box
+# --------------------------------------------------------------------------
+
+
+def test_dotfiles_defaults_to_none():
+    r = _roster("users: {wizard: {authentik_user: v, k8s_user: wizard, tier: admin}}")
+    assert r.users["wizard"].dotfiles is None
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["wizard"]["dotfiles"] is None
+
+
+def test_dotfiles_is_carried_into_the_desired_state_json():
+    r = _roster(
+        "users: {wizard: {authentik_user: v, k8s_user: wizard, tier: admin, "
+        "dotfiles: viktor/dot_files}}"
+    )
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["wizard"]["dotfiles"] == "viktor/dot_files"
+
+
+@pytest.mark.parametrize("bad", ["dot_files", "../x/d", "a/b/c", "-o/a", 7])
+def test_rejects_unsafe_dotfiles(bad):
+    # It becomes a clone URL that runs as the user, so owner/name only.
+    with pytest.raises(eng.RosterError, match="dotfiles"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            f"dotfiles: {json.dumps(bad)}" "}}"
+        )
+
+
+# --------------------------------------------------------------------------
+# extra_groups: a group granted to one person beyond their tier's
+# --------------------------------------------------------------------------
+
+
+def test_extra_groups_default_to_the_tier_groups_alone():
+    r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
+    assert r.users["emo"].extra_groups == ()
+    assert eng.derive_desired_state(r, {}).accounts["emo"].groups == ("codex-shared",)
+
+
+def test_extra_groups_join_the_tier_groups_sorted_and_once():
+    # emo keeps docker (Viktor, 2026-11-11), which his tier does not give.
+    r = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user, "
+        "extra_groups: [docker]}, "
+        "wizard: {authentik_user: v, k8s_user: wizard, tier: admin, extra_groups: [docker]}}"
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["emo"].groups == ("codex-shared", "docker")
+    assert ds.accounts["wizard"].groups == ("code-shared", "codex-shared", "docker", "sudo")
+    d = eng._desired_state_to_dict(ds)
+    assert d["accounts"]["emo"]["groups"] == ["codex-shared", "docker"]
+
+
+@pytest.mark.parametrize("bad", [["sudo"], ["code-shared"], ["root"], "docker", [7], ["docker", "wheel"]])
+def test_rejects_extra_groups_outside_the_allowlist(bad):
+    # sudo and the admin tree come only with tier: admin, which validate
+    # checks against the cluster; a roster row cannot hand them out alone.
+    with pytest.raises(eng.RosterError, match="extra_groups"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            f"extra_groups: {json.dumps(bad)}" "}}"
+        )
+
+
 @pytest.mark.parametrize("bad", ["agents", "../x/agents", "a/b/c", "o/.git", "-o/a", 7])
 def test_rejects_unsafe_agents_repo(bad):
     # The value becomes a fetch URL and a file under root's state directory,
@@ -398,8 +465,10 @@ def test_derive_ttyd_admins_carries_a_do_not_edit_header():
 
 def test_derive_accounts_assign_tier_groups_and_shell():
     ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
-    assert ds.accounts["wizard"].groups == ("code-shared", "docker", "sudo")
-    assert ds.accounts["emo"].groups == ()
+    assert ds.accounts["wizard"].groups == ("code-shared", "codex-shared", "docker", "sudo")
+    # The shared ChatGPT login (/opt/codex-shared) goes to admins and power
+    # users, as on the box today; a namespace-owner does not get it.
+    assert ds.accounts["emo"].groups == ("codex-shared",)
     assert ds.accounts["ancamilea"].groups == ()
     assert ds.accounts["emo"].shell == "/bin/zsh"
 

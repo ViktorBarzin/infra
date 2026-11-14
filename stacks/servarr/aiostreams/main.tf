@@ -23,6 +23,16 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
+resource "kubernetes_config_map" "rd_blocked_names" {
+  metadata {
+    name      = "rd-blocked-names"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  data = {
+    "rd_blocked_names.py" = file("${path.module}/files/rd_blocked_names.py")
+  }
+}
+
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -46,6 +56,17 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata {
         labels = {
           app = "aiostreams"
+        }
+        annotations = {
+          # Roll the pod when the sidecar script changes.
+          "checksum/rd-blocked-names" = sha1(file("${path.module}/files/rd_blocked_names.py"))
+          # AIOSTREAMS_AUTH is read only at start: change this when the account
+          # list in kubernetes_manifest.auth_secret changes, to roll the pod.
+          "aiostreams-auth-users" = "proxy,viktor"
+          # kubernetes-pods job scrapes the sidecar's /metrics (RdBlockedNamesStale).
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "8081"
+          "prometheus.io/path"   = "/metrics"
         }
       }
       spec {
@@ -76,8 +97,37 @@ resource "kubernetes_deployment" "aiostreams" {
             failure_threshold = 3
           }
           env {
+            # The built-in proxy always emits BASE_URL/api/v1/proxy/..., and
+            # Cloudflare's CDN terms bar video on proxied hosts, so BASE_URL is
+            # the grey-cloud host (module.ingress_direct). The proxied host
+            # keeps serving the configure page and every existing install.
+            # Why the proxy exists: docs/research/2026-11-11-aiostreams-rd-proxy-for-emo.md.
             name  = "BASE_URL"
-            value = "https://aiostreams.viktorbarzin.me"
+            value = "https://aiostreams-direct.viktorbarzin.me"
+          }
+          env {
+            # One proxy-only account; Viktor's config authenticates the built-in
+            # proxy as it. Setting this also enables /login, but
+            # AIOSTREAMS_AUTH_REQUIRED stays false, so the configure page is
+            # public as before.
+            name = "AIOSTREAMS_AUTH"
+            value_from {
+              secret_key_ref {
+                name = "aiostreams-auth"
+                key  = "AIOSTREAMS_AUTH"
+              }
+            }
+          }
+          env {
+            # Users not listed here default to admin.
+            name  = "AIOSTREAMS_AUTH_PERMISSIONS"
+            value = "proxy=proxy"
+          }
+          env {
+            # Uplink guard: at most two proxied streams at once in total. Each
+            # one is London playback leaving through the ~148 Mbit/s Sofia uplink.
+            name  = "STREAMS_CONNECTION_LIMITS"
+            value = "**:2"
           }
           env {
             name  = "SECRET_KEY"
@@ -98,10 +148,13 @@ resource "kubernetes_deployment" "aiostreams" {
           }
           env {
             # Whitelisted regex sync URLs. Vidhin's regexes.json contains release-group
-            # patterns (TRaSH Guides-aligned).
+            # patterns (TRaSH Guides-aligned). The localhost one is the
+            # rd-blocked-names sidecar below: Real-Debrid's blocked release names,
+            # read by the user config's syncedExcludedRegexUrls.
             name = "WHITELISTED_REGEX_PATTERNS_URLS"
             value = jsonencode([
               "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/regexes.json",
+              "http://localhost:8081/rd-blocked-names.json",
             ])
           }
           env {
@@ -133,6 +186,53 @@ resource "kubernetes_deployment" "aiostreams" {
             }
           }
         }
+        container {
+          # Keeps Real-Debrid's blocked release names current. Since May 2026 RD
+          # refuses (HTTP 451) files whose names carry certain tags, and changes
+          # that list every few weeks; Debrid Media Manager re-measures it in
+          # src/utils/deInfringe.ts. This fetches that file every 6h, refuses an
+          # update that would hide ordinary names, keeps the last good list in
+          # /app/data, and serves it on :8081 for AIOStreams' synced exclude list.
+          # Standard library only, so nothing is installed at start.
+          # Tests: cd files && python3 -m unittest test_rd_blocked_names
+          name    = "rd-blocked-names"
+          image   = "docker.io/library/python:3.15.2-alpine"
+          command = ["python3", "-u", "/scripts/rd_blocked_names.py"]
+          port {
+            container_port = 8081
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8081
+            }
+            period_seconds = 30
+          }
+          volume_mount {
+            name       = "rd-blocked-names-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "24Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "rd-blocked-names-script"
+          config_map {
+            name = kubernetes_config_map.rd_blocked_names.metadata[0].name
+          }
+        }
         volume {
           name = "data"
           persistent_volume_claim {
@@ -150,6 +250,47 @@ resource "kubernetes_deployment" "aiostreams" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
     ]
   }
+  depends_on = [kubernetes_manifest.auth_secret]
+}
+
+# AIOStreams accounts: the built-in proxy's, and viktor's admin login for the
+# dashboard (Vault secret/viktor aiostreams_admin_password). AIOStreams reads
+# AIOSTREAMS_AUTH only at start, so changing a Vault key needs a rollout.
+resource "kubernetes_manifest" "auth_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "aiostreams-auth"
+      namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "aiostreams-auth"
+        template = {
+          data = {
+            # viktor is unlisted in AIOSTREAMS_AUTH_PERMISSIONS, so admin: the
+            # dashboard at /dashboard, which shows each proxied stream and its
+            # bandwidth (added 2026-11-12 to judge the London proxy trial).
+            AIOSTREAMS_AUTH = "proxy:{{ .proxy_password }},viktor:{{ .admin_password }}"
+          }
+        }
+      }
+      data = [
+        { secretKey = "proxy_password", remoteRef = { key = "viktor", property = "aiostreams_proxy_password" } },
+        { secretKey = "admin_password", remoteRef = { key = "viktor", property = "aiostreams_admin_password" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.aiostreams]
 }
 
 resource "kubernetes_service" "aiostreams" {
@@ -666,4 +807,25 @@ module "ingress" {
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Grey-cloud name for the same app, carrying the built-in proxy's video.
+# Real-Debrid allows one public IP at a time; Viktor's config proxies its RD
+# streams through here so London playback reaches RD from the Sofia IP, the
+# same IP emo's TV uses (emo installs the /v/sofia variant, which plays
+# direct). Proxy URLs carry SECRET_KEY-encrypted credentials checked on every
+# request. CrowdSec covers the origin in nftables, as for stremio.
+module "ingress_direct" {
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "app": the same AIOStreams app as module.ingress, with the same own
+  # UUID + password gate; proxy URLs also carry encrypted proxy credentials.
+  auth         = "app"
+  dns_type     = "non-proxied" # video: Cloudflare's CDN terms bar it on proxied hosts
+  namespace    = kubernetes_namespace.aiostreams.metadata[0].name
+  name         = "aiostreams-direct"
+  service_name = kubernetes_service.aiostreams.metadata[0].name
+  # No Turnstile gate: Stremio players fetching video.
+  turnstile        = false
+  homepage_enabled = false
+  tls_secret_name  = var.tls_secret_name
 }

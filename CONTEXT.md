@@ -487,6 +487,44 @@ _Avoid_: syncing a folder root when the servable content lives in a subfolder (s
 The HTML file a **Valia site** serves at `/`. Defaults to `index.html`; per-site override when she names it differently (stem95su: `stem_board.html`). The override is a registration-time setting, not a constraint on her authoring.
 _Avoid_: asking Valia to rename her files to fit hosting conventions.
 
+### Pages site
+
+**Page**:
+One published document at `pages.viktorbarzin.me`, owned by one user and kept as a commit in the `viktor/pages` repo. Publishing the same source again from the same user updates that Page in place; it never makes a new one.
+_Avoid_: "artifact" (claude.ai Artifacts are a vendor product we don't use), "doc" when you mean the published result.
+
+**Space**:
+The part of the site a Page lives in: a user's own Space (`pages/<user>/`, readable by that user and admins) or the shared Space (`pages/shared/`).
+_Avoid_: "folder", "area".
+
+**Bundle**:
+A Page published as a set of files: an HTML entry plus its images, data and scripts. A single self-contained HTML file is a one-file Bundle.
+_Avoid_: "site", "upload".
+
+**Sandbox**:
+The browser isolation every Page runs under: its scripts get an opaque origin, so they cannot read cookies or other Pages.
+_Avoid_: calling a Page "trusted" because its author is.
+
+**Shell**:
+The fixed document the site answers a browser navigation with. It runs as the site's real origin, carries the analytics, and frames the Page in its Sandbox on the same URL. It never holds Page content (ADR-0042).
+_Avoid_: "wrapper page", "viewer".
+
+**Bundle URL**:
+The unguessable `/c/<cap>/` address a multi-file Bundle's files are also served at, because inside the Sandbox they load without the sign-in cookie. Only the Shell uses it; it changes on every publish of the Bundle. Not a Public link: nobody hands it out.
+_Avoid_: "cap link", "private link".
+
+**Plan block**:
+A fenced YAML block in a plan that the renderer draws: a topology of the change, a decision card, a config diff, before and after numbers, or a timeline. A plan carries about 600 words of prose outside its Plan blocks (`https://pages.viktorbarzin.me/assets/plan-template.md`).
+_Avoid_: "widget", "diagram" for the non-graph blocks.
+
+**Expiry**:
+The date after which the publish service deletes a Page, Bundle or Public link, 90 days after its last publish or share unless its author set another lifetime or `never`. Items from before 2026-11-12 have none. Deleted items stay in git history.
+_Avoid_: "TTL" in prose meant for users (it is the field name only).
+
+**Public link**:
+An unguessable URL that opens one Page without signing in. It lasts until its author revokes it; the Page itself stays in its Space.
+_Avoid_: "public page" (the Page is not moved or copied), "share link" (the shared Space is a different thing).
+
 ### Showcase
 
 **Showcase**:

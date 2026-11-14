@@ -757,6 +757,12 @@ resource "kubernetes_deployment" "openclaw" {
         # marker-managed reinforce the same rule from different angles:
         # identity (SOUL), how (TOOLS), memory-search (memory note),
         # entry-point (skill).
+        #
+        # STALE since 2026-11-11: the notes below tell the agent to run
+        # `ssh devvm openclaw-task ...`, and playbooks/devvm.yml removed
+        # /usr/local/bin/openclaw-task from the devvm while OpenClaw ran no
+        # pods. Before scaling OpenClaw back up, install files/openclaw-task.sh
+        # on the devvm through that playbook, or drop these lines.
         init_container {
           name  = "seed-devvm-memory-note"
           image = "busybox:1.38@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
@@ -1171,7 +1177,7 @@ resource "kubernetes_deployment" "openclaw" {
           # agentRuntime"), crashlooping the gateway on any restart. 2026.2.26
           # predates that bug. Revisit the openai-codex/ChatGPT-Plus OAuth
           # primary (commit 4b39cb72) when upgrading openclaw again.
-          image = "ghcr.io/openclaw/openclaw:2026.11.2"
+          image = "ghcr.io/openclaw/openclaw:2026.11.3"
           # Startup sequence:
           #   1. doctor --fix     — repair sessions/state (also resets some config)
           #   2. models set       — pin gpt-5.4-mini (doctor auto-promotes to gpt-5-pro otherwise)
@@ -1449,7 +1455,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Sidecar: modelrelay — auto-routes to fastest healthy free model
         container {
           name  = "modelrelay"
-          image = "docker.io/library/node:26.13.0-alpine"
+          image = "docker.io/library/node:26.13.1-alpine"
           command = ["sh", "-c", <<-EOF
             if [ ! -f /tools/modelrelay/node_modules/.package-lock.json ]; then
               mkdir -p /tools/modelrelay
@@ -1893,7 +1899,7 @@ resource "kubernetes_cron_job_v1" "task_processor" {
 
             container {
               name  = "task-processor"
-              image = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
+              image = "bitnami/kubectl:latest@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0"
               command = ["bash", "-c", <<-EOF
                 # Find the openclaw pod
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
@@ -2024,7 +2030,7 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
 
             container {
               name  = "memory-sync"
-              image = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
+              image = "bitnami/kubectl:latest@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0"
               command = ["bash", "-c", <<-EOF
                 set -eu
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}')

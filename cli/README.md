@@ -190,7 +190,7 @@ and a cwd-relative path, neither of which holds in an arbitrary session.
 | Command | Tier | What it does |
 |---|---|---|
 | `ha token [--instance sofia\|london]` | read | print the long-lived HA API token, resolved live from the dedicated k8s Secret `openclaw/ha-tokens` (key per instance) via the ambient kubeconfig — no pre-set env var. Use as `curl -H "Authorization: Bearer $(homelab ha token)" …`. The secret is a least-privilege carve-out (`stacks/openclaw/ha_tokens.tf`): the `Home Server Admins` group and the `chrome-service/emo-browser` ServiceAccount (emo's default devvm kubeconfig) can read *just* it, so non-admin operators get the HA token without the rest of `skill_secrets` (slack webhook, uptime-kuma password) |
-| `ha ssh [--instance sofia\|london] [-i KEY] -- <cmd>` | write | run `<cmd>` on the HA host over ssh with deterministic non-interactive flags (explicit key = the invoking user's `~/.ssh/id_ed25519`, no user ssh-config, no known_hosts prompt). sofia (`vbarzin@192.168.1.8`) is reachable from the devvm LAN; london is documented but generally remote |
+| `ha ssh [--instance sofia\|london] [-i KEY] -- <cmd>` | write | run `<cmd>` on the HA host over ssh with deterministic non-interactive flags (explicit key = the invoking user's `~/.ssh/id_ed25519`, no user ssh-config, no known_hosts prompt). sofia (`vbarzin@192.168.1.8`) is reachable from the devvm LAN; london (`hassio@192.168.8.103`) is reachable over the site-to-site tunnel (verified 2026-11-13) |
 
 `--instance` defaults to **sofia** (the devvm shares the Sofia LAN). `ha token`
 prints the bare token to stdout so it composes in `$(…)`; it's read-tier like
@@ -559,7 +559,34 @@ Both are admin-only: they read `/etc/claude-sessions/reader.env`, which is
 `homelab claude-sessions ingest` is the write half, run as root by
 `claude-sessions-ingest.timer` every 15 minutes. It sends only the bytes
 appended to each transcript since the last run, with a dedup token per batch.
-Design: `docs/architecture/claude-session-store.md`, ADR-0039.
+Since 2026-11-11 it also sends the rest of `~/.claude` and `~/.codex`
+(history, plans, tasks, teams, todos, file-history, workflows, Codex sessions,
+settings with secrets redacted, and a reduced `~/.claude.json` with project
+trust, user-scope MCP servers and the onboarding flags) to `claude.home_files`
+and `claude.home_lines`, never credentials or caches.
+
+`homelab claude-sessions restore --user <name> (--to <home> | --tar -)
+[--session <id>] [--path <rel>]... [--force]` writes it all back (`--path`: only
+those stored home files), so `claude --resume` works on a
+rebuilt devvm. Existing files are kept unless `--force`; redacted settings come
+back under the real name without the redacted keys (or as `<name>.from-store`
+when the real file is there). As root into another user's home, pipe `--tar -` into
+`runuser -u <user> -- tar -x --skip-old-files -C /home/<user>`. Admin-only, like
+`sql`. `restore --user <name> --rebuild` is the root form t3-provision-users
+runs for every user on a rebuilt box: once per box it restores the user, records
+the restored files in the ingest state as already sent, and writes the marker
+the ingest waits for. `homelab claude-sessions mcp-secrets (capture | fill |
+list) --user <name> [--home <dir>]` keeps the MCP server secrets the store
+redacts out of `~/.claude.json` and `~/.codex/config.toml` in Vault
+`secret/workstation/<user>/mcp` and puts them back into a restored copy,
+never touching an entry that still holds its own secret (provisioning step
+4a2, once per user and box). `fill` names, with a `WARN`, entries that differ
+from Vault's copy or that the file lacks. `capture` also writes
+`~/.claude/mcp-captured.json` (digests, no values). The ingest compares the
+live entries with it and counts the new or changed ones in
+`claude_sessions_ingest_mcp_entries_uncaptured`, and the recorded entries
+the live files lack or hold redacted in
+`claude_sessions_ingest_mcp_entries_unfilled`. Design: `docs/architecture/claude-session-store.md`, ADR-0039.
 
 ### v0.37 verbs — netsec (what the network IDS saw)
 
@@ -596,3 +623,70 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 ## Design
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
+
+### v0.42 — ha yiko guardrails
+
+So that driving cannot strain the robot or get the Ecovacs account flagged:
+
+- `drive`, `turn`, `clean` and `photo` refuse below 20% battery or while the
+  robot reports an error; `drive`, `turn` and `clean` also refuse while
+  `script.yiko_photo` runs.
+- Before every manual move the CLI arms HA's `script.yiko_auto_dock`, which
+  sends Yiko home 15 minutes after the last manual command unless it started
+  cleaning. If arming fails, the CLI does not move the robot.
+- Hourly budgets per devvm user, in `~/.cache/homelab/yiko-budget.json`: 120
+  move commands (a minute of the app's joystick is about 20) and 10 camera
+  starts (each one is a new Ecovacs login by the camera bridge).
+- `dock` and `stop` are never blocked.
+
+### v0.41 verbs — ha yiko drive, turn, stop, look
+
+| Command | Tier | What it does |
+|---|---|---|
+| `ha yiko drive forward\|backward <cm> [--night]` | write | drive straight without cleaning, at about 20 cm/s (1-300 cm); the robot stops by itself at obstacles |
+| `ha yiko turn left\|right [deg] [--night]` | write | turn on the spot (default 90), at about 50 deg/s; lands within about 25 deg, so check with `look` |
+| `ha yiko stop` | write | stop the wheels now |
+| `ha yiko look [--out FILE] [--night]` | write | one frame from Yiko's camera, turning the camera on if needed; restarts it once if the snapshot fails |
+
+These send the raw `move` command the Ecovacs app's joystick sends
+(`{"act": forward|backward|spinLeft|spinRight, "a": 0|90}`, then `stop`),
+found by decompiling the app. Long moves run as start-wait-stop chunks 1.5 s
+apart. A camera session lasts 10 minutes (HA's auto-off), and Yiko refuses
+video for 3-5 minutes after one ends and while it is idle on the dock.
+Runbook: `docs/runbooks/london-yiko.md`, "Drive Yiko by hand".
+
+### v0.40 verbs — ha yiko (the London robot vacuum)
+
+| Command | Tier | What it does |
+|---|---|---|
+| `ha yiko status [--json]` | read | Yiko's state, battery, station, work mode, area cleaned, camera and photo script, from HA London |
+| `ha yiko photo <room> [--shots N] [--out DIR] [--json] [--night]` | write | run HA London's `script.yiko_photo`, wait for it to finish (about 2 min), and download only the photos this run wrote (`Last-Modified` at or after the script's trigger) to `~/pictures/yiko/<room>-<time>/` |
+| `ha yiko clean <room> [--night]` | write | start a clean of one room in the current work mode, and confirm the job started (`sensor.yiko_area_cleaned` changes) |
+| `ha yiko dock` | write | stop the job and send Yiko to the dock |
+
+Rooms come from the `rooms` attribute of `vacuum.yiko`. `photo` and `clean`
+refuse 22:00-08:00 London time, the robot's own do-not-disturb window, unless
+`--night` is set. This is a scoped exception to ADR-0012; see its 2026-11-14
+note. Runbook: `docs/runbooks/london-yiko.md`.
+
+### v0.39 — pages: expiry, unpublish, plan warnings
+
+`homelab pages publish` and `pages share` take `--expires 30d|90d|never`
+(pages and links from 2026-11-12 on expire after 90 days by default) and print
+`expires: <date>`; `publish` prints the renderer's warnings on stderr, such as a
+plan over its 600-word prose budget. `homelab pages unpublish <page URL | name>
+[--shared]` deletes a page or Bundle with its public links.
+
+### v0.38 verbs — pages: HTML, Bundles and public links
+
+`homelab pages publish` takes `<doc.md | page.html | dir/>` since v0.38.0. A
+markdown doc goes to `/publish` as before. One HTML file, or every file under
+a directory (dotfiles skipped, binary files sent as base64), goes to
+pages-publish `/publish-bundle` with the user's own `PAGES_API_KEY`; the file
+or directory name is the page's identity, so publishing it again updates the
+same page. The CLI checks the limits (10 MiB per file, 25 MiB per publish, 200
+files) before sending. `--public` also creates a public link and prints it as
+`public: <url>`. `homelab pages share <page>` and `homelab pages unshare
+<page | public link>` create and revoke links
+(`https://pages.viktorbarzin.me/p/<random>/`). Pages run sandboxed (ADR-0042);
+`stacks/pages-publish/README.md` has what a page can and cannot do.

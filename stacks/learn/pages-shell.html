@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pages</title>
+<link rel="icon" href="data:,">
+<meta name="analytics" content="sdk">
+<!--
+  The pages shell (infra ADR-0042). Every browser navigation to a page on
+  pages.viktorbarzin.me gets this file, served by Caddy from the learn
+  ConfigMap, never from git: it is the only document on the site that runs
+  with the site's real origin, so nobody's page content may ever run in it.
+  The page itself loads in the sandboxed frame below, from the SAME URL; Caddy
+  tells the two requests apart by Sec-Fetch-Dest and gives the frame's
+  response a CSP sandbox header. Rybbit lives here because it cannot start
+  inside the sandbox (it reads localStorage, which throws there).
+-->
+<script src="/_t/r/script.js" data-site-id="1" defer data-replay-mask-all-inputs="false" data-replay-mask-input-options='{"password":true}'></script>
+<style>
+html, body { margin: 0; height: 100%; background: #fcfcfb; }
+@media (prefers-color-scheme: dark) { html, body { background: #1a1a19; color: #fff; } }
+iframe { display: block; border: 0; width: 100%; height: 100%; }
+.note { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 2rem; }
+</style>
+</head>
+<body>
+<noscript><p class="note">This page needs JavaScript. <a href="?raw">Open it without the frame</a>.</p></noscript>
+<script>
+(function () {
+  "use strict";
+  // Keep in step with the raw-page CSP in stacks/learn/main.tf.
+  var SANDBOX = "allow-scripts allow-forms allow-modals allow-popups " +
+    "allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock " +
+    "allow-top-navigation-by-user-activation";
+  var CAP = /^[0-9a-f]{32}$/;
+
+  function note(text) {
+    var p = document.createElement("p");
+    p.className = "note";
+    var a = document.createElement("a");
+    a.href = location.href;
+    a.target = "_top";
+    a.textContent = text;
+    p.appendChild(a);
+    document.body.appendChild(p);
+  }
+
+  // Never frame a shell inside a shell, whatever a cache hands back.
+  if (window.top !== window.self) {
+    note("Open this page in its own tab");
+    return;
+  }
+
+  var path = location.pathname;
+  var rest = location.search + location.hash;
+  // Every frame URL is built on this origin. A path like //evil.example/x
+  // must never become a protocol-relative src (2026-11-12 review).
+  var here = location.origin;
+  var frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", SANDBOX);
+  frame.setAttribute("allow", "fullscreen; clipboard-write; autoplay; geolocation");
+  frame.setAttribute("allowfullscreen", "");
+  frame.title = "Page";
+  // rr-block: session replay records this element as a blank box, so a
+  // Bundle URL in its src never lands in a replay.
+  frame.className = "rr-block";
+  document.body.appendChild(frame);
+
+  // Location bridge. WebKit, the engine of every iPhone browser, gives no
+  // location to a sandboxed page: its origin is opaque, and the allow list
+  // above does not change that (found 2026-11-13). So a page asks the shell,
+  // which runs as the real origin and so gets the browser's own prompt:
+  //   parent.postMessage({type: "pages:geo", op: "watch" | "get" | "stop"}, "*")
+  // The shell answers {type: "pages:geo", ok: true, lat, lon, accuracy, ts}
+  // or {type: "pages:geo", ok: false, code, message}. Only the framed page
+  // can ask, and only its window gets the answer.
+  var geoWatch = null;
+  function geoStop() {
+    if (geoWatch !== null) navigator.geolocation.clearWatch(geoWatch);
+    geoWatch = null;
+  }
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (e.source !== frame.contentWindow || !d || d.type !== "pages:geo") return;
+    var win = frame.contentWindow;
+    function ok(p) {
+      win.postMessage({ type: "pages:geo", ok: true, lat: p.coords.latitude,
+        lon: p.coords.longitude, accuracy: p.coords.accuracy, ts: p.timestamp }, "*");
+    }
+    function fail(err) {
+      win.postMessage({ type: "pages:geo", ok: false, code: err.code,
+        message: String(err.message || "") }, "*");
+    }
+    if (!navigator.geolocation) { fail({ code: 2, message: "No geolocation here" }); return; }
+    var opts = { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 };
+    if (d.op === "stop") geoStop();
+    else if (d.op === "watch") { geoStop(); geoWatch = navigator.geolocation.watchPosition(ok, fail, opts); }
+    else navigator.geolocation.getCurrentPosition(ok, fail, opts);
+  });
+  // A new page in the frame starts with no watch running.
+  frame.addEventListener("load", geoStop);
+
+  function setTitle(text) {
+    // Parsed in an inert document and read back as text: the title is a
+    // page author's string and is never put into this document as markup.
+    if (!text) return;
+    var doc = new DOMParser().parseFromString(
+      "<!doctype html><title>" + text + "</title>", "text/html");
+    var t = (doc.title || "").trim();
+    if (t) document.title = t.slice(0, 200);
+  }
+
+  function titleFrom(src) {
+    fetch(here + src, { headers: { Range: "bytes=0-8191" }, credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.text() : ""; })
+      .then(function (t) {
+        var m = /<title[^>]*>([^<]*)<\/title>/i.exec(t);
+        if (m) setTitle(m[1]);
+      })
+      .catch(function () {});
+  }
+
+  function show(src) {
+    frame.src = here + src;
+  }
+
+  var segs = path.split("/").filter(Boolean);
+
+  // A public link frames its own path: /p/<token>/ resolves to the page or
+  // Bundle it names, and the public never learns a Bundle URL.
+  if (segs[0] === "p") {
+    show(path + rest);
+    titleFrom(path);
+    return;
+  }
+
+  // A top-level page or a Space index needs no Bundle lookup.
+  var nested = segs.length > 1 || path.charAt(path.length - 1) === "/";
+  if (!nested || segs.length === 0) {
+    show(path + rest);
+    titleFrom(path);
+    return;
+  }
+
+  // A Bundle is a directory with a marker the publish service writes. Its
+  // files load inside the sandbox without the sign-in cookie, so the frame
+  // opens them at the Bundle URL /c/<cap>/ instead. The Bundle is either the
+  // first path segment (/<bundle>/...) or the second (/shared/<bundle>/...,
+  // /wizard/<bundle>/...).
+  var roots = ["/" + segs[0] + "/"];
+  if (segs.length > 2 || (segs.length === 2 && path.charAt(path.length - 1) === "/")) {
+    roots.push("/" + segs[0] + "/" + segs[1] + "/");
+  }
+
+  function tryRoot(i) {
+    if (i >= roots.length) {
+      show(path + rest);
+      titleFrom(path);
+      return;
+    }
+    var root = roots[i];
+    fetch(here + root + ".pages-bundle.json", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (m) {
+        if (m && typeof m.cap === "string" && CAP.test(m.cap)) {
+          show("/c/" + m.cap + "/" + path.slice(root.length) + rest);
+          if (typeof m.title === "string") setTitle(m.title);
+          else titleFrom(path);
+        } else {
+          tryRoot(i + 1);
+        }
+      })
+      .catch(function () { tryRoot(i + 1); });
+  }
+  tryRoot(0);
+})();
+</script>
+</body>
+</html>

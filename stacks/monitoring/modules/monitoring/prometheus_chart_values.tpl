@@ -1032,6 +1032,8 @@ serverFiles:
           # your metric prefix here.
           # reels_.+ is the Reels web app's (worker lane heartbeats and queue age, read
           # by ReelsWorkerDown and ReelsQueueStuck).
+          # cloud_.+ is Cloud's (stacks/cloud): the reconciler's reconcile, queue and
+          # Postgres size series and the console's, read by the Cloud alert group.
           # NB the realtime_* and tasks_ops_total names are the tasks app's (TypeScript
           # build); listed by full name because realtime_ is a generic prefix.
           # NB kube_cronjob_spec_suspend is required by RenovateNotSucceeding (quiet
@@ -1040,7 +1042,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|reels_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|reels_.+|cloud_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -4090,7 +4092,7 @@ serverFiles:
               description: "Enrolled services that are currently running are unaffected (plugin failOpen), but parked ones 503 on first request until Sablier recovers. `kubectl -n sablier describe deploy sablier`."
       # London robot vacuum camera (stacks/ecovacs-video-proxy). It sits at 0
       # replicas; HA London scales it to 1 while someone watches and back after
-      # 5 minutes, and the camera-cap CronJob forces 0 after 15. An uptime probe
+      # 10 minutes, and the camera-cap CronJob forces 0 after 15. An uptime probe
       # would keep the robot's camera on, so health is read from kube-state.
       - name: Yiko camera
         rules:
@@ -4101,7 +4103,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Yiko's camera bridge has been on for 25m+; the robot's camera and headlights stay on"
-              description: "HA London's 5-minute auto-off and the 15-minute camera-cap CronJob both failed to stop it. Stop it: `kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0`, then check `kubectl -n ecovacs-video-proxy get cronjob,jobs`. Runbook: docs/runbooks/london-yiko.md."
+              description: "HA London's 10-minute auto-off and the 15-minute camera-cap CronJob both failed to stop it. Stop it: `kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0`, then check `kubectl -n ecovacs-video-proxy get cronjob,jobs`. Runbook: docs/runbooks/london-yiko.md."
           - alert: YikoCameraStartFailed
             expr: |
               kube_deployment_status_replicas_unavailable{namespace="ecovacs-video-proxy",deployment="ecovacs-video-proxy"} > 0
@@ -4737,6 +4739,24 @@ serverFiles:
               notify: page
             annotations:
               summary: "ha-sofia has had no successful automatic backup for {{ $value | humanizeDuration }}; VM 103 is on a single unmirrored SSD, see docs/architecture/home-automation.md"
+          # ha-london (the Pi 3 in London) writes its weekly automatic backup
+          # (Sun 05:00 Europe/London) through Supervisor network storage to
+          # /srv/nfs/ha-london-backup on the Proxmox host. Without it the only
+          # copies sit on the Pi's SD card. ha-london-backup-status (hourly,
+          # textfile collector) reports the newest archive's mtime, 0 when there
+          # is none; 8 days allows the weekly run plus a day. absent() covers the
+          # script or the export going away, after 6h so a host reboot is quiet.
+          # docs/architecture/london-site.md, "Backups".
+          - alert: HomeAssistantLondonBackupStale
+            expr: |
+              (time() - ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"}) > 691200
+                or absent(ha_london_backup_newest_file_timestamp_seconds{job="proxmox-host"})
+            for: 6h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "ha-london's newest backup on the Proxmox host (/srv/nfs/ha-london-backup) is over 8 days old or missing; its only other copies are on the Pi's SD card. See docs/architecture/london-site.md, Backups"
           - alert: LVMSnapshotStale
             expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
@@ -4903,7 +4923,7 @@ serverFiles:
               summary: "NFS local mirror last run failed (status={{ $value }})"
           # nightly-chain on the PVE host (scripts/nightly-chain.sh, since
           # 2026-11-10) is now the only thing that starts the night's dumps and
-          # the five host backup steps, so a chain that stops running stops all
+          # the six host backup steps, so a chain that stops running stops all
           # of them. The per-backup *Stale alerts still fire, but only after
           # 30 h to 9 d; these say which link broke the same morning.
           - alert: NightlyChainNotSucceeding
@@ -4914,7 +4934,7 @@ serverFiles:
               notify: page
             annotations:
               summary: "The nightly backup chain has not finished cleanly for {{ $value | humanizeDuration }}"
-              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, devvm-home-backup and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
+              description: "nightly-chain on the PVE host starts the DB dumps, then nfs-mirror, lvm-pvc-snapshot, daily-backup, t3-state-pull and offsite-sync-backup. Read `journalctl -u nightly-chain` on the host and check NightlyChainStepFailed for the step. Docs: docs/architecture/backup-dr.md."
           - alert: NightlyChainStepFailed
             expr: nightly_chain_step_ok{job="nightly-chain"} == 0
             for: 5m
@@ -4924,6 +4944,35 @@ serverFiles:
             annotations:
               summary: "Nightly backup chain step {{ $labels.step }} failed on its last run"
               description: "A step is a host unit (journalctl -u <step> on the PVE host) or a dump as <namespace>/<cronjob> (kubectl get jobs -n <namespace>, Jobs named <cronjob>-chain-<stamp>). The chain carries on after a failed step. Docs: docs/architecture/backup-dr.md."
+          # T3 snapshots off the devvm (scripts/t3-state-pull.sh, a nightly-chain
+          # step since 2026-11-11). The devvm writes one per user at ~03:30
+          # UTC and the chain pulls it the next night, so the newest copy on sda
+          # is ~23 h old after a pull and ~47 h just before the next one. 72 h
+          # means at least one night's T3 threads exist only on the devvm.
+          # ancamilea left the roster on 2026-08-17 and her last snapshot stays
+          # on sda on purpose, so she is excluded by name. A user who leaves
+          # T3 later is added here and in docs/architecture/backup-dr.md
+          # ("Freshness"); there is no age cut-off, which would let a missed
+          # page resolve itself after 30 days.
+          - alert: T3SnapshotOffVmStale
+            expr: |
+              (time() - t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull", user!="ancamilea"}) > 259200
+            for: 3h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "Newest T3 snapshot of {{ $labels.user }} on the PVE host is {{ $value | humanizeDuration }} old"
+              description: "A rebuilt devvm would lose that user's T3 threads since then. Check the devvm side (`systemctl status t3-backup-state`, `sudo ls -l /var/backups/t3-state/<user>`) and the host side (`journalctl -u t3-state-pull` on 192.168.1.127, `ls -l /mnt/backup/t3-state/<user>`). Docs: docs/architecture/backup-dr.md, T3 snapshots."
+          - alert: T3SnapshotPullNeverReported
+            expr: absent(t3_state_pull_newest_snapshot_timestamp{job="t3-state-pull"})
+            for: 48h
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "No T3 snapshot on the PVE host has been reported for 48 h"
+              description: "t3-state-pull has not pushed to the Pushgateway, or /mnt/backup/t3-state is empty, so no T3 thread history is kept off the devvm. Run `nightly-chain --only t3-state-pull` on 192.168.1.127 and read its journal. Docs: docs/architecture/backup-dr.md, T3 snapshots."
           - alert: NightlyChainRanWithoutLock
             expr: nightly_chain_lock_acquired{job="nightly-chain"} == 0
             for: 5m
@@ -5310,6 +5359,46 @@ serverFiles:
               severity: warning
             annotations:
               summary: "PostgreSQL {{ $labels.cnpg_cluster }}: NOTIFY queue {{ $value | humanizePercentage }} full. At 100% every NOTIFY on the cluster fails. Find the listener holding it: SELECT pid, datname, usename, application_name, xact_start FROM pg_stat_activity WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;"
+          - alert: CloudProvisionerForeignRole
+            # Cloud's cloud_provisioner (CREATEROLE) administers a role whose
+            # name is not p_*. pg_hba confines only p_* Project roles, so such
+            # a role reaches every database that grants CONNECT to PUBLIC
+            # (stacks/dbaas cloud_postgres_rules.tf, the audit query). Either
+            # the reconciler has a bug or its credential is in someone else's
+            # hands. Series from the pg-custom-queries ConfigMap, primary only.
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_foreign_roles_count) > 0
+            for: 2m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: cloud_provisioner administers {{ $value }} role(s) not named p_*, which pg_hba does not confine. List them on the primary: WITH RECURSIVE a AS (SELECT roleid FROM pg_auth_members WHERE member='cloud_provisioner'::regrole AND admin_option UNION SELECT m.roleid FROM pg_auth_members m JOIN a ON a.roleid=m.member WHERE m.admin_option) SELECT rolname FROM a JOIN pg_roles r ON r.oid=a.roleid WHERE rolname !~ '^p_' AND rolname != 'cloud_projects'; then rotate pg-cloud-provisioner in Vault and drop them."
+          - alert: CloudProjectRoleUnlimited
+            # A LOGIN role that Cloud's cloud_provisioner administers has no
+            # CONNECTION LIMIT or one above 8, the largest Size's. Cloud never
+            # renders one (MAX_ROLE_CONNECTIONS in the cloud repo), so either
+            # the reconciler has a bug or its credential is in someone else's
+            # hands, and the role can use up the cluster's connection slots
+            # (stacks/dbaas cloud_postgres_rules.tf, the role-limits audit).
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_role_limits_unlimited) > 0
+            for: 2m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: {{ $value }} Cloud role(s) with CONNECTION LIMIT -1 or above 8. List them on the primary: WITH RECURSIVE a AS (SELECT roleid FROM pg_auth_members WHERE member='cloud_provisioner'::regrole AND admin_option UNION SELECT m.roleid FROM pg_auth_members m JOIN a ON a.roleid=m.member WHERE m.admin_option) SELECT rolname, rolconnlimit FROM a JOIN pg_roles r ON r.oid=a.roleid WHERE rolcanlogin AND (rolconnlimit < 0 OR rolconnlimit > 8); set a limit (ALTER ROLE ... CONNECTION LIMIT 2) and rotate pg-cloud-provisioner in Vault if Cloud did not make it."
+          - alert: CloudProjectConnectionsOverCeiling
+            # The CONNECTION LIMITs of Cloud's roles add up to more than the
+            # Cloud-wide ceiling of 20 (POSTGRES_CONNECTION_CEILING in the
+            # cloud repo; change both together). Postgres cannot enforce a sum,
+            # so the reconciler does and this checks it.
+            expr: max by (cnpg_cluster) (cnpg_cloud_provisioner_role_limits_connlimit_sum) > 20
+            for: 5m
+            labels:
+              severity: critical
+              notify: page
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: Cloud's roles may hold {{ $value }} connections, above the ceiling of 20. Either the reconciler let a Plan through it should have refused, or its provisioner credential is in someone else's hands. List them: SELECT rolname, rolconnlimit FROM pg_roles WHERE rolname ~ '^p_' ORDER BY rolconnlimit DESC;"
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -6718,6 +6807,32 @@ serverFiles:
               lane: security
             annotations:
               summary: "No NetFlow rows written to netsec.flows for 30m"
+          - alert: NetsecHaproxyStale
+            # HAProxy on OPNsense logs every connection to the mail ports, about
+            # 150-240 an hour on 2026-11-11, and the mailserver's own health probes
+            # keep it above zero. An hour with no row written to netsec.haproxy
+            # means the log-format, syslog-ng's netsec-haproxy.conf or the sink is
+            # stuck (docs/runbooks/network-ids.md).
+            expr: (sum(increase(vector_component_sent_events_total{namespace="netsec", component_id="haproxy_ch"}[1h])) or on() vector(0)) == 0
+            for: 10m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No HAProxy mail connections written to netsec.haproxy for 1h"
+          - alert: NetsecTechnitiumStale
+            # netsec-technitium (stacks/netsec) copies Technitium's Postgres query
+            # log every 5 minutes and pushes the newest copied row's time. Sofia
+            # makes hundreds of lookups a minute, so 30 minutes without a newer
+            # row means the job, Postgres logging or ClickHouse is stuck
+            # (docs/runbooks/network-ids.md, "Technitium query log").
+            expr: (time() - max(netsec_technitium_newest_row_timestamp)) > 1800 or absent(netsec_technitium_newest_row_timestamp)
+            for: 15m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "No new Technitium lookups copied to netsec.technitium for 30m"
           - alert: NetsecEveStale
             # Suricata's eve-meta.json carries every DNS response crossing VLAN 10
             # and 20, so 30 minutes with no row written to netsec.eve means
@@ -6867,6 +6982,45 @@ serverFiles:
             annotations:
               summary: "Claude session ingest on the devvm has not succeeded for over an hour"
               description: "Check `journalctl -u claude-sessions-ingest` on the devvm and the claude-sessions ClickHouse. Offsets are kept, so the next good run catches up."
+          - alert: ClaudeSessionsUserWaitingForRestore
+            # The same textfile. On a rebuilt devvm the ingest skips a user
+            # until t3-provision-users' `restore --rebuild` has put their
+            # stored ~/.claude back (claude_sessions_rebuild.go). A user stuck
+            # here has new sessions that never reach the store and would be
+            # lost at the next rebuild.
+            expr: max(claude_sessions_ingest_users_waiting_for_restore{job="devvm"}) > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} devvm user(s) wait for their agent state restore, so their sessions are not stored"
+              description: "Check `journalctl -u t3-provision-users | grep 'restore'` on the devvm. Runbook: docs/runbooks/restore-claude-sessions.md."
+          - alert: ClaudeSessionsMCPSecretsUncaptured
+            # The same textfile. MCP server secrets (headers, env keys, the
+            # ha URL path) are kept in Vault only by a manual `mcp-secrets
+            # capture`; the ingest compares the live entries with the digests
+            # that capture recorded. A count here is a secret a rebuild would
+            # lose or put back stale.
+            expr: max(claude_sessions_ingest_mcp_entries_uncaptured{job="devvm"}) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} devvm MCP server entries hold secrets not captured to Vault"
+              description: "`journalctl -u claude-sessions-ingest | grep WARN` on the devvm names the user and entries; run `homelab claude-sessions mcp-secrets capture --user <user>` (docs/runbooks/devvm-credentials.md, MCP server secrets)."
+          - alert: ClaudeSessionsMCPSecretsUnfilled
+            # The same textfile. The other half: entries the capture record
+            # names that the live files lack or hold redacted. After a
+            # rebuild that is a fill that never ran (no admin provisioning
+            # pass) or could not put an entry back, so those MCP servers
+            # stay broken; on the live box, a server dropped since capture.
+            expr: max(claude_sessions_ingest_mcp_entries_unfilled{job="devvm"}) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} captured devvm MCP server entries are missing their secrets"
+              description: "`journalctl -u claude-sessions-ingest | grep WARN` on the devvm names the user and entries. After a rebuild run `homelab claude-sessions mcp-secrets fill --user <user>` with an admin token, or add the entry back by hand; if it was removed on purpose, run `mcp-secrets capture --user <user>` (docs/runbooks/devvm-credentials.md, MCP server secrets)."
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m
@@ -7325,7 +7479,7 @@ serverFiles:
             annotations:
               summary: "technitium-dynamic-updates has not run in over 2h (last: {{ $value | humanizeDuration }} ago)"
           - alert: ExternalDNSLanSyncStale
-            expr: (time() - external_dns_controller_last_sync_timestamp_seconds) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds)
+            expr: (time() - external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns"}) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns"})
             for: 10m
             labels:
               severity: warning
@@ -7337,14 +7491,14 @@ serverFiles:
           # backstop: the zone holds well over 100 records, so near zero means
           # external-dns reads far fewer records than the zone has.
           - alert: ExternalDNSLanZoneEmpty
-            expr: external_dns_registry_endpoints_total < 20
+            expr: external_dns_registry_endpoints_total{app_kubernetes_io_instance="external-dns"} < 20
             for: 10m
             labels:
               severity: warning
             annotations:
               summary: "external-dns sees only {{ $value | printf \"%.0f\" }} records in viktorbarzin.lan. Its zone transfer from Technitium is probably failing (TSIG key or zoneTransfer policy)"
           - alert: ExternalDNSLanSoftErrors
-            expr: external_dns_controller_consecutive_soft_errors > 0
+            expr: external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns"} > 0
             for: 15m
             labels:
               severity: warning
@@ -7357,6 +7511,47 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CoreDNS forward SERVFAIL/REFUSED rate: {{ $value | printf \"%.2f\" }}/s — upstream DNS (pfSense/public) may be unhealthy"
+      # Internal DNS freshness (2026-11-14). Technitium replicas must follow
+      # the primary within seconds (NOTIFY, set up by technitium-zone-sync),
+      # and Cloud App hosts get their internal CNAME from external-dns-cloud
+      # (stacks/technitium external_dns.tf). tests/technitium-replication.test.sh
+      # runs promtool unit tests on this group.
+      - name: "Internal DNS freshness"
+        rules:
+          # probe_dns_serial is the SOA serial blackbox read from each instance
+          # (job technitium-soa). A replica that missed a NOTIFY catches up on
+          # the SOA refresh (5 min for viktorbarzin.me, 15 min for .lan), so 10
+          # minutes of difference means replication is broken, and new records
+          # NXDOMAIN on a third or two thirds of lookups through 10.0.20.201.
+          - alert: TechnitiumReplicaSerialBehind
+            expr: probe_dns_serial{job="technitium-soa", role!="primary"} != on (zone) group_left () probe_dns_serial{job="technitium-soa", role="primary"}
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Technitium {{ $labels.role }} serves {{ $labels.zone }} at serial {{ $value | printf \"%.0f\" }}, not the primary's. New records are missing on that replica"
+              description: "Check the replica's zone in its web UI (technitium-{{ $labels.role }}-web:5380) and the last technitium-zone-sync job log: it sets the primary's notifyNameServers and the replicas' notifyAllowedNetworks. Run the job by hand to resync."
+          - alert: TechnitiumSOAProbeFailed
+            expr: probe_success{job="technitium-soa"} == 0 or up{job="technitium-soa"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "The SOA probe of {{ $labels.zone }} on Technitium {{ $labels.role }} fails, so replica drift on it goes unseen"
+          - alert: ExternalDNSCloudSyncStale
+            expr: (time() - external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns-cloud"}) > 900 or absent(external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns-cloud"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns-cloud (technitium ns) has not synced in over 15m. New Cloud App hosts get no internal DNS record"
+          - alert: ExternalDNSCloudSoftErrors
+            expr: external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns-cloud"} > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "external-dns-cloud has failed {{ $value | printf \"%.0f\" }} consecutive syncs of viktorbarzin.me. Check its log in the technitium namespace"
       - name: qbittorrent
         rules:
           - alert: MAMCookieExpired
@@ -7411,6 +7606,22 @@ serverFiles:
               severity: warning
             annotations:
               summary: "qBittorrent is disconnected from the network"
+
+      - name: aiostreams
+        rules:
+          # Metric source: the rd-blocked-names sidecar in the aiostreams pod
+          # (stacks/servarr/aiostreams/files/rd_blocked_names.py). It refreshes
+          # every 6h and keeps serving the last good list when a refresh fails,
+          # so Stremio keeps working; this says the list has stopped following
+          # Real-Debrid's changes.
+          - alert: RdBlockedNamesStale
+            expr: (time() - max(rd_blocked_names_last_success_timestamp_seconds)) > 3 * 86400 or absent(rd_blocked_names_last_success_timestamp_seconds)
+            for: 1h
+            labels:
+              severity: info
+            annotations:
+              summary: "Real-Debrid blocked-names list has not refreshed for 3 days; AIOStreams is using the last good copy"
+              description: "Logs: kubectl -n aiostreams logs deploy/aiostreams -c rd-blocked-names. Usual causes: Debrid Media Manager renamed the RD_BLOCKED_* constants in src/utils/deInfringe.ts, or a new list failed the safety check."
 
       - name: Headscale VPN
         rules:
@@ -8069,6 +8280,29 @@ serverFiles:
             annotations:
               summary: "Status/failover page https://status.viktorbarzin.me unreachable for >10m"
               description: "The external status/failover page on mx2 (nginx + gatus, ADR-0020) has failed its in-cluster HTTPS probe for >10m. During a homelab outage the Cloudflare Worker serves this page's /error.html to visitors of all proxied hosts — while it is down, outage error pages degrade to the Worker's inline fallback HTML. Check gatus/nginx on mx2: `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` or the OCI console. NOTE: if BackupMxDown (TCP:25, same VM) fires simultaneously, the whole VM — or our own egress (see WANGatewayUnreachable/InternetEgressDown) — is the problem, not nginx. Runbook: docs/runbooks/backup-mx.md."
+      # pages.viktorbarzin.me login-free paths (job blackbox-pages-public,
+      # docs/plans/2026-11-12-pages-public-paths-monitoring-design.md). Per
+      # target, so the alert names which path broke.
+      - name: Pages public paths
+        rules:
+          - alert: PagesPublicPathDown
+            expr: probe_success{job="blackbox-pages-public"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: pages
+            annotations:
+              summary: "pages.viktorbarzin.me {{ $labels.service }} failing for >10m"
+              description: "{{ $labels.instance }} has not given the expected answer for >10m (200, no redirect, CORS *, and on /p/ and /c/ the CSP sandbox and the canary text). All pages-* targets down: the learn pod or Traefik. Only pages-public-link and pages-public-shell: the canary's public link symlink (p/<token> in viktor/pages) is gone. Only pages-bundle: the canary was republished and its cap changed; put the new cap in local.pages_canary_cap (stacks/monitoring authentik_walloff_probe.tf). Only pages-public-shell: the shell handle in the learn Caddyfile. A 302 to Authentik on any of them is a walled-off carve-out (AuthentikWallingOffPublicPath fires too). Check: `curl -sI '{{ $labels.instance }}'`."
+          - alert: PagesPublicProbeMissing
+            expr: absent(up{job="blackbox-pages-public"})
+            for: 30m
+            labels:
+              severity: warning
+              subsystem: pages
+            annotations:
+              summary: "The blackbox-pages-public scrape job has no series"
+              description: "Nothing is probing the pages login-free paths, so PagesPublicPathDown cannot fire. Check the job in prometheus_chart_values.tpl and the blackbox-exporter in the monitoring namespace."
       - name: Loki
         rules:
           - alert: LokiStreamLimitNear
@@ -8208,6 +8442,139 @@ serverFiles:
             annotations:
               summary: "Vermont access archive has not run for {{ $value | humanizeDuration }}"
               description: "The acs-archive CronJob in vermont-access normally runs every Monday 00:00 Europe/Sofia. The busiest panel (.116) keeps about two weeks, so a second missed week starts losing events. Check kubectl -n vermont-access get cronjob,jobs."
+      - name: Cloud
+        rules:
+          # Cloud (stacks/cloud, docs/architecture/cloud.md). Metric names are
+          # the cloud repo's (src/reconciler/metrics.ts). The scrape job sets
+          # honor_labels, so the Postgres series keep their own `service`
+          # label, the Cloud Service name. Only a stopped reconciler and a
+          # stuck queue page: then no Project change applies for anyone until
+          # an Operator acts. The rest is one Project or one database, which
+          # its owner sees in the console. Runbook: docs/runbooks/cloud.md.
+          - alert: CloudReconcilerDown
+            # No series at all (never started, ImagePullBackOff) counts as
+            # down too.
+            expr: (max(up{job="kubernetes-service-endpoints", namespace="cloud", service="cloud-reconciler"}) or on() vector(0)) == 0
+            for: 15m
+            labels:
+              severity: critical
+              notify: page
+              subsystem: cloud
+            annotations:
+              summary: "Cloud reconciler is down: no Project change applies"
+              description: "Prometheus has not scraped cloud-reconciler for 15 minutes. Project changes queue up and none applies. Check the pod (kubectl -n cloud get pods -l app=cloud-reconciler) and its logs (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"}'). Runbook: docs/runbooks/cloud.md, \"Restart\"."
+          - alert: CloudReconcileQueueStuck
+            # Jobs wait and no job finished in the last 30 minutes, for 30
+            # minutes: it fires 30 minutes after a job is queued on an idle
+            # reconciler, and up to 60 minutes after the last finished job.
+            # Most jobs take minutes. A job longer than 30 minutes (three
+            # OpenTofu steps of up to 20 minutes each,
+            # RECONCILE_STEP_TIMEOUT_SECONDS) started on an idle reconciler
+            # with another job behind it can page while it still works.
+            # A reconciler that never finished a job has no
+            # cloud_reconcile_total series, hence `unless` over `== 0`.
+            # prom-client creates a labelled series at its first increment, so
+            # the first job after a restart starts its series at 1, which
+            # increase() cannot see; the `last_over_time` clause counts a
+            # series with no sample in the hour before the window as a
+            # finished job. A scrape gap under an hour does not make an old
+            # series look new.
+            expr: max(cloud_reconcile_queue_depth) > 0 unless on() (sum(increase(cloud_reconcile_total[30m])) > 0 or sum(cloud_reconcile_total unless last_over_time(cloud_reconcile_total[1h] offset 30m)) > 0)
+            for: 30m
+            labels:
+              severity: critical
+              notify: page
+              subsystem: cloud
+            annotations:
+              summary: "Cloud reconcile queue is stuck: {{ $value }} job(s) waiting, none finished for at least 30 minutes"
+              description: "Jobs have waited for 30 minutes and the reconciler finished none in that time or the 30 minutes before. Usually a hung OpenTofu step, a lost Postgres or Vault connection, or a job it cannot claim. Logs: homelab logs query '{namespace=\"cloud\", container=\"reconciler\"}'. Runbook: docs/runbooks/cloud.md, \"Drain the queue\"."
+          - alert: CloudReconcileFailing
+            # result="failed" is a job that used all its attempts; retries
+            # alone stay quiet. A failed job is not retried (a failed destroy
+            # is queued again after an hour), so one failure must fire: no
+            # `for`, and the alert stays up while the failure is inside the
+            # 15-minute window. The `last_over_time` clause catches the first
+            # failure after a restart, whose series starts at 1 where
+            # increase() sees nothing: a series with no sample in the hour
+            # before the window is new. A restarted pod has a new instance
+            # label, so its series is new. A scrape gap under an hour does not
+            # make an old failure fire again.
+            expr: sum(increase(cloud_reconcile_total{result="failed"}[15m])) > 0 or sum(cloud_reconcile_total{result="failed"} unless last_over_time(cloud_reconcile_total{result="failed"}[1h] offset 15m)) > 0
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "A Cloud reconcile job failed after all its attempts"
+              description: "At least one reconcile job failed after all its attempts in the last 15 minutes. One Project with a bad change shows its error in the console; many failing points at a broken credential or an unreachable Postgres, Vault or API server. Failed jobs and their log excerpts: SELECT id, project_id, kind, last_error FROM reconcile_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Recover from a failed apply\"."
+          - alert: CloudProjectStuckConverging
+            # cloud_project_converging_seconds{project}: seconds since the
+            # oldest queued or running job for a version above the Project's
+            # applied version (docs/architecture/cloud.md, "Metrics"). A
+            # Project that is not converging has no series.
+            expr: max by (project) (cloud_project_converging_seconds) > 1800
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud Project {{ $labels.project }} has not converged for over 30 minutes"
+              description: "Project {{ $labels.project }} has a saved change the reconciler has not applied for over 30 minutes. Look for its jobs in reconcile_jobs and the reconciler logs. Runbook: docs/runbooks/cloud.md, \"Debug a stuck Project\"."
+          - alert: CloudPostgresDatabaseNearSize
+            # M2 contract: alert at 80% of the Size's disk; M5 enforces the
+            # limit.
+            expr: max by (project, service) (cloud_postgres_database_bytes / cloud_postgres_database_limit_bytes) > 0.8
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud Postgres {{ $labels.project }}/{{ $labels.service }} is at {{ $value | humanizePercentage }} of its Size"
+              description: "The database of Postgres Service {{ $labels.service }} in Project {{ $labels.project }} uses over 80% of the disk its Size allows. Its owner should pick a larger Size or delete data."
+          - alert: CloudPostgresDatabaseUnmeasured
+            # M2 contract: a database the size loop cannot measure is a blind
+            # spot. A new one is unmeasured until its first apply finishes,
+            # which 15 minutes covers.
+            expr: max by (project, service) (cloud_postgres_database_unmeasured) == 1
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud cannot measure Postgres {{ $labels.project }}/{{ $labels.service }}"
+              description: "The reconciler could not measure this database for 15 minutes, so the 80% alert cannot see it. Its owner may have revoked CONNECT from cloud_provisioner, or the database is missing. Reconciler log line: measuring Cloud databases failed."
+          - alert: CloudPostgresDiskEnforcementFailed
+            # cloud_postgres_disk_enforcement_failed: 1 while the reconciler's last
+            # size pass did not enforce this database's disk (src/reconciler/disk-limits.ts).
+            # A pass runs every 10 minutes, so 30m is three failed passes.
+            expr: max by (project, service) (cloud_postgres_disk_enforcement_failed) == 1
+            for: 30m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud cannot enforce the disk limit of Postgres {{ $labels.project }}/{{ $labels.service }}"
+              description: "For 30 minutes the reconciler could not switch this database's role to read-only, change its CONNECT, or end its sessions. The usual cause is a session of the Project's own database holding a lock on its role row, which makes the 5 s lock_timeout expire. While this lasts, the database can grow past its Size. Reconciler log lines: changing a Cloud role's write access failed, changing a Cloud role's CONNECT failed, ending a Cloud role's sessions failed, reading Cloud roles' write access failed. Find the blocking session on the primary: SELECT pid, usename, state, query FROM pg_stat_activity WHERE usename LIKE 'p\\_%' AND (state = 'idle in transaction' OR wait_event_type = 'Lock'); then end it with pg_terminate_backend(pid). The next pass enforces the limit. Runbook: docs/runbooks/cloud.md, \"Alerts\"."
+          - alert: CloudPostgresReadOnly
+            expr: max by (project, service) (cloud_postgres_database_read_only) == 1
+            for: 10m
+            labels:
+              severity: info
+              subsystem: cloud
+            annotations:
+              summary: "Cloud Postgres {{ $labels.project }}/{{ $labels.service }} is full and read-only"
+              description: "The database reached its Size's disk, so its role is read-only. The owner sees why in the console. Write access returns when usage drops or the Size grows."
+          - alert: CloudBuildMinutesHigh
+            # cloud_build_minutes_used and cloud_build_minutes_allowance: the
+            # GitHub Actions minutes this month and the account's allowance.
+            # Exported from M5, when Cloud runs builds.
+            expr: max(cloud_build_minutes_used) / max(cloud_build_minutes_allowance) > 0.7
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud builds used {{ $value | humanizePercentage }} of this month's GitHub Actions minutes"
+              description: "Private GitHub Actions minutes are shared by Cloud builds and every other private repo. At 100% every private build stops until the month ends."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
@@ -9268,6 +9635,27 @@ extraScrapeConfigs: |
         target_label: instance
       - target_label: __address__
         replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # pages.viktorbarzin.me login-free paths (/assets/, /c/, /p/; ADR-0042).
+  # Each target names its own blackbox module (__param_module); targets and
+  # modules are in authentik_walloff_probe.tf. Alert: PagesPublicPathDown.
+  - job_name: 'blackbox-pages-public'
+    scrape_interval: 2m
+    scrape_timeout: 30s
+    metrics_path: /probe
+    static_configs:
+%{ for svc, t in pages_public_targets ~}
+      - targets: ["${t.url}"]
+        labels:
+          service: "${svc}"
+          __param_module: "${t.module}"
+%{ endfor ~}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   # --- Backup MX (mx2, Oracle Always-Free relay; ADR-0019) ------------------
   # Two jobs: (1) a blackbox TCP-connect probe of the reserved public IP:25 from
   # inside the cluster (out over the internet) -> BackupMxDown; (2) a direct
@@ -9596,6 +9984,39 @@ extraScrapeConfigs: |
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # SOA serial of each Technitium instance per zone (2026-11-14), for
+  # TechnitiumReplicaSerialBehind. The primary through technitium-primary, each
+  # replica through its own DNS ClusterIP (stacks/technitium ha.tf). Labels:
+  # zone, and role = primary | secondary | tertiary taken from the target.
+  - job_name: 'technitium-soa'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    static_configs:
+      - targets:
+          - technitium-primary.technitium.svc.cluster.local
+          - technitium-secondary-dns.technitium.svc.cluster.local
+          - technitium-tertiary-dns.technitium.svc.cluster.local
+        labels:
+          zone: viktorbarzin.me
+          __param_module: dns_soa_viktorbarzin_me
+      - targets:
+          - technitium-primary.technitium.svc.cluster.local
+          - technitium-secondary-dns.technitium.svc.cluster.local
+          - technitium-tertiary-dns.technitium.svc.cluster.local
+        labels:
+          zone: viktorbarzin.lan
+          __param_module: dns_soa_viktorbarzin_lan
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - source_labels: [__param_target]
+        regex: 'technitium-(primary|secondary|tertiary)[.-].*'
+        target_label: role
       - target_label: __address__
         replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   - job_name: 'internet-egress-dns'

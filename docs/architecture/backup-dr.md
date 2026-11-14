@@ -2,7 +2,7 @@
 
 <!-- showcase: Data is snapshotted on the host, mirrored to a second disk and copied offsite to a Synology. Data that can be regenerated stays out of the offsite copy. -->
 
-Last updated: 2026-11-10
+Last updated: 2026-11-11
 
 > **2026-11-10 — the night runs as one ordered chain.** `nightly-chain` on the
 > PVE host (`scripts/nightly-chain.sh`, `nightly-chain.timer` at 00:00 UTC) is
@@ -18,18 +18,31 @@ Last updated: 2026-11-10
 >    3 at a time, via `kubectl create job --from=cronjob/...`. The 18 CronJobs
 >    are suspended; a Job created from a CronJob still moves its
 >    `lastSuccessfulTime`, so the `*BackupStale` alerts are unchanged;
-> 3. nfs-mirror, 4. lvm-pvc-snapshot, 5. daily-backup, 6. devvm-home-backup,
+> 3. nfs-mirror, 4. lvm-pvc-snapshot, 5. daily-backup,
+>    6. t3-state-pull (since 2026-11-11, see "T3 snapshots"),
 >    7. offsite-sync-backup, each its own unit, started with
 >    `systemctl start --wait`; a failed step is reported and the rest still run;
 > 8. release the lock.
 >
-> The five step timers are disabled (`DISABLED_TIMERS` in
+> **2026-11-12: devvm-home-backup retired.** It was step 6. The devvm is
+> disposable now (`docs/plans/2026-11-11-disposable-devvm.md`) and the second
+> rebuild drill passed with nothing lost, so the file copy of `/home` stopped.
+> Its script and units still ship, disabled. Its last generations stay in
+> `/mnt/backup/devvm-home/` and the Synology copy; nothing rolls them over any
+> more, so they keep their contents, deleted secrets included
+> (`docs/runbooks/devvm-credentials.md`), until removed by hand.
+>
+> The six step timers are disabled (`DISABLED_TIMERS` in
 > `scripts/ci/pve-scripts-sync.sh`). daily-backup, offsite-sync-backup and
 > lvm-pvc-snapshot moved to the idle IO class like nfs-mirror and
 > devvm-home-backup. If the cluster API is down the dumps are skipped and the
-> host steps still run. Alerts: `NightlyChainNotSucceeding` (30 h),
+> host steps still run. A dump whose Job cannot be created is tried again
+> every 180 s, 5 tries in all (`NIGHTLY_CHAIN_START_TRIES`,
+> `NIGHTLY_CHAIN_RETRY_DELAY`), while the other dumps go on. Before
+> 2026-11-12 a failed start was final: that night the host lost its route to
+> the API from 00:01:56 to about 00:06 and 8 of 12 dumps were skipped. Alerts: `NightlyChainNotSucceeding` (30 h),
 > `NightlyChainStepFailed`, `NightlyChainRanWithoutLock` (info). Test one
-> piece by hand with `nightly-chain --only backup-etcd,devvm-home-backup`.
+> piece by hand with `nightly-chain --only backup-etcd,t3-state-pull`.
 > The times in the older sections below are the pre-chain schedule.
 
 > **2026-06-01 — regenerable services carved back out** (offsite Synology hit
@@ -106,6 +119,8 @@ sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backu
 ```
 
 The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 T). **Not backed up at all**: `/srv/nfs/frigate/` (camera ring buffer), `/srv/nfs/temp/` (scratch). Everything else rides leg 1 via `nfs-mirror`.
+
+`/srv/nfs/ha-london-backup/` (since 2026-11-11) holds ha-london's own encrypted Home Assistant backups, which the Pi in London writes through Supervisor network storage over the WireGuard tunnel (`docs/architecture/london-site.md`, "Backups"). It has no exclude in `scripts/nfs-mirror.sh`, so it rides leg 1 like any service directory; `HomeAssistantLondonBackupStale` pages when its newest archive is over 8 days old.
 
 **3-2-1 Breakdown**:
 - **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
@@ -250,12 +265,12 @@ graph LR
         T0200["nfs-mirror<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>now includes tonight's dumps"]
         T0300["lvm-pvc-snapshot<br/>thin snapshots of Proxmox CSI PVCs"]
         T0500["daily-backup<br/>mount the snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + opnsense + pve-config"]
-        T0330["devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
+        T3P["t3-state-pull<br/>devvm /var/backups/t3-state → sda /mnt/backup/t3-state/<user>/"]
         T0600["offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
         T0700["release the lock"]
     end
 
-    T0000 --> T0015 --> T0200 --> T0300 --> T0500 --> T0330 --> T0600 --> T0700
+    T0000 --> T0015 --> T0200 --> T0300 --> T0500 --> T3P --> T0600 --> T0700
     INO -.->|change events feed Step 2| T0600
 
     style Nightly fill:#ffe0b2
@@ -363,9 +378,10 @@ graph LR
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | OPNsense Backup | Nightly chain step 5 (daily-backup) | PVE host: `scp` over SSH | `/conf/config.xml`, newest 14 copies kept |
 | Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
-| Offsite Sync | Nightly chain step 7, last | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
+| Offsite Sync | Nightly chain step 8, last | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
-| devvm /home (incremental) | Nightly chain step 6, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
+| devvm /home (incremental) | **Retired 2026-11-12** (removed from the nightly chain; last generations kept) | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
+| T3 snapshots | Nightly chain step 7, keep 3 per user | PVE host: `t3-state-pull` | devvm `/var/backups/t3-state/<user>/` daily snapshots → `/mnt/backup/t3-state/<user>/`, gzipped; restored by `t3-restore-state` on the devvm |
 | PostgreSQL Backup (full) | Nightly chain dumps, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Nightly chain dumps (same Job as the full dump), 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
 | MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
@@ -407,7 +423,7 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 **Mode**: `vzdump --mode snapshot` — live, no downtime. devvm has the qemu guest agent enabled (`agent: 1`), so the snapshot is **filesystem-consistent** (fs-freeze) rather than merely crash-consistent. Runs `Nice=10` + `IOSchedulingClass=idle` + `--ionice 7` so it never starves etcd on the contended sdc IO domain.
 **Scope**: VMIDs in `VZDUMP_VMIDS` (default `102` = devvm). Add VMIDs there to image other hand-managed VMs.
 **Retention**: `KEEP=3` newest dumps per VMID on sda (`/mnt/backup/vzdump/`); each devvm image is ~35-50 GB zstd.
-**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup`/`routers` are excluded). Any new top-level folder under `/mnt/backup` needs its exclude in `scripts/nfs-mirror.sh` in the same commit: devvm-home (2026-09) and vzdump (2026-06) were both emptied nightly before theirs was added.
+**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup`/`routers` are excluded). Any new top-level folder under `/mnt/backup` needs its exclude in `scripts/nfs-mirror.sh` in the same commit: devvm-home (2026-09) and vzdump (2026-06) were both emptied nightly before theirs was added. `t3-state` (2026-11-11) got its exclude in the commit that created it.
 
 **It happened again.** `devvm-home-backup` landed 2026-08-16 without a matching exclude, so `nfs-mirror` reaped its generations nightly for the next 19 days. Measured 2026-09-04: generations `2026-08-31` through `2026-09-03` held **0 entries under `wizard/`** against 87 in `2026-09-04`, and their mtimes (02:05-02:11) sat just after this job's 02:00 slot. Only the current night's generation ever survived, so retention was **1 day, not 14**. Fixed the same day by adding `/devvm-home/`. **Anything new written under `/mnt/backup/` needs its own exclude line here on the same commit** — that is the whole lesson from both incidents.
 
@@ -415,6 +431,132 @@ A third case on 2026-10-15: the autonomous upgrade run wrote its pre-upgrade dum
 **Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **weekly**; Copy 3 (Synology) refreshes **monthly**.
 **Monitoring**: pushes `vzdump_last_run_timestamp` / `vzdump_last_status` / `vzdump_last_success_timestamp` to Pushgateway job `vzdump-backup`. The alerts `VzdumpBackupStale`, `VzdumpBackupNeverRun` and `VzdumpBackupFailing` were **removed on 2026-09-23**: with the job retired they could only report the retirement, and `VzdumpBackupStale` had started firing once the last image passed 8 days old.
 **Restore**: on the PVE host, `qmrestore /mnt/backup/vzdump/vzdump-qemu-<vmid>-<ts>.vma.zst <vmid>` — restore to a spare VMID first if the original still exists, then swap disks; or use the PVE UI (add `/mnt/backup` as a dir storage with content=backup → Restore).
+
+### T3 snapshots
+
+Added 2026-11-11 for the disposable-devvm plan (`docs/plans/2026-11-11-disposable-devvm.md`):
+T3 threads are one of the kept places, so their copy has to live off the VM.
+
+All of a user's T3 state (threads and messages, `t3 project add` registrations, paired
+devices and sessions) is one SQLite file, `~/.t3/userdata/statev2.sqlite`, on the devvm's
+own disk. Three pieces carry it:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `t3-backup-state` | devvm, own timer, ~03:30 UTC + up to 20 min jitter | `VACUUM INTO` copy per user → `/var/backups/t3-state/<user>/state-<YYYYMMDD-HHMMSS>.sqlite`, keep 6. `devvm-cleanup` (04:00 UTC) gzips all but the newest. Each copy, and each pre-bump copy from `t3-safe-restart.sh`, is written as a hidden `.state-<ts>.partial` and renamed when complete. Since 2026-11-14: on 2026-11-12 a pre-bump copy ran beside the daily one, `devvm-cleanup` gzipped the unfinished daily, and the run failed and left a truncated `state-20261112-034332.sqlite.gz` (header page count 0) |
+| `t3-state-pull` | PVE host, nightly chain step 7 | pulls the newest 3 daily snapshots per user to `/mnt/backup/t3-state/<user>/`, always stored as `.sqlite.gz` |
+| `t3-restore-state` | devvm, `/usr/local/bin` | puts the newest snapshot back as the user's live database |
+| `devvm-bootstrap` step 4c | a Terraform-built devvm's first boot | copies `/mnt/backup/t3-state` from the host back into `/var/backups/t3-state` before provisioning |
+
+**What the pull takes.** Only daily `state-<ts>.sqlite[.gz]` files. Pre-bump copies
+(`state-prebump-*`) are taken minutes after the daily one and serve version rollback on
+the box itself; journals and `-wal`/`-shm` files are skipped. When the devvm still has a
+snapshot uncompressed (its newest) the host gzips it, so the first copy of wizard's ~1.7 GB
+database is ~400 MB on sda; once the devvm's own `.gz` exists, nothing is fetched again.
+A file modified in the last 30 minutes is left for the next night, because the chain can
+reach this step while `t3-backup-state` or `devvm-cleanup` is still writing. Every file is
+checked (SQLite header, or `gzip -t`) before it is kept. New files go into
+`/mnt/backup/.changed-files`, so the same night's offsite incremental carries them; the
+monthly full pass reaps pruned ones on the Synology. `nfs-mirror` excludes `/t3-state/`.
+
+**Shrink guard.** Pruning holds, and the step fails, when the newest snapshot is under a
+quarter of the size of the largest one kept. That is what a rebuilt devvm whose T3 state
+was never restored would send: a fresh, nearly empty database that would push every real
+generation out within three nights.
+
+**Access.** Pull, like `devvm-home-backup`. The host key `/root/.ssh/id_devvm_t3_state`
+is authorised on the devvm's root account pinned to
+`command="/usr/bin/rrsync -ro /var/backups/t3-state",restrict`, so it reads that one
+directory and nothing else. The authorisation is declared in `playbooks/devvm.yml`
+(tag `t3-snapshot`); the public key text is Vault `secret/devvm-authorized-keys`, field
+`root-t3-state-pull`, like the admin's keys, because this repo is publicly mirrored.
+The snapshots hold live T3 session tokens, so the host keeps them root-only (0700/0600).
+
+**Freshness.** The chain pulls the snapshot the devvm wrote ~23 h earlier, so the newest
+copy off the VM is ~23 h old after a pull and ~47 h just before the next. A rebuild loses
+at most that much T3 history. Alerts: `T3SnapshotOffVmStale` (newest snapshot of a user
+older than 72 h, page; ancamilea is excluded by name because her copy is frozen on
+purpose since she left the roster on 2026-08-17; there is no age cut-off, so a missed page
+keeps firing) and `T3SnapshotPullNeverReported`
+(no metric for 48 h, page). A failed run also shows as `NightlyChainStepFailed`.
+Pushgateway job `t3-state-pull`.
+
+**Not covered.** Only the database. `~/.t3/userdata/secrets/` (T3 cloud link keys and the
+asset-signing key), `attachments/`, `settings.json` and `keybindings.json` are not in the
+snapshot. On a rebuild T3 generates new keys and the user re-links T3 Cloud if they used it.
+`devvm-home-backup` still copies all of `~/.t3` while it runs.
+
+**Restore on a rebuilt devvm.** Automatic for a devvm built from `stacks/devvm`:
+
+1. `scripts/devvm-bootstrap` puts up a hold file, `/var/lib/t3-restore/awaiting-snapshots`,
+   before the playbook. The playbook enables the hourly provisioning timer, which could
+   otherwise start an empty T3 for each user before the snapshots are in.
+2. After the playbook (step 4c) it reads Vault `secret/devvm-t3-seed` with its bootstrap
+   token and copies `/mnt/backup/t3-state/` from the host into `/var/backups/t3-state/`.
+   The fields are `private_key`, `public_key` and `known_hosts` (the host's key, so ssh
+   checks it on first contact). On the host the key is pinned in root's
+   `authorized_keys` to
+   `command="/usr/bin/rrsync -ro /mnt/backup/t3-state",restrict,from="192.168.1.2"`,
+   declared in `playbooks/pve-host.yml` (tag `t3-snapshot`). It can read that one
+   directory and nothing else, and only from the firewall's inter-VLAN SNAT address.
+   The key file lives in a root-only temp directory for the copy and is deleted after.
+   `/var/backups/t3-state` is left root 0755. The per-user directories stay root 0700
+   until that user's first nightly `t3-backup-state` takes them over.
+3. On success it removes the hold. Provisioning (step 5) calls
+   `t3-restore-state --if-missing <user>` before `systemctl enable --now t3-serve@<user>`,
+   so each user's newest snapshot is their database from the first start.
+4. If the copy fails, the build carries on and the status reads
+   `ok (T3 held: snapshots not copied from the Proxmox host)`. While the hold is up,
+   `--if-missing` exits 3 for a user with no snapshot and no database, and provisioning
+   leaves that user's T3 stopped. Nobody gets an empty T3 that a later restore would have
+   to move aside.
+
+Copy by hand, after a failed step 4c or onto a box not built by `stacks/devvm`, from a
+machine that holds the admin's SSH key. Archive the user directories, not `.`: the host's
+`/mnt/backup/t3-state` is root 0700, and extracting `.` as root gives the target that mode,
+which stops every nightly and pre-bump snapshot on the new box.
+
+```bash
+# 1. host -> new devvm, into the directory t3-restore-state reads
+ssh root@192.168.1.127 'cd /mnt/backup/t3-state && tar -cf - --exclude=.incoming */' \
+  | ssh wizard@<new-devvm> 'sudo install -d -m 0755 /var/backups/t3-state && sudo tar -C /var/backups/t3-state -xf - --no-same-owner'
+# 2. release the hold; the next hourly provisioning run restores and starts each serve
+sudo rm -f /var/lib/t3-restore/awaiting-snapshots
+sudo systemctl start t3-provision-users.service   # or wait for the timer
+# 2b. a user whose serve already made an empty database: restore explicitly; the
+#     empty database is kept beside it as statev2.sqlite.before-restore-<ts>
+sudo t3-restore-state --dry-run --all
+sudo t3-restore-state --all            # or: sudo t3-restore-state <user>
+```
+
+`t3-restore-state` picks the newest `state-<ts>.sqlite[.gz]` in `/var/backups/t3-state/<user>/`
+(`--snapshot FILE` names another). Root decompresses it in `/var/lib/t3-restore` (root
+0700) and checks it with `PRAGMA quick_check` before touching anything. Every step inside
+the user's home runs as the user, so a symlink the user planted there reaches only what
+they could write anyway. It stops a running `t3-serve@<user>`, moves the live database and
+its WAL aside, installs the snapshot as `statev2.sqlite` (mode 0600) and starts the serve
+again. `--if-missing` does nothing for a user who has any T3 database. If the box ran a
+night before the restore, its own nightly snapshot of the empty database is now the newest
+file there: pass `--snapshot` with the pulled one, one user at a time (`--all` takes no
+`--snapshot`).
+
+**After a rebuild, on the host.** Nothing to do for the host key. The box that replaces
+the devvm installs the live devvm's SSH host keys from Vault
+`secret/workstation/devvm/ssh-host-keys` at first boot (`scripts/devvm-bootstrap` step
+2b), so the line the host's `/root/.ssh/known_hosts` holds for 10.0.10.10 still matches
+and the next night's `t3-state-pull` runs. Only if the bootstrap status ends
+`(host keys not installed: ...)` does the box answer with a new key and the pull fail
+(`NightlyChainStepFailed` pages); install the keys by hand as in
+`docs/runbooks/devvm-drill.md`, "Building the real replacement", rather than trusting
+the new key on the host.
+
+**ancamilea.** Her snapshots are pulled and kept, but she left the roster on 2026-08-17,
+so a rebuilt box has no account for her: provisioning and `--all` skip her. Her data is the
+pre-0.1.0 `state.sqlite` schema (migration 40); `t3-restore-state` installs every snapshot
+as `statev2.sqlite`, and whether T3 0.1.x accepts an old-schema file under that name has not
+been tested. If she is added back, restore her with `sudo t3-restore-state ancamilea` and
+check her threads; if T3 refuses the file, put it back as `~/.t3/userdata/state.sqlite`
+instead so T3 runs its own import.
 
 ### Layer 2: Weekly File-Level Backup (sda Backup Disk)
 
@@ -481,7 +623,7 @@ K8s CronJobs run inside the cluster, dumping database/state to NFS-exported back
 - The PostgreSQL job above and Immich's `postgresql-backup` (00:00, `pg_dumpall` of `immich-postgresql`) run on `docker.io/library/postgres:16.15-trixie`, so the client stays on PostgreSQL 16 like `pg-cluster`. Each job pushes `backup_last_success_timestamp` to the Pushgateway (jobs `postgresql-backup`, `postgresql-backup-per-db`, `immich-postgresql-backup`) with Perl's core `HTTP::Tiny`, because the image has no curl or wget. Until 2026-10-10 the jobs ran `postgres:16.4-bullseye` and installed curl at run time; that step failed once `bullseye-pgdg` left `apt.postgresql.org`, so the dumps kept succeeding while the timestamp stopped updating around 2026-09-06. The push result is logged as `pushgateway: <status>`.
 - **MySQL** (`mysql-backup`, 00:30): users and grants to `grants_*.sql.gz`, then `mysqldump --single-transaction --routines --events` of each database to `/mnt/main/mysql-backup/per-db/<dbname>/dump_*.sql.gz`. 14-day rotation. Until 2026-11-03 a full `--all-databases` dump and a separate per-db job (00:45) each read every database.
 - **ClickHouse** (rybbit, 01:10): CronJob `clickhouse-backup` writes schema plus Native-format rows per table to `/srv/nfs/clickhouse-backup/<yyyymmdd-hhmm>/`, after restoring the dump into `clickhouse-local` to check it. 14-day rotation. Runbook: `docs/runbooks/restore-clickhouse.md`.
-- **ClickHouse** (claude-sessions, 01:40): CronJob `clickhouse-backup` runs native `BACKUP DATABASE claude` to `/srv/nfs/claude-sessions-backup/`: a full on Sunday, an incremental against the newest full on other days. Incrementals kept 28 days, fulls 35. Runbook: `docs/runbooks/restore-claude-sessions.md`.
+- **ClickHouse** (claude-sessions, 01:40): CronJob `clickhouse-backup` runs native `BACKUP DATABASE claude` plus the `netsec` `*_hourly` rollup tables (not the raw `netsec` tables) to `/srv/nfs/claude-sessions-backup/`: a full on Sunday, an incremental against the newest full on other days. Incrementals kept 28 days, fulls 35. Runbook: `docs/runbooks/restore-claude-sessions.md`.
 - **Dolt** (beads-server, 01:25): CronJob `dolt-backup` writes a mysqldump per database to `/srv/nfs/dolt-backup/<yyyymmdd-hhmm>/`, after restoring it into a scratch Dolt directory to check it. Current rows only, no commit history. 14-day rotation. Runbook: `docs/runbooks/restore-dolt.md`.
 - **Dolt history** (beads-server, 01:45): CronJob `dolt-history-backup` copies each database's store from the `dolt-data` PVC (mounted read-only by a co-located pod; manifest first, chunk journal last), checks the copy with `dolt fsck`, runs `dolt backup sync-url` from the copy, and writes `<db>.tar` to `/srv/nfs/dolt-backup/history/<yyyymmdd-hhmm>/` after restoring it with `dolt backup restore` and comparing commit and branch counts. Keeps commit history, branches, tags and working sets; the live server only answers two count queries. Keeps the newest 14 runs. The Renovate rails run it before a Dolt bump. Runbook: `docs/runbooks/restore-dolt.md`.
 
@@ -665,9 +807,9 @@ PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 ### Deploying the PVE host scripts
 
 `lvm-pvc-snapshot`, `daily-backup`, `offsite-sync-backup`, `devvm-home-backup`,
-`vzdump-vms` and `nfs-mirror` deploy from git through Woodpecker, not by hand. Push a
-change to any of the eighteen files under `infra/scripts/` (`<name>.sh`, `<name>.service`,
-`<name>.timer`) and
+`vzdump-vms`, `nfs-mirror`, `router-config-backup`, `nightly-chain` and `t3-state-pull`
+deploy from git through Woodpecker, not by hand. Push a change to any of their files under
+`infra/scripts/` (`<name>.sh`, `<name>.service`, `<name>.timer`) and
 `.woodpecker/pve-scripts-sync.yml` copies the script to `/usr/local/bin/<name>`, the units
 to `/etc/systemd/system/`, runs `bash -n` on each script, then `systemctl daemon-reload`
 and prints the timer list. Failures post to Slack.
@@ -691,6 +833,8 @@ changing anything.
 `nfs-mirror` joined 2026-09-04, the last one still deployed by hand. All three of its
 files were byte-identical between repo and host when it joined.
 
+`t3-state-pull` joined 2026-11-11 with its timer in `DISABLED_TIMERS` from the start.
+
 Nothing in this set is deployed by hand any more.
 
 ## Configuration
@@ -709,12 +853,15 @@ Nothing in this set is deployed by hand any more.
 | `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14), mirrored offsite monthly (`-H` preserves the link farm) |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
-| `/usr/local/bin/nightly-chain` | PVE host: runs the night's dumps and the five host steps in order, holding kured's node lock (source `infra/scripts/nightly-chain.{sh,service,timer}`, helper `kured-lock.sh`) |
+| `/usr/local/bin/nightly-chain` | PVE host: runs the night's dumps and the six host steps in order, holding kured's node lock (source `infra/scripts/nightly-chain.{sh,service,timer}`, helper `kured-lock.sh`) |
 | `/etc/systemd/system/nightly-chain.timer` | 00:00 UTC daily, the only nightly backup timer |
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | **Disabled since 2026-11-10**: nightly-chain step 4 |
 | `/etc/systemd/system/daily-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 5 |
-| `/etc/systemd/system/offsite-sync-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 7 |
-| `/etc/systemd/system/devvm-home-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 6 |
+| `/etc/systemd/system/offsite-sync-backup.timer` | **Disabled since 2026-11-10**: nightly-chain step 8 |
+| `/etc/systemd/system/devvm-home-backup.timer` | **Disabled since 2026-11-10**; the step itself retired from the nightly chain 2026-11-12 |
+| `/usr/local/bin/t3-state-pull` | PVE host: nightly-chain step 7, the devvm's daily T3 snapshots → `/mnt/backup/t3-state/<user>/` (source `infra/scripts/t3-state-pull.{sh,service,timer}`; timer disabled, the chain starts it) |
+| `/mnt/backup/t3-state/` | PVE host: newest 3 T3 snapshots per user as `state-<ts>.sqlite.gz`, mode 0700/0600, carried offsite nightly through the manifest |
+| `/usr/local/bin/t3-restore-state` | devvm: puts a user's newest snapshot back as `~/.t3/userdata/statev2.sqlite` (source `infra/scripts/t3-restore-state.sh`, installed by `playbooks/devvm.yml`) |
 | `/etc/systemd/system/vzdump-vms.timer` | **Disabled since 2026-09-15** on purpose (`DISABLED_TIMERS` in `scripts/ci/pve-scripts-sync.sh`) |
 | `/etc/systemd/system/vzdump-vms.service` | oneshot: `vzdump-vms` (source `infra/scripts/vzdump-vms.{sh,service,timer}`) |
 | `/usr/local/bin/nfs-mirror` | PVE host: nightly-chain step 3, mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
@@ -1045,6 +1192,8 @@ module "nfs_backup" {
 │  OpnsenseBackupStale        > 9d  since last success            │
 │  OffsiteBackupSyncStale     > 8d  since last success            │
 │  BackupDiskFull             > 85% usage on /mnt/backup          │
+│  T3SnapshotOffVmStale       > 72h newest T3 snapshot on sda     │
+│  T3SnapshotPullNeverReported no t3-state-pull metric for 48h    │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1096,7 +1245,7 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 | Uptime Kuma | ✓ | ✓ | — | ✓ | proxmox-lvm |
 | **Other apps not enumerated above** | ✓¹ | ✓¹ | varies | ✓ | proxmox-lvm / proxmox-lvm-encrypted |
 | **Hand-managed VMs (not in Terraform)** |
-| devvm (workstation, VMID 102) | — | — | ✓ daily `/home` rsync + weekly vzdump image | ✓ monthly | local-lvm (sdc) |
+| devvm (workstation, VMID 102) | — | — | ✓ daily `/home` rsync + daily T3 snapshots (`t3-state-pull`); the weekly vzdump image is retired | ✓ `/home` monthly, T3 snapshots nightly | local-lvm (sdc) |
 | Other hand-managed VMs (HA 103, registry 220, k8s nodes) | — | — | — gap² | — | local-lvm — see note² |
 | **Media (NFS)** |
 | Immich (~800GB) | — | — | — | ✓ | NFS |

@@ -53,6 +53,13 @@ resource "kubernetes_deployment" "error_pages" {
             name  = "TEMPLATE_NAME"
             value = "shuffle"
           }
+          # The catch-all route (unrouted *.viktorbarzin.me hosts) answers 404 with
+          # a 404 status, not 200, so a deleted App's host no longer looks alive.
+          # The errors middlewares keep the backend's status either way.
+          env {
+            name  = "SEND_SAME_HTTP_CODE"
+            value = "true"
+          }
 
           liveness_probe {
             http_get {
@@ -206,6 +213,30 @@ resource "kubernetes_manifest" "tlsstore_default" {
   depends_on = [helm_release.traefik, module.tls_secret]
 }
 
+# Rewrites every path on the catch-all route to /404. error-pages answers its
+# own health path /healthz with 200 "OK", so before this an unrouted host
+# (for example a deleted Cloud App) answered /healthz 200 while / answered
+# 404, and an uptime check on a dead host read healthy (Cloud round-4
+# end-to-end test). The kubelet probes reach the pod directly, not through
+# this route.
+resource "kubernetes_manifest" "middleware_catchall_404_path" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "catchall-404-path"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      replacePath = {
+        path = "/404"
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Catch-all IngressRoute — serves 404 for unmatched *.viktorbarzin.me hosts (lowest priority)
 # Only matches *.viktorbarzin.me — non-viktorbarzin.me domains get TLS rejection (no matching router)
 # This prevents leaking the wildcard cert to attackers who point arbitrary domains at our IP
@@ -225,6 +256,7 @@ resource "kubernetes_manifest" "ingressroute_catchall" {
         priority = 1
         middlewares = [
           { name = "rate-limit", namespace = kubernetes_namespace.traefik.metadata[0].name },
+          { name = "catchall-404-path", namespace = kubernetes_namespace.traefik.metadata[0].name },
         ]
         services = [{
           name      = "error-pages"
@@ -236,5 +268,5 @@ resource "kubernetes_manifest" "ingressroute_catchall" {
     }
   }
 
-  depends_on = [helm_release.traefik, kubernetes_service.error_pages]
+  depends_on = [helm_release.traefik, kubernetes_service.error_pages, kubernetes_manifest.middleware_catchall_404_path]
 }

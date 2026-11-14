@@ -92,6 +92,17 @@ resource "kubernetes_namespace" "this" {
   }
 }
 
+# Only when var.service_account is set. The stack binds any RBAC to it.
+resource "kubernetes_service_account" "this" {
+  count = var.service_account != null ? 1 : 0
+
+  metadata {
+    name      = var.service_account.name
+    namespace = kubernetes_namespace.this.metadata[0].name
+  }
+  automount_service_account_token = var.service_account.automount_token
+}
+
 resource "kubernetes_deployment" "this" {
   # CI owns rollouts (CI_SETS_IMAGE). Waiting here would fail the first apply,
   # which runs before the first image exists, and leave the Deployment tainted;
@@ -108,7 +119,7 @@ resource "kubernetes_deployment" "this" {
       # Restart on a change to any Secret read through env. <name>-db-creds is
       # left out on purpose: the app reads the password file on every new
       # connection, so the Vault rotation needs no restart.
-      "secret.reloader.stakater.com/reload" = join(",", local.env_from_secrets)
+      "secret.reloader.stakater.com/reload" = join(",", distinct(concat(local.env_from_secrets, [for e in var.secret_env : e.secret])))
     }
   }
 
@@ -130,6 +141,11 @@ resource "kubernetes_deployment" "this" {
       }
 
       spec {
+        # null without var.service_account, so the pod keeps the default
+        # service account and the provider default, as before.
+        service_account_name            = one(kubernetes_service_account.this[*].metadata[0].name)
+        automount_service_account_token = var.service_account != null ? var.service_account.automount_token : null
+
         # Needed only for a private ghcr image (a package pushed from a private
         # GitHub repo is private); see README "Private repositories".
         dynamic "image_pull_secrets" {
@@ -212,6 +228,21 @@ resource "kubernetes_deployment" "this" {
             content {
               name  = env.value.name
               value = env.value.value
+            }
+          }
+
+          # var.secret_env: single keys from Secrets the stack owns.
+          dynamic "env" {
+            for_each = var.secret_env
+            content {
+              name = env.value.name
+              value_from {
+                secret_key_ref {
+                  name     = env.value.secret
+                  key      = env.value.key
+                  optional = env.value.optional
+                }
+              }
             }
           }
 

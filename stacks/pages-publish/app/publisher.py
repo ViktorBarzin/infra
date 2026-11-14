@@ -29,6 +29,31 @@ log = logging.getLogger(__name__)
 
 STATUSES = ("draft", "approved", "executing", "done")
 
+# Lifetimes (Viktor, 2026-11-12): pages and public links published from now on
+# expire after 90 days unless the author says otherwise; app/bundles.py
+# deletes them once expired, recoverable from git history.
+DEFAULT_TTL = "90d"
+_TTL_RE = re.compile(r"^(?:([1-9]\d{0,3})d|never)$")
+_META_RE = re.compile(r'<meta name="plan-(\w+)" content="([^"]*)"')
+
+
+def validate_ttl(ttl: str | None) -> str | None:
+    """None (use the default rule), "<N>d" with N up to 9999, or "never"."""
+    if ttl is None or ttl == "":
+        return None
+    if not _TTL_RE.match(ttl):
+        raise PublishError(f"expires must be <days>d (such as 30d or 90d) or never, got {ttl!r}")
+    return ttl
+
+
+def page_meta(path: str) -> dict[str, str]:
+    """The plan-* meta tags in a page's first 4 KB (empty if unreadable)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return dict(_META_RE.findall(f.read(4096)))
+    except OSError:
+        return {}
+
 # How many times publish() will re-sync + re-render + re-push when another
 # publish lands on master first.
 DEFAULT_ATTEMPTS = 5
@@ -37,10 +62,12 @@ DEFAULT_ATTEMPTS = 5
 # '..' check in sanitize_slug is what blocks parent traversal, not the regex.
 _SLUG_RE = re.compile(r"[0-9A-Za-z._-]+")
 
-# Every asset a rendered page can reference, as it appears in the HTML. The
-# charset has no '/' so a match is always a bare filename inside assets/,
-# which is what keeps the preview from serving an arbitrary repo file.
-_ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
+# Every asset a rendered page can reference, as it appears in the HTML: a file
+# in assets/ or in one of its versioned library dirs (assets/reveal-6.0.2/...).
+# No segment may start with '.', and collect_assets() checks the resolved path
+# stays inside assets/, which is what keeps the preview from serving an
+# arbitrary repo file.
+_ASSET_REF_RE = re.compile(r"/assets/((?:[0-9A-Za-z_-][0-9A-Za-z._-]*/){0,3}[0-9A-Za-z_-][0-9A-Za-z._-]*)")
 
 # Assets are text (css/js). A preview of a page with a mermaid diagram carries
 # mermaid.min.js, ~3.5 MB, so the ceiling is well above that and still bounded.
@@ -58,16 +85,17 @@ MAX_PAGE_BYTES = 8 * 1024 * 1024
 MAX_PAGE_REQUEST_BYTES = 2 * MAX_PAGE_BYTES
 
 
-# /publish-bundle limits. The showcase site is a handful of text files plus one
-# OpenGraph PNG; these leave room for growth while bounding one request.
+# /publish-bundle limits, for the Showcase's bundle token and for every user's
+# Bundles (app/bundles.py adds a 10 MiB per-file cap and a file-type list).
+# 25 MiB per publish is decision 3 of the 2026-11-12 design.
 MAX_BUNDLE_FILES = 200
-MAX_BUNDLE_BYTES = 20 * 1024 * 1024
+MAX_BUNDLE_BYTES = 25 * 1024 * 1024
 MAX_BUNDLE_DEPTH = 3  # path segments, so "a/b/file" at most
 BUNDLE_ENCODINGS = ("utf-8", "base64")
 
 # Top-level dirs of the repo that belong to the site itself, not to a user or a
 # bundle owner. Kept in sync with config.RESERVED_USERS.
-_RESERVED_SEGMENTS = ("shared", "assets", "tools")
+_RESERVED_SEGMENTS = ("shared", "assets", "tools", "c", "p")
 
 
 def _unsafe_segment(segment: str) -> bool:
@@ -176,12 +204,28 @@ def ensure_repo(cfg: Config) -> None:
     _run(["git", "-C", cfg.repo_dir, "config", "user.email", cfg.committer_email])
 
 
-def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> str:
+def render_page(
+    cfg: Config,
+    md_path: str,
+    abs_target_dir: str,
+    status: str,
+    source_name: str | None = None,
+    *,
+    ttl: str | None = None,
+    default_ttl: str | None = None,
+    warnings: list[str] | None = None,
+) -> str:
     """Invoke the repo's renderer (tools/render.py); return the path it emitted.
 
     render.py prints the written page path on stdout (``<date>-<slug>.html``,
     or a reused page) and regenerates that dir's index.html — the emitted path
     is authoritative for the served URL, so we read it back rather than guess.
+
+    ``source_name`` is the file name the author published from. The markdown
+    sits in a fresh temp dir on every call, so without it the renderer saw a
+    new source each time and minted a new page per day (fixed 2026-11-12).
+    Exit code 3 is a content error in the markdown (an invalid chart block),
+    which is the author's to fix, so it becomes a 400.
     """
     cmd = [
         cfg.python_bin,
@@ -192,7 +236,23 @@ def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> 
         "--status",
         status,
     ]
+    if source_name:
+        cmd += ["--source-name", source_name]
+    if ttl:
+        cmd += ["--ttl", ttl]
+    if default_ttl:
+        cmd += ["--default-ttl", default_ttl]
     p = _run(cmd)
+    if warnings is not None:
+        # render.py's "warning:" lines (the plan prose budget) go back to the
+        # author; they never fail a publish.
+        warnings += [
+            ln.strip().removeprefix("warning:").strip()
+            for ln in (p.stderr or "").splitlines()
+            if ln.strip().startswith("warning:")
+        ]
+    if p.returncode == 3:
+        raise PublishError(p.stderr.strip().removeprefix("error: "))
     if p.returncode != 0:
         raise RenderError(f"render.py failed: {p.stderr.strip()}")
     lines = [ln.strip() for ln in p.stdout.splitlines() if ln.strip()]
@@ -242,6 +302,15 @@ def sync_to_master(cfg: Config) -> None:
     if reset.returncode != 0:
         log.error("git reset failed: %s", reset.stderr.strip())
         raise RenderError(f"git reset failed: {reset.stderr.strip()}")
+
+    # Drop untracked files a failed request left behind (a Bundle written
+    # before its index.md failed to render, a public link whose commit never
+    # happened). reset --hard leaves them, and the next publish's scoped
+    # `git add` would commit them as part of somebody else's page.
+    clean = _run(["git", "-C", cfg.repo_dir, "clean", "-ffd"], env=env)
+    if clean.returncode != 0:
+        log.error("git clean failed: %s", clean.stderr.strip())
+        raise RenderError(f"git clean failed: {clean.stderr.strip()}")
 
     # Land on a real branch. Nothing here needs one (`push HEAD:master` works
     # detached), but a detached HEAD is exactly what made the wedged clone hard
@@ -316,7 +385,8 @@ def publish(
     status: str = "draft",
     shared: bool = False,
     attempts: int = DEFAULT_ATTEMPTS,
-) -> dict[str, str]:
+    ttl: str | None = None,
+) -> dict:
     """Full pipeline: validate -> (sync -> render -> commit -> push). url + path.
 
     ``user`` is the token-resolved identity; callers must never pass a
@@ -332,6 +402,7 @@ def publish(
     """
     slug = sanitize_slug(filename)
     status = validate_status(status)
+    ttl = validate_ttl(ttl)
     subdir = target_subdir(user, shared)
     abs_target = os.path.join(cfg.repo_dir, subdir)
 
@@ -353,10 +424,17 @@ def publish(
         for attempt in range(1, attempts + 1):
             sync_to_master(cfg)
             os.makedirs(abs_target, exist_ok=True)
-            out_path = render_page(cfg, md_path, abs_target, status)
+            warnings: list[str] = []
+            out_path = render_page(
+                cfg, md_path, abs_target, status, f"{slug}.md",
+                ttl=ttl, default_ttl=DEFAULT_TTL, warnings=warnings,
+            )
+            meta = page_meta(out_path)
             result = {
                 "url": derive_url(cfg, out_path, shared),
                 "path": os.path.relpath(out_path, cfg.repo_dir),
+                "expires": meta.get("expires") or None,
+                "warnings": warnings,
             }
 
             if not stage_and_commit(cfg, subdir, slug, user, status):
@@ -392,6 +470,8 @@ def collect_assets(cfg: Config, html: str) -> dict[str, str]:
     assets: dict[str, str] = {}
     root = os.path.realpath(os.path.join(cfg.repo_dir, "assets"))
     for name in sorted(set(_ASSET_REF_RE.findall(html))):
+        if ".." in name:
+            continue
         path = os.path.realpath(os.path.join(root, name))
         if path != root and not path.startswith(root + os.sep):
             continue  # unreachable given the charset; kept as the explicit gate
@@ -443,7 +523,7 @@ def render_preview(
             f.write(content)
         out_dir = os.path.join(td, "out")
         os.makedirs(out_dir, exist_ok=True)
-        out_path = render_page(cfg, md_path, out_dir, status)
+        out_path = render_page(cfg, md_path, out_dir, status, f"{slug}.md")
         with open(out_path, encoding="utf-8") as f:
             html = f.read()
 

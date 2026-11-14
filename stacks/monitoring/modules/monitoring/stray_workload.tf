@@ -173,7 +173,7 @@ resource "kubernetes_job" "stray_workload_db_init" {
         restart_policy = "Never"
         container {
           name  = "db-init"
-          image = "docker.io/library/postgres:18.6-alpine"
+          image = "docker.io/library/postgres:18.7-alpine"
           # The SQL lives in its own file (stray_workload_db_init.sql) rather
           # than a heredoc, so nothing needs Terraform template escaping and the
           # whole script is runnable by hand. psql interpolates the password as
@@ -379,7 +379,7 @@ resource "kubernetes_cron_job_v1" "stray_workload_detect" {
             # on stock images with nothing installed at runtime.
             init_container {
               name              = "extract-declared"
-              image             = "docker.io/library/postgres:18.6-alpine"
+              image             = "docker.io/library/postgres:18.7-alpine"
               image_pull_policy = "IfNotPresent"
               # ON_ERROR_STOP=1 is the load-bearing flag: without it a schema
               # the reader cannot SELECT is skipped with a warning and the

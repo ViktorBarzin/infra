@@ -58,11 +58,19 @@ def repo_dir(repo: str) -> str:
     """The directory under ~/code a `repos` entry clones to: its name part."""
     return repo.rsplit("/", 1)[-1]
 # Tier -> supplementary groups the reconcile ENSURES (additive-only; never stripped).
+# codex-shared reads the shared ChatGPT login in /opt/codex-shared (the codex
+# wrapper in playbooks/devvm.yml); admins and power users had it by hand until
+# 2026-11-11, so a rebuilt box now gives it to the same people.
 TIER_GROUPS: dict[str, tuple[str, ...]] = {
-    "admin": ("code-shared", "docker", "sudo"),
-    "power-user": (),
+    "admin": ("code-shared", "codex-shared", "docker", "sudo"),
+    "power-user": ("codex-shared",),
     "namespace-owner": (),
 }
+# Groups a roster row may add beyond its tier's (`extra_groups`). docker is
+# root-equivalent, so it is granted per person in a reviewed diff rather than
+# by tier; emo keeps it (Viktor, 2026-11-11). sudo and code-shared stay
+# tier: admin's alone.
+EXTRA_GROUPS_ALLOWED: tuple[str, ...] = ("docker",)
 DEFAULT_SHELL = "/bin/zsh"
 # The FLOOR a membership-driven provision lands on: the least privilege that
 # still makes the box useful, and the same default provision-user.yml already
@@ -122,6 +130,11 @@ class User:
     # provisioner installs as ~/.agents/AGENTS.md. Each user's file is in a
     # private repo of their own, so one user cannot read another's.
     agents_repo: str | None = None
+    # Forgejo `owner/name` of the user's chezmoi source, which the provisioner
+    # applies once on a new box (`chezmoi init --apply`).
+    dotfiles: str | None = None
+    # Groups from EXTRA_GROUPS_ALLOWED this user gets on top of the tier's.
+    extra_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,6 +160,7 @@ class Account:
     # caller constructing Account positionally keeps working.
     authentik_user: str = ""
     agents_repo: str | None = None
+    dotfiles: str | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +234,19 @@ def _parse_user(os_user: str, spec: dict) -> User:
             f"user {os_user!r}: agents_repo must be a Forgejo owner/name, "
             f"got {agents_repo!r}"
         )
+    dotfiles = spec.get("dotfiles")
+    if dotfiles is not None and not _is_owned_repo(dotfiles):
+        raise RosterError(
+            f"user {os_user!r}: dotfiles must be a Forgejo owner/name, got {dotfiles!r}"
+        )
+    extra_groups = spec.get("extra_groups") or []
+    if not isinstance(extra_groups, list) or any(
+        g not in EXTRA_GROUPS_ALLOWED for g in extra_groups
+    ):
+        raise RosterError(
+            f"user {os_user!r}: extra_groups must be a list of "
+            f"{list(EXTRA_GROUPS_ALLOWED)}, got {extra_groups!r}"
+        )
     claude_auth = spec.get("claude_auth", True)
     if not isinstance(claude_auth, bool):
         raise RosterError(
@@ -263,6 +290,8 @@ def _parse_user(os_user: str, spec: dict) -> User:
         t3_port,
         t3_host,
         agents_repo,
+        dotfiles,
+        tuple(sorted(set(extra_groups))),
     )
 
 
@@ -493,13 +522,14 @@ def derive_desired_state(
             tier=u.tier,
             shell=DEFAULT_SHELL,
             login_locked=True,
-            groups=TIER_GROUPS[u.tier],
+            groups=tuple(sorted(set(TIER_GROUPS[u.tier]) | set(u.extra_groups))),
             code_layout=u.code_layout,
             repos=u.repos,
             claude_auth=u.claude_auth and not u.parked,
             parked=u.parked,
             authentik_user=u.authentik_user,
             agents_repo=u.agents_repo,
+            dotfiles=u.dotfiles,
         )
         for u in roster.users.values()
     }
@@ -751,6 +781,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "parked": a.parked,
                 "authentik_user": a.authentik_user,
                 "agents_repo": a.agents_repo,
+                "dotfiles": a.dotfiles,
             }
             for name, a in ds.accounts.items()
         },
