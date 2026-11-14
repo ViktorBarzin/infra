@@ -1,0 +1,128 @@
+---
+# playbooks/rpi-sofia-monitors.yml
+#
+# Monitors on rpi-sofia that report to ha-sofia. Today: vermont-reach.
+#
+# vermont-reach (Emil, 2026-11-14) checks every 5 minutes whether the Vermont
+# complex video system is reachable from outside and healthy: the complex
+# internet, the NVR (.150) and the back-door terminal (.117) on the LAN and in
+# Hik-Connect, port 8000 on the complex's public address, the NVR disk, each
+# camera channel, and new faults in the NVR exception log. A failure must show
+# on two runs in a row before a notification goes out, and every notified
+# failure gets a recovery message with its duration. Notifications go to MQTT
+# topic vermont-reach/notify; the ha-sofia automation "Вермонт видеосистема:
+# известия" sends them to Emil's iPhone and to HA's notifications. The design
+# and the load estimate are in docs/runbooks/cameras-nvr-intercom.md
+# ("Наблюдение на достъпа отвън").
+#
+# Load, measured 2026-11-14: per run, 4 small ISAPI requests to the NVR, 1 to
+# the .117, and one TCP connect without login to the public port 8000 over
+# the home internet. No Hik-Connect cloud calls.
+#
+# The older hand-installed monitors on the Pi (nvr-channels,
+# entrance-panels-watch, sd-health-monitor) are not managed here yet.
+#
+# Secrets come from Vault at run time (secret/emo/vermont-panels,
+# secret/emo/vermont-intercom-admin, secret/emo/rpi-sofia-mqtt), so the
+# person running this needs a Vault token that reads secret/emo (emo or an
+# admin) and VAULT_ADDR set.
+#
+# RUN (from repo root; claim presence first:
+#      presence claim host:rpi-sofia --purpose "rpi-sofia monitors"):
+#   tests   : (cd playbooks/files/rpi-sofia && python3 -m unittest vermont_reach_test)
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-monitors.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/rpi-sofia-monitors.yml
+#
+# Stop it: sudo systemctl disable --now vermont-reach.timer
+
+- name: rpi-sofia monitors
+  hosts: rpi_sofia
+  gather_facts: false
+  become: true
+  vars:
+    vermont_public_host: 2.56.52.209
+    vermont_public_port: 8000
+    vr_nvr_pass: "{{ lookup('pipe', 'vault kv get -field=password secret/emo/vermont-panels') }}"
+    vr_acs_pass: "{{ lookup('pipe', 'vault kv get -field=password secret/emo/vermont-intercom-admin') }}"
+    vr_mqtt_host: "{{ lookup('pipe', 'vault kv get -field=mqtt_host secret/emo/rpi-sofia-mqtt') }}"
+    vr_mqtt_port: "{{ lookup('pipe', 'vault kv get -field=mqtt_port secret/emo/rpi-sofia-mqtt') }}"
+    vr_mqtt_user: "{{ lookup('pipe', 'vault kv get -field=mqtt_user secret/emo/rpi-sofia-mqtt') }}"
+    vr_mqtt_pass: "{{ lookup('pipe', 'vault kv get -field=mqtt_pass secret/emo/rpi-sofia-mqtt') }}"
+
+  tasks:
+    - name: Install mosquitto clients for MQTT publishing
+      ansible.builtin.apt:
+        name: mosquitto-clients
+        state: present
+
+    - name: Install vermont-reach
+      ansible.builtin.copy:
+        src: files/rpi-sofia/vermont_reach.py
+        dest: /usr/local/bin/vermont-reach
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Config directory for vermont-reach
+      ansible.builtin.file:
+        path: /etc/vermont-reach
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: vermont-reach credentials
+      ansible.builtin.copy:
+        dest: /etc/vermont-reach.env
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          # Managed by infra playbooks/rpi-sofia-monitors.yml; values from Vault.
+          NVR_USER=admin
+          NVR_PASS={{ vr_nvr_pass }}
+          ACS_USER=admin
+          ACS_PASS={{ vr_acs_pass }}
+          MQTT_HOST={{ vr_mqtt_host }}
+          MQTT_PORT={{ vr_mqtt_port }}
+          MQTT_OPTIONS_DIR=/etc/vermont-reach
+          DISCOVERY_PREFIX=homeassistant
+          PUBLIC_HOST={{ vermont_public_host }}
+          PUBLIC_PORT={{ vermont_public_port }}
+      no_log: true
+
+    - name: mosquitto_pub options file (keeps the MQTT login off the command line)
+      ansible.builtin.copy:
+        dest: /etc/vermont-reach/mosquitto_pub
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          -u {{ vr_mqtt_user }}
+          -P {{ vr_mqtt_pass }}
+      no_log: true
+
+    - name: vermont-reach units
+      ansible.builtin.copy:
+        src: "files/rpi-sofia/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - vermont-reach.service
+        - vermont-reach.timer
+      register: vr_units
+
+    - name: Reload systemd after unit changes
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: vr_units.changed
+
+    - name: Enable and start the vermont-reach timer
+      ansible.builtin.systemd:
+        name: vermont-reach.timer
+        enabled: true
+        state: started
+      # In --check the unit file is not on the Pi yet, so systemd cannot find it.
+      ignore_errors: "{{ ansible_check_mode }}"
