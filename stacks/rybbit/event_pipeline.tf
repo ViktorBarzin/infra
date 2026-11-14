@@ -10,6 +10,7 @@ locals {
   analytics_apps = {
     "alexa-assistant" = "alexa-assistant.viktorbarzin.me"
     "blog"            = "viktorbarzin.me"
+    "cloud"           = "cloud.viktorbarzin.me"
     "fire-planner"    = "fire-planner.viktorbarzin.me"
     "health"          = "health.viktorbarzin.me"
     "interview-prep"  = "interview-prep.viktorbarzin.me"
@@ -20,6 +21,7 @@ locals {
     "pages"           = "pages.viktorbarzin.me"
     "plotting-book"   = "plotting-book.viktorbarzin.me"
     "priority-pass"   = "priority-pass.viktorbarzin.me"
+    "reels"           = "reels.viktorbarzin.me"
     "tasks"           = "tasks.viktorbarzin.me"
     "terminal-lobby"  = "terminal.viktorbarzin.me"
     "tripit"          = "tripit.viktorbarzin.me"

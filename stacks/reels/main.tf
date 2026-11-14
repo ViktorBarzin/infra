@@ -67,10 +67,12 @@ module "app" {
   tls_secret_name = var.tls_secret_name
 
   app_secret_env = { APP_ENCRYPTION_KEY = "app_encryption_key" }
-  extra_env = [
+  extra_env = concat([
     { name = "IMMICH_URL", value = local.immich_url },
     { name = "DATA_DIR", value = "/data" },
-  ]
+  ], local.telemetry_env)
+  # TELEMETRY_WRITE_KEY, SENTRY_DSN, SENTRY_BROWSER_DSN (telemetry.tf).
+  secret_env     = local.telemetry_secret_env
   emit_group_env = true
 
   volumes = [{ name = "data", claim_name = "reels-data", mount_path = "/data" }]

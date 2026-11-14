@@ -63,8 +63,9 @@ module "console" {
 
   extra_env = local.cloud_console_env
   # M5: SECRETS_PUBLIC_KEY and GITHUB_API_TOKEN from Secret
-  # cloud-console-system (below), optional.
-  secret_env = local.cloud_console_secret_env
+  # cloud-console-system (below), optional. TELEMETRY_WRITE_KEY, SENTRY_DSN
+  # and SENTRY_BROWSER_DSN from Secret cloud-telemetry (telemetry.tf).
+  secret_env = concat(local.cloud_console_secret_env, local.telemetry_secret_env)
 
   # email_verified true only for accounts whose email something vouched for
   # (email_claim.tf), so the owner check can match a Forgejo account by a
