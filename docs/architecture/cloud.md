@@ -255,7 +255,10 @@ say that pushes do not deploy while it is `false`. It is `false` until the GitHu
 the accounts it made still carry it, which is what the owner check matches
 on. The console gets `PROMETHEUS_URL=http://prometheus-server.monitoring.svc.cluster.local`
 (Metrics tab) and `LOKI_URL=http://loki.monitoring.svc.cluster.local:3100`
-(logs tab).
+(logs tab). Alloy gives log lines from `p-*` namespaces an `image` label
+(`stacks/monitoring/modules/monitoring/alloy.yaml`); the Logs tab uses it to
+leave out the "Not deployed yet" placeholder and to tag each line with its
+Deploy. It adds no streams, because each container is one stream already.
 
 Network: neither Deployment has an egress NetworkPolicy, and namespace
 `cloud` carries `tier=4-aux`, so Calico's `wave1-egress-observe-tier34`
