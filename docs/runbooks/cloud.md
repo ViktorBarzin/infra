@@ -186,6 +186,29 @@ source or verified path for that person, an admin sets
 `cloud_apps_email_vouched: true` in the user's attributes in Authentik, only
 for an email they know is that person's.
 
+## Add a Cloud User
+
+1. Put the person's Authentik account in the group **Cloud Users** (or
+   **Cloud Operators** for operator rights). That lets them sign in to the
+   console.
+2. Check that Authentik vouches for their email. Without it, the shared
+   private-App client `cloud-apps` (policy `cloud-apps-active-users`,
+   `stacks/authentik/cloud-apps.tf`) refuses them at every private App,
+   their own included, with Authentik's "Request has been denied" page.
+   Cloud's Plan warns when this is the case. The account is vouched for when
+   one of these holds:
+   - a social source enrolled it (Google, GitHub, Facebook);
+   - the passkey signup verified the email (path `users/email-verified`);
+   - an admin set `cloud_apps_email_vouched: true` in its attributes.
+3. For an account made by hand or by invitation, set
+   `cloud_apps_email_vouched: true` only for an email you know belongs to
+   that person. Users cannot set it themselves. The same rule decides
+   `email_verified` in Cloud's sign-in profile (`stacks/cloud/email_claim.tf`),
+   which the Forgejo owner check below also reads.
+
+Cloud's round-4 end-to-end test hit step 2: a test account made by hand had
+no vouch, so Authentik refused its own private App.
+
 ## Restart
 
 The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:
