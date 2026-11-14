@@ -18,7 +18,7 @@
 | linkwarden | OAuth2/OIDC | implicit consent |
 | Tasks | OAuth2/OIDC (confidential, TF: `stacks/tasks` via `modules/kubernetes/tanstack_app`) | implicit consent |
 | Vault | OAuth2/OIDC | implicit consent |
-| wrongmove | OAuth2/OIDC | implicit consent |
+| wrongmove | OAuth2/OIDC (public, provider pk 15, TF: `stacks/real-estate-crawler/authentik.tf`, adopted from the UI 2026-11-14) | implicit consent |
 
 ### Access bindings
 
