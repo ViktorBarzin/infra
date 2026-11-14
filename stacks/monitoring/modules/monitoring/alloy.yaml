@@ -85,6 +85,20 @@ alloy:
           target_label = "container"
         }
 
+        // Label creation - "image" for Cloud's Project namespaces (p-*) only.
+        // Cloud's Logs tab leaves out the "Not deployed yet" placeholder's
+        // lines by it and tags each line with the Deploy whose image wrote it
+        // (cloud repo, src/server/logs.server.ts). No new streams: a pod's
+        // container is one stream already. Other namespaces get no label.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_image"]
+          separator     = ";"
+          regex         = "p-[a-z0-9-]+;(.+)"
+          action        = "replace"
+          target_label  = "image"
+          replacement   = "$1"
+        }
+
         // Label creation -  "app" field from "__meta_kubernetes_pod_label_app_kubernetes_io_name"
         rule {
           source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
