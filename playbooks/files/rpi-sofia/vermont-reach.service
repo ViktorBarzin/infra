@@ -1,0 +1,9 @@
+[Unit]
+Description=Vermont complex watch: outside reachability and NVR health -> HA (MQTT)
+After=network-online.target camera-net.service
+Wants=camera-net.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vermont-reach
+TimeoutStartSec=240
