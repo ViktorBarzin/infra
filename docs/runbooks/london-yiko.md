@@ -114,6 +114,36 @@ the `spotArea` clean type.
 - The camera failed with `20303` while the robot was idle on the dock. The
   stream started once the robot was out cleaning.
 
+### Drive Yiko by hand
+
+`homelab ha yiko drive forward|backward <cm>`, `turn left|right [deg]`, `stop`
+and `look` (v0.41). They send the raw command the Ecovacs app's joystick sends,
+found by decompiling the app (com.eco.global.app 3.17, class
+`common_video_manager...data.Move`): `move` with
+`{"act": "forward"|"backward", "a": 0}` or `{"act": "spinLeft"|"spinRight",
+"a": 90}`, re-sent every 3 s while the button is held, then `{"act": "stop"}`.
+
+Measured 2026-11-14:
+
+| Fact | Value |
+|---|---|
+| Forward speed | about 20 cm/s (2 s moved 40 cm, 4 s moved 80 cm on the map) |
+| Turn speed | 40-57 deg/s across runs; the CLI uses 50, so a turn lands within about 25 deg |
+| `a` | not an angle: a=10, 30 and 90 turned alike; a over 90 is ignored |
+| `turnLeft`/`turnRight` (with `a`) | accepted, but each is a U-turn of about 180 deg |
+| `turnAround` | accepted, but did not change the heading |
+| A new spin 0.4 s after `stop` | ignored, so long moves run as chunks 1.5 s apart |
+| Re-sending a spin while it turns | cut a 180 deg turn to about 100 deg |
+| Obstacles | the robot stops by itself |
+
+- Position: `image.yiko_map`'s SVG holds the robot (`<use href="#d">`) and the
+  dock (`<use href="#c">`); 1 unit is 5 cm. Use robot minus dock, because the
+  image is re-cropped. `getPos` always answers `invalid: 1`.
+- Camera: one session lasts 5 min (HA's auto-off). For 3-5 min after a session
+  ends, and while the robot is idle on the dock, Ecovacs answers `start_watch`
+  with `20303`. A `stop` or a small turn did not wake it. `look` restarts the
+  camera once if a snapshot fails.
+
 ### HA London: Ecovacs integration says "Device verification required"
 
 Ecovacs sometimes asks a known client to verify again by email (it happened to

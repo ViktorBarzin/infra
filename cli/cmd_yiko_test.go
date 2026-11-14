@@ -20,6 +20,7 @@ type fakeYikoHA struct {
 	states   map[string]map[string]any
 	calls    []string // "domain.service <json body>"
 	media    map[string]time.Time
+	camera   []byte // served at /api/camera_proxy/camera.yiko when set
 	onCall   func(f *fakeYikoHA, svc string, body map[string]any)
 	authSeen string
 }
@@ -86,6 +87,16 @@ func (f *fakeYikoHA) handler(w http.ResponseWriter, r *http.Request) {
 			hook(f, strings.Replace(svc, "/", ".", 1), body)
 		}
 		w.Write([]byte("[]"))
+	case r.URL.Path == "/api/camera_proxy/camera.yiko":
+		f.mu.Lock()
+		img := f.camera
+		f.mu.Unlock()
+		if img == nil {
+			http.Error(w, "no image", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(img)
 	case strings.HasPrefix(r.URL.Path, "/media/local/"):
 		f.mu.Lock()
 		mt, ok := f.media[strings.TrimPrefix(r.URL.Path, "/media/local/")]
