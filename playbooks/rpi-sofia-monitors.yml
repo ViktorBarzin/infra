@@ -40,7 +40,9 @@
   gather_facts: false
   become: true
   vars:
-    vermont_public_host: VERMONT_PUBLIC_HOST_IN_VAULT
+    # The complex's public address, where the NVR answers on 8000. Kept in
+    # Vault, not here: the repo is public.
+    vermont_public_host: "{{ lookup('pipe', 'vault kv get -field=public_host secret/emo/vermont-reach') }}"
     vermont_public_port: 8000
     vr_nvr_pass: "{{ lookup('pipe', 'vault kv get -field=password secret/emo/vermont-panels') }}"
     vr_acs_pass: "{{ lookup('pipe', 'vault kv get -field=password secret/emo/vermont-intercom-admin') }}"

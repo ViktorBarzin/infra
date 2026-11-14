@@ -13,9 +13,9 @@
 #
 # A service account is the supported answer. authentik's own documentation is
 # explicit that user-created service accounts authenticate to FLOWS with an
-# app password, while API tokens only reach /api/v3/ — and a service account
-# carries no MFA stage, so the authentication flow completes with a username
-# and a password alone. The session cookie that falls out is an ordinary
+# app password, while API tokens only reach /api/v3/. Our flow still asks it
+# for a second factor, which it answers with TOTP (see "The MFA stage" below).
+# The session cookie that falls out is an ordinary
 # Authentik session, so the outpost treats this account exactly as it treats a
 # person. Nothing here forges a header or steps around the outpost, which is
 # what f1-stream audit item 15 closed and what must stay closed.
@@ -52,6 +52,7 @@ resource "authentik_user" "agent" {
   type     = "service_account"
   path     = "goauthentik.io/service-accounts"
   groups   = [data.authentik_group.home_server_admins.id]
+  roles    = [authentik_rbac_role.agent_impersonation.id]
 
   attributes = jsonencode({
     # Read by nothing today. Here so whoever finds this account in the UI
@@ -72,57 +73,50 @@ resource "authentik_token" "agent_app_password" {
   description = "Agent flow login. Rotate by tainting this resource."
 }
 
-# --- Letting the service account past the MFA stage ---------------------------
+# --- The MFA stage -------------------------------------------------------------
 #
 # default-authentication-flow binds default-authentication-mfa-validation at
 # order 30 with not_configured_action=configure, so a user holding no
-# authenticator is sent to enrol one rather than waved through. That is right
-# for people and impossible for a service account: measured 2026-09-19, the
-# flow answered ak-stage-authenticator-webauthn, the ENROLMENT stage, which
-# needs a physical authenticator svc-agent will never have.
+# authenticator is sent to enrol a passkey. svc-agent cannot do that.
 #
-# The stage is skipped for this one account by name, and for nothing else.
+# svc-agent holds a TOTP device instead, and answers the stage with a code.
+# The device is runtime data, like every other user's authenticator, so it is
+# not in this file. Its secret is `totp_secret` in Vault secret/authentik-agent,
+# beside the app password. `homelab browser --as` reads both. To re-create the
+# device, see docs/architecture/authentication.md, "Agent impersonation".
 #
-# WHY A NAME AND NOT A TYPE. `user.type == "service_account"` reads better and
-# is wrong here: it would wave through every service account this instance ever
-# grows, including ones created by an app integration for their own reasons.
-# A username is the narrowest thing that unblocks the account we just made, and
-# a second agent account is one more line here, deliberately visible in a diff.
-#
-# WHY IT FAILS CLOSED. A policy bound to a stage skips that stage when it
-# returns False. Every path through this expression that is not exactly
-# svc-agent returns True, including the one where there is no pending user at
-# all, so a broken context keeps MFA on rather than turning it off for the
-# estate.
-resource "authentik_policy_expression" "skip_mfa_for_agent" {
-  name = "skip-mfa-for-agent-service-account"
+# This replaces a policy that was meant to skip the stage for svc-agent by
+# name. That policy returned false for svc-agent, as intended, but the flow
+# still answered ak-stage-authenticator-webauthn after the password (measured
+# 2026-09-22 and again 2026-11-14). svc-agent never finished a flow login
+# while it was bound, so removing it changes nothing for any other user, for
+# whom it returned true.
 
-  # Logged so the next person debugging this can read what the policy saw
-  # rather than guessing at the flow context the way this one was written.
-  execution_logging = true
-
-  expression = <<-EOT
-    # Skip the MFA stage for the agent service account, which has no
-    # authenticator and cannot enrol one. Everything else keeps MFA, and so
-    # does anything unrecognised: an empty name is not the service account.
-    #
-    # NO ak_message HERE. A probe written with one on 2026-09-19 printed the
-    # context into the flow, which is rendered to whoever is signing in, so
-    # every human login briefly showed a debug string. The policy_execution
-    # event carries the same information for anyone debugging this; read that
-    # instead (the binding has execution_logging on).
-    holder = request.context.get("pending_user") or request.user
-    name = getattr(holder, "username", "") if holder is not None else ""
-    return name != "${authentik_user.agent.username}"
-  EOT
+# --- Impersonation ---------------------------------------------------------------
+#
+# Lets an agent see an app as a given user sees it. Viktor decided this in
+# docs/plans/2026-09-01-service-identity-and-request-attribution-design.md:
+# agents may impersonate any user, with a recorded reason.
+#
+# POST /api/v3/core/users/<pk>/impersonate/ checks authentik_core.impersonate,
+# object-level or global, and finds the target through the user viewset, which
+# lists only users the caller may view. So the role holds both, globally.
+# Impersonation is session state: it starts only from a signed-in session, never
+# from an API token. impersonation_require_reason is on (system-settings.tf), so
+# every start writes an impersonation_started event with the reason in it.
+#
+# What this cannot do: administer authentik. The role grants viewing users and
+# impersonating them, and nothing that edits them.
+resource "authentik_rbac_role" "agent_impersonation" {
+  name = "agent impersonation"
 }
 
-resource "authentik_policy_binding" "skip_mfa_for_agent" {
-  # The order-30 stage binding of default-authentication-flow
-  # (default-authentication-mfa-validation). A raw pk because the flow and its
-  # bindings are authentik built-ins rather than resources in this stack, the
-  # same shape app-access-bindings.tf uses for the TripIt app.
-  target = "d471dda8-e258-453d-86d7-14963f87ec03"
-  policy = authentik_policy_expression.skip_mfa_for_agent.id
-  order  = 0
+resource "authentik_rbac_permission_role" "agent_impersonate" {
+  role       = authentik_rbac_role.agent_impersonation.id
+  permission = "authentik_core.impersonate"
+}
+
+resource "authentik_rbac_permission_role" "agent_view_user" {
+  role       = authentik_rbac_role.agent_impersonation.id
+  permission = "authentik_core.view_user"
 }

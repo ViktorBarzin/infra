@@ -215,6 +215,7 @@ agent supplies the Playwright script — judgment stays out of the CLI.
 |---|---|---|
 | `browser run <script.js> [--url U] [--shared-context] [--keep-open] [--port N] [--timeout S]` | write | port-forward `svc/chrome-service:9222`, assert it's a real (non-headless) Chrome via `/json/version`, `connect_over_cdp`, `addInitScript(stealth.js)`, then run the script with `page`/`context`/`browser`/`log` in scope (top-level await ok; return a value to print it). Always tears the forward down. |
 | `browser open <url> [--shared-context] [--timeout S]` | write | open `<url>` headful and print title + visible text + a screenshot path — a quick check. |
+| `browser run\|open ... --as <user> --reason "<why>"` | write | sign in as `svc-agent` (Vault `secret/authentik-agent`: app password + TOTP), impersonate the Authentik user `<user>` (username, email or pk) with the reason, and seed a fresh context with only that session (no hub cookies), so apps behind forward-auth or OIDC see `<user>`. Logs the session out on exit. Not with `--shared-context`. See `docs/architecture/authentication.md`, "Agent impersonation". |
 | `browser --help` | read | when-to-use signature + the error-code cheat-sheet (`ERR_FILE_NOT_FOUND` = automation-layer intercept, not egress; `ERR_CONNECTION_REFUSED`/`_TIMED_OUT`/`_NAME_NOT_RESOLVED` = real egress; one endpoint 500 while siblings 200 = bot rejection). |
 
 Default context is a **fresh incognito** one (closed on exit) — safe for the

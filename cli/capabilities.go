@@ -259,6 +259,21 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "test an app as a specific Authentik user sees it, without that person",
+			Use:     "homelab browser run <script.js> | open <url> --as <user> --reason \"<why>\"",
+			Instead: "asking the person to click, or signing in with their password",
+			Synonyms: []string{"impersonate", "impersonation", "as user", "as another user",
+				"log in as", "login as", "sign in as", "act as", "their view", "what they see",
+				"authentik user", "test as", "permissions", "access", "other user"},
+			Detail: []string{
+				"Signs in as svc-agent, impersonates <user> in Authentik and opens a clean",
+				"        context holding only that session; apps behind forward-auth or",
+				"        OIDC then see <user>. Logs the session out on exit.",
+				"Every start is an impersonation_started event carrying the reason.",
+				"Needs read on Vault secret/authentik-agent (admins).",
+			},
+		},
+		{
 			// Tier 4 of the browser tiering, above `browser run`. The two are
 			// siblings with opposite answers to "whose browser is this", so
 			// this row carries the words for a HUMAN'S session and leaves the

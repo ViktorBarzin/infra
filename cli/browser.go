@@ -68,6 +68,8 @@ type browserOpts struct {
 	tall      bool   // tall snapshot viewport (1280x2000) for lazy-loaded/virtualized DOM
 	noSeed    bool   // pool: do NOT seed the master's cookies (pure clean context)
 	seedPath  string // runtime: path to the fetched seed file (set by the pool path)
+	asUser    string // --as: impersonate this Authentik user (username, email or pk)
+	asReason  string // --reason: recorded by Authentik with the impersonation
 	help      bool
 
 	// stderrTee also receives the runner's stderr, so a caller (delegate) can
@@ -111,6 +113,20 @@ func parseBrowserArgs(mode string, args []string) (browserOpts, error) {
 				o.url = args[i+1]
 				i++
 			}
+		case a == "--as":
+			if i+1 < len(args) {
+				o.asUser = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--as="):
+			o.asUser = strings.TrimPrefix(a, "--as=")
+		case a == "--reason":
+			if i+1 < len(args) {
+				o.asReason = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--reason="):
+			o.asReason = strings.TrimPrefix(a, "--reason=")
 		case strings.HasPrefix(a, "--url="):
 			o.url = strings.TrimPrefix(a, "--url=")
 		case a == "--port":
@@ -151,6 +167,17 @@ func parseBrowserArgs(mode string, args []string) (browserOpts, error) {
 	}
 	if o.help {
 		return o, nil
+	}
+	if o.asUser != "" {
+		if strings.TrimSpace(o.asReason) == "" {
+			return o, fmt.Errorf("--as needs --reason \"<why>\": Authentik records it with the impersonation")
+		}
+		if o.sharedCtx {
+			return o, fmt.Errorf("--as cannot use --shared-context: it would impersonate inside your hub's own signed-in profile")
+		}
+		// The impersonated session is the context's only cookies; seeding the
+		// hub's would put your own Authentik session beside it.
+		o.noSeed = true
 	}
 	switch mode {
 	case "run":
@@ -440,6 +467,14 @@ func runBrowser(o browserOpts) error {
 			os.Exit(130)
 		}
 	}()
+
+	if o.asUser != "" {
+		state, err := startBrowserImpersonation(o, addTeardown)
+		if err != nil {
+			return err
+		}
+		o.seedPath = state
+	}
 
 	var cdpURL string
 	usePool := !o.sharedCtx

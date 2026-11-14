@@ -260,6 +260,43 @@ Enabling either half, and the Postgres `pg_hba` and role changes that are
 deliberately **not** in the Terraform, are in
 `docs/runbooks/authentik-ldap-rac-outposts.md`.
 
+### Agent impersonation
+
+An agent can open a browser as a given Authentik user, to test an app as that
+user sees it. The user does not take part. The design decision is in
+`docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`:
+agents may impersonate any user, with a recorded reason.
+
+```
+homelab browser run <script.js> | open <url> --as <user> --reason "<why>"
+```
+
+How it works:
+
+1. The CLI signs in as `svc-agent` through `default-authentication-flow`. It
+   sends the app password, then a TOTP code. Both come from Vault
+   `secret/authentik-agent` (`app_password`, `totp_secret`), so only admins can
+   run it.
+2. It calls `POST /api/v3/core/users/<pk>/impersonate/` with the reason.
+   `svc-agent` holds the role `agent impersonation`
+   (`stacks/authentik/agent-service-account.tf`), which grants
+   `authentik_core.impersonate` and `authentik_core.view_user` globally.
+3. The pool browser gets a fresh context with only that Authentik session, and
+   no hub cookies. Forward-auth and OIDC apps then sign in as the target user.
+4. On exit the CLI runs `default-invalidation-flow`, which logs the session out
+   and ends the impersonation.
+
+Each start writes an `impersonation_started` event, with `svc-agent` as the
+user, the target in `on_behalf_of` and the reason in the context.
+
+The TOTP device is runtime data, like every user's authenticator. Its secret is
+the Vault value. To re-create it, generate 20 random bytes and store their
+base32 form as `totp_secret`. Then, in `ak shell` on a server pod, run
+`TOTPDevice.objects.create(user=User.objects.get(username="svc-agent"),
+name="agent TOTP", key=<the same bytes as hex>, confirmed=True)`. Authentik
+accepts each code once, so a second sign-in in the same 30 s step waits for
+the next code.
+
 ### Kubernetes API authentication (OIDC) — CURRENTLY NON-FUNCTIONAL
 
 > ⚠️ **apiserver OIDC does not work in this cluster** (as of 2026-06-04). The
