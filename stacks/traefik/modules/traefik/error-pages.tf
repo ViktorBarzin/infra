@@ -53,6 +53,13 @@ resource "kubernetes_deployment" "error_pages" {
             name  = "TEMPLATE_NAME"
             value = "shuffle"
           }
+          # The catch-all route (unrouted *.viktorbarzin.me hosts) answers 404 with
+          # a 404 status, not 200, so a deleted App's host no longer looks alive.
+          # The errors middlewares keep the backend's status either way.
+          env {
+            name  = "SEND_SAME_HTTP_CODE"
+            value = "true"
+          }
 
           liveness_probe {
             http_get {

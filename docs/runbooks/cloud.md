@@ -337,6 +337,38 @@ stuck Project".
 | `CloudBuildMinutesHigh` | no | GitHub billing page; Cloud builds stop at the Budget |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
 
+### The pull token, the ghcr cache and a rotation
+
+- An `UNAUTHORIZED` or a 500 from the ghcr cache at 10.0.20.10:5010 in a
+  Project pod's events is normal for a private image. The cache holds no
+  credentials by design (`playbooks/files/registry-cache/config-ghcr.yml`);
+  containerd then pulls from ghcr.io directly with the Project's
+  `cloud-registry` Secret (`hosts.toml` from
+  `playbooks/k8s-node-tuning.yml`), and the kubelet reports only the first
+  host's error. Look at the second pull attempt, or at whether the pod
+  started.
+- The reconciler refuses every apply while `ghcr_pull_token` is empty
+  (`registry_token_missing` on the change and in Notifications). Set the
+  key, then apply the Project File again.
+- After a change to `ghcr_pull_token`, `cloud-reconciler-registry` picks it
+  up within its refresh interval (2 min after section 4 of the cloud
+  repo's `docs/build/e2e-r1-infra.md`), Reloader restarts the reconciler,
+  and the reconciler applies every Project again, which updates each
+  `cloud-registry`. To hurry it:
+  `kubectl -n cloud annotate externalsecret cloud-reconciler-registry force-sync=$(date +%s) --overwrite`.
+  Before that cloud build is deployed, force-sync every Project's copy too:
+  `for ns in $(kubectl get ns -l cloud.viktorbarzin.me/managed=true -o name | cut -d/ -f2); do kubectl -n $ns annotate externalsecret cloud-registry force-sync=$(date +%s) --overwrite; done`.
+- `ghcr_delete_token` (optional, in `secret/cloud/system`): a token with
+  `read:packages` and `delete:packages`. With it, the reconciler deletes
+  the ghcr packages of Apps that were removed or whose Project was
+  destroyed, 10 minutes after the apply (`package_deletions` in Cloud's
+  database). Without it nothing is deleted. Use a dedicated classic PAT
+  with only `read:packages` and `delete:packages` (fine-grained tokens
+  cannot manage packages), not the existing broad PAT: Cloud holds no
+  admin token. The reconciler deletes only repositories named
+  `ghcr.io/<owner>/cloud-<project>_<app>`, so Cloud's own image and infra
+  images are never touched.
+
 ## Forgejo bot accounts (created 2026-11-14)
 
 Two Forgejo accounts serve Cloud's builds, each with one scoped token in Vault

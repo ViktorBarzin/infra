@@ -90,7 +90,10 @@ resource "kubernetes_manifest" "reconciler_registry" {
       namespace = module.console.namespace
     }
     spec = {
-      refreshInterval = "1h"
+      # Minutes, not an hour: a new ghcr_pull_token reaches every Project only
+      # after the reconciler sees it (Cloud re-applies every Project when the
+      # token's sha256 changes). One key, so the polling costs Vault little.
+      refreshInterval = "2m"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
