@@ -84,6 +84,21 @@ APP_HEADERS = {
 }
 
 
+class WhoopAuthError(RuntimeError):
+    """A non-200 answer from WHOOP's Cognito proxy; `error_type` is its __type."""
+
+    def __init__(self, message: str, error_type: str | None = None):
+        super().__init__(message)
+        self.error_type = error_type
+
+
+class PasswordLoginRejected(WhoopAuthError):
+    """WHOOP refused the password login. Since 2026-11-12 it does this for
+    Anca's account from the home IPv4 address the pods use, and still emails
+    her a code. Retrying only adds failed logins and code emails, so the job
+    stops and someone seeds a new refresh token from the devvm over IPv6."""
+
+
 def _cognito(session: requests.Session, target: str, body: dict) -> dict:
     resp = session.post(
         AUTH_URL,
@@ -99,7 +114,11 @@ def _cognito(session: requests.Session, target: str, body: dict) -> dict:
         timeout=TIMEOUT,
     )
     if resp.status_code != 200:
-        raise RuntimeError(f"WHOOP {target} failed ({resp.status_code}): {resp.text[:200]}")
+        try:
+            error_type = resp.json().get("__type")
+        except ValueError:
+            error_type = None
+        raise WhoopAuthError(f"WHOOP {target} failed ({resp.status_code}): {resp.text[:200]}", error_type)
     return resp.json()
 
 
@@ -165,6 +184,15 @@ def fetch_otp_code(user: str, app_password: str, since: dt.datetime) -> str:
     raise RuntimeError(f"no WHOOP login code in {user} since {since.isoformat(timespec='seconds')}")
 
 
+def wait_for_stray_code(user: str, app_password: str, since: dt.datetime) -> None:
+    """Wait until the code email of a rejected login arrives, so the cleanup
+    that follows can trash it. Never raises: no email is fine too."""
+    try:
+        fetch_otp_code(user, app_password, since)
+    except Exception as exc:  # waiting is best-effort, like the cleanup itself
+        print(f"no stray WHOOP code email to clean up ({exc})")
+
+
 def delete_otp_emails(user: str, app_password: str, since: dt.datetime) -> int:
     """Move WHOOP sign-in-code emails (on/after `since`'s date) to Gmail Trash.
     Runs after a successful login, so the code email is gone once used; sweeps
@@ -221,11 +249,18 @@ def authenticate(session: requests.Session, email_addr: str, password: str,
     emailed login code if asked.
     `otp_getter()` is called only when WHOOP issues an OTP challenge, so no email
     is read on a login that WHOOP lets through directly."""
-    body = _cognito(session, "InitiateAuth", {
-        "AuthFlow": "USER_PASSWORD_AUTH",
-        "AuthParameters": {"USERNAME": email_addr, "PASSWORD": password},
-        "ClientId": "",
-    })
+    try:
+        body = _cognito(session, "InitiateAuth", {
+            "AuthFlow": "USER_PASSWORD_AUTH",
+            "AuthParameters": {"USERNAME": email_addr, "PASSWORD": password},
+            "ClientId": "",
+        })
+    except WhoopAuthError as exc:
+        if exc.error_type == "NotAuthorizedException":
+            raise PasswordLoginRejected(
+                f"{exc}. Not retrying. Seed a new refresh token from the devvm over IPv6: "
+                "see the header of stacks/health/whoop_cycle_to_ha.tf", exc.error_type) from exc
+        raise
     if body.get("AuthenticationResult"):
         result = body["AuthenticationResult"]
         return result["AccessToken"], result.get("RefreshToken")
@@ -458,6 +493,7 @@ def main() -> int:
     login_started = now  # the OTP email must be newer than this
     store = KubeSecretStore(env["SESSION_SECRET"]) if env.get("SESSION_SECRET") else NoStore()
     code_emailed = []
+    password_rejected = False
 
     def otp_getter() -> str:
         code_emailed.append(True)
@@ -465,7 +501,11 @@ def main() -> int:
 
     try:
         with requests.Session() as session:
-            token = sign_in(session, env["WHOOP_EMAIL"], env["WHOOP_PASSWORD"], store, otp_getter)
+            try:
+                token = sign_in(session, env["WHOOP_EMAIL"], env["WHOOP_PASSWORD"], store, otp_getter)
+            except PasswordLoginRejected:
+                password_rejected = True
+                raise
             cycle = project(fetch_cycle(session, token, today.isoformat(), env["WHOOP_INSTALLATION_ID"]), today.isoformat())
             print(f"{today}: {cycle}")
             for service_path, payload in helper_calls(cycle, today, now.isoformat(timespec="seconds")):
@@ -478,7 +518,10 @@ def main() -> int:
                 resp.raise_for_status()
     finally:
         # A code was emailed, so trash it and any decoys, even if a later step failed.
-        if code_emailed:
+        # A rejected password login emails a code too, a few seconds later.
+        if password_rejected:
+            wait_for_stray_code(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started)
+        if code_emailed or password_rejected:
             moved = delete_otp_emails(env["GMAIL_USER"], env["GMAIL_APP_PASSWORD"], login_started)
             print(f"cleaned up {moved} WHOOP sign-in-code email(s)")
     return 0

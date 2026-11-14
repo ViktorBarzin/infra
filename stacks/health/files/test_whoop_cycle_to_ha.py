@@ -262,6 +262,78 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(store.saves, ["ref"])
 
 
+class PasswordRejectedTests(unittest.TestCase):
+    """WHOOP answers a password login from the home IPv4 address with 401
+    NotAuthorizedException, and still emails Anca a code. The job must stop on
+    the first try and trash that code."""
+
+    REJECTED = (401, {"__type": "NotAuthorizedException", "message": "Authentication Failed"})
+
+    def test_rejected_password_raises_password_login_rejected(self):
+        sess = StatusSession([self.REJECTED])
+        with self.assertRaises(wc.PasswordLoginRejected):
+            wc.authenticate(sess, "a@b.com", "pw", lambda: "1")
+        self.assertEqual(len(sess.calls), 1)
+
+    def test_other_errors_are_not_password_rejections(self):
+        sess = StatusSession([(500, {"__type": "InternalErrorException"})])
+        with self.assertRaises(RuntimeError) as ctx:
+            wc.authenticate(sess, "a@b.com", "pw", lambda: "1")
+        self.assertNotIsInstance(ctx.exception, wc.PasswordLoginRejected)
+
+    def test_expired_token_then_rejected_password_saves_nothing(self):
+        sess = StatusSession([(400, {"__type": "NotAuthorizedException"}), self.REJECTED])
+        store = MemoryStore("ref-old")
+        with self.assertRaises(wc.PasswordLoginRejected):
+            wc.sign_in(sess, "a@b.com", "pw", store, lambda: "1")
+        self.assertEqual(store.saves, [])
+
+    def test_main_trashes_the_stray_code_and_fails(self):
+        env = {"JITTER_SECONDS": "0", "WHOOP_EMAIL": "a@b.com", "WHOOP_PASSWORD": "pw",
+               "WHOOP_INSTALLATION_ID": "i", "HA_URL": "http://ha", "HA_TOKEN": "t",
+               "GMAIL_USER": "a@b.com", "GMAIL_APP_PASSWORD": "g"}
+        events = []
+
+        def rejected(*args):
+            events.append("sign_in")
+            raise wc.PasswordLoginRejected("rejected")
+
+        def wait(user, app_password, since):
+            events.append("wait")
+            return "123456"
+
+        def delete(user, app_password, since):
+            events.append("delete")
+            return 1
+
+        saved = {name: getattr(wc, name) for name in ("sign_in", "fetch_otp_code", "delete_otp_emails")}
+        saved_env = dict(wc.os.environ)
+        wc.sign_in, wc.fetch_otp_code, wc.delete_otp_emails = rejected, wait, delete
+        wc.os.environ.clear()
+        wc.os.environ.update(env)
+        try:
+            with self.assertRaises(wc.PasswordLoginRejected):
+                wc.main()
+        finally:
+            for name, fn in saved.items():
+                setattr(wc, name, fn)
+            wc.os.environ.clear()
+            wc.os.environ.update(saved_env)
+        self.assertEqual(events, ["sign_in", "wait", "delete"])
+
+    def test_stray_code_wait_never_fails_the_cleanup(self):
+        saved = wc.fetch_otp_code
+
+        def none_arrived(user, app_password, since):
+            raise RuntimeError("no WHOOP login code")
+
+        wc.fetch_otp_code = none_arrived
+        try:
+            wc.wait_for_stray_code("a@b.com", "g", dt.datetime(2026, 11, 14, tzinfo=dt.UTC))
+        finally:
+            wc.fetch_otp_code = saved
+
+
 class SecretCodecTests(unittest.TestCase):
     def test_round_trip(self):
         body = wc.secret_patch_body("ref-abc")
