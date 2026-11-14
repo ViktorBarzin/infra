@@ -12,17 +12,6 @@
       ],
       "matchNewValue": "v3.33.1",
       "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-14 pipeline #3897: stack nextcloud failed after this bump: its terragrunt apply failed (commit e9760c27)",
-      "matchDatasources": [
-        "docker"
-      ],
-      "matchPackageNames": [
-        "docker.io/library/nextcloud"
-      ],
-      "matchNewValue": "35.0.3",
-      "enabled": false
     }
   ]
 }
