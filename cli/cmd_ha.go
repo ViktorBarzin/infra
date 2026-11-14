@@ -86,20 +86,25 @@ func haToken(args []string) error {
 	if err != nil {
 		return err
 	}
-	b64, err := kubectlCapture(haSecretNamespace, "get", "secret", haSecretName,
-		"-o", "jsonpath={.data."+inst.secretKey+"}")
-	if err != nil {
-		return fmt.Errorf("read secret %s/%s (kubeconfig set? RBAC?): %w", haSecretNamespace, haSecretName, err)
-	}
-	if b64 == "" {
-		return fmt.Errorf("secret %s/%s has no %q key", haSecretNamespace, haSecretName, inst.secretKey)
-	}
-	tok, err := decodeSecretValue(b64)
+	tok, err := haTokenFor(inst)
 	if err != nil {
 		return err
 	}
 	fmt.Println(tok)
 	return nil
+}
+
+// haTokenFor reads an instance's long-lived token from openclaw/ha-tokens.
+func haTokenFor(inst haInstance) (string, error) {
+	b64, err := kubectlCapture(haSecretNamespace, "get", "secret", haSecretName,
+		"-o", "jsonpath={.data."+inst.secretKey+"}")
+	if err != nil {
+		return "", fmt.Errorf("read secret %s/%s (kubeconfig set? RBAC?): %w", haSecretNamespace, haSecretName, err)
+	}
+	if b64 == "" {
+		return "", fmt.Errorf("secret %s/%s has no %q key", haSecretNamespace, haSecretName, inst.secretKey)
+	}
+	return decodeSecretValue(b64)
 }
 
 // defaultHAKeyPath is the invoking user's ed25519 key, so the verb is per-user

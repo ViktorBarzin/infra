@@ -465,33 +465,27 @@ Bike named **"Classic Performance"** → entities are `sensor.classic_performanc
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
 
 #### 8. Yiko robot vacuum (Ecovacs X8 Pro Omni) and its camera
-To photograph something in a room ("take a photo of my bike in the corridor"),
-run the HA script. Do not drive the robot by hand:
+Control Yiko with `homelab ha yiko`. Do not drive the robot by hand:
 
 ```bash
-T=$(homelab ha token --instance london)
-curl -s -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
-  -X POST https://ha-london.viktorbarzin.me/api/services/script/turn_on \
-  -d '{"entity_id":"script.yiko_photo","variables":{"room":"corridor","shots":6}}'
-# poll until script.yiko_photo is "off" (about 2-3 min), then fetch the photos:
-homelab ha ssh --instance london -- "sudo base64 /media/yiko/corridor-1.jpg" | grep -v '^Warning' | base64 -d > corridor-1.jpg
+homelab ha yiko status                      # state, battery, camera, photo script
+homelab ha yiko photo corridor --shots 6    # ~2 min; prints the downloaded photo paths
+homelab ha yiko clean kitchen               # clean one room in the current work mode
+homelab ha yiko dock                        # stop the job and go home
 ```
 
 - Rooms: `corridor`, `balcony`, `kitchen`, `bedroom1`, `kids_room`. The dock is in the living room.
-- The script turns mopping off, starts a clean of that room, waits until Yiko
-  is cleaning inside it, then pauses for each photo and moves on for 8 s between
-  photos. Then it sends Yiko home and restores the work mode. Read the photos and
-  pick the best one: Yiko's heading at each stop is random, and rooms are dark
-  in the evening.
-- Use `script/turn_on`, not a blocking `script/yiko_photo` call: the proxy in
-  front of HA closes a request after about 30 s.
+- `photo` runs HA London's `script.yiko_photo`: mopping off, clean of that room,
+  wait until Yiko is inside it, pause for each photo and move on 8 s between
+  photos, then home and the work mode restored. Read every photo and pick the
+  best: Yiko's heading at each stop is random, and rooms are dark at night.
+- `photo` and `clean` refuse 22:00-08:00 London time, when people sleep in the
+  flat. Use `--night` only after Viktor says so for that run.
 - If Yiko has just docked, wait about 30 s (it empties its bin) before you start.
-- A run overwrites the photos from the last run of that room. Check the times
-  with `sudo ls -l --full-time /media/yiko/`. No new files means the run failed: the
-  script's trace (`script.yiko_photo`, Traces in the HA UI, or WS
-  `trace/list` and `trace/get` with domain `script`) shows `job_started`,
-  `arrived` and `camera_ready`.
-- Why the script is built this way, and the raw commands: infra
+- An error "no new photos" means Yiko did not reach the room or the camera did
+  not start. The script's trace (`script.yiko_photo`, Traces in the HA UI)
+  shows `job_started`, `arrived` and `camera_ready`.
+- Why it is built this way, and the raw commands: infra
   `docs/runbooks/london-yiko.md`, "Send Yiko to one room".
 
 ### Custom Components (HACS integrations)
