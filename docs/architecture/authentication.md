@@ -180,7 +180,12 @@ any `fixed_data`, group or flow, so two guards bound the token:
   stores no creation time on an Invitation, so the 7 days count back from
   the moment of use: a cloud-inviter code works only in its last 7 days. A
   skipped invitation counts as no match, so the prompt fails and no account
-  is written.
+  is written. A leaked token can still make a code that expires months
+  ahead and wait for its last 7 days, so a token rotation always deletes
+  every cloud-inviter invitation (runbook). The policy stamps the accepted
+  invitation's pk on the new account; `assign-invite-group` consumes exactly
+  that invitation, and its fallback lookup by code skips every cloud-inviter
+  invitation.
 - A deny stage right after the InvitationStage of every flow that has one
   (`invitation-enrollment`, order 11) refuses any invitation cloud-inviter
   made. An InvitationStage merges `fixed_data` into the new account and takes
@@ -191,8 +196,9 @@ any `fixed_data`, group or flow, so two guards bound the token:
 Cloud App Guests has no roles, parent or superuser flag, and no application
 binds it. A guest reaches Cloud Apps through `cloud-apps`, whose policy
 admits accounts with a vouched email, and a private App's oauth2-proxy admits
-only its allow list. `stacks/authentik/test_invite_guards.py` runs both
-policy bodies against fake objects. Operations: `docs/runbooks/cloud.md`,
+only its allow list. `stacks/authentik/test_invite_guards.py` runs the
+three policy bodies against fake objects; no pipeline runs it, so run it
+before any edit to them. Operations: `docs/runbooks/cloud.md`,
 "Guest invites".
 
 ### Per-app sign-up paths (2026-10-16, ADR-0001)

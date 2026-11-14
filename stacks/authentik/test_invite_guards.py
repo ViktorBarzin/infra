@@ -1,7 +1,8 @@
 """The guest-invite guards, run against fake Authentik objects.
 
-validate-invite-code (invite-flow.tf) and invitation-made-by-cloud-inviter
-(cloud-inviter.tf) are Authentik expression policies. These tests take each
+validate-invite-code and assign-invite-group (invite-flow.tf) and
+invitation-made-by-cloud-inviter (cloud-inviter.tf) are Authentik expression
+policies. These tests take each
 expression body out of the .tf file, fill in its Terraform interpolations,
 and run it the way Authentik does: as the body of a function of `request`.
 
@@ -55,23 +56,69 @@ def expression(tf_file, resource):
     return code
 
 
+class QuerySet(list):
+    def first(self):
+        return self[0] if self else None
+
+
 class Invitation:
     """The fields of authentik's Invitation the policies read."""
 
     store = []
+    made = 0
 
     def __init__(self, fixed_data, created_by_id=ADMIN_PK, single_use=True,
                  expires=None, expiring=True):
+        Invitation.made += 1
+        self.pk = f"00000000-0000-4000-8000-{Invitation.made:012d}"
         self.fixed_data = fixed_data
         self.created_by_id = created_by_id
         self.single_use = single_use
         self.expires = expires
         self.expiring = expiring
 
+    def delete(self):
+        Invitation.store.remove(self)
+
     class objects:  # noqa: N801 - Django's manager name
         @staticmethod
-        def filter(fixed_data__code):
-            return [i for i in Invitation.store if (i.fixed_data or {}).get("code") == fixed_data__code]
+        def filter(fixed_data__code=None, pk=None):
+            if pk is not None:
+                return QuerySet(i for i in Invitation.store if i.pk == pk)
+            return QuerySet(i for i in Invitation.store if (i.fixed_data or {}).get("code") == fixed_data__code)
+
+
+class Group:
+    def __init__(self, name):
+        self.name = name
+
+    class objects:  # noqa: N801 - Django's manager name
+        @staticmethod
+        def filter(name):
+            return QuerySet([Group(name)])
+
+
+class User:
+    """The pending user the write stage saved, as assign-invite-group sees it."""
+
+    def __init__(self, attributes):
+        self.pk = 1
+        self.username = "guest-r7km4q"
+        self.email = "guest@example.com"
+        self.attributes = attributes
+        self.groups = []
+        self.saved = False
+        user = self
+
+        class Groups:
+            @staticmethod
+            def add(group):
+                user.groups.append(group.name)
+
+        self.ak_groups = Groups
+
+    def save(self):
+        self.saved = True
 
 
 def install_fakes():
@@ -81,11 +128,15 @@ def install_fakes():
     utils.timezone = timezone
     models = types.ModuleType("authentik.stages.invitation.models")
     models.Invitation = Invitation
-    for name in ("django", "authentik", "authentik.stages", "authentik.stages.invitation"):
+    core = types.ModuleType("authentik.core.models")
+    core.Group = Group
+    for name in ("django", "authentik", "authentik.stages", "authentik.stages.invitation",
+                 "authentik.core"):
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules["django.utils"] = utils
     sys.modules["django.utils.timezone"] = timezone
     sys.modules["authentik.stages.invitation.models"] = models
+    sys.modules["authentik.core.models"] = core
 
 
 def compile_policy(code):
@@ -102,6 +153,7 @@ class Request:
 
 install_fakes()
 VALIDATE = compile_policy(expression("invite-flow.tf", "validate_invite_code"))
+ASSIGN = compile_policy(expression("invite-flow.tf", "assign_invite_group"))
 REFUSE = compile_policy(expression("cloud-inviter.tf", "cloud_inviter_invitation"))
 GUESTS = local("cloud_guest_group_name")
 
@@ -135,11 +187,13 @@ class ValidateInviteCode(unittest.TestCase):
         self.assertEqual(pd["attributes.invite_group"], "Proxy Users")
 
     def test_a_cloud_code_in_the_guarded_shape_is_accepted(self):
-        Invitation.store = [cloud()]
+        invitation = cloud()
+        Invitation.store = [invitation]
         ok, pd = validate()
         self.assertTrue(ok)
         self.assertEqual(pd["attributes.invite_group"], GUESTS)
         self.assertEqual(pd["invite_code"], "R7KM4Q")
+        self.assertEqual(pd["attributes.invite_pk"], invitation.pk)
 
     def test_a_cloud_code_used_just_after_it_was_made_passes_the_skew_margin(self):
         Invitation.store = [cloud(expires=NOW + datetime.timedelta(days=7, minutes=5))]
@@ -178,6 +232,53 @@ class ValidateInviteCode(unittest.TestCase):
         Invitation.store = [cloud()]
         self.assertFalse(validate("")[0])
         self.assertFalse(validate("AAA-AAA")[0])
+
+
+def assign(attributes):
+    user = User(dict(attributes))
+    ASSIGN(Request({"pending_user": user, "prompt_data": {}}))
+    return user
+
+
+class AssignInviteGroup(unittest.TestCase):
+    def setUp(self):
+        Invitation.store = []
+
+    def test_consumes_exactly_the_invitation_validate_accepted(self):
+        # A malformed cloud-inviter invitation shares the code and comes first.
+        bad = cloud(fixed_data={"code": "R7KM4Q", "target_group": "Home Server Admins"})
+        good = cloud()
+        Invitation.store = [bad, good]
+        ok, pd = validate()
+        self.assertTrue(ok)
+        user = assign({k.split(".", 1)[1]: v for k, v in pd.items() if k.startswith("attributes.")})
+        self.assertEqual(user.groups, [GUESTS])
+        self.assertEqual(Invitation.store, [bad])
+        self.assertEqual(user.attributes, {})
+        self.assertEqual(user.username, "guest@example.com")
+
+    def test_the_fallback_by_code_never_takes_a_cloud_inviter_invitation(self):
+        bad = cloud(fixed_data={"code": "R7KM4Q", "target_group": "Home Server Admins"})
+        admin = Invitation({"code": "R7KM4Q", "target_group": "Proxy Users"})
+        Invitation.store = [bad, admin]
+        # The stash failed: only the code reached the saved user.
+        user = assign({"invite_code": "R7KM4Q"})
+        self.assertEqual(user.groups, ["Proxy Users"])
+        self.assertEqual(Invitation.store, [bad])
+
+    def test_a_cloud_inviter_invitation_alone_gives_no_group_through_the_fallback(self):
+        bad = cloud(fixed_data={"code": "R7KM4Q", "target_group": "Home Server Admins"})
+        Invitation.store = [bad]
+        user = assign({"invite_code": "R7KM4Q"})
+        self.assertEqual(user.groups, [])
+        self.assertEqual(Invitation.store, [bad])
+
+    def test_an_admin_code_without_a_stashed_pk_still_works(self):
+        admin = Invitation({"code": "R7KM4Q", "target_group": "Proxy Users"})
+        Invitation.store = [admin]
+        user = assign({"invite_group": "Proxy Users", "invite_code": "R7KM4Q"})
+        self.assertEqual(user.groups, ["Proxy Users"])
+        self.assertEqual(Invitation.store, [])
 
 
 class RefuseOnInvitationStageFlows(unittest.TestCase):

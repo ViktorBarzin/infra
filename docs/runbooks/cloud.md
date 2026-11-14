@@ -265,24 +265,40 @@ Invitation, valid 7 days, as the Authentik service account `cloud-inviter`
 (`stacks/authentik/cloud-inviter.tf`). The guest opens
 `https://authentik.viktorbarzin.me/if/flow/signup-start/`, signs up and types
 the code; the account lands in **Cloud App Guests**, which grants nothing
-else. Someone who already has an account needs no code.
+else. Someone who already has an account needs no code: Cloud looks the
+email up with the console's membership-reader token
+(`AUTHENTIK_READER_TOKEN`, global `view_user`), only adds it to the list and
+makes no code.
 
 What holds it:
 
 - `cloud-inviter`'s role has one permission, `add_invitation`. Its token is in
   Vault `secret/cloud/inviter` (key `token`), written by the authentik stack.
   The console reads it through ExternalSecret `cloud-console-inviter`
-  (`CLOUD_INVITER_TOKEN`); the reconciler cannot read that path. Without it
-  the console answers `invites_unavailable`.
+  (`CLOUD_INVITER_TOKEN`); the reconciler's own Vault policy cannot read that
+  path. ESO reads it through the shared ClusterSecretStore `vault-kv`, whose
+  `eso-reader` policy covers `secret/data/*`, the same as
+  `secret/cloud/system`: anyone who may create an ExternalSecret in some
+  namespace can read it. Without it the console answers
+  `invites_unavailable`.
 - `validate-invite-code` accepts a cloud-inviter invitation only with
   `fixed_data` keys exactly `code` and `target_group`, the group Cloud App
   Guests, `single_use` true and an expiry at most 7 days ahead
-  (`docs/architecture/authentication.md`, "Cloud guest invite codes").
+  (`docs/architecture/authentication.md`, "Cloud guest invite codes"). It
+  stamps the accepted invitation's pk on the new account, and
+  `assign-invite-group` consumes exactly that one; its fallback lookup by
+  code never takes a cloud-inviter invitation. No pipeline runs the guard
+  tests: run `python3 -m unittest discover -s stacks/authentik -p 'test_*.py'`
+  before any edit to either policy.
 - The deny stage `deny-cloud-guest-invite` sits right after the
   InvitationStage of `invitation-enrollment` (order 11) and refuses any
-  invitation cloud-inviter made. If another flow gets an InvitationStage, add
-  its slug and order to `local.cloud_invitation_stage_flows`. To list them,
-  read only:
+  invitation cloud-inviter made. The list of flows comes from this repo's
+  docs, and flows here are partly managed in the UI, so the rollout checks
+  the live instance before the console gets the token: every flow that the
+  command below lists must be in `local.cloud_invitation_stage_flows` (add
+  its slug and the order after its InvitationStage, apply the authentik
+  stack again). Do the same if another flow gets an InvitationStage later.
+  The check reads only:
 
   ```sh
   curl -s -H "Authorization: Bearer $(vault kv get -field=tf_api_token secret/authentik)" \
@@ -297,12 +313,15 @@ apply writes the new key to `secret/cloud/inviter`; ESO refreshes
 `cloud-console-inviter` within its 1 h interval (annotate it with
 `force-sync=$(date +%s)` to do it now) and Reloader restarts the console. The
 old token stops working at the apply, so invites fail until the console has
-the new one.
+the new one. A rotation always ends with the purge below. A code works only
+in its last 7 days, but an Invitation records no creation time, so a leaked
+token can make codes that expire months ahead and wait; rotating the token
+leaves them working until they are deleted.
 
 List or revoke outstanding codes: `homelab invite list` shows every code with
 its group; `homelab invite revoke <code>` deletes one. To revoke every
-cloud-inviter code at once (a leaked token), rotate the token first, then
-delete the invitations it made:
+cloud-inviter code at once (after every rotation), rotate the token first,
+then delete the invitations it made:
 
 ```sh
 T=$(vault kv get -field=tf_api_token secret/authentik)

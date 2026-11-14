@@ -2078,13 +2078,16 @@
     # agent starts and runs Cloud Apps with it (`cloud new`, `cloud deploys`,
     # app-kit plan K4 in the cloud repo) and must not need an install step.
     # The package bundles its dependencies into one file and lists none, so
-    # pointing npm's registry at Forgejo for this one install is enough.
+    # pointing npm's registry at Forgejo for this one install is enough. It
+    # needs no install scripts, so none run: npm pins the version, not the
+    # contents, and this install runs as root.
     - name: Install the Cloud CLI at the pinned version
       community.general.npm:
         name: "@viktorbarzin/cloud"
         version: "{{ devvm_cloud_cli_version }}"
         registry: "{{ devvm_cloud_cli_registry }}"
         global: true
+        ignore_scripts: true
         state: present
       tags: [cloud-cli]
 
