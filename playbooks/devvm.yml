@@ -247,6 +247,13 @@
     # which bw 2024.x never sends, so `homelab vault put` 422'd on every create
     # (infra#145). 2026.10.0 sends it. Needs node >= 22 (node_major above).
     devvm_bw_cli_version: "2026.10.0"
+    # The Cloud CLI (`cloud`, Forgejo viktor/cloud cli/). Pinned like the
+    # Bitwarden CLI: agents run it unattended as each user (`cloud new` makes
+    # repos and Projects), so the version is a reviewed choice. Bump it after
+    # the cloud repo's cli-release workflow has published the new version to
+    # this registry, which serves the package without a login.
+    devvm_cloud_cli_version: "0.4.0"
+    devvm_cloud_cli_registry: "https://forgejo.viktorbarzin.me/api/packages/viktor/npm/"
     # Users whose Claude Code the nightly timer keeps current. Claude Code
     # installs PER USER (~/.local/share/claude/versions), so unlike codex there
     # is no single binary to swap and every account needs its own update run.
@@ -2065,6 +2072,24 @@
         version: "{{ devvm_bw_cli_version }}"
         global: true
         state: present
+
+    # ---- 7a1c) the Cloud CLI -------------------------------------------------
+    # System-wide like bw, so `cloud` is on every user's PATH: a non-admin's
+    # agent starts and runs Cloud Apps with it (`cloud new`, `cloud deploys`,
+    # app-kit plan K4 in the cloud repo) and must not need an install step.
+    # The package bundles its dependencies into one file and lists none, so
+    # pointing npm's registry at Forgejo for this one install is enough. It
+    # needs no install scripts, so none run: npm pins the version, not the
+    # contents, and this install runs as root.
+    - name: Install the Cloud CLI at the pinned version
+      community.general.npm:
+        name: "@viktorbarzin/cloud"
+        version: "{{ devvm_cloud_cli_version }}"
+        registry: "{{ devvm_cloud_cli_registry }}"
+        global: true
+        ignore_scripts: true
+        state: present
+      tags: [cloud-cli]
 
     # ---- 7a2) the codex CLI, and keeping it current -------------------------
     # Added 2026-09-06. Nothing in this repo installed codex: setup-devvm.sh and

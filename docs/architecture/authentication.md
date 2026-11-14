@@ -164,6 +164,43 @@ Group membership is auto-assigned from the invitation's `fixed_data` field. This
 **Google social signup is a special case (2026-07-25, `stacks/authentik/google-social-signup.tf`).** An Authentik invitation lives in the flow *plan*, which is abandoned when the browser leaves for Google's OAuth screen — so a social signup that starts on `invitation-enrollment` returns from `/source/oauth/callback/google/` with no `itoken` and the InvitationStage denies with *"Invalid invite/invite not found."* This is why invite-gated Google signup never worked through the shared flow. Fix: the **Google source's `enrollment_flow` is a dedicated `google-proxy-enrollment`** (write + login, no password prompt). The invite is bridged across the OAuth redirect via the **Postgres cache keyed by the round-trip-stable browser session key**: a `capture-proxy-invite` policy on the invite landing sets `proxy_invite_ok:<session_key>` iff the itoken resolves to a proxy invite, and a `validate-proxy-invite` policy on the enrollment write-stage denies unless that flag is set — otherwise it stamps `attributes.proxy_only=true` + a username (the invitation's `fixed_data` does NOT reach the user on this path, so proxy_only is set by the policy, not the invite) and posts to Slack `#alerts`. A direct hit on the Google source with no invite is denied. GitHub/Facebook still route social enrollment through `invitation-enrollment` and share the original broken-invite limitation.
 
 
+### Cloud guest invite codes (app-kit K5)
+
+Cloud's console mints invite codes for guests of private Cloud Apps, as the
+service account `cloud-inviter` (`stacks/authentik/cloud-inviter.tf`), whose
+role holds only `add_invitation`. Authentik's API lets an Invitation carry
+any `fixed_data`, group or flow, so two guards bound the token:
+
+- `validate-invite-code` (`stacks/authentik/invite-flow.tf`, the order-0
+  prompt policy of `social-signup` and `signup-passkey`, before any user is
+  written) skips an invitation whose `created_by` is cloud-inviter unless its
+  `fixed_data` keys are exactly `code` and `target_group`, `target_group` is
+  **Cloud App Guests**, `single_use` is true, and `expiring` and `expires`
+  are set with at most 7 days (plus 10 minutes of clock skew) left. Authentik
+  stores no creation time on an Invitation, so the 7 days count back from
+  the moment of use: a cloud-inviter code works only in its last 7 days. A
+  skipped invitation counts as no match, so the prompt fails and no account
+  is written. A leaked token can still make a code that expires months
+  ahead and wait for its last 7 days, so a token rotation always deletes
+  every cloud-inviter invitation (runbook). The policy stamps the accepted
+  invitation's pk on the new account; `assign-invite-group` consumes exactly
+  that invitation, and its fallback lookup by code skips every cloud-inviter
+  invitation.
+- A deny stage right after the InvitationStage of every flow that has one
+  (`invitation-enrollment`, order 11) refuses any invitation cloud-inviter
+  made. An InvitationStage merges `fixed_data` into the new account and takes
+  the typed email unchecked. A flow-level policy cannot do this, because it
+  runs before the InvitationStage reads the token, the same reason the
+  recovery flow uses a deny stage.
+
+Cloud App Guests has no roles, parent or superuser flag, and no application
+binds it. A guest reaches Cloud Apps through `cloud-apps`, whose policy
+admits accounts with a vouched email, and a private App's oauth2-proxy admits
+only its allow list. `stacks/authentik/test_invite_guards.py` runs the
+three policy bodies against fake objects; no pipeline runs it, so run it
+before any edit to them. Operations: `docs/runbooks/cloud.md`,
+"Guest invites".
+
 ### Per-app sign-up paths (2026-10-16, ADR-0001)
 
 Since 2026-09-02 all three social sources enrol through one flow, `social-signup`, whose first stage asks for an invite code (`stacks/authentik/invite-flow.tf`). `stacks/authentik/app-signup.tf` adds a second way through that flow for people who arrive from an app that takes sign-ups, generalised from tv (then f1-stream) ADR-0042. Everyone else keeps the invite path unchanged.

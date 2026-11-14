@@ -65,7 +65,8 @@ module "console" {
   # M5: SECRETS_PUBLIC_KEY and GITHUB_API_TOKEN from Secret
   # cloud-console-system (below), optional. TELEMETRY_WRITE_KEY, SENTRY_DSN
   # and SENTRY_BROWSER_DSN from Secret cloud-telemetry (telemetry.tf).
-  secret_env = concat(local.cloud_console_secret_env, local.telemetry_secret_env)
+  # K5: CLOUD_INVITER_TOKEN from Secret cloud-console-inviter (below).
+  secret_env = concat(local.cloud_console_secret_env, local.telemetry_secret_env, local.cloud_console_inviter_env)
 
   # email_verified true only for accounts whose email something vouched for
   # (email_claim.tf), so the owner check can match a Forgejo account by a
@@ -144,6 +145,57 @@ resource "kubernetes_manifest" "console_system" {
         }
       }
       dataFrom = [{ extract = { key = "cloud/system" } }]
+    }
+  }
+}
+
+# App-kit K5: the cloud-inviter token (stacks/authentik/cloud-inviter.tf), with
+# which the console makes guest invite codes for private Apps. Its own
+# ExternalSecret and its own Vault path, secret/cloud/inviter: never
+# secret/cloud/system, which the reconciler and every Project's OpenTofu state
+# read. The env is optional, so the console starts before the token exists and
+# answers invites_unavailable until it does.
+locals {
+  cloud_console_inviter_secret = "${local.cloud_console_name}-console-inviter"
+  cloud_console_inviter_env = [{
+    name     = "CLOUD_INVITER_TOKEN"
+    secret   = local.cloud_console_inviter_secret
+    key      = "token"
+    optional = true
+  }]
+}
+
+resource "kubernetes_manifest" "console_inviter" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = local.cloud_console_inviter_secret
+      namespace = module.console.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = local.cloud_console_inviter_secret
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+        }
+      }
+      data = [{
+        secretKey = "token"
+        remoteRef = { key = "cloud/inviter", property = "token" }
+      }]
     }
   }
 }

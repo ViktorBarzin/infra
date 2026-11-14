@@ -748,6 +748,11 @@ resource "vault_policy" "ci" {
     path "secret/data/cloud/system" {
       capabilities = ["create", "read", "update"]
     }
+    # stacks/authentik writes the cloud-inviter token here
+    # (cloud-inviter.tf); of the workloads, only Cloud's console reads it.
+    path "secret/data/cloud/inviter" {
+      capabilities = ["create", "read", "update"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {

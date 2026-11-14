@@ -26,11 +26,29 @@ resource "authentik_stage_prompt_field" "invite_code" {
 # (fixed_data.code), stash the target group on the flow plan, and set a username
 # (source enrollments provide none). Returns False on a bad/expired code, which
 # rejects the prompt so NO user is created without a valid invite.
+#
+# Cloud's guest codes (cloud-inviter.tf): an invitation that cloud-inviter
+# created counts only in the one shape Cloud makes. Its fixed_data keys are
+# exactly code and target_group, target_group is Cloud App Guests, it is single
+# use, and it expires (expiring set, expires set) at most 7 days from now. An
+# Invitation records no creation time, so "7 days after it was made" is checked
+# as "at most 7 days left when it is used", plus 10 minutes for clock skew. Any
+# other cloud-inviter invitation is skipped as if it did not exist, so a stolen
+# inviter token cannot mint a code for another group, stamp attributes on the
+# new account, or make a code that lasts.
+#
+# Before any edit to this policy or assign-invite-group, run the guard tests
+# (test_invite_guards.py; no pipeline runs them):
+#   python3 -m unittest discover -s stacks/authentik -p 'test_*.py'
 resource "authentik_policy_expression" "validate_invite_code" {
   name = "validate-invite-code"
   expression = trimspace(<<-EOT
+from datetime import timedelta
 from authentik.stages.invitation.models import Invitation
 from django.utils import timezone
+CLOUD_INVITER_PK = int("${authentik_user.cloud_inviter.id}")
+CLOUD_GUEST_GROUP = "${local.cloud_guest_group_name}"
+CLOUD_INVITE_MAX = timedelta(days=${local.cloud_invite_max_days}, minutes=10)
 # setdefault so our writes to prompt_data persist to the write stage.
 pd = request.context.setdefault("prompt_data", {})
 # Normalize the typed code so matching is forgiving: upper-case, no dashes/spaces.
@@ -43,6 +61,16 @@ inv = None
 for cand in Invitation.objects.filter(fixed_data__code=code):
     if cand.expires and cand.expires < timezone.now():
         continue
+    if cand.created_by_id == CLOUD_INVITER_PK:
+        fd = cand.fixed_data if isinstance(cand.fixed_data, dict) else {}
+        if sorted(fd.keys()) != ["code", "target_group"]:
+            continue
+        if fd.get("target_group") != CLOUD_GUEST_GROUP:
+            continue
+        if cand.single_use is not True or not cand.expiring or cand.expires is None:
+            continue
+        if cand.expires > timezone.now() + CLOUD_INVITE_MAX:
+            continue
     inv = cand
     break
 if inv is None:
@@ -59,6 +87,9 @@ if not pd.get("username"):
 # the saved user — prompt_data does not reliably survive to the login stage.
 pd["attributes.invite_group"] = tg
 pd["attributes.invite_code"] = code
+# The accepted invitation itself, so assign-invite-group consumes this one and
+# not another invitation that shares the code.
+pd["attributes.invite_pk"] = str(inv.pk)
 return True
 EOT
   )
@@ -73,17 +104,26 @@ resource "authentik_stage_prompt" "invite_code_prompt" {
 # On the login stage (after write, so the user exists): add the new user to the
 # invite's target_group and consume a single-use invite. Replaces the hardcoded
 # assign-proxy-group.
+#
+# The fallback lookup by code skips every cloud-inviter invitation: a Cloud
+# guest code counts only through validate-invite-code's shape checks, which
+# stamp attributes.invite_group and attributes.invite_pk. So an invitation a
+# stolen inviter token made with a live admin code can neither pick the group
+# nor be the one consumed in place of the accepted one.
 resource "authentik_policy_expression" "assign_invite_group" {
   name = "assign-invite-group"
   expression = trimspace(<<-EOT
 from authentik.core.models import Group
 from authentik.stages.invitation.models import Invitation
+CLOUD_INVITER_PK = int("${authentik_user.cloud_inviter.id}")
 # Add the new user to the invite's target group. Resolve the group from EITHER
 # source, so a single stash mechanism failing can't drop the assignment:
 #   1. attributes.invite_group — stamped by validate-invite-code via the write stage
-#   2. the invite code (attributes.invite_code, else prompt_data) re-looked-up
-# Then upgrade the guest- placeholder username to the real email, consume a
-# single-use invite, and drop the transient bookkeeping attributes.
+#   2. the invite code (attributes.invite_code, else prompt_data) re-looked-up,
+#      never a cloud-inviter invitation
+# Then upgrade the guest- placeholder username to the real email, consume the
+# accepted single-use invite (attributes.invite_pk), and drop the transient
+# bookkeeping attributes.
 u = request.context.get("pending_user")
 if u is None or not getattr(u, "pk", None):
     return True
@@ -91,10 +131,22 @@ attrs = u.attributes or {}
 pd = request.context.get("prompt_data", {}) or {}
 code = attrs.get("invite_code") or (pd.get("invite_code") or "").strip().upper().replace("-", "").replace(" ", "")
 tg = attrs.get("invite_group")
-if not tg and code:
-    inv0 = Invitation.objects.filter(fixed_data__code=code).first()
-    if inv0 is not None:
-        tg = (inv0.fixed_data or {}).get("target_group")
+accepted = None
+if attrs.get("invite_pk"):
+    try:
+        accepted = Invitation.objects.filter(pk=attrs.get("invite_pk")).first()
+    except Exception:
+        accepted = None
+fallback = None
+if accepted is None and code:
+    for cand in Invitation.objects.filter(fixed_data__code=code):
+        if cand.created_by_id == CLOUD_INVITER_PK:
+            continue
+        fallback = cand
+        break
+source = accepted if accepted is not None else fallback
+if not tg and source is not None:
+    tg = (source.fixed_data or {}).get("target_group")
 if tg:
     g = Group.objects.filter(name=tg).first()
     if g is not None:
@@ -106,15 +158,12 @@ try:
         u.username = u.email
 except Exception:
     pass
-if code:
-    for inv in Invitation.objects.filter(fixed_data__code=code):
-        if inv.single_use:
-            try:
-                inv.delete()
-            except Exception:
-                pass
-        break
-for k in ("invite_group", "invite_code"):
+if source is not None and source.single_use:
+    try:
+        source.delete()
+    except Exception:
+        pass
+for k in ("invite_group", "invite_code", "invite_pk"):
     attrs.pop(k, None)
 u.attributes = attrs
 try:

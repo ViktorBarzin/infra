@@ -256,6 +256,94 @@ for an email they know is that person's.
 Cloud's round-4 end-to-end test hit step 2: a test account made by hand had
 no vouch, so Authentik refused its own private App.
 
+## Guest invites
+
+A private App's owner, or an Operator, invites an email from the console
+(Invite next to the email) or with `cloud invite <project> <app> <email>`.
+Cloud adds the email to the App's allow list and creates a single-use
+Invitation, valid 7 days, as the Authentik service account `cloud-inviter`
+(`stacks/authentik/cloud-inviter.tf`). The guest opens
+`https://authentik.viktorbarzin.me/if/flow/signup-start/`, signs up and types
+the code; the account lands in **Cloud App Guests**, which grants nothing
+else. Someone who already has an account needs no code: Cloud looks the
+email up with the console's membership-reader token
+(`AUTHENTIK_READER_TOKEN`, global `view_user`), only adds it to the list and
+makes no code.
+
+What holds it:
+
+- `cloud-inviter`'s role has one permission, `add_invitation`. Its token is in
+  Vault `secret/cloud/inviter` (key `token`), written by the authentik stack.
+  The console reads it through ExternalSecret `cloud-console-inviter`
+  (`CLOUD_INVITER_TOKEN`); the reconciler's own Vault policy cannot read that
+  path. ESO reads it through the shared ClusterSecretStore `vault-kv`, whose
+  `eso-reader` policy covers `secret/data/*`, the same as
+  `secret/cloud/system`: anyone who may create an ExternalSecret in some
+  namespace can read it. Without it the console answers
+  `invites_unavailable`.
+- `validate-invite-code` accepts a cloud-inviter invitation only with
+  `fixed_data` keys exactly `code` and `target_group`, the group Cloud App
+  Guests, `single_use` true and an expiry at most 7 days ahead
+  (`docs/architecture/authentication.md`, "Cloud guest invite codes"). It
+  stamps the accepted invitation's pk on the new account, and
+  `assign-invite-group` consumes exactly that one; its fallback lookup by
+  code never takes a cloud-inviter invitation. No pipeline runs the guard
+  tests: run `python3 -m unittest discover -s stacks/authentik -p 'test_*.py'`
+  before any edit to either policy.
+- The deny stage `deny-cloud-guest-invite` sits right after the
+  InvitationStage of `invitation-enrollment` (order 11) and refuses any
+  invitation cloud-inviter made. The list of flows comes from this repo's
+  docs, and flows here are partly managed in the UI, so the rollout checks
+  the live instance before the console gets the token: every flow that the
+  command below lists must be in `local.cloud_invitation_stage_flows` (add
+  its slug and the order after its InvitationStage, apply the authentik
+  stack again). Do the same if another flow gets an InvitationStage later.
+  The check reads only:
+
+  ```sh
+  curl -s -H "Authorization: Bearer $(vault kv get -field=tf_api_token secret/authentik)" \
+    https://authentik.viktorbarzin.me/api/v3/stages/invitation/stages/ | jq '.results[] | {name, flow_set: [.flow_set[].slug]}'
+  ```
+
+- Each owner's Apps get at most 20 codes a day (Cloud's own limit).
+
+Rotate the token: taint `authentik_token.cloud_inviter` and apply the
+authentik stack (`homelab tf apply authentik`, from the main checkout). The
+apply writes the new key to `secret/cloud/inviter`; ESO refreshes
+`cloud-console-inviter` within its 1 h interval (annotate it with
+`force-sync=$(date +%s)` to do it now) and Reloader restarts the console. The
+old token stops working at the apply, so invites fail until the console has
+the new one. A rotation always ends with the purge below. A code works only
+in its last 7 days, but an Invitation records no creation time, so a leaked
+token can make codes that expire months ahead and wait; rotating the token
+leaves them working until they are deleted.
+
+List or revoke outstanding codes: `homelab invite list` shows every code with
+its group; `homelab invite revoke <code>` deletes one. To revoke every
+cloud-inviter code at once (after every rotation), rotate the token first,
+then delete the invitations it made:
+
+```sh
+T=$(vault kv get -field=tf_api_token secret/authentik)
+A=https://authentik.viktorbarzin.me/api/v3/stages/invitation/invitations
+curl -s -H "Authorization: Bearer $T" "$A/?created_by__username=cloud-inviter&page_size=500" \
+  | jq -r '.results[].pk' | while read -r pk; do
+      curl -s -X DELETE -H "Authorization: Bearer $T" "$A/$pk/"; done
+```
+
+Accounts a code already made stay; remove them from Cloud App Guests, or
+delete them, in Authentik.
+
+## The Cloud CLI on the devvm
+
+`playbooks/devvm.yml` installs `@viktorbarzin/cloud` for every user at
+`devvm_cloud_cli_version` (tag `cloud-cli`), from the Forgejo npm registry the
+cloud repo's `cli-release` workflow publishes to. To roll a new CLI out, wait
+for that workflow to publish the version, bump the variable, then
+`ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff --tags cloud-cli`
+and the same without `--check`. Users then run `cloud new <app>` with the
+Forgejo token git already holds for them; it needs `write:repository`.
+
 ## Restart
 
 The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:
