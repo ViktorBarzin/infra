@@ -157,7 +157,15 @@ the `migrate` init container. Order:
    ingress floor passes edge pods to oauth2-proxy pods on 4180.
 2. Deploy Cloud (merge to master; GitHub Actions builds, Woodpecker rolls
    out). The new reconciler sees a new render digest and queues an apply
-   for every Project; they run one at a time.
+   for every Project; they run one at a time. Each App answers 503 or 502
+   for a few seconds while its new edge and oauth2-proxy start, and
+   signed-in visitors sign in again (the session cookie is now the
+   host-only `__Host-oauth2_proxy`). Accepted race, once per private App:
+   its Ingress moves from `auth-<app>` to `edge-<app>` right after the edge
+   Service's selector changes, and an old edge pod (no sign-in check) leaves
+   the Service only when the EndpointSlice controller catches up. If
+   Traefik picks up the new Ingress first, a request in that moment can
+   reach the App without a sign-in.
 3. Watch them settle: `kubectl get ingress -A -l cloud.viktorbarzin.me/managed=true -o json | jq -r '.items[] | select(.spec.rules[0].http.paths[0].backend.service.name | startswith("auth-")) | .metadata.namespace'`
    lists Projects still on the old Ingress, and
    `kubectl get deploy -A -l cloud.viktorbarzin.me/component=edge -o json | jq -r '.items[] | select([.spec.template.spec.containers[0].env[].name] | index("CLOUD_EDGE_SECRET") | not) | .metadata.namespace'`
@@ -174,6 +182,9 @@ the `migrate` init container. Order:
 Rollback before step 4: revert the Cloud release, then apply each
 Project's file again (console or `cloud apply`): the older reconciler does
 not re-apply Projects by itself. The policies still admit the old shapes.
+Before rolling forward again, clear the stored render digest, or the new
+release finds its own digest still there and re-applies nothing:
+`DELETE FROM reconciler_state WHERE key = 'render';` (SQL as above).
 
 ## Turn on builds
 

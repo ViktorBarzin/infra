@@ -325,7 +325,10 @@ locals {
   # The oauth2-proxy, as Cloud renders it for every App (app-kit K1): it
   # proxies nothing (upstream static://202) and answers the edge's
   # /oauth2/auth question with X-Auth-Request-* headers (--set-xauthrequest),
-  # with a 12-hour session cookie bound to the App's host. Every flag is
+  # with a 12-hour host-only session cookie: the __Host- prefix and no
+  # --cookie-domain, so browsers refuse the cookie when script on a sibling
+  # host sets it for viktorbarzin.me, and no App can plant a session in
+  # another (a public App admits any account, so anyone holds one). Every flag is
   # fixed: the issuer, the endpoints, no --skip-jwt-bearer-tokens. The one
   # flag that differs is the gate: a private App's email allowlist file
   # (args_private, with its ConfigMap mounted) or a public App's
@@ -361,8 +364,7 @@ locals {
     "--whitelist-domain=@APP@.viktorbarzin.me",
     "--http-address=0.0.0.0:4180",
     "--reverse-proxy=true",
-    "--cookie-name=_oauth2_proxy",
-    "--cookie-domain=@APP@.viktorbarzin.me",
+    "--cookie-name=__Host-oauth2_proxy",
     "--cookie-secure=true",
     "--cookie-expire=12h",
     "--ping-path=/oauth2/ping",

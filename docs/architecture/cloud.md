@@ -284,7 +284,13 @@ asks it at `/oauth2/auth` who is signed in, and passes that to the App as
 module). A public App's oauth2-proxy has `--email-domain=*` and no emails
 file; a private App's has the email allowlist. Not signed in, a public App
 gets the request anonymously and a private App redirects a page load to
-sign-in and answers other requests 401.
+sign-in and answers other requests 401. The session cookie is the
+host-only `__Host-oauth2_proxy` (no `--cookie-domain`), so script on a
+sibling host cannot plant a session for another App. Services `edge-<app>`
+and `auth-<app>` select only pods running the current Caddyfile and args
+(pod labels `cloud.viktorbarzin.me/edge-config` and `auth-config`), so an
+access change answers 503 or 502 until the new pods are ready instead of
+serving with the old rules.
 
 ```mermaid
 flowchart LR

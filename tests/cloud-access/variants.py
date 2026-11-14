@@ -367,7 +367,8 @@ PROXY_RULES = [
     ("upstream-other-ns", arg("--upstream", "http://edge-recipes.p-other.svc.cluster.local:80/"), A_RUNS),
     ("upstream-vault", arg("--upstream", "http://vault-active.vault.svc.cluster.local:8200/"), A_RUNS),
     ("client-id", arg("--client-id", "kubernetes"), A_RUNS),
-    ("cookie-domain-parent", arg("--cookie-domain", ".viktorbarzin.me"), A_RUNS),
+    ("cookie-domain-parent", lambda s: ec(s)["args"].append("--cookie-domain=.viktorbarzin.me"), A_RUNS),
+    ("cookie-name-plain", arg("--cookie-name", "_oauth2_proxy"), A_RUNS),
     ("other-host", arg("--redirect-url", "https://menu.viktorbarzin.me/oauth2/callback"), A_RUNS),
     ("issuer", arg("--oidc-issuer-url", "https://evil.example.com/"), A_RUNS),
     ("skip-jwt", lambda s: ec(s)["args"].append("--skip-jwt-bearer-tokens=true"), A_RUNS),
@@ -510,10 +511,10 @@ def edit(old, new):
     return f
 
 
-COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|techaro\\.lol-anubis-[^=;]*|_oauth2_proxy[^=;]*"
+COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|techaro\\.lol-anubis-[^=;]*|_oauth2_proxy[^=;]*|__Host-oauth2_proxy[^=;]*"
 RENDERED = "Caddyfile is one Cloud renders"
 case("edge-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
-     variant(public_cf, edit(COOKIE_LIST, "_oauth2_proxy[^=;]*|techaro\\.lol-anubis-[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
+     variant(public_cf, edit(COOKIE_LIST, "__Host-oauth2_proxy[^=;]*|_oauth2_proxy[^=;]*|techaro\\.lol-anubis-[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
 case("edge-cm-comment", "kr", "ok", "Caddyfile with a comment line before it", variant(public_cf, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
 for cookie in COOKIE_LIST.split("|")[:4]:
     short = cookie.split("[")[0].rstrip("_").replace("\\.", ".")
