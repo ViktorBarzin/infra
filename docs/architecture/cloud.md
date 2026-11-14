@@ -42,6 +42,7 @@ flowchart LR
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
 | Images | `ghcr.io/viktorbarzin/cloud` and `ghcr.io/viktorbarzin/cloud-reconciler`, private; Kyverno copies `ghcr-credentials` into `cloud` | `stacks/kyverno` `ghcr-credentials.tf` |
 | Alerts | group `Cloud` | `stacks/monitoring` `prometheus_chart_values.tpl` |
+| App hosts in internal DNS | Helm release `external-dns-cloud` (namespace `technitium`) writes `CNAME <host> -> viktorbarzin.me` plus an owner TXT record in Technitium within seconds of an App Ingress appearing, and deletes both with the Ingress. It reads only Ingresses labelled `cloud.viktorbarzin.me/managed=true`, which Cloud's `modules/app` sets. Publicly the hosts ride the Cloudflare wildcard. See `docs/architecture/dns.md`, "Cloud App hosts" | `stacks/technitium` `external_dns.tf` |
 
 The console's ingress is proxied, so `external-monitor-sync` adds the Uptime
 Kuma monitor `[External] cloud` by itself.

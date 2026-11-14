@@ -6,7 +6,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | wireguard | VPN server | wireguard |
-| technitium | DNS server (10.0.20.201 = primary + 2 replicas; blocking and PostgreSQL query logging on all three, replicas kept in step by `technitium-blocking-sync`) | technitium |
+| technitium | DNS server (10.0.20.201 = primary + 2 replicas that follow it by NOTIFY; blocking and PostgreSQL query logging on all three, replicas kept in step by `technitium-blocking-sync`); external-dns for `*.viktorbarzin.lan` Ingress hosts and `external-dns-cloud` for Cloud App hosts in `viktorbarzin.me` | technitium |
 | headscale | Tailscale control server | headscale |
 | traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |

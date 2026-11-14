@@ -2,11 +2,11 @@
 
 <!-- showcase: Technitium answers for the internal zone and for recursive lookups, Cloudflare hosts the public zone, and records for new ingresses are created from the Kubernetes API. -->
 
-Last updated: 2026-11-10 (OPNsense replaced pfSense as the edge firewall, ADR-0038: Unbound, Kea and the WAN DNS redirect run on OPNsense on the same addresses). Previously 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
+Last updated: 2026-11-14 (replicas follow the primary by NOTIFY within seconds, viktorbarzin.me SOA refresh 5 min, alert `TechnitiumReplicaSerialBehind`; Cloud App hosts get their internal CNAME from `external-dns-cloud`). Previously 2026-11-10 (OPNsense replaced pfSense as the edge firewall, ADR-0038: Unbound, Kea and the WAN DNS redirect run on OPNsense on the same addresses). Previously 2026-10-14 (external-dns now creates and deletes the records for `*.viktorbarzin.lan` Ingress hosts from the kube API, ADR-0033; the `technitium-dynamic-updates` CronJob keeps the TSIG keys and update policy on all three Technitium instances. Previously 2026-07-08: record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview
 
-DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage with zone replication via AXFR every 30 minutes. A **NodeLocal DNSCache** DaemonSet runs on every node and transparently intercepts pod DNS traffic, caching responses locally so pods keep resolving even during CoreDNS, Technitium, or OPNsense disruptions.
+DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage. The primary sends NOTIFY to both replicas on every zone change, and they transfer the zone within seconds; a resync every 30 minutes is the backstop. A **NodeLocal DNSCache** DaemonSet runs on every node and transparently intercepts pod DNS traffic, caching responses locally so pods keep resolving even during CoreDNS, Technitium, or OPNsense disruptions.
 
 ## Architecture Diagram
 
@@ -98,6 +98,7 @@ graph TB
 | OPNsense Unbound | 10.0.20.1 | OPNsense 26.7.8 (Unbound 1.26.2) | DNS resolver on VLAN 10/VLAN 20/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); forwards `viktorbarzin.me` to Technitium; DoT upstream to Cloudflare. Declared in `playbooks/files/opnsense/unbound.yml` |
 | Kea DHCP-DDNS | 10.0.20.1 | OPNsense 26.7.8 | Automatic DNS registration on DHCP lease. Not running on pfSense since 2026-07-18 and not configured on OPNsense (see "Dynamic updates" below) |
 | external-dns | K8s namespace `technitium` | v0.23.0 (chart 1.23.0) | A + TXT ownership records for `*.viktorbarzin.lan` Ingress hosts, over TSIG-signed RFC 2136 (ADR-0033) |
+| external-dns-cloud | K8s namespace `technitium` | v0.23.0 (chart 1.23.0) | CNAME + TXT ownership records in `viktorbarzin.me` for Cloud App hosts, over TSIG-signed RFC 2136 (see "Cloud App hosts") |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
 ### Terraform Stacks
@@ -226,6 +227,8 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 - **Pod anti-affinity**: `required` on `kubernetes.io/hostname` — all 3 pods run on different nodes
 - **PodDisruptionBudget**: `minAvailable=2` — at least 2 DNS pods survive voluntary disruptions
 - **Recreate strategy**: Each deployment uses `Recreate` (RWO block storage)
+- **NOTIFY** (since 2026-11-14): every primary zone has `notify=SpecifiedNameServers` with the ClusterIPs of `technitium-secondary-dns` and `technitium-tertiary-dns`, and both replicas have `notifyAllowedNetworks` = the pod network 10.10.0.0/16. A replica checks a NOTIFY's source against the zone's primary address (the `technitium-primary` ClusterIP), and the primary sends from its pod IP, so the setting is needed. `technitium-zone-sync` keeps both. Before that no NOTIFY reached a replica: `viktorbarzin.me` had `notify=None`, and the other zones notified their NS hosts (the primary pod's first-start name), which resolve to nothing. On 2026-11-14 a CNAME the hourly ingress sync wrote at 03:00 was still NXDOMAIN on both replicas at 03:14 (9 of 9 queries to 10.0.20.201), and appeared at the 03:30 resync.
+- **SOA timers of `viktorbarzin.me`**: refresh 300 s, retry 60 s (were 1 day each), kept by `technitium-zone-sync` (`local.zone_sync_soa` in `ha.tf`). The refresh is how often a replica checks the primary when a NOTIFY is lost. The other zones keep Technitium's defaults (900/300).
 - **Zone sync CronJob** (`technitium-zone-sync`, every 30min): Replicates all primary zones to secondary/tertiary via AXFR. Idempotent and type-aware: a Primary zone becomes a Secondary on the replicas, and a Forwarder zone (e.g. `ntp.org`, which Technitium auto-creates to skip DNSSEC validation for NTP) becomes a SecondaryForwarder. A replica zone of the wrong type is deleted and recreated. A Forwarder mirrored as a plain Secondary is authoritative with only SOA + FWD records and answers NXDOMAIN for every name under it (infra#169: all of `*.ntp.org` failed on both replicas).
 
 ### Services
@@ -238,6 +241,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | `technitium-web` | ClusterIP | auto | `app=technitium` | Web UI (port 5380) + DoH (port 80) |
 | `technitium-secondary-web` | ClusterIP | auto | `app=technitium-secondary` | Secondary API access |
 | `technitium-tertiary-web` | ClusterIP | auto | `app=technitium-tertiary` | Tertiary API access |
+| `technitium-secondary-dns`, `technitium-tertiary-dns` | ClusterIP | auto | `app=technitium-secondary` / `-tertiary` | Port 53 of one replica: NOTIFY target, and the `technitium-soa` probe |
 
 ### Zones
 
@@ -260,9 +264,10 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | writer | key | sends to | allowed |
 |---|---|---|---|
 | external-dns | `external-dns` (Terraform `random_id`, `stacks/technitium/modules/technitium/dynamic_updates.tf`) | the primary, via ClusterIP `technitium-primary` | A, AAAA, CNAME, TXT under `*.viktorbarzin.lan` |
+| external-dns-cloud | `external-dns-cloud` (Terraform `random_id`, same file) | the primary, via ClusterIP `technitium-primary` | CNAME, TXT under `*.viktorbarzin.me` |
 | Kea DHCP-DDNS | `kea-ddns` (Vault `secret/viktor` `kea_ddns_tsig_secret`) | LB 10.0.20.201, so any instance; a replica checks the signature with its own copy of the key and forwards to the primary | ANY under `*.viktorbarzin.lan` and the three Kea reverse zones |
 
-The update ACL is the firewall addresses (10.0.20.1, 10.0.10.1, 192.168.1.2, OPNsense's since the cutover) plus the pod network 10.10.0.0/16 on the primary (external-dns, and replicas forwarding Kea updates), and the firewall addresses on the replicas. Key policies exist on the primary only, since Technitium accepts them on primary zones only. Zone options and TSIG keys are per-instance settings that AXFR does not copy, and a replica zone recreated by `technitium-zone-sync` starts at `update=Deny`. The hourly `technitium-dynamic-updates` CronJob therefore sets the full key list and these options on all three instances. When it first ran on 2026-10-14, all three had drifted back to `update=Deny` with no policies, so neither writer could update. Kea itself is also off: pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the DDNS settings added by hand on 2026-04-19, and OPNsense's Kea has no DDNS configured (`playbooks/files/opnsense/dhcp.yml` has none, and `kea-dhcp-ddns` was not running on 2026-11-10). Re-enabling it is a separate task; the Technitium side accepts its updates again from 2026-10-14.
+The update ACL is the firewall addresses (10.0.20.1, 10.0.10.1, 192.168.1.2, OPNsense's since the cutover) plus the pod network 10.10.0.0/16 on the primary (external-dns, and replicas forwarding Kea updates), and the firewall addresses on the replicas. Key policies exist on the primary only, since Technitium accepts them on primary zones only. On the replicas only the zones Kea writes get the firewall ACL; `viktorbarzin.me` stays at `update=Deny` there. Zone options and TSIG keys are per-instance settings that AXFR does not copy, and a replica zone recreated by `technitium-zone-sync` starts at `update=Deny`. The hourly `technitium-dynamic-updates` CronJob therefore sets the full key list and these options on all three instances. When it first ran on 2026-10-14, all three had drifted back to `update=Deny` with no policies, so neither writer could update. Kea itself is also off: pfSense regenerated `kea-dhcp4.conf` on 2026-07-18 without the DDNS settings added by hand on 2026-04-19, and OPNsense's Kea has no DDNS configured (`playbooks/files/opnsense/dhcp.yml` has none, and `kea-dhcp-ddns` was not running on 2026-11-10). Re-enabling it is a separate task; the Technitium side accepts its updates again from 2026-10-14.
 
 ### Resolver Settings
 
@@ -530,7 +535,7 @@ flowchart LR
 
 | CronJob | Schedule | Namespace | Purpose |
 |---------|----------|-----------|---------|
-| `technitium-zone-sync` | `*/30 * * * *` | technitium | AXFR replication to secondary/tertiary |
+| `technitium-zone-sync` | `*/30 * * * *` | technitium | Creates replica zones and resyncs them; keeps NOTIFY settings and the `viktorbarzin.me` SOA timers |
 | `technitium-password-sync` | `0 */6 * * *` | technitium | Vault-rotated PG password → Technitium config, configure PG logging on all three instances |
 | `technitium-blocking-sync` | `20 */6 * * *` | technitium | Copy the primary's block lists, Advanced Blocking and Drop Requests configs to the replicas; install the replicas' query-log app |
 | `dns-anomaly-monitor` | `*/30 * * * *` | technitium | Last-hour dashboard stats summed over all three instances → Pushgateway |
@@ -591,6 +596,8 @@ password produced the same-looking auth-path failure.
 | CoreDNS Prometheus metrics (:9153) | Grafana CoreDNS dashboard | `CoreDNSErrors`, `CoreDNSForwardFailureRate` |
 | Technitium zone-sync CronJob (Pushgateway) | — | `TechnitiumZoneSyncFailed`, `TechnitiumZoneSyncStale`, `TechnitiumZoneCountMismatch` |
 | Technitium DNS pod availability | — | `TechnitiumDNSDown` |
+| blackbox SOA probe, job `technitium-soa` (each instance x `viktorbarzin.me`, `viktorbarzin.lan`) | — | `TechnitiumReplicaSerialBehind` (a replica's serial differs from the primary's for 10 min), `TechnitiumSOAProbeFailed` |
+| external-dns metrics (`app_kubernetes_io_instance` = `external-dns` or `external-dns-cloud`) | — | `ExternalDNSLan*`; `ExternalDNSCloudSyncStale`, `ExternalDNSCloudSoftErrors` |
 | `dns-anomaly-monitor` CronJob (Pushgateway) | Grafana Network Traffic | `DNSQueryRateDropped`, `DNSHighErrorRate`, `DNSAnomalyMonitorDown`, `DNSAnomalyMonitorStale` |
 | `technitium-blocking-sync` CronJob (Pushgateway) | — | `TechnitiumBlockingSyncFailed`, `TechnitiumBlockingSyncStale` |
 | `dns-digest` CronJob (monitoring ns, daily 08:00 London) | Slack #alerts, only when there is something to report | `DNSDigestStale`, `DNSDigestBlind` |
@@ -676,6 +683,9 @@ K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` 
 
 ### Zone Not Replicating to Secondary/Tertiary
 
+`TechnitiumReplicaSerialBehind` fires when a replica's SOA serial differs from the primary's for 10 minutes. With NOTIFY working a replica follows in seconds.
+
+0. Compare serials: `dig +short @10.0.20.201 viktorbarzin.me SOA` several times (the LB picks an instance), or the `probe_dns_serial{job="technitium-soa"}` series in Prometheus. Then check NOTIFY in the latest zone-sync job log (`SET:` and `ERROR:` lines), the primary zone's Notify setting (Specified Name Servers, the two `technitium-*-dns` ClusterIPs) and the replica's `notifyAllowedNetworks` (Settings, Zone Transfer). A replica log line "refused a NOTIFY request since the request IP address was not recognized" means that setting is missing.
 1. Check zone-sync CronJob: `kubectl get cronjob -n technitium technitium-zone-sync`
 2. Check recent jobs: `kubectl get jobs -n technitium | grep zone-sync`
 3. Verify AXFR is enabled on primary: Check zone options → Zone Transfer = Allow
@@ -691,11 +701,20 @@ Common causes:
 ### Adding a New DNS Record
 
 For internal `.viktorbarzin.lan` records:
-0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. Replicas and OPNsense's Unbound copy follow on their next refresh, up to about 30 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
+0. A service behind Traefik needs nothing: give its Ingress a `*.viktorbarzin.lan` host (`root_domain = "viktorbarzin.lan"` on `ingress_factory`) and external-dns writes the A record on the primary within seconds, and deletes it when the Ingress goes away. The replicas follow in seconds by NOTIFY; OPNsense's Unbound copy follows on its SOA refresh, up to 15 minutes. Hosts on a Traefik IngressRoute with no Ingress object are not covered; declare those in `technitium-static-records`.
 1. In the phpIPAM web UI (`phpipam.viktorbarzin.me`), set the hostname on the address and give it a description that does not start with `-- ` (that makes it a hand row, which the importer never changes)
 2. Within 30 minutes `phpipam-import` publishes it to Technitium, unless the name already points elsewhere (it logs a warning and leaves it)
 3. A London, Valchedrym or Mladost 3 device is better named with a static lease on its site router (`ensure_host` in `scripts/london-flint/provision.sh` for London)
 4. Or add directly in Technitium web UI (`technitium.viktorbarzin.me`), or declaratively in `technitium-static-records`
+
+### Cloud App hosts
+
+A Cloud App host `<name>.viktorbarzin.me` is an Ingress in a `p-*` namespace labelled `cloud.viktorbarzin.me/managed=true` (Cloud's `modules/app` sets it). Publicly it rides the Cloudflare wildcard. Internally, the Helm release `external-dns-cloud` (`stacks/technitium/modules/technitium/external_dns.tf`) writes `CNAME <host> -> viktorbarzin.me`, TTL 300, plus TXT `edns-cname-<host>` (owner `k8s-cloud`) on the primary within seconds of the Ingress appearing, and deletes both when it goes away. NOTIFY takes the change to the replicas.
+
+- It reads only Ingresses with that label (`--label-filter`), and `technitium-ingress-dns-sync` skips them, so each Cloud host has one writer.
+- It changes or deletes only records carrying its own owner TXT, and creates nothing at a name that already holds a record it does not own. A Cloud host can therefore never replace a homelab record; the admission policy `cloud-managed-ingress` also refuses hosts the homelab routes.
+- Its TSIG key `external-dns-cloud` may write only CNAME and TXT under `*.viktorbarzin.me`.
+- A Cloud host made by the hourly sync before 2026-11-14 has no owner record, so `external-dns-cloud` leaves it alone and it stays after the App is deleted. Delete such a record on the primary (`/api/zones/records/delete` with `type=CNAME&cname=viktorbarzin.me`); if the App still exists, `external-dns-cloud` writes its own within a minute. Expect a short NXDOMAIN window in between.
 
 For external `.viktorbarzin.me` records:
 1. Add `dns_type = "proxied"` (or `"non-proxied"`) to the `ingress_factory` module call in the service stack

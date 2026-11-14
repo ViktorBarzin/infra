@@ -1,0 +1,131 @@
+# promtool unit tests for the "Internal DNS freshness" alert group
+# (stacks/monitoring prometheus_chart_values.tpl). tests/technitium-replication.test.sh
+# cuts the group out into dns.rules.yml and runs these with promtool.
+# Labels are the ones the technitium-soa scrape job sets (instance, zone,
+# role) and the kubernetes-pods job sets on external-dns
+# (app_kubernetes_io_instance = the Helm release name). Probes run every 60s.
+rule_files:
+  - dns.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The secondary misses a change and stays one serial behind: fires after 10m.
+  - interval: 1m
+    input_series:
+      - series: 'probe_dns_serial{job="technitium-soa", instance="technitium-primary.technitium.svc.cluster.local", role="primary", zone="viktorbarzin.me"}'
+        values: '1386x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="technitium-secondary-dns.technitium.svc.cluster.local", role="secondary", zone="viktorbarzin.me"}'
+        values: '1385x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="technitium-tertiary-dns.technitium.svc.cluster.local", role="tertiary", zone="viktorbarzin.me"}'
+        values: '1386x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TechnitiumReplicaSerialBehind
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: TechnitiumReplicaSerialBehind
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: technitium-soa
+              instance: technitium-secondary-dns.technitium.svc.cluster.local
+              role: secondary
+              zone: viktorbarzin.me
+
+  # A NOTIFY that lands within a few minutes is normal: no alert.
+  - interval: 1m
+    input_series:
+      - series: 'probe_dns_serial{job="technitium-soa", instance="p", role="primary", zone="viktorbarzin.lan"}'
+        values: '100x5 101x15'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="s", role="secondary", zone="viktorbarzin.lan"}'
+        values: '100x8 101x12'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: TechnitiumReplicaSerialBehind
+        exp_alerts: []
+
+  # Zones are compared with their own primary only.
+  - interval: 1m
+    input_series:
+      - series: 'probe_dns_serial{job="technitium-soa", instance="p", role="primary", zone="viktorbarzin.me"}'
+        values: '1386x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="p", role="primary", zone="viktorbarzin.lan"}'
+        values: '2026111400x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="s", role="secondary", zone="viktorbarzin.me"}'
+        values: '1386x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="s", role="secondary", zone="viktorbarzin.lan"}'
+        values: '2026111400x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: TechnitiumReplicaSerialBehind
+        exp_alerts: []
+
+  # The replica lost the zone: it answers without an SOA, serial 0. Fires.
+  - interval: 1m
+    input_series:
+      - series: 'probe_dns_serial{job="technitium-soa", instance="p", role="primary", zone="viktorbarzin.me"}'
+        values: '1386x20'
+      - series: 'probe_dns_serial{job="technitium-soa", instance="t", role="tertiary", zone="viktorbarzin.me"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: TechnitiumReplicaSerialBehind
+        exp_alerts:
+          - exp_labels: {severity: warning, job: technitium-soa, instance: t, role: tertiary, zone: viktorbarzin.me}
+
+  # The probe itself fails, or blackbox is unreachable.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="technitium-soa", instance="t", role="tertiary", zone="viktorbarzin.lan"}'
+        values: '0x20'
+      - series: 'probe_success{job="technitium-soa", instance="s", role="secondary", zone="viktorbarzin.lan"}'
+        values: '1x20'
+      - series: 'up{job="technitium-soa", instance="p", role="primary", zone="viktorbarzin.me"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: TechnitiumSOAProbeFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, job: technitium-soa, instance: t, role: tertiary, zone: viktorbarzin.lan}
+          - exp_labels: {severity: warning, job: technitium-soa, instance: p, role: primary, zone: viktorbarzin.me}
+
+  # external-dns-cloud missing entirely: the LAN instance's metric does not
+  # stand in for it.
+  - interval: 1m
+    input_series:
+      - series: 'external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns", namespace="technitium"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ExternalDNSCloudSyncStale
+        exp_alerts:
+          - exp_labels: {severity: warning, app_kubernetes_io_instance: external-dns-cloud}
+
+  # external-dns-cloud syncing every minute: quiet. It stops at minute 10: fires
+  # once 15m stale for 10m.
+  - interval: 1m
+    input_series:
+      - series: 'external_dns_controller_last_sync_timestamp_seconds{app_kubernetes_io_instance="external-dns-cloud", namespace="technitium"}'
+        values: '0+60x10 600x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ExternalDNSCloudSyncStale
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ExternalDNSCloudSyncStale
+        exp_alerts:
+          - exp_labels: {severity: warning, app_kubernetes_io_instance: external-dns-cloud, namespace: technitium}
+
+  # Soft errors on the cloud instance fire its alert; the LAN instance's do not.
+  - interval: 1m
+    input_series:
+      - series: 'external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns-cloud", namespace="technitium"}'
+        values: '3x20'
+      - series: 'external_dns_controller_consecutive_soft_errors{app_kubernetes_io_instance="external-dns", namespace="technitium"}'
+        values: '3x20'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: ExternalDNSCloudSoftErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, app_kubernetes_io_instance: external-dns-cloud, namespace: technitium}
