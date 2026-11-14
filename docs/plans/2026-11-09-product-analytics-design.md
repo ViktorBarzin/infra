@@ -155,7 +155,7 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
    - Logs moved to the standard.
 5. **Clean-up.** Retire the duplicated Loki dashboards for events that moved. tv's viewing tables stay, because tv features read them.
 
-## Rollout status (2026-11-12)
+## Rollout status (2026-11-14)
 
 | App | Server events | Browser | Errors | Logs on the standard | App ADR |
 |---|---|---|---|---|---|
@@ -170,6 +170,8 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 | priority-pass | live | `pass.selected`, `pass.shared`, `pass.downloaded` | server | yes | 0001 |
 | tasks | `account.connected`, `task.created`, `task.completed`, `list.created` | `smart_view.opened`, `completed_tasks.toggled`, `search.started`, `task_sheet.opened` | server and browser | yes (`@viktorbarzin/log` 1.0) | 0005 |
 | alexa-assistant | `turn.completed`, `person.paired`, `result.delivered`, `pairing.started` (voice events use `alexa:<person>`) | `access_requests.opened`, `unknown_voice.shown`, `status.load_failed` | server and browser | yes | 0004 |
+| reels (repo trip-reel) | `library.connected`, `trip.created`, `cut.created`, `render.requested` (2026-11-14) | `preview.played`, `render.played`, `render.downloaded` | server and browser | yes (`@viktorbarzin/log` 1.0); the Python worker sends nothing | 0002 |
+| cloud (console only, not the reconciler) | `project.created`, `plan.applied`, `project.deleted`, `access_token.created` (2026-11-14) | pageviews and replay; no browser events | server and browser | yes | 0007 |
 | vpn-portal | `wg_device.registered`, `wg_device.revoked`, `wg_device.rotated`, `tailscale_device.enrolled` | `subscription.copied`, `client_app.opened`, `proxy_config.copied`, `wg_config.exported` | server and browser | yes | 2026-11-10-telemetry-in-the-browser |
 | plotting-book | `account.registered`, `project.created`, `writing_session.logged`, `share_link.created` | `project.exported`, `scene_filter.toggled`, `outline_mode.switched` | server and browser | yes | 2026-11-10-telemetry-in-the-browser |
 | interview-prep (no server; nginx serves the browser settings) | n/a | `lesson.played`, `lesson.completed`, `scene.selected` | browser | n/a | 2026-11-10-telemetry-in-the-browser |
