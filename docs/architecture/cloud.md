@@ -290,7 +290,12 @@ sibling host cannot plant a session for another App. Services `edge-<app>`
 and `auth-<app>` select only pods running the current Caddyfile and args
 (pod labels `cloud.viktorbarzin.me/edge-config` and `auth-config`), so an
 access change answers 503 or 502 until the new pods are ready instead of
-serving with the old rules.
+serving with the old rules. The Project quota holds a surge pod for every
+edge and oauth2-proxy beside the App's own, so the new pods start while
+the App's new pod is still getting ready. Cloud's Project policy lets
+Traefik reach only edge pods with the `edge-config` label; edge pods from
+before app-kit K1 have it as an annotation only, so Traefik never reaches
+one during the K1 re-apply.
 
 ```mermaid
 flowchart LR

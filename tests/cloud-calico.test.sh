@@ -17,7 +17,9 @@
 #      Service) as the reconciler, so Cloud's own Project policy goes through
 #      calico-apiserver and the reconciler's RBAC there. While it exists,
 #      tests/cloud-calico/matrix.sh checks a connectivity matrix with probe
-#      pods carrying Cloud's labels: Traefik reaches every App's edge only;
+#      pods carrying Cloud's labels: Traefik reaches every App's edge only,
+#      and only an edge pod with the Caddyfile digest label (none from before
+#      app-kit K1);
 #      each edge reaches only its own App and its own oauth2-proxy on 4180;
 #      oauth2-proxy reaches no edge and no App; App pods reach the CNPG primary and DNS, and
 #      not the Authentik server, a replica, Vault, other namespaces, the API
