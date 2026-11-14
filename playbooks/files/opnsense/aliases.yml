@@ -105,6 +105,46 @@ aliases:
   content_descriptions:
   - devvm
   managed_by: pfsense-vermont-alias.yml
+# infra#176 (2026-11-11): the weekly access-event archive in stacks/vermont-access.
+# Pods SNAT to their node address, so the k8s nodes are the source; the pass rule
+# in filter.yml and the Pi's allowlist limit them to vermont_acs_devices on TCP 80.
+# Keep in step with vermont_allowed_sources in playbooks/rpi-sofia-netmap.yml.
+- name: vermont_acs_pollers
+  type: host
+  content:
+  - 10.0.20.100
+  - 10.0.20.101
+  - 10.0.20.102
+  - 10.0.20.103
+  - 10.0.20.104
+  - 10.0.20.105
+  description: k8s nodes, may reach the Vermont access devices on TCP 80 (infra#176)
+  content_descriptions:
+  - k8s-master
+  - k8s-node1
+  - k8s-node2
+  - k8s-node3
+  - k8s-node4
+  - k8s-node5
+- name: vermont_acs_devices
+  type: host
+  content:
+  - 10.77.1.111
+  - 10.77.1.112
+  - 10.77.1.113
+  - 10.77.1.114
+  - 10.77.1.115
+  - 10.77.1.116
+  - 10.77.1.117
+  description: Vermont entrance panels and back-door terminal, on the complex alias (infra#176)
+  content_descriptions:
+  - entrance panel, building A
+  - entrance panel
+  - entrance panel
+  - entrance panel
+  - entrance panel
+  - entrance panel
+  - back-door terminal DS-K1T805MBFWX
 - name: vermont_complex_alias
   type: network
   content:

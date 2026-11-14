@@ -14,7 +14,9 @@
 # on eth1 RETURNs to FORWARD (and continues exactly as before), anything else
 # is dropped. pfSense does not NAT this traffic, so the sources are the real
 # k8s node and devvm addresses; each gets a return route via pfSense's WAN
-# address so replies do not hairpin through the TP-Link.
+# address so replies do not hairpin through the TP-Link. A source may be
+# limited to an address range and a TCP port (the k8s nodes: the access
+# devices .111-.117 on port 80 only, infra#176).
 # Usage: vermont-netmap.sh start|stop|status
 set -u
 NS=guestns
@@ -27,6 +29,13 @@ PFSENSE_WAN={{ vermont_pfsense_wan }}
 ALLOWED_SRCS=(
 {% for s in vermont_allowed_sources %}
   {{ s.cidr }}   # {{ s.why }}
+{% endfor %}
+)
+# Extra match per source, same order as ALLOWED_SRCS; empty = every address
+# and port of the alias.
+ALLOWED_MATCH=(
+{% for s in vermont_allowed_sources %}
+  "{% if s.dst_range is defined %}-m iprange --dst-range {{ s.dst_range }}{% endif %}{% if s.tcp_port is defined %} -p tcp --dport {{ s.tcp_port }}{% endif %}"
 {% endfor %}
 )
 # Sources behind pfSense, which need a return route via its WAN address.
@@ -63,9 +72,10 @@ start() {
   # Allowlist chain, rebuilt from scratch so a removed source disappears.
   ipt -N $CHAIN 2>/dev/null || true
   ipt -F $CHAIN
-  local s
-  for s in "${ALLOWED_SRCS[@]}"; do
-    ipt -A $CHAIN -s "$s" -j RETURN
+  local i
+  for i in "${!ALLOWED_SRCS[@]}"; do
+    # shellcheck disable=SC2086  # the match is a list of words on purpose
+    ipt -A $CHAIN -s "${ALLOWED_SRCS[$i]}" ${ALLOWED_MATCH[$i]} -j RETURN
   done
   ipt -A $CHAIN -j DROP
   # Any jump other than the current one (e.g. an older one without -i) goes.

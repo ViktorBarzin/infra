@@ -46,6 +46,10 @@ locals {
     # trips, cuts, renders and the job queue between them. Drizzle migrations
     # run from the web app's `migrate` init container.
     reels = {}
+    # vermont-access (stacks/vermont-access, infra#176): two years of the
+    # Vermont complex access-control events. The weekly CronJob creates its
+    # table with CREATE TABLE IF NOT EXISTS.
+    vermont_access = {}
   }
 }
 
