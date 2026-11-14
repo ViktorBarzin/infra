@@ -103,6 +103,10 @@ locals {
     FORGEJO_READ_TOKEN      = "forgejo_read_token"
     FORGEJO_ADMIN_TOKEN     = "forgejo_admin_token"
     SECRETS_PRIVATE_KEY     = "secrets_private_key"
+    # Optional. The reconciler skips Vault once the files set every other
+    # key, so the delete token must come as a file too, or gone Apps' ghcr
+    # images are never deleted (found 2026-11-14, rows stuck at 0 attempts).
+    GHCR_DELETE_TOKEN = "ghcr_delete_token"
   }
   cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
 
