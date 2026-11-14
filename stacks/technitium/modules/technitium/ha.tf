@@ -422,7 +422,10 @@ locals {
     SOA_ZONE    = "viktorbarzin.me"
     SOA_REFRESH = "300"
     SOA_RETRY   = "60"
-    SOA_MINIMUM = "7200" # negative-cache TTL, unchanged
+    # Negative-cache TTL, 7200 until 2026-11-14: a lookup made before a record
+    # existed kept answering NXDOMAIN for up to 2 h (1 h at OPNsense Unbound,
+    # whose default cache-max-negative-ttl is 3600 s). CoreDNS caps at 300 s.
+    SOA_MINIMUM = "300"
   }
 }
 
