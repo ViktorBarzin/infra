@@ -182,7 +182,7 @@ resource "kubernetes_deployment" "clickhouse" {
           # Literal pin so Renovate tracks it (renovate.json5 "Shape A"), the
           # same tag as stacks/rybbit so one upgrade procedure covers both.
           # Parts written by 26.x cannot be read by 25.x: back up before a bump.
-          image = "clickhouse/clickhouse-server:26.10.3.7"
+          image = "clickhouse/clickhouse-server:26.10.4.207"
           env {
             name = "CLICKHOUSE_PASSWORD"
             value_from {
@@ -433,7 +433,7 @@ resource "kubernetes_cron_job_v1" "backup" {
             container {
               name = "backup"
               # Must match the server tag: clickhouse-client of the same release.
-              image   = "clickhouse/clickhouse-server:26.10.3.7"
+              image   = "clickhouse/clickhouse-server:26.10.4.207"
               command = ["/bin/bash", "/scripts/backup.sh"]
               env {
                 name  = "CH_HOST"
