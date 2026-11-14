@@ -146,6 +146,35 @@ cloud-console-system` shows both `SecretSynced`, and the console has
 `kubectl -n cloud exec deploy/cloud -c cloud -- bun -e 'console.log(!!process.env.SECRETS_PUBLIC_KEY)'`
 prints `true`.
 
+## App-kit K1 rollout
+
+App-kit milestone A (the cloud repo's `docs/build/kit-a-infra.md`) gives
+every App an oauth2-proxy, routes the App's host to its edge only, and adds
+the `migrate` init container. Order:
+
+1. Apply infra first, from the main checkout: `homelab tf apply cloud`. The
+   admission policies then accept the old and the new shapes, and the
+   ingress floor passes edge pods to oauth2-proxy pods on 4180.
+2. Deploy Cloud (merge to master; GitHub Actions builds, Woodpecker rolls
+   out). The new reconciler sees a new render digest and queues an apply
+   for every Project; they run one at a time.
+3. Watch them settle: `kubectl get ingress -A -l cloud.viktorbarzin.me/managed=true -o json | jq -r '.items[] | select(.spec.rules[0].http.paths[0].backend.service.name | startswith("auth-")) | .metadata.namespace'`
+   lists Projects still on the old Ingress, and
+   `kubectl get deploy -A -l cloud.viktorbarzin.me/component=edge -o json | jq -r '.items[] | select([.spec.template.spec.containers[0].env[].name] | index("CLOUD_EDGE_SECRET") | not) | .metadata.namespace'`
+   lists edges still on the old shape. Both print nothing when every
+   Project runs the new shape. A Project whose apply failed shows in the
+   console; applying its Project File again retries it.
+4. The follow-up, once both lists are empty: remove what
+   `local.cloud_k1_transition` in `stacks/cloud/access_rules.tf` lists (the
+   old Caddyfile variant, the edge env without the secret, the oauth2-proxy
+   `args_v1`, Ingress backends `auth-<app>` port `http`, and the floor's
+   Traefik to oauth2-proxy and oauth2-proxy to edge passes), then
+   `homelab tf apply cloud`.
+
+Rollback before step 4: revert the Cloud release, then apply each
+Project's file again (console or `cloud apply`): the older reconciler does
+not re-apply Projects by itself. The policies still admit the old shapes.
+
 ## Turn on builds
 
 1. Make the tokens in docs/build/m5-infra.md in the cloud repo (table

@@ -37,7 +37,7 @@ flowchart LR
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
 | Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators`; both providers send scope mapping `cloud: email (verified when vouched for)` instead of the managed `scope-email` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf`, `stacks/cloud/email_claim.tf` |
-| Private Apps' sign-in | Authentik application `cloud-apps`, shared by every private App's oauth2-proxy | `stacks/authentik/cloud-apps.tf` (M2) |
+| Apps' sign-in | Authentik application `cloud-apps`, shared by every App's oauth2-proxy, public or private (app-kit K1) | `stacks/authentik/cloud-apps.tf` (M2) |
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
 | Images | `ghcr.io/viktorbarzin/cloud` and `ghcr.io/viktorbarzin/cloud-reconciler`, private; Kyverno copies `ghcr-credentials` into `cloud` | `stacks/kyverno` `ghcr-credentials.tf` |
@@ -269,6 +269,50 @@ pods: the reconciler reached Forgejo, Prometheus, Loki, `api.github.com`,
 `github.com` and `ghcr.io`; the console reached Prometheus and Loki. If
 tier 4-aux egress is ever restricted, namespace `cloud` needs these allowed
 first. The Calico tier `cloud` applies to `p-*` namespaces only.
+
+## A request to a Project App, and what admission allows
+
+Since app-kit K1 (the cloud repo's `docs/plans/2026-11-14-cloud-app-kit.md`)
+every App, public or private, runs three pods: the App, its edge (pinned
+Caddy) and its oauth2-proxy (pinned, on `cloud-apps`). Traefik routes the
+App's host to the edge only. The edge deletes forged identity headers
+(`X-Cloud-User-*`, `X-Cloud-Edge-Secret`, `X-Auth-Request-*`,
+`X-Authentik-*`, both spellings), sends `/oauth2/*` to the oauth2-proxy,
+asks it at `/oauth2/auth` who is signed in, and passes that to the App as
+`X-Cloud-User-Id`, `-Email` and `-Username` with the App's edge secret
+(Secret `edge-<app>` in the Project namespace, made by Cloud's OpenTofu
+module). A public App's oauth2-proxy has `--email-domain=*` and no emails
+file; a private App's has the email allowlist. Not signed in, a public App
+gets the request anonymously and a private App redirects a page load to
+sign-in and answers other requests 401.
+
+```mermaid
+flowchart LR
+  T[Traefik] -->|Ingress app-app| E["edge-app<br/>Caddy"]
+  E -->|"/oauth2/auth, /oauth2/*<br/>TCP 4180"| O["auth-app<br/>oauth2-proxy"]
+  E -->|"X-Cloud-User-* +<br/>X-Cloud-Edge-Secret"| A["app-app<br/>App code, init container migrate"]
+  O -->|"TCP 9000"| AK[Authentik server]
+```
+
+`stacks/cloud/access_rules.tf` pins this. `cloud-managed-edge-config`
+accepts the public and the private Caddyfile, `cloud-managed-pod` and
+`cloud-managed-deployment` accept the edge with its one `secretKeyRef`
+env value (Secret `edge-<app>`, key `secret`) and the oauth2-proxy with
+exactly one of the emails file and `--email-domain=*`, and the ingress
+floor passes edge pods to oauth2-proxy pods on TCP 4180. App pods may have
+one init container, `migrate` (app-kit K3), with the App container's image
+and no `restartPolicy`; edge and oauth2-proxy pods may have none, and every
+container rule (extended resources, ephemeral limits, probe and hook
+hosts) covers init containers too.
+
+During the rollout (`local.cloud_k1_transition`), the shapes from before K1
+stay admitted: the private App's Ingress on `auth-<app>` port `http`, the
+oauth2-proxy proxying to its edge with a 1-hour cookie, the edge with
+`respond /oauth2/* 404` and no edge secret, and the floor's Traefik to
+oauth2-proxy and oauth2-proxy to edge passes. Cloud's reconciler applies
+every Project again after its release, one at a time; the runbook's
+"App-kit K1 rollout" says how to check that none is left and what the
+follow-up removes.
 
 ## Connections on the shared primary
 

@@ -17,9 +17,9 @@
 #      Service) as the reconciler, so Cloud's own Project policy goes through
 #      calico-apiserver and the reconciler's RBAC there. While it exists,
 #      tests/cloud-calico/matrix.sh checks a connectivity matrix with probe
-#      pods carrying Cloud's labels: Traefik reaches public edges and private
-#      oauth2-proxies only; oauth2-proxy reaches only its own edge; each edge
-#      reaches only its own App; App pods reach the CNPG primary and DNS, and
+#      pods carrying Cloud's labels: Traefik reaches every App's edge only;
+#      each edge reaches only its own App and its own oauth2-proxy on 4180;
+#      oauth2-proxy reaches no edge and no App; App pods reach the CNPG primary and DNS, and
 #      not the Authentik server, a replica, Vault, other namespaces, the API
 #      server ClusterIP, the node or the home WAN IP; oauth2-proxy reaches the
 #      Authentik server; the kubelet's readiness probes pass the floors.
@@ -200,8 +200,10 @@ run "apply" {
 EOF
 : >"$TMP/results"
 tofu() {
+  # modules/project refuses an empty pull token (registry_password), so the
+  # test passes a dummy one, as cloud-access.test.sh and the worker do.
   (cd "$TMP/tofu" && env HOME="$TMP/home" TF_CLI_CONFIG_FILE="$TMP/tofu/tofurc" TF_IN_AUTOMATION=1 \
-    KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
+    TF_VAR_registry_password=test-pull-token KUBE_CONFIG_PATH="$TMP/reconciler.kubeconfig" ADMIN_KUBECONFIG="$KUBECONFIG" CLOUD_NAMESPACE="$NS" \
     CALICO_RESULTS="$TMP/results" AGNHOST_IMAGE="$AGNHOST_IMAGE" CALICO_INTERNET="${CLOUD_CALICO_INTERNET:-0}" \
     CLOUD_MATRIX_SCRIPT="$HERE/tests/cloud-calico/matrix.sh" "$TOFU" "$@")
 }

@@ -145,10 +145,15 @@ if admitted_only:
 apps = of_kind("Deployment", **{COMPONENT: "app"})
 edges = of_kind("Deployment", **{COMPONENT: "edge"})
 proxies = of_kind("Deployment", **{COMPONENT: "oauth2-proxy"})
-assert apps and edges and proxies, "the render needs an App, its edge and a private App's oauth2-proxy"
-app = apps[0]
-edge = edges[0]
-proxy = proxies[0]
+assert apps and edges and proxies, "the render needs an App, its edge and its oauth2-proxy"
+# menu is the public App, with a built image and a migrate init container;
+# recipes the private one (tests/cloud-access/render.ts).
+app = one("Deployment", "app-menu")
+edge = one("Deployment", "edge-menu")
+proxy = one("Deployment", "auth-recipes")
+public_proxy = one("Deployment", "auth-menu")
+assert [c["name"] for c in app["spec"]["template"]["spec"].get("initContainers", [])] == ["migrate"], "the public App runs its migrations as init container migrate"
+assert len(proxies) == 2, "every App has an oauth2-proxy, public or private"
 assert all(c["name"] != "cookie-strip" for o in apps for c in o["spec"]["template"]["spec"]["containers"]), "the edge runs in its own pod"
 
 
@@ -190,6 +195,17 @@ def init_container(s):
     s["initContainers"] = [{"name": "init", "image": c["image"], "securityContext": c.get("securityContext", {}), "resources": c.get("resources", {})}]
 
 
+def migrate_container(s):
+    """An init container as Cloud renders it: named migrate, the first container's image."""
+    c = s["containers"][0]
+    return {"name": "migrate", "image": c["image"], "args": ["entrypoints/migrate.js"],
+            "securityContext": copy.deepcopy(c.get("securityContext", {})), "resources": copy.deepcopy(c.get("resources", {}))}
+
+
+def init_of(s):
+    return s["initContainers"][0]
+
+
 def app_c(s):
     return [c for c in s["containers"] if c["name"] == "app"][0]
 
@@ -219,7 +235,12 @@ POD_RULES = [
     ("priority", lambda s: s.update({"priorityClassName": "tier-0-core"}), "only priority class tier-4-aux"),
     ("gpu", lambda s: s["containers"][0].setdefault("resources", {}).setdefault("limits", {}).update({"nvidia.com/gpu": "1"}), "no GPU or other extended resource"),
     ("serviceaccount", lambda s: s.update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
-    ("init", init_container, "may not have init containers"),
+    ("init", init_container, "the init container is named migrate"),
+    ("init-second", lambda s: s["initContainers"].append(dict(migrate_container(s), name="migrate-2")), "at most one init container"),
+    ("init-other-image", lambda s: init_of(s).update({"image": "docker.io/library/busybox:1.37"}), "the init container is named migrate"),
+    ("init-sidecar", lambda s: init_of(s).update({"restartPolicy": "Always"}), "sets no restartPolicy"),
+    ("init-gpu", lambda s: init_of(s).setdefault("resources", {}).setdefault("limits", {}).update({"nvidia.com/gpu": "1"}), "no GPU or other extended resource"),
+    ("init-no-ephemeral-limit", lambda s: init_of(s)["resources"]["limits"].pop("ephemeral-storage"), "sets an ephemeral-storage limit"),
     ("share-pid", lambda s: s.update({"shareProcessNamespace": True}), "may not share its process namespace"),
     ("probe-host", probe_host, "may not name a host|violates PodSecurity"),
 ]
@@ -229,6 +250,10 @@ for name, change, expect in POD_RULES:
 
 
 pod = as_pod(app, "rendered-app-pod")
+# The App pod without its migrations, as Cloud renders an App with no
+# migrate or before its first Deploy.
+case("deploy-no-init", "kr", "ok", "App Deployment without an init container",
+     variant(app, lambda o: spec_of(o).pop("initContainers")))
 case("pod", "ka", "ok", "a pod from the rendered App template (Pod Security restricted and cloud-managed-pod)", pod)
 case("pod-edge", "ka", "ok", "a pod from the rendered edge template", as_pod(edge, "rendered-edge-pod"))
 case("pod-proxy", "ka", "ok", "a pod from the rendered oauth2-proxy template", as_pod(proxy, "rendered-proxy-pod"))
@@ -267,6 +292,10 @@ def mount(s, path):
     return [m for m in ec(s)["volumeMounts"] if m["mountPath"] == path][0]
 
 
+def edge_secret(s):
+    return [e for e in ec(s)["env"] if e["name"] == "CLOUD_EDGE_SECRET"][0]
+
+
 EDGE_RULES = [
     ("image", lambda s: ec(s).update({"image": "docker.io/library/caddy:latest"}), E_ONE),
     ("renamed", lambda s: ec(s).update({"name": "caddy"}), E_ONE),
@@ -292,11 +321,26 @@ EDGE_RULES = [
     ("config-subpath", lambda s: mount(s, "/etc/caddy").update({"subPath": "Caddyfile"}), E_MOUNTS),
     ("config-writable", lambda s: mount(s, "/etc/caddy").update({"readOnly": False}), E_MOUNTS),
     ("extra-mount", lambda s: (s["volumes"].append({"name": "tmp", "emptyDir": {"sizeLimit": "1Mi"}}), ec(s)["volumeMounts"].append({"name": "tmp", "mountPath": "/tmp"})), E_MOUNTS),
+    # The edge secret: only CLOUD_EDGE_SECRET, only from the App's own Secret
+    # edge-<app> key secret, never optional.
+    ("secret-other-secret", lambda s: edge_secret(s)["valueFrom"]["secretKeyRef"].update({"name": "env-menu"}), E_RUNS),
+    ("secret-other-key", lambda s: edge_secret(s)["valueFrom"]["secretKeyRef"].update({"key": "url"}), E_RUNS),
+    ("secret-optional", lambda s: edge_secret(s)["valueFrom"]["secretKeyRef"].update({"optional": True}), E_RUNS),
+    ("secret-literal", lambda s: (edge_secret(s).pop("valueFrom"), edge_secret(s).update({"value": "known"})), E_RUNS),
+    ("secret-from-cm", lambda s: edge_secret(s).update({"valueFrom": {"configMapKeyRef": {"name": "edge-menu", "key": "Caddyfile"}}}), E_RUNS),
+    ("secret-renamed", lambda s: edge_secret(s).update({"name": "CADDY_ADMIN"}), E_RUNS),
+    ("env-second-secret", lambda s: ec(s)["env"].append(dict(copy.deepcopy(edge_secret(s)), name="OTHER")), E_RUNS),
+    ("env-twice", lambda s: [e.update({"name": "XDG_CONFIG_HOME", "value": "/run/caddy/config"}) for e in ec(s)["env"] if e["name"] == "XDG_DATA_HOME"], E_RUNS),
+    ("init", lambda s: s.update({"initContainers": [migrate_container(s)]}), "only an App pod may have an init container"),
 ]
 for name, change, expect in EDGE_RULES:
     case(f"edge-{name}", "kr", expect, f"edge Deployment with {name}", variant(edge, lambda o, ch=change: ch(spec_of(o))))
 case("edge-pod-port-9090", "ka", E_PORT, "edge pod with port edge = 9090", variant(as_pod(edge, "edge-9090"), lambda o: ec(spec_of(o))["ports"][0].update({"containerPort": 9090})))
-case("app-as-edge", "kr", E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
+case("app-as-edge", "kr", "only an App pod may have an init container|" + E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
+# Until the follow-up (access_rules.tf, cloud_k1_transition): the edge
+# before app-kit K1, without the edge secret.
+case("edge-v1-env", "kr", "ok", "edge Deployment without CLOUD_EDGE_SECRET, as before app-kit K1",
+     variant(edge, lambda o: ec(spec_of(o))["env"].remove(edge_secret(spec_of(o)))))
 
 # --- the oauth2-proxy Deployment -----------------------------------------------------
 A_ONE = "an oauth2-proxy pod has one container, oauth2-proxy"
@@ -339,7 +383,44 @@ PROXY_RULES = [
 ]
 for name, change, expect in PROXY_RULES:
     case(f"proxy-{name}", "kr", expect, f"oauth2-proxy Deployment with {name}", variant(proxy, lambda o, ch=change: ch(spec_of(o))))
-case("app-as-proxy", "kr", A_ONE, "App Deployment labelled component=oauth2-proxy (Calico lets those reach Authentik)", variant(app, relabel("oauth2-proxy")))
+case("app-as-proxy", "kr", "only an App pod may have an init container|" + A_ONE, "App Deployment labelled component=oauth2-proxy (Calico lets those reach Authentik)", variant(app, relabel("oauth2-proxy")))
+
+
+def drop_arg(value):
+    def f(s):
+        ec(s)["args"].remove(value)
+    return f
+
+
+EMAILS_FILE = "--authenticated-emails-file=/etc/oauth2-proxy/emails"
+ANY_EMAIL = "--email-domain=*"
+assert ANY_EMAIL in ec(spec_of(public_proxy))["args"] and EMAILS_FILE not in ec(spec_of(public_proxy))["args"], "a public App's oauth2-proxy has --email-domain=* and no emails file"
+assert "volumeMounts" not in ec(spec_of(public_proxy)) and not spec_of(public_proxy).get("volumes"), "a public App's oauth2-proxy mounts nothing"
+PUBLIC_PROXY_RULES = [
+    ("emails-file-too", lambda s: ec(s)["args"].insert(ec(s)["args"].index(ANY_EMAIL), EMAILS_FILE), A_RUNS),
+    ("no-gate", drop_arg(ANY_EMAIL), A_RUNS),
+    ("emails-mount", lambda s: (s.update({"volumes": [{"name": "emails", "configMap": {"name": "auth-menu"}}]}),
+                                ec(s).update({"volumeMounts": [{"name": "emails", "mountPath": "/etc/oauth2-proxy", "readOnly": True}]})), A_MOUNTS),
+    ("emptydir", lambda s: (s.update({"volumes": [{"name": "x", "emptyDir": {"sizeLimit": "1Mi"}}]}),
+                            ec(s).update({"volumeMounts": [{"name": "x", "mountPath": "/tmp"}]})), A_MOUNTS),
+    # The private args with no allowlist mounted: every account gets in.
+    ("emails-file-unmounted", lambda s: ec(s)["args"].__setitem__(ec(s)["args"].index(ANY_EMAIL), EMAILS_FILE), A_MOUNTS),
+    ("upstream-edge", arg("--upstream", "http://edge-menu.%s.svc.cluster.local:80/" % target), A_RUNS),
+]
+for name, change, expect in PUBLIC_PROXY_RULES:
+    case(f"public-proxy-{name}", "kr", expect, f"public App's oauth2-proxy Deployment with {name}", variant(public_proxy, lambda o, ch=change: ch(spec_of(o))))
+case("proxy-email-domain-with-file", "kr", A_RUNS, "private App's oauth2-proxy with --email-domain=* beside its emails file",
+     variant(proxy, lambda o: ec(spec_of(o))["args"].insert(ec(spec_of(o))["args"].index(EMAILS_FILE) + 1, ANY_EMAIL)))
+
+
+def v1_proxy_args(o):
+    """The private oauth2-proxy before app-kit K1: upstream its edge, 1h cookie, no X-Auth-Request headers."""
+    args = ec(spec_of(o))["args"]
+    args[:] = [{"--upstream=static://202": f"--upstream=http://edge-recipes.{target}.svc.cluster.local:80/", "--cookie-expire=12h": "--cookie-expire=1h"}.get(a, a)
+               for a in args if a != "--set-xauthrequest=true"]
+
+
+case("proxy-v1", "kr", "ok", "private App's oauth2-proxy as before app-kit K1 (until the follow-up)", variant(proxy, v1_proxy_args))
 
 # --- Kubernetes Services ----------------------------------------------------------
 edge_svc = one("Service", "edge-recipes")
@@ -371,7 +452,7 @@ public = [i for i in ingresses if "traefik.ingress.kubernetes.io/router.middlewa
 assert public, "the render needs a public App"
 ing = public[0]
 private_ing = one("Ingress", "app-recipes")
-assert private_ing["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"] == {"name": "auth-recipes", "port": {"name": "http"}}, "a private App's Ingress names its oauth2-proxy"
+assert private_ing["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"] == {"name": "edge-recipes", "port": {"name": "edge"}}, "a private App's Ingress names its edge"
 assert ing["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"].startswith("edge-"), "a public App's Ingress names its edge"
 
 
@@ -401,7 +482,9 @@ case("ing-app-service", "kr", BACKEND, "Ingress backend on the App's own Service
 case("ing-app-service-edge-port", "kr", BACKEND, "Ingress backend on Service app-menu port edge",
      variant(ing, lambda o: [p["backend"]["service"].update({"name": "app-menu"}) for p in paths(o)]))
 case("ing-auth-edge-port", "kr", BACKEND, "Ingress backend on Service auth-recipes port edge",
-     variant(private_ing, lambda o: [p["backend"]["service"].update({"port": {"name": "edge"}}) for p in paths(o)]))
+     variant(private_ing, lambda o: [p["backend"]["service"].update({"name": "auth-recipes", "port": {"name": "edge"}}) for p in paths(o)]))
+case("ing-auth-v1", "kr", "ok", "private App's Ingress on Service auth-recipes port http, as before app-kit K1 (until the follow-up)",
+     variant(private_ing, lambda o: [p["backend"]["service"].update({"name": "auth-recipes", "port": {"name": "http"}}) for p in paths(o)]))
 case("ing-no-class", "kr", "ingressClassName traefik", "Ingress without ingressClassName",
      variant(ing, lambda o: o["spec"].pop("ingressClassName")))
 case("ing-tls-secret", "kr", "tls.secretName", "Ingress with tls.secretName",
@@ -428,7 +511,7 @@ def edit(old, new):
 
 
 COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|techaro\\.lol-anubis-[^=;]*|_oauth2_proxy[^=;]*"
-RENDERED = "Caddyfile is the one Cloud renders"
+RENDERED = "Caddyfile is one Cloud renders"
 case("edge-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
      variant(public_cf, edit(COOKIE_LIST, "_oauth2_proxy[^=;]*|techaro\\.lol-anubis-[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
 case("edge-cm-comment", "kr", "ok", "Caddyfile with a comment line before it", variant(public_cf, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
@@ -464,6 +547,54 @@ case("edge-cm-admin", "kr", RENDERED, "Caddyfile with the admin API on",
      variant(public_cf, edit("admin off", "admin 0.0.0.0:2019")))
 case("edge-cm-admin-user", "ka", RENDERED, "admin is refused another Caddyfile too",
      variant(public_cf, edit("admin off", "admin 0.0.0.0:2019")))
+# Identity at the edge (app-kit K1).
+assert "reverse_proxy /oauth2/* auth-menu." in public_cf["data"][CADDY] and "sign_in_required" not in public_cf["data"][CADDY], "the public edge"
+assert "sign_in_required" in private_cf["data"][CADDY], "the private edge"
+case("edge-cm-private-on-public", "kr", "ok", "the private 401 handler on the public App's edge (access is the reconciler's to set)",
+     variant(public_cf, lambda o: o["data"].update({CADDY: private_cf["data"][CADDY].replace("recipes.", "menu.")})))
+case("edge-cm-keeps-forged-id", "kr", RENDERED, "Caddyfile that keeps a client's X-Cloud-User-* headers",
+     variant(public_cf, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace("\t\trequest_header -X-Cloud-User-*\n", "", 1)})))
+case("edge-cm-keeps-forged-underscore", "kr", RENDERED, "Caddyfile that keeps a client's X_Cloud_User_* headers",
+     variant(public_cf, edit("request_header -X_Cloud_User_*\n", "")))
+case("edge-cm-keeps-forged-secret", "kr", RENDERED, "Caddyfile that keeps a client's X-Cloud-Edge-Secret",
+     variant(public_cf, edit("request_header -X-Cloud-Edge-Secret\n", "")))
+case("edge-cm-no-edge-secret", "kr", RENDERED, "Caddyfile that sends the App no edge secret",
+     variant(public_cf, edit("header_up X-Cloud-Edge-Secret {env.CLOUD_EDGE_SECRET}\n", "")))
+case("edge-cm-other-auth", "kr", RENDERED, "Caddyfile asking another App's oauth2-proxy",
+     variant(public_cf, lambda o: o["data"].update({CADDY: o["data"][CADDY].replace("auth-menu.", "auth-recipes.")})))
+case("edge-cm-oauth2-to-app", "kr", RENDERED, "Caddyfile sending /oauth2/* to the App",
+     variant(public_cf, edit("reverse_proxy /oauth2/* auth-menu.", "reverse_proxy /oauth2/* app-menu.")))
+case("edge-cm-forged-user", "kr", RENDERED, "Caddyfile that sets X-Cloud-User-Id from a client header",
+     variant(public_cf, edit("{rp.header.X-Auth-Request-User}\n", "{header.X-User}\n")))
+case("edge-cm-anonymous-identity", "kr", RENDERED, "public Caddyfile that lets an anonymous request through without deleting identity",
+     variant(public_cf, edit("\t\t\t\trequest_header -X-Cloud-User-*\n\t\t\t}", "\t\t\t\trequest_header -X-Cloud-Other\n\t\t\t}")))
+# Until the follow-up: the Caddyfile before app-kit K1.
+V1_CADDYFILE = """{
+\tadmin off
+\tauto_https off
+\tpersist_config off
+\tservers {
+\t\ttrusted_proxies static private_ranges
+\t\tmax_header_size 64KB
+\t}
+}
+:8080 {
+\trespond /oauth2/* 404
+\treverse_proxy app-menu.%s.svc.cluster.local:80 {
+\t\ttransport http {
+\t\t\tmax_response_header 64KB
+\t\t}
+\t\theader_up Cookie `(?:^\\s*|;\\s*)(?:%s)=[^;]*` ""
+\t\theader_up Cookie `^;\\s*` ""
+\t\theader_up -X-Authentik-*
+\t\theader_up -X_Authentik_*
+\t\theader_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` ""
+\t}
+}
+""" % (target, COOKIE_LIST)
+case("edge-cm-v1", "kr", "ok", "the Caddyfile before app-kit K1 (until the follow-up)", variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE})))
+case("edge-cm-v1-no-404", "kr", RENDERED, "the Caddyfile before app-kit K1 without its /oauth2/ 404",
+     variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE.replace("\trespond /oauth2/* 404\n", "")})))
 
 # --- ResourceQuota and LimitRange -------------------------------------------------------
 quota = one("ResourceQuota", "cloud-quota")

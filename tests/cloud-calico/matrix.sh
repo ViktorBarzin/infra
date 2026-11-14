@@ -42,12 +42,14 @@ EOF
 }
 C=cloud.viktorbarzin.me/component
 S=cloud.viktorbarzin.me/service
-# recipes is the private App (oauth2-proxy in front), menu the public one.
+# recipes is the private App, menu the public one; both have an oauth2-proxy,
+# which listens on its real port, 4180 (app-kit K1: the edge asks it).
 probe "$ns" app-recipes "{\"$C\": \"app\", \"$S\": \"recipes\"}"
 probe "$ns" edge-recipes "{\"$C\": \"edge\", \"$S\": \"recipes\"}"
-probe "$ns" auth-recipes "{\"$C\": \"oauth2-proxy\", \"$S\": \"recipes\"}"
+probe "$ns" auth-recipes "{\"$C\": \"oauth2-proxy\", \"$S\": \"recipes\"}" 4180
 probe "$ns" app-menu "{\"$C\": \"app\", \"$S\": \"menu\"}"
 probe "$ns" edge-menu "{\"$C\": \"edge\", \"$S\": \"menu\"}"
+probe "$ns" auth-menu "{\"$C\": \"oauth2-proxy\", \"$S\": \"menu\"}" 4180
 # Another Project, with an edge pod claiming to front recipes.
 probe p-other edge-recipes "{\"$C\": \"edge\", \"$S\": \"recipes\"}"
 probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
@@ -55,7 +57,7 @@ probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
 # Every probe answers its kubelet readiness probe, which comes from the node:
 # the floors must not block it.
 # Cloud's own pods may still be terminating, so wait for the probes by name.
-if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/edge-recipes pod/auth-recipes pod/app-menu pod/edge-menu --timeout=180s >/dev/null 2>&1 \
+if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/edge-recipes pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu --timeout=180s >/dev/null 2>&1 \
   && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1; then
   ok "every probe pod in $ns and p-other passes the kubelet's readiness probe"
 else
@@ -69,14 +71,20 @@ can()    { if reach "$1" "$2" "$3"; then ok "$4"; else bad "$4: no connection"; 
 cannot() { if reach "$1" "$2" "$3"; then bad "$4: connected"; else ok "$4"; fi; }
 
 T=(traefik client)
-# Traefik's view.
+# Traefik's view: every App's edge, public or private (app-kit K1).
 can    "${T[@]}" "$(ip "$ns" edge-menu):8080"     "Traefik reaches a public App's edge"
-can    "${T[@]}" "$(ip "$ns" auth-recipes):8080"  "Traefik reaches a private App's oauth2-proxy"
+can    "${T[@]}" "$(ip "$ns" edge-recipes):8080"  "Traefik reaches a private App's edge"
 cannot "${T[@]}" "$(ip "$ns" app-menu):8080"      "Traefik does not reach a public App's pods"
 cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"   "Traefik does not reach a private App's pods"
-cannot "${T[@]}" "$(ip "$ns" edge-recipes):8080"  "Traefik does not reach a private App's edge (oauth2-proxy is in front)"
-# The oauth2-proxy and the edges.
-can    "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "oauth2-proxy reaches its own edge"
+cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"  "Traefik does not reach a private App's oauth2-proxy (Cloud's policy; the floor still passes it until the K1 follow-up)"
+cannot "${T[@]}" "$(ip "$ns" auth-menu):4180"     "Traefik does not reach a public App's oauth2-proxy"
+# The edges and the oauth2-proxies.
+can    "$ns" edge-recipes "$(ip "$ns" auth-recipes):4180" "the private App's edge reaches its own oauth2-proxy on 4180"
+can    "$ns" edge-menu "$(ip "$ns" auth-menu):4180"       "the public App's edge reaches its own oauth2-proxy on 4180"
+cannot "$ns" edge-recipes "$(ip "$ns" auth-menu):4180"    "an edge does not reach another App's oauth2-proxy"
+cannot p-other edge-recipes "$(ip "$ns" auth-recipes):4180" "an edge pod in another Project does not reach this App's oauth2-proxy, even with its service label"
+cannot "$ns" app-recipes "$(ip "$ns" auth-recipes):4180"  "App pods do not reach their oauth2-proxy"
+cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "oauth2-proxy does not reach its edge (Cloud's policy; the floor still passes it until the K1 follow-up)"
 cannot "$ns" auth-recipes "$(ip "$ns" app-recipes):8080"  "oauth2-proxy does not reach its App's pods"
 cannot "$ns" auth-recipes "$(ip "$ns" edge-menu):8080"    "oauth2-proxy does not reach another App's edge"
 can    "$ns" edge-recipes "$(ip "$ns" app-recipes):8080"  "the private App's edge reaches its own App"

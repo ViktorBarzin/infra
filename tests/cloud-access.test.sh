@@ -29,9 +29,12 @@
 #     the strip list, the Authentik slug and the egress exclusions; the egress
 #     floor mixes no IP families in a rule, allows DNS both ways, and ends in
 #     Deny; the ingress floor lets Traefik reach only edge and oauth2-proxy
-#     pods, App pods only edge pods, and ends in Deny;
-#   - Cloud's modules apply a private App, a public App and a Postgres Service
-#     as the reconciler, every Deployment's pod is admitted (Pod Security
+#     pods, App pods only edge pods, oauth2-proxy pods edge pods only on TCP
+#     4180, and ends in Deny; each oauth2-proxy shape holds exactly one of
+#     the emails file and --email-domain=*;
+#   - Cloud's modules apply a private App, a public App (with a built image
+#     and a migrate init container) and a Postgres Service as the
+#     reconciler, every Deployment's pod is admitted (Pod Security
 #     restricted, cloud-managed-pod), and the destroy succeeds; then the same
 #     for each of Cloud's snapshot fixtures (render.fixtures.ts FIXTURES: one
 #     App, one Postgres with no pods, a Service removed, hostile env values
@@ -42,11 +45,16 @@
 #     downwardAPI, emptyDirs without a sizeLimit, containers without an
 #     ephemeral-storage limit, runtimeClassName, nodeName, nodeSelector,
 #     affinity, tolerations, host network, priority, GPU, service account,
-#     init containers, probe hosts, prometheus.io annotations, the component
-#     label, the edge pod (image, args, env, port number, readiness probe,
-#     mounts, a second container) and its Caddyfile (structure, upstream and
+#     init containers (only one, named migrate, on App pods, with the App's
+#     image and no restartPolicy, and every container rule on it too), probe
+#     hosts, prometheus.io annotations, the component label, the edge pod
+#     (image, args, env and its edge secret, port number, readiness probe,
+#     mounts, a second container) and its Caddyfile (structure, upstreams,
+#     the forged identity headers it deletes, the edge secret it adds and
 #     the homelab cookies it must strip), the oauth2-proxy pod (image, args,
-#     upstream, client id, env, port, mounts), edge and oauth2-proxy Services
+#     upstream, client id, the emails file or --email-domain=* but never
+#     both, env, port, mounts), the shapes before app-kit K1 still admitted
+#     until the follow-up, edge and oauth2-proxy Services
 #     (selector, ports), Ingress annotations, entrypoints, middlewares, class,
 #     backends and homelab hosts, quota and limit range labels, names, scope
 #     and ephemeral storage, SecretStore and ExternalSecret stores, and any
@@ -239,10 +247,16 @@ if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
 missing = set(k["strip_required"]) - set(contract["stripCookies"])
 if missing:
     problems.append(f"Cloud's strip list {contract['stripCookies']} lacks {sorted(missing)}")
-if contract["authentik"]["appSlug"] != "cloud-apps" or f"/application/o/{contract['authentik']['appSlug']}/" not in " ".join(k["oauth2_proxy"]["args"]):
-    problems.append(f"Authentik slug: Cloud uses {contract['authentik']['appSlug']}, infra's oauth2-proxy pin expects cloud-apps")
-if f"--client-id={k['client_id']}" not in k["oauth2_proxy"]["args"]:
-    problems.append(f"oauth2-proxy pin does not use client id {k['client_id']}")
+for shape in ["args_private", "args_public", "args_v1"]:
+    if contract["authentik"]["appSlug"] != "cloud-apps" or f"/application/o/{contract['authentik']['appSlug']}/" not in " ".join(k["oauth2_proxy"][shape]):
+        problems.append(f"Authentik slug: Cloud uses {contract['authentik']['appSlug']}, infra's oauth2-proxy pin ({shape}) expects cloud-apps")
+    if f"--client-id={k['client_id']}" not in k["oauth2_proxy"][shape]:
+        problems.append(f"oauth2-proxy pin ({shape}) does not use client id {k['client_id']}")
+# --email-domain=* only in the public shape, which has no emails file.
+for shape in ["args_private", "args_public", "args_v1"]:
+    a = k["oauth2_proxy"][shape]
+    if ("--email-domain=*" in a) == any(x.startswith("--authenticated-emails-file") for x in a):
+        problems.append(f"oauth2-proxy pin {shape} must hold exactly one of --email-domain=* and the emails file: {a}")
 # The home WAN IP (hairpin into Traefik) and backup-mx, which admits the home
 # WAN IP on 22 and 9100 (access_rules.tf, cloud_egress_excluded).
 for net in ["176.12.22.76/32", "92.5.132.215/32"]:
@@ -284,6 +298,10 @@ for r in ing["ingress"][:-1]:
         problems.append(f"ingress floor: Traefik reaches App pods: {r}")
 if not any("traefik" in r.get("source", {}).get("namespaceSelector", "") and "'edge'" in r["destination"]["selector"] and "'oauth2-proxy'" in r["destination"]["selector"] for r in ing["ingress"][:-1]):
     problems.append("ingress floor: Traefik cannot reach edge and oauth2-proxy pods")
+# The edge asks its oauth2-proxy on 4180 (app-kit K1), and only on that port.
+to_auth = [r for r in ing["ingress"][:-1] if r.get("source", {}).get("selector") == f"{comp} == 'edge'" and "'oauth2-proxy'" in r["destination"].get("selector", "")]
+if len(to_auth) != 1 or to_auth[0].get("protocol") != "TCP" or to_auth[0]["destination"].get("ports") != [4180]:
+    problems.append(f"ingress floor: edge pods should reach oauth2-proxy pods on TCP 4180 only: {to_auth}")
 (d / "contract-problems.txt").write_text("\n".join(problems))
 
 vdocs = [

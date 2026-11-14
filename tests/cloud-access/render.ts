@@ -17,8 +17,9 @@
  *   fixtures.json          [{dir, name, namespace}] listing them in order
  *
  * The combined Project holds a private App, a public App connected to a
- * Postgres Service, and the Postgres Service, so every object kind Cloud
- * renders appears at least once; the forbidden variants are built from it.
+ * Postgres Service (with a built image and a migrate init container), and
+ * the Postgres Service, so every object kind Cloud renders appears at least
+ * once; the forbidden variants are built from it.
  * The fixtures are the shapes Cloud's own tests render (a Postgres-only
  * Project, a single App, a Service removed, hostile env values), so each one
  * is applied as well and its objects must be admitted as they are.
@@ -45,13 +46,26 @@ const spec = {
 			size: "nano",
 			allow: ["ana@example.com"],
 		}),
-		menu: fixtures.app({ access: "public", size: "nano", connects: ["db"] }),
+		// A built image, so its migrations render as init container migrate
+		// (the placeholder runs none). The image need not exist: the test
+		// checks admission, not that the App runs.
+		menu: fixtures.app({
+			access: "public",
+			size: "nano",
+			connects: ["db"],
+			migrate: ["entrypoints/migrate.js"],
+		}),
 		db: { kind: "postgres", size: "small" },
 	},
 };
+const MENU_IMAGE =
+	"ghcr.io/viktorbarzin/cloud-recipe-box_menu@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-async function writeRoot(dir: string, projectFile: unknown) {
-	const r = renderer.render(projectFile, fixtures.CTX);
+async function writeRoot(dir: string, projectFile: unknown, images = {}) {
+	const r = renderer.render(projectFile, {
+		...fixtures.CTX,
+		images: { ...fixtures.CTX.images, ...images },
+	});
 	const main = structuredClone(r.mainTfJson);
 	delete main.terraform.backend;
 	await mkdir(dir, { recursive: true });
@@ -63,7 +77,7 @@ async function writeRoot(dir: string, projectFile: unknown) {
 	return r;
 }
 
-const rendered = await writeRoot(out, spec);
+const rendered = await writeRoot(out, spec, { menu: MENU_IMAGE });
 
 const list: { dir: string; name: string; namespace: string }[] = [];
 for (const [i, [name, projectFile]] of Object.entries(

@@ -66,10 +66,13 @@
 #     pod template, uses only emptyDir (each with a sizeLimit), configMap,
 #     secret, projected and downwardAPI volumes; sets no runtimeClassName,
 #     nodeName, nodeSelector, affinity, extra tolerations, host network, PID
-#     or IPC, init containers, shared process namespace, service account other
-#     than default, priority class other than tier-4-aux, or prometheus.io/*
-#     annotation; requests no GPU or other extended resource; and limits the
-#     ephemeral storage of every container. Every pod is labelled
+#     or IPC, shared process namespace, service account other than default,
+#     priority class other than tier-4-aux, or prometheus.io/* annotation;
+#     requests no GPU or other extended resource; and limits the ephemeral
+#     storage of every container, init containers included. Only an App pod
+#     may have an init container: at most one, named migrate, with no
+#     restartPolicy (no sidecar) and the image of the pod's first container
+#     (Cloud's migrations, app-kit K3). Every pod is labelled
 #     cloud.viktorbarzin.me/component app, edge or oauth2-proxy. An edge pod
 #     runs exactly the edge Cloud renders and an oauth2-proxy pod exactly the
 #     oauth2-proxy Cloud renders (local.cloud_edge, local.cloud_oauth2_proxy):
@@ -77,35 +80,49 @@
 #     exec probe, fixed ports and mounts, and for the edge its readiness
 #     probe. App pods are free, within the rules above.
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
-#     Caddyfile, and that file is the one Cloud renders (local
-#     cloud_caddyfile_lines): only the cookie list and the App's own
-#     upstream vary, and the list strips at least the homelab's cookies.
+#     Caddyfile, and that file is one Cloud renders (local
+#     cloud_caddyfile_variants: public, private, and until the follow-up the
+#     file before app-kit K1): only the cookie list varies, the upstreams are
+#     the App's own Services, and the list strips at least the homelab's
+#     cookies.
 #   cloud-managed-secretstore  a SecretStore is the in-cluster Vault, KV v2 at
 #     secret/, Kubernetes auth role cloud-project as service account
 #     cloud-secrets, and nothing else. Any other provider would let the ESO
 #     controller fetch a URL or a secret store of the reconciler's choosing
 #     and write the answer into a Project Secret.
 #
-# The edge chain (M2 contract, Addendum v2 point 8). The homelab's
-# forward-auth cookies (authentik_proxy_*, tsgate, Anubis's
+# The edge chain (M2 contract, Addendum v2 point 8; identity at the edge,
+# app-kit K1 in the cloud repo's docs/plans/2026-11-14-cloud-app-kit.md). The
+# homelab's forward-auth cookies (authentik_proxy_*, tsgate, Anubis's
 # techaro.lol-anubis-auth) are scoped to viktorbarzin.me, so every Project
 # host receives them. Cloud's edge, a pinned Caddy in its own Deployment
-# edge-<app>, removes them before a request reaches the App, and removes every
-# Set-Cookie with a Domain attribute on the way back. The policies above make
-# it the only way in:
-#   public:  Traefik -> Service edge-<app>:edge -> edge pod -> App
-#   private: Traefik -> Service auth-<app>:http -> oauth2-proxy pod, whose
-#            only upstream is http://edge-<app>.<ns>.svc.cluster.local:80/
-#            -> edge pod -> App
+# edge-<app>, removes them and every forged identity header before a request
+# reaches the App, asks the App's oauth2-proxy who is signed in, passes that
+# on as X-Cloud-User-* with the App's edge secret (Secret edge-<app>), and
+# removes every Set-Cookie with a Domain attribute on the way back. The
+# policies above make it the only way in:
+#   every App: Traefik -> Service edge-<app>:edge -> edge pod -> App, and the
+#              edge asks Service auth-<app>:80 (oauth2-proxy, upstream
+#              static://202) at /oauth2/auth and sends it /oauth2/*
+# Before app-kit K1 a private App ran Traefik -> Service auth-<app>:http ->
+# oauth2-proxy (upstream http://edge-<app>.<ns>.svc.cluster.local:80/) ->
+# edge -> App, and a public App had no oauth2-proxy. Cloud's reconciler
+# applies every Project again after the release, one at a time, so both
+# shapes run side by side for a while: the Ingress backend, the edge pod and
+# Caddyfile, the oauth2-proxy args and the Calico floor accept the old shape
+# too. local.cloud_k1_transition lists what a follow-up removes once every
+# Project runs the new shape.
 # Traefik reaches a Project only through an Ingress; the Ingress names only
 # an edge-* or auth-* Service; those Services select only edge or
 # oauth2-proxy pods; and those pods run only Cloud's pinned images, args and
 # config. No App code runs in an edge or oauth2-proxy pod, so App code can
 # never own the edge's socket. The Calico floor below lets App pods accept
-# connections only from edge pods, edge pods only from Traefik and
-# oauth2-proxy pods, and oauth2-proxy pods only from Traefik; Cloud's Project
-# policy narrows that to the App's own pods. Cloud's edge.test.ts runs the
-# Caddyfile in the pinned image; M4's live cookie test checks it end to end.
+# connections only from edge pods, edge pods only from Traefik (and, until
+# the follow-up, oauth2-proxy pods), oauth2-proxy pods only from edge pods on
+# 4180 (and, until the follow-up, Traefik); Cloud's Project policy narrows
+# that to the App's own pods. Cloud's edge.test.ts runs the Caddyfile in the
+# pinned image against a stand-in oauth2-proxy; M4's live cookie test checks
+# it end to end.
 #
 # Network. Calico tier "cloud" (main.tf) sits before the default tier and
 # holds two infra-owned GlobalNetworkPolicies for every managed namespace,
@@ -279,44 +296,92 @@ locals {
       XDG_CONFIG_HOME = "/run/caddy/config"
       XDG_DATA_HOME   = "/run/caddy/data"
     }
+    # The one env value from a Secret: the App's edge secret, which the
+    # Caddyfile adds to every request it passes to the App. Secret
+    # edge-<app>, key secret (the cloud repo's modules/app/edge.tf).
+    secret_env = "CLOUD_EDGE_SECRET"
+    secret_key = "secret"
     config_dir = "/etc/caddy"
     run_dir    = "/run/caddy"
   }
+
+  # What a follow-up removes once every Project runs the app-kit K1 shape
+  # (the reconciler applies every Project again after the Cloud release; the
+  # runbook's "App-kit K1 rollout" says how to check that none is left):
+  #   - cloud_caddyfile_lines_v1 and its regex: the edge Caddyfile with
+  #     `respond /oauth2/* 404` and no forward_auth;
+  #   - the edge env without CLOUD_EDGE_SECRET (two values instead of three);
+  #   - cloud_oauth2_proxy.args_v1: the private-App oauth2-proxy whose
+  #     upstream is its edge, with --cookie-expire=1h;
+  #   - Ingress backends auth-<app> port http in cloud-managed-ingress;
+  #   - the ingress floor's Pass from Traefik to oauth2-proxy pods and from
+  #     oauth2-proxy pods to edge pods.
+  cloud_k1_transition = true
 
   # The shared Authentik client (stacks/authentik cloud-apps.tf, the same
   # literal there). Pinned so an oauth2-proxy pod signs in only through it.
   cloud_apps_client_id = "cloud-apps"
 
-  # The oauth2-proxy pins its upstream to the App's own edge Service, so a
-  # signed-in request never reaches App code unstripped, and fixes every
-  # other flag: the issuer, the endpoints, the email allowlist file as the
-  # only gate, no --skip-jwt-bearer-tokens, no --email-domain, a cookie bound
-  # to the App's host. @APP@ is the pod's cloud.viktorbarzin.me/service
-  # label and @NS@ its namespace, filled in by the policy; the App's host is
-  # @APP@.viktorbarzin.me. Its component label is also the Calico source
-  # selector that reaches the Authentik server pods, so nothing but this
-  # program may carry it.
+  # The oauth2-proxy, as Cloud renders it for every App (app-kit K1): it
+  # proxies nothing (upstream static://202) and answers the edge's
+  # /oauth2/auth question with X-Auth-Request-* headers (--set-xauthrequest),
+  # with a 12-hour session cookie bound to the App's host. Every flag is
+  # fixed: the issuer, the endpoints, no --skip-jwt-bearer-tokens. The one
+  # flag that differs is the gate: a private App's email allowlist file
+  # (args_private, with its ConfigMap mounted) or a public App's
+  # --email-domain=* (args_public, with no mount and no volume), never both.
+  # args_v1 is the private-App shape before K1, whose upstream was the App's
+  # own edge Service; it goes in the follow-up (cloud_k1_transition). @APP@
+  # is the pod's cloud.viktorbarzin.me/service label and @NS@ its namespace,
+  # filled in by the policy; the App's host is @APP@.viktorbarzin.me. Its
+  # component label is also the Calico source selector that reaches the
+  # Authentik server pods, so nothing but this program may carry it.
+  cloud_oauth2_proxy_head = [
+    "--provider=oidc",
+    "--client-id=${local.cloud_apps_client_id}",
+    "--redirect-url=https://@APP@.viktorbarzin.me/oauth2/callback",
+    "--oidc-issuer-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/",
+    "--skip-oidc-discovery=true",
+    "--login-url=https://authentik.viktorbarzin.me/application/o/authorize/",
+    "--redeem-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/token/",
+    "--oidc-jwks-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/jwks/",
+    "--profile-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/userinfo/",
+    "--scope=openid profile email",
+    "--code-challenge-method=S256",
+  ]
+  cloud_oauth2_proxy_emails_file = "--authenticated-emails-file=/etc/oauth2-proxy/emails"
+  cloud_oauth2_proxy_any_email   = "--email-domain=*"
+  cloud_oauth2_proxy_tail = [
+    "--insecure-oidc-allow-unverified-email=true",
+    "--upstream=static://202",
+    "--pass-basic-auth=false",
+    "--pass-user-headers=false",
+    "--pass-access-token=false",
+    "--set-xauthrequest=true",
+    "--whitelist-domain=@APP@.viktorbarzin.me",
+    "--http-address=0.0.0.0:4180",
+    "--reverse-proxy=true",
+    "--cookie-name=_oauth2_proxy",
+    "--cookie-domain=@APP@.viktorbarzin.me",
+    "--cookie-secure=true",
+    "--cookie-expire=12h",
+    "--ping-path=/oauth2/ping",
+    "--ready-path=/oauth2/ready",
+    "--skip-provider-button=true",
+    "--silence-ping-logging=true",
+  ]
   cloud_oauth2_proxy = {
-    component  = "oauth2-proxy"
-    container  = "oauth2-proxy"
-    image      = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.6@sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048"
-    prefix     = "auth-"
-    port_name  = "http"
-    port       = 4180
-    emails_dir = "/etc/oauth2-proxy"
-    args = [
-      "--provider=oidc",
-      "--client-id=${local.cloud_apps_client_id}",
-      "--redirect-url=https://@APP@.viktorbarzin.me/oauth2/callback",
-      "--oidc-issuer-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/",
-      "--skip-oidc-discovery=true",
-      "--login-url=https://authentik.viktorbarzin.me/application/o/authorize/",
-      "--redeem-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/token/",
-      "--oidc-jwks-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/cloud-apps/jwks/",
-      "--profile-url=http://goauthentik-server.authentik.svc.cluster.local/application/o/userinfo/",
-      "--scope=openid profile email",
-      "--code-challenge-method=S256",
-      "--authenticated-emails-file=/etc/oauth2-proxy/emails",
+    component    = "oauth2-proxy"
+    container    = "oauth2-proxy"
+    image        = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.6@sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048"
+    prefix       = "auth-"
+    port_name    = "http"
+    port         = 4180
+    emails_dir   = "/etc/oauth2-proxy"
+    args_private = concat(local.cloud_oauth2_proxy_head, [local.cloud_oauth2_proxy_emails_file], local.cloud_oauth2_proxy_tail)
+    args_public  = concat(local.cloud_oauth2_proxy_head, [local.cloud_oauth2_proxy_any_email], local.cloud_oauth2_proxy_tail)
+    args_v1 = concat(local.cloud_oauth2_proxy_head, [
+      local.cloud_oauth2_proxy_emails_file,
       "--insecure-oidc-allow-unverified-email=true",
       "--upstream=http://edge-@APP@.@NS@.svc.cluster.local:80/",
       "--pass-basic-auth=false",
@@ -333,49 +398,109 @@ locals {
       "--ready-path=/oauth2/ready",
       "--skip-provider-button=true",
       "--silence-ping-logging=true",
-    ]
+    ])
   }
 
   # The edge's Caddyfile (ConfigMap edge-<app>, key Caddyfile), line by line,
   # from the cloud repo's modules/app/Caddyfile.tftpl. The policy
-  # cloud-managed-edge-config accepts only this file: optional leading
-  # comment lines, then these lines in order with any indentation.
+  # cloud-managed-edge-config accepts only these files: optional leading
+  # comment lines, then one of the line lists in order with any indentation.
   # Placeholders:
   #   @APP@, @NS@  the App (the ConfigMap's name after edge-) and the
-  #                namespace, filled in by the policy, so the only upstream is
-  #                this App's own Service app-<app>
+  #                namespace, filled in by the policy, so the only upstreams
+  #                are this App's own Services app-<app> and auth-<app>
   #   @COOKIES@    the cookie alternation; cloud_strip_cookies_required must
   #                each be in it
   # The header caps (64KB both ways) are fixed: without the response cap a
   # few App responses with huge headers OOM-kill Caddy.
-  cloud_caddyfile_lines = [
+  #
+  # The app-kit K1 file is one explicit route: it deletes forged identity
+  # headers first (X-Cloud-User-*, X-Cloud-Edge-Secret, X-Auth-Request-*,
+  # X-Authentik-*, both spellings), sends /oauth2/* to the oauth2-proxy (so
+  # the App's server never receives a cloud-apps callback), asks the
+  # oauth2-proxy at /oauth2/auth and copies its X-Auth-Request-* answer to
+  # X-Cloud-User-*, then proxies to the App with the homelab cookies
+  # stripped and the edge secret added. Only the 401 handler differs by
+  # access: a public App passes the request on with no identity, a private
+  # App redirects a page load to sign-in and answers anything else 401.
+  cloud_caddyfile_head = [
     "{", "admin off", "auto_https off", "persist_config off", "servers {",
     "trusted_proxies static private_ranges", "max_header_size 64KB", "}", "}",
     ":8080 {",
-    # Every path under /oauth2/ gets 404, so the App's server never receives
-    # a cloud-apps callback (Cloud final fixes, 2026-11-13). A private App's
-    # oauth2-proxy answers /oauth2/* before the edge.
-    "respond /oauth2/* 404",
-    "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {",
+  ]
+  cloud_caddyfile_app_leg = [
     "transport http {", "max_response_header 64KB", "}",
     "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
     "header_up Cookie `^;\\s*` \"\"",
-    "header_up -X-Authentik-*", "header_up -X_Authentik_*",
-    "header_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` \"\"",
-    "}", "}",
   ]
-  # Each line as a regex: metacharacters escaped, any indentation, a newline.
-  cloud_caddyfile_line_re = join("", [
-    for l in local.cloud_caddyfile_lines : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"
-  ])
+  cloud_caddyfile_set_cookie = "header_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` \"\""
+  cloud_caddyfile_k1 = {
+    start = [
+      "route {",
+      "request_header -X-Cloud-User-*", "request_header -X_Cloud_User_*",
+      "request_header -X-Cloud-Edge-Secret", "request_header -X_Cloud_Edge_Secret",
+      "request_header -X-Auth-Request-*", "request_header -X_Auth_Request_*",
+      "request_header -X-Authentik-*", "request_header -X_Authentik_*",
+      "reverse_proxy /oauth2/* auth-@APP@.@NS@.svc.cluster.local:80",
+      "reverse_proxy auth-@APP@.@NS@.svc.cluster.local:80 {",
+      "method GET", "rewrite /oauth2/auth",
+      "header_up X-Forwarded-Method {method}", "header_up X-Forwarded-Uri {uri}",
+      "@signed_in status 2xx",
+      "handle_response @signed_in {",
+      "@user not vars {rp.header.X-Auth-Request-User} \"\"",
+      "request_header @user X-Cloud-User-Id {rp.header.X-Auth-Request-User}",
+      "@email not vars {rp.header.X-Auth-Request-Email} \"\"",
+      "request_header @email X-Cloud-User-Email {rp.header.X-Auth-Request-Email}",
+      "@username not vars {rp.header.X-Auth-Request-Preferred-Username} \"\"",
+      "request_header @username X-Cloud-User-Username {rp.header.X-Auth-Request-Preferred-Username}",
+      "}",
+      "@anonymous status 401",
+      "handle_response @anonymous {",
+    ]
+    public = ["request_header -X-Cloud-User-*"]
+    private = [
+      "@page header Sec-Fetch-Mode navigate",
+      "redir @page /oauth2/start?rd={%uri} 302",
+      "@old_page {", "header !Sec-Fetch-Mode", "header Accept *text/html*", "}",
+      "redir @old_page /oauth2/start?rd={%uri} 302",
+      "header Content-Type application/json",
+      "respond `{\"error\":{\"code\":\"sign_in_required\"}}` 401",
+    ]
+    end = concat(
+      ["}", "}", "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {"],
+      local.cloud_caddyfile_app_leg,
+      ["header_up X-Cloud-Edge-Secret {env.CLOUD_EDGE_SECRET}", local.cloud_caddyfile_set_cookie],
+      ["}", "}", "}"],
+    )
+  }
+  cloud_caddyfile_variants = {
+    public  = concat(local.cloud_caddyfile_head, local.cloud_caddyfile_k1.start, local.cloud_caddyfile_k1.public, local.cloud_caddyfile_k1.end)
+    private = concat(local.cloud_caddyfile_head, local.cloud_caddyfile_k1.start, local.cloud_caddyfile_k1.private, local.cloud_caddyfile_k1.end)
+    # Before app-kit K1 (cloud_k1_transition): every path under /oauth2/ got
+    # 404, and no forward_auth. A private App's oauth2-proxy answered
+    # /oauth2/* before the edge.
+    v1 = concat(local.cloud_caddyfile_head, [
+      "respond /oauth2/* 404",
+      "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {",
+      ], local.cloud_caddyfile_app_leg, [
+      "header_up -X-Authentik-*", "header_up -X_Authentik_*",
+      local.cloud_caddyfile_set_cookie,
+      "}", "}",
+    ])
+  }
   # One cookie in the alternation: a name (a dot only escaped), optionally
   # followed by [^=;]* for a prefix.
   cloud_strip_cookie_re = "(?:[A-Za-z0-9_-]|\\\\[.])+(?:\\[\\^=;\\]\\*)?"
-  cloud_caddyfile_re = replace(join("", [
-    "^(?:[\\t ]*(?:#[^\\n]*)?\\n)*",
-    local.cloud_caddyfile_line_re,
-    "(?:[\\t ]*\\n)*$",
-  ]), "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
+  # Each variant as a regex: every line with metacharacters escaped, any
+  # indentation and a newline after it, optional comment lines before, blank
+  # lines after.
+  cloud_caddyfile_res = {
+    for k, lines in local.cloud_caddyfile_variants : k => replace(join("", concat(
+      ["^(?:[\\t ]*(?:#[^\\n]*)?\\n)*"],
+      [for l in lines : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"],
+      ["(?:[\\t ]*\\n)*$"],
+    )), "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
+  }
   # The homelab's cookies scoped to viktorbarzin.me, in Cloud's strip_cookies
   # form (a trailing * is a prefix): Authentik's forward-auth session, the
   # Turnstile gate and Anubis's pass (techaro.lol-anubis-auth since
@@ -562,10 +687,12 @@ locals {
     }
   }
 
-  # Who may connect to a Project pod (M2 contract, Addendum v2 point 8). The
-  # edge is the only way to App code, so App pods accept connections only
-  # from edge pods, edge pods only from Traefik and oauth2-proxy pods, and
-  # oauth2-proxy pods only from Traefik. Everything else is denied here,
+  # Who may connect to a Project pod (M2 contract, Addendum v2 point 8;
+  # app-kit K1). The edge is the only way to App code, so App pods accept
+  # connections only from edge pods, edge pods only from Traefik, and
+  # oauth2-proxy pods only from edge pods on 4180. Until the follow-up
+  # (cloud_k1_transition), Traefik also reaches oauth2-proxy pods and they
+  # reach edge pods: the request path of a private App before K1. Everything else is denied here,
   # before the default tier, so a Project policy cannot let Traefik, another
   # namespace or the LAN reach App pods directly. A GlobalNetworkPolicy
   # cannot say "the same namespace", so the edge and oauth2-proxy rules pass
@@ -588,10 +715,21 @@ locals {
           source      = { namespaceSelector = "projectcalico.org/name == 'traefik'" }
           destination = { selector = "${local.cloud_component_label} in {'${local.cloud_edge.component}', '${local.cloud_oauth2_proxy.component}'}" }
         },
+        # Before app-kit K1 a private App's oauth2-proxy proxied to its edge
+        # (cloud_k1_transition: the follow-up removes this rule, and
+        # oauth2-proxy pods from the Traefik rule above).
         {
           action      = "Pass"
           source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_oauth2_proxy.component}'" }
           destination = { selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
+        },
+        # The edge asks the App's oauth2-proxy who is signed in and sends it
+        # /oauth2/*, on its port only.
+        {
+          action      = "Pass"
+          protocol    = "TCP"
+          source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
+          destination = { selector = "${local.cloud_component_label} == '${local.cloud_oauth2_proxy.component}'", ports = [local.cloud_oauth2_proxy.port] }
         },
         {
           action      = "Pass"
@@ -623,13 +761,27 @@ locals {
       expression = "variables.component in ${jsonencode(local.cloud_workload_components)}"
       message    = "in a Cloud namespace, a pod is labelled ${local.cloud_component_label} ${join(", ", local.cloud_workload_components)}"
     },
+    # Init containers: Cloud's migrations (app-kit K3), one container named
+    # migrate in an App pod, running the App's own image before it starts. A
+    # restartPolicy would make it a sidecar that runs beside the App; the
+    # edge and the oauth2-proxy have none, so their pins stay whole.
     {
-      expression = "!has(@S.initContainers) || size(@S.initContainers) == 0"
-      message    = "in a Cloud namespace, a pod may not have init containers"
+      expression = "!has(@S.initContainers) || size(@S.initContainers) == 0 || variables.component == 'app'"
+      message    = "in a Cloud namespace, only an App pod may have an init container"
     },
     {
-      expression = "@S.containers.all(c, !has(c.resources) || ((!has(dyn(c.resources).requests) || dyn(c.resources).requests.all(k, k in ${jsonencode(local.cloud_pod_resources)})) && (!has(dyn(c.resources).limits) || dyn(c.resources).limits.all(k, k in ${jsonencode(local.cloud_pod_resources)}))))"
-      message    = "in a Cloud namespace, a container may request only ${join(", ", local.cloud_pod_resources)}: no GPU or other extended resource"
+      expression = "!has(@S.initContainers) || size(@S.initContainers) <= 1"
+      message    = "in a Cloud namespace, a pod has at most one init container"
+    },
+    {
+      expression = "!has(@S.initContainers) || @S.initContainers.all(c, c.name == 'migrate' && !has(c.restartPolicy) && c.image == @S.containers[0].image)"
+      message    = "in a Cloud namespace, the init container is named migrate, sets no restartPolicy and runs the image of the pod's first container"
+    },
+    # The rules with each_container check every container and every init
+    # container alike.
+    {
+      each_container = "!has(c.resources) || ((!has(dyn(c.resources).requests) || dyn(c.resources).requests.all(k, k in ${jsonencode(local.cloud_pod_resources)})) && (!has(dyn(c.resources).limits) || dyn(c.resources).limits.all(k, k in ${jsonencode(local.cloud_pod_resources)})))"
+      message        = "in a Cloud namespace, a container may request only ${join(", ", local.cloud_pod_resources)}: no GPU or other extended resource"
     },
     {
       # The kubelet enforces the limit, the quota counts it, and a container
@@ -637,8 +789,8 @@ locals {
       # dyn(): the API server's type checker has no schema for
       # resources.limits or emptyDir.sizeLimit (quantities), though both
       # evaluate.
-      expression = "@S.containers.all(c, has(c.resources) && has(dyn(c.resources).limits) && 'ephemeral-storage' in dyn(c.resources).limits)"
-      message    = "in a Cloud namespace, every container sets an ephemeral-storage limit"
+      each_container = "has(c.resources) && has(dyn(c.resources).limits) && 'ephemeral-storage' in dyn(c.resources).limits"
+      message        = "in a Cloud namespace, every container sets an ephemeral-storage limit"
     },
     {
       expression = "!has(@S.volumes) || @S.volumes.all(v, ${join(" || ", [for t in local.cloud_pod_volume_types : "has(v.${t})"])})"
@@ -692,10 +844,10 @@ locals {
       # The kubelet runs probes and hooks from the node's network, past the
       # Calico floor. Pod Security restricted refuses a host on a pod (1.34+);
       # this refuses it on a Deployment at apply time too.
-      expression = "@S.containers.all(c, ${join(" && ", concat(
+      each_container = join(" && ", concat(
         [for pr in ["livenessProbe", "readinessProbe", "startupProbe"] : "(!has(c.${pr}) || ((!has(c.${pr}.httpGet) || !has(c.${pr}.httpGet.host) || c.${pr}.httpGet.host == '') && (!has(c.${pr}.tcpSocket) || !has(c.${pr}.tcpSocket.host) || c.${pr}.tcpSocket.host == '')))"],
         [for h in ["postStart", "preStop"] : "(!has(c.lifecycle) || !has(c.lifecycle.${h}) || ((!has(c.lifecycle.${h}.httpGet) || !has(c.lifecycle.${h}.httpGet.host) || c.lifecycle.${h}.httpGet.host == '') && (!has(c.lifecycle.${h}.tcpSocket) || !has(c.lifecycle.${h}.tcpSocket.host) || c.lifecycle.${h}.tcpSocket.host == '')))"],
-      ))})"
+      ))
       message = "in a Cloud namespace, a probe or lifecycle hook may not name a host"
     },
     {
@@ -708,8 +860,11 @@ locals {
       message    = "in a Cloud namespace, an edge pod has one container, ${local.cloud_edge.container}, running ${local.cloud_edge.image}"
     },
     {
-      expression = "@EDGE @S.containers.all(c, !has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_edge.args)} && !has(c.envFrom) && has(c.env) && size(c.env) == ${length(local.cloud_edge.env)} && c.env.all(e, e.name in ${jsonencode(local.cloud_edge.env)} && has(e.value) && !has(e.valueFrom) && e.value == ${jsonencode(local.cloud_edge.env)}[e.name]) && !has(c.lifecycle) && !has(c.livenessProbe) && !has(c.startupProbe))"
-      message    = "in a Cloud namespace, the edge runs as Cloud renders it: args ${join(" ", local.cloud_edge.args)}, env only ${join(" and ", keys(local.cloud_edge.env))}, and no command, envFrom, lifecycle hook, liveness or startup probe"
+      # The env: the fixed values, each once, plus the edge secret from the
+      # App's own Secret. Without the secret (two values) is the shape
+      # before app-kit K1, which the follow-up refuses.
+      expression = "@EDGE @S.containers.all(c, !has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_edge.args)} && !has(c.envFrom) && has(c.env) && (size(c.env) == ${length(local.cloud_edge.env)} || (size(c.env) == ${length(local.cloud_edge.env) + 1} && c.env.exists(e, e.name == '${local.cloud_edge.secret_env}'))) && ${jsonencode(keys(local.cloud_edge.env))}.all(k, c.env.exists(e, e.name == k)) && c.env.all(e, (e.name in ${jsonencode(local.cloud_edge.env)} && has(e.value) && !has(e.valueFrom) && e.value == ${jsonencode(local.cloud_edge.env)}[e.name]) || (e.name == '${local.cloud_edge.secret_env}' && (!has(e.value) || e.value == '') && has(e.valueFrom) && has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef) && e.valueFrom.secretKeyRef.name == '${local.cloud_edge.prefix}' + variables.service && e.valueFrom.secretKeyRef.key == '${local.cloud_edge.secret_key}' && (!has(e.valueFrom.secretKeyRef.optional) || !e.valueFrom.secretKeyRef.optional))) && !has(c.lifecycle) && !has(c.livenessProbe) && !has(c.startupProbe))"
+      message    = "in a Cloud namespace, the edge runs as Cloud renders it: args ${join(" ", local.cloud_edge.args)}, env only ${join(" and ", keys(local.cloud_edge.env))} and ${local.cloud_edge.secret_env} from Secret ${local.cloud_edge.prefix}<its App> key ${local.cloud_edge.secret_key}, and no command, envFrom, lifecycle hook, liveness or startup probe"
     },
     {
       expression = "@EDGE @S.containers.all(c, has(c.ports) && size(c.ports) == 1 && c.ports.all(p, has(p.name) && p.name == '${local.cloud_edge.port_name}' && p.containerPort == ${local.cloud_edge.port} && (!has(p.protocol) || p.protocol == 'TCP') && !has(p.hostPort) && !has(p.hostIP)))"
@@ -731,20 +886,24 @@ locals {
       message    = "in a Cloud namespace, an oauth2-proxy pod has one container, ${local.cloud_oauth2_proxy.container}, running ${local.cloud_oauth2_proxy.image}"
     },
     {
-      expression = "@AUTH @S.containers.all(c, !has(c.command) && has(c.args) && c.args == ${jsonencode(local.cloud_oauth2_proxy.args)}.map(a, a.replace('@APP@', variables.service).replace('@NS@', request.namespace)) && !has(c.env) && has(c.envFrom) && size(c.envFrom) == 1 && c.envFrom.all(e, has(e.secretRef) && e.secretRef.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service && !has(e.configMapRef) && (!has(e.prefix) || e.prefix == '')) && !has(c.lifecycle) && ${join(" && ", [for pr in ["livenessProbe", "readinessProbe", "startupProbe"] : "(!has(c.${pr}) || !has(c.${pr}.exec))"])})"
-      message    = "in a Cloud namespace, the oauth2-proxy runs as Cloud renders it: the fixed args with its own App's host and edge, Secret ${local.cloud_oauth2_proxy.prefix}<its App> as its only env, and no command, lifecycle hook or exec probe"
+      expression = "@AUTH @S.containers.all(c, !has(c.command) && has(c.args) && (${join(" || ", [for k in ["args_private", "args_public", "args_v1"] : "c.args == ${jsonencode(local.cloud_oauth2_proxy[k])}.map(a, a.replace('@APP@', variables.service).replace('@NS@', request.namespace))"])}) && !has(c.env) && has(c.envFrom) && size(c.envFrom) == 1 && c.envFrom.all(e, has(e.secretRef) && e.secretRef.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service && !has(e.configMapRef) && (!has(e.prefix) || e.prefix == '')) && !has(c.lifecycle) && ${join(" && ", [for pr in ["livenessProbe", "readinessProbe", "startupProbe"] : "(!has(c.${pr}) || !has(c.${pr}.exec))"])})"
+      message    = "in a Cloud namespace, the oauth2-proxy runs as Cloud renders it: the fixed args with its own App's host and either its emails file or ${local.cloud_oauth2_proxy_any_email}, Secret ${local.cloud_oauth2_proxy.prefix}<its App> as its only env, and no command, lifecycle hook or exec probe"
     },
     {
       expression = "@AUTH @S.containers.all(c, has(c.ports) && size(c.ports) == 1 && c.ports.all(p, has(p.name) && p.name == '${local.cloud_oauth2_proxy.port_name}' && p.containerPort == ${local.cloud_oauth2_proxy.port} && !has(p.hostPort) && !has(p.hostIP)))"
       message    = "in a Cloud namespace, the oauth2-proxy has one port, ${local.cloud_oauth2_proxy.port_name} = ${local.cloud_oauth2_proxy.port}, and no host port"
     },
     {
-      expression = "@AUTH @S.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.mountPath == '${local.cloud_oauth2_proxy.emails_dir}' && has(m.readOnly) && m.readOnly && (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service)))"
-      message    = "in a Cloud namespace, the oauth2-proxy mounts only ConfigMap ${local.cloud_oauth2_proxy.prefix}<its App>, read-only, at ${local.cloud_oauth2_proxy.emails_dir}"
+      # A public App's oauth2-proxy (--email-domain=*) has no emails file:
+      # no mount and no volume. Any other mounts only the allowlist.
+      expression = "@AUTH @S.containers.all(c, has(c.args) && c.args.exists(a, a == '${local.cloud_oauth2_proxy_any_email}') ? ((!has(c.volumeMounts) || size(c.volumeMounts) == 0) && (!has(@S.volumes) || size(@S.volumes) == 0)) : (has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.mountPath == '${local.cloud_oauth2_proxy.emails_dir}' && has(m.readOnly) && m.readOnly && (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(@S.volumes) && @S.volumes.exists(v, v.name == m.name && has(v.configMap) && has(v.configMap.name) && v.configMap.name == '${local.cloud_oauth2_proxy.prefix}' + variables.service))))"
+      message    = "in a Cloud namespace, the oauth2-proxy mounts only ConfigMap ${local.cloud_oauth2_proxy.prefix}<its App>, read-only, at ${local.cloud_oauth2_proxy.emails_dir}, and with ${local.cloud_oauth2_proxy_any_email} nothing at all"
     },
     ] : {
-    expression = replace(replace(r.expression, "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || ")
-    message    = r.message
+    expression = replace(replace(
+      try("@S.containers.all(c, ${r.each_container}) && (!has(@S.initContainers) || @S.initContainers.all(c, ${r.each_container}))", r.expression),
+    "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || ")
+    message = r.message
   }]
 
   # The variables cloud_pod_rules use, from the pod's metadata (@M).
@@ -1059,6 +1218,7 @@ locals {
         }]
         variables = [
           { name = "caddyfile", expression = "has(object.data) && 'Caddyfile' in object.data ? object.data['Caddyfile'] : ''" },
+          { name = "app", expression = "object.metadata.name.substring(${length(local.cloud_edge.prefix)})" },
           # The one header_up Cookie line that strips cookies (a comment line
           # starts with #, so it cannot match).
           { name = "cookieLine", expression = "size(variables.caddyfile) <= 8192 ? variables.caddyfile.find(r'\\n[\\t ]*header_up Cookie `[^`\\n]*`') : ''" },
@@ -1070,8 +1230,8 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "size(variables.caddyfile) <= 8192 && variables.caddyfile.matches(r'${local.cloud_caddyfile_re}'.replace('@APP@', object.metadata.name.substring(${length(local.cloud_edge.prefix)})).replace('@NS@', request.namespace))"
-            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile is the one Cloud renders (modules/app/Caddyfile.tftpl), with only the strip list filled in and app-<app> in this namespace as its upstream"
+            expression = "size(variables.caddyfile) <= 8192 && (${join(" || ", [for k in sort(keys(local.cloud_caddyfile_res)) : "variables.caddyfile.matches(r'${local.cloud_caddyfile_res[k]}'.replace('@APP@', variables.app).replace('@NS@', request.namespace))"])})"
+            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile is one Cloud renders (modules/app/Caddyfile.tftpl), with only the strip list filled in and app-<app> and auth-<app> in this namespace as its upstreams"
             reason     = "Forbidden"
           },
           {
