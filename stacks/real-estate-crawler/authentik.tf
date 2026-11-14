@@ -1,8 +1,9 @@
 # Authentik OAuth2 provider and application for Wrongmove's "Log in with
 # Authentik" (SSO) button. Both were made by hand in the Authentik UI and
-# adopted into Terraform on 2026-11-14 with import {} blocks, matching the live
-# objects field for field. Who may sign in is decided by the "Wrongmove Users"
-# group binding in stacks/authentik/app-access-bindings.tf, not here.
+# adopted into Terraform on 2026-11-14 (import {} blocks, since removed),
+# matching the live objects field for field. Who may sign in is decided by
+# the "Wrongmove Users" group binding in
+# stacks/authentik/app-access-bindings.tf, not here.
 #
 # A public/PKCE client: the frontend runs the authorize flow and the backend
 # only checks the token audience (OIDC_CLIENT_ID in main.tf, the same id as
@@ -39,16 +40,6 @@ data "authentik_property_mapping_provider_scope" "email" {
 
 data "authentik_property_mapping_provider_scope" "profile" {
   managed = "goauthentik.io/providers/oauth2/scope-profile"
-}
-
-import {
-  to = authentik_provider_oauth2.wrongmove
-  id = "15"
-}
-
-import {
-  to = authentik_application.wrongmove
-  id = "wrongmove"
 }
 
 resource "authentik_provider_oauth2" "wrongmove" {
