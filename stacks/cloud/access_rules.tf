@@ -443,6 +443,10 @@ locals {
   cloud_reconciler_project_rules = [
     { api_groups = [""], resources = ["resourcequotas", "limitranges", "serviceaccounts", "services", "secrets", "configmaps"], verbs = local.cloud_write_verbs, resource_names = [] },
     { api_groups = ["apps"], resources = ["deployments"], verbs = local.cloud_write_verbs, resource_names = [] },
+    # Read only: why a Deploy's new pods are not ready (image pull, quota,
+    # exit, readiness). Cloud never writes pods or ReplicaSets itself.
+    { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
+    { api_groups = ["apps"], resources = ["replicasets"], verbs = ["get", "list"], resource_names = [] },
     { api_groups = ["networking.k8s.io"], resources = ["ingresses"], verbs = local.cloud_write_verbs, resource_names = [] },
     { api_groups = ["external-secrets.io"], resources = ["externalsecrets", "secretstores"], verbs = local.cloud_write_verbs, resource_names = [] },
     # Calico checks both the plain resource and its per-tier pseudo-resource.
