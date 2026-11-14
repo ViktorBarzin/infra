@@ -415,10 +415,17 @@ case("proxy-email-domain-with-file", "kr", A_RUNS, "private App's oauth2-proxy w
 
 
 def v1_proxy_args(o):
-    """The private oauth2-proxy before app-kit K1: upstream its edge, 1h cookie, no X-Auth-Request headers."""
+    """The private oauth2-proxy before app-kit K1: upstream its edge, 1h cookie
+    named _oauth2_proxy with --cookie-domain, no X-Auth-Request headers."""
     args = ec(spec_of(o))["args"]
-    args[:] = [{"--upstream=static://202": f"--upstream=http://edge-recipes.{target}.svc.cluster.local:80/", "--cookie-expire=12h": "--cookie-expire=1h"}.get(a, a)
-               for a in args if a != "--set-xauthrequest=true"]
+    host = next(a for a in args if a.startswith("--whitelist-domain=")).split("=", 1)[1]
+    old = {
+        "--upstream=static://202": [f"--upstream=http://edge-recipes.{target}.svc.cluster.local:80/"],
+        "--cookie-expire=12h": ["--cookie-expire=1h"],
+        "--cookie-name=__Host-oauth2_proxy": ["--cookie-name=_oauth2_proxy", f"--cookie-domain={host}"],
+        "--set-xauthrequest=true": [],
+    }
+    args[:] = [b for a in args for b in old.get(a, [a])]
 
 
 case("proxy-v1", "kr", "ok", "private App's oauth2-proxy as before app-kit K1 (until the follow-up)", variant(proxy, v1_proxy_args))
