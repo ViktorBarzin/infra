@@ -1,5 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": []
+  "packageRules": [
+    {
+      "description": "rails revert 2026-11-13 pipeline #3892: stack calico failed after this bump: its terragrunt apply failed (commit fe1ef059)",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "tigera-operator"
+      ],
+      "matchNewValue": "v3.33.1",
+      "enabled": false
+    }
+  ]
 }

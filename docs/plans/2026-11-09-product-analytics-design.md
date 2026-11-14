@@ -63,8 +63,8 @@ Events use the [Segment spec](https://segment.com/docs/connections/spec/) and ar
 | `event` | `noun.past_verb`, lower case, matching `^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`, e.g. `recording.started`, `trip.created` |
 | `userId` | The Person's Authentik hashed user id (`uid`) once signed in, omitted before. It equals the OIDC `sub` under Authentik's default `hashed_user_id` mode (tv, every `tanstack_app`). tripit's provider issues the email as `sub`, so tripit sends `uid` |
 | `anonymousId` | Browser and Android: the SDK's own id, sent on every event, so Rybbit can merge it into the Person at `identify`. In the browser it is the Rybbit script's visitor id (localStorage `rybbit-visitor-id`). Server events sent while handling a browser's request: that visitor id, read from the request's `X-Visitor-Id` header. Server events with neither: omitted when `userId` is set, otherwise a stable id (`server:<app>` by default). Never a new random id per event, which Rybbit would count as a new person |
-| `X-Visitor-Id` | Request header the browser sets on same-origin API calls to its Rybbit visitor id (`visitorHeaders()` in `@viktorbarzin/telemetry`). Rybbit derives its user id from site id and anonymous id, so a server event carrying this id lands on the browser's Rybbit user |
-| `context.ip`, `context.userAgent` | Server events sent during a request carry the person's IP (`X-Real-Ip`, else the first `X-Forwarded-For` entry, else the peer) and User-Agent, which Vector maps to Rybbit's `ip_address` and `user_agent` for country and device. Never the SDK's own agent, which Rybbit flags as a bot |
+| `X-Visitor-Id` | Request header the browser sets on same-origin API calls to its Rybbit visitor id (`visitorHeaders()` in `@viktorbarzin/telemetry`). It reaches `anonymousId` and the raw events copy. Rybbit itself does not use it when the event also carries a browser User-Agent and IP: Vector then leaves `anonymous_id` out, so Rybbit gives the event the same IP and user-agent fingerprint as that browser's pageviews (decided 2026-11-12, because the Rybbit script never sends its visitor id with pageviews) |
+| `context.ip`, `context.userAgent` | Server events sent during a request carry the person's IP (`X-Real-Ip`, else the first `X-Forwarded-For` entry, else the peer) and User-Agent, which Vector maps to Rybbit's `ip_address` and `user_agent` for country and device. Vector forwards a User-Agent to Rybbit only when it is a browser's (`Mozilla/...`). An SDK or HTTP-client agent (`analytics-python`, `okhttp` on Android TV, `Python-urllib`) matches Rybbit's bot patterns, so Vector sends none and the event keeps its stable `anonymousId`. The raw events copy keeps whatever arrived |
 | `properties` | snake_case keys, at most 2,048 characters as JSON (Rybbit's limit) |
 | `context.page.url` | Set by the browser SDK. Server and Android events set `context.app` instead |
 | write key | One per app, in Vault at `secret/rybbit` in the `write_keys` JSON, keyed by app. Vector derives `app` from it and ignores any `app` the client sends |
@@ -75,7 +75,7 @@ Vector rejects an event, and sends it to Loki under `{job="event-pipeline", outc
 - the properties are too long;
 - the browser host is not a production host (`*.viktorbarzin.me` and `viktorbarzin.me`).
 
-The client libraries implement the server side of this from telemetry 0.2.0 (Python `viktorbarzin-telemetry` 0.2.0, Go `go/v0.2.0`) and the next `@viktorbarzin/telemetry` release: Python `RequestContextMiddleware` (ASGI) or `request_context()`, Go `RequestMiddleware`, TypeScript `withRequestContext()`. Up to 0.1.0 the Python and Go libraries gave every event without an anonymousId a new uuid4, so each anonymous backend event counted as a new person. Every Python app moved to 0.2.0 on 2026-11-10 (tv, tripit, wrongmove, offline-reader, learning, health, fire-planner, priority-pass, nextcloud-todos); events recorded before that keep their per-event ids. terminal-lobby (Go) and the TypeScript apps follow with the 2026-11-11 npm publish.
+The client libraries implement the server side of this from telemetry 0.2.0 (Python `viktorbarzin-telemetry` 0.2.0, Go `go/v0.2.0`) and `@viktorbarzin/telemetry` 0.2.0: Python `RequestContextMiddleware` (ASGI) or `request_context()`, Go `RequestMiddleware`, TypeScript `withRequestContext()`. Up to 0.1.0 the Python and Go libraries gave every event without an anonymousId a new uuid4, so each anonymous backend event counted as a new person. Every Python app moved to 0.2.0 on 2026-11-10 (tv, tripit, wrongmove, offline-reader, learning, health, fire-planner, priority-pass, nextcloud-todos); events recorded before that keep their per-event ids. The TypeScript apps moved on 2026-11-12, onto 0.2.1, which also holds a new visitor's first browser events until the Rybbit visitor id exists, so they don't carry a random id. terminal-lobby moved to Go 0.2.0 the same day; it keeps a per-user hash instead of `server:terminal-lobby` as the fallback id, so different users' pre-sign-in events stay apart.
 
 ## Log standard
 
@@ -109,7 +109,7 @@ Apps use the Sentry SDKs with a DSN per app pointing at `/_t/x/<project>` on the
 | Go | `telemetry` repo, `telemetry/go` | Segment client config, Sentry init, `slog` JSON handler |
 | Kotlin | `telemetry` repo, `telemetry-android` | Segment client config (our settings host, telemetry off), Sentry init |
 
-The libraries are public, as app-kit is. The TypeScript packages publish to npm through app-kit's release workflow. The Python package publishes to PyPI through trusted publishing from the `telemetry` repo's GitHub mirror. The Go module is fetched from the mirror. JitPack builds the Android library from tags. The code holds no secrets: Write keys and DSNs come from each app's configuration.
+The libraries are public, as app-kit is. The TypeScript packages publish through app-kit's release workflow to Forgejo's npm registry, which the apps install from, and to npm as a public mirror (app-kit ADR-0003, 2026-11-12). The npm mirror is paused until the owner's npm account is unlocked. The Python package publishes to PyPI through trusted publishing from the `telemetry` repo's GitHub mirror. The Go module is fetched from the mirror. JitPack builds the Android library from tags. The code holds no secrets: Write keys and DSNs come from each app's configuration.
 
 ## Settings
 
@@ -155,28 +155,35 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
    - Logs moved to the standard.
 5. **Clean-up.** Retire the duplicated Loki dashboards for events that moved. tv's viewing tables stay, because tv features read them.
 
-## Rollout status (2026-11-09)
+## Rollout status (2026-11-14)
 
-| App | Server events | Browser (Rybbit script) | Errors | Logs on the standard | App ADR |
+| App | Server events | Browser | Errors | Logs on the standard | App ADR |
 |---|---|---|---|---|---|
-| tv (pilot, includes the Android TV app) | live | live | live | yes | 2026-11-09-tv-sends-product-events |
-| tripit | live | live | live | yes (keeps its formatter and secret scrubbing) | 0077 |
-| terminal-lobby | live | live | live | yes | 0048 |
-| offline-reader | live | wired, not seen signed-in | live | yes | 0007 |
-| learning | live | wired, not seen signed-in | live | yes | 0005 |
-| health | live | wired, not seen signed-in | live | yes | 0014 |
-| fire-planner | live | wired, not seen signed-in | live | yes | 0002 |
-| wrongmove | live | live | live | yes | 0004 |
-| blog, kms, pages | n/a | live (pages: on each page's next publish) | n/a | n/a | n/a |
-| interview-prep, vpn-portal, plotting-book | waiting for `@viktorbarzin/telemetry` on npm (interview-prep has no server) | wired, not seen signed-in | browser live, server waits for the package | waits for the package | 2026-11-10-telemetry-in-the-browser (each repo) |
-| priority-pass | live | wired, not seen signed-in | live | yes | 0001 |
+| tv (pilot, includes the Android TV app) | live | live; `link.shared`, `cast.started`, `quality.chosen` | server | yes | 2026-11-09-tv-sends-product-events |
+| tripit | live | live; `search.opened`, `offline_copy.toggled`, `tour.started` | server | yes (keeps its formatter and secret scrubbing) | 0077 |
+| terminal-lobby | live on Go 0.2.0 (v0.142.3, 2026-11-12); events carry the browser, and the visitor IP since the lobby API routes got `traefik/real-ip` | live | live | yes | 0048 |
+| offline-reader | live | `download.completed`, `download.interrupted`, `page.read` | server | yes | 0007 |
+| learning | live | `reference.opened`, `routine_guide.opened`, `progress.queued` | server | yes | 0005 |
+| health | live | `plate_calculator.opened`, `rest_timer.skipped`, `rest_timer.adjusted` | server | yes | 0014 |
+| fire-planner | live | `scenario_tab.opened`, `info_tip.opened` | server | yes | 0002 |
+| wrongmove | live | live; `user.signed_in` (Authentik sign-ins; the server sends passkey ones), `view_mode.changed`, `swipe_review.opened`, `rightmove_listing.opened` | server | yes | 0004 |
+| priority-pass | live | `pass.selected`, `pass.shared`, `pass.downloaded` | server | yes | 0001 |
+| tasks | `account.connected`, `task.created`, `task.completed`, `list.created` | `smart_view.opened`, `completed_tasks.toggled`, `search.started`, `task_sheet.opened` | server and browser | yes (`@viktorbarzin/log` 1.0) | 0005 |
+| alexa-assistant | `turn.completed`, `person.paired`, `result.delivered`, `pairing.started` (voice events use `alexa:<person>`) | `access_requests.opened`, `unknown_voice.shown`, `status.load_failed` | server and browser | yes | 0004 |
+| reels (repo trip-reel) | `library.connected`, `trip.created`, `cut.created`, `render.requested` (2026-11-14) | `preview.played`, `render.played`, `render.downloaded` | server and browser | yes (`@viktorbarzin/log` 1.0); the Python worker sends nothing | 0002 |
+| cloud (console only, not the reconciler) | `project.created`, `plan.applied`, `project.deleted`, `access_token.created` (2026-11-14) | pageviews and replay; no browser events | server and browser | yes | 0007 |
+| vpn-portal | `wg_device.registered`, `wg_device.revoked`, `wg_device.rotated`, `tailscale_device.enrolled` | `subscription.copied`, `client_app.opened`, `proxy_config.copied`, `wg_config.exported` | server and browser | yes | 2026-11-10-telemetry-in-the-browser |
+| plotting-book | `account.registered`, `project.created`, `writing_session.logged`, `share_link.created` | `project.exported`, `scene_filter.toggled`, `outline_mode.switched` | server and browser | yes | 2026-11-10-telemetry-in-the-browser |
+| interview-prep (no server; nginx serves the browser settings) | n/a | `lesson.played`, `lesson.completed`, `scene.selected` | browser | n/a | 2026-11-10-telemetry-in-the-browser |
 | nextcloud-todos (no web UI; Person id from config) | live | n/a | live | yes | 0001 |
-| tasks, alexa-assistant | waiting for `@viktorbarzin/telemetry` and `@viktorbarzin/log` 1.0 on npm (scheduled 2026-11-11) | | | | |
+| blog, kms, pages | n/a | pageviews (pages: on each page's next publish) | n/a | n/a | n/a |
 | Third-party apps (Forgejo, Immich, Home Assistant, Paperless, CyberChef and the rest) | n/a | pageviews through the injection plugin, `hosted` site | n/a | n/a | n/a |
 
-"Wired, not seen signed-in" means the app loads the script and calls `identify`, but the check ran without a signed-in browser. A signed-in visit settles it.
+Every browser above runs `@viktorbarzin/telemetry` 0.2.1 from Forgejo's npm registry. "Server" under Errors means GlitchTip gets backend errors only; those frontends had no browser Sentry before, and none was added.
 
-Browser custom events, and the two app-kit apps (tasks, alexa-assistant), wait for the first npm publish of `@viktorbarzin/telemetry` and the trusted publishers on the app-kit packages, which need the owner's npm authenticator.
+Until 2026-11-12, Segment events and pageviews did not share a Rybbit `user_id` for a visitor who was not signed in. The Rybbit script (v2.9.2, and upstream master on 2026-11-12) keeps `rybbit-visitor-id` only for feature flags and experiments, and pageviews get an IP and user-agent fingerprint, while events sent with the visitor id hashed it instead (terminal-lobby: events `5d421c561c62`, pageviews `d867526b0b51`). Vector now leaves `anonymous_id` out of any event with a browser User-Agent and IP, so both get the fingerprint. The owner chose this over patching Rybbit's script and server. The cost: an anonymous visitor who changes network becomes a new Rybbit user, as their pageviews already did. Signed-in visits join through the identified user id. Android and background events keep their stable id.
+
+The server and browser events were checked by sending them by hand with real headers, and the served bundles were read. No real signed-in browser visit has been checked since the 2026-11-12 changes. Rybbit files headless browsers under `bot_events`, so automated checks never reach the counted tables; a signed-in visit settles it.
 
 ## Open questions
 

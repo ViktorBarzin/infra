@@ -1,0 +1,31 @@
+#cloud-config
+# Vendor data for every devvm stacks/devvm builds (modules/proxmox-devvm).
+# Rendered by playbooks/pve-host.yml (tag snippets) to
+# /var/lib/vz/snippets/devvm_bootstrap.yaml, with scripts/devvm-bootstrap
+# embedded below. Shared by every devvm: nothing here is per-VM or secret.
+# The VM's name, address, admin account and SSH keys come from the Proxmox
+# cloud-init drive; the Vault token arrives later through the guest agent
+# (scripts/devvm-drill-handoff). Runbook: docs/runbooks/devvm-drill.md.
+# The handoff lands in /run/devvm-bootstrap. qemu-ga creates files 0666, so
+# the directory is what keeps other accounts out; bootcmd makes it before the
+# agent is installed.
+bootcmd:
+  - [install, -d, -m, "0700", -o, root, -g, root, /run/devvm-bootstrap]
+package_update: true
+packages:
+  - qemu-guest-agent
+  - ansible
+  - git
+  - curl
+  - jq
+  - gpg
+write_files:
+  - path: /usr/local/sbin/devvm-bootstrap
+    owner: root:root
+    permissions: "0755"
+    content: |
+{{ lookup('file', playbook_dir ~ '/../scripts/devvm-bootstrap') | indent(6, true) }}
+runcmd:
+  # The handoff waits on the agent, so start it before the long build.
+  - [systemctl, start, qemu-guest-agent]
+  - [/usr/local/sbin/devvm-bootstrap]

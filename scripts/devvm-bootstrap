@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# First-boot build of a devvm made by stacks/devvm (modules/proxmox-devvm).
+#
+# cloud-init runs this as root from the vendor snippet devvm_bootstrap.yaml,
+# which playbooks/pve-host.yml renders from this file. It turns the bare Ubuntu
+# cloud image into a devvm the same way an admin builds one by hand:
+#   1. wait for the handoff file the applier writes through the guest agent
+#      (scripts/devvm-drill-handoff): a response-wrapped Vault token plus the
+#      infra ref to build from;
+#   2. unwrap the token. It is single use, so a failed unwrap means somebody
+#      else used it first: stop and say so;
+#   2b. only on the box that replaces the live devvm (handoff host_keys true):
+#      put the live devvm's SSH host keys from Vault in place of the first-boot
+#      ones, so ssh clients and the Proxmox host's t3-state-pull still trust it;
+#   3. clone infra (public on Forgejo) at that ref, and install the vault CLI
+#      at the version its playbook pins;
+#   4. run playbooks/devvm.yml against this box with a local connection, the
+#      token in VAULT_TOKEN for the tasks that read Vault on the controller;
+#   5. install terminal-lobby from its (public) apt registry, copy the users'
+#      T3 snapshots back from the Proxmox host, then run the roster
+#      provisioner (t3-provision-users) once from the clone;
+#   6. revoke the token.
+# Progress goes to stdout (cloud-init captures it in /var/log/cloud-init-output.log)
+# and the result to $STATE/status: "ok" or "failed: <step>".
+#
+# Overrides, used by scripts/test-devvm-bootstrap.sh:
+#   DEVVM_BOOTSTRAP_HANDOFF  handoff file      (/run/devvm-bootstrap/handoff.json)
+#   DEVVM_BOOTSTRAP_STATE    status directory  (/var/lib/devvm-bootstrap)
+#   DEVVM_BOOTSTRAP_CLONE    infra clone       (/opt/devvm-bootstrap/infra)
+#   DEVVM_BOOTSTRAP_PROVISIONER  installed provisioner (/usr/local/bin/t3-provision-users)
+#   DEVVM_BOOTSTRAP_WAIT / _POLL  seconds to wait for the handoff, poll interval
+#   DEVVM_BOOTSTRAP_T3_DIR / _T3_HOLD / _T3_SOURCE  T3 snapshot directory, hold
+#                            file, and the host they are copied from
+#   DEVVM_BOOTSTRAP_HASHICORP_KEYRING / _LIST  where the HashiCorp apt key and
+#                            source go (/usr/share/keyrings, /etc/apt/sources.list.d)
+#   DEVVM_BOOTSTRAP_SSH_DIR / _CLOUD_CFG_D  sshd's host keys and cloud-init's
+#                            drop-ins (/etc/ssh, /etc/cloud/cloud.cfg.d)
+set -euo pipefail
+
+HANDOFF="${DEVVM_BOOTSTRAP_HANDOFF:-/run/devvm-bootstrap/handoff.json}"
+STATE="${DEVVM_BOOTSTRAP_STATE:-/var/lib/devvm-bootstrap}"
+CLONE="${DEVVM_BOOTSTRAP_CLONE:-/opt/devvm-bootstrap/infra}"
+PROVISIONER="${DEVVM_BOOTSTRAP_PROVISIONER:-/usr/local/bin/t3-provision-users}"
+WAIT="${DEVVM_BOOTSTRAP_WAIT:-3600}"
+POLL="${DEVVM_BOOTSTRAP_POLL:-5}"
+INFRA_REMOTE="${DEVVM_BOOTSTRAP_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
+export VAULT_ADDR="${DEVVM_BOOTSTRAP_VAULT_ADDR:-https://vault.viktorbarzin.me}"
+# cloud-init's runcmd runs with no HOME, and the playbook's go build of
+# t3-dispatch then fails ("neither GOMODCACHE nor GOPATH is set"; the second
+# stacks/devvm drill, 2026-11-11). This runs as root, so root's home it is.
+export HOME="${HOME:-/root}"
+T3_DIR="${DEVVM_BOOTSTRAP_T3_DIR:-/var/backups/t3-state}"
+T3_HOLD="${DEVVM_BOOTSTRAP_T3_HOLD:-/var/lib/t3-restore/awaiting-snapshots}"
+T3_SOURCE="${DEVVM_BOOTSTRAP_T3_SOURCE:-root@192.168.1.127}"
+HC_KEYRING="${DEVVM_BOOTSTRAP_HASHICORP_KEYRING:-/usr/share/keyrings/hashicorp-archive-keyring.asc}"
+HC_LIST="${DEVVM_BOOTSTRAP_HASHICORP_LIST:-/etc/apt/sources.list.d/hashicorp.list}"
+SSH_DIR="${DEVVM_BOOTSTRAP_SSH_DIR:-/etc/ssh}"
+CLOUD_CFG_D="${DEVVM_BOOTSTRAP_CLOUD_CFG_D:-/etc/cloud/cloud.cfg.d}"
+HOST_KEYS_PATH="secret/data/workstation/devvm/ssh-host-keys"
+
+log() { echo "[devvm-bootstrap] $*"; }
+mkdir -p "$STATE"
+step="start"
+status() { printf '%s\n' "$1" >"$STATE/status"; }
+
+revoke() {
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    vault token revoke -self >/dev/null 2>&1 || log "WARN: could not revoke the bootstrap token; it expires on its own"
+  fi
+}
+on_exit() {
+  local rc=$?
+  revoke
+  if [[ $rc -ne 0 ]]; then
+    status "failed: $step"
+    log "FAILED at: $step"
+  fi
+}
+trap on_exit EXIT
+
+# ---- 1. handoff -----------------------------------------------------------
+step="no handoff at $HANDOFF within ${WAIT}s"
+status "waiting for handoff"
+waited=0
+until [[ -s "$HANDOFF" ]]; do
+  if (( waited >= WAIT )); then exit 1; fi
+  sleep "$POLL"
+  waited=$((waited + POLL))
+  # A poll of 0 (tests) still has to end.
+  (( POLL > 0 )) || waited=$((waited + 1))
+done
+# qemu-ga creates the file 0666, so what keeps other local accounts away from
+# it is the directory: cloud-init's bootcmd makes it root-only before the
+# agent is even installed. Refuse to trust a handoff anyone else could reach.
+hdir="$(dirname "$HANDOFF")"
+step="handoff directory $hdir is not mode 700 and owned by $(id -un)"
+[[ "$(stat -c '%u %a' "$hdir")" == "$(id -u) 700" ]] || exit 1
+chmod 600 "$HANDOFF"
+wrapped="$(jq -r '.wrapped_token // empty' "$HANDOFF")"
+ref="$(jq -r '.infra_ref // "master"' "$HANDOFF")"
+want_host_keys="$(jq -r '.host_keys // false' "$HANDOFF")"
+rm -f "$HANDOFF"
+
+step="handoff ref '$ref' is not a plain git ref"
+[[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || exit 1
+step="handoff has no wrapped token"
+[[ -n "$wrapped" ]] || exit 1
+
+# ---- 2. unwrap ------------------------------------------------------------
+# The token goes in through curl's config on stdin, never argv, so it is not
+# visible in the process list.
+step="unwrap failed: the wrapped token was used already or expired; if nobody retried, treat it as intercepted"
+status "unwrapping"
+reply="$(printf 'header = "X-Vault-Token: %s"\n' "$wrapped" |
+  curl -sS -K - -X POST "$VAULT_ADDR/v1/sys/wrapping/unwrap" || true)"
+unset wrapped
+token="$(printf '%s' "$reply" | jq -r '.auth.client_token // empty' 2>/dev/null || true)"
+[[ -n "$token" ]] || exit 1
+export VAULT_TOKEN="$token"
+unset token reply
+log "Vault token unwrapped"
+
+# ---- 2b. the live devvm's SSH host keys -----------------------------------
+# Only the box that replaces the live devvm asks for them (stacks/devvm
+# allow_live_identity; the handoff says host_keys true and its token carries
+# policy devvm-host-identity). Drills keep the keys cloud-init made for them.
+# sshd has been up since first boot with those fresh keys; this runs right
+# after the unwrap, minutes in, so the window where the box answers with a
+# key nobody pinned is short, and clients that pinned the live key refuse it
+# rather than trust it. A key that cannot be read or does not match its .pub
+# installs nothing: the box keeps its first-boot keys and the status says so
+# (docs/runbooks/devvm-drill.md, "Building the real replacement").
+install_host_keys() {
+  local d n names=() stale
+  d="$(mktemp -d)" || return 1
+  chmod 700 "$d"
+  # The token goes in through curl's config on stdin, the reply into the
+  # 0700 directory; no key passes through argv or a variable.
+  ( umask 077
+    printf 'header = "X-Vault-Token: %s"\n' "$VAULT_TOKEN" |
+      curl -sS -K - "$VAULT_ADDR/v1/$HOST_KEYS_PATH" >"$d/reply.json" ) || { rm -rf "$d"; return 1; }
+  mapfile -t names < <(jq -r '.data.data // {} | keys[] | select(test("^ssh_host_[a-z0-9]+_key$"))' "$d/reply.json" 2>/dev/null)
+  [[ " ${names[*]} " == *" ssh_host_ed25519_key "* ]] || { log "WARN: host keys: no ssh_host_ed25519_key in $HOST_KEYS_PATH"; rm -rf "$d"; return 1; }
+  for n in "${names[@]}"; do
+    ( umask 077
+      jq -j --arg n "$n" '.data.data[$n]' "$d/reply.json" >"$d/$n" &&
+        jq -j --arg n "$n.pub" '.data.data[$n] // empty' "$d/reply.json" >"$d/$n.pub" ) || { rm -rf "$d"; return 1; }
+    if [[ ! -s "$d/$n.pub" ]] ||
+      [[ "$(ssh-keygen -y -P "" -f "$d/$n" </dev/null 2>/dev/null | cut -d' ' -f1,2)" != "$(cut -d' ' -f1,2 "$d/$n.pub")" ]]; then
+      log "WARN: host keys: $n does not match its .pub"
+      rm -rf "$d"
+      return 1
+    fi
+  done
+  mkdir -p "$SSH_DIR" "$CLOUD_CFG_D" || { rm -rf "$d"; return 1; }
+  for n in "${names[@]}"; do
+    { cp "$d/$n" "$SSH_DIR/.$n.new" && chmod 600 "$SSH_DIR/.$n.new" &&
+      cp "$d/$n.pub" "$SSH_DIR/.$n.pub.new" && chmod 644 "$SSH_DIR/.$n.pub.new" &&
+      mv -f "$SSH_DIR/.$n.new" "$SSH_DIR/$n" && mv -f "$SSH_DIR/.$n.pub.new" "$SSH_DIR/$n.pub"; } ||
+      { rm -rf "$d"; return 1; }
+  done
+  rm -rf "$d"
+  # A first-boot key of a type the live box does not have would still be
+  # offered; drop it so the box answers with the live identity only.
+  for stale in "$SSH_DIR"/ssh_host_*_key; do
+    [[ -e "$stale" ]] || continue
+    [[ " ${names[*]} " == *" $(basename "$stale") "* ]] || rm -f "$stale" "$stale.pub"
+  done
+  # Proxmox derives cloud-init's instance-id from the drive's contents, so a
+  # later change to the VM's cloud-init settings (an admin key added to
+  # secret/devvm-authorized-keys, say) makes cloud-init treat the next boot as
+  # a new instance, which deletes and regenerates the host keys by default.
+  printf '%s\n' \
+    "# devvm-bootstrap: this box carries the live devvm's SSH host keys from Vault" \
+    "# $HOST_KEYS_PATH. Never delete or regenerate them (docs/runbooks/devvm-drill.md)." \
+    "ssh_deletekeys: false" \
+    "ssh_genkeytypes: []" >"$CLOUD_CFG_D/99-devvm-host-keys.cfg" || return 1
+  systemctl try-restart ssh.service || return 1
+}
+host_note=""
+if [[ "$want_host_keys" == "true" ]]; then
+  step="host keys"
+  status "installing the live devvm's SSH host keys"
+  if install_host_keys; then
+    log "the live devvm's SSH host keys are installed"
+  else
+    host_note=" (host keys not installed: the box has its first-boot SSH host keys)"
+    log "WARN: host keys not installed from $HOST_KEYS_PATH; the box keeps its first-boot SSH host keys, so clients that pinned the live devvm's refuse it (docs/runbooks/devvm-drill.md, Building the real replacement)"
+  fi
+fi
+
+# ---- 3. the infra clone and the vault CLI ---------------------------------
+step="cloning infra at $ref"
+status "cloning infra"
+rm -rf "$CLONE"
+mkdir -p "$(dirname "$CLONE")"
+git clone --depth 1 --branch "$ref" "$INFRA_REMOTE" "$CLONE"
+
+# The playbook's Vault reads call the vault CLI, and its own install task
+# (section 1b) installs vault=devvm_vault_version, which apt refuses to
+# downgrade. So a blank box gets exactly that version here, read from the
+# clone's playbook, from the same HashiCorp source the playbook declares.
+# The newest vault would fail the playbook at 1b.
+step="reading devvm_vault_version from playbooks/devvm.yml"
+vault_version="$(python3 -I -c '
+import sys, yaml
+for play in yaml.safe_load(open(sys.argv[1])) or []:
+    v = (play.get("vars") or {}).get("devvm_vault_version")
+    if v:
+        print(v)
+        break
+' "$CLONE/playbooks/devvm.yml")"
+[[ "$vault_version" =~ ^[0-9][A-Za-z0-9.+~-]*$ ]] || exit 1
+step="installing the vault CLI ($vault_version)"
+if [[ "$(dpkg-query -W -f='${Version}' vault 2>/dev/null || true)" != "$vault_version" ]]; then
+  status "installing vault"
+  curl -fsSL https://apt.releases.hashicorp.com/gpg -o "$HC_KEYRING"
+  echo "deb [signed-by=$HC_KEYRING] https://apt.releases.hashicorp.com jammy main" >"$HC_LIST"
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "vault=$vault_version" >/dev/null
+fi
+
+# ---- 4. the playbook ------------------------------------------------------
+# --- t3-snapshot: hold (docs/architecture/backup-dr.md, "T3 snapshots") ---
+# The playbook enables the hourly t3-provision-users timer (OnBootSec=2min),
+# which can run before step 4c has copied the T3 snapshots and would start an
+# empty T3 database for every user. While this file exists, t3-restore-state
+# --if-missing holds the serve of a user with no snapshot and no database.
+step="T3 hold file"
+mkdir -p "$(dirname "$T3_HOLD")"
+echo "devvm-bootstrap $(date -u +%FT%TZ): T3 snapshots not copied from the Proxmox host yet" >"$T3_HOLD"
+# --- end t3-snapshot ---
+step="playbook (playbooks/devvm.yml)"
+status "running playbook"
+log "running playbooks/devvm.yml"
+(cd "$CLONE" && ansible-playbook -i localhost, -c local -e devvm_target=localhost \
+  -e ansible_python_interpreter=/usr/bin/python3 playbooks/devvm.yml)
+
+# ---- 4b. terminal-lobby ---------------------------------------------------
+# The playbook declares the apt source; on the live box the lobby's deploy
+# pipeline installs the packages (tl-reconcile). The registry is public, so a
+# new box installs them here, as tl-reconcile would.
+step="installing terminal-lobby"
+status "installing terminal-lobby"
+DEBIAN_FRONTEND=noninteractive apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq terminal-lobby ttyd-devvm
+
+# ---- 4c. T3 snapshots ------------------------------------------------------
+# --- t3-snapshot (disposable devvm, 2026-11-11) ---
+# Copy the users' nightly T3 snapshots from the Proxmox host's backup disk
+# (/mnt/backup/t3-state, written by t3-state-pull) into the directory
+# t3-restore-state reads, so step 5's provisioning restores each user's newest
+# before it first starts their serve. The key is Vault secret/devvm-t3-seed;
+# on the host it is pinned to `rrsync -ro /mnt/backup/t3-state` (pve-host.yml,
+# tag t3-snapshot), and the host key comes from the same secret. A failed copy
+# does not stop the build: the hold stays, so nobody gets an empty T3, and the
+# status says so. Recovery: backup-dr.md, "T3 snapshots".
+seed_t3_snapshots() {
+  local d rc=0 json
+  d="$(mktemp -d)" || return 1
+  chmod 700 "$d"
+  json="$(vault kv get -format=json secret/devvm-t3-seed)" || { rm -rf "$d"; return 1; }
+  ( umask 077
+    jq -r '.data.data.private_key // empty' <<<"$json" >"$d/key"
+    jq -r '.data.data.known_hosts // empty' <<<"$json" >"$d/known_hosts" )
+  unset json
+  [[ -s "$d/key" && -s "$d/known_hosts" ]] || { rm -rf "$d"; return 1; }
+  mkdir -p "$T3_DIR"
+  # The host keeps the copies 0700/0600; they stay that way here, root-owned,
+  # until each user's own nightly t3-backup-state takes their directory over.
+  rsync -rt --perms --chmod=D0700,F0600 --timeout=300 --exclude=.incoming \
+    -e "ssh -i $d/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$d/known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=30" \
+    "$T3_SOURCE:./" "$T3_DIR/" || rc=$?
+  rm -rf "$d"
+  # The copy gives the top directory the host's 0700. It must stay 0755:
+  # t3-backup-state writes each user's snapshot as that user.
+  chmod 0755 "$T3_DIR"
+  return "$rc"
+}
+step="T3 snapshots"
+status "copying T3 snapshots"
+t3_note=""
+if seed_t3_snapshots; then
+  rm -f "$T3_HOLD"
+  log "T3 snapshots copied from the Proxmox host into $T3_DIR"
+else
+  t3_note=" (T3 held: snapshots not copied from the Proxmox host)"
+  log "WARN: T3 snapshots were not copied from the Proxmox host; T3 stays held for every user without a database until they are (docs/architecture/backup-dr.md, T3 snapshots)"
+fi
+# --- end t3-snapshot ---
+
+# ---- 5. roster provisioning -----------------------------------------------
+step="roster provisioning (t3-provision-users)"
+status "provisioning users"
+install -m 0755 "$CLONE/scripts/t3-provision-users.sh" "$PROVISIONER"
+WORKSTATION_DIR="$CLONE/scripts/workstation" "$PROVISIONER"
+
+# ---- 6. done --------------------------------------------------------------
+step="done"
+status "ok${host_note}${t3_note}"
+log "devvm build finished"

@@ -13,7 +13,9 @@
 # Windows10 (300) are deliberately outside Terraform, decided 2026-05-26 after
 # the telmate/proxmox provider rewrote entire disk lists and corrupted the
 # config of k8s-node2 and node3 twice. That decision stands. This playbook
-# manages the capping mechanism, not the VMs.
+# manages the capping mechanism, not the VMs. (The bpg/proxmox stacks
+# stacks/opnsense and stacks/devvm create VMs of their own; the devvm-tf tasks
+# below declare the scoped token stacks/devvm uses.)
 #
 #   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --check --diff
 #   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
@@ -22,6 +24,11 @@
 - name: Proxmox host configuration
   hosts: pve
   gather_facts: true
+
+  vars:
+    # VMIDs stacks/devvm may create (devvm-tf tasks below). 102 joins this list
+    # only for the real replacement, after VM 102 is destroyed.
+    pve_devvm_tf_vmids: "{{ range(9100, 9110) | list }}"
 
   tasks:
     # ---- per-VM disk I/O caps ------------------------------------------------
@@ -101,6 +108,88 @@
         value: "10"
         sysctl_file: /etc/sysctl.d/90-swappiness.conf
         reload: true
+
+    # ---- route to the internal VLANs -----------------------------------------
+    # The host's default route is the TP-Link at 192.168.1.1, which sent every
+    # host-to-cluster packet back out to OPNsense (192.168.1.2) on the same
+    # bridge, and OPNsense's reply-to sent the replies back through it too. On
+    # 2026-11-11 and 2026-11-12 the host lost the cluster from 00:00 UTC to
+    # about 00:06 while the cluster, the devvm and the internet path all
+    # worked; the nightly backup chain skipped 8 dumps. Routing 10.0.0.0/16
+    # straight to OPNsense, with reply-to off on its matching WAN rule
+    # (playbooks/files/opnsense/filter.yml, "Proxmox host to the internal
+    # VLANs"), keeps the TP-Link out of both directions. /etc/network/interfaces
+    # is otherwise hand-kept; this line is the only part managed here.
+    - name: Persist the route to the internal VLANs on vmbr0
+      ansible.builtin.lineinfile:
+        path: /etc/network/interfaces
+        line: "\tup ip route replace 10.0.0.0/16 via 192.168.1.2 dev vmbr0"
+        insertafter: '^\tgateway 192\.168\.1\.1$'
+      tags: routes
+
+    - name: Read the live route to the internal VLANs
+      ansible.builtin.command: ip -4 route show 10.0.0.0/16
+      register: pve_internal_route
+      changed_when: false
+      check_mode: false
+      tags: routes
+
+    - name: Add the live route to the internal VLANs
+      ansible.builtin.command: ip route replace 10.0.0.0/16 via 192.168.1.2 dev vmbr0
+      when: "'via 192.168.1.2' not in pve_internal_route.stdout"
+      tags: routes
+
+    # ---- zram swap in front of the disk swap ---------------------------------
+    # Measured 2026-11-12: 6 of the 8 GiB on pve/swap in use, almost all QEMU
+    # guest RAM, swapped back in at 6.7 pages/s on a 7-day average and 836/s at
+    # peak, each a ~15 ms seek on sdc that stalls the guest's vCPU. A zram
+    # device at priority 100 takes every new swap-out into compressed RAM;
+    # pve/swap stays at -1 as overflow and drains as guests touch their old
+    # pages. Still not swapoff, for the reason above. The size is the
+    # uncompressed ceiling, so the worst case is 8 GiB of RAM for pages that do
+    # not compress; the host had 42 GiB available when this was added.
+    # Research: docs/research/2026-11-12-nvme-tier-vs-cache.md ("Other caching
+    # layers").
+    - name: Install zram-generator
+      ansible.builtin.apt:
+        name: systemd-zram-generator
+        state: present
+      tags: zram
+
+    - name: Configure the zram swap device
+      ansible.builtin.copy:
+        dest: /etc/systemd/zram-generator.conf
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by infra playbooks/pve-host.yml. Compressed swap in RAM,
+          # used before the disk swap on sdc (priority -1).
+          [zram0]
+          zram-size = 8192
+          compression-algorithm = zstd
+          swap-priority = 100
+      register: zram_conf
+      tags: zram
+
+    # Restarting the setup unit recreates the device, which moves whatever is
+    # in it back into RAM; that only happens when the config above changes.
+    - name: Recreate the zram device after a config change
+      ansible.builtin.systemd_service:
+        name: systemd-zram-setup@zram0.service
+        state: restarted
+        daemon_reload: true
+      when: zram_conf.changed
+      # A dry run before the first install has no unit to find yet.
+      ignore_errors: "{{ ansible_check_mode }}"
+      tags: zram
+
+    - name: Keep zram swap active
+      ansible.builtin.systemd_service:
+        name: dev-zram0.swap
+        state: started
+      ignore_errors: "{{ ansible_check_mode }}"
+      tags: zram
 
     # ---- journald in RAM -----------------------------------------------------
     # This host was the last one still writing its journal to disk, and that
@@ -424,6 +513,89 @@
       when: not (ansible_check_mode and pve_csi_leak_units is changed)
       tags: csi-leak
 
+    # ---- ha-london network backups ---------------------------------------------
+    # Home Assistant in London writes its automatic backups through Supervisor
+    # network storage to /srv/nfs/ha-london-backup, exported by
+    # scripts/pve-nfs-exports (that line needs this directory to exist first).
+    # nfs-mirror and offsite-sync then carry it to sda and the Synology like
+    # any other /srv/nfs subtree. ha-london-backup-status reports the newest
+    # archive's age hourly; HaLondonBackupStale pages on it.
+    # docs/architecture/london-site.md, "Backups".
+    - name: Create the ha-london backup directory
+      ansible.builtin.file:
+        path: /srv/nfs/ha-london-backup
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install ha-london-backup-status
+      ansible.builtin.copy:
+        src: files/pve/ha-london-backup-status
+        dest: /usr/local/bin/ha-london-backup-status
+        mode: "0755"
+        owner: root
+        group: root
+      tags: ha-london-backup
+
+    - name: Install the ha-london-backup-status unit and timer
+      ansible.builtin.copy:
+        src: "files/pve/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - ha-london-backup-status.service
+        - ha-london-backup-status.timer
+      register: pve_ha_london_backup_units
+      tags: ha-london-backup
+
+    - name: Enable the ha-london-backup-status timer
+      ansible.builtin.systemd:
+        name: ha-london-backup-status.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ pve_ha_london_backup_units is changed }}"
+      when: not (ansible_check_mode and pve_ha_london_backup_units is changed)
+      tags: ha-london-backup
+
+    # ---- backup trees that hold secrets: root only ----------------------------
+    # These trees hold copies of secrets, and the host has non-root logins: uid
+    # 1000 is the local account emo, which owned /srv/nfs/meshcentral, and
+    # /mnt/backup is 755. Found 2026-11-12 (docs/runbooks/devvm-credentials.md):
+    #   /srv/nfs/meshcentral    MeshCentral's autobackup zips (encrypted only
+    #                           since 2026-11-12) and a stale 2026-04 copy of
+    #                           its data volume: password hashes, cert keys.
+    #   /mnt/backup/meshcentral nfs-mirror's copy of the above. nfs-mirror runs
+    #                           with --no-perms, so it keeps this mode.
+    #   /mnt/backup/vzdump      the retired full-disk images of VM 102 (devvm),
+    #                           every home on it included; files are 644.
+    # /mnt/backup/devvm-home is kept 700 by devvm-home-backup itself. This
+    # keeps out non-root host logins only; root, and the NFS export (which
+    # admits any client as root, scripts/pve-nfs-exports), are not covered.
+    # The pod and the backup scripts write as root, so nothing loses access.
+    # /mnt/backup itself is root-only too since 2026-11-12 (Viktor): it holds
+    # every app's PVC files in plain text under pvc-data/, and closing the top
+    # folder covers them all. emo also holds a key in root's authorized_keys,
+    # by Viktor's choice, so this is hygiene against the non-root login, not a
+    # boundary against emo.
+    - name: Keep backup trees that hold secrets root-only
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - /srv/nfs/meshcentral
+        - /mnt/backup
+        - /mnt/backup/meshcentral
+        - /mnt/backup/vzdump
+      when: item is not match('/mnt/backup') or (ansible_mounts | selectattr('mount', 'equalto', '/mnt/backup') | list | length > 0)
+      tags: backup-perms
+
     # ---- drive SMART -----------------------------------------------------------
     # Nothing read the physical drives' own SMART data until 2026-11-09; the
     # iDRAC only reports a per-drive OK/not-OK verdict. disk-smart-status reads
@@ -530,6 +702,231 @@
         - node4_bootstrap.yaml
         - k8s_node5_bootstrap.yaml
       tags: snippets
+
+    # ---- stacks/devvm: the Terraform devvm definition ----------------------
+    # The vendor snippet every Terraform-built devvm boots with
+    # (modules/proxmox-devvm). It embeds scripts/devvm-bootstrap, so a change to
+    # that script reaches new VMs only after this task runs. Runbook:
+    # docs/runbooks/devvm-drill.md.
+    - name: Install the devvm bootstrap cloud-init snippet
+      ansible.builtin.template:
+        src: files/pve/snippets/devvm_bootstrap.yaml.j2
+        dest: /var/lib/vz/snippets/devvm_bootstrap.yaml
+        mode: "0644"
+        owner: root
+        group: root
+        backup: true
+      tags: [snippets, devvm-tf]
+
+    # ---- T3 snapshots back onto a rebuilt devvm ------------------------------
+    # A Terraform-built devvm's first-boot build (scripts/devvm-bootstrap, step
+    # 4c) copies /mnt/backup/t3-state from here with this key, so provisioning
+    # restores each user's T3 threads before their serve first starts. The key
+    # reads that one directory and nothing else. from= is the firewall's
+    # inter-VLAN SNAT address, which every connection from VLAN 10 arrives
+    # from. The private key, this public key and the host's known_hosts line
+    # are Vault secret/devvm-t3-seed, which the devvm-bootstrap token reads.
+    # docs/architecture/backup-dr.md, "T3 snapshots".
+    - name: Read the devvm T3 seed key
+      ansible.builtin.command: vault kv get -field=public_key secret/devvm-t3-seed
+      delegate_to: localhost
+      become: false
+      register: devvm_t3_seed_key
+      changed_when: false
+      check_mode: false
+      no_log: true
+      tags: [t3-snapshot]
+
+    - name: Let a new devvm read /mnt/backup/t3-state and nothing else
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ devvm_t3_seed_key.stdout }}"
+        key_options: 'command="/usr/bin/rrsync -ro /mnt/backup/t3-state",restrict,from="192.168.1.2"'
+        state: present
+      tags: [t3-snapshot]
+
+    # What stacks/devvm's token may touch: VMs in the pool `devvm` and the
+    # VMID slots in pve_devvm_tf_vmids, plus the storage, network and node
+    # rights to create one. The slots are needed as well as the pool because
+    # PVE checks /vms/<id> during create, before the new VM joins the pool (the
+    # first drill failed with "403 Permission check failed (/vms/9102,
+    # VM.Config.Options)"). The live devvm (102) is neither in the pool nor a
+    # slot, so this token cannot reach it. The same scoping as
+    # stacks/opnsense (ADR-0038); the token secret is Vault secret/devvm
+    # pve_api_token, written by the token task below.
+    #
+    # Every VM destroy deletes the ACLs on its /vms/<id>, with or without
+    # purge (PVE::API2::Qemu calls remove_vm_access unconditionally), so a
+    # drill's teardown takes its slot grant with it. scripts/pve-devvm-tf-acl
+    # puts slot grants back, every minute from a timer, and never grants a
+    # slot that holds a guest outside the pool. For the real replacement, add
+    # 102 to pve_devvm_tf_vmids once VM 102 is destroyed
+    # (docs/runbooks/devvm-drill.md, "Building the real replacement").
+    - name: Read the PVE pools, roles and users
+      ansible.builtin.command: "pvesh get {{ item }} --output-format json"
+      loop: [/pools, /access/roles, /access/users]
+      register: pve_access
+      changed_when: false
+      check_mode: false
+      tags: devvm-tf
+
+    - name: Create the devvm pool
+      ansible.builtin.command: pveum pool add devvm --comment "VMs stacks/devvm owns (modules/proxmox-devvm). The live devvm 102 is deliberately not a member."
+      when: "'devvm' not in (pve_access.results[0].stdout | from_json | map(attribute='poolid'))"
+      tags: devvm-tf
+
+    - name: Declare the TFDevvm role
+      ansible.builtin.command: >-
+        pveum role {{ 'modify' if 'TFDevvm' in (pve_access.results[1].stdout | from_json | map(attribute='roleid')) else 'add' }}
+        TFDevvm --privs {{ pve_devvm_tf_privs | join(',') }}
+      when: >-
+        'TFDevvm' not in (pve_access.results[1].stdout | from_json | map(attribute='roleid'))
+        or ((pve_access.results[1].stdout | from_json | selectattr('roleid', 'equalto', 'TFDevvm') | first).privs.split(',') | sort)
+           != (pve_devvm_tf_privs | sort)
+      vars:
+        pve_devvm_tf_privs:
+          - Datastore.AllocateSpace
+          - Datastore.AllocateTemplate
+          - Datastore.Audit
+          - Pool.Audit
+          - SDN.Use
+          - Sys.AccessNetwork
+          - Sys.Audit
+          - VM.Allocate
+          - VM.Audit
+          - VM.Config.CDROM
+          - VM.Config.CPU
+          - VM.Config.Cloudinit
+          - VM.Config.Disk
+          - VM.Config.HWType
+          - VM.Config.Memory
+          - VM.Config.Network
+          - VM.Config.Options
+          - VM.Console
+          - VM.GuestAgent.Audit
+          - VM.GuestAgent.FileWrite
+          - VM.PowerMgmt
+      tags: devvm-tf
+
+    - name: Create the terraform-devvm user
+      ansible.builtin.command: pveum user add terraform-devvm@pve --comment "Terraform stacks/devvm (bpg/proxmox), pool devvm only."
+      when: "'terraform-devvm@pve' not in (pve_access.results[2].stdout | from_json | map(attribute='userid'))"
+      tags: devvm-tf
+
+    - name: Read the terraform-devvm tokens
+      ansible.builtin.command: pveum user token list terraform-devvm@pve --output-format json
+      register: pve_devvm_tokens
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      tags: devvm-tf
+
+    # The secret is shown once, at creation, so it goes straight to Vault.
+    # Rotate: `pveum user token remove terraform-devvm@pve tf`, then rerun.
+    - name: Create the tf token and store it in Vault secret/devvm
+      ansible.builtin.shell: |
+        set -euo pipefail
+        secret=$(pveum user token add terraform-devvm@pve tf --privsep 1 \
+          --comment "stacks/devvm" --output-format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+        printf '%s' "terraform-devvm@pve!tf=$secret"
+      args:
+        executable: /bin/bash
+      register: pve_devvm_new_token
+      when: "'tf' not in ((pve_devvm_tokens.stdout | default('[]', true) | from_json) | map(attribute='tokenid'))"
+      no_log: true
+      tags: devvm-tf
+
+    - name: Write the new token to Vault
+      ansible.builtin.shell: vault kv put secret/devvm pve_api_token=-
+      args:
+        stdin: "{{ pve_devvm_new_token.stdout }}"
+        # Ansible appends a newline by default, and bpg rejects a token with one.
+        stdin_add_newline: false
+      delegate_to: localhost
+      become: false
+      when: pve_devvm_new_token is changed
+      no_log: true
+      tags: devvm-tf
+
+    - name: Read the ACLs
+      ansible.builtin.command: pvesh get /access/acl --output-format json
+      register: pve_acl
+      changed_when: false
+      check_mode: false
+      tags: devvm-tf
+
+    - name: Grant TFDevvm where it is missing
+      ansible.builtin.command: >-
+        pveum acl modify {{ item.0 }} --roles TFDevvm
+        {{ '--tokens' if '!' in item.1 else '--users' }} '{{ item.1 }}' --propagate 1
+      loop: "{{ ['/pool/devvm', '/storage/local', '/storage/local-lvm', '/nodes/pve', '/sdn/zones/localnetwork']
+                | product(['terraform-devvm@pve', 'terraform-devvm@pve!tf']) | list }}"
+      when: >-
+        (pve_acl.stdout | from_json
+         | selectattr('path', 'equalto', item.0)
+         | selectattr('ugid', 'equalto', item.1)
+         | selectattr('roleid', 'equalto', 'TFDevvm') | list | length) == 0
+      tags: devvm-tf
+
+    - name: Install the VMID slot grant script
+      ansible.builtin.copy:
+        src: ../scripts/pve-devvm-tf-acl
+        dest: /usr/local/sbin/pve-devvm-tf-acl
+        mode: "0755"
+        owner: root
+        group: root
+      tags: devvm-tf
+
+    - name: Say which VMIDs are slots
+      ansible.builtin.copy:
+        dest: /etc/default/pve-devvm-tf-acl
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/pve-host.yml (pve_devvm_tf_vmids).
+          DEVVM_TF_VMIDS="{{ pve_devvm_tf_vmids | join(' ') }}"
+      tags: devvm-tf
+
+    - name: Install the VMID slot grant units
+      ansible.builtin.copy:
+        src: "../scripts/pve-devvm-tf-acl.{{ item }}"
+        dest: "/etc/systemd/system/pve-devvm-tf-acl.{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop: [service, timer]
+      notify: reload systemd
+      tags: devvm-tf
+
+    # A check run on a host without them yet cannot enable the timer or run
+    # the script; the copies above already show as changes then.
+    - name: Check whether the slot grant script is installed
+      ansible.builtin.stat:
+        path: /usr/local/sbin/pve-devvm-tf-acl
+      register: pve_devvm_tf_acl_script
+      tags: devvm-tf
+
+    - name: Enable the VMID slot grant timer
+      ansible.builtin.systemd_service:
+        name: pve-devvm-tf-acl.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode or pve_devvm_tf_acl_script.stat.exists
+      tags: devvm-tf
+
+    # In check mode this is the script's --dry-run, so a missing slot grant
+    # shows as a change, as the fixed paths above do.
+    - name: Grant TFDevvm on the VMID slots where it is missing
+      ansible.builtin.command: "/usr/local/sbin/pve-devvm-tf-acl{{ ' --dry-run' if ansible_check_mode else '' }}"
+      environment:
+        DEVVM_TF_VMIDS: "{{ pve_devvm_tf_vmids | join(' ') }}"
+      register: pve_devvm_tf_acl_run
+      changed_when: "'grant ' in pve_devvm_tf_acl_run.stdout"
+      check_mode: false
+      when: pve_devvm_tf_acl_script.stat.exists
+      tags: devvm-tf
 
     # ---- storage content types --------------------------------------------
     # `local` also holds `import` content (raw/qcow2 disk images) since

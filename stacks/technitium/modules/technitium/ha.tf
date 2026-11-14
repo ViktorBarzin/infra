@@ -365,6 +365,38 @@ resource "kubernetes_service" "technitium_tertiary_web" {
   }
 }
 
+# One DNS ClusterIP per replica. The primary sends NOTIFY to these two
+# addresses (technitium-zone-sync sets them as each zone's notifyNameServers),
+# so a change reaches the replicas in seconds and a replica pod restart does
+# not change the target. The blackbox SOA probe (stacks/monitoring, job
+# technitium-soa) also queries each instance through them.
+resource "kubernetes_service" "technitium_replica_dns" {
+  for_each = toset(["secondary", "tertiary"])
+  metadata {
+    name      = "technitium-${each.key}-dns"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    labels = {
+      "app" = "technitium-${each.key}"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "technitium-${each.key}"
+    }
+    port {
+      name     = "dns-tcp"
+      port     = 53
+      protocol = "TCP"
+    }
+    port {
+      name     = "dns-udp"
+      port     = 53
+      protocol = "UDP"
+    }
+  }
+}
+
 # PodDisruptionBudget — keep at least 2 DNS pods running during voluntary disruptions
 resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
   metadata {
@@ -381,9 +413,28 @@ resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
   }
 }
 
-# Setup Job — configures secondary + tertiary zones via Technitium REST API
+# SOA timers technitium-zone-sync keeps on viktorbarzin.me (seconds). The other
+# zones already run Technitium's defaults (900/300/900). viktorbarzin.me had
+# refresh and retry at 1 day, so with NOTIFY broken a replica could lag the
+# primary by a day; the */30 resync below hid most of that.
+locals {
+  zone_sync_soa = {
+    SOA_ZONE    = "viktorbarzin.me"
+    SOA_REFRESH = "300"
+    SOA_RETRY   = "60"
+    # Negative-cache TTL, 7200 until 2026-11-14: a lookup made before a record
+    # existed kept answering NXDOMAIN for up to 2 h (1 h at OPNsense Unbound,
+    # whose default cache-max-negative-ttl is 3600 s). CoreDNS caps at 300 s.
+    SOA_MINIMUM = "300"
+  }
+}
+
 # Zone sync CronJob — replicates all primary zones to secondary/tertiary
 # Runs every 30 minutes. Idempotent: skips zones that already exist on replicas.
+# It also keeps NOTIFY working (primary zones notify the two replica DNS
+# Services, replicas accept NOTIFY from the pod network) and the SOA timers
+# in local.zone_sync_soa, so a change reaches the replicas in seconds and the
+# resync here is only a backstop.
 # Type-aware: Primary -> Secondary, Forwarder -> SecondaryForwarder (infra#169);
 # a replica zone of the wrong type is deleted and recreated.
 resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
@@ -435,10 +486,50 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                   PRIMARY_COUNT=$(wc -l < /tmp/primary_zones.txt)
                   echo "Primary has $PRIMARY_COUNT zones to replicate"
 
-                  # Enable zone transfers on primary for all zones
-                  while read -r zone; do
-                    curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" > /dev/null || true
-                  done < /tmp/primary_zones.txt
+                  # Enable zone transfers on primary for all zones, and make it
+                  # NOTIFY both replicas on every change. Before 2026-11-14 no
+                  # NOTIFY reached a replica: viktorbarzin.me had notify=None,
+                  # and the other zones notified their NS hosts (the primary
+                  # pod's first-start name), which resolve to nothing. Replicas
+                  # then caught up only on the resync below or the SOA refresh
+                  # (1 day for viktorbarzin.me).
+                  while read -r zone ptype; do
+                    case "$ptype" in
+                      Primary|Forwarder) NOTIFY_OPTS="&notify=SpecifiedNameServers&notifyNameServers=$NOTIFY_TARGETS" ;;
+                      *) NOTIFY_OPTS="" ;;
+                    esac
+                    RESP=$(curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow$NOTIFY_OPTS" || echo '{"status":"error"}')
+                    echo "$RESP" | grep -q '"status":"ok"' || { echo "ERROR: zone options on primary for $zone: $RESP"; OVERALL_STATUS=1; }
+                  done < /tmp/primary_zone_types.txt
+
+                  # SOA timers for $SOA_ZONE. refresh/retry are how often a
+                  # replica checks the primary when a NOTIFY is lost; minimum
+                  # is how long a resolver caches a NXDOMAIN. Updated only when
+                  # they differ: an SOA write bumps the serial, which Technitium
+                  # does itself (serial+1, or the date scheme if it is on), so
+                  # the serial never goes backwards.
+                  SOA_JSON=$(curl -sf "$PRIMARY/api/zones/records/get?token=$P_TOKEN&zone=$SOA_ZONE&domain=$SOA_ZONE" | tr -d ' \n' | grep -o '"type":"SOA","ttl":[0-9]*,[^}]*}' || true)
+                  soa_field() { echo "$SOA_JSON" | sed -n "s/.*\"$1\":\"\{0,1\}\([^\",}]*\).*/\1/p"; }
+                  if [ -z "$SOA_JSON" ]; then
+                    echo "ERROR: cannot read the SOA of $SOA_ZONE"; OVERALL_STATUS=1
+                  elif [ "$(soa_field refresh)" = "$SOA_REFRESH" ] && [ "$(soa_field retry)" = "$SOA_RETRY" ] && [ "$(soa_field minimum)" = "$SOA_MINIMUM" ]; then
+                    echo "SOA timers of $SOA_ZONE ok ($SOA_REFRESH/$SOA_RETRY/$SOA_MINIMUM)"
+                  else
+                    RESP=$(curl -sf -G "$PRIMARY/api/zones/records/update" --data-urlencode "token=$P_TOKEN" \
+                      --data-urlencode "zone=$SOA_ZONE" --data-urlencode "domain=$SOA_ZONE" --data-urlencode "type=SOA" \
+                      --data-urlencode "ttl=$(soa_field ttl)" \
+                      --data-urlencode "primaryNameServer=$(soa_field primaryNameServer)" \
+                      --data-urlencode "responsiblePerson=$(soa_field responsiblePerson)" \
+                      --data-urlencode "serial=$(soa_field serial)" \
+                      --data-urlencode "refresh=$SOA_REFRESH" --data-urlencode "retry=$SOA_RETRY" \
+                      --data-urlencode "expire=$(soa_field expire)" --data-urlencode "minimum=$SOA_MINIMUM" \
+                      --data-urlencode "useSerialDateScheme=$(soa_field useSerialDateScheme)" || echo '{"status":"error"}')
+                    if echo "$RESP" | grep -q '"status":"ok"'; then
+                      echo "SET: SOA timers of $SOA_ZONE to $SOA_REFRESH/$SOA_RETRY/$SOA_MINIMUM"
+                    else
+                      echo "ERROR: SOA update of $SOA_ZONE: $RESP"; OVERALL_STATUS=1
+                    fi
+                  fi
 
                   # Sync to each replica
                   for REPLICA in $REPLICAS; do
@@ -452,6 +543,21 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                       printf 'technitium_zone_count{instance="%s"} 0\n' "$R_NAME" | \
                         curl -sf --data-binary @- "$PUSHGW/instance/$R_NAME" || true
                       continue
+                    fi
+
+                    # Accept NOTIFY from the primary pod. A replica checks a
+                    # NOTIFY's source address against the zone's primary
+                    # addresses (the technitium-primary ClusterIP), but the
+                    # primary sends from its pod IP, so without this network
+                    # the replica refuses every NOTIFY. Written only on change.
+                    CUR_NOTIFY=$(curl -sf "$REPLICA/api/settings/get?token=$R_TOKEN" | tr -d ' \n' | sed -n 's/.*"notifyAllowedNetworks":\[\([^]]*\)\].*/\1/p')
+                    if [ "$CUR_NOTIFY" != "\"$NOTIFY_ALLOWED\"" ]; then
+                      RESP=$(curl -sf "$REPLICA/api/settings/set?token=$R_TOKEN&notifyAllowedNetworks=$NOTIFY_ALLOWED" || echo '{"status":"error"}')
+                      if echo "$RESP" | grep -q '"status":"ok"'; then
+                        echo "SET: notifyAllowedNetworks=$NOTIFY_ALLOWED on $REPLICA (was [$CUR_NOTIFY])"
+                      else
+                        echo "ERROR: notifyAllowedNetworks on $REPLICA: $RESP"; OVERALL_STATUS=1
+                      fi
                     fi
 
                     # Get existing zones on this replica
@@ -513,7 +619,7 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
 
                 # Push overall status (0=ok, 1=fail) + last-run timestamp
                 cat <<METRICS | curl -sf --data-binary @- "$PUSHGW" || true
-                # HELP technitium_zone_sync_status Zone sync job status (0=ok, 1=fail)
+                # HELP technitium_zone_sync_status Zone sync job status (0=ok, 1=a zone, NOTIFY or SOA step failed)
                 # TYPE technitium_zone_sync_status gauge
                 technitium_zone_sync_status $OVERALL_STATUS
                 # HELP technitium_zone_sync_failures Zones that failed to create this run
@@ -546,6 +652,25 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                 # so `primaryNameServerAddresses` must be a literal IP.
                 name  = "PRIMARY_HOST"
                 value = kubernetes_service.technitium_primary.spec[0].cluster_ip
+              }
+              env {
+                # Literal IPs for the same reason: Technitium takes only
+                # addresses in notifyNameServers.
+                name  = "NOTIFY_TARGETS"
+                value = join(",", [for s in kubernetes_service.technitium_replica_dns : s.spec[0].cluster_ip])
+              }
+              env {
+                # The pod network (dynamic_updates.tf): the primary's NOTIFY
+                # comes from its pod IP.
+                name  = "NOTIFY_ALLOWED"
+                value = local.pod_cidr
+              }
+              dynamic "env" {
+                for_each = local.zone_sync_soa
+                content {
+                  name  = env.key
+                  value = env.value
+                }
               }
             }
             dns_config {

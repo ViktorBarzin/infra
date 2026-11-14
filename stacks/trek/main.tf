@@ -22,7 +22,7 @@ variable "tls_secret_name" {
 variable "image_tag" {
   type = string
   # renovate: datasource=docker depName=mauriceboe/trek
-  default = "5.1.3"
+  default = "5.1.4"
 }
 
 resource "kubernetes_namespace" "trek" {

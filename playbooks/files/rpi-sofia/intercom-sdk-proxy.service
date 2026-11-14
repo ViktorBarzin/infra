@@ -1,0 +1,16 @@
+[Unit]
+Description=TCP прокси до SDK порта на домофона (10.200.1.2:8134 -> 192.168.1.134:8000)
+Documentation=man:socat(1)
+# Домофонът е достъпен САМО от netns guestns; SDK-то на Hikvision върви само на
+# x86 (няма ARM версия), затова външен хост стига до порт 8000 през този прокси
+# плюс ssh тунел. Не пипаме iptables -- socat е достатъчен и е обратимо.
+After=camera-net.service
+Requires=camera-net.service
+
+[Service]
+ExecStart=/usr/bin/ip netns exec guestns /usr/bin/socat TCP-LISTEN:8134,bind=10.200.1.2,fork,reuseaddr,keepalive TCP:192.168.1.134:8000,keepalive
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

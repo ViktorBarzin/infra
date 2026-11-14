@@ -75,6 +75,9 @@ EXCLUDES=(
     # router-config-backup's weekly site-router archives (added 2026-10-05,
     # with this exclude in the same commit so the third such job is not reaped).
     --exclude='/routers/'
+    # t3-state-pull's per-user T3 snapshots (added 2026-11-11, exclude in the
+    # same commit).
+    --exclude='/t3-state/'
     # Hand-made pre-upgrade backups (manual-upgrade-YYYYMMDD/<item>/), written
     # straight to /mnt/backup by upgrade runs. The 2026-10-15 run created
     # manual-upgrade-20261015/ without this line, and the 23:20 UTC mirror

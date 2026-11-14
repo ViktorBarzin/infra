@@ -55,7 +55,7 @@ resource "helm_release" "traefik" {
   # transparency-log witnesses) do not touch this install, and the rendered
   # manifest differs only in the helm.sh/chart label. No image.tag pin: the
   # chart default image is the version.
-  version         = "42.3.2"
+  version         = "42.4.0"
   atomic          = true
   cleanup_on_fail = true
   timeout         = 600
@@ -225,6 +225,10 @@ resource "helm_release" "traefik" {
           # a rollback here costs minutes rather than seconds.
           middlewares = [
             "traefik-crowdsec@kubernetescrd",
+            # Drops client-sent X-Authentik-* (and X-Auth-Fallback) before any
+            # router, so only forward auth can set them (2026-11-12 audit,
+            # middleware.tf strip-client-identity). Created by an earlier apply.
+            "traefik-strip-client-identity@kubernetescrd",
             "traefik-compress@kubernetescrd",
             # After compress: compress reads the browser's Accept-Encoding on
             # the way in, then analytics-inject drops it for HTML pages it may
@@ -1405,7 +1409,7 @@ resource "kubernetes_deployment" "auth_proxy" {
         }
         container {
           name  = "nginx"
-          image = "nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11"
+          image = "nginx:1.31.8-alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72"
 
           port {
             container_port = 9000

@@ -41,6 +41,8 @@ flowchart TD
 | `dns_queries` | one pod DNS lookup | 365 days | node-local-dns `log`, via Alloy OTLP (phase 4) |
 | `tetragon` | one process start or outbound connect | 365 days | phase 4b |
 | `haproxy` | one connection to a mail port (25, 465, 587, 993) through HAProxy on OPNsense | 365 days | phase 7 |
+| `technitium` | one Sofia DNS lookup answered by Technitium (home LAN, VLAN 10 and 20, pods via CoreDNS), with blocked or not | 365 days | CronJob `netsec-technitium` from Postgres `technitium.dns_logs` (phase 7) |
+| `*_hourly` (11 tables) | one row per hour and key: `flows_hourly`, `eve_{alert,dns,tls,http,ssh}_hourly`, `haproxy_hourly`, `proxy_hourly`, `dns_queries_hourly`, `tetragon_hourly`, `technitium_hourly` | forever | materialized views on the raw tables (phase 7) |
 
 Addresses are `IPv6` columns; IPv4 is stored mapped (`::ffff:10.0.20.101`).
 Tables are partitioned by day, so TTL drops whole parts.
@@ -54,6 +56,27 @@ the plan's 14 and 30 days. Measured that day from `system.parts`: `eve` about
 had 470 GB free. TTLs were changed live with `ALTER TABLE ... MODIFY TTL`
 and copied into `schema.sql`.
 
+**Rollups, kept forever.** Viktor wants traffic patterns available
+indefinitely (2026-11-11). Full rows stay 365 days; ten `*_hourly`
+SummingMergeTree tables with no TTL keep the counts per hour and key (pairs
+and service port with flows, bytes and packets; alert signatures; DNS names
+per client; SNI, JA4 and TLS version; HTTP host and user agent; SSH software
+versions; mail clients; pod DNS; Tetragon binaries and destinations). Built
+from that day's data they come to about 3.5 GB a year, 2.6 GB of it
+`flows_hourly`, because every scanner is a new pair. A materialized view on
+each raw table fills its rollup on insert; the views count rows from
+2026-11-11 12:05 UTC (`flows` by arrival time `received` from 12:13, because
+NetFlow records arrive up to about 5 minutes after their `ts`), and older rows
+were backfilled once with the same SELECT, so nothing is counted twice.
+Checked after the backfill: every rollup's counters equal the raw table's.
+Every view needs `DEFINER = default SQL SECURITY DEFINER`: `netsec_writer`
+holds INSERT only, and a view running with its rights makes each raw insert
+fail after the raw rows are written. That ran for 21 minutes on 2026-11-11
+(11:27-11:48 UTC): the raw tables kept every row, but Vector logged about
+159,000 events as dropped. Test a new or changed view with an insert as
+`netsec_writer` on scratch tables, then watch `netsec-vector` for errors
+right after creating it. Backed up nightly with the `claude` database (below).
+
 **Users.** `netsec_writer` (INSERT on `netsec.*`, quota 4 GB written and
 20,000 inserts per hour, about ten times the measured rate) and
 `netsec_reader` (SELECT on `netsec.*`, the claude-sessions reader profile:
@@ -62,8 +85,16 @@ read-only, 120 s, 2 GB, 100,000 rows). Passwords in Vault
 The reader credential is on the devvm at `/etc/netsec/reader.env`,
 `root:sudo 0640`; Viktor is the only member of `sudo`.
 
-**Not backed up.** `backup.sh` saves `DATABASE claude` only, so browsing data
-stays off NFS and the offsite copy (plan decision 7). Losing the PVC loses
+**Backup: rollups only.** `backup.sh` (CronJob `clickhouse-backup`, 01:40)
+saves `DATABASE claude` plus every `netsec` table named `*_hourly`, listed at
+run time, to `/srv/nfs/claude-sessions-backup/`, which reaches the sda mirror
+and Synology like the claude backups. Viktor chose this on 2026-11-11 because
+the rollups are kept forever and cannot be rebuilt; the full raw tables (about
+75 GB at steady state) would not fit Synology, which runs 91-98% full. The
+rollups still hold which address looked up which name each hour, so that much
+browsing data is now on NFS and offsite, relaxing plan decision 7. The raw
+tables stay off both. Restore: `docs/runbooks/restore-claude-sessions.md`,
+"netsec rollups". Losing the PVC loses
 history, not protection.
 
 **Not in Grafana.** Every Authentik user is a Grafana Viewer, and OSS Grafana
@@ -115,7 +146,9 @@ the ClickHouse pod 295 MiB.
 
 **Alerts** (lane `security`, `prometheus_chart_values.tpl`):
 `NetsecVectorDown`, `NetsecSinkErrors`, `NetsecFlowsStale` (no row written to
-`flows` for 30 minutes), `NetsecEveStale` (the same for `eve`).
+`flows` for 30 minutes), `NetsecEveStale` (the same for `eve`),
+`NetsecHaproxyStale` (no mail connection row for an hour),
+`NetsecTechnitiumStale` (no new Technitium row copied for 30 minutes).
 
 ## Phase 2: Suricata metadata
 
@@ -412,6 +445,25 @@ flowchart TD
 - **Suricata ssh**: `eve-meta.json` gains the `ssh` type, so every SSH session
   (Forgejo's 10.0.20.200:22 is open to the internet) records the client and
   server version strings in `payload.ssh`.
+- **Technitium query log**: the home LAN (192.168.1.x, behind the AX6000) and
+  hosts on VLAN 20 reach Technitium (10.0.20.201) without crossing OPNsense,
+  so Suricata never sees their lookups. CronJob `netsec-technitium`
+  (`stacks/netsec`, every 5 minutes) has the ClickHouse server read new rows
+  of Postgres `technitium.dns_logs` with `postgresql()` and insert them into
+  `netsec.technitium`; a materialized view fills `technitium_hourly`.
+  `technitium_pull.sql` copies `dlid > newest - 20000` and skips dlids already
+  present, so a late-committed row is caught and no row is copied twice. The 90
+  days Postgres held (14,682,621 rows from 2026-08-13) were backfilled once as
+  the admin on 2026-11-11, matching Postgres exactly; ClickHouse holds them in
+  213 MB against 8.1 GB in Postgres. Postgres logging stays as is for Grafana
+  and `dns-digest`. Viktor agreed to keep the home LAN's lookups for 365 days
+  and the rollup forever (2026-11-11). Alert `NetsecTechnitiumStale`.
+- **Inbound coverage, checked 2026-11-11** (one hour of `flows`): 40,963 IPv4
+  and 3,748 IPv6 flows from the internet into VLAN 20 with the client's own
+  address, site-to-site WireGuard as its 10.3.x addresses, mail through
+  `haproxy`. Tailscale clients appear as 10.0.20.1, because OPNsense rewrites
+  their source on the way in. Alerts: `NetsecFlowsStale`, `NetsecEveStale`,
+  `NetsecHaproxyStale`, `NetsecTechnitiumStale`.
 - **Not covered**: Suricata `anomaly` events stay in `eve.json` on OPNsense
   only, because Suricata allows one anomaly logger. Inbound IPv4 to ports
   without a forward is dropped by the ISP router before OPNsense. CrowdSec

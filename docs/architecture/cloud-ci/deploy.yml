@@ -1,0 +1,38 @@
+# Cloud's deploy (infra docs/architecture/cloud.md, "CI"). Copy this file to
+# .woodpecker/deploy.yml in viktor/cloud; the infra repo keeps the reviewed
+# copy in docs/architecture/cloud-ci/.
+#
+# Triggered ONLY by the GitHub Actions build POSTing to the Woodpecker API
+# (manual event, with IMAGE_TAG) after both images are pushed to GHCR (infra
+# ADR-0002). event:[manual] (NOT push) so the Forgejo->GitHub mirror's raw
+# pushes don't fire a spurious deploy. The woodpecker-agent SA is
+# cluster-admin; no kubeconfig needed.
+#
+# The console goes first: its init container `migrate` runs the Drizzle
+# migrations, so the reconciler starts on the migrated schema. The reconciler
+# Deployment is Recreate with a 3780 s grace period: the old pod finishes its
+# running job before the new one starts, which can outlast this pipeline. Its
+# rollout is reported, not waited for; CloudReconcilerDown pages if the new
+# pod never comes up.
+when:
+  - event: manual
+
+steps:
+  - name: check-vars
+    image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+    commands:
+      - "[ -n \"$IMAGE_TAG\" ] || (echo 'IMAGE_TAG not set — refusing to deploy'; exit 1)"
+
+  - name: deploy
+    # Pinned by digest: this step runs as the cluster-admin woodpecker-agent SA.
+    # bitnami publishes only `latest`; Renovate bumps the digest.
+    image: bitnami/kubectl:latest@sha256:26837860fa038ce221416ee0fd211a0ee300f67e24e88faecca0423088400b99
+    commands:
+      # A block scalar: Woodpecker substitutes ${IMAGE_TAG} before parsing,
+      # and on a push it is empty, which would break a plain scalar's YAML.
+      - |
+        kubectl -n cloud set image deployment/cloud migrate=ghcr.io/viktorbarzin/cloud:${IMAGE_TAG} cloud=ghcr.io/viktorbarzin/cloud:${IMAGE_TAG}
+        kubectl -n cloud rollout status deployment/cloud --timeout=300s
+        kubectl -n cloud set image deployment/cloud-reconciler reconciler=ghcr.io/viktorbarzin/cloud-reconciler:${IMAGE_TAG}
+        kubectl -n cloud rollout status deployment/cloud-reconciler --timeout=300s \
+          || echo "cloud-reconciler is still rolling: the old pod finishes its running job first (up to 3780 s). Watch: kubectl -n cloud rollout status deployment/cloud-reconciler"

@@ -1,0 +1,17 @@
+[Unit]
+Description=Copy the devvm's nightly T3 snapshots to sda
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/architecture/backup-dr.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-state-pull
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=t3-state-pull
+# A night moves one new snapshot per user: about 1.7 GB for wizard (his
+# newest is uncompressed on the devvm) and well under 1 MB for everyone else,
+# then a local gzip. Minutes on the LAN; 2 h is the wall-clock stop.
+TimeoutStartSec=7200
+Nice=10
+IOSchedulingClass=idle

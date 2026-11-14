@@ -25,7 +25,7 @@ variable "immich_version" {
   # immich-machine-learning (with the -cuda suffix) and the
   # thumbnail-reconcile CronJob, so they always move together.
   # renovate: datasource=docker depName=ghcr.io/immich-app/immich-server
-  default = "v3.4.0"
+  default = "v3.4.1"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
@@ -1543,7 +1543,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "docker.io/library/postgres:16.15-trixie"
+              image = "docker.io/library/postgres:16.16-trixie"
               command = ["/bin/bash", "-c", <<-EOT
                 set -euo pipefail
                 # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl

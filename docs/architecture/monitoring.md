@@ -164,7 +164,7 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 
 **Recovery** — a systemd hardware watchdog (`RuntimeWatchdogSec=14s`, bcm2835 max ~15s) auto-reboots the Pi on a hard hang instead of leaving it dead for hours.
 
-> The cluster side (scrape job, alerts, Loki ingress, dashboard) is Terraform-managed in `stacks/monitoring/`. The **Pi-side** pieces (node_exporter, the textfile collector + timer, promtail, the watchdog config, and the `server=/viktorbarzin.lan/192.168.1.2` dnsmasq split-horizon forward needed to resolve the Loki ingress) are configured by hand on the Pi — it is not under Terraform — and are backed up off-box at `/home/wizard/rpi-sofia-backup/`. The real reliability fix (reflash/replace the SD card) needs on-site access.
+> The cluster side (scrape job, alerts, Loki ingress, dashboard) is Terraform-managed in `stacks/monitoring/`. The **Pi-side** pieces (node_exporter, the textfile collector + timer, promtail, the watchdog config, and the `server=/viktorbarzin.lan/192.168.1.2` dnsmasq split-horizon forward needed to resolve the Loki ingress) are configured by hand on the Pi — it is not under Terraform; only its complex-network part (camera-net, the socat relays, vermont-netmap) is declared, in `playbooks/rpi-sofia-netmap.yml` — and are backed up off-box at `/home/wizard/rpi-sofia-backup/`. The real reliability fix (reflash/replace the SD card) needs on-site access.
 
 ### External host: pve (Proxmox hypervisor, 192.168.1.127)
 
@@ -182,6 +182,10 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 Query examples (Grafana → Loki): `{host="pve"}`, `{job="pve-journal", identifier="snoopy"}` (command audit), `{job="sshd-pve"} |= "Accepted publickey"`.
 
 > Not Terraform. Since 2026-09-24 `playbooks/pve-host.yml` deploys the promtail config (validated with `promtail -check-syntax`, restarted on change) and the fan-control daemon. The promtail binary and unit and the snoopy enable (`/etc/ld.so.preload`) are still set up by hand on the host (Loki resolves via the Technitium CNAME — no `/etc/hosts` pin). Source-of-truth files: `scripts/pve-promtail.{yaml,service}` + `scripts/pve-snoopy.ini`; first-install steps are in the `pve-promtail.yaml` header.
+
+### External host: devvm (10.0.10.10)
+
+`promtail` v3.5.1, config `scripts/devvm-promtail.yaml`, unit `scripts/devvm-promtail.service`, both installed by `playbooks/devvm.yml`. Streams: `{job="devvm-journal"}` (the whole journal), `{job="sshd-devvm"}` (sshd), `{job="devvm-drill-journal"}` (a rebuild drill VM, `docs/runbooks/devvm-drill.md`) and `{job="agent-api-trace"}` (a metadata projection of agent-api's trace file). The journal carries command lines: sudo logs each one, with `ENV=NAME=value` for `sudo NAME=value`, and systemd logs every agent shell command as `Started run-<id>.scope - /bin/zsh -c ...`. Since 2026-11-11 every job ends with the `*mask_secrets` stage, which replaces Vault, GitHub and AWS tokens, JWTs, private key blocks, `Authorization`/`Bearer` values, URL passwords and the values of secret-looking names with `[REDACTED]` before shipping (`tests/devvm-promtail-redact.test.sh`). The local journal (RAM only) keeps the full line. Lines shipped before the masking went live (22:57 UTC that day) that hold a Vault, GitHub or AWS token, a JWT, a private key, an `Authorization` value or a secret-named `ENV=` pair are covered by Loki delete request `60b1d8a8` (filter-and-delete; the compactor removes them after the 24 h cancel period). Deletion is open on this Loki: `curl -X POST -G https://loki.viktorbarzin.lan/loki/api/v1/delete --data-urlencode 'query=<selector> |~ "<regex>"' --data-urlencode start=<unix> --data-urlencode end=<unix>`, listed with a GET on the same path.
 
 ### Dell R730 iDRAC: SNMP-primary + Redfish remnant (migrated 2026-06-05)
 

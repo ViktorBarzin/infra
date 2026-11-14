@@ -93,6 +93,25 @@ eq "a master without the file keeps the last good copy" '# emo v2' "$(cat "$AGEN
 ok "a missing file is logged" logged "WARN: no AGENTS.md on ebarzin/agents master"
 ok "no temp file is left behind" test -z "$(find "$AGENTS_SRC_DIR" -name '*.tmp')"
 
+# A fetch made by a run with another owner (drill 5: the first-boot run from
+# root's /opt clone made it as root, and every later fetch as wizard failed on
+# FETCH_HEAD) is a cache: it is made again, owned by this run's owner.
+g -C "$origin" checkout -q -- . 2>/dev/null; printf '# emo v3\n' > "$origin/AGENTS.md"; g -C "$origin" add AGENTS.md; g -C "$origin" commit -qm v3
+stat() { if [[ -n "${FAKE_MIRROR_OWNER:-}" && "$*" == "-c %U $AGENTS_FETCH_DIR/emo.git" ]]; then echo "$FAKE_MIRROR_OWNER"; else command stat "$@"; fi; }
+touch "$AGENTS_FETCH_DIR/emo.git/stale-marker"
+: > "$LOG"
+FAKE_MIRROR_OWNER=root fetch_user_agents emo ebarzin/agents
+no "a fetch owned by someone else is started again" test -e "$AGENTS_FETCH_DIR/emo.git/stale-marker"
+ok "and that is logged" logged "fetch for emo was owned by root"
+eq "the new fetch brings master" '# emo v3' "$(cat "$AGENTS_SRC_DIR/emo.md")"
+touch "$AGENTS_FETCH_DIR/emo.git/stale-marker"
+fetch_user_agents emo ebarzin/agents
+ok "a fetch with the right owner is kept" test -e "$AGENTS_FETCH_DIR/emo.git/stale-marker"
+# agents_owner, when set (resolve_agents_owner), wins over clone_owner.
+clone_owner=root agents_owner="$(id -un)" fetch_user_agents emo ebarzin/agents
+eq "agents_owner wins over a root clone_owner" "$(id -un)" "$(stat -c %U "$AGENTS_FETCH_DIR")"
+unset -f stat
+
 # Dry run fetches nothing and writes nothing.
 DRY_RUN=1
 out="$(fetch_user_agents anca anca/agents)"

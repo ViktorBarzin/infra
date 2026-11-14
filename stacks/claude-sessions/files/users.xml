@@ -45,6 +45,8 @@
             <grants>
                 <query>GRANT INSERT ON claude.lines</query>
                 <query>GRANT INSERT ON claude.files</query>
+                <query>GRANT INSERT ON claude.home_files</query>
+                <query>GRANT INSERT ON claude.home_lines</query>
             </grants>
         </ingest>
         <reader>
@@ -63,6 +65,10 @@
             <networks><ip>::/0</ip></networks>
             <grants>
                 <query>GRANT INSERT ON netsec.*</query>
+                <!-- netsec-technitium (stacks/netsec) reads its watermark and
+                     pulls Technitium's Postgres log with postgresql(). -->
+                <query>GRANT SELECT ON netsec.technitium</query>
+                <query>GRANT CREATE TEMPORARY TABLE, POSTGRES ON *.*</query>
             </grants>
         </netsec_writer>
         <!-- Viktor only: /etc/netsec/reader.env on the devvm is root:sudo 0640

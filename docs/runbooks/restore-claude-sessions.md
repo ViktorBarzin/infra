@@ -52,8 +52,122 @@ Tested on 2026-11-08 against a full plus an incremental: the restored counts mat
    PY
    ```
 
-   Side files (`claude.files`) are replaced by path, so re-sending them is harmless; they are absent from the rebuilt state and get sent again.
+   Side files (`claude.files`) are replaced by path, so re-sending them is harmless; they are absent from the rebuilt state and get sent again. The same holds for `claude.home_files` and `claude.home_lines`: both are `ReplacingMergeTree` keyed by path (and offset), so their files are sent again in full and the duplicates merge away. A re-sent `.jsonl` home file gets a new generation, and restore reads only the newest one.
 4. Start the timer again: `sudo systemctl start claude-sessions-ingest.timer`. Lines written after the backup are recovered as long as the local transcripts still hold them (kept 180 days).
+
+## Restore a user's ~/.claude and ~/.codex
+
+After a devvm rebuild, `homelab claude-sessions restore` writes a user's agent
+state back from the store: transcripts and subagent transcripts, tool results,
+prompt history, plans, tasks, teams, todos, file-history, workflows, Codex
+sessions, the settings files and a reduced `~/.claude.json` (project trust,
+user-scope MCP servers, the onboarding flags). Files that already exist are kept unless
+`--force`. Credentials are not in the store; they come from Vault. Admins only
+(it uses `/etc/claude-sessions/reader.env`).
+
+```sh
+# your own home, as yourself
+homelab claude-sessions restore --user wizard --to "$HOME"
+# another user's home: build the tar as an admin, extract it as that user, so
+# root never writes into a directory the user controls
+homelab claude-sessions restore --user emo --tar - | sudo runuser -u emo -- tar -x --skip-old-files -C /home/emo
+# one session only, into a scratch HOME, to look at it
+homelab claude-sessions restore --user wizard --session <uuid> --to /var/tmp/x
+# only ~/.claude.json and the Codex config, then their MCP secrets from Vault
+homelab claude-sessions restore --user wizard --path .claude.json --path .codex/config.toml --to /var/tmp/x
+homelab claude-sessions mcp-secrets fill --user wizard --home /var/tmp/x
+```
+
+On a rebuilt devvm this runs by itself: `t3-provision-users.sh` step 4a calls
+`homelab claude-sessions restore --user <name> --rebuild` as root for every
+account with a home under `/home`. Step 5 starts a user's T3 serve only once their
+marker exists, and logs `t3-serve held for <user>` until then. A user
+outside the roster (ancamilea since she was parked) gets no account on a
+rebuilt box, so nothing is restored for her until her roster row comes back. It restores each user once,
+records the restored files in the ingest state as already sent, and leaves
+`/var/lib/claude-sessions-ingest/restored/<user>`; the ingest leaves a user
+alone until that marker exists. Check it after the first provisioning run:
+
+```sh
+sudo ls /var/lib/claude-sessions-ingest/restored/     # one file per user
+sudo journalctl -u t3-provision-users --since today | grep 'restore --rebuild'
+journalctl -u claude-sessions-ingest -n 3 | grep users_waiting_for_restore=0
+```
+
+Checked on the live devvm on 2026-11-11: the first pass with this step logged
+`outcome=already ingesting` for emo and wizard, and the ingest wrote the
+marker for ancamilea itself. A rebuild of ancamilea into a scratch home with
+`--home` and `--state` wrote 202 files, all 201 that still exist on her live
+home byte-identical, seeded 202 state entries, and the ingest that followed
+had nothing to send (`files_changed=0`).
+
+Order matters for a manual restore into a home on a rebuilt box. Run it before
+the user first starts claude or codex there, and before the ingest takes the
+user on. Otherwise the new box's short `history.jsonl` is kept by
+`--skip-old-files`, and once ingested it becomes the newest copy in the store.
+`--rebuild` keeps that order for you. To restore a user again on purpose,
+remove their marker and the state entries under their home with the timer
+stopped.
+
+Only the devvm at 10.0.10.10 ingests. A drill VM restores from the store but
+never writes to it: `playbooks/devvm.yml` section 8d keeps `ingest.env` and the
+timer off there, and the unit's `ExecCondition` skips any run on another
+address. A drill built before that gate did write once (2026-11-11, see
+`claude-session-store.md`); if rows ever come from a box that is not the live
+one, find them by `ingested_at` against the live ingest's journal and delete
+them with `ALTER TABLE ... DELETE` as `default`.
+
+A settings file whose secrets were redacted at ingest comes back under its real
+name without the redacted keys; the command lists them. Provisioning step 5d
+then fills the memory and pages keys from Vault (`install_agent_api_keys`, admin
+Vault token only), and step 4a2 the MCP server secrets of `~/.claude.json` and
+`~/.codex/config.toml` from `secret/workstation/<user>/mcp`
+(`homelab claude-sessions mcp-secrets fill`, admin token only, once per user
+and box; a restored entry that no longer matches the Vault copy, or one Vault
+keeps that the file lacks, is named in a `WARN` line, fill it by hand). Step
+4a3 installs the home-local programs the restored MCP config starts (uv,
+`workspace-mcp` as a pinned uv tool, the phpipam venv). Those secrets reach
+Vault only through `mcp-secrets capture`, run by an admin after adding or
+rotating an MCP server; the ingest logs a `WARN` and the alert
+`ClaudeSessionsMCPSecretsUncaptured` fires when a live entry changed since the
+last capture, and `ClaudeSessionsMCPSecretsUnfilled` fires when an entry the
+capture recorded is missing from the files or still redacted, such as a
+rebuild where fill never ran or named an entry to fill by hand
+([devvm-credentials.md](devvm-credentials.md), "MCP server secrets"). Any other
+secret in a settings file has to be added again by hand. Environment flags without a secret, such as
+`DISABLE_AUTOUPDATER`, are kept. If the real file is already there, `--to`
+writes the stored copy beside it as `<name>.from-store` to merge by hand, and
+`--rebuild` merges a JSON file itself. Files over 32 MiB were stored without
+content and are counted as `omitted`.
+
+If `ClaudeSessionsUserWaitingForRestore` fires, a user's restore keeps failing
+and the ingest is skipping them: read the WARN line in
+`journalctl -u t3-provision-users`, fix the cause (usually ClickHouse or
+`/etc/claude-sessions/reader.env`), and the next hourly pass restores them.
+
+Tested on 2026-11-11: one of wizard's sessions (1,248 lines and two subagents)
+came back byte for byte, and `claude --resume` in a temporary HOME listed it.
+A line file with lines missing from the store is written without them and named
+in a `WARN ... bytes missing` line.
+
+## netsec rollups
+
+Since 2026-11-11 each backup also holds the `netsec` hourly rollups (every
+`netsec` table named `*_hourly`), never the raw `netsec` tables. Restore one
+beside the live table to check it, or after a lost volume into the empty table
+that `schema.sql` created (stop `netsec-vector` first, or the materialized
+views add rows during the restore):
+
+```sh
+kubectl -n claude-sessions exec -it deploy/clickhouse -- bash -c \
+  'clickhouse-client --password "$CLICKHOUSE_PASSWORD" -q "RESTORE TABLE netsec.flows_hourly AS netsec.flows_hourly_restore FROM Disk('"'"'backups'"'"', '"'"'<name>'"'"')"'
+# after a lost volume, into the live table instead:
+#   RESTORE TABLE netsec.flows_hourly FROM Disk('backups', '<name>') SETTINGS allow_non_empty_tables = true
+```
+
+Tested on 2026-11-11: a restored `flows_hourly` summed to the same flow count
+as the live table for every complete hour. The raw tables are lost with the
+volume; the views fill the rollups again from the first new insert.
 
 ## Lost volume
 

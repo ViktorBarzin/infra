@@ -58,3 +58,25 @@ gap for every user in every directory.
   already unblocked, and a generic passthrough overlaps the MCP. Re-measure via
   `usage top` (ADR-0011); add targeted sugar verbs only if those endpoints are
   still hand-rolled often.
+
+## 2026-11-14: one exception, `ha yiko`
+
+Viktor asked for an easy way for agents to control Yiko, the London robot
+vacuum. `ha yiko status|photo|clean|dock` (v0.40) is the one exception to "no
+entity control". It passes the CLI's test of saving reasoning, not typing:
+
+- HA's own `spot_area` does not work on Yiko's firmware, so a room clean needs
+  a raw `clean_V2` `freeClean` command.
+- HA's vacuum state does not follow a room job. The verbs read
+  `sensor.yiko_area_cleaned` to tell that a job started.
+- `photo` has to wait for `script.yiko_photo` and pick out the photos that this
+  run wrote.
+
+v0.41 adds manual driving to the same exception: `ha yiko drive|turn|stop|look`.
+They send the Ecovacs app's own joystick command, which no HA entity exposes.
+
+Also, no `ha` MCP is available for HA London: London does not run HA's MCP
+Server, and the project `.mcp.json` entry needs an `HA_MCP_URL` that wizard's
+environment does not set. Other entities stay out of scope. `ha ssh --instance
+london` does connect from the devvm over the site-to-site tunnel (2026-11-13),
+so the "generally won't connect" note above is out of date.

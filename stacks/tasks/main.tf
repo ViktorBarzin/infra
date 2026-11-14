@@ -37,10 +37,12 @@ module "app" {
   tls_secret_name = var.tls_secret_name
 
   app_secret_env = { TASKS_FERNET_KEY = "fernet_key" }
-  extra_env = [
+  extra_env = concat([
     { name = "TASKS_CALDAV_BASE_URL", value = "https://nextcloud.viktorbarzin.me/remote.php/dav" },
     { name = "TASKS_LOCAL_TZ", value = "Europe/Sofia" },
-  ]
+  ], local.telemetry_env)
+  # TELEMETRY_WRITE_KEY, SENTRY_DSN, SENTRY_BROWSER_DSN (telemetry.tf).
+  secret_env = local.telemetry_secret_env
   # tasks reads AUTH_USERS_GROUP and AUTH_ADMINS_GROUP since it runs on the
   # @viktorbarzin packages; the values equal its built-in defaults.
   emit_group_env = true

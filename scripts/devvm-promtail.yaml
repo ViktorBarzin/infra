@@ -7,22 +7,23 @@
 # upstream_closed = t3-serve closed/stalled; graceful = clean close). Joined with
 # Traefik's per-/ws duration (already in Loki) this attributes every drop to a layer.
 #
-# NOT Terraform-managed (devvm is outside k8s) — same hand-deployed pattern as
-# scripts/pve-promtail.* and the rpi-sofia promtail. This file is source-of-truth.
+# NOT Terraform-managed (devvm is outside k8s). This file is source-of-truth:
+# playbooks/devvm.yml (tag promtail and the "Deploy the promtail config" task)
+# installs the pinned binary, the unit (scripts/devvm-promtail.service) and this
+# file as /etc/promtail/config.yml, checking it with `promtail -check-syntax`
+# first. Loki reach: loki.viktorbarzin.lan (Technitium CNAME -> live Traefik LB;
+# insecure cert).
 #
-# Deploy (on devvm, as root via sudo):
-#   sudo install -d -m 0755 /etc/promtail /var/lib/promtail
-#   sudo install -m 0644 scripts/devvm-promtail.yaml    /etc/promtail/config.yml
-#   sudo install -m 0644 scripts/devvm-promtail.service /etc/systemd/system/promtail.service
-#   # Binary: grafana/loki v3.5.1 promtail-linux-amd64 -> /usr/local/bin/promtail (chmod 0755).
-#   sudo systemctl daemon-reload && sudo systemctl enable --now promtail
-#   # Loki reach: loki.viktorbarzin.lan (Technitium CNAME -> live Traefik LB; insecure cert).
+# Every job ends with the *mask_secrets stage (defined in the journal job), which
+# masks tokens, keys and passwords before a line is shipped. Test:
+#   tests/devvm-promtail-redact.test.sh
 #
 # Streams produced:
 #   {job="devvm-journal"}                     — full devvm journal
 #   {job="devvm-journal", unit="t3-dispatch.service"}        — dispatch (ws open/close lines)
 #   {job="devvm-journal", unit="t3-serve@wizard.service"}    — per-user t3 serve
 #   {job="sshd-devvm"}                        — sshd auth lines (parity with sshd-pve)
+#   {job="devvm-drill-journal", host="<name>"} — all of a drill VM's journal (docs/runbooks/devvm-drill.md)
 #   {job="agent-api-trace"}                   — agent-api's request trace (JSONL, see below)
 server:
   http_listen_port: 9080
@@ -52,6 +53,14 @@ scrape_configs:
         host: devvm
         job: devvm-journal
     relabel_configs:
+      # host is the box's own hostname, which on the live devvm is "devvm",
+      # the static label above. A drill VM built from stacks/devvm
+      # (docs/runbooks/devvm-drill.md) is named devvm-drill or similar, so its
+      # journal does not land in the live box's streams and alerts. This rule
+      # overrides the static label (checked with promtail 3.5.1 -dry-run).
+      - source_labels: ['__journal__hostname']
+        regex: '(.+)'
+        target_label: host
       - source_labels: ['__journal__systemd_unit']
         target_label: unit
       # identifier ONLY for the allowlisted tags that Loki rules/forensics key on.
@@ -74,6 +83,123 @@ scrape_configs:
         regex: 'sshd.*'
         target_label: job
         replacement: 'sshd-devvm'
+      # A drill's whole journal, sshd lines included, goes to
+      # job="devvm-drill-journal" (2026-11-11). Every devvm rule in
+      # stacks/monitoring (loki.tf), the TLEVENT dashboard and the crowdsec
+      # sshd source select on job alone, so a host label was not enough: the
+      # third drill's claude-auth-sync FAIL lines fired
+      # WorkstationClaudeAuthInvalid for wizard and emo while the live box
+      # logged OK, and a drill's stream would keep DevvmJournalSilent quiet if
+      # the live box stopped shipping. RE2 has no "not equal", so: mark every
+      # line, unmark the live hostname (an empty value deletes the label),
+      # then move what is still marked. __ labels are dropped after relabel.
+      - source_labels: ['host']
+        regex: '.+'
+        target_label: __drill_job
+        replacement: 'devvm-drill-journal'
+      - source_labels: ['host']
+        regex: 'devvm'
+        target_label: __drill_job
+        replacement: ''
+      - source_labels: ['__drill_job']
+        regex: '(.+)'
+        target_label: job
+    # MASK SECRETS BEFORE A LINE LEAVES THE BOX (2026-11-11). Loki keeps 26
+    # weeks and anyone on the LAN can read it without logging in, and this
+    # journal carries command lines: sudo logs each one it runs (with
+    # ENV=NAME=value for `sudo NAME=value cmd`), and systemd logs every agent
+    # shell command as "Started run-<id>.scope - /bin/zsh -c ...". Round 1 of
+    # the disposable-devvm work put wizard's admin Vault token in Loki that way.
+    # The Proxmox host got the same fix on 2026-09-24 (scripts/pve-promtail.yaml).
+    #
+    # Each expression captures only the secret, which is the part `replace`
+    # rewrites, so the rest of the line (sudo's PWD and USER, the command) stays
+    # readable. They run in order; a value already masked stays masked. The
+    # local journal (RAM only) keeps the full line. Tested with promtail 3.5.1
+    # -stdin -dry-run in tests/devvm-promtail-redact.test.sh, which also checks
+    # that every scrape job ends with this stage: add `- *mask_secrets` as the
+    # last stage of any new job.
+    #
+    # What it does not catch: a secret with no recognisable shape or name (a
+    # bare password typed as an argument), and a token that sudo splits across
+    # two "(command continued)" lines. Reading secrets inside the command
+    # (docs/agents/secrets.md) is still the rule; this is the net under it.
+    pipeline_stages:
+      - &mask_secrets
+        match:
+          selector: '{job=~".+"}'
+          stages:
+            # Private key blocks, PEM or OpenSSH. A block without its END line
+            # (a truncated or split line) is masked to the end of the line.
+            - replace:
+                expression: '(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(.+?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)'
+                replace: '[REDACTED]'
+            # Vault service, batch and recovery tokens (hvs./hvb./hvr.).
+            - replace:
+                expression: '\b(hv[sbr]\.[A-Za-z0-9_-]{20,})'
+                replace: '[REDACTED]'
+            # Vault tokens from before 1.10: s. or b. and 24 characters.
+            - replace:
+                expression: '(?:^|[^A-Za-z0-9._/-])([sb]\.[A-Za-z0-9]{24})(?:[^A-Za-z0-9._-]|$)'
+                replace: '[REDACTED]'
+            # GitHub tokens, classic and fine-grained.
+            - replace:
+                expression: '\b(gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})'
+                replace: '[REDACTED]'
+            # AWS access key ids. The secret key is caught by its name below.
+            - replace:
+                expression: '\b((?:AKIA|ASIA|ABIA|ACCA|AGPA|AIDA|AIPA|ANPA|ANVA|AROA|APKA|ASCA)[A-Z0-9]{16})\b'
+                replace: '[REDACTED]'
+            # JWTs (Home Assistant, Authentik, Kubernetes service accounts).
+            - replace:
+                expression: '(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})'
+                replace: '[REDACTED]'
+            # Authorization headers. Forgejo tokens are 40 hex characters with
+            # no prefix, the same shape as a git commit id, so they are caught
+            # by where they sit: this header, a URL, -u, or a token= name.
+            - replace:
+                expression: '(?i)authorization:\s*(?:bearer|basic|token|digest)?\s*([^\s"''\\]+)'
+                replace: '[REDACTED]'
+            - replace:
+                expression: '(?i)\b(?:x-vault-token|x-api-key|x-auth-token|private-token|x-gitea-token|x-forgejo-token)\s*:\s*([^\s"''\\]+)'
+                replace: '[REDACTED]'
+            # A bearer token outside a header. 16 characters or more, so
+            # agent-api's "invalid bearer token", which the
+            # AgentApiAuthInvalid rule in loki.tf greps for, stays.
+            - replace:
+                expression: '(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{16,})'
+                replace: '[REDACTED]'
+            # The password in a URL: https://user:<token>@forgejo..., and
+            # postgres://user:<password>@host.
+            - replace:
+                expression: '\b[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@"''\\]+:([^/\s@"''\\]+)@'
+                replace: '[REDACTED]'
+            # curl -u user:<password>.
+            - replace:
+                expression: '(?:\s|^)(?:-u|--user)\s+["'']?[^\s:"'']+:([^\s"''\\]+)'
+                replace: '[REDACTED]'
+            # NAME=value where the upper-case name looks secret anywhere in it:
+            # sudo's ENV=VAULT_TOKEN=..., export GITHUB_TOKEN=..., MY_DB_PASSWORD=.
+            # Case-sensitive on purpose, so sudo's PWD= and OLDPWD= stay.
+            - replace:
+                expression: '\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SESSION_?KEY|CREDENTIALS?)[A-Z0-9_]*=(?:\\*["''])*([^\s"''\;&|]+)'
+                replace: '[REDACTED]'
+            # name=value in any case (query strings, config lines).
+            - replace:
+                expression: '(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|session[_-]?key)=(?:\\*["''])*([^\s&"''\;]+)'
+                replace: '[REDACTED]'
+            # "name": "value" in JSON or YAML-ish text.
+            - replace:
+                expression: '(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|session[_-]?key)\\*["'']\s*:\s*\\*["'']([^"''\\]+)'
+                replace: '[REDACTED]'
+            # --token=value, --password "value".
+            - replace:
+                expression: '(?i)--(?:password|passwd|pass|token|secret|api-key|access-key|client-secret|auth-token|vault-token)(?:=|\s+)(?:\\*["''])*([^\s"''\\]+)'
+                replace: '[REDACTED]'
+            # mysql -p<password>.
+            - replace:
+                expression: '\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b[^|;&\n]*?\s-p(?:\\*["''])*([^\s"''\\]+)'
+                replace: '[REDACTED]'
   # agent-api's request trace. Every call a machine caller (Muse first) makes
   # to Terminal Lobby's machine-facing API is appended to that file as one JSON
   # object per line; the design is docs/plans/2026-09-14-muse-agent-broker-design.md.
@@ -194,3 +320,6 @@ scrape_configs:
           template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools "http_status" .http_status "event" .event "delegation_id" .delegation_id "reason" .reason | toJson }}'
       - output:
           source: projected
+      # The projection keeps chosen text (a delegation's reason), so the
+      # same masking runs on what is left.
+      - *mask_secrets

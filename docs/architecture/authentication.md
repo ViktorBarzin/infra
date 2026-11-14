@@ -219,7 +219,7 @@ Authentik provides OIDC for 10 applications:
 | Kubernetes | OIDC (public client) | K8s API authentication (kubectl / kubelogin CLI) |
 | Kubernetes Dashboard | OIDC (confidential) | Built for dashboard SSO — currently **idle** (apiserver OIDC blocked; dashboard uses forward-auth + token-paste) |
 | Linkwarden | OIDC | Bookmark manager SSO |
-| Wrongmove | OIDC | Real estate app SSO |
+| Wrongmove | OIDC (public client, TF: `stacks/real-estate-crawler/authentik.tf`) | Real estate app SSO |
 
 ### LDAP and RAC providers — prepared, not enabled (2026-09-01)
 

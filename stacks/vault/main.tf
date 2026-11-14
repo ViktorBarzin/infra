@@ -742,6 +742,17 @@ resource "vault_policy" "ci" {
     path "secret/data/platform" {
       capabilities = ["create", "read", "update"]
     }
+    # stacks/authentik writes the shared Cloud Apps client here
+    # (cloud-apps.tf). Only this one path; the rest of secret/cloud/*
+    # belongs to Cloud's reconciler.
+    path "secret/data/cloud/system" {
+      capabilities = ["create", "read", "update"]
+    }
+    # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
+    # one wrapped token per new devvm through this role, nothing wider.
+    path "auth/token/create/devvm-bootstrap" {
+      capabilities = ["update"]
+    }
     # Allow CI to get dynamic K8s deploy tokens for user namespaces
     path "kubernetes/creds/*-deployer" {
       capabilities = ["read"]
@@ -761,6 +772,39 @@ resource "vault_policy" "ci" {
       capabilities = ["deny"]
     }
     path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
@@ -872,6 +916,10 @@ resource "vault_policy" "ci_vault_admin" {
     path "kubernetes/roles/*" {
       capabilities = ["create", "read", "update", "delete", "list"]
     }
+    # vault_token_auth_backend_role.devvm_bootstrap
+    path "auth/token/roles/devvm-bootstrap" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
     # vault_transit_secret_backend_key (sops-state-<namespace>, incl. /config)
     path "transit/keys/sops-state-*" {
       capabilities = ["create", "read", "update", "delete"]
@@ -903,6 +951,81 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
   token_period   = 604800 # periodic: auto-renews indefinitely
 }
 
+# --- devvm bootstrap (stacks/devvm, docs/runbooks/devvm-drill.md) ---
+#
+# A Terraform-built devvm runs playbooks/devvm.yml on itself at first boot
+# (scripts/devvm-bootstrap). The playbook's Vault reads need a token there, so
+# the applier mints one through this role and hands it over response-wrapped
+# through the guest agent (scripts/devvm-drill-handoff). Read-only on exactly
+# the paths the playbook reads; orphan so it outlives the applier's own token;
+# 4h hard limit, and the bootstrap revokes it when it finishes. A path the
+# playbook starts reading must be added here, or a fresh build fails at that
+# task with a 403. Exercised by every devvm drill (stacks/devvm local.drills).
+resource "vault_policy" "devvm_bootstrap" {
+  name   = "devvm-bootstrap"
+  policy = <<-EOT
+    path "secret/data/claude-sessions" {
+      capabilities = ["read"]
+    }
+    path "secret/data/terminal-lobby" {
+      capabilities = ["read"]
+    }
+    path "secret/data/terminal-lobby/vapid" {
+      capabilities = ["read"]
+    }
+    path "secret/data/devvm-authorized-keys" {
+      capabilities = ["read"]
+    }
+    path "secret/data/rybbit" {
+      capabilities = ["read"]
+    }
+    path "secret/data/glitchtip" {
+      capabilities = ["read"]
+    }
+    path "secret/data/agentmd" {
+      capabilities = ["read"]
+    }
+    # Not a playbook read: scripts/devvm-bootstrap step 4c copies the users'
+    # T3 snapshots from the PVE host with this key (read-only rrsync there).
+    path "secret/data/devvm-t3-seed" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# Only for the box that replaces the live devvm (stacks/devvm
+# allow_live_identity): its bootstrap puts the live devvm's SSH host keys back
+# in place of the first-boot ones, so ssh clients and the Proxmox host's
+# t3-state-pull still trust 10.0.10.10. scripts/devvm-drill-handoff adds this
+# policy to the token only with HOST_KEYS=true; drill tokens never carry it.
+# Written by an admin from the live box (docs/runbooks/devvm-drill.md,
+# "Building the real replacement"); every broad secret/data/* reader denies it.
+resource "vault_policy" "devvm_host_identity" {
+  name   = "devvm-host-identity"
+  policy = <<-EOT
+    path "secret/data/workstation/devvm/ssh-host-keys" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# The caller names the policies (scripts/devvm-drill-handoff); Vault refuses
+# any outside allowed_policies, whatever the caller's own policies are.
+resource "vault_token_auth_backend_role" "devvm_bootstrap" {
+  role_name               = "devvm-bootstrap"
+  allowed_policies        = [vault_policy.devvm_bootstrap.name, vault_policy.devvm_host_identity.name]
+  orphan                  = true
+  renewable               = false
+  token_type              = "service"
+  token_ttl               = 14400 # 4h
+  token_explicit_max_ttl  = 14400
+  token_no_default_policy = false
+
+  # CI applies this stack with ci-vault-admin, which gains the role path in
+  # the same apply.
+  depends_on = [vault_policy.ci_vault_admin]
+}
+
 # --- ESO Policy & Role ---
 
 resource "vault_policy" "eso_reader" {
@@ -914,6 +1037,39 @@ resource "vault_policy" "eso_reader" {
     }
     # Deny access to vault's administrative secrets
     path "secret/data/vault" {
+      capabilities = ["deny"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
     path "database/static-creds/*" {
@@ -963,6 +1119,39 @@ resource "vault_policy" "openclaw_k8s" {
     }
     path "secret/data/*" {
       capabilities = ["read", "list"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
+      capabilities = ["deny"]
     }
   EOT
 }
@@ -1031,6 +1220,39 @@ resource "vault_policy" "terraform_state" {
       capabilities = ["deny"]
     }
     path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    # A devvm user's hand-made credential files and loose secrets
+    # (docs/runbooks/devvm-credentials.md): SSH and GPG private keys, the
+    # cluster-admin kubeconfig, Git PATs. Only an admin restores them on a
+    # rebuilt box; no workload reads them, so the secret/data/* grant above
+    # stops short of them (2026-11-11).
+    path "secret/data/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/files/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/loose/*" {
+      capabilities = ["deny"]
+    }
+    # MCP server secrets of ~/.claude.json and ~/.codex/config.toml (the
+    # session store keeps those files redacted), restored the same way.
+    path "secret/data/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/+/mcp" {
+      capabilities = ["deny"]
+    }
+    # The devvm's own SSH host keys, installed only on the box that replaces
+    # it (devvm-host-identity below).
+    path "secret/data/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
   EOT
@@ -1132,6 +1354,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-paperless-ngx",
     "pg-tv",
     "pg-verify-probe",
+    # Cloud's reconciler (cloud.tf).
+    "pg-cloud-provisioner", "pg-cloud-state",
     ], [
     # App databases from app_db_roles.tf. distinct() keeps the first
     # occurrence, so roles already listed above keep their place and a new
@@ -1172,8 +1396,9 @@ resource "vault_database_secret_backend_connection" "postgresql" {
 #   10:06 pg-woodpecker   10:08 pg-paperless-ngx   10:10 pg-linkwarden
 #   10:12 mysql-uptimekuma   10:13 pg-prowlarr (app_db_roles.tf; owns prowlarr and prowlarr_log)
 #   10:14 mysql-nextcloud   10:15 pg-reels (app_db_roles.tf)   10:16 mysql-speedtest
-#   10:17 pg-vermont-access (app_db_roles.tf)
-#   10:18 mysql-wrongmove
+#   10:17 Cloud: pg-cloud (app_db_roles.tf), pg-cloud-provisioner and
+#         pg-cloud-state (cloud.tf)
+#   10:18 mysql-wrongmove   10:19 pg-vermont-access (app_db_roles.tf)
 #
 # rotation_window = 3600 lets Vault retry a failed slot for an hour, and means a
 # role switched to a schedule outside its window does not rotate at apply.

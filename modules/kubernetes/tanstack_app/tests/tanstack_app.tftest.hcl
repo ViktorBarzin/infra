@@ -51,7 +51,7 @@ run "ports_signup_pullsecret" {
     image_pull_secrets = ["ghcr-credentials"]
   }
   assert {
-    condition = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.name}=${e.value}" if contains(["PORT", "METRICS_PORT", "SIGNUP_MODE"], e.name)] == ["PORT=8080", "METRICS_PORT=9100", "SIGNUP_MODE=open"]
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.name}=${e.value}" if contains(["PORT", "METRICS_PORT", "SIGNUP_MODE"], e.name)] == ["PORT=8080", "METRICS_PORT=9100", "SIGNUP_MODE=open"]
     error_message = "settings env"
   }
   assert {
@@ -112,5 +112,100 @@ run "nfs_volume_mounts_without_rechowning" {
   assert {
     condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].security_context[0].fs_group_change_policy == "OnRootMismatch"
     error_message = "OnRootMismatch, or the kubelet re-owns every file on the volume at each pod start"
+  }
+}
+
+run "secret_env_reads_single_keys_and_restarts_on_change" {
+  command = plan
+  variables {
+    secret_env = [
+      { name = "TELEMETRY_WRITE_KEY", secret = "demo-one-telemetry", key = "write_key" },
+      { name = "SENTRY_DSN", secret = "demo-one-telemetry", key = "sentry_dsn", optional = false },
+    ]
+  }
+  assert {
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : e.name if e.value_from != null && length(e.value_from) > 0] == ["TELEMETRY_WRITE_KEY", "SENTRY_DSN"]
+    error_message = "secret env comes after the plain env, in order"
+  }
+  assert {
+    condition     = [for e in kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].env : "${e.value_from[0].secret_key_ref[0].name}/${e.value_from[0].secret_key_ref[0].key}/${e.value_from[0].secret_key_ref[0].optional}" if e.value_from != null && length(e.value_from) > 0] == ["demo-one-telemetry/write_key/true", "demo-one-telemetry/sentry_dsn/false"]
+    error_message = "secret_key_ref name, key and optional (default true)"
+  }
+  assert {
+    condition     = contains(split(",", kubernetes_deployment.this.metadata[0].annotations["secret.reloader.stakater.com/reload"]), "demo-one-telemetry")
+    error_message = "Reloader restarts the pod when the telemetry Secret changes"
+  }
+}
+
+run "no_service_account_by_default" {
+  command = plan
+  assert {
+    condition     = length(kubernetes_service_account.this) == 0
+    error_message = "no service account unless asked for, so existing apps render unchanged"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == null || kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == true
+    error_message = "the pod spec keeps the provider default"
+  }
+}
+
+run "own_service_account_with_api_token" {
+  command = plan
+  variables {
+    service_account = { name = "demo-one-console", automount_token = true }
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].metadata[0].name == "demo-one-console"
+    error_message = "service account name"
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].automount_service_account_token == true
+    error_message = "service account mounts its token"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].service_account_name == "demo-one-console"
+    error_message = "the pod runs as the module's service account"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == true
+    error_message = "the pod mounts the token"
+  }
+}
+
+run "own_service_account_without_token_by_default" {
+  command = plan
+  variables {
+    service_account = { name = "demo-one" }
+  }
+  assert {
+    condition     = kubernetes_service_account.this[0].automount_service_account_token == false
+    error_message = "no token unless asked for"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].automount_service_account_token == false
+    error_message = "the pod mounts no token"
+  }
+}
+
+run "managed_email_mapping_by_default" {
+  command = plan
+  assert {
+    condition     = length(authentik_provider_oauth2.this.property_mappings) == 3 && contains(authentik_provider_oauth2.this.property_mappings, data.authentik_property_mapping_provider_scope.email.id)
+    error_message = "openid, profile and Authentik's managed scope-email, as before"
+  }
+}
+
+run "own_email_mapping_replaces_the_managed_one" {
+  command = plan
+  variables {
+    email_scope_mapping_id = "custom-email-mapping"
+  }
+  assert {
+    condition     = length(authentik_provider_oauth2.this.property_mappings) == 3 && contains(authentik_provider_oauth2.this.property_mappings, "custom-email-mapping")
+    error_message = "the app's own email mapping takes the managed one's place"
+  }
+  assert {
+    condition     = !contains(authentik_provider_oauth2.this.property_mappings, data.authentik_property_mapping_provider_scope.email.id)
+    error_message = "the managed scope-email is not sent beside the app's own"
   }
 }

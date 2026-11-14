@@ -31,7 +31,7 @@ resource "helm_release" "loki" {
   # manifests differ only in the chart label. 2026-11-10: chart 20.0.0 made
   # the values schema reject unknown top-level keys, so loki.yaml dropped the
   # inert minio and bloomCompactor keys (21.0.0 and 21.1.0 had failed on them).
-  version = "21.2.1"
+  version = "21.2.3"
 
   values          = [templatefile("${path.module}/loki.yaml", {})]
   atomic          = true
@@ -73,7 +73,7 @@ resource "helm_release" "alloy" {
   chart      = "alloy"
   # Pinned 2026-10-10 (was unpinned, so any apply floated to the newest chart).
   # Keep in step with helm_release.alloy_syslog below.
-  version = "1.15.0"
+  version = "1.16.0"
 
   values          = [file("${path.module}/alloy.yaml")]
   atomic          = true
@@ -93,7 +93,7 @@ resource "helm_release" "alloy_syslog" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
-  version    = "1.15.0"
+  version    = "1.16.0"
 
   values          = [file("${path.module}/alloy-syslog.yaml")]
   atomic          = true
@@ -1007,8 +1007,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Measured 2026-08-10: 7 fire/resolve pairs in 7 days = 14 Slack
               # posts, every firing duration 15-20m. A 12h window keeps one
               # alert per nightly cycle instead of one per rollback event.
+              # unit=~ (this and the next two rules, 2026-11-11): only runs
+              # inside the t3 systemd units count. A scratch run typed in a
+              # shell on the live box logged "rolling back" and "ROLLBACK
+              # FAILED" into this journal, paged, and held this alert for 12h
+              # over the next real bump. Every in-unit line also arrives as
+              # the unit's stdout, which always carries the unit label.
+              # Scratch runs: see "Scratch runs" in docs/runbooks/t3-version-bump.md.
               alert  = "T3AutoUpdateRolledBack"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [12h])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"rolling back|rolled back\" [12h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
@@ -1021,7 +1028,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Rollback itself failed (npm couldn't reinstall the previous build):
               # the box may be left on a broken t3. Manual fix needed.
               alert  = "T3AutoUpdateRollbackFailed"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
               for    = "0m"
               labels = { severity = "critical", notify = "page" }
               annotations = {
@@ -1035,7 +1042,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # /etc/t3-autoupdate.freeze switch is set). Surfaces a stuck-on-purpose
               # tracker so it isn't silently frozen forever.
               alert  = "T3AutoUpdateFrozen"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"FROZEN\" [25h])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\", unit=~\"(agent-update|t3-autoupdate|t3-migrate-idle|t3-watchdog)[.]service\"} |~ \"FROZEN\" [25h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {

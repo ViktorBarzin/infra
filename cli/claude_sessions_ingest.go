@@ -16,9 +16,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"net"
@@ -30,6 +34,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // fileState is what the ingester remembers about one file between runs.
@@ -39,6 +44,19 @@ type fileState struct {
 	MtimeNs int64  `json:"mtime_ns"`
 	Offset  int64  `json:"offset"`
 	TsHint  string `json:"ts_hint,omitempty"`
+	// Gen names the version of an append-only home file (claude.home_lines);
+	// it changes whenever the file is read again from the start.
+	Gen string `json:"gen,omitempty"`
+	// Rv is the redaction rule a settings file was sent under (redactVersion).
+	Rv int `json:"rv,omitempty"`
+	// Sum is the SHA-256 state over the transcript's first Offset bytes, so a
+	// rewritten copy (a new inode) that starts with the same bytes goes on
+	// from Offset instead of being sent again from 0.
+	Sum string `json:"sum,omitempty"`
+	// Stored is the SHA-256 of the copy last sent for a file the store keeps
+	// reduced (~/.claude.json), so a rewrite that changed only what the copy
+	// leaves out sends nothing.
+	Stored string `json:"stored,omitempty"`
 }
 
 type ingestState struct {
@@ -100,6 +118,13 @@ func planFile(prev *fileState, inode uint64, size, mtimeNs int64) (skip bool, of
 // file. A final line with no newline yet is left for the next run. It returns
 // the offset just past the last complete line and the latest timestamp.
 func readNewLines(r io.Reader, start int64, hint string, emit func(offset int64, line []byte, hint string) error) (int64, string, error) {
+	return readNewLinesSum(r, start, hint, nil, emit)
+}
+
+// readNewLinesSum is readNewLines that also writes every complete line, blank
+// ones included, to sum: afterwards sum has seen exactly the bytes up to the
+// returned offset.
+func readNewLinesSum(r io.Reader, start int64, hint string, sum io.Writer, emit func(offset int64, line []byte, hint string) error) (int64, string, error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	off := start
 	for {
@@ -112,6 +137,9 @@ func readNewLines(r io.Reader, start int64, hint string, emit func(offset int64,
 		}
 		lineOff := off
 		off += int64(len(line))
+		if sum != nil {
+			sum.Write(line)
+		}
 		body := bytes.TrimRight(line, "\r\n")
 		if len(bytes.TrimSpace(body)) == 0 {
 			continue
@@ -160,6 +188,8 @@ type pathInfo struct {
 //	<slug>/<session>/subagents/<agent>.jsonl            subagent transcript
 //	<slug>/<session>/subagents/<agent>.meta.json        subagent metadata
 //	<slug>/<session>/tool-results/<id>.txt              a large tool output
+//	<slug>/<session>/subagents/workflows/<run>/<agent>.jsonl      workflow subagent
+//	<slug>/<session>/subagents/workflows/<run>/<agent>.meta.json  its metadata
 func classifyTranscriptPath(projectsRoot, path string) (pathInfo, bool) {
 	rel, err := filepath.Rel(projectsRoot, path)
 	if err != nil {
@@ -175,6 +205,10 @@ func classifyTranscriptPath(projectsRoot, path string) (pathInfo, bool) {
 		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[3], ".jsonl"), Kind: kindTranscript}, true
 	case len(p) == 4 && p[2] == "tool-results":
 		return pathInfo{Project: p[0], Session: p[1], Kind: kindToolResult}, true
+	case len(p) == 6 && p[2] == "subagents" && p[3] == "workflows" && strings.HasSuffix(p[5], ".meta.json"):
+		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[5], ".meta.json"), Kind: kindSubagentMeta}, true
+	case len(p) == 6 && p[2] == "subagents" && p[3] == "workflows" && strings.HasSuffix(p[5], ".jsonl"):
+		return pathInfo{Project: p[0], Session: p[1], Agent: strings.TrimSuffix(p[5], ".jsonl"), Kind: kindTranscript}, true
 	}
 	return pathInfo{}, false
 }
@@ -323,16 +357,25 @@ type ingestConfig struct {
 	DB        dbConn
 	Budget    int // bytes per INSERT body before compression
 	OnlyUser  string
+	// RequireRestore leaves a user alone until `restore --rebuild` has run
+	// for them on this box, unless the state already lists their files
+	// (claude_sessions_rebuild.go). The verb sets it; tests may not.
+	RequireRestore bool
 }
 
 type ingestStats struct {
-	Users        int
-	FilesSeen    int
-	FilesChanged int
-	Lines        int
-	Bytes        int64
-	SideFiles    int
-	FileErrors   int
+	Users         int
+	FilesSeen     int
+	FilesChanged  int
+	Lines         int
+	Bytes         int64
+	SideFiles     int
+	HomeFiles     int // whole files sent to claude.home_files
+	HomeLines     int // lines sent to claude.home_lines
+	FileErrors    int
+	UsersWaiting  int // users skipped until restore --rebuild has run for them
+	MCPUncaptured int // live MCP server entries with secrets that are new or changed since the last capture (uncapturedMCPEntries)
+	MCPUnfilled   int // captured MCP server entries the live files lack or hold without their secret (unfilledMCPEntries)
 }
 
 type lineRow struct {
@@ -356,11 +399,16 @@ type sideFileRow struct {
 	Content   string `json:"content"`
 }
 
-// runIngest does one pass over every user's transcripts. A database error
+// runIngest does one pass over every user's ~/.claude and ~/.codex. A database error
 // stops the run (the state keeps every batch that was accepted); a problem
 // with one file is counted and the run moves on.
 func runIngest(cfg ingestConfig) (ingestStats, error) {
 	var st ingestStats
+	unlock, err := lockIngestState(cfg.StatePath)
+	if err != nil {
+		return st, err
+	}
+	defer unlock()
 	state, err := loadState(cfg.StatePath)
 	if err != nil {
 		return st, err
@@ -383,18 +431,64 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 			continue
 		}
 		owner := hfi.Sys().(*syscall.Stat_t).Uid
-		root := filepath.Join(home, ".claude", "projects")
-		if _, err := os.Lstat(root); err != nil {
-			continue
+		user := h.Name()
+		if cfg.RequireRestore && !rebuildMarked(cfg.StatePath, user) {
+			if !stateTracksHome(state, home) {
+				if hasAgentDirs(home) {
+					st.UsersWaiting++
+				}
+				continue
+			}
+			// The live box: this user has been ingested all along.
+			if err := writeRebuildMarker(cfg.StatePath, user, "already ingesting"); err != nil {
+				return st, err
+			}
 		}
-		st.Users++
-		err = walkTranscriptFiles(root, func(path string, info pathInfo) error {
-			seen[path] = true
+		batch := &homeFileBatch{db: cfg.DB, budget: cfg.Budget, state: state}
+		found, err := walkHome(home, func(abs, rel string, d fs.DirEntry) error {
+			class, info := classifyHomeFile(home, abs, rel)
+			if class == homeSkip {
+				return nil
+			}
+			seen[abs] = true
 			st.FilesSeen++
-			return ingestOne(cfg, state, &st, h.Name(), owner, path, info)
+			switch class {
+			case homeTranscript:
+				return ingestOne(cfg, state, &st, user, owner, abs, info)
+			case homeAppend:
+				return ingestHomeAppend(cfg, state, &st, user, owner, abs, rel)
+			}
+			if unchangedSinceLastRun(state.Files[abs], d) && !needsRedactRefresh(rel, state.Files[abs]) {
+				return nil
+			}
+			return ingestHomeWhole(cfg, state, &st, batch, user, owner, abs, rel)
 		})
+		if err == nil {
+			err = batch.flush()
+		}
+		if found {
+			st.Users++
+		}
+		if err == nil {
+			// Read-only, names only: the ingest has no Vault access, so it
+			// can only point an admin at `mcp-secrets capture`.
+			if names, uerr := uncapturedMCPEntries(home); uerr == nil && len(names) > 0 {
+				st.MCPUncaptured += len(names)
+				fmt.Fprintf(os.Stderr, "claude-sessions-ingest WARN user=%s: %d MCP server entries with secrets are new or changed since the last capture, so a rebuild would not bring them back as they are; run `homelab claude-sessions mcp-secrets capture --user %s`: %s\n",
+					user, len(names), user, strings.Join(names, ", "))
+			}
+			if names, uerr := unfilledMCPEntries(home); uerr == nil && len(names) > 0 {
+				st.MCPUnfilled += len(names)
+				fmt.Fprintf(os.Stderr, "claude-sessions-ingest WARN user=%s: %d captured MCP server entries are missing from the live files or hold no secret, so those servers do not work; after a rebuild run `homelab claude-sessions mcp-secrets fill --user %s` (or add them back by hand), and if they were removed on purpose run `mcp-secrets capture --user %s` so the record forgets them: %s\n",
+					user, len(names), user, user, strings.Join(names, ", "))
+			}
+		}
 		if err != nil {
 			saveState(cfg.StatePath, state)
+			var dbe errDB
+			if errors.As(err, &dbe) {
+				return st, dbe.error
+			}
 			return st, err
 		}
 	}
@@ -410,55 +504,19 @@ func runIngest(cfg ingestConfig) (ingestStats, error) {
 	return st, saveState(cfg.StatePath, state)
 }
 
-// walkTranscriptFiles visits the files classifyTranscriptPath recognises,
-// reading directories only (no file contents) and never following symlinks.
-func walkTranscriptFiles(root string, visit func(path string, info pathInfo) error) error {
-	slugs, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	for _, slug := range slugs {
-		if !slug.IsDir() {
-			continue
-		}
-		slugDir := filepath.Join(root, slug.Name())
-		entries, err := os.ReadDir(slugDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			p := filepath.Join(slugDir, e.Name())
-			if e.Type().IsRegular() {
-				if info, ok := classifyTranscriptPath(root, p); ok {
-					if err := visit(p, info); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			if !e.IsDir() {
-				continue // symlinks and anything else are ignored
-			}
-			for _, sub := range []string{"subagents", "tool-results"} {
-				files, err := os.ReadDir(filepath.Join(p, sub))
-				if err != nil {
-					continue
-				}
-				for _, f := range files {
-					if !f.Type().IsRegular() {
-						continue
-					}
-					fp := filepath.Join(p, sub, f.Name())
-					if info, ok := classifyTranscriptPath(root, fp); ok {
-						if err := visit(fp, info); err != nil {
-							return err
-						}
-					}
-				}
+// hasAgentDirs reports whether home has a ~/.claude or ~/.codex with
+// anything in it, the users worth counting as waiting.
+func hasAgentDirs(home string) bool {
+	for _, r := range homeRoots {
+		if d, err := os.Open(filepath.Join(home, r)); err == nil {
+			names, _ := d.Readdirnames(1)
+			d.Close()
+			if len(names) > 0 {
+				return true
 			}
 		}
 	}
-	return nil
+	return false
 }
 
 // errDB marks a database failure, which stops the whole run.
@@ -484,11 +542,21 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		return nil
 	}
 	size, mtime := fi.Size(), fi.ModTime().UnixNano()
-	skip, offset, hint := planFile(state.Files[path], sys.Ino, size, mtime)
+	prev := state.Files[path]
+	skip, offset, hint := planFile(prev, sys.Ino, size, mtime)
 	if skip {
 		return nil
 	}
 	st.FilesChanged++
+	// A transcript Claude Code rewrote (a new inode) that starts with the
+	// bytes already sent goes on from where the old copy stopped, so its
+	// lines are not stored twice (claude.lines is a plain MergeTree, and the
+	// session cost and turn figures would count them twice).
+	if info.Kind == kindTranscript && offset == 0 && prev != nil && prev.Inode != sys.Ino && prev.Sum != "" && prev.Offset > 0 && size >= prev.Offset {
+		if h, err := prefixSum(f, prev.Offset); err == nil && sumState(h) == prev.Sum {
+			offset, hint = prev.Offset, prev.TsHint
+		}
+	}
 
 	if info.Kind != kindTranscript {
 		content, err := io.ReadAll(io.LimitReader(f, maxSideFileBytes))
@@ -501,17 +569,70 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		if err := cfg.DB.insert(insertFiles, "", append(row, '\n')); err != nil {
 			return errDB{err}
 		}
+		// claude.files holds text, and JSON turns bytes that are not UTF-8
+		// into U+FFFD, so a binary tool result (a fetched PDF) also goes to
+		// claude.home_files as base64, which restore prefers.
+		if rel := transcriptRel(user, path); rel != "" && !utf8.Valid(content) && fi.Size() <= maxSideFileBytes {
+			hrow, _ := json.Marshal(homeFileRow{OsUser: user, Path: rel, Kind: homeKind(rel), Mtime: fi.ModTime().UTC().Format(time.RFC3339Nano),
+				Mode: uint32(fi.Mode().Perm()), Size: size, Encoding: "base64", Content: base64.StdEncoding.EncodeToString(content)})
+			if err := cfg.DB.insert(insertHomeFiles, "", append(hrow, '\n')); err != nil {
+				return errDB{err}
+			}
+			st.HomeFiles++
+		}
 		st.SideFiles++
 		state.Files[path] = &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: size}
 		return nil
 	}
 
+	return appendLines(cfg, state, st, path, f, sys.Ino, size, mtime, offset, hint, "", insertLines,
+		func(off int64, line []byte, h string) ([]byte, error) {
+			row := lineRow{OsUser: user, Project: info.Project, SessionID: info.Session, AgentID: info.Agent,
+				File: path, ByteOffset: off, Raw: string(line)}
+			if h != "" {
+				hv := h
+				row.TsHint = &hv
+			}
+			st.Lines++
+			return json.Marshal(row)
+		})
+}
+
+// appendLines sends the complete lines of f from offset on, in batches, with
+// query. mkRow turns one line into its JSONEachRow row. The state is saved
+// after every accepted batch.
+func appendLines(cfg ingestConfig, state *ingestState, st *ingestStats, path string, f *os.File, inode uint64, size, mtime, offset int64, hint, gen, query string,
+	mkRow func(off int64, line []byte, hint string) ([]byte, error)) error {
+	// A transcript's running SHA-256 (fileState.Sum), carried on from the
+	// last run or, for a state written before it existed or a run that died
+	// mid-file, read again from the file's first offset bytes.
+	var sum hash.Hash
+	if gen == "" {
+		if prev := state.Files[path]; offset == 0 {
+			sum = sha256.New()
+		} else if prev != nil && prev.Sum != "" && prev.Offset == offset {
+			sum = sha256.New()
+			if b, err := base64.StdEncoding.DecodeString(prev.Sum); err != nil || sum.(encoding.BinaryUnmarshaler).UnmarshalBinary(b) != nil {
+				sum = nil
+			}
+		}
+		if sum == nil && offset > 0 {
+			sum, _ = prefixSum(f, offset)
+		}
+	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		st.FileErrors++
 		return nil
 	}
+	// The token names the file version: a transcript Claude Code rewrote
+	// (a new inode) is read again from 0, and a token equal to the old
+	// file's would make ClickHouse drop that batch, new lines included.
+	tokenKey := path + "@" + strconv.FormatUint(inode, 10)
+	if gen != "" {
+		tokenKey = path + "#" + gen
+	}
 	bt := newBatcher(cfg.Budget, func(token string, body []byte) error {
-		if err := cfg.DB.insert(insertLines, token, body); err != nil {
+		if err := cfg.DB.insert(query, token, body); err != nil {
 			return errDB{err}
 		}
 		return nil
@@ -521,25 +642,22 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		// batch in flight, which the dedup token then drops.
 		// Size -1 marks the file as part-done: if the run dies here, the next
 		// one must not mistake an unchanged size and mtime for "all sent".
-		state.Files[path] = &fileState{Inode: sys.Ino, Size: -1, MtimeNs: mtime, Offset: end, TsHint: h}
+		state.Files[path] = &fileState{Inode: inode, Size: -1, MtimeNs: mtime, Offset: end, TsHint: h, Gen: gen}
 		saveState(cfg.StatePath, state)
 	}
-	end, lastHint, err := readNewLines(io.LimitReader(f, size-offset), offset, hint, func(off int64, line []byte, h string) error {
-		row := lineRow{OsUser: user, Project: info.Project, SessionID: info.Session, AgentID: info.Agent,
-			File: path, ByteOffset: off, Raw: string(line)}
-		if h != "" {
-			hv := h
-			row.TsHint = &hv
-		}
-		b, err := json.Marshal(row)
+	var sumW io.Writer
+	if sum != nil {
+		sumW = sum
+	}
+	end, lastHint, err := readNewLinesSum(io.LimitReader(f, size-offset), offset, hint, sumW, func(off int64, line []byte, h string) error {
+		b, err := mkRow(off, line, h)
 		if err != nil {
 			return err
 		}
-		if err := bt.add(path, off, b); err != nil {
+		if err := bt.add(tokenKey, off, b); err != nil {
 			return err
 		}
 		bt.setCommitPoint(off+int64(len(line))+1, h)
-		st.Lines++
 		st.Bytes += int64(len(line)) + 1
 		return nil
 	})
@@ -554,8 +672,32 @@ func ingestOne(cfg ingestConfig, state *ingestState, st *ingestStats, user strin
 		st.FileErrors++
 		return nil
 	}
-	state.Files[path] = &fileState{Inode: sys.Ino, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint}
+	state.Files[path] = &fileState{Inode: inode, Size: size, MtimeNs: mtime, Offset: end, TsHint: lastHint, Gen: gen, Sum: sumState(sum)}
 	return nil
+}
+
+// prefixSum hashes the first n bytes of f.
+func prefixSum(f *os.File, n int64) (hash.Hash, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	if _, err := io.CopyN(h, f, n); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// sumState is the hash's running state, base64, or "" for none.
+func sumState(h hash.Hash) string {
+	if h == nil {
+		return ""
+	}
+	b, err := h.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // parseEnvFile reads KEY=VALUE lines (the systemd EnvironmentFile shape).

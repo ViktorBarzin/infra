@@ -1,3 +1,4 @@
 fastapi
 uvicorn[standard]
 markdown>=3.5
+pyyaml>=6

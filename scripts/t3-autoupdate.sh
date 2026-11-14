@@ -77,6 +77,27 @@ if [ -e "$FREEZE_FILE" ]; then
 fi
 
 current="$(ver)"
+
+# ---- 0c. first install on a new box (2026-11-11) ---------------------------------
+# A devvm built from stacks/devvm has no t3 at all: setup-devvm.sh used to put
+# the first build in, and the bootstrap never runs it, so every t3-serve@ died
+# with 203/EXEC on the third drill. playbooks/devvm.yml runs this script once
+# when T3_LINK is absent. Only a box with no link and no legacy npm -g install
+# counts: a link that exists but does not run is a broken build on a box with
+# users, which must not be swapped to an ungated one, so that case keeps the
+# exit below. No gate: there is no running serve to break, and the restored
+# databases migrate forward on first start exactly as they would on a bump.
+if [ -z "$current" ] && [ ! -e "$T3_LINK" ] && [ ! -L "$T3_LINK" ] && [ ! -e "$T3_LEGACY_DIR" ]; then
+  if [ -n "$T3_PIN" ]; then target="$T3_PIN"
+  else target="$(npm view "t3@$T3_TRACK" version 2>/dev/null | tail -1 | tr -d '[:space:]')"; fi
+  [ -n "$target" ] || { LOG "first install: could not resolve t3@$T3_TRACK from npm"; exit 1; }
+  if [ "$DRY_RUN" = "1" ]; then LOG "DRY_RUN: first install would put t3 $target at $T3_LINK"; exit 0; fi
+  install_version "$target" || { LOG "first install: npm install of t3@$target FAILED"; exit 1; }
+  activate_version "$target" || { LOG "first install: could not point $T3_LINK at $target"; exit 1; }
+  echo "$target" >"$LAST_GOOD_FILE"
+  LOG "first install: t3 $target at $T3_LINK (no t3 on this box before)"
+  exit 0
+fi
 [ -n "$current" ] || { LOG "cannot read current t3 version — aborting (is t3 installed?)"; exit 0; }
 [ -s "$LAST_GOOD_FILE" ] || echo "$current" >"$LAST_GOOD_FILE"   # seed last-good on first run
 last_good="$(tr -d '[:space:]' <"$LAST_GOOD_FILE" 2>/dev/null)"
@@ -159,7 +180,15 @@ LOG "health gate passed for $target and $T3_LINK now points at it; canary-restar
 
 # ---- 6. canary rollout: idle instances one-by-one, verify pairing after each ----
 restarted=0; deferred=0
-for unit in $(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' 2>/dev/null | awk '{print $1}'); do
+# The serves run $T3_SERVE_LINK. Restarting them after a scratch-link bump
+# would test nothing and interrupt real users, so a scratch run skips them.
+units=""
+if scratch_link; then
+  LOG "not restarting t3-serve@ units: they run $T3_SERVE_LINK, not the scratch link $T3_LINK"
+else
+  units="$(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' 2>/dev/null | awk '{print $1}')"
+fi
+for unit in $units; do
   u="$(printf '%s' "$unit" | sed -n 's/^t3-serve@\(.*\)\.service$/\1/p')"; [ -n "$u" ] || continue
   if unit_busy "$unit"; then
     LOG "deferring $unit (active agent) — migrates on its next idle restart"

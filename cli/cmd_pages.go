@@ -1,17 +1,35 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// Limits the server enforces (stacks/pages-publish/app/bundles.py), checked
+// here first so a 300 MB directory fails before it is read into a request.
+const (
+	pagesMaxFileBytes    = 10 << 20
+	pagesMaxPublishBytes = 25 << 20
+	pagesMaxFiles        = 200
 )
 
 func pagesCommands() []Command {
 	return []Command{
 		{Path: []string{"pages", "publish"}, Tier: TierWrite,
-			Summary: "publish a markdown doc as an HTML page: pages publish <path/to/doc.md> [--shared] [--status draft|approved|executing|done]", Run: pagesPublish},
+			Summary: "publish a page: pages publish <doc.md | page.html | dir/> [--shared] [--public] [--expires 30d|90d|never] [--status draft|approved|executing|done]; a dir is a Bundle (index.html or index.md plus its images, data, scripts); --public also prints a no-login link; new pages expire after 90 days unless --expires says otherwise", Run: pagesPublish},
+		{Path: []string{"pages", "share"}, Tier: TierWrite,
+			Summary: "make a public link (no login) to one of your pages: pages share <page URL | name> [--shared] [--expires 30d|90d|never]; it lives until it expires (90 days by default) or pages unshare", Run: pagesShare},
+		{Path: []string{"pages", "unshare"}, Tier: TierWrite,
+			Summary: "revoke the public links of a page, or one link: pages unshare <page URL | name | public link> [--shared]", Run: pagesUnshare},
+		{Path: []string{"pages", "unpublish"}, Tier: TierWrite,
+			Summary: "delete one of your pages or Bundles, with its public links: pages unpublish <page URL | name> [--shared]; git history keeps a copy", Run: pagesUnpublish},
 		{Path: []string{"pages", "preview"}, Tier: TierRead,
 			Summary: "render a doc to local files you can open and screenshot, without publishing: pages preview <path/to/doc.md> [--status ...] [--out DIR]", Run: pagesPreview},
 	}
@@ -25,6 +43,13 @@ func pagesPublish(args []string) error {
 		switch {
 		case a == "--shared":
 			req.Shared = true
+		case a == "--public":
+			req.Public = true
+		case a == "--expires":
+			if i+1 < len(args) {
+				req.Expires = args[i+1]
+				i++
+			}
 		case a == "--status":
 			if i+1 < len(args) {
 				req.Status = args[i+1]
@@ -35,7 +60,14 @@ func pagesPublish(args []string) error {
 		}
 	}
 	if path == "" {
-		return fmt.Errorf("usage: homelab pages publish <path/to/doc.md> [--shared] [--status draft|approved|executing|done]")
+		return fmt.Errorf("usage: homelab pages publish <doc.md | page.html | dir/> [--shared] [--public] [--expires 30d|90d|never] [--status draft|approved|executing|done]")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if info.IsDir() || !strings.HasSuffix(strings.ToLower(path), ".md") {
+		return pagesPublishBundle(path, info.IsDir(), req)
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -47,10 +79,20 @@ func pagesPublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	// A publish right after the pod starts waits for its first clone of
+	// viktor/pages, and --public adds a second commit: 30s was not enough
+	// on 2026-11-12, and the page landed after the CLI had given up.
+	c.http.Timeout = 3 * time.Minute
 	raw, err := c.do("POST", "/publish", req)
 	if err != nil {
 		return err
 	}
+	return printPublished(raw)
+}
+
+// printPublished prints the page URL, its path in the site, and the public
+// link when one was asked for.
+func printPublished(raw []byte) error {
 	var resp pagesPublishResp
 	if err := json.Unmarshal(raw, &resp); err != nil || resp.URL == "" {
 		// 2xx but not the expected {url,path} shape — show it raw rather than
@@ -62,6 +104,200 @@ func pagesPublish(args []string) error {
 	if resp.Path != "" {
 		fmt.Println(resp.Path)
 	}
+	if resp.PublicURL != "" {
+		fmt.Println("public: " + resp.PublicURL)
+	}
+	if resp.Expires != "" {
+		fmt.Println("expires: " + resp.Expires)
+	}
+	for _, w := range resp.Warnings {
+		fmt.Fprintln(os.Stderr, "warning: "+w)
+	}
+	return nil
+}
+
+// pagesPublishBundle sends one HTML file, or every file under a directory, to
+// /publish-bundle. The name sent is the file or directory name: it is the
+// page's identity, so publishing the same name again updates the same page.
+// Dotfiles and dot-directories (.git, .DS_Store) are skipped; the server
+// refuses paths that start with a dot.
+func pagesPublishBundle(path string, isDir bool, base pagesPublishReq) error {
+	req := pagesBundleReq{Status: base.Status, Shared: base.Shared, Public: base.Public, Expires: base.Expires}
+	var total int64
+	add := func(rel string, data []byte) error {
+		if int64(len(data)) > pagesMaxFileBytes {
+			return fmt.Errorf("%s is %d bytes; one file may be at most %d MiB", rel, len(data), pagesMaxFileBytes>>20)
+		}
+		total += int64(len(data))
+		if total > pagesMaxPublishBytes {
+			return fmt.Errorf("the files add up to more than %d MiB, the limit for one publish", pagesMaxPublishBytes>>20)
+		}
+		if len(req.Files) >= pagesMaxFiles {
+			return fmt.Errorf("a Bundle holds at most %d files", pagesMaxFiles)
+		}
+		f := pagesBundleFile{Path: rel, Content: string(data), Encoding: "utf-8"}
+		if !utf8.Valid(data) {
+			f.Content = base64.StdEncoding.EncodeToString(data)
+			f.Encoding = "base64"
+		}
+		req.Files = append(req.Files, f)
+		return nil
+	}
+	clean := filepath.Clean(path)
+	req.Name = filepath.Base(clean)
+	if !isDir {
+		data, err := os.ReadFile(clean)
+		if err != nil {
+			return fmt.Errorf("cannot read %s: %w", path, err)
+		}
+		if err := add(req.Name, data); err != nil {
+			return err
+		}
+	} else {
+		err := filepath.WalkDir(clean, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if p == clean {
+				return nil
+			}
+			if strings.HasPrefix(d.Name(), ".") {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || !d.Type().IsRegular() {
+				return nil
+			}
+			rel, err := filepath.Rel(clean, p)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			return add(filepath.ToSlash(rel), data)
+		})
+		if err != nil {
+			return err
+		}
+		if len(req.Files) == 0 {
+			return fmt.Errorf("%s has no files to publish", path)
+		}
+	}
+	c, err := newPagesClient()
+	if err != nil {
+		return err
+	}
+	c.http.Timeout = 0 // a 25 MiB upload on a slow link outlives the 30s default
+	raw, err := c.do("POST", "/publish-bundle", req)
+	if err != nil {
+		return err
+	}
+	return printPublished(raw)
+}
+
+func pagesLinkArgs(args []string, verb string) (pagesShareReq, error) {
+	var req pagesShareReq
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--shared":
+			req.Shared = true
+		case a == "--expires" && verb == "share":
+			if i+1 < len(args) {
+				req.Expires = args[i+1]
+				i++
+			}
+		case !strings.HasPrefix(a, "-") && req.Page == "":
+			req.Page = a
+		}
+	}
+	if req.Page == "" {
+		return req, fmt.Errorf("usage: homelab pages %s <page URL | name> [--shared]", verb)
+	}
+	return req, nil
+}
+
+// pagesShare makes a public link: pages.viktorbarzin.me/p/<random>/ opens the
+// page with no login until it is revoked. The page stays in its Space.
+func pagesShare(args []string) error {
+	req, err := pagesLinkArgs(args, "share")
+	if err != nil {
+		return err
+	}
+	c, err := newPagesClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("POST", "/share", req)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		URL     string `json:"url"`
+		Expires string `json:"expires"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.URL == "" {
+		return fmt.Errorf("pages API returned no link: %s", strings.TrimSpace(string(raw)))
+	}
+	fmt.Println(resp.URL)
+	if resp.Expires != "" {
+		fmt.Println("expires: " + resp.Expires)
+	}
+	return nil
+}
+
+// pagesUnpublish deletes a page or Bundle from the caller's Space (or
+// shared/), with its public links and Bundle URL. The pages repo's history
+// keeps a copy, so a mistake can be restored.
+func pagesUnpublish(args []string) error {
+	req, err := pagesLinkArgs(args, "unpublish")
+	if err != nil {
+		return err
+	}
+	c, err := newPagesClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("POST", "/unpublish", req)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Removed string `json:"removed"`
+		Links   int    `json:"links"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.Removed == "" {
+		return fmt.Errorf("pages API returned no result: %s", strings.TrimSpace(string(raw)))
+	}
+	fmt.Printf("removed %s and %d public link(s)\n", resp.Removed, resp.Links)
+	return nil
+}
+
+func pagesUnshare(args []string) error {
+	req, err := pagesLinkArgs(args, "unshare")
+	if err != nil {
+		return err
+	}
+	c, err := newPagesClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("POST", "/unshare", req)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Removed int    `json:"removed"`
+		Page    string `json:"page"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("pages API returned a body this CLI cannot read: %w", err)
+	}
+	fmt.Printf("removed %d public link(s) to %s\n", resp.Removed, resp.Page)
 	return nil
 }
 

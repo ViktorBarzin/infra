@@ -24,7 +24,7 @@ sequenceDiagram
     B-->>HA: RTSP 10.0.20.200:8554/live
     HA->>B: poll /snapshot.jpg every 5 s (only while the toggle is on) until 200 = video is live
     HA-->>U: conditional live card appears
-    Note over HA,K: off, 5 min auto-off, or HA start -> replicas=0
+    Note over HA,K: off, 10 min auto-off, or HA start -> replicas=0
     Note over K: camera-cap CronJob (every 15 min) forces 0 once a pod has run 15 min
 ```
 
@@ -47,7 +47,7 @@ sequenceDiagram
 | Bridge secrets (env vars, one key per variable) | Vault `secret/ecovacs-video-proxy` |
 | Alerts `YikoCameraLeftOn`, `YikoCameraStartFailed` | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`, group "Yiko camera" |
 | HA side, YAML (needs an HA restart to change) | `/config/configuration.yaml`: `rest_command.yiko_camera_scale` (PATCH replicas), `command_line` `binary_sensor.yiko_camera_ready` (curl /snapshot.jpg, on when 200; its own `scan_interval` is 3600 s, and the automation below refreshes it every 5 s while the camera is on). Secrets in `/config/secrets.yaml`: `k8s_yiko_camera_bearer`, `yiko_rtsp_password`, `yiko_camera_ready_cmd` |
-| HA side, UI-managed | `input_boolean.yiko_camera`; automation `automation.yiko_camera` (id `yiko_camera`: on → replicas 1; off, 5 min on, or HA start → replicas 0); automation `automation.yiko_camera_ready_poll` (id `yiko_camera_ready_poll`: `homeassistant.update_entity` on the ready sensor every 5 s while `input_boolean.yiko_camera` is on, and once 30 s after it turns off; added 2026-11-04 so the Pi 3 no longer runs a failing curl and logs an error every 5 s while the bridge is at 0 replicas); generic camera `camera.yiko` "Yiko camera" (stream `rtsp://10.0.20.200:8554/live` over TCP, still image `/snapshot.jpg`, user `yiko`); Camera card + conditional live `picture-entity` in the first section of the `vacuum-yiko` dashboard |
+| HA side, UI-managed | `input_boolean.yiko_camera`; automation `automation.yiko_camera` (id `yiko_camera`: on → replicas 1; off, 10 min on (5 until 2026-11-14), or HA start → replicas 0); automation `automation.yiko_camera_ready_poll` (id `yiko_camera_ready_poll`: `homeassistant.update_entity` on the ready sensor every 5 s while `input_boolean.yiko_camera` is on, and once 30 s after it turns off; added 2026-11-04 so the Pi 3 no longer runs a failing curl and logs an error every 5 s while the bridge is at 0 replicas); generic camera `camera.yiko` "Yiko camera" (stream `rtsp://10.0.20.200:8554/live` over TCP, still image `/snapshot.jpg`, user `yiko`); Camera card + conditional live `picture-entity` in the first section of the `vacuum-yiko` dashboard |
 
 ## Common tasks
 
@@ -59,6 +59,116 @@ kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0
 
 This is a transient step; the Terraform state ignores the replica count, so
 nothing reverts it.
+
+### Send Yiko to one room, for example to take a photo there
+
+Run `homelab ha yiko photo <room>` (v0.40). It starts the HA London script
+`script.yiko_photo` (fields `room`, `shots`), waits for it, and downloads the
+photos this run wrote from `/media/yiko/<room>-<n>.jpg` through HA's
+authenticated `/media/local/` URL. `homelab ha yiko clean <room>` and `dock`
+send the raw commands below. `photo` and `clean` refuse 22:00-08:00 London
+time without `--night`. The script is in `/config/scripts.yaml`
+(ha-london-config `38734dd`). It does these steps:
+
+1. Sets `select.yiko_work_mode` to `vacuum`, so the floor stays dry.
+2. Starts a clean of the room with a raw `clean_V2` command (table below).
+3. Turns on `input_boolean.yiko_camera`.
+4. Waits up to 60 s for `sensor.yiko_area_cleaned` to change. A new job resets
+   it to 0, so no change means the robot rejected the start.
+5. Waits up to 4 min for that sensor to reach 1 m². The robot cleans only the
+   target room, so this means it is inside the room.
+6. Waits for `binary_sensor.yiko_camera_ready`, then for each photo: pause,
+   `camera.snapshot`, resume, 8 s.
+7. Stops the job, sends Yiko to the dock, restores the work mode and turns the
+   camera off. It returns `{room, job_started, arrived, camera_ready, files}`.
+
+Measured 2026-11-13: about 70 s from the start to inside the corridor, and
+2 min 20 s for a whole run with 6 photos.
+
+Raw commands (`vacuum.send_command`, command `clean_V2`). HA's own `spot_area`
+does not work on firmware 1.134.0: the robot answers `20011 unknown type` to
+the `spotArea` clean type.
+
+| Action | `params` |
+|---|---|
+| Clean one room | `{"act":"start","content":{"type":"freeClean","value":"1,<room id>"}}` |
+| Pause | `{"act":"pause","content":{"type":""}}` |
+| Resume | `{"act":"resume"}` |
+| Stop | `{"act":"stop","content":{"type":""}}`, then `vacuum.return_to_base` |
+
+- Room ids are in the `rooms` attribute of `vacuum.yiko` (corridor 1, balcony 3,
+  kitchen 4, bedroom1 6, kids_room 7). The dock is in the living room.
+- In an HA template, render `params` as one dict
+  (`{{ {'act': 'start', 'content': {...}} }}`). A template that renders the
+  bare text `1,1` becomes a list, and the robot answers `20011 format error`.
+- During a `freeClean` job HA can show `docked` or `idle`. The raw command
+  `getWorkState` gives the real state (`robotState.state`, `paused`). HA shows
+  raw replies only with `logger.set_level` `deebot_client: debug`, in
+  `docker logs homeassistant`.
+- `getPos` always answers `invalid: 1`, and the `mapPoint` go-to command answers
+  `ok` but the robot does not move.
+- Photos taken while the robot moves are blurred and show its laser lines.
+  Photos taken while it is paused are sharp.
+- A start sent while the robot docks and empties its bin did nothing. Wait about
+  30 s after it docks.
+- The camera failed with `20303` while the robot was idle on the dock. The
+  stream started once the robot was out cleaning.
+
+### Drive Yiko by hand
+
+`homelab ha yiko drive forward|backward <cm>`, `turn left|right [deg]`, `stop`
+and `look` (v0.41). They send the raw command the Ecovacs app's joystick sends,
+found by decompiling the app (com.eco.global.app 3.17, class
+`common_video_manager...data.Move`): `move` with
+`{"act": "forward"|"backward", "a": 0}` or `{"act": "spinLeft"|"spinRight",
+"a": 90}`, re-sent every 3 s while the button is held, then `{"act": "stop"}`.
+
+Measured 2026-11-14:
+
+| Fact | Value |
+|---|---|
+| Forward speed | about 20 cm/s (2 s moved 40 cm, 4 s moved 80 cm on the map) |
+| Turn speed | 40-57 deg/s across runs; the CLI uses 50, so a turn lands within about 25 deg |
+| `a` | not an angle: a=10, 30 and 90 turned alike; a over 90 is ignored |
+| `turnLeft`/`turnRight` (with `a`) | accepted, but each is a U-turn of about 180 deg |
+| `turnAround` | accepted, but did not change the heading |
+| A new spin 0.4 s after `stop` | ignored, so long moves run as chunks 1.5 s apart |
+| Re-sending a spin while it turns | cut a 180 deg turn to about 100 deg |
+| Obstacles | the robot stops by itself |
+
+- Position: `image.yiko_map`'s SVG holds the robot (`<use href="#d">`) and the
+  dock (`<use href="#c">`); 1 unit is 5 cm. Use robot minus dock, because the
+  image is re-cropped. `getPos` always answers `invalid: 1`.
+- Camera: one session lasts 10 min (HA's auto-off; 5 until 2026-11-14). For 3-5 min after a session
+  ends, and while the robot is idle on the dock, Ecovacs answers `start_watch`
+  with `20303`. A `stop` or a small turn did not wake it. `look` restarts the
+  camera once if a snapshot fails.
+
+### Guardrails: protect the robot and the Ecovacs account
+
+Viktor asked on 2026-11-14 that driving must not break the robot or get the
+account banned. Ecovacs publishes no rate limits, so the rule is to stay near
+what one person with the app sends.
+
+| Risk | Guard |
+|---|---|
+| Stranded with a flat battery | `drive`, `turn`, `clean`, `photo` refuse under 20% |
+| Driving a stuck robot | they refuse while `sensor.yiko_error` is not 0 |
+| Fighting the photo script | `drive`, `turn`, `clean` refuse while `script.yiko_photo` runs |
+| Left off the dock | `script.yiko_auto_dock` (mode restart): armed before every manual move, it calls `vacuum.return_to_base` 15 min after the last one, unless `sensor.yiko_area_cleaned` changed in that time (a clean). No arm, no move |
+| Command flood | 120 move commands an hour per user (app joystick: about 20 a minute) |
+| Login churn | 10 camera starts an hour per user; each start is one bridge login. Sessions last 10 min, so fewer starts are needed |
+| Unknown commands | the CLI sends only commands the app sends. Do not probe raw commands |
+
+Account health on 2026-11-14, after a night of probing (about 300 raw
+commands, many rejected, and 17 bridge logins in 48 h): HA's Ecovacs entry
+`loaded`, no auth or rate errors in HA or the bridge, and no Ecovacs email to
+the account in 3 days. To check again: the HA config entry state, `homelab
+logs query '{namespace="ecovacs-video-proxy"} |~ "verification|429|limit"'`,
+and Gmail `from:ecovacs`.
+
+Spinning on the dock can lift the robot off its charging contacts; drive
+forward 30 cm first. `homelab ha yiko dock` puts it back.
 
 ### HA London: Ecovacs integration says "Device verification required"
 

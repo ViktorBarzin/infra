@@ -20,7 +20,7 @@ variable "mysql_host" { type = string }
 variable "nextcloud_image_tag" {
   type = string
   # renovate: datasource=docker depName=docker.io/library/nextcloud
-  default = "35.0.2"
+  default = "35.0.3"
 }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -174,7 +174,7 @@ resource "helm_release" "nextcloud" {
   # a newer schema. A failed release stays on the new image to fix forward.
   atomic          = false
   cleanup_on_fail = false
-  version         = "9.4.1"
+  version         = "9.4.3"
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
   timeout    = 6000

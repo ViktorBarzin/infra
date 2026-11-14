@@ -92,9 +92,8 @@ If the scoped Vault token expired or drift protection rejected it, rerun the roo
 provisioner with an admin Vault token after confirming the matching policy exists:
 
 ```bash
-export VAULT_ADDR=https://vault.viktorbarzin.me
-export VAULT_TOKEN="$(cat /home/wizard/.vault-token)"
-sudo --preserve-env=VAULT_ADDR,VAULT_TOKEN /usr/local/bin/t3-provision-users
+# reads the admin's ~/.vault-token as root; a token on the sudo line is logged
+sudo VAULT_ADDR=https://vault.viktorbarzin.me bash -c 'VAULT_TOKEN="$(cat "/home/$SUDO_USER/.vault-token")" exec /usr/local/bin/t3-provision-users'
 ```
 
 Never copy another user's `.credentials.json` or scoped Vault token. Never restore
@@ -160,7 +159,7 @@ forbidden shared token, and it never crosses OS users.
    the file already carries the token.
 
    **Interactive shells** load the token too, via `/etc/profile.d/25-claude-oauth-token.sh`
-   (installed by `setup-devvm.sh`). Note: Debian's `/etc/zsh/zprofile` does **not**
+   (installed by `playbooks/devvm.yml` since 2026-11-11, `setup-devvm.sh` before). Note: Debian's `/etc/zsh/zprofile` does **not**
    source `/etc/profile`, so that snippet is also sourced from `/etc/zsh/zshenv`
    (read on every zsh invocation) — otherwise a plain interactive `claude` in a zsh
    terminal would miss the token and print `Not logged in · Please run /login` even

@@ -64,6 +64,8 @@ reported as `protected` in the sync's output instead.
    ```bash
    # legacy secret-bearing group, if they were ever in it
    sudo gpasswd -d <os_user> code-shared
+   # the shared ChatGPT login in /opt/codex-shared (admins and power users)
+   sudo gpasswd -d <os_user> codex-shared
    # drop write access to the infra repo
    curl -X DELETE -H "Authorization: token <admin_pat>" \
      https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/collaborators/<forgejo_login>

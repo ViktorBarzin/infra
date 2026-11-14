@@ -11,11 +11,16 @@
 #
 # DRY_RUN=1 prints actions without mutating. WORKSTATION_DIR overrides the roster/engine location.
 set -euo pipefail
+# The admin Vault token, if any, is taken out of the environment at the top
+# (take_admin_vault_token, below the helpers).
 
 WORKSTATION_DIR="${WORKSTATION_DIR:-/home/wizard/code/infra/scripts/workstation}"
 ENGINE="$WORKSTATION_DIR/roster_engine.py"
 ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
+# The shared ChatGPT login for codex (stage_shared_auth; the wrapper, group and
+# directory are in playbooks/devvm.yml).
+CODEX_SHARED_DIR="${CODEX_SHARED_DIR:-/opt/codex-shared}"
 MAP=/etc/ttyd-user-map
 # The browser-bridge server, for the per-user CLI token in 5d-quater. The
 # public host rather than the in-cluster Service: the devvm is outside the
@@ -45,6 +50,14 @@ INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
 FORGEJO_BASE="${FORGEJO_BASE:-https://forgejo.viktorbarzin.me}"
 FORGEJO_INFRA_REMOTE="${FORGEJO_INFRA_REMOTE:-$FORGEJO_BASE/viktor/infra.git}"
 REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-$FORGEJO_BASE/viktor}"
+# Forgejo's SSH host key, pinned (install_forgejo_known_hosts): a new box had
+# none, so the first `git` over SSH asked to trust git.viktorbarzin.me (drill
+# 5). The same RSA key every user here already trusts, checked against an
+# ssh-keyscan on 2026-11-11. Forgejo has no other host key type.
+FORGEJO_SSH_HOST_KEY="git.viktorbarzin.me ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCvYoLmdqeB/92oO1fpVtfGuV0XHr6DHMR/tM5Pl0vzK1rh3TXgEpS0zadC060V87eBZVFbH2FZ1Rgg/Ibsp7yTDfZYXF7H6aA+/DcMdrv6z8RQ7IfZ1Nl2jyqwVDTMJ+hihXQ0DLe0TrrNm+5f138LVuKLZMYGU/0a+OgZscPwP7KBbE5FpWOYSp1j+3ne+SdM7hWycbmMO5cFPQzBLGTD8QwM27ZbN/9iIUy3ikGh4CXW/BK7CatkxtZu7Q+duWJIafbB/IZfs8WoIhvNPu1dU5OhYEQYY7t1C8C6PShWSO2jZZmstzYT6aCwpV+E8sq2rb6yuUwvU0Jyy1DmBaAuQJXO6HrtH4bkfKqv9u1TSPPfPMsSa8gP5CUPXeNukYbp73YMbdtSxwRv3sPuLLy1qyCgpxOtheoIcUFqjejc+DFBwrGwAVszSwfVsAbGObLjkB299+VnWQAvABiIAQGNUBx8Els/hPpCxXTQsl85c268A6c6qu8Lryto8fPLsgx0011XuvAQ0KjjBjB35gY9bLW2RgOO5oS//g6KSMzW3JI7qIu42FEvMt0wQpU3wj8Kha/qa3IxHHu+FSumJ/tehjUlYS/uYOMJKi/Bk5j4Uw/KuvP4oRWb6wom5IMO3PvMqtXoYkyfGSh86YBPgMNpva4vLRhUa+dyimudWgOBHQ=="
+# The live devvm's address. A drill VM has another, and must not act for the
+# live box on shared devices (is_live_devvm).
+LIVE_DEVVM_ADDR="${LIVE_DEVVM_ADDR:-10.0.10.10}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
@@ -58,9 +71,28 @@ ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 # terminal-lobby's extension for pi, which the terminal-lobby package installs.
 # Step 5d-quinquies links it into every roster user's ~/.pi/agent/extensions.
 PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
+# chezmoi release install_user_dotfiles installs when a user with `dotfiles`
+# has none; the one the live devvm runs.
+CHEZMOI_VERSION="${CHEZMOI_VERSION:-v2.69.3}"
 
 log() { echo "[t3-provision] $*"; }
+# A rebuild runs this script with an admin VAULT_TOKEN
+# (docs/runbooks/devvm-credentials.md). runuser hands the caller's environment
+# to the user's command, and a user can read the environment of any process
+# running as them, so the token must not stay in this script's environment:
+# every `runuser -u <user>` below would carry it into code that user controls
+# (their ~/.profile, git config, claude). take_admin_vault_token moves it into
+# a variable that is never exported, before anything runs as a user, and
+# vault_admin hands it to the vault CLI alone, which runs as root.
+take_admin_vault_token() {
+  ADMIN_VAULT_TOKEN="${VAULT_TOKEN:-}"
+  unset VAULT_TOKEN
+}
+vault_admin() {
+  VAULT_TOKEN="$ADMIN_VAULT_TOKEN" vault "$@"
+}
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
+take_admin_vault_token
 
 # ---- writing inside a user's home -------------------------------------------
 # Root never creates, writes, chowns or chmods a path inside a user's home. The
@@ -239,7 +271,7 @@ sync_managed_config() {
 # ever installed by a manual setup-devvm.sh run, so a committed edit could sit
 # undeployed. bash -n gates a broken script; cmp avoids needless churn.
 sync_tmux_persist() {
-  local src="$WORKSTATION_DIR/../tmux-persist.sh" dst=/usr/local/bin/tmux-persist
+  local src="${TMUX_PERSIST_SRC:-$WORKSTATION_DIR/../tmux-persist.sh}" dst=/usr/local/bin/tmux-persist
   [[ -r "$src" ]] || return 0
   bash -n "$src" 2>/dev/null || { log "WARN: $src has a syntax error — tmux-persist sync skipped"; return 0; }
   cmp -s "$src" "$dst" 2>/dev/null && return 0
@@ -493,11 +525,18 @@ install_claude_auth_sync() {
   if [[ ! -s "$token_file" ]]; then
     if [[ "$DRY_RUN" == 1 ]]; then
       echo "[dry-run] mint scoped Claude-auth Vault token -> $user"
-    elif vault token lookup >/dev/null 2>&1 && \
-      token="$(vault token create -orphan -period=768h -policy="$policy" \
+    elif vault_admin token lookup >/dev/null 2>&1 && \
+      token="$(vault_admin token create -orphan -period=768h -policy="$policy" \
         -display-name="devvm-claude-auth-$user" -field=token 2>/dev/null)"; then
       if mkdir_as "$user" 0700 "$cfg" && write_as "$user" 0600 "$token_file" <<<"$token"; then
         log "minted isolated Claude-auth Vault token -> $user"
+        # Sync once now. On a rebuilt box the timer's first run fired during
+        # the build, before this token existed, and the next is ~6 h away, so
+        # Claude stayed "Not logged in" after the admin run (round-3 drill,
+        # 2026-11-12). Only on a fresh mint: the hourly run, which finds the
+        # token already there, never starts it. --no-block so a slow Vault
+        # does not hold up the rest of provisioning.
+        run systemctl start --no-block "claude-auth-sync@$user.service" >/dev/null 2>&1 || true
       else
         log "WARN: minted a Claude-auth Vault token for $user but could not write $token_file"
       fi
@@ -508,6 +547,293 @@ install_claude_auth_sync() {
   run systemctl enable --now "claude-auth-sync@$user.timer" >/dev/null 2>&1 || true
 }
 
+# ---- a rebuilt box gets each user's own state back (2026-11-11) --------------
+# docs/plans/2026-11-11-disposable-devvm.md: the devvm is rebuilt from code, and
+# what a user made by hand comes back from a kept place. These three steps are
+# that half for credentials, the Vault renewer and dotfiles. Each writes only
+# what is absent, so on the live box they are no-ops.
+
+# The user's hand-made credential files (SSH and GPG keys, Git PATs, gh, gcloud,
+# docker, the admin kubeconfig) from Vault, secret/workstation/<user>/files,
+# via workstation-creds. Reading those needs an admin Vault token, which the
+# hourly run does not have, so this restores only when the provisioner is run
+# with one: on a rebuild, read from the admin's ~/.vault-token inside sudo and
+# never passed on the sudo line, which sudo logs
+# (docs/runbooks/devvm-credentials.md). A file already there is never replaced.
+restore_user_credentials() {  # restore_user_credentials USER
+  local user="$1"
+  [[ -s "$CREDS_SRC" ]] || { log "WARN: $CREDS_SRC missing -> credential restore skipped for $user"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] restore Vault-held credential files -> $user"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault_admin token lookup >/dev/null 2>&1; then
+    [[ -n "${CREDS_NO_VAULT_LOGGED:-}" ]] || log "credential restore skipped: no admin Vault token (expected on the hourly run)"
+    CREDS_NO_VAULT_LOGGED=1
+    return 0
+  fi
+  local out
+  if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" bash "$CREDS_SRC" restore "$user" 2>&1)"; then
+    log "$(tail -n 1 <<<"$out")"
+  else
+    log "WARN: credential restore failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+
+# vault-token-renew for every user it has a token scope for (vtr_resolve_config
+# in the script itself decides that, so the two cannot disagree): the script in
+# ~/.local/bin, its user units, linger so the timer fires logged out, and a
+# first periodic token when ~/.vault-token is absent and this run holds admin
+# Vault access. Installed by hand before 2026-11-11
+# (docs/runbooks/vault-token-renew-devvm.md).
+install_vault_token_renew() {  # install_vault_token_renew USER
+  local user="$1" home uid policies flags=() p token changed=0 f
+  [[ -s "$VTR_SRC" && -s "$VTR_SERVICE" && -s "$VTR_TIMER" ]] || return 0
+  if ! policies="$(bash -c 'source "$1"; vtr_resolve_config "$2" && echo "${VTR_MINT_POLICIES[*]}"' _ "$VTR_SRC" "$user" 2>/dev/null)"; then
+    log "vault-token-renew: no token scope for $user in vault-token-renew.sh -> skipped"
+    return 0
+  fi
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  [[ -n "$home" && -d "$home" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] vault-token-renew script + units + timer -> $user"; return 0; fi
+  for f in "$home/.local/bin" "$home/.config/systemd/user"; do
+    [[ -d "$f" ]] || mkdir_as "$user" 0755 "$f" || { log "WARN: could not create $f"; return 0; }
+  done
+  if ! cmp -s "$VTR_SRC" "$home/.local/bin/vault-token-renew"; then
+    write_as "$user" 0755 "$home/.local/bin/vault-token-renew" < "$VTR_SRC" && changed=1
+  fi
+  for f in service timer; do
+    p="VTR_${f^^}"
+    if ! cmp -s "${!p}" "$home/.config/systemd/user/vault-token-renew.$f"; then
+      write_as "$user" 0644 "$home/.config/systemd/user/vault-token-renew.$f" < "${!p}" && changed=1
+    fi
+  done
+  [[ "$(loginctl show-user "$user" -p Linger 2>/dev/null)" == "Linger=yes" ]] || loginctl enable-linger "$user" >/dev/null 2>&1 || true
+  local sysu=(runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user)
+  if (( changed )) || ! "${sysu[@]}" is-enabled --quiet vault-token-renew.timer 2>/dev/null; then
+    "${sysu[@]}" daemon-reload >/dev/null 2>&1 || true
+    "${sysu[@]}" enable --now vault-token-renew.timer >/dev/null 2>&1 \
+      || log "WARN: could not enable vault-token-renew.timer for $user (user manager not up?)"
+    log "installed vault-token-renew -> $user"
+  fi
+  [[ -s "$home/.vault-token" ]] && return 0
+  for p in $policies; do flags+=("-policy=$p"); done
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if vault_admin token lookup >/dev/null 2>&1 && \
+     token="$(vault_admin token create -orphan -period=768h "${flags[@]}" -display-name="devvm-$user" -field=token 2>/dev/null)" && \
+     [[ -n "$token" ]] && write_as "$user" 0600 "$home/.vault-token" <<<"$token"; then
+    log "minted periodic Vault token -> $user:~/.vault-token"
+  else
+    log "WARN: no ~/.vault-token for $user (run the provisioner with an admin VAULT_TOKEN to mint one)"
+  fi
+}
+
+# The user's dotfiles: `chezmoi init` from the roster row's `dotfiles`
+# Forgejo repo (wizard: viktor/dot_files, emo: ebarzin/dotfiles), then an
+# apply, ONCE per box: an existing ~/.local/share/chezmoi is the user's live
+# source and is never touched, since a whole-tree apply over a home that
+# drifted from the repo would overwrite work. --exclude=encrypted skips the
+# GPG-encrypted entries, which need a passphrase; on the devvm the files they
+# hold (the admin kubeconfig among them) come from Vault through
+# restore_user_credentials, which runs first.
+#
+# The regular files under ~/.claude and ~/.codex are never written from here:
+# the session store restores them (step 4a), and its copy is the newer one. A
+# chezmoi copy written first would be kept by the restore (tar
+# --skip-old-files) and then sent back to the store by the ingest as the
+# newest, which is how drill 5 got wizard's stale plugin lists. So the apply
+# runs in two parts (dotfiles_apply): every other top-level entry whole, and
+# those two directories with files excluded, so their links (CLAUDE.md,
+# AGENTS.md, skills) and directories still come from the dotfiles.
+# chezmoi itself is installed into ~/.local/bin, pinned, when absent.
+install_user_dotfiles() {  # install_user_dotfiles USER REPO|-
+  local user="$1" repo="$2" home uid bin src
+  [[ -n "$repo" && "$repo" != "-" ]] || return 0
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  src="$home/.local/share/chezmoi"
+  # A first init that failed (Forgejo or the network down) leaves an empty
+  # source directory behind. rmdir removes only an empty one, so that case is
+  # retried and a real source, which always has files, is left alone.
+  if [[ -e "$src" || -L "$src" ]]; then
+    [[ "$DRY_RUN" != 1 && ! -L "$src" ]] && runuser -u "$user" -- rmdir "$src" 2>/dev/null || return 0
+    log "retrying dotfiles for $user: ~/.local/share/chezmoi was left empty"
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] chezmoi init --apply $repo -> $user"; return 0; fi
+  bin="$home/.local/bin/chezmoi"
+  if [[ ! -x "$bin" ]]; then
+    runuser -u "$user" -- sh -c 'cd "$1" && curl -fsSL https://get.chezmoi.io | sh -s -- -b "$1/.local/bin" -t "$2"' \
+      _ "$home" "$CHEZMOI_VERSION" >/dev/null 2>&1 || { log "WARN: could not install chezmoi for $user"; return 0; }
+  fi
+  # </dev/null throughout: this runs inside step 4's read loop, and a chezmoi
+  # prompt reading stdin would eat the remaining users.
+  if ! runuser -u "$user" -- env HOME="$home" "$bin" init --no-tty "$(repo_url "$repo")" </dev/null >/dev/null 2>&1; then
+    log "WARN: chezmoi init --apply $repo for $user finished with errors (some entries may be missing)"
+    runuser -u "$user" -- rmdir "$src" 2>/dev/null || true   # nothing cloned: let the next run retry
+  elif dotfiles_apply "$user" "$home" "$bin"; then
+    log "applied dotfiles $repo -> $user"
+  else
+    log "WARN: chezmoi apply of $repo for $user finished with errors (some entries may be missing)"
+  fi
+  uid="$(id -u "$user" 2>/dev/null)" && \
+    runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
+# dotfiles_apply USER HOME BIN: apply the user's initialised chezmoi source in
+# two parts, so the session store's files under ~/.claude and ~/.codex are never
+# overwritten (install_user_dotfiles says why). Returns 1 when either part
+# reported an error; --keep-going applies the rest regardless.
+dotfiles_apply() {
+  local user="$1" home="$2" bin="$3" t rc=0 rest=() agent=()
+  local cz=(runuser -u "$user" -- env HOME="$home" "$bin")
+  while IFS= read -r t; do
+    case "$t" in
+      ""|*/*) ;;
+      .claude|.codex) agent+=("$home/$t") ;;
+      *) rest+=("$home/$t") ;;
+    esac
+  done < <("${cz[@]}" managed --path-style=relative </dev/null 2>/dev/null | sort -u)
+  if (( ${#rest[@]} )); then
+    "${cz[@]}" apply --force --no-tty --keep-going --exclude=encrypted "${rest[@]}" </dev/null >/dev/null 2>&1 || rc=1
+  fi
+  if (( ${#agent[@]} )); then
+    "${cz[@]}" apply --force --no-tty --keep-going --exclude=encrypted,files "${agent[@]}" </dev/null >/dev/null 2>&1 || rc=1
+  fi
+  return "$rc"
+}
+
+# The admin's own infra checkout at ~/code/infra. Non-admins get a locked clone
+# from install_locked_clone; the admin's was made by hand, so on a new box there
+# was none, and both the hourly run (whose WORKSTATION_DIR is that checkout) and
+# the rebuild command in docs/runbooks/devvm-credentials.md stopped at "roster/
+# engine not under ...". The bootstrap's own run, from its clone in /opt, makes
+# it. Cloned over HTTPS from Forgejo, where infra is public, as the admin; it
+# stays git-crypt locked until a run with an admin token unlocks it
+# (unlock_admin_infra_clone, below). An existing ~/code/infra, or a ~/code that
+# is itself the clone, is never touched.
+install_admin_infra_clone() {  # install_admin_infra_clone USER
+  local user="$1" home dst
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  dst="$home/code/infra"
+  [[ -e "$dst" || -L "$dst" || -e "$home/code/.git" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] clone infra -> $user:~/code/infra"; return 0; fi
+  if [[ ! -d "$home/code" ]]; then
+    mkdir_as "$user" 2770 "$home/code" || { log "WARN: could not create $user:~/code"; return 0; }
+    runuser -u "$user" -- chgrp code-shared "$home/code" 2>/dev/null || true
+  fi
+  log "clone infra -> $user:~/code/infra (locked; a run with an admin Vault token unlocks it)"
+  if runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$FORGEJO_INFRA_REMOTE" "$dst" 2>/dev/null; then
+    runuser -u "$user" -- git -C "$dst" remote add forgejo "$FORGEJO_INFRA_REMOTE" 2>/dev/null || true
+  else
+    log "WARN: clone of infra failed for $user (offline?); the next run retries"
+  fi
+}
+
+# The admin's ~/code/infra comes from install_admin_infra_clone git-crypt
+# locked, and until round 3 of the disposable-devvm plan the admin unlocked it
+# by hand on every rebuild. On a run whose admin Vault token reads secret/infra,
+# this does it: the key (git_crypt_key_b64) goes through pipes into a 0600 file
+# in a 0700 directory the admin owns, git-crypt unlocks the clone as the admin,
+# and the directory is removed. The key is never on a command line, in an
+# environment or in a log line. A clone that already holds its key
+# (.git/git-crypt/keys/default) is not touched, so the live box's clone is left
+# alone and nothing is ever locked again. Only on the live box's address: drills
+# keep the key off throwaway disks, unless root opted the drill in with
+# `touch $STATEDIR/drill-unlock-infra` (docs/runbooks/devvm-drill.md).
+# The filters then get --key-file, as wizard's live clone has had since
+# 2026-11-09: git-crypt 0.7.0 looks for its key under a linked worktree's own
+# gitdir, so without it a plain `git worktree add` (T3 worktree threads) fails
+# in the smudge filter.
+unlock_admin_infra_clone() {  # unlock_admin_infra_clone USER
+  local user="$1" home dst kf d b64 out
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  dst="$home/code/infra"
+  [[ -d "$dst/.git" && ! -L "$dst" ]] || return 0
+  kf="$dst/.git/git-crypt/keys/default"
+  [[ -e "$kf" || -L "$kf" ]] && return 0
+  if ! is_live_devvm && [[ ! -e "$STATEDIR/drill-unlock-infra" ]]; then
+    log "not the live devvm: $user:~/code/infra stays locked (a drill opts in with: touch $STATEDIR/drill-unlock-infra)"
+    return 0
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] git-crypt unlock $user:~/code/infra with secret/infra git_crypt_key_b64"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault_admin token lookup >/dev/null 2>&1; then
+    log "infra unlock skipped: no admin Vault token (expected on the hourly run)"
+    return 0
+  fi
+  command -v git-crypt >/dev/null || { log "WARN: git-crypt is not installed -> $user:~/code/infra stays locked"; return 0; }
+  if ! b64="$(vault_admin kv get -field=git_crypt_key_b64 secret/infra 2>/dev/null)" || [[ -z "$b64" ]]; then
+    log "infra unlock skipped: this Vault token cannot read secret/infra git_crypt_key_b64 (the bootstrap's cannot; the admin run unlocks)"
+    return 0
+  fi
+  if ! d="$(runuser -u "$user" -- mktemp -d "${INFRA_UNLOCK_TMP:-/tmp}/infra-unlock.XXXXXX")"; then
+    unset b64; log "WARN: no key directory for $user -> ~/code/infra stays locked"; return 0
+  fi
+  if ! printf '%s' "$b64" | base64 -d 2>/dev/null | write_as "$user" 0600 "$d/key"; then
+    log "WARN: could not write the git-crypt key for $user -> ~/code/infra stays locked"
+  elif ! out="$(runuser -u "$user" -- env HOME="$home" sh -c 'cd "$1" && git-crypt unlock "$2"' _ "$dst" "$d/key" </dev/null 2>&1)"; then
+    log "WARN: git-crypt unlock of $user:~/code/infra failed: $(head -n 1 <<<"$out")"
+  else
+    runuser -u "$user" -- env HOME="$home" git -C "$dst" config filter.git-crypt.smudge "\"git-crypt\" smudge --key-file $kf" &&
+      runuser -u "$user" -- env HOME="$home" git -C "$dst" config filter.git-crypt.clean "\"git-crypt\" clean --key-file $kf" &&
+      runuser -u "$user" -- env HOME="$home" git -C "$dst" config diff.git-crypt.textconv "\"git-crypt\" diff --key-file $kf" ||
+      log "WARN: could not add --key-file to $user:~/code/infra's git-crypt filters (worktrees will not decrypt)"
+    log "unlocked $user:~/code/infra with secret/infra git_crypt_key_b64"
+  fi
+  unset b64
+  runuser -u "$user" -- rm -rf "$d"
+  return 0
+}
+
+# Shared logins that live outside any home (setup-devvm.sh section 8, which a
+# rebuilt box never ran): the one ChatGPT login every codex user shares, at
+# /opt/codex-shared/auth.json (codex-auth-backup keeps secret/workstation
+# codex_shared_auth_json current), and each person's chrome hub config,
+# /etc/t3-serve/chrome-hub-<user>.json, which install_chrome_hub copies into
+# their home. Only with an admin Vault token, and only what is missing: the
+# live Codex file is newer than Vault between two backups.
+stage_shared_auth() {
+  local need=0 u auth t out   # need: 2 = the Codex login, 1 = a hub config
+  [[ -s "$CODEX_SHARED_DIR/auth.json" ]] || need=2
+  if [[ -s "$HUBS_MAP" ]]; then
+    for u in $(jq -r 'keys[]' "$HUBS_MAP" 2>/dev/null); do
+      [[ -s "$ENVDIR/chrome-hub-$u.json" ]] || { need=$((need | 1)); break; }
+    done
+  fi
+  (( need )) || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] stage the shared Codex login and chrome hub configs from Vault"; return 0; fi
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  if ! vault_admin token lookup >/dev/null 2>&1; then
+    log "shared login staging skipped: no admin Vault token (expected on the hourly run)"
+    return 0
+  fi
+  if (( need & 2 )); then
+    if auth="$(vault_admin kv get -field=codex_shared_auth_json secret/workstation 2>/dev/null)" && [[ -n "$auth" ]]; then
+      getent group codex-shared >/dev/null 2>&1 || groupadd codex-shared
+      install -d -m 2770 "$CODEX_SHARED_DIR" && chgrp codex-shared "$CODEX_SHARED_DIR" && chmod 2770 "$CODEX_SHARED_DIR"
+      # Group members can write in this directory, so the temp file is made
+      # with mktemp (exclusive create) rather than a name they could plant.
+      if t="$(mktemp "$CODEX_SHARED_DIR/.auth.json.XXXXXX")" && printf '%s\n' "$auth" > "$t" &&
+         chgrp codex-shared "$t" && chmod 0660 "$t" && mv -f "$t" "$CODEX_SHARED_DIR/auth.json"; then
+        log "staged the shared Codex login -> $CODEX_SHARED_DIR/auth.json"
+      else
+        rm -f "$t"; log "WARN: could not write $CODEX_SHARED_DIR/auth.json"
+      fi
+    else
+      log "WARN: secret/workstation codex_shared_auth_json unreadable -> shared Codex login not staged"
+    fi
+  fi
+  if (( need & 1 )) && [[ -s "$HUBS_SRC" ]]; then
+    if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" CHROME_HUBS_MAP="$HUBS_MAP" CHROME_HUBS_OUT="$ENVDIR" bash "$HUBS_SRC" 2>&1)"; then
+      log "chrome hub configs: $(grep -c 'staged' <<<"$out") staged"
+    else
+      log "WARN: chrome hub staging failed: $(tail -n 1 <<<"$out")"
+    fi
+  fi
+  return 0
+}
+
 # Re-deploy the managed per-user Claude launcher to ~/start-claude.sh. /etc/skel only
 # seeds it at account creation (setup-devvm.sh), so without this a launcher edit never
 # reaches EXISTING users — they keep running a stale copy. Copy-if-changed from the repo's
@@ -515,7 +841,7 @@ install_claude_auth_sync() {
 # appends a managed persistence section to each user's ~/.tmux.conf that a re-copy would clobber.)
 deploy_user_launcher() {
   local user="$1" home src dst
-  src="$WORKSTATION_DIR/skel/start-claude.sh"
+  src="${LAUNCHER_SRC:-$WORKSTATION_DIR/skel/start-claude.sh}"
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" && -f "$src" ]] || return 0
   dst="$home/start-claude.sh"
@@ -858,12 +1184,12 @@ install_browser_bridge_token() {
 
   local token=""
   # 1) A token this box (or its predecessor) already minted for this user.
-  token="$(vault kv get -field="$user" secret/browser-bridge/tokens 2>/dev/null || true)"
+  token="$(vault_admin kv get -field="$user" secret/browser-bridge/tokens 2>/dev/null || true)"
 
   # 2) Otherwise mint one, and keep the copy.
   if [[ -z "$token" ]]; then
     local provision_token
-    provision_token="$(vault kv get -field=provision_token secret/browser-bridge 2>/dev/null || true)"
+    provision_token="$(vault_admin kv get -field=provision_token secret/browser-bridge 2>/dev/null || true)"
     [[ -n "$provision_token" ]] || {
       log "WARN: secret/browser-bridge has no provision_token -> no browser-bridge token for $user"; return 0; }
 
@@ -879,8 +1205,8 @@ install_browser_bridge_token() {
       return 0; }
 
     # patch, never put: the path is one secret holding every user's token.
-    vault kv patch "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
-      || vault kv put "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+    vault_admin kv patch "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+      || vault_admin kv put "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
       || log "WARN: minted a browser-bridge token for $user but could not store it in Vault"
   fi
 
@@ -894,11 +1220,60 @@ install_browser_bridge_token() {
   return 0  # best-effort tail must never return non-zero under set -euo pipefail
 }
 
+# The agent-tool keys a user's ~/.claude/settings.json carries in env:
+# MEMORY_API_KEY and CLAUDE_MEMORY_API_KEY for homelab memory, PAGES_API_KEY
+# for page publishing. Each is that user's entry in the map its service checks,
+# secret/claude-memory api_keys and secret/pages-publish api_keys, so a rebuilt
+# box takes them from there: nothing else brings them back, since chezmoi
+# leaves settings.json alone on the devvm and the session store does not keep
+# env values. Fills only keys that are absent, never replacing one, and only
+# when this run holds an admin Vault token. The values reach the user's python
+# on stdin, never in argv or the log.
+install_agent_api_keys() {  # install_agent_api_keys USER
+  local user="$1" home settings mem pages want added
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home/.claude" ]] || return 0
+  settings="$home/.claude/settings.json"
+  if [[ -f "$settings" ]] && jq -e '.env // {} | has("MEMORY_API_KEY") and has("CLAUDE_MEMORY_API_KEY") and has("PAGES_API_KEY")' \
+       "$settings" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] agent API keys from Vault -> $user"; return 0; fi
+  vault_admin token lookup >/dev/null 2>&1 || return 0
+  mem="$(vault_admin kv get -field=api_keys secret/claude-memory 2>/dev/null | jq -r --arg u "$user" '.[$u] // empty' 2>/dev/null)" || mem=""
+  pages="$(vault_admin kv get -field=api_keys secret/pages-publish 2>/dev/null | jq -r --arg u "$user" '.[$u] // empty' 2>/dev/null)" || pages=""
+  want="$(jq -cn --arg m "$mem" --arg p "$pages" --arg url https://claude-memory.viktorbarzin.me \
+    '(if $m != "" then {MEMORY_API_KEY: $m, CLAUDE_MEMORY_API_KEY: $m, MEMORY_API_URL: $url, CLAUDE_MEMORY_API_URL: $url} else {} end)
+     + (if $p != "" then {PAGES_API_KEY: $p} else {} end)')"
+  [[ "$want" != "{}" ]] || return 0
+  added="$(printf '%s' "$want" | runuser -u "$user" -- sh -c 'umask 077 && exec python3 -c "$1" "$2"' _ '
+import json, os, sys
+path, want = sys.argv[1], json.load(sys.stdin)
+data = {}
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path) as fh:
+        data = json.load(fh)
+env = data.setdefault("env", {})
+added = sorted(k for k in want if k not in env)
+if added:
+    env.update({k: want[k] for k in added})
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+print(" ".join(added))
+' "$settings" 2>/dev/null)" || { log "WARN: could not write the agent API keys for $user"; return 0; }
+  [[ -n "$added" ]] && log "agent API keys from Vault -> $user ($added)"
+  return 0
+}
+
 install_memory() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
-  local src="$WORKSTATION_DIR/claude-hooks" hooks_dst="$home/.claude/hooks" settings="$home/.claude/settings.json"
+  local src="${HOOKS_SRC:-$WORKSTATION_DIR/claude-hooks}" hooks_dst="$home/.claude/hooks" settings="$home/.claude/settings.json"
   [[ -d "$src" ]] || { log "WARN: $src missing -> skip memory setup for $user"; return 0; }
 
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
@@ -924,6 +1299,9 @@ install_memory() {
   fi
   [[ -f "$settings" ]] && runuser -u "$user" -- chmod 600 "$settings" || true
 
+  # (2a) on a rebuilt box, the user's keys come back from Vault (admin token only).
+  install_agent_api_keys "$user"
+
   # (2b) reuse the user's existing key; warn (do NOT mint — needs an admin vault write) if absent.
   if [[ -f "$settings" ]] && ! grep -q 'MEMORY_API_KEY' "$settings"; then
     log "WARN: $user has no MEMORY_API_KEY in settings.json — homelab memory no-ops until an admin mints one"
@@ -943,31 +1321,38 @@ install_memory() {
 # from AGENTS.md on master of that Forgejo repo, the user's own private one.
 #
 # The fetch lands in one bare repository per user under $AGENTS_FETCH_DIR, a
-# directory owned by the admin infra checkout's owner ($clone_owner, wizard) and
-# closed to everyone else. Every git command runs as that owner, like step 0a's
-# fetch, so it authenticates with that owner's Forgejo credential (viktor, a
-# collaborator on each user's repo) and root never runs git in a repository it
-# does not own. Root only writes what `git show` prints, into a 0700 directory.
-# Only committed master is read; no working tree is involved.
+# directory owned by $agents_owner (resolve_agents_owner: the admin infra
+# checkout's owner, wizard) and closed to everyone else. Every git command runs
+# as that owner, like step 0a's fetch, so it authenticates with that owner's
+# Forgejo credential (viktor, a collaborator on each user's repo) and root
+# never runs git in a repository it does not own. Root only writes what `git
+# show` prints, into a 0700 directory. Only committed master is read; no
+# working tree is involved. A fetch repository owned by anyone else is a cache
+# from an earlier run with another owner, and is made again.
 #
 # Fail safe: a failed fetch, or a master with no AGENTS.md, keeps the last good
 # copy, so the user keeps the instructions they already have, and says so in
 # the journal. Best-effort tail: must return 0.
 fetch_user_agents() {
-  local user="$1" repo="$2" mirror dest sha
+  local user="$1" repo="$2" mirror dest sha owner="${agents_owner:-$clone_owner}" had
   mirror="$AGENTS_FETCH_DIR/$user.git"; dest="$AGENTS_SRC_DIR/$user.md"
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fetch agent instructions for $user from $repo master"; return 0; fi
   install -d -m 0700 "$AGENTS_SRC_DIR"   # root only: one user's file is not another's to read
-  install -d -m 0700 -o "$clone_owner" "$AGENTS_FETCH_DIR" || { log "WARN: cannot create $AGENTS_FETCH_DIR -> agent instructions for $user unchanged"; return 0; }
-  if [[ ! -d "$mirror" ]] && ! runuser -u "$clone_owner" -- git init --quiet --bare "$mirror" >/dev/null 2>&1; then
+  install -d -m 0700 -o "$owner" "$AGENTS_FETCH_DIR" || { log "WARN: cannot create $AGENTS_FETCH_DIR -> agent instructions for $user unchanged"; return 0; }
+  # Drill 5: the first-boot run, from root's /opt clone, made this as root,
+  # and every hourly fetch after it, as wizard, failed on FETCH_HEAD.
+  if [[ -d "$mirror" ]] && had="$(stat -c %U "$mirror" 2>/dev/null)" && [[ "$had" != "$owner" ]]; then
+    rm -rf "$mirror" && log "agent instructions fetch for $user was owned by $had, not $owner -> made again"
+  fi
+  if [[ ! -d "$mirror" ]] && ! runuser -u "$owner" -- git init --quiet --bare "$mirror" >/dev/null 2>&1; then
     log "WARN: cannot create $mirror -> agent instructions for $user unchanged"; return 0
   fi
-  if ! runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git --git-dir="$mirror" \
+  if ! runuser -u "$owner" -- env GIT_TERMINAL_PROMPT=0 git --git-dir="$mirror" \
        fetch --quiet --no-tags "$FORGEJO_BASE/$repo.git" +refs/heads/master:refs/heads/master 2>/dev/null; then
     log "WARN: fetch of $repo failed -> agent instructions for $user unchanged"; return 0
   fi
-  sha="$(runuser -u "$clone_owner" -- git --git-dir="$mirror" rev-parse --short master 2>/dev/null)"
-  if runuser -u "$clone_owner" -- git --git-dir="$mirror" show master:AGENTS.md > "$dest.tmp" 2>/dev/null \
+  sha="$(runuser -u "$owner" -- git --git-dir="$mirror" rev-parse --short master 2>/dev/null)"
+  if runuser -u "$owner" -- git --git-dir="$mirror" show master:AGENTS.md > "$dest.tmp" 2>/dev/null \
      && [[ -s "$dest.tmp" ]]; then
     mv -f "$dest.tmp" "$dest"
     log "agent instructions for $user: $repo master ($sha)"
@@ -1270,9 +1655,120 @@ PYEOF
   return 0
 }
 
+# ---- first boot of a rebuilt box (drill 5 gaps, 2026-11-11) ------------------
+
+# check_workstation_inputs: 0 when the roster and engine are there; 1 when the
+# infra checkout they live in does not exist yet; 2 when it exists without
+# them. 1 is a box still being built: the hourly timer fires during the
+# playbook, before the bootstrap's own run has cloned ~/code/infra, and that
+# run used to fail the unit once on every new box (drills 3 and 5).
+check_workstation_inputs() {
+  [[ -d "$WORKSTATION_DIR" ]] || return 1
+  [[ -f "$ROSTER" && -f "$ENGINE" ]] || return 2
+  return 0
+}
+
+# resolve_agents_owner CLONE_OWNER ADMINS: who runs the agent-instruction
+# fetches (fetch_user_agents). The infra checkout's owner, unless that is
+# root: the bootstrap's run reads its roster from a root-owned clone in /opt,
+# and fetches made as root are ones the admin's hourly runs cannot write to.
+# Then the first admin (ADMINS: /etc/ttyd-admins text) with an account, and
+# root only when there is none.
+resolve_agents_owner() {
+  local u
+  if [[ "$1" != root ]]; then echo "$1"; return 0; fi
+  while IFS= read -r u; do
+    [[ -z "$u" || "$u" == \#* ]] && continue
+    if id "$u" >/dev/null 2>&1; then echo "$u"; return 0; fi
+  done <<<"$2"
+  echo root
+}
+
+# install_forgejo_known_hosts USER: FORGEJO_SSH_HOST_KEY in ~/.ssh/known_hosts
+# when no entry for the host is there (hashed or plain), written as the user.
+install_forgejo_known_hosts() {
+  local user="$1" home kh
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  kh="$home/.ssh/known_hosts"
+  runuser -u "$user" -- ssh-keygen -F git.viktorbarzin.me -f "$kh" </dev/null >/dev/null 2>&1 && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] Forgejo SSH host key -> $user:~/.ssh/known_hosts"; return 0; fi
+  if [[ ! -d "$home/.ssh" ]]; then
+    mkdir_as "$user" 0700 "$home/.ssh" || { log "WARN: could not create $user:~/.ssh"; return 0; }
+  fi
+  if runuser -u "$user" -- sh -c 'umask 022; printf "%s\n" "$2" >> "$1"' _ "$kh" "$FORGEJO_SSH_HOST_KEY"; then
+    log "Forgejo SSH host key -> $user:~/.ssh/known_hosts"
+  else
+    log "WARN: could not write $user:~/.ssh/known_hosts"
+  fi
+  return 0
+}
+
+# start_skills_update_once OS_USER...: start claude-skills-update once per box,
+# as soon as every listed user who has an account has had their agent state
+# restored (step 4a brings back ~/.agents/.skill-lock.json, which the updater
+# installs from). Its timer fires at 05:45, so a rebuilt box had no skills
+# until the next morning (drill 5). The marker in $STATEDIR makes it once.
+start_skills_update_once() {
+  local marker="$STATEDIR/skills-update.started" u
+  [[ -e "$marker" ]] && return 0
+  for u in "$@"; do
+    id "$u" >/dev/null 2>&1 || continue
+    [[ -e "$CLAUDE_SESSIONS_RESTORED_DIR/$u" ]] || return 0
+  done
+  systemctl cat claude-skills-update.service >/dev/null 2>&1 || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] start claude-skills-update once"; return 0; fi
+  if systemctl start --no-block claude-skills-update.service >/dev/null 2>&1; then
+    : > "$marker"
+    log "started claude-skills-update once (skills without waiting for its 05:45 timer)"
+  else
+    log "WARN: could not start claude-skills-update.service"
+  fi
+  return 0
+}
+
+# is_live_devvm: this box holds the live devvm's address. Same test as the
+# session-store ingest's ExecCondition.
+is_live_devvm() {
+  ip -4 -o addr show scope global 2>/dev/null | grep -qF " ${LIVE_DEVVM_ADDR:-10.0.10.10}/"
+}
+
+# install_ios_rig_units USER TIER: the iOS test rig's user units
+# (docs/runbooks/ios-test-rig.md), which only `homelab ios bootstrap
+# --units-only` writes, so a rebuilt box lacked them (drill 5). Run as the
+# user, with an empty environment and their own ~/.vault-token, for an admin
+# whose Vault token reads secret/ios-rig (the rig is configured), when the
+# units are absent, and only on the live box's address: a drill must not hold
+# a second tunnel to the Mac or talk to the phone beside the live box.
+install_ios_rig_units() {
+  local user="$1" tier="$2" home="" uid="" bin="${HOMELAB_BIN:-/usr/local/bin/homelab}" vault_bin out
+  [[ "$tier" == admin ]] || return 0
+  IFS=: read -r _ _ uid _ _ home _ < <(getent passwd "$user") || return 0
+  [[ -n "$home" && -n "$uid" && -d "$home" && -x "$bin" ]] || return 0
+  [[ -e "$home/.config/systemd/user/ios-rig-tunnel.service" ]] && return 0
+  is_live_devvm || return 0
+  [[ -s "$home/.vault-token" ]] || return 0
+  vault_bin="$(command -v vault)" || return 0
+  local envu=(env -i HOME="$home" USER="$user" LOGNAME="$user" PATH=/usr/local/bin:/usr/bin:/bin
+              XDG_RUNTIME_DIR="/run/user/$uid" VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}")
+  timeout 30 runuser -u "$user" -- "${envu[@]}" "$vault_bin" kv get -format=json secret/ios-rig </dev/null >/dev/null 2>&1 || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] homelab ios bootstrap --units-only -> $user"; return 0; fi
+  if out="$(timeout 120 runuser -u "$user" -- "${envu[@]}" "$bin" ios bootstrap --units-only </dev/null 2>&1)"; then
+    log "iOS rig units restored -> $user"
+  else
+    log "WARN: homelab ios bootstrap --units-only failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+  return 0
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
-[[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
+inputs_rc=0; check_workstation_inputs || inputs_rc=$?
+if (( inputs_rc == 1 )); then
+  log "the infra checkout at ${WORKSTATION_DIR%/scripts/workstation} is not there yet (a box still being built) -> nothing to reconcile"
+  exit 0
+fi
+(( inputs_rc == 0 )) || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
 
 # 0a) run what is COMMITTED, not what happens to be in a working tree.
 #
@@ -1311,16 +1807,22 @@ committed_cli() {  # committed_cli <dest>; 0 when dest now holds origin/master's
   fi
   rm -rf "$tmp"; return 1
 }
+# Any other directory of the repo, the same way: claude-hooks/ for install_memory.
+committed_tree() {  # committed_tree <repo-dir> <dest>; 0 when dest now holds origin/master's copy
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp -d "$dst.XXXXXX")" || return 1
+  if runuser -u "$clone_owner" -- git -C "$clone_root" "${gitc[@]}" archive --format=tar origin/master "$src" 2>/dev/null \
+       | tar -x -C "$tmp" 2>/dev/null && [[ -d "$tmp/$src" ]] && [[ -n "$(ls -A "$tmp/$src")" ]]; then
+    rm -rf "$dst" && mv "$tmp/$src" "$dst" && rm -rf "$tmp" && return 0
+  fi
+  rm -rf "$tmp"; return 1
+}
 if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
   if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
        fetch --quiet origin master 2>/dev/null; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
     committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
-    [[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
-    for f in metadata.json config.yaml gitignore README.md; do
-      committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
-    done
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
        python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
          "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
@@ -1333,12 +1835,31 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
     log "WARN: git fetch failed — running from the working tree at $WORKSTATION_DIR"
   fi
 fi
-# cli/ is extracted on both passes: the pass that self-deploys a new copy of
-# this script skips the fetch above, and that copy would otherwise build from
-# the working tree until the next hourly run. origin/master is whatever the
-# last fetch brought, which is committed content either way.
+# The rest of what this script deploys comes from origin/master too, so
+# nothing it installs depends on the admin's working tree being current. That
+# tree was kept current by an hourly `git pull` in wizard's crontab until
+# 2026-11-11, when the disposable-devvm plan dropped it. Like cli/ below, these
+# are extracted on both passes: the pass that self-deploys a new copy of this
+# script skips the fetch above, and a file only the new copy knows about would
+# otherwise come from the working tree until the next hourly run.
+# origin/master is whatever the last fetch brought, which is committed content
+# either way.
+committed scripts/workstation/workstation-creds.sh "$STATEDIR/workstation-creds.committed.sh" || true
+committed scripts/vault-token-renew.sh "$STATEDIR/vault-token-renew.committed.sh" || true
+committed scripts/vault-token-renew.service "$STATEDIR/vault-token-renew.committed.service" || true
+committed scripts/vault-token-renew.timer "$STATEDIR/vault-token-renew.committed.timer" || true
+committed scripts/tmux-persist.sh "$STATEDIR/tmux-persist.committed.sh" || true
+committed scripts/workstation/skel/start-claude.sh "$STATEDIR/start-claude.committed.sh" || true
+committed scripts/workstation/stage-chrome-hubs.sh "$STATEDIR/stage-chrome-hubs.committed.sh" || true
+committed scripts/workstation/chrome-hubs.json "$STATEDIR/chrome-hubs.committed.json" || true
+[[ "$DRY_RUN" == 1 ]] || install -d -m 0755 "$STATEDIR/beads.committed"
+for f in metadata.json config.yaml gitignore README.md; do
+  committed "scripts/workstation/beads/$f" "$STATEDIR/beads.committed/$f" || true
+done
 if [[ "$DRY_RUN" != 1 ]]; then
   committed_cli "$STATEDIR/cli.committed" || log "WARN: could not extract cli/ from origin/master"
+  committed_tree scripts/workstation/claude-hooks "$STATEDIR/claude-hooks.committed" \
+    || log "WARN: could not extract claude-hooks/ from origin/master"
 fi
 # Point the three inputs at whatever we managed to materialise; each falls back
 # independently, so a partial failure still runs with the rest committed.
@@ -1361,6 +1882,18 @@ AGENTS_FETCH_DIR="$STATEDIR/agent-repos"
 # the four files falls back to the working tree independently of the others.
 BEADS_SRC="$WORKSTATION_DIR/beads"
 [[ -s "$STATEDIR/beads.committed/metadata.json" ]] && BEADS_SRC="$STATEDIR/beads.committed"
+# The deployed files, each falling back to the working tree on its own.
+pick() { if [[ -s "$STATEDIR/$1" ]]; then echo "$STATEDIR/$1"; else echo "$2"; fi; }
+CREDS_SRC="$(pick workstation-creds.committed.sh "$WORKSTATION_DIR/workstation-creds.sh")"
+VTR_SRC="$(pick vault-token-renew.committed.sh "$WORKSTATION_DIR/../vault-token-renew.sh")"
+VTR_SERVICE="$(pick vault-token-renew.committed.service "$WORKSTATION_DIR/../vault-token-renew.service")"
+VTR_TIMER="$(pick vault-token-renew.committed.timer "$WORKSTATION_DIR/../vault-token-renew.timer")"
+TMUX_PERSIST_SRC="$(pick tmux-persist.committed.sh "$WORKSTATION_DIR/../tmux-persist.sh")"
+LAUNCHER_SRC="$(pick start-claude.committed.sh "$WORKSTATION_DIR/skel/start-claude.sh")"
+HUBS_SRC="$(pick stage-chrome-hubs.committed.sh "$WORKSTATION_DIR/stage-chrome-hubs.sh")"
+HUBS_MAP="$(pick chrome-hubs.committed.json "$WORKSTATION_DIR/chrome-hubs.json")"
+HOOKS_SRC="$WORKSTATION_DIR/claude-hooks"
+[[ -d "$STATEDIR/claude-hooks.committed" ]] && HOOKS_SRC="$STATEDIR/claude-hooks.committed"
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
@@ -1381,6 +1914,9 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SE
   elif bash -n "$SELF_SRC" 2>/dev/null; then
     install -m 0755 "$SELF_SRC" "$SELF_DST"
     log "self-deployed $SELF_DST from repo (changed) — re-exec"
+    # The fresh copy takes the admin token again at its top. Exported here,
+    # into root's own exec, rather than as an env argument, which ps shows.
+    [[ -z "$ADMIN_VAULT_TOKEN" ]] || export VAULT_TOKEN="$ADMIN_VAULT_TOKEN"
     exec env T3_PROVISION_SELF_DEPLOYED=1 "$SELF_DST" "$@"
   else
     log "WARN: repo t3-provision-users.sh fails 'bash -n' — keeping deployed copy"
@@ -1500,7 +2036,7 @@ trap 'rm -f "$ports_file" "$pw_ports_file" "${desired_file:-}"' EXIT
 # 2) tier validation vs live k8s_users (best-effort; aborts only on a real conflict)
 if command -v vault >/dev/null; then
   export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
-  if k8s_raw="$(vault kv get -field=k8s_users secret/platform 2>/dev/null)"; then
+  if k8s_raw="$(vault_admin kv get -field=k8s_users secret/platform 2>/dev/null)"; then
     k8s_file="$(mktemp)"; echo "$k8s_raw" | jq -c 'map_values(.role)' > "$k8s_file"
     if ! python3 "$ENGINE" validate --roster "$ROSTER" --k8s-users-json "$k8s_file"; then
       rm -f "$k8s_file"; echo "[t3-provision] ABORT: roster tier conflicts with k8s_users" >&2; exit 1
@@ -1523,10 +2059,23 @@ sync_pi_org_policy
 # 3c) machine-wide tmux-persist binary (repo -> /usr/local/bin; units enabled in step 5b)
 sync_tmux_persist
 
+# 3d) credentials from Vault for every account that already exists, before the
+#     loop below: the admin's restored kubeconfig is what step 4 copies the
+#     cluster address into every other user's from, and the restored Git PATs
+#     are what their clones authenticate with. Only with an admin Vault token;
+#     the hourly run logs one skip line.
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  id "$u" >/dev/null 2>&1 && restore_user_credentials "$u"
+done
+# 3e) the shared Codex login and the chrome hub configs, from Vault when absent
+#     (admin token only), before step 4 adds users to codex-shared and step 5c
+#     copies each hub config into its home.
+stage_shared_auth
+
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
 # the jq below emits "-" for empty groups/repos and we map it back here.
-while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth; do
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth dotfiles; do
   [[ "$groups_csv" == "-" ]] && groups_csv=""
   [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
@@ -1534,7 +2083,12 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     run useradd -m -s "$shell" "$os_user"
     run passwd -l "$os_user"           # SSO/t3 only — no local password
     run chmod 700 "/home/$os_user"
+    restore_user_credentials "$os_user"    # an existing account was done in 3d
   fi
+  install_user_dotfiles "$os_user" "$dotfiles"
+  install_forgejo_known_hosts "$os_user"
+  [[ "$tier" == admin ]] && install_admin_infra_clone "$os_user"
+  [[ "$tier" == admin ]] && unlock_admin_infra_clone "$os_user"
   if [[ -n "$groups_csv" ]]; then
     current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
     IFS=',' read -ra want <<< "$groups_csv"
@@ -1568,7 +2122,208 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   fi
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
   install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring)] | @tsv' "$desired_file")
+  install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
+  install_ios_rig_units "$os_user" "$tier"   # admins, live box only, when the rig is configured
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
+
+# --- session-store (disposable devvm, 2026-11-11) ---
+# 4a) agent state from the session store. On a rebuilt box, each user's
+# ~/.claude and ~/.codex come back from the claude-sessions ClickHouse once,
+# here, before step 5 starts their T3 serve and before the ingest takes the
+# user on (it waits for this step's marker). `restore --rebuild` writes as the
+# user through runuser and tar --skip-old-files, then records the restored
+# files in the ingest state as already sent. A user this box already ingests,
+# such as everyone on the live devvm, gets only the marker; every later pass is
+# a no-op that does not touch the database. A failure leaves no marker, so the
+# next pass tries again (docs/runbooks/restore-claude-sessions.md).
+restore_agent_state() {  # restore_agent_state USER
+  local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
+  [[ -x "$bin" ]] || { log "WARN: no $bin -> agent state restore skipped for $user"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] restore ~/.claude and ~/.codex from the session store -> $user"; return 0; fi
+  if out="$("$bin" claude-sessions restore --user "$user" --rebuild 2>&1)"; then
+    grep -q 'already restored' <<<"$out" || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+  else
+    log "WARN: agent state restore failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+# agent_state_restored USER: step 4a has finished for USER on this box (its
+# marker exists). Step 5 starts a user's T3 serve only then: a user who ran
+# claude before the restore would make a new history.jsonl, which restore
+# keeps (--skip-old-files) and the ingest then stores as the newest copy.
+CLAUDE_SESSIONS_RESTORED_DIR="${CLAUDE_SESSIONS_RESTORED_DIR:-/var/lib/claude-sessions-ingest/restored}"
+agent_state_restored() {  # agent_state_restored USER
+  [[ "$DRY_RUN" == 1 || -e "$CLAUDE_SESSIONS_RESTORED_DIR/$1" ]]
+}
+# Every account with a home under /home, not only the roster's: the ingest
+# reads every home (breakglass too), and waits for each one's marker.
+for u in $( { jq -r '.accounts[].os_user' "$desired_file"; for h in /home/*/; do basename "$h"; done; } | sort -u); do
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && restore_agent_state "$u"
+done
+# --- end session-store ---
+
+# --- claude-state (disposable devvm, 2026-11-11) ---
+# 4a2) MCP server secrets from Vault. The store keeps ~/.claude.json and
+# ~/.codex/config.toml without their MCP secrets (header values, env keys,
+# the ha server's secret URL path); `mcp-secrets fill` puts them back from
+# secret/workstation/<user>/mcp into an entry that is exactly the store's
+# redacted copy of the Vault one, so the live box's files are never touched.
+# Admin token only (the hourly run skips this quietly); prints nothing when
+# there is nothing to fill. The token reaches homelab in its environment, and
+# homelab writes as the user with that environment emptied.
+# Once per user per box: a marker in CLAUDE_SESSIONS_MCP_FILLED_DIR records a
+# fill that ran, so a later pass cannot put back a secret the user removed
+# since (dropping just an API key leaves the stripped form fill matches).
+# A failed fill leaves no marker and runs again on the next admin pass.
+CLAUDE_SESSIONS_MCP_FILLED_DIR="${CLAUDE_SESSIONS_MCP_FILLED_DIR:-/var/lib/claude-sessions-ingest/mcp-filled}"
+fill_mcp_secrets() {  # fill_mcp_secrets USER
+  local user="$1" out bin="${HOMELAB_BIN:-/usr/local/bin/homelab}"
+  [[ -x "$bin" ]] || return 0
+  agent_state_restored "$user" || return 0
+  [[ -e "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fill MCP server secrets from Vault -> $user"; return 0; fi
+  vault_admin token lookup >/dev/null 2>&1 || return 0
+  if out="$(VAULT_TOKEN="$ADMIN_VAULT_TOKEN" "$bin" claude-sessions mcp-secrets fill --user "$user" 2>&1)"; then
+    [[ -z "$out" ]] || while IFS= read -r l; do log "$user: $l"; done <<<"$out"
+    mkdir -p -m 0700 "$CLAUDE_SESSIONS_MCP_FILLED_DIR" && date -u +%FT%TZ > "$CLAUDE_SESSIONS_MCP_FILLED_DIR/$user"
+  else
+    log "WARN: MCP secret fill failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+# 4a3) The home-local programs a restored MCP config starts. The session
+# store brings back ~/.claude.json and ~/.codex/config.toml, but not the
+# programs they name under ~/.local: wizard's google_workspace server runs
+# ~/.local/bin/uvx, his Codex phpipam server a venv in
+# ~/.local/share/phpipam-mcp. Each is installed, as the user and pinned, only
+# when a config names it and it is absent, so a live home is never touched.
+# Their OAuth files come from Vault with the other credential files
+# (workstation-creds). No admin token needed; quiet when there is nothing to do.
+MCP_UV_VERSION="0.11.19"   # the version wizard's live ~/.local/bin/uv is, and the playbook's ios_rig_uv_version
+MCP_UV_SHA256="7035608168e106375b36d0c818d537a889c51a8625fe7f8f7cad5e62b947c368"
+MCP_PHPIPAM_VERSION="0.2.1"
+# The live venv's packages, exact: 0.2.1 pins mcp but not what mcp pulls in,
+# and a fresh resolve (Nov 2026) gets versions its import fails on.
+MCP_PHPIPAM_PINS="annotated-types==0.7.0 anyio==4.13.0 attrs==26.1.0 certifi==2026.2.25 charset-normalizer==3.4.7 click==8.3.2 h11==0.16.0 httpcore==1.0.9 httpx==0.28.1 httpx-sse==0.4.3 idna==3.11 jsonschema==4.26.0 jsonschema-specifications==2025.9.1 mcp==1.14.1 pydantic==2.12.5 pydantic-core==2.41.5 pydantic-settings==2.13.1 python-dotenv==1.2.2 python-multipart==0.0.25 referencing==0.37.0 requests==2.32.5 rpds-py==0.30.0 sse-starlette==3.3.4 starlette==1.0.0 typing-extensions==4.15.0 typing-inspection==0.4.2 urllib3==2.6.3 uvicorn==0.44.0"
+# google_workspace runs `uvx workspace-mcp` with no version, so a fresh box
+# would resolve whatever PyPI has newest. A uv tool install of the version
+# wizard's live servers run (from his uv cache, Nov 2026) holds it: uvx uses
+# an installed tool before it resolves one. Skipped in a home whose uv cache
+# already has workspace-mcp, so the live box keeps what it runs.
+MCP_WORKSPACE_VERSION="2.4.2"
+MCP_WORKSPACE_PYTHON="3.14.5"
+MCP_WORKSPACE_PINS="aiofile==3.12.3 annotated-doc==0.0.6 annotated-types==0.8.0 anyio==4.16.0 attrs==26.1.0 authlib==1.9.5 beartype==0.23.1 cachetools==8.0.0 caio==0.12.10 certifi==2026.10.23 cffi==2.1.1 charset-normalizer==3.5.2 click==8.5.1 cryptography==50.0.2 cyclopts==5.4.1 defusedxml==0.7.1 dnspython==2.9.2 docstring_parser==0.18.0 email-validator==2.3.0 exceptiongroup==1.3.1 fastapi==0.162.5 fastmcp==4.1.8 fastmcp-slim==4.1.8 google-api-core==2.44.0 google-api-python-client==2.202.0 googleapis-common-protos==1.76.0 google-auth==2.62.2 google-auth-httplib2==0.4.4 google-auth-oauthlib==1.5.0 griffelib==2.4.1 h11==0.16.0 httpcore==1.0.9 httpcore2==2.16.0 httplib2==0.32.1 httpx==0.28.1 httpx2==2.16.0 idna==3.20 joserfc==1.8.0 jsonref==1.1.0 jsonschema==4.26.0 jsonschema-path==0.5.0 jsonschema-specifications==2025.9.1 markdown-it-py==4.3.0 mcp==2.3.0 mcp-types==2.3.0 mdurl==0.1.2 oauthlib==4.0.1 openapi-pydantic==0.6.0 opentelemetry-api==1.45.2 packaging==26.3 pathable==0.6.0 platformdirs==4.14.5 protobuf==7.36.2 proto-plus==1.29.0 pyasn1==0.6.5 pyasn1_modules==0.4.2 pycparser==3.12 pydantic==2.14.3 pydantic_core==2.50.4 pydantic-settings==2.16.2 pygments==2.21.0 pyjwt==2.15.1 py-key-value-aio==0.4.6 pyparsing==3.3.3 pypdf==7.0.1 pyperclip==1.11.0 python-dotenv==1.2.4 python-multipart==0.0.33 pytz==2026.6 pyyaml==6.0.3 referencing==0.37.0 requests==2.34.2 requests-oauthlib==2.0.0 rich==15.0.0 rich-rst==2.2.0 rpds-py==2026.9.1 sse-starlette==3.7.0 starlette==1.10.0 truststore==0.10.5 typing_extensions==4.16.0 typing-inspection==0.4.5 tzdata==2026.6 uncalled-for==0.6.1 uritemplate==4.2.0 urllib3==2.8.0 uvicorn==0.54.0 watchfiles==1.3.0 websockets==17.4"
+install_mcp_tools() {  # install_mcp_tools USER
+  local user="$1" home cfgs=() f uv ipam
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  agent_state_restored "$user" || return 0
+  for f in "$home/.claude.json" "$home/.codex/config.toml"; do [[ -f "$f" && ! -L "$f" ]] && cfgs+=("$f"); done
+  (( ${#cfgs[@]} )) || return 0
+  uv="$home/.local/bin/uvx" ipam="$home/.local/share/phpipam-mcp/bin/phpipam-mcp-server"
+  local sane=(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$home" LANG=C.UTF-8)
+  local need_uv=0
+  [[ ! -x "$uv" ]] && grep -qF '.local/bin/uv' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  # The phpipam venv is made with uv.
+  [[ ! -x "$ipam" && ! -x "$home/.local/bin/uv" ]] && grep -qF '.local/share/phpipam-mcp/' "${cfgs[@]}" 2>/dev/null && need_uv=1
+  # google_workspace: a pinned uv tool, unless uvx already ran it here.
+  local need_ws=0
+  [[ ! -d "$home/.local/share/uv/tools/workspace-mcp" ]] && grep -qF '"workspace-mcp"' "${cfgs[@]}" 2>/dev/null \
+    && ! compgen -G "$home/.cache/uv/archive-v0/*/lib/python*/site-packages/workspace_mcp-*.dist-info" >/dev/null && need_ws=1
+  (( need_ws )) && [[ ! -x "$home/.local/bin/uv" ]] && need_uv=1
+  if (( need_uv )); then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install uv $MCP_UV_VERSION -> $user ~/.local/bin"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; umask 022; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT
+        curl -fsSL -o "$d/uv.tgz" "$1"; echo "$2  $d/uv.tgz" | sha256sum -c --quiet
+        tar -xzf "$d/uv.tgz" -C "$d" --strip-components=1; mkdir -p "$HOME/.local/bin"
+        for b in uv uvx; do [ -e "$HOME/.local/bin/$b" ] || cp "$d/$b" "$HOME/.local/bin/$b"; done' \
+        _ "https://github.com/astral-sh/uv/releases/download/$MCP_UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" "$MCP_UV_SHA256" \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed uv $MCP_UV_VERSION into ~/.local/bin for the restored MCP config"
+    else
+      log "WARN: could not install uv for $user (the MCP servers that run ~/.local/bin/uvx will not start)"
+    fi
+  fi
+  if (( need_ws )); then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install workspace-mcp $MCP_WORKSPACE_VERSION -> $user ~/.local/share/uv/tools"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; d="$(mktemp -d)"; trap "rm -rf \"$d\"" EXIT; py="$1" r="$2"; shift 2
+        printf "%s\n" "$@" > "$d/constraints.txt"
+        "$HOME/.local/bin/uv" tool install --quiet --python "$py" -c "$d/constraints.txt" "$r"' _ "$MCP_WORKSPACE_PYTHON" "workspace-mcp==$MCP_WORKSPACE_VERSION" $MCP_WORKSPACE_PINS \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed workspace-mcp $MCP_WORKSPACE_VERSION as a uv tool for the restored MCP config"
+    else
+      log "WARN: could not install workspace-mcp for $user (google_workspace will resolve the newest release on its first start)"
+    fi
+  fi
+  if [[ ! -x "$ipam" ]] && grep -qF '.local/share/phpipam-mcp/bin/phpipam-mcp-server' "${cfgs[@]}" 2>/dev/null; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] install phpipam-mcp-server $MCP_PHPIPAM_VERSION -> $user ~/.local/share/phpipam-mcp"
+    elif runuser -u "$user" -- "${sane[@]}" sh -c 'set -e; v="$HOME/.local/share/phpipam-mcp"
+        "$HOME/.local/bin/uv" venv --quiet --allow-existing --python /usr/bin/python3 "$v"
+        "$HOME/.local/bin/uv" pip install --quiet --python "$v/bin/python" "$@"' _ "phpipam-mcp-server==$MCP_PHPIPAM_VERSION" $MCP_PHPIPAM_PINS \
+        </dev/null >/dev/null 2>&1; then
+      log "$user: installed phpipam-mcp-server $MCP_PHPIPAM_VERSION into ~/.local/share/phpipam-mcp for the restored MCP config"
+    else
+      log "WARN: could not install phpipam-mcp-server for $user (the Codex phpipam MCP server will not start)"
+    fi
+  fi
+  return 0
+}
+for u in $(jq -r '.accounts[].os_user' "$desired_file"); do
+  [[ -d "/home/$u" ]] && id "$u" >/dev/null 2>&1 && install_mcp_tools "$u" && fill_mcp_secrets "$u"
+done
+# --- end claude-state ---
+
+# --- emo-jobs (disposable devvm, 2026-11-11) ---
+# 4b) a roster repo's own devvm setup. A workspace repo may ship devvm-setup.sh
+# at its root: the steps that put back what the user built around the clone by
+# hand, such as ~/bin links and systemd user units. emo's
+# ebarzin/vermont-device-configs restores his ~/bin links and the Hikvision SDK
+# this way (docs/runbooks/cameras-nvr-intercom.md). It runs AS the user on every
+# reconcile, so it must be idempotent and print nothing when nothing changed.
+# The environment is emptied first: a rebuild runs this script with an admin
+# VAULT_TOKEN (step 3d), and the user's own code must never see it. Linger is
+# turned on so the user's timers fire while they are logged out.
+run_repo_setup() {  # run_repo_setup USER SUBPATH
+  local user="$1" sub="$2" home="" uid="" f out
+  IFS=: read -r _ _ uid _ _ home _ < <(getent passwd "$user") || return 0
+  [[ -n "$home" && -n "$uid" ]] || return 0
+  f="$home/$sub/devvm-setup.sh"
+  [[ -f "$f" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] run ~/$sub/devvm-setup.sh as $user"; return 0; fi
+  [[ "$(loginctl show-user "$user" -p Linger 2>/dev/null)" == "Linger=yes" ]] || loginctl enable-linger "$user" >/dev/null 2>&1 || true
+  if out="$(timeout 300 runuser -u "$user" -- env -i HOME="$home" USER="$user" LOGNAME="$user" \
+        PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR="/run/user/$uid" bash "$f" 2>&1)"; then
+    [[ -z "$out" ]] || log "$user ~/$sub/devvm-setup.sh: $(tail -n 1 <<<"$out")"
+  else
+    log "WARN: ~/$sub/devvm-setup.sh failed for $user: $(tail -n 1 <<<"$out")"
+  fi
+}
+while IFS=$'\t' read -r os_user repos_csv; do
+  IFS=',' read -ra extra_repos <<< "$repos_csv"
+  for repo in "${extra_repos[@]}"; do
+    [[ -n "$repo" && "$repo" != "-" ]] || continue
+    run_repo_setup "$os_user" "code/${repo##*/}"
+  done
+done < <(jq -r '.accounts[] | select(.tier != "admin" and .code_layout == "workspace") | [.os_user, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
+# --- end emo-jobs ---
+
+# --- t3-snapshot (disposable devvm, 2026-11-11) ---
+# t3_restore_before_serve USER: on a rebuilt devvm, put the user's newest T3
+# snapshot back before the serve first starts (scripts/t3-restore-state.sh).
+# --if-missing is a no-op for anyone who already has a database. Returns 1
+# when the restore says hold (exit 3: the first-boot build could not copy the
+# snapshots and this user has none yet), so the caller skips starting an empty
+# T3 for them; the next hourly run tries again. Tests:
+# scripts/t3-restore-state.test.sh.
+t3_restore_before_serve() {
+  local u="$1" bin="${T3_RESTORE_BIN:-/usr/local/bin/t3-restore-state}" rc=0
+  [[ -x "$bin" ]] || return 0
+  run "$bin" --if-missing "$u" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) log "t3-serve held for $u: waiting for the T3 snapshots (docs/architecture/backup-dr.md, T3 snapshots)"; return 1 ;;
+    *) log "WARN: t3-restore-state failed for $u (rc=$rc)"; return 0 ;;
+  esac
+}
+# --- end t3-snapshot ---
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
@@ -1590,6 +2345,15 @@ while IFS=$'\t' read -r os_user port; do
     log "t3-serve DISABLED for $os_user (roster parked: true)"
     continue
   fi
+  # --- session-store (disposable devvm, 2026-11-11) ---
+  if id "$os_user" >/dev/null 2>&1 && ! agent_state_restored "$os_user"; then
+    log "t3-serve held for $os_user: ~/.claude not restored from the session store yet (docs/runbooks/restore-claude-sessions.md)"
+    continue
+  fi
+  # --- end session-store ---
+  # --- t3-snapshot (disposable devvm, 2026-11-11) ---
+  if id "$os_user" >/dev/null 2>&1 && ! t3_restore_before_serve "$os_user"; then continue; fi
+  # --- end t3-snapshot ---
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
@@ -1626,6 +2390,7 @@ done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$des
 #     Retires the old shared rules in every home that has its own file. Personal
 #     slot created once, never rewritten. Pruned first, so a user whose
 #     agents_repo was removed is not installed again this run.
+agents_owner="$(resolve_agents_owner "$clone_owner" "$(jq -r '.ttyd_admins' "$desired_file")")"
 prune_user_agents "$(jq -r '.accounts[] | select(.agents_repo != null) | .os_user' "$desired_file")"
 while IFS=$'\t' read -r os_user agents_repo; do
   id "$os_user" >/dev/null 2>&1 || continue
@@ -1667,7 +2432,7 @@ done < <(jq -r '.accounts[].os_user' "$desired_file")
 #     NEVER --now: the tracker installs a NEW build + migrates DBs + restarts serves, so firing
 #     a missed run mid-day with users active is exactly the 2026-06-09 shape. `enable` (no --now)
 #     just arms the 04:00 schedule (the timer also dropped Persistent=true so a boot can't fire a
-#     missed bump). Fresh boxes get t3 from setup-devvm.sh's nightly install, not here.
+#     missed bump). A new box gets its first t3 from playbooks/devvm.yml (t3-autoupdate first install), not here.
 run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 #     tmux session persistence: periodic snapshot + boot-time restore (reboot
 #     survival for users' named claude sessions). Safe to --now: save is a
@@ -1760,5 +2525,9 @@ if [[ "$DRY_RUN" == 1 ]]; then
 else
   install -m 0644 "$ROSTER" "$applied_snapshot"
 fi
+
+# 8) skills on a rebuilt box: claude-skills-update once, after every user's
+#    agent state is back (start_skills_update_once).
+start_skills_update_once $(jq -r '.accounts[].os_user' "$desired_file")
 
 log "reconcile complete ($([[ "$DRY_RUN" == 1 ]] && echo DRY-RUN || echo applied))"

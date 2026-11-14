@@ -27,6 +27,13 @@ resource "authentik_group" "proxy_users" {
 #   policy above restricts to proxy only. (Groups can't be set via fixed_data —
 #   authentik docs — hence the attribute.)
 #
+# EVERY invitation on invitation-enrollment must set attributes.proxy_only.
+# That flow takes the typed email without checking it, and Cloud's private Apps
+# trust the email (cloud-apps.tf): policy cloud-apps-active-users refuses
+# proxy_only accounts, and accounts with no vouched email. An invitation without
+# proxy_only would let a signed-in user rerun this flow and rewrite their own
+# email to any address while keeping their social-source record.
+#
 # The invitation TOKEN itself is a RUNTIME object (no terraform resource in the
 # goauthentik provider). Create/rotate it via the API against the
 # invitation-enrollment flow:

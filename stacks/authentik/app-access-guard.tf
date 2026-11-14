@@ -55,6 +55,12 @@ locals {
     # binding here would turn signed-in household members away from public
     # pages, so it is bound to an allow-all policy (public_allow_all) instead.
     public = "public ingress tier, reachable by anonymous visitors"
+    # Cloud's shared sign-in client (cloud-apps.tf, M2 contract point 7). It
+    # is bound to a policy that admits every active account but guest and
+    # service accounts; each private App's oauth2-proxy admits only its own
+    # email allowlist. The application belongs to this repo; Cloud creates no
+    # Authentik object.
+    "cloud-apps" = "Cloud's private Apps, gated by each App's email allowlist in oauth2-proxy"
   }
 
   authentik_api = "https://authentik.viktorbarzin.me/api/v3"
@@ -93,6 +99,7 @@ data "http" "authentik_applications" {
     authentik_application.postgres_ldap,
     authentik_application.rac,
     authentik_application.public,
+    authentik_application.cloud_apps,
   ]
 
   lifecycle {
@@ -123,6 +130,7 @@ data "http" "authentik_policy_bindings" {
     authentik_policy_binding.immich_home_users,
     authentik_policy_binding.linkwarden_home_users,
     authentik_policy_binding.public_allow_all,
+    authentik_policy_binding.cloud_apps_active_users,
   ]
 
   lifecycle {

@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Re-grant stacks/devvm's token its VMID slots on the Proxmox host.
+
+PVE checks /vms/<id> when a VM is created, before the new VM joins pool
+devvm, so the token (terraform-devvm@pve!tf) needs role TFDevvm on each VMID
+it may create. Every destroy deletes the ACLs on that path:
+PVE::API2::Qemu calls remove_vm_access($vmid) unconditionally, purge or not
+(PVE 9.2.21, seen 2026-11-11 when drill 2's teardown removed /vms/9103). So
+each drill used up its slot. This puts the grants back; a timer runs it every
+minute and playbooks/pve-host.yml --tags devvm-tf runs it once.
+
+A slot that holds a guest outside pool devvm is never granted: that keeps the
+live devvm (102) out of the token's reach even when 102 is listed for the
+real replacement, until 102 has been destroyed.
+
+  pve-devvm-tf-acl [--dry-run]
+
+Environment (defaults are the live host's):
+  DEVVM_TF_VMIDS  space-separated VMIDs, default 9100-9109
+  PVE_USER_CFG    /etc/pve/user.cfg
+  PVE_NODES_DIR   /etc/pve/nodes
+  PVEUM           pveum
+"""
+
+import glob
+import os
+import subprocess
+import sys
+
+USER = "terraform-devvm@pve"
+TOKEN = "terraform-devvm@pve!tf"
+ROLE = "TFDevvm"
+POOL = "devvm"
+
+
+def main(argv):
+    dry_run = argv[1:] == ["--dry-run"]
+    if argv[1:] and not dry_run:
+        print("usage: pve-devvm-tf-acl [--dry-run]", file=sys.stderr)
+        return 2
+
+    raw = os.environ.get("DEVVM_TF_VMIDS", " ".join(str(i) for i in range(9100, 9110)))
+    if not all(v.isdigit() for v in raw.split()) or not raw.split():
+        print(f"pve-devvm-tf-acl: DEVVM_TF_VMIDS is not a list of VMIDs: {raw!r}", file=sys.stderr)
+        return 1
+    vmids = [int(v) for v in raw.split()]
+
+    user_cfg = os.environ.get("PVE_USER_CFG", "/etc/pve/user.cfg")
+    nodes_dir = os.environ.get("PVE_NODES_DIR", "/etc/pve/nodes")
+    pveum = os.environ.get("PVEUM", "pveum")
+
+    try:
+        with open(user_cfg, encoding="utf-8") as f:
+            lines = [line.rstrip("\n") for line in f]
+    except OSError as e:
+        print(f"pve-devvm-tf-acl: cannot read {user_cfg}: {e}", file=sys.stderr)
+        return 1
+
+    if not any(line.startswith(f"user:{USER}:") for line in lines):
+        print(f"pve-devvm-tf-acl: {USER} is not declared yet; run playbooks/pve-host.yml --tags devvm-tf")
+        return 0
+
+    pool_lines = [line for line in lines if line.startswith(f"pool:{POOL}:")]
+    if not pool_lines:
+        print(f"pve-devvm-tf-acl: pool {POOL} is missing from {user_cfg}", file=sys.stderr)
+        return 1
+    # pool:<name>:<comment>:<vmlist>:<storage list>:  read from the right, so
+    # a comment cannot shift the columns.
+    pool_members = {int(v) for v in pool_lines[0].split(":")[-3].split(",") if v.strip().isdigit()}
+
+    # Guest configs are the existence check. None at all means pmxcfs is not
+    # mounted, and "nothing exists" would then grant a live VM's slot.
+    guests = set()
+    for kind in ("qemu-server", "lxc"):
+        for path in glob.glob(os.path.join(nodes_dir, "*", kind, "*.conf")):
+            name = os.path.basename(path)[: -len(".conf")]
+            if name.isdigit():
+                guests.add(int(name))
+    if not guests:
+        print(f"pve-devvm-tf-acl: no guest configs under {nodes_dir}; refusing to grant", file=sys.stderr)
+        return 1
+
+    # acl:<propagate>:<path>:<users, groups and tokens>:<roles>:
+    granted = set()
+    for line in lines:
+        if not line.startswith("acl:"):
+            continue
+        parts = line.split(":")
+        if len(parts) < 5 or ROLE not in parts[4].split(","):
+            continue
+        for who in parts[3].split(","):
+            granted.add((parts[2], who))
+
+    status = 0
+    for vmid in vmids:
+        path = f"/vms/{vmid}"
+        if vmid in guests and vmid not in pool_members:
+            if any((path, who) not in granted for who in (USER, TOKEN)):
+                print(f"skip {path}: a guest with this VMID exists outside pool {POOL}")
+            continue
+        for who, flag in ((USER, "--users"), (TOKEN, "--tokens")):
+            if (path, who) in granted:
+                continue
+            print(f"grant {path} {who} {ROLE}" + (" (dry run)" if dry_run else ""))
+            if dry_run:
+                continue
+            rc = subprocess.run([pveum, "acl", "modify", path, "--roles", ROLE, flag, who, "--propagate", "1"]).returncode
+            if rc != 0:
+                print(f"pve-devvm-tf-acl: pveum failed ({rc}) granting {path} to {who}", file=sys.stderr)
+                status = 1
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

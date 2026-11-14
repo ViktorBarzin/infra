@@ -3,7 +3,8 @@
 # TLS Certificate — Auto-sync to all namespaces
 # =============================================================================
 # Source wildcard cert (*.viktorbarzin.me) in kyverno namespace, cloned by
-# ClusterPolicy into every NS. Renewal pipeline updates this source secret,
+# ClusterPolicy into every NS except kube-* and Cloud Project namespaces
+# (generate-conditions.tf). Renewal pipeline updates this source secret,
 # Kyverno propagates to all namespaces within seconds.
 
 resource "kubernetes_secret" "tls_secret" {

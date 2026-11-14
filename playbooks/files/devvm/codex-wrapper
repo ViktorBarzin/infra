@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Shared-ACCOUNT Codex wrapper (devvm). Each user keeps a PRIVATE CODEX_HOME
+# (~/.codex); the ChatGPT login (auth.json) is shared from /opt/codex-shared via
+# the dedicated `codex-shared` group (NOT code-shared, which gates infra secrets).
+set -u
+SHARED=/opt/codex-shared/auth.json
+HOME_CODEX="${CODEX_HOME:-$HOME/.codex}"
+MINE="$HOME_CODEX/auth.json"
+
+# Stale-session self-heal: if we can't read the shared auth yet ARE a codex-shared
+# member per /etc/group (shell predates the group add), re-exec under the group so
+# codex sees the credential instead of a confusing "not authenticated". sg never
+# prompts for a group you already belong to.
+if [ ! -r "$SHARED" ] \
+   && id -nG "$(id -un)" 2>/dev/null | tr ' ' '\n' | grep -qx codex-shared \
+   && ! id -nG | tr ' ' '\n' | grep -qx codex-shared; then
+  exec sg codex-shared -c "$(printf '%q ' "$0" "$@")"
+fi
+
+mkdir -p "$HOME_CODEX"
+if [ ! -L "$MINE" ]; then
+  [ -e "$MINE" ] && mv -f "$MINE" "$MINE.local.bak"
+  ln -sf "$SHARED" "$MINE"
+fi
+/usr/bin/codex "$@"; rc=$?
+if [ -f "$MINE" ] && [ ! -L "$MINE" ]; then
+  if cat "$MINE" > "$SHARED" 2>/dev/null; then rm -f "$MINE"; ln -sf "$SHARED" "$MINE"; fi
+fi
+exit $rc
