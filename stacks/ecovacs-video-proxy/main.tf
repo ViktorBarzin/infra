@@ -10,7 +10,7 @@
 # a fresh review: keep Renovate off this image.
 #
 # On demand: the Deployment sits at 0 replicas. HA London scales it to 1 when
-# someone turns on input_boolean.yiko_camera, and back to 0 after 5 minutes or
+# someone turns on input_boolean.yiko_camera, and back to 0 after 10 minutes or
 # when it is turned off (ServiceAccount camera-switch below). With
 # ACTIVE_ONLY_VIDEO=false the bridge streams for as long as the pod runs, so
 # "pod up" is "camera on". The camera-cap CronJob scales it down if a pod has

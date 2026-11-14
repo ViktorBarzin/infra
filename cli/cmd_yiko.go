@@ -294,6 +294,9 @@ func yikoClean(api haAPI, room string) error {
 	if err != nil {
 		return err
 	}
+	if err := yikoPreflight(api, true); err != nil {
+		return err
+	}
 	before, err := api.state(yikoAreaSensor)
 	if err != nil {
 		return err
@@ -349,6 +352,17 @@ func yikoPhoto(api haAPI, o yikoOpts) (yikoPhotoResult, error) {
 		return res, fmt.Errorf("%s is already running; wait for it to finish", yikoPhotoScript)
 	}
 	if _, err := yikoRoomID(api, o.room); err != nil {
+		return res, err
+	}
+	if err := yikoPreflight(api, false); err != nil {
+		return res, err
+	}
+	// The script starts the camera once and sends start, pause/resume per
+	// photo, stop and dock: count them against the same hourly budgets.
+	if err := yikoTakeBudget(yikoBudgetPath(), "camera start", 1, yikoCameraBudget, time.Now()); err != nil {
+		return res, err
+	}
+	if err := yikoTakeBudget(yikoBudgetPath(), "move", 2*o.shots+3, yikoMoveBudget, time.Now()); err != nil {
 		return res, err
 	}
 	prevTrigger, _ := before.Attributes["last_triggered"].(string)
