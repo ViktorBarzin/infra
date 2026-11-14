@@ -26,7 +26,7 @@
 # the WHOOP app's own identity headers.
 #
 # Since 2026-11-12 WHOOP answers a PASSWORD login from the home IPv4 address
-# (176.12.22.76, which the pods use) with 401 "Authentication Failed", and
+# (the one the pods use) with 401 "Authentication Failed", and
 # accepts the same password over IPv6. The refresh token works from the pod.
 # So when the saved token expires, the job tries ONE password login, trashes
 # the code email WHOOP still sends, and fails with PasswordLoginRejected;
