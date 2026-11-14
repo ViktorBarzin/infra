@@ -99,15 +99,19 @@ state_db() {
 # WAL stays owned; never stops the serve). Uses global $target for the filename.
 # Echoes the backup path on success; non-zero on failure.
 backup_user() {
-  local u="$1" src out dst ts
+  local u="$1" src out dst tmp ts
   src="$(state_db "$u")"; [ -f "$src" ] || return 1
   ts="$(date +%Y%m%d-%H%M%S)"
   out="$BACKUP_DIR/$u"; dst="$out/state-prebump-$target-$ts.sqlite"
+  # Hidden temp name, renamed when complete: devvm-cleanup gzips every *.sqlite
+  # here but the newest, so a copy in progress next to t3-backup-state's must
+  # not match it (2026-11-12, see t3-backup-state.sh).
+  tmp="$out/.state-prebump-$ts.partial"
   install -d -o "$u" -g "$u" -m700 "$out" 2>/dev/null || mkdir -p "$out"
-  if runuser -u "$u" -- timeout "$T3_BACKUP_TIMEOUT" sqlite3 "$src" "VACUUM INTO '$dst'" 2>/dev/null && [ -s "$dst" ]; then
+  if runuser -u "$u" -- timeout "$T3_BACKUP_TIMEOUT" sqlite3 "$src" "VACUUM INTO '$tmp'" 2>/dev/null && [ -s "$tmp" ] && mv -f "$tmp" "$dst"; then
     printf '%s\n' "$dst"; return 0
   fi
-  rm -f "$dst"; return 1
+  rm -f "$tmp" "$tmp-journal"; return 1
 }
 
 # newest pre-bump backup for a user taken for the current $target (restore source).

@@ -443,7 +443,7 @@ own disk. Three pieces carry it:
 
 | Piece | Where | What it does |
 |---|---|---|
-| `t3-backup-state` | devvm, own timer, ~03:30 UTC + up to 20 min jitter | `VACUUM INTO` copy per user → `/var/backups/t3-state/<user>/state-<YYYYMMDD-HHMMSS>.sqlite`, keep 6. `devvm-cleanup` (04:00 UTC) gzips all but the newest. Unchanged by this work |
+| `t3-backup-state` | devvm, own timer, ~03:30 UTC + up to 20 min jitter | `VACUUM INTO` copy per user → `/var/backups/t3-state/<user>/state-<YYYYMMDD-HHMMSS>.sqlite`, keep 6. `devvm-cleanup` (04:00 UTC) gzips all but the newest. Each copy, and each pre-bump copy from `t3-safe-restart.sh`, is written as a hidden `.state-<ts>.partial` and renamed when complete. Since 2026-11-14: on 2026-11-12 a pre-bump copy ran beside the daily one, `devvm-cleanup` gzipped the unfinished daily, and the run failed and left a truncated `state-20261112-034332.sqlite.gz` (header page count 0) |
 | `t3-state-pull` | PVE host, nightly chain step 7 | pulls the newest 3 daily snapshots per user to `/mnt/backup/t3-state/<user>/`, always stored as `.sqlite.gz` |
 | `t3-restore-state` | devvm, `/usr/local/bin` | puts the newest snapshot back as the user's live database |
 | `devvm-bootstrap` step 4c | a Terraform-built devvm's first boot | copies `/mnt/backup/t3-state` from the host back into `/var/backups/t3-state` before provisioning |

@@ -14,7 +14,7 @@ DEST="${T3_BACKUP_DEST:-/var/backups/t3-state}"
 # fill the devvm root fs. 6 is ample (rollback only ever needs the most recent
 # pre-bump backup). Bump per user via T3_BACKUP_KEEP if a DB is small.
 KEEP="${T3_BACKUP_KEEP:-6}"
-MAP=/etc/ttyd-user-map
+MAP="${T3_USER_MAP:-/etc/ttyd-user-map}"
 LOG() { logger -t t3-backup-state "$*"; echo "t3-backup-state: $*"; }
 
 ts=$(date +%Y%m%d-%H%M%S)
@@ -31,6 +31,12 @@ for u in "${users[@]}"; do
   [[ -f "$src" ]] || src="${T3_HOME_BASE:-/home}/$u/.t3/userdata/state.sqlite"
   if [[ ! -f "$src" ]]; then LOG "skip $u (no state.sqlite)"; continue; fi
   out="$DEST/$u"; dst="$out/state-$ts.sqlite"
+  # The copy is written under a hidden temp name and renamed when complete, so
+  # no other tool ever sees a half-written snapshot under a state-*.sqlite name.
+  # On 2026-11-12 a pre-bump snapshot ran at the same time as this one, so this
+  # copy was not the newest *.sqlite; devvm-cleanup gzipped it mid-write and
+  # unlinked it, the [[ -s ]] check failed, and a truncated .gz stayed behind.
+  tmp="$out/.state-$ts.partial"
   install -d -o "$u" -g "$u" -m 0700 "$out"
   # VACUUM INTO takes a consistent read-snapshot copy — unlike .backup it does NOT
   # restart when the source is written mid-copy, so it finishes in a single pass even
@@ -40,10 +46,11 @@ for u in "${users[@]}"; do
   # disk) so the daily run can never wedge — it just logs + retries next cycle.
   # 3600s (was 900): a 2.85 GB DB under load needed more than 900s (2026-10-20). The
   # daily 03:30 slot normally finds instances idle, where even a large DB copies fast.
-  if runuser -u "$u" -- timeout "${T3_BACKUP_TIMEOUT:-3600}" sqlite3 "$src" "VACUUM INTO '$dst'" 2>/dev/null && [[ -s "$dst" ]]; then
+  err=$(runuser -u "$u" -- timeout "${T3_BACKUP_TIMEOUT:-3600}" sqlite3 "$src" "VACUUM INTO '$tmp'" 2>&1)
+  if [[ $? -eq 0 && -s "$tmp" ]] && mv -f "$tmp" "$dst"; then
     LOG "backed up $u -> $dst ($(stat -c%s "$dst" 2>/dev/null) bytes)"
   else
-    LOG "WARN: backup FAILED for $u ($src)"; rc=1; rm -f "$dst"
+    LOG "WARN: backup FAILED for $u ($src): ${err:-no output}"; rc=1; rm -f "$tmp" "$tmp-journal"
   fi
   # Retention: keep newest $KEEP per user.
   #
