@@ -481,7 +481,11 @@ homelab ha yiko stop                        # stop the wheels
 - To go somewhere by hand: `look`, then `turn`/`drive` in small steps, and
   `look` after each one. Turns land within about 25 deg. Yiko stops by itself at
   obstacles. End with `dock`, which also stops it.
-- A camera session lasts 5 min. After it ends, and while Yiko is idle on the
+- Guardrails, keep them: the CLI refuses under 20% battery or on a robot
+  error, sends Yiko home 15 min after the last manual command, and allows 120
+  move commands and 10 camera starts an hour. Never send raw `move` or other
+  probe commands around it; unknown commands are how an account gets noticed.
+- A camera session lasts 10 min. After it ends, and while Yiko is idle on the
   dock, the robot refuses video for 3-5 min: drive it off the dock first, and
   plan a drive within one session.
 

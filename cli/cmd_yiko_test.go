@@ -34,6 +34,7 @@ func newFakeYikoHA() *fakeYikoHA {
 			"script.yiko_photo":               {"state": "off", "attributes": map[string]any{"last_triggered": "2026-11-13T15:49:13+00:00"}},
 			"sensor.yiko_area_cleaned":        {"state": "4", "last_changed": "2026-11-13T13:07:30+00:00"},
 			"sensor.yiko_battery":             {"state": "100"},
+			"sensor.yiko_error":               {"state": "0"},
 			"sensor.yiko_station_state":       {"state": "idle"},
 			"select.yiko_work_mode":           {"state": "vacuum_and_mop"},
 			"input_boolean.yiko_camera":       {"state": "off"},
@@ -123,6 +124,10 @@ func startFakeYikoHA(t *testing.T, f *fakeYikoHA) haAPI {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
 	t.Cleanup(srv.Close)
+	oldBudget := yikoBudgetPath
+	budget := filepath.Join(t.TempDir(), "budget.json")
+	yikoBudgetPath = func() string { return budget }
+	t.Cleanup(func() { yikoBudgetPath = oldBudget })
 	oldPoll, oldStart, oldRun := yikoPoll, yikoStartTimeout, yikoRunTimeout
 	yikoPoll, yikoStartTimeout, yikoRunTimeout = 5*time.Millisecond, 300*time.Millisecond, 2*time.Second
 	t.Cleanup(func() { yikoPoll, yikoStartTimeout, yikoRunTimeout = oldPoll, oldStart, oldRun })

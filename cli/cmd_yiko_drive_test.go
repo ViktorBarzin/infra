@@ -171,7 +171,7 @@ func TestYikoLook(t *testing.T) {
 }
 
 func TestYikoLookRestartsStaleCamera(t *testing.T) {
-	// HA switches the camera off after 5 min while the ready sensor still says
+	// HA switches the camera off after 10 min while the ready sensor still says
 	// on; the snapshot then fails, and look must restart the camera once.
 	f := newFakeYikoHA()
 	f.set("binary_sensor.yiko_camera_ready", map[string]any{"state": "on"})

@@ -624,6 +624,21 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 
+### v0.42 — ha yiko guardrails
+
+So that driving cannot strain the robot or get the Ecovacs account flagged:
+
+- `drive`, `turn`, `clean` and `photo` refuse below 20% battery or while the
+  robot reports an error; `drive`, `turn` and `clean` also refuse while
+  `script.yiko_photo` runs.
+- Before every manual move the CLI arms HA's `script.yiko_auto_dock`, which
+  sends Yiko home 15 minutes after the last manual command unless it started
+  cleaning. If arming fails, the CLI does not move the robot.
+- Hourly budgets per devvm user, in `~/.cache/homelab/yiko-budget.json`: 120
+  move commands (a minute of the app's joystick is about 20) and 10 camera
+  starts (each one is a new Ecovacs login by the camera bridge).
+- `dock` and `stop` are never blocked.
+
 ### v0.41 verbs — ha yiko drive, turn, stop, look
 
 | Command | Tier | What it does |
@@ -636,7 +651,7 @@ See `infra/docs/adr/0004`–`0013` for the architecture decisions.
 These send the raw `move` command the Ecovacs app's joystick sends
 (`{"act": forward|backward|spinLeft|spinRight, "a": 0|90}`, then `stop`),
 found by decompiling the app. Long moves run as start-wait-stop chunks 1.5 s
-apart. A camera session lasts 5 minutes (HA's auto-off), and Yiko refuses
+apart. A camera session lasts 10 minutes (HA's auto-off), and Yiko refuses
 video for 3-5 minutes after one ends and while it is idle on the dock.
 Runbook: `docs/runbooks/london-yiko.md`, "Drive Yiko by hand".
 

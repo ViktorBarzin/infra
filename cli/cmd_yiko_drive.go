@@ -181,7 +181,7 @@ func yikoLook(api haAPI, out string) (string, error) {
 	}
 	img, err := yikoSnapshot(api)
 	if err != nil {
-		// HA switches the camera off after 5 min, and the ready sensor can
+		// HA switches the camera off after 10 min, and the ready sensor can
 		// still say on for a while: restart the camera once and retry.
 		if err := api.call("input_boolean", "turn_off", map[string]any{"entity_id": yikoCameraSwitch}); err != nil {
 			return "", err
@@ -206,6 +206,9 @@ func yikoLook(api haAPI, out string) (string, error) {
 
 // yikoCameraStart turns the camera on and waits for the stream.
 func yikoCameraStart(api haAPI) error {
+	if err := yikoTakeBudget(yikoBudgetPath(), "camera start", 1, yikoCameraBudget, time.Now()); err != nil {
+		return err
+	}
 	if err := api.call("input_boolean", "turn_on", map[string]any{"entity_id": yikoCameraSwitch}); err != nil {
 		return err
 	}
@@ -254,7 +257,7 @@ func yikoDriveCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := yikoMove(api, d); err != nil {
+	if err := yikoManual(api, d); err != nil {
 		return err
 	}
 	fmt.Printf("Yiko drove %s for %.1f s (about %.0f cm unless something blocked it). See where it is: homelab ha yiko look\n",
@@ -267,7 +270,7 @@ func yikoTurnCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := yikoMove(api, d); err != nil {
+	if err := yikoManual(api, d); err != nil {
 		return err
 	}
 	fmt.Printf("Yiko turned %s for %.1f s (about %.0f deg, +-25). See where it faces: homelab ha yiko look\n",

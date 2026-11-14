@@ -4092,7 +4092,7 @@ serverFiles:
               description: "Enrolled services that are currently running are unaffected (plugin failOpen), but parked ones 503 on first request until Sablier recovers. `kubectl -n sablier describe deploy sablier`."
       # London robot vacuum camera (stacks/ecovacs-video-proxy). It sits at 0
       # replicas; HA London scales it to 1 while someone watches and back after
-      # 5 minutes, and the camera-cap CronJob forces 0 after 15. An uptime probe
+      # 10 minutes, and the camera-cap CronJob forces 0 after 15. An uptime probe
       # would keep the robot's camera on, so health is read from kube-state.
       - name: Yiko camera
         rules:
@@ -4103,7 +4103,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Yiko's camera bridge has been on for 25m+; the robot's camera and headlights stay on"
-              description: "HA London's 5-minute auto-off and the 15-minute camera-cap CronJob both failed to stop it. Stop it: `kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0`, then check `kubectl -n ecovacs-video-proxy get cronjob,jobs`. Runbook: docs/runbooks/london-yiko.md."
+              description: "HA London's 10-minute auto-off and the 15-minute camera-cap CronJob both failed to stop it. Stop it: `kubectl -n ecovacs-video-proxy scale deploy ecovacs-video-proxy --replicas=0`, then check `kubectl -n ecovacs-video-proxy get cronjob,jobs`. Runbook: docs/runbooks/london-yiko.md."
           - alert: YikoCameraStartFailed
             expr: |
               kube_deployment_status_replicas_unavailable{namespace="ecovacs-video-proxy",deployment="ecovacs-video-proxy"} > 0
