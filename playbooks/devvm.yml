@@ -252,7 +252,7 @@
     # repos and Projects), so the version is a reviewed choice. Bump it after
     # the cloud repo's cli-release workflow has published the new version to
     # this registry, which serves the package without a login.
-    devvm_cloud_cli_version: "0.6.0"
+    devvm_cloud_cli_version: "0.7.0"
     devvm_cloud_cli_registry: "https://forgejo.viktorbarzin.me/api/packages/viktor/npm/"
     # Users whose Claude Code the nightly timer keeps current. Claude Code
     # installs PER USER (~/.local/share/claude/versions), so unlike codex there
@@ -1984,6 +1984,17 @@
       ansible.builtin.copy:
         src: files/devvm/claude-scratch.conf
         dest: /etc/tmpfiles.d/claude-scratch.conf
+        mode: "0644"
+        owner: root
+        group: root
+
+    # Bun and Vite fill the /tmp tmpfs with compile caches that tmp.conf's
+    # 10-day rule never ages out, because reading an entry counts as use.
+    # Cloud's round-9 test hit ENOSPC there; the numbers are in the file.
+    - name: Age build caches under /tmp by modification time
+      ansible.builtin.copy:
+        src: files/devvm/tmpfiles-build-caches.conf
+        dest: /etc/tmpfiles.d/build-caches.conf
         mode: "0644"
         owner: root
         group: root
