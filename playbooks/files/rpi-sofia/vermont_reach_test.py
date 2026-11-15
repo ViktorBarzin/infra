@@ -52,6 +52,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(vr.parse_log(xml), [{"time": "2026-11-14T00:01:12", "kind": "hdError",
                                               "ip": "::", "channel": ""}])
 
+    def test_log_kind_is_not_the_trailing_channel_number(self):
+        # Seen on 2026-11-15 03:00: camera 12 restarting by itself was sent as
+        # fault "12", because the channel is the last segment of the metaId.
+        xml = ("<logDescriptor><metaId>log.hikvision.com/Exception/ipcDisconnect/12</metaId>"
+               "<StartDateTime>2026-11-15T03:00:38Z</StartDateTime><ipAddress>::</ipAddress>"
+               "</logDescriptor>")
+        self.assertEqual(vr.parse_log(xml), [{"time": "2026-11-15T03:00:38", "kind": "ipcDisconnect",
+                                              "ip": "::", "channel": "12"}])
+
 
 class InternetTest(unittest.TestCase):
     def test_all_outside_paths_down_means_internet_down(self):

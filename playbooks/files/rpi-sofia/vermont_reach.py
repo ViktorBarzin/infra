@@ -134,11 +134,13 @@ def parse_log(text):
     out = []
     for block in re.findall(r"<logDescriptor>(.*?)</logDescriptor>", text, re.S):
         d = dict(re.findall(r"<(\w+)>([^<]*)</\1>", block))
-        meta = d.get("metaId", "")
+        # .../Exception/<kind> or .../Exception/<kind>/<channel>
+        parts = d.get("metaId", "").split("/")
+        trailing = parts[-1] if len(parts) > 3 and parts[-1].isdigit() else ""
         out.append({"time": d.get("StartDateTime", "").rstrip("Z"),
-                    "kind": meta.rsplit("/", 1)[-1],
+                    "kind": parts[-2] if trailing else parts[-1],
                     "ip": d.get("ipAddress", ""),
-                    "channel": d.get("channelNo") or d.get("localChannelNo") or ""})
+                    "channel": d.get("channelNo") or d.get("localChannelNo") or trailing})
     return out
 
 
