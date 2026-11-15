@@ -146,52 +146,32 @@ cloud-console-system` shows both `SecretSynced`, and the console has
 `kubectl -n cloud exec deploy/cloud -c cloud -- bun -e 'console.log(!!process.env.SECRETS_PUBLIC_KEY)'`
 prints `true`.
 
-## App-kit K1 rollout
+## App-kit K1 rollout (done 2026-11-15)
 
-App-kit milestone A (the cloud repo's `docs/build/kit-a-infra.md`) gives
-every App an oauth2-proxy, routes the App's host to its edge only, and adds
-the `migrate` init container. Order:
+App-kit milestone A (the cloud repo's `docs/build/kit-a-infra.md`) gave
+every App an oauth2-proxy, routed the App's host to its edge only, and
+added the `migrate` init container. Every Project runs that shape, and
+`stacks/cloud/access_rules.tf` admits no other: an Ingress on
+`auth-<app>`, an edge without `CLOUD_EDGE_SECRET`, an oauth2-proxy
+proxying to its edge and the Caddyfile without the sign-in check are
+refused, and the ingress floor passes nothing from Traefik to oauth2-proxy
+pods or from oauth2-proxy pods to edge pods.
 
-1. Apply infra first, from the main checkout: `homelab tf apply cloud`. The
-   admission policies then accept the old and the new shapes, and the
-   ingress floor passes edge pods to oauth2-proxy pods on 4180.
-2. Deploy Cloud (merge to master; GitHub Actions builds, Woodpecker rolls
-   out). The new reconciler sees a new render digest and queues an apply
-   for every Project; they run one at a time. Each App answers 503 or 502
-   for a few seconds while its new edge and oauth2-proxy start, and
-   signed-in visitors sign in again (the session cookie is now the
-   host-only `__Host-oauth2_proxy`). A private App's Ingress moves from
-   `auth-<app>` to `edge-<app>` in the same apply that changes the edge
-   Service's selector, and an old edge pod (no sign-in check) leaves the
-   Service only when the EndpointSlice controller catches up. Cloud's
-   Project policy lets Traefik reach only edge pods with the
-   `cloud.viktorbarzin.me/edge-config` label, which no old edge pod has, so
-   a request in that moment fails instead of reaching the App without a
-   sign-in.
-3. Watch them settle: `kubectl get ingress -A -l cloud.viktorbarzin.me/managed=true -o json | jq -r '.items[] | select(.spec.rules[0].http.paths[0].backend.service.name | startswith("auth-")) | .metadata.namespace'`
-   lists Projects still on the old Ingress,
-   `kubectl get deploy -A -l cloud.viktorbarzin.me/component=edge -o json | jq -r '.items[] | select([.spec.template.spec.containers[0].env[].name] | index("CLOUD_EDGE_SECRET") | not) | .metadata.namespace'`
-   lists edges still on the old shape, and
-   `kubectl get deploy -A -l 'cloud.viktorbarzin.me/component in (edge,oauth2-proxy)' -o json | jq -r '.items[] | select((.status.availableReplicas // 0) < 1) | .metadata.namespace + "/" + .metadata.name'`
-   lists edge and oauth2-proxy Deployments with no available pod. All
-   three print nothing when every Project runs the new shape. Every
-   re-apply waits for each App's edge and oauth2-proxy, so a Project whose
-   new pods never become available fails as `edge_not_ready` and names
-   the App. A failed Project shows in the console; applying its Project
-   File again retries it.
-4. The follow-up, once all three lists are empty: remove what
-   `local.cloud_k1_transition` in `stacks/cloud/access_rules.tf` lists (the
-   old Caddyfile variant, the edge env without the secret, the oauth2-proxy
-   `args_v1`, Ingress backends `auth-<app>` port `http`, and the floor's
-   Traefik to oauth2-proxy and oauth2-proxy to edge passes), then
-   `homelab tf apply cloud`.
+Health check. Each command prints nothing when all is well:
 
-Rollback before step 4: revert the Cloud release, then apply each
-Project's file again (console or `cloud apply`): the older reconciler does
-not re-apply Projects by itself. The policies still admit the old shapes.
-Before rolling forward again, clear the stored render digest, or the new
-release finds its own digest still there and re-applies nothing:
-`DELETE FROM reconciler_state WHERE key = 'render';` (SQL as above).
+- `kubectl get ingress -A -l cloud.viktorbarzin.me/managed=true -o json | jq -r '.items[] | select(.spec.rules[0].http.paths[0].backend.service.name | startswith("auth-")) | .metadata.namespace'`
+  lists Projects with an Ingress on the oauth2-proxy.
+- `kubectl get deploy -A -l cloud.viktorbarzin.me/component=edge -o json | jq -r '.items[] | select([.spec.template.spec.containers[0].env[].name] | index("CLOUD_EDGE_SECRET") | not) | .metadata.namespace'`
+  lists edges without the edge secret.
+- `kubectl get deploy -A -l 'cloud.viktorbarzin.me/component in (edge,oauth2-proxy)' -o json | jq -r '.items[] | select((.status.availableReplicas // 0) < 1) | .metadata.namespace + "/" + .metadata.name'`
+  lists edge and oauth2-proxy Deployments with no available pod.
+
+A Cloud reconciler from before K1 renders shapes the policies now refuse,
+so rolling Cloud back past K1 fails every Project apply. Roll forward
+instead. Every re-apply waits for each App's edge and oauth2-proxy, so a
+Project whose new pods never become available fails as `edge_not_ready`
+and names the App. A failed Project shows in the console; applying its
+Project File again retries it.
 
 ## Turn on builds
 

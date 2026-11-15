@@ -25,6 +25,10 @@
 #      not the Authentik server, a replica, Vault, other namespaces, the API
 #      server ClusterIP, the node or the home WAN IP; oauth2-proxy reaches the
 #      Authentik server; the kubelet's readiness probes pass the floors.
+#      Then, with an allow-all Project policy in the default tier, the floor
+#      alone still denies Traefik to oauth2-proxy pods, oauth2-proxy pods to
+#      edge pods (the private App's path before app-kit K1) and Traefik to
+#      App pods.
 #
 # Needs docker, kind, kubectl, helm, python3 with PyYAML, bun, terraform (for
 # `terraform console`) and a cloud repo checkout with its pinned OpenTofu and
