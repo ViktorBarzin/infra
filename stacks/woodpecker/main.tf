@@ -279,9 +279,9 @@ locals {
   # Vault key -> Woodpecker repo ids that may read it (from_secret uses in
   # every repo's .woodpecker, counted 2026-11-15).
   ci_repo_secrets = {
-    "slack_webhook"     = ["1"]      # ViktorBarzin/infra
-    "slack-webhook-url" = ["2", "6"] # Website, webhook-handler
-    "dockerhub-token"   = ["77"]     # viktor/claude-memory
+    "slack_webhook"     = ["1", "82"]            # ViktorBarzin/infra, viktor/infra
+    "slack-webhook-url" = ["2", "6", "87", "88"] # Website, webhook-handler, audiobook-search, insta2spotify
+    "dockerhub-token"   = ["77"]                 # viktor/claude-memory
   }
   ci_repo_secret_lines = join("\n", flatten([
     for key, repos in local.ci_repo_secrets : [for r in repos : "${key} ${r}"]

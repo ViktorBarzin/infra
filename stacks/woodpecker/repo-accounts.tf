@@ -20,10 +20,12 @@
 # policy fails open to `default`, so a Kyverno outage costs rights, not safety.
 
 locals {
-  # Woodpecker repo id -> the namespace its deploy pipeline changes. Read from
-  # each repo's .woodpecker/deploy.yml on 2026-11-15 (`kubectl -n <ns>`),
-  # leaving out instagram-poster and hermes-agent, whose namespaces are gone. The
-  # GitHub and Forgejo registrations of one repo have different ids.
+  # Woodpecker repo id -> the namespace its deploy pipeline changes. Read on
+  # 2026-11-15 from the `kubectl -n <ns>` lines of the pipeline configs each
+  # repo last ran (GET /api/repos/<id>/pipelines/<n>/config), leaving out
+  # instagram-poster and hermes-agent, whose namespaces are gone. The GitHub
+  # and Forgejo registrations of one repo have different ids. A repo missing
+  # here deploys with no rights: add it, and its namespace gets the binding.
   ci_deploy_repos = {
     "2"   = "website"                  # ViktorBarzin/Website
     "4"   = "health"                   # ViktorBarzin/health
@@ -58,12 +60,36 @@ locals {
     "478" = "alexa-assistant"          # ViktorBarzin/alexa-assistant
     "511" = "reels"                    # ViktorBarzin/trip-reel
     "512" = "cloud"                    # ViktorBarzin/cloud
+    "7"   = "realestate-crawler"       # immovika/realestate-crawler
+    "9"   = "ebook2audiobook"          # ViktorBarzin/audiblez-web
+    "10"  = "tv"                       # ViktorBarzin/tv
+    "43"  = "plotting-book"            # PassionProjectsAnca/Plotting-Your-Dream-Book
+    "79"  = "k8s-portal"               # ViktorBarzin/infra-onboarding
+    "84"  = "tasks"                    # viktor/tasks
+    "87"  = "ebooks"                   # ViktorBarzin/audiobook-search
+    "88"  = "insta2spotify"            # ViktorBarzin/insta2spotify
+    "166" = "tv"                       # viktor/f1-stream, now the tv repo
+    "212" = "tasks"                    # ViktorBarzin/tasks
+    "81"  = "priority-pass"            # viktor/priority-pass
+    "83"  = "realestate-crawler"       # viktor/wrongmove
+    "122" = "payslip-ingest"           # viktor/payslip-ingest
+    "123" = "job-hunter"               # viktor/job-hunter
+    "159" = "fire-planner"             # viktor/fire-planner
+    "161" = "freedify"                 # viktor/freedify
+    "163" = "recruiter-responder"      # viktor/recruiter-responder
+    "164" = "tuya-bridge"              # viktor/tuya_bridge
+    "165" = "tripit"                   # viktor/tripit
   }
   ci_deploy_namespaces = toset(values(local.ci_deploy_repos))
 
   ci_repo_accounts = merge(
     { for id, ns in local.ci_deploy_repos : id => "ci-deploy-${ns}" },
-    { "1" = kubernetes_service_account.ci_infra.metadata[0].name }, # ViktorBarzin/infra
+    # The infra repo's two registrations: 82 is viktor/infra on Forgejo, the
+    # one that runs the applies; 1 is the GitHub mirror's.
+    {
+      "1"  = kubernetes_service_account.ci_infra.metadata[0].name # ViktorBarzin/infra
+      "82" = kubernetes_service_account.ci_infra.metadata[0].name # viktor/infra
+    },
   )
 }
 
@@ -152,6 +178,50 @@ resource "kubernetes_role_binding" "ci_deploy" {
   role_ref {
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role.ci_deployer.metadata[0].name
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+# tv's deploy does more than set an image: it records itself in the
+# tv-deploy ConfigMap, reads the guard hook from tv-guard-secrets, and sleeps
+# the emulator through the tv-deploy-yield Role in stacks/android-emulator.
+resource "kubernetes_role" "ci_deploy_tv" {
+  metadata {
+    name      = "woodpecker-ci-deploy-tv"
+    namespace = "tv"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["configmaps"]
+    verbs      = ["create"]
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["tv-deploy"]
+    verbs          = ["get", "patch"]
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["secrets"]
+    resource_names = ["tv-guard-secrets"]
+    verbs          = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding" "ci_deploy_tv" {
+  metadata {
+    name      = "woodpecker-ci-deploy-tv"
+    namespace = "tv"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.ci_deploy["tv"].metadata[0].name
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  role_ref {
+    kind      = "Role"
+    name      = kubernetes_role.ci_deploy_tv.metadata[0].name
     api_group = "rbac.authorization.k8s.io"
   }
 }

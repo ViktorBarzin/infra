@@ -63,10 +63,9 @@ resource "kubernetes_role_binding" "gate" {
 # Service, no RBAC) and waits up to 20 min while someone holds a presence
 # claim on the emulator.
 #
-# Woodpecker runs pipeline steps as the `default` ServiceAccount in namespace
-# woodpecker. That account is cluster-admin today (stacks/woodpecker,
-# woodpecker-default), so this Role grants nothing new yet. It names what the
-# deploy needs here, so the deploy keeps working if that binding is narrowed.
+# tv's pipeline steps run as ci-deploy-tv in namespace woodpecker
+# (stacks/woodpecker/repo-accounts.tf). Until 2026-11-15 they ran as
+# `default`, which was cluster-admin.
 resource "kubernetes_role" "deploy_yield" {
   metadata {
     name      = "tv-deploy-yield"
@@ -99,7 +98,7 @@ resource "kubernetes_role_binding" "deploy_yield" {
   }
   subject {
     kind      = "ServiceAccount"
-    name      = "default"
+    name      = "ci-deploy-tv"
     namespace = "woodpecker"
   }
 }
