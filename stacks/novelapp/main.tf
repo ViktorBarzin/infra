@@ -285,10 +285,12 @@ resource "kubernetes_role_binding" "novelapp_owner_vabbit81" {
     kind      = "ClusterRole"
     name      = "admin"
   }
+  # The owner group from stacks/authentik/rights-groups.tf; per email until
+  # 2026-11-15 (enforced-identity plan, step 7).
   subject {
     api_group = "rbac.authorization.k8s.io"
-    kind      = "User"
-    name      = "vabbit81@gmail.com"
+    kind      = "Group"
+    name      = "kubernetes-namespace-owner-novelapp"
   }
   subject {
     api_group = ""

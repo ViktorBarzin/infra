@@ -377,8 +377,12 @@ resource "vault_identity_group" "admins" {
   policies = [vault_policy.admin.name, vault_policy.sops_admin.name]
 }
 
+# vault-admins is a rights group with no Authentik superuser flag
+# (stacks/authentik/rights-groups.tf). Until 2026-11-15 this mapped
+# "authentik Admins", which is superuser, so anything that needed Vault admin
+# had to be an Authentik admin as well (enforced-identity plan, step 7).
 resource "vault_identity_group_alias" "admins" {
-  name           = "authentik Admins"
+  name           = "vault-admins"
   mount_accessor = vault_jwt_auth_backend.oidc.accessor
   canonical_id   = vault_identity_group.admins.id
 }

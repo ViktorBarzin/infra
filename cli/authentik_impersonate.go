@@ -317,7 +317,7 @@ func (im *impersonation) impersonate(pk int, reason string) error {
 	case http.StatusNoContent, http.StatusOK:
 		return nil
 	case http.StatusForbidden:
-		return errors.New("Authentik denied impersonation (HTTP 403): svc-agent needs the agent impersonation role from stacks/authentik/agent-service-account.tf")
+		return errors.New("Authentik denied impersonation (HTTP 403): svc-agent may impersonate only members of the Authentik group \"Agent impersonatable\" (stacks/authentik/agent-service-account.tf)")
 	case http.StatusUnauthorized:
 		return errors.New("Authentik refused impersonation (HTTP 401): impersonation is off in system settings, or the target is svc-agent itself")
 	default:

@@ -18,27 +18,14 @@ variable "k8s_users" {
 }
 
 # --- Admin role ---
-# Binds to built-in cluster-admin ClusterRole
+# Granted through the Authentik group kubernetes-admins (oidc-group-bindings.tf)
+# since 2026-11-15, not per email (enforced-identity plan, step 7). The
+# per-email bindings matched the k8s_users email, which had drifted from the
+# Authentik user for Viktor.
 
-resource "kubernetes_cluster_role_binding" "admin_users" {
-  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "admin" })
-
-  metadata {
-    name = "oidc-admin-${each.key}"
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-
-  subject {
-    kind      = "User"
-    name      = each.value.email
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
+# Two more per-email admin bindings, oidc-admin-vbarzin and oidc-admin-akadmin,
+# had been made with `kubectl create` on 2026-02-17 and were in no state. They
+# were adopted and removed on 2026-11-15; both people are in kubernetes-admins.
 
 # --- Power-user role (read+write+secrets) — RETAINED BUT UNBOUND ---
 # Superseded by oidc-power-user-readonly (below) per ADR-0005: power-users are bound
@@ -163,26 +150,9 @@ resource "kubernetes_cluster_role" "power_user_readonly" {
   }
 }
 
-# Power-users are bound to the READ-ONLY role above (NOT the read+write+secrets one).
-resource "kubernetes_cluster_role_binding" "power_users" {
-  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "power-user" })
-
-  metadata {
-    name = "oidc-power-user-readonly-${each.key}"
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.power_user_readonly.metadata[0].name
-  }
-
-  subject {
-    kind      = "User"
-    name      = each.value.email
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
+# Power-users get the READ-ONLY role through the Authentik group
+# kubernetes-power-users (oidc-group-bindings.tf), not per email, since
+# 2026-11-15.
 
 # --- Namespace-owner role ---
 # Full admin within assigned namespaces + read-only cluster-wide
@@ -201,12 +171,15 @@ locals {
   ])
 }
 
-resource "kubernetes_role_binding" "namespace_owner" {
-  for_each = nonsensitive({ for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair })
+# admin inside each owned namespace, for the Authentik group
+# kubernetes-namespace-owner-<ns> (stacks/authentik/rights-groups.tf, filled
+# from the same k8s_users map). Per email until 2026-11-15.
+resource "kubernetes_role_binding" "namespace_owner_group" {
+  for_each = nonsensitive(toset([for pair in local.namespace_owner_pairs : pair.namespace]))
 
   metadata {
-    name      = "namespace-owner-${each.value.user_key}"
-    namespace = each.value.namespace
+    name      = "namespace-owner"
+    namespace = each.value
   }
 
   role_ref {
@@ -216,8 +189,8 @@ resource "kubernetes_role_binding" "namespace_owner" {
   }
 
   subject {
-    kind      = "User"
-    name      = each.value.email
+    kind      = "Group"
+    name      = "kubernetes-namespace-owner-${each.value}"
     api_group = "rbac.authorization.k8s.io"
   }
 }
@@ -247,25 +220,8 @@ resource "kubernetes_cluster_role" "namespace_owner_readonly" {
   }
 }
 
-resource "kubernetes_cluster_role_binding" "namespace_owner_readonly" {
-  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "namespace-owner" })
-
-  metadata {
-    name = "oidc-ns-owner-readonly-${each.key}"
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.namespace_owner_readonly.metadata[0].name
-  }
-
-  subject {
-    kind      = "User"
-    name      = each.value.email
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
+# Namespace owners get the read-only role above through the Authentik group
+# kubernetes-namespace-owners (oidc-group-bindings.tf) since 2026-11-15.
 
 # Resource quotas per user namespace
 resource "kubernetes_resource_quota" "user_namespace_quota" {
@@ -285,7 +241,7 @@ resource "kubernetes_resource_quota" "user_namespace_quota" {
     }
   }
 
-  depends_on = [kubernetes_role_binding.namespace_owner]
+  depends_on = [kubernetes_role_binding.namespace_owner_group]
 }
 
 # ConfigMap with user-role mapping for the self-service portal

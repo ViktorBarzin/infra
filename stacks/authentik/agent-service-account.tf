@@ -111,9 +111,34 @@ resource "authentik_rbac_role" "agent_impersonation" {
   name = "agent impersonation"
 }
 
+# Impersonation is granted per user, for the members of "Agent impersonatable"
+# alone (enforced-identity plan, step 7). Until 2026-11-15 the role held
+# authentik_core.impersonate globally, so svc-agent could become any of the 25
+# users, admins included. Authentik checks the object permission on
+# POST /api/v3/core/users/<pk>/impersonate/.
+#
+# Members: Viktor, whose agents test apps as him, and the guest account. Only
+# Viktor-tier credentials read svc-agent's login (Vault secret/authentik-agent).
+locals {
+  agent_impersonatable_usernames = ["vbarzin@gmail.com", "guest"]
+}
+
+data "authentik_user" "agent_impersonatable" {
+  for_each = toset(local.agent_impersonatable_usernames)
+  username = each.value
+}
+
+resource "authentik_group" "agent_impersonatable" {
+  name  = "Agent impersonatable"
+  users = [for u in data.authentik_user.agent_impersonatable : u.id]
+}
+
 resource "authentik_rbac_permission_role" "agent_impersonate" {
+  for_each   = data.authentik_user.agent_impersonatable
   role       = authentik_rbac_role.agent_impersonation.id
   permission = "authentik_core.impersonate"
+  model      = "authentik_core.user"
+  object_id  = tostring(each.value.pk)
 }
 
 resource "authentik_rbac_permission_role" "agent_view_user" {
