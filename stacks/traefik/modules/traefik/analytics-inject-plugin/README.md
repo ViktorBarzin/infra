@@ -25,6 +25,11 @@ the design doc lists that as an open question.
 | `extraAttributes` | none | extra attributes, sorted by name, for example `data-track-errors: "true"`. An empty value renders a bare attribute. `src`, `data-site-id` and `defer` are rejected. |
 | `excludeHosts` | none | hosts never touched: not wrapped, `Accept-Encoding` kept. Wins over `includeHosts`. |
 | `includeHosts` | none | when non-empty, the only eligible hosts. Meant for a staged rollout, then cleared. |
+| `mode` | `inject` | `inject`, or `identify` (see "Identify") |
+| `identifySrc` | none | inject mode: path of the identify script, for example `/_t/id.js`. Must start with one `/`. Set together with `identifyCookie`. |
+| `identifyCookie` | none | inject mode: the cookie that marks a visitor signed in to Authentik. With it, the identify tag goes in before the Rybbit tag. |
+| `identifyHeader` | `X-authentik-uid` | identify mode: the request header with the user id |
+| `identifyStorageKey` | `rybbit-user-id` | identify mode: the localStorage key the Rybbit script reads its user id from |
 
 Values are HTML-escaped. `New()` rejects a missing `siteId`, attribute
 names outside `[A-Za-z][A-Za-z0-9_:.-]*`, and invalid host patterns.
@@ -84,6 +89,38 @@ are sent unmodified and the rest streams. If the backend flushes while the
 body is held, the plugin injects into what it has (when an insertion point is
 there), sends it, and streams the rest.
 
+## Identify
+
+The Rybbit script cannot tell who is signed in to a third-party app, so
+without this every network change made a new visitor. Two parts fix it for
+visitors signed in to Authentik:
+
+1. Inject mode, with `identifySrc` and `identifyCookie` set: when the request
+   carries the cookie `identifyCookie` (the domain-wide `authentik_proxy_*`
+   session cookie of the forward-auth outpost), the plugin inserts
+   `<script src="/_t/id.js" defer></script>` before the Rybbit tag. Both are
+   deferred, so the identify script runs first. A visitor without the cookie
+   gets only the Rybbit tag, and never a request to Authentik.
+2. Identify mode answers the identify script. It runs behind
+   `authentik-forward-auth` on the route `/_t/id.js`
+   (`stacks/rybbit/ingest_path.tf`) and never calls the next handler. For a
+   `GET` with a user id of 1 to 128 letters, digits, `.`, `_`, `@` or `-` in
+   `identifyHeader`, it answers
+   `try{localStorage.setItem("rybbit-user-id","<id>")}catch(e){}`. Without an
+   id (the forward-auth break-glass fallback sends none) it answers a comment
+   and leaves the stored id alone. `HEAD` gets the headers only, and other
+   methods get 405. Every answer has `Cache-Control: no-store, private` and
+   `X-Content-Type-Options: nosniff`.
+
+The Rybbit script reads `rybbit-user-id` at start and sends it as `user_id`,
+which Rybbit stores as `identified_user_id`. Authentik's uid is the hashed id
+our own apps send as the OIDC `sub`, so the visit joins the person those apps
+identify.
+
+Limits: the stored id stays after the visitor signs out of Authentik, until
+another signed-in visit replaces it. Apps that opt out with `X-Analytics: sdk`
+get neither tag and identify themselves.
+
 ## Compression and ordering
 
 The plugin runs as a websecure entrypoint middleware, after `compress`:
@@ -119,6 +156,7 @@ analytics-inject = {
     ".traefik.yml" = file("${path.module}/analytics-inject-plugin/.traefik.yml")
     "main.go"      = file("${path.module}/analytics-inject-plugin/main.go")
     "filters.go"   = file("${path.module}/analytics-inject-plugin/filters.go")
+    "identify.go"  = file("${path.module}/analytics-inject-plugin/identify.go")
   }
 }
 ```

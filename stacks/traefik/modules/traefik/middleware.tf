@@ -913,6 +913,33 @@ resource "kubectl_manifest" "middleware_analytics_inject" {
   depends_on = [helm_release.traefik]
 }
 
+# analytics-identify: the same plugin in identify mode. It answers
+# /_t/id.js (route in stacks/rybbit/ingest_path.tf, behind
+# authentik-forward-auth) with a script that stores the X-authentik-uid of the
+# signed-in user under `rybbit-user-id`, where the Rybbit script reads its
+# user id at start. Authentik's uid is the same hashed id our own apps send
+# as the OIDC sub, so third-party pageviews join the person those apps
+# identify. It never passes a request on.
+resource "kubectl_manifest" "middleware_analytics_identify" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "analytics-identify"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        analytics-inject = {
+          mode = "identify"
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
+}
+
 # crowdsec: enforces CrowdSec ban decisions in-process. Attached to the
 # `websecure` ENTRYPOINT (main.tf), not to individual routers, so it covers all
 # ~195 Ingresses, the 10 IngressRoutes and the catchall without per-ingress
