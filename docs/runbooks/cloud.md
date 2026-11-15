@@ -247,6 +247,14 @@ for an email they know is that person's.
    requested_at = now();`, then 10 seconds later `SELECT u.email,
    l.account, l.error FROM forgejo_links l JOIN users u ON u.id =
    l.user_id;` (`homelab k8s db cloud`). `account` names the linked login.
+   The link lets Cloud check that the owner may read the repo; Cloud then
+   reads the branch and builds it as `cloud-bot` (below), which sees a
+   private repo only as a collaborator. `cloud new` (CLI 0.6.0 and later)
+   adds `cloud-bot` with Read before the first push. A private repo made by
+   hand, or by `cloud new` before 0.6.0, needs `cloud-bot` added as a Read
+   collaborator (the repo's Settings, Collaborators); until then
+   `cloud deploys` says "Cloud's reader account cloud-bot cannot read this
+   private repo".
 
 Cloud's round-4 end-to-end test hit step 2: a test account made by hand had
 no vouch, so Authentik refused its own private App.
@@ -533,7 +541,7 @@ secret, `stacks/authentik/cloud-apps.tf`):
 
 | Account | Admin | Token key | Scopes | Used by |
 |---|---|---|---|---|
-| `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret |
+| `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret; reads a private App repo only as a Read collaborator, which `cloud new` adds (Cloud's `FORGEJO_READER`, default `cloud-bot`) |
 | `cloud-admin-reader` | yes | `forgejo_admin_token` | read:admin, read:repository, read:user | reconciler only (the Project owner's repo-access check); never copied anywhere |
 
 Both were made with the in-pod CLI (the admin REST endpoint cannot mint
