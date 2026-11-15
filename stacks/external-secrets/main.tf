@@ -49,6 +49,18 @@ resource "kubernetes_manifest" "css_vault_kv" {
     kind       = "ClusterSecretStore"
     metadata   = { name = "vault-kv" }
     spec = {
+      # Tenant and Cloud namespaces may not use this store: it reads all of
+      # secret/*. They have their own SecretStores (tenant.tf, and Cloud's
+      # per-Project store). External Secrets checks these conditions itself,
+      # so an ExternalSecret there naming this store is refused.
+      conditions = [{
+        namespaceSelector = {
+          matchExpressions = [
+            { key = "kubernetes.io/metadata.name", operator = "NotIn", values = local.tenant_namespaces },
+            { key = "cloud.viktorbarzin.me/managed", operator = "DoesNotExist" },
+          ]
+        }
+      }]
       provider = {
         vault = {
           server  = "http://vault-active.vault.svc.cluster.local:8200"
@@ -79,6 +91,18 @@ resource "kubernetes_manifest" "css_vault_db" {
     kind       = "ClusterSecretStore"
     metadata   = { name = "vault-database" }
     spec = {
+      # Tenant and Cloud namespaces may not use this store: it reads all of
+      # secret/*. They have their own SecretStores (tenant.tf, and Cloud's
+      # per-Project store). External Secrets checks these conditions itself,
+      # so an ExternalSecret there naming this store is refused.
+      conditions = [{
+        namespaceSelector = {
+          matchExpressions = [
+            { key = "kubernetes.io/metadata.name", operator = "NotIn", values = local.tenant_namespaces },
+            { key = "cloud.viktorbarzin.me/managed", operator = "DoesNotExist" },
+          ]
+        }
+      }]
       provider = {
         vault = {
           server  = "http://vault-active.vault.svc.cluster.local:8200"

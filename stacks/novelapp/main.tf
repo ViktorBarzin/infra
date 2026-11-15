@@ -16,9 +16,12 @@ resource "kubernetes_manifest" "external_secret" {
     }
     spec = {
       refreshInterval = "1h"
+      # The namespace's own store: reads only secret/<namespace>
+      # (stacks/external-secrets/tenant.tf). vault-kv refuses tenant
+      # namespaces since 2026-11-15.
       secretStoreRef = {
-        name = "vault-kv"
-        kind = "ClusterSecretStore"
+        name = "vault-tenant"
+        kind = "SecretStore"
       }
       target = {
         name = "novelapp-secrets"
