@@ -98,9 +98,11 @@ WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
   disable-devtool traps). It presents as a real Chrome and usually succeeds
   first try — but it's the shared cluster browser (slower startup, one batch
   run, no per-step feedback), so it's the escalation path, never the default.
-  A Cloudflare Turnstile checkbox ("Verify you are human", or the full-page
-  "Just a moment...") is also a reason to come here: headless fails it with
-  error 600010, and this browser passes it by itself (see CLOUDFLARE below).
+  The full-page Cloudflare check ("Just a moment...") is also a reason to come
+  here: the Playwright MCP browser still fails it, and this browser passes it
+  by itself (see CLOUDFLARE below). A Turnstile checkbox on a site's own form
+  ("Verify you are human") the Playwright MCP browser now passes on its own.
+  T3's preview browser is headless and fails both.
   Need the HUMAN'S logged-in session, or a tab already open on their screen?
   Neither this nor the headless browser can reach it. That is
   homelab browser bridge, which drives their own Chrome through an extension.

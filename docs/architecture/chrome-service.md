@@ -406,7 +406,10 @@ Key facts:
   (7 of 7 passes confirmed by siteverify) and on
   `scrapingcourse.com/cloudflare-challenge`, where the runner without the
   solver was still on "Just a moment..." after 25 s. Code:
-  `cli/browser_runner.js` (`watchTurnstile`). FlareSolverr
+  `cli/browser_runner.js` (`watchTurnstile`). The terminal-lobby Playwright
+  MCP browser (`tl-browser`) does the same since terminal-lobby ADR-0049, but
+  it runs plain Playwright and still fails the full-page check, so that page
+  stays a reason to come here. FlareSolverr
   (`servarr`) also solves Turnstile but runs its own Chrome with no CDP, so
   it cannot share a session with this browser.
 - **`stealth.js` is vendored** into the CLI (`cli/browser_stealth.js`) as a
