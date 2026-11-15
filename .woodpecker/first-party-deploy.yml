@@ -19,8 +19,8 @@
 # IfNotPresent on pinned tags, so only a tag@digest reference makes the node
 # pull the new bytes.
 #
-# The woodpecker-agent ServiceAccount is cluster-admin, so the kubectl step
-# needs no kubeconfig. Same mechanism as each app repo's .woodpecker/deploy.yml
+# Steps of this repo run as ci-infra (cluster-admin, stacks/woodpecker/
+# repo-accounts.tf), so the kubectl step needs no kubeconfig. Same mechanism as each app repo's .woodpecker/deploy.yml
 # from scripts/offinfra-onboard; this one lives in infra because four of the
 # apps are built from this repo, and the other three are GitHub-canonical
 # repos with no Woodpecker registration of their own.

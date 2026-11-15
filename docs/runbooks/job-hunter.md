@@ -114,8 +114,8 @@ Deploys are **automatic on push to master** — we build the image, so CI also
 drives the rollout (`.woodpecker.yml`: `build-and-push` tags `latest` +
 `${CI_COMMIT_SHA:0:8}`, then a `deploy` step runs
 `kubectl set image deployment/job-hunter ...:${SHA}` + `rollout status`). The
-woodpecker-agent SA is cluster-admin, so no kubeconfig/RBAC is wired into the
-step. (Keel was a redundant net here until it was retired on 2026-10-11.) So
+step runs as `ci-deploy-job-hunter` (`stacks/woodpecker/repo-accounts.tf`), so
+no kubeconfig is wired into it. (Keel was a redundant net here until it was retired on 2026-10-11.) So
 to ship code:
 
 ```bash

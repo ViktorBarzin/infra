@@ -425,8 +425,8 @@ these lines.
 - Commands with `${VAR}:${VAR}` must be **quoted** — an unquoted `:` triggers
   YAML map parsing when the vars are empty.
 - Use `bitnami/kubectl:latest` (not pinned versions — entrypoint compatibility).
-- Global secrets must include `manual` in their events list for API-triggered
-  pipelines.
+- Repo secrets from the sync job include `manual` in their events, so
+  API-triggered pipelines get them. There are no global secrets.
 
 ### GitHub repo secrets
 
@@ -541,7 +541,7 @@ when:
 
 steps:
   deploy:
-    image: bitnami/kubectl:latest   # uses the in-cluster woodpecker-agent SA (cluster-admin)
+    image: bitnami/kubectl:latest   # runs as ci-deploy-<ns> (stacks/woodpecker/repo-accounts.tf)
     commands:
       - "kubectl set image deployment/app app=${IMAGE_NAME}:${IMAGE_TAG} -n <ns>"
       - "kubectl rollout status deployment/app -n <ns> --timeout=300s"
@@ -554,10 +554,24 @@ steps:
 
 ### CI/CD secrets sync
 
-A CronJob in the `woodpecker` namespace pushes `secret/ci/global` from Vault →
-the Woodpecker API every 6h, keeping global secrets in sync. Woodpecker deploy
-pipelines authenticate to the cluster via the in-cluster `woodpecker-agent` SA
-(cluster-admin); Vault K8s auth backs any secret reads.
+A CronJob in the `woodpecker` namespace (ServiceAccount `woodpecker-sync`)
+copies keys of `secret/ci/global` from Vault to the Woodpecker API every 6h, each
+as a repo secret of only the repos listed in `ci_repo_secrets`
+(`stacks/woodpecker/main.tf`), and deletes any global secret.
+
+Each step pod runs as its repo's ServiceAccount (enforced-identity plan, step 4,
+2026-11-15). Woodpecker stamps the pod with `woodpecker-ci.org/repo-id` and drops
+any label under that prefix a pipeline sets, and the Kyverno MutatingPolicy
+`woodpecker-repo-service-account` maps it (`stacks/woodpecker/repo-accounts.tf`):
+
+| repo | ServiceAccount | rights |
+|---|---|---|
+| infra (Woodpecker repos 82 and 1) | `ci-infra` | cluster-admin; the only account the Vault `ci` role trusts |
+| an app that deploys | `ci-deploy-<namespace>` | `woodpecker-ci-deployer` in that namespace: set image, rollout, a smoke Job |
+| any other | `default` | none |
+
+Until then every step ran as `default`, bound to cluster-admin and trusted by
+the Vault `ci` role. The agent keeps the chart's Role in `woodpecker` only.
 
 ## Decisions & Rationale
 
@@ -581,10 +595,9 @@ handling. The Forgejo registry was frozen + emptied (issue #32).
 
 ### Why Woodpecker stays for deploy?
 
-`kubectl set image` needs in-cluster privileged access; doing it from GHA would
-mean exposing kube-apiserver or a long-lived kubeconfig. Woodpecker's
-`woodpecker-agent` SA is already cluster-admin in-cluster — the deploy step
-needs no credentials.
+`kubectl set image` needs in-cluster access; doing it from GHA would mean
+exposing kube-apiserver or a long-lived kubeconfig. In Woodpecker the deploy
+step gets its repo's namespace-scoped ServiceAccount and needs no credentials.
 
 ### Why `event: manual` on deploy.yml?
 

@@ -30,8 +30,11 @@ job's last step since 2026-09-24; a separate `deploy` job in older repos) POSTs
 registration, github-forge; GHA secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` +
 `IMAGE_NAME` → `.woodpecker/deploy.yml` (event:**manual** ONLY, so the raw
 Forgejo→GitHub mirror pushes don't fire a tag-less deploy) runs `kubectl set
-image deployment/<app> …` in-cluster (woodpecker-agent SA = cluster-admin, no
-kubeconfig). Deployment image is `ignore_changes` (`# CI_SETS_IMAGE`) so the SHA
+image deployment/<app> …` in-cluster as the repo's own ServiceAccount
+(`ci-deploy-<namespace>`, set by a Kyverno MutatingPolicy from the pod's
+`woodpecker-ci.org/repo-id` label; map in `stacks/woodpecker/repo-accounts.tf`,
+no kubeconfig). **A new deploying repo must be added to `ci_deploy_repos`**, or
+its step runs as `default`, which has no rights. Deployment image is `ignore_changes` (`# CI_SETS_IMAGE`) so the SHA
 sticks vs `terragrunt apply`; CronJobs track `:latest` + `imagePullPolicy:
 Always`. (Keel was a redundant net here until it was retired on
 2026-10-11.) Apps without a Woodpecker repo of their own (the infra-built
@@ -123,7 +126,9 @@ GitHub forge = repo 1.
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
 - Use `bitnami/kubectl:latest` (not pinned versions — entrypoint compatibility issues)
-- Global secrets must have `manual` in their events list for API-triggered pipelines
+- There are no global secrets since 2026-11-15: the sync job writes each key of
+  `secret/ci/global` as a repo secret to the repos listed in `ci_repo_secrets`
+  (`stacks/woodpecker/main.tf`), with `manual` in its events
 
 **GitHub repo secrets** (per repo): `WOODPECKER_TOKEN` (POST deploy pipeline),
 `FORGEJO_GIT_TOKEN` (write:repository PAT for the svu tag push). ghcr push uses

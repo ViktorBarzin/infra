@@ -293,3 +293,4 @@ echo "  - ghcr tags:  (token exchange) https://ghcr.io/v2/viktorbarzin/$IMAGE/ta
 echo "  - WP deploy:  $WP_API/repos/$WP_REPO_ID/pipelines"
 echo "  - rollout:    kubectl -n $NAMESPACE get deploy"
 echo "  - pull secret: ensure the Deployment carries ghcr-credentials (Kyverno allowlist + stack imagePullSecrets)"
+[ "$NO_DEPLOY" = 1 ] || echo "  - deploy rights: add \"$WP_REPO_ID\" = \"$NAMESPACE\" to ci_deploy_repos in stacks/woodpecker/repo-accounts.tf and apply woodpecker; until then the deploy step has no rights"
