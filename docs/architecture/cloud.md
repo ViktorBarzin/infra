@@ -298,9 +298,7 @@ access change answers 503 or 502 until the new pods are ready instead of
 serving with the old rules. The Project quota holds a surge pod for every
 edge and oauth2-proxy beside the App's own, so the new pods start while
 the App's new pod is still getting ready. Cloud's Project policy lets
-Traefik reach only edge pods with the `edge-config` label; edge pods from
-before app-kit K1 have it as an annotation only, so Traefik never reaches
-one during the K1 re-apply.
+Traefik reach only edge pods with the `edge-config` label.
 
 ```mermaid
 flowchart LR
@@ -321,14 +319,13 @@ and no `restartPolicy`; edge and oauth2-proxy pods may have none, and every
 container rule (extended resources, ephemeral limits, probe and hook
 hosts) covers init containers too.
 
-During the rollout (`local.cloud_k1_transition`), the shapes from before K1
-stay admitted: the private App's Ingress on `auth-<app>` port `http`, the
-oauth2-proxy proxying to its edge with a 1-hour cookie, the edge with
-`respond /oauth2/* 404` and no edge secret, and the floor's Traefik to
-oauth2-proxy and oauth2-proxy to edge passes. Cloud's reconciler applies
-every Project again after its release, one at a time; the runbook's
-"App-kit K1 rollout" says how to check that none is left and what the
-follow-up removes.
+The shapes from before K1 are refused: `cloud-managed-ingress` admits
+only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge
+must carry its edge secret; the oauth2-proxy must use
+`--upstream=static://202`, never its edge; and the Caddyfile must hold the
+sign-in check, never `respond /oauth2/* 404` alone. The ingress floor
+passes nothing from Traefik to oauth2-proxy pods or from oauth2-proxy pods
+to edge pods, so a Project policy cannot open the old path either.
 
 ## Connections on the shared primary
 

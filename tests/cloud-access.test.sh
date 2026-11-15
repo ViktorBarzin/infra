@@ -28,9 +28,10 @@
 #   - Cloud's renderer and infra agree on the edge and oauth2-proxy images,
 #     the strip list, the Authentik slug and the egress exclusions; the egress
 #     floor mixes no IP families in a rule, allows DNS both ways, and ends in
-#     Deny; the ingress floor lets Traefik reach only edge and oauth2-proxy
-#     pods, App pods only edge pods, oauth2-proxy pods edge pods only on TCP
-#     4180, and ends in Deny; each oauth2-proxy shape holds exactly one of
+#     Deny; the ingress floor lets Traefik reach only edge pods, App pods only
+#     edge pods, oauth2-proxy pods only edge pods on TCP 4180, passes nothing
+#     from Traefik to oauth2-proxy pods or from oauth2-proxy pods to edge
+#     pods, and ends in Deny; each oauth2-proxy shape holds exactly one of
 #     the emails file and --email-domain=*;
 #   - Cloud's modules apply a private App, a public App (with a built image
 #     and a migrate init container) and a Postgres Service as the
@@ -53,8 +54,10 @@
 #     the forged identity headers it deletes, the edge secret it adds and
 #     the homelab cookies it must strip), the oauth2-proxy pod (image, args,
 #     upstream, client id, the emails file or --email-domain=* but never
-#     both, env, port, mounts), the shapes before app-kit K1 still admitted
-#     until the follow-up, edge and oauth2-proxy Services
+#     both, env, port, mounts), each shape from before app-kit K1 (the
+#     Caddyfile with no sign-in check, the edge without its edge secret, the
+#     oauth2-proxy proxying to its edge, the Ingress on auth-<app>), edge and
+#     oauth2-proxy Services
 #     (selector, ports), Ingress annotations, entrypoints, middlewares, class,
 #     backends and homelab hosts, quota and limit range labels, names, scope
 #     and ephemeral storage, SecretStore and ExternalSecret stores, and any
@@ -247,13 +250,15 @@ if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
 missing = set(k["strip_required"]) - set(contract["stripCookies"])
 if missing:
     problems.append(f"Cloud's strip list {contract['stripCookies']} lacks {sorted(missing)}")
-for shape in ["args_private", "args_public", "args_v1"]:
+for shape in ["args_private", "args_public"]:
     if contract["authentik"]["appSlug"] != "cloud-apps" or f"/application/o/{contract['authentik']['appSlug']}/" not in " ".join(k["oauth2_proxy"][shape]):
         problems.append(f"Authentik slug: Cloud uses {contract['authentik']['appSlug']}, infra's oauth2-proxy pin ({shape}) expects cloud-apps")
     if f"--client-id={k['client_id']}" not in k["oauth2_proxy"][shape]:
         problems.append(f"oauth2-proxy pin ({shape}) does not use client id {k['client_id']}")
+if set(k["oauth2_proxy"]) & {"args_v1"}:
+    problems.append("oauth2-proxy pin: args_v1 (the private App before app-kit K1) is gone; only args_private and args_public")
 # --email-domain=* only in the public shape, which has no emails file.
-for shape in ["args_private", "args_public", "args_v1"]:
+for shape in ["args_private", "args_public"]:
     a = k["oauth2_proxy"][shape]
     if ("--email-domain=*" in a) == any(x.startswith("--authenticated-emails-file") for x in a):
         problems.append(f"oauth2-proxy pin {shape} must hold exactly one of --email-domain=* and the emails file: {a}")
@@ -281,8 +286,8 @@ if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or no
     problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
 if any(r.get("action") == "Allow" and r.get("destination", {}).get("nets", [None])[0] in ("0.0.0.0/0", "::/0") for r in egress):
     problems.append("floor: an Allow to the internet would stop the Project policy narrowing it")
-# The ingress floor: Traefik reaches only edge and oauth2-proxy pods, App pods
-# accept only edge pods, and everything else is denied.
+# The ingress floor: Traefik reaches only edge pods, App pods accept only edge
+# pods, oauth2-proxy pods only edge pods, and everything else is denied.
 ing = k["ingress_floor"]["spec"]
 if ing.get("types") != ["Ingress"] or ing.get("tier") != "cloud" or ing["ingress"][-1] != {"action": "Deny"}:
     problems.append(f"ingress floor: not an Ingress policy in tier cloud ending in Deny: {ing}")
@@ -296,8 +301,12 @@ for r in ing["ingress"][:-1]:
         problems.append(f"ingress floor: App pods reachable from something other than edge pods: {r}")
     if "traefik" in src.get("namespaceSelector", "") and ("'app'" in dst or not dst):
         problems.append(f"ingress floor: Traefik reaches App pods: {r}")
-if not any("traefik" in r.get("source", {}).get("namespaceSelector", "") and "'edge'" in r["destination"]["selector"] and "'oauth2-proxy'" in r["destination"]["selector"] for r in ing["ingress"][:-1]):
-    problems.append("ingress floor: Traefik cannot reach edge and oauth2-proxy pods")
+    if "traefik" in src.get("namespaceSelector", "") and "'oauth2-proxy'" in dst:
+        problems.append(f"ingress floor: Traefik reaches oauth2-proxy pods (the private App before app-kit K1): {r}")
+    if "'oauth2-proxy'" in src.get("selector", "") and "'edge'" in dst:
+        problems.append(f"ingress floor: oauth2-proxy pods reach edge pods (the private App before app-kit K1): {r}")
+if not any("traefik" in r.get("source", {}).get("namespaceSelector", "") and r["destination"]["selector"] == f"{comp} == 'edge'" for r in ing["ingress"][:-1]):
+    problems.append("ingress floor: Traefik cannot reach edge pods")
 # The edge asks its oauth2-proxy on 4180 (app-kit K1), and only on that port.
 to_auth = [r for r in ing["ingress"][:-1] if r.get("source", {}).get("selector") == f"{comp} == 'edge'" and "'oauth2-proxy'" in r["destination"].get("selector", "")]
 if len(to_auth) != 1 or to_auth[0].get("protocol") != "TCP" or to_auth[0]["destination"].get("ports") != [4180]:

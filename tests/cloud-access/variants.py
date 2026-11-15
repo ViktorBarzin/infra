@@ -337,9 +337,9 @@ for name, change, expect in EDGE_RULES:
     case(f"edge-{name}", "kr", expect, f"edge Deployment with {name}", variant(edge, lambda o, ch=change: ch(spec_of(o))))
 case("edge-pod-port-9090", "ka", E_PORT, "edge pod with port edge = 9090", variant(as_pod(edge, "edge-9090"), lambda o: ec(spec_of(o))["ports"][0].update({"containerPort": 9090})))
 case("app-as-edge", "kr", "only an App pod may have an init container|" + E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
-# Until the follow-up (access_rules.tf, cloud_k1_transition): the edge
-# before app-kit K1, without the edge secret.
-case("edge-v1-env", "kr", "ok", "edge Deployment without CLOUD_EDGE_SECRET, as before app-kit K1",
+# The edge from before app-kit K1, without the edge secret (two env values),
+# is refused.
+case("edge-v1-env", "kr", E_RUNS, "edge Deployment without CLOUD_EDGE_SECRET, as before app-kit K1",
      variant(edge, lambda o: ec(spec_of(o))["env"].remove(edge_secret(spec_of(o)))))
 
 # --- the oauth2-proxy Deployment -----------------------------------------------------
@@ -428,7 +428,7 @@ def v1_proxy_args(o):
     args[:] = [b for a in args for b in old.get(a, [a])]
 
 
-case("proxy-v1", "kr", "ok", "private App's oauth2-proxy as before app-kit K1 (until the follow-up)", variant(proxy, v1_proxy_args))
+case("proxy-v1", "kr", A_RUNS, "private App's oauth2-proxy as before app-kit K1, proxying to its edge", variant(proxy, v1_proxy_args))
 
 # --- Kubernetes Services ----------------------------------------------------------
 edge_svc = one("Service", "edge-recipes")
@@ -491,7 +491,7 @@ case("ing-app-service-edge-port", "kr", BACKEND, "Ingress backend on Service app
      variant(ing, lambda o: [p["backend"]["service"].update({"name": "app-menu"}) for p in paths(o)]))
 case("ing-auth-edge-port", "kr", BACKEND, "Ingress backend on Service auth-recipes port edge",
      variant(private_ing, lambda o: [p["backend"]["service"].update({"name": "auth-recipes", "port": {"name": "edge"}}) for p in paths(o)]))
-case("ing-auth-v1", "kr", "ok", "private App's Ingress on Service auth-recipes port http, as before app-kit K1 (until the follow-up)",
+case("ing-auth-v1", "kr", BACKEND, "private App's Ingress on Service auth-recipes port http, as before app-kit K1",
      variant(private_ing, lambda o: [p["backend"]["service"].update({"name": "auth-recipes", "port": {"name": "http"}}) for p in paths(o)]))
 case("ing-no-class", "kr", "ingressClassName traefik", "Ingress without ingressClassName",
      variant(ing, lambda o: o["spec"].pop("ingressClassName")))
@@ -576,7 +576,7 @@ case("edge-cm-forged-user", "kr", RENDERED, "Caddyfile that sets X-Cloud-User-Id
      variant(public_cf, edit("{rp.header.X-Auth-Request-User}\n", "{header.X-User}\n")))
 case("edge-cm-anonymous-identity", "kr", RENDERED, "public Caddyfile that lets an anonymous request through without deleting identity",
      variant(public_cf, edit("\t\t\t\trequest_header -X-Cloud-User-*\n\t\t\t}", "\t\t\t\trequest_header -X-Cloud-Other\n\t\t\t}")))
-# Until the follow-up: the Caddyfile before app-kit K1.
+# The Caddyfile before app-kit K1 (no sign-in check, /oauth2/* 404) is refused.
 V1_CADDYFILE = """{
 \tadmin off
 \tauto_https off
@@ -600,9 +600,7 @@ V1_CADDYFILE = """{
 \t}
 }
 """ % (target, COOKIE_LIST)
-case("edge-cm-v1", "kr", "ok", "the Caddyfile before app-kit K1 (until the follow-up)", variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE})))
-case("edge-cm-v1-no-404", "kr", RENDERED, "the Caddyfile before app-kit K1 without its /oauth2/ 404",
-     variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE.replace("\trespond /oauth2/* 404\n", "")})))
+case("edge-cm-v1", "kr", RENDERED, "the Caddyfile before app-kit K1", variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE})))
 
 # --- ResourceQuota and LimitRange -------------------------------------------------------
 quota = one("ResourceQuota", "cloud-quota")
