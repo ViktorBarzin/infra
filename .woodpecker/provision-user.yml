@@ -48,7 +48,7 @@ steps:
       - "apk update && apk add jq curl git git-crypt"
       # git-crypt for secrets/ directory
       - |
-        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key \
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/secrets/git-crypt-key \
           -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
           | jq -r .data.key | base64 -d > /tmp/key
       - "git-crypt unlock /tmp/key; rm -f /tmp/key"

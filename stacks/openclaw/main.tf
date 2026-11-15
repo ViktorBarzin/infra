@@ -72,21 +72,11 @@ resource "kubernetes_service_account" "openclaw" {
   }
 }
 
-resource "kubernetes_cluster_role_binding" "openclaw" {
-  metadata {
-    name = "openclaw-cluster-admin"
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.openclaw.metadata[0].name
-    namespace = kubernetes_namespace.openclaw.metadata[0].name
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-}
+# openclaw's account was cluster-admin (openclaw-cluster-admin) until
+# 2026-11-15. Every openclaw workload is scaled to zero and its CronJobs are
+# suspended, and the audit log shows no write by it in 30 days, so the binding
+# was removed outright (enforced-identity plan, step 6). Waking openclaw needs
+# a scoped Role for what it then does.
 
 resource "kubernetes_secret" "ssh_key" {
   metadata {
@@ -99,15 +89,9 @@ resource "kubernetes_secret" "ssh_key" {
   type = "generic"
 }
 
-resource "kubernetes_config_map" "git_crypt_key" {
-  metadata {
-    name      = "git-crypt-key"
-    namespace = kubernetes_namespace.openclaw.metadata[0].name
-  }
-  data = {
-    "key" = filebase64("${path.root}/../../.git/git-crypt/keys/default")
-  }
-}
+# The git-crypt-key ConfigMap that stood here was removed on 2026-11-15: no
+# pod mounted it, and as a ConfigMap every read-only role in the cluster could
+# read the infra repo's key.
 
 resource "kubernetes_config_map" "openclaw_config" {
   metadata {

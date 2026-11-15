@@ -216,8 +216,9 @@ resource "kubernetes_secret" "claude_credentials" {
   type = "Opaque"
 }
 
-# git-crypt key for repo decryption
-resource "kubernetes_config_map" "git_crypt_key" {
+# git-crypt key for repo decryption. A Secret since 2026-11-15: as a
+# ConfigMap every read-only role in the cluster could read it.
+resource "kubernetes_secret" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"
     namespace = kubernetes_namespace.claude_agent.metadata[0].name
@@ -905,8 +906,8 @@ resource "kubernetes_deployment" "claude_agent" {
 
         volume {
           name = "git-crypt-key"
-          config_map {
-            name = kubernetes_config_map.git_crypt_key.metadata[0].name
+          secret {
+            secret_name = kubernetes_secret.git_crypt_key.metadata[0].name
           }
         }
 

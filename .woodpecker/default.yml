@@ -93,7 +93,7 @@ steps:
       # ── git-crypt unlock ──
       - |
         SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        curl -sk "https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key" \
+        curl -sk "https://10.0.20.100:6443/api/v1/namespaces/woodpecker/secrets/git-crypt-key" \
           -H "Authorization:Bearer $SA_TOKEN" | jq -r .data.key | base64 -d > /tmp/key
         git-crypt unlock /tmp/key && rm /tmp/key
 

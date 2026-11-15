@@ -47,7 +47,7 @@ steps:
       # git-crypt: the roster itself is plaintext, but the repo has encrypted
       # paths and git refuses to work cleanly against them locked.
       - |
-        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key \
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/secrets/git-crypt-key \
           -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
           | jq -r .data.key | base64 -d > /tmp/key
         git-crypt unlock /tmp/key; rm -f /tmp/key

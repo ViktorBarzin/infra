@@ -134,16 +134,20 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.woodpecker]
 }
 
-resource "kubernetes_config_map" "git_crypt_key" {
+# The infra repo's git-crypt key, which the infra pipelines read through the
+# API (ci-infra). A Secret since 2026-11-15: as a ConfigMap, every read-only
+# role in the cluster could read it, power-user and namespace-owner included,
+# and with it decrypt every git-crypt'd file in infra.
+resource "kubernetes_secret" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"
     namespace = kubernetes_namespace.woodpecker.metadata[0].name
   }
-
-  data = {
+  binary_data = {
     "key" = filebase64("${path.root}/../../.git/git-crypt/keys/default")
   }
 }
+
 
 # Database init job - REMOVED: database and user already exist.
 # The job used -U root which doesn't work with CNPG (superuser is 'postgres').
