@@ -306,6 +306,8 @@ agents may impersonate any user, with a recorded reason.
 
 ```
 homelab browser run <script.js> | open <url> --as <user> --reason "<why>"
+homelab browser as <user> --reason "<why>" --format t3|playwright|json
+homelab browser as --end [<user>]
 ```
 
 How it works:
@@ -322,6 +324,28 @@ How it works:
    no hub cookies. Forward-auth and OIDC apps then sign in as the target user.
 4. On exit the CLI runs `default-invalidation-flow`, which logs the session out
    and ends the impersonation.
+
+`homelab browser as` does steps 1 and 2 for a browser the agent already
+drives, and prints the session instead of opening a browser:
+
+- `--format t3` prints an expression for `preview_evaluate`. The agent runs it
+  in a T3 tab opened without `profileId`, on
+  `https://authentik.viktorbarzin.me/-/health/live/`. That tab has its own
+  empty context, and the health page sets no cookie. The expression sets the
+  cookies with `document.cookie`, which cannot replace an existing httpOnly
+  `authentik_session`. Never use the `default` profile: it holds Viktor's own
+  sign-in.
+- `--format playwright` prints a function for the Playwright MCP's
+  `browser_run_code_unsafe`. It clears every `viktorbarzin.me` cookie first,
+  because the session browser is seeded with Viktor's logins. Cookies of our
+  domain are never pushed to the chrome hub (terminal-lobby ADR-0047), so the
+  session stays in that browser.
+- `--format json` prints a Playwright storage state.
+
+The session stays live, saved in `~/.cache/homelab/impersonation/` at mode
+0600, until `homelab browser as --end` runs step 4. Logout also ends the
+forward-auth sessions the outposts gave out to it: after `--end`, an app the
+tab had opened redirects to Authentik again.
 
 Each start writes an `impersonation_started` event, with `svc-agent` as the
 user, the target in `on_behalf_of` and the reason in the context.
