@@ -292,6 +292,12 @@ resource "kubernetes_role_binding" "novelapp_owner_vabbit81" {
     kind      = "Group"
     name      = "kubernetes-namespace-owner-novelapp"
   }
+  # The owner's agent sessions, same rights under the `agent:` prefix.
+  subject {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Group"
+    name      = "agent:kubernetes-namespace-owner-novelapp"
+  }
   subject {
     api_group = ""
     kind      = "ServiceAccount"

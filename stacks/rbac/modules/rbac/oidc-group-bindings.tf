@@ -45,18 +45,12 @@ locals {
     # The agent issuer prefixes groups with `agent:`, so these are separate
     # subjects from the three above and an agent inherits no human binding.
     #
-    # Read-only on purpose, including for `agent:kubernetes-admins`. Two
-    # reasons, not one: the org-wide workstation policy already says an agent's
-    # kubectl is read-only and every infrastructure change goes through
-    # Terraform, so write verbs here would authorise a path we tell agents not
-    # to use; and an agent's refresh token is a standing credential in a token
-    # cache, so this is the ceiling on what a leaked one is worth.
-    # `oidc-power-user-readonly` grants cluster-wide get/list/watch and
-    # explicitly no secrets and no pods/exec (ADR-0005).
-    #
-    # An agent that genuinely needs to write should get a purpose-scoped
-    # binding of its own, named for the job, rather than a widening of this row.
-    "agent:kubernetes-admins"           = kubernetes_cluster_role.power_user_readonly.metadata[0].name
+    # Each row equals its human row (enforced-identity plan, 2026-11-15: a
+    # person's agent gets the same rights as the person, under its own name,
+    # so the audit log tells them apart). Until then the agent rows were
+    # read-only, and agents ran as their person, with the person's rights,
+    # through the person's own credentials.
+    "agent:kubernetes-admins"           = "cluster-admin"
     "agent:kubernetes-power-users"      = kubernetes_cluster_role.power_user_readonly.metadata[0].name
     "agent:kubernetes-namespace-owners" = kubernetes_cluster_role.namespace_owner_readonly.metadata[0].name
   }

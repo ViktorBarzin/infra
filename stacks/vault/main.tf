@@ -353,6 +353,29 @@ resource "vault_jwt_auth_backend_role" "default" {
   oidc_scopes = ["openid", "email", "profile"]
 }
 
+# An agent session logs in through this role (enforced-identity plan, step 8):
+# `vault login -method=oidc role=agent`. Same person, same groups and so the
+# same policies as `default`, but the token carries role=agent in its
+# metadata and in every audit entry, so Vault's audit log tells a person's
+# agent from the person. A shorter TTL, because the token sits in an agent's
+# environment.
+resource "vault_jwt_auth_backend_role" "agent" {
+  backend        = vault_jwt_auth_backend.oidc.path
+  role_name      = "agent"
+  token_policies = ["default"]
+  token_ttl      = 86400
+  token_max_ttl  = 604800
+  user_claim     = "email"
+  groups_claim   = "groups"
+  role_type      = "oidc"
+  claim_mappings = { email = "agent_of" }
+  allowed_redirect_uris = [
+    "https://vault.viktorbarzin.me/ui/vault/auth/oidc/oidc/callback",
+    "http://localhost:8250/oidc/callback",
+  ]
+  oidc_scopes = ["openid", "email", "profile"]
+}
+
 resource "vault_policy" "admin" {
   name   = "vault-admin"
   policy = <<-EOT

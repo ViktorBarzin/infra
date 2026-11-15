@@ -195,6 +195,29 @@ resource "kubernetes_role_binding" "namespace_owner_group" {
   }
 }
 
+# The same admin for the owner's agent sessions, which arrive with the group
+# under the `agent:` prefix (apiserver-oidc.tf).
+resource "kubernetes_role_binding" "namespace_owner_agent_group" {
+  for_each = nonsensitive(toset([for pair in local.namespace_owner_pairs : pair.namespace]))
+
+  metadata {
+    name      = "namespace-owner-agent"
+    namespace = each.value
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "admin"
+  }
+
+  subject {
+    kind      = "Group"
+    name      = "agent:kubernetes-namespace-owner-${each.value}"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
 # Read-only cluster-wide access for namespace owners
 resource "kubernetes_cluster_role" "namespace_owner_readonly" {
   metadata {
