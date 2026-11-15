@@ -81,10 +81,14 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # The main pod's own token since 2026-11-15, held only by Viktor-tier
+          # callers (the fixer, nextcloud-todos, the postmortem pipeline).
+          # Everyone else holds api_bearer_token and reaches
+          # claude-agent-restricted (restricted.tf).
           secretKey = "API_BEARER_TOKEN"
           remoteRef = {
             key      = "claude-agent-service"
-            property = "api_bearer_token"
+            property = "admin_api_token"
           }
         },
         {

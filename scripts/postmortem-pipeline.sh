@@ -42,7 +42,7 @@ echo "Vault authenticated"
 # 5. Fetch API token for claude-agent-service
 AGENT_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
   http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/claude-agent-service | \
-  jq -r '.data.data.api_bearer_token')
+  jq -r '.data.data.admin_api_token')
 if [ -z "$AGENT_TOKEN" ] || [ "$AGENT_TOKEN" = "null" ]; then
   echo "ERROR: Failed to fetch agent API token"
   exit 1
