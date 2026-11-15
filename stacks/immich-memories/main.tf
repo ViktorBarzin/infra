@@ -11,8 +11,12 @@
 # store on the encrypted cache volume. IMMICH_URL is fixed by env, so the
 # server field cannot be changed from the UI.
 #
-# Shape follows upstream's Kustomize base (deploy/kubernetes/base), Basic tier
-# (CPU only, no model servers), one replica (workflow state is in-process).
+# Shape follows upstream's Kustomize base (deploy/kubernetes/base) plus its
+# components/gpu patch: one replica (workflow state is in-process), no model
+# servers. The pod takes one time-slice of the T4, so the render runs on the
+# card: NVENC encode, CUDA decode and scaling, title kernels, and HDR tone
+# mapping through Vulkan. Picture analysis stays on the CPU (the image ships
+# CPU Torch; GPU analysis needs upstream's separate CUDA inference service).
 #
 # Sign-in: Authentik forward-auth gates each host, and the app's "header"
 # provider takes the user from X-authentik-username. The header provider has
@@ -284,6 +288,17 @@ resource "kubernetes_deployment" "immich_memories" {
         # vars that collide with the app's own settings prefix.
         enable_service_links            = false
         automount_service_account_token = false
+
+        # GPU node. The nvidia.com/gpu request already limits scheduling to
+        # it; the toleration passes its taint.
+        node_selector = { "nvidia.com/gpu.present" = "true" }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
+        priority_class_name = "gpu-workload"
         security_context {
           run_as_non_root        = true
           run_as_user            = 1000
@@ -361,6 +376,12 @@ resource "kubernetes_deployment" "immich_memories" {
               value = env.value
             }
           }
+          # The GPU operator injects only compute,utility. NVENC needs video,
+          # and the Vulkan tone mapping needs graphics.
+          env {
+            name  = "NVIDIA_DRIVER_CAPABILITIES"
+            value = "compute,video,utility,graphics"
+          }
           security_context {
             allow_privilege_escalation = false
             read_only_root_filesystem  = true
@@ -377,7 +398,12 @@ resource "kubernetes_deployment" "immich_memories" {
               memory = "2Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory           = "8Gi"
+              "nvidia.com/gpu" = "1" # one T4 time-slice, not the whole card
+              # GPU VRAM budget (ADR-0016): an NVENC session, the CUDA title
+              # kernels and one film-size frame chain. Estimate before the
+              # first measured render; retune from gpu_pod_memory_used_bytes.
+              "viktorbarzin.me/gpumem" = "1500"
             }
           }
           volume_mount {
