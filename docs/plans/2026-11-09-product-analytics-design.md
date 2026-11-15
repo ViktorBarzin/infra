@@ -133,6 +133,8 @@ It runs as an entrypoint middleware on `websecure`, as CrowdSec and compression 
 - First-party apps load the script themselves, so they opt out with `<meta name="analytics" content="sdk">` in their HTML or an `X-Analytics: sdk` response header. The plugin strips that header before it reaches the browser.
 - `includeHosts` limits the plugin to named hosts for a staged start. It is cleared once the first hosts work.
 
+A visitor signed in to Authentik is identified on these apps too. When the request carries the catch-all outpost's session cookie, the plugin also inserts `<script src="/_t/id.js" defer>` before the Rybbit tag. The `/_t/id.js` route runs `authentik-forward-auth`, and the same plugin in identify mode answers with a script that stores the `X-authentik-uid` under `rybbit-user-id`. The Rybbit script reads that key at start. Authentik's uid is the id our own apps send as the OIDC `sub`, so these pageviews join the same person. The cookie covers all of `viktorbarzin.me`, so apps with their own sign-in, such as Home Assistant, are covered whenever the browser holds an Authentik session. A visitor without the cookie gets no identify tag. Until 2026-11-15 each network change made a new visitor on these apps: two people on ha-sofia showed as 9 visitors in a week.
+
 ## Rollout
 
 1. **Platform.**

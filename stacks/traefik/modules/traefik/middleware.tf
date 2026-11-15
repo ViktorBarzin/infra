@@ -905,6 +905,14 @@ resource "kubectl_manifest" "middleware_analytics_inject" {
           siteId       = "2"
           excludeHosts = local.analytics_inject_exclude_hosts
           includeHosts = local.analytics_inject_include_hosts
+          # Visitors signed in to Authentik also get /_t/id.js, which stores
+          # their Authentik uid for the Rybbit script (analytics-identify
+          # below). The cookie is the domain-wide session cookie of the
+          # catch-all forward-auth outpost (cookie_domain viktorbarzin.me,
+          # stacks/authentik/authentik_provider.tf); its name derives from
+          # that provider, so recreating the provider changes it.
+          identifySrc    = "/_t/id.js"
+          identifyCookie = "authentik_proxy_34f8da53"
         }
       }
     }

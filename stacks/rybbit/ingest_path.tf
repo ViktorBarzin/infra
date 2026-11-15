@@ -6,6 +6,10 @@
 #
 #   /_t/r/...  -> Rybbit /api/...        (script.js, track, identify, replay)
 #   /_t/e/...  -> Event pipeline (Vector) (Segment SDK endpoints)
+#   /_t/id.js  -> the signed-in user's id for the Rybbit script, answered by
+#     the analytics-identify plugin behind authentik-forward-auth. The only
+#     route here with forward-auth: analytics-inject asks for it only from
+#     visitors holding the Authentik session cookie.
 #   /_t/x/api/<project>/{envelope,store,minidump}/ -> GlitchTip (stacks/glitchtip).
 #     Only the ingest endpoints: the same port also serves GlitchTip's
 #     dashboard API, /admin/ and /metrics, which stay off this route.
@@ -126,6 +130,21 @@ resource "kubernetes_manifest" "ingest_route" {
           ])
           services = [{
             name = kubernetes_service.event_pipeline.metadata[0].name
+            port = 80
+          }]
+        },
+        {
+          # analytics-identify answers every request itself, so the service
+          # is never reached; a route needs one.
+          match    = "Path(`/_t/id.js`)"
+          kind     = "Rule"
+          priority = local.ingest_priority
+          middlewares = concat(local.ingest_shared_middlewares, [
+            { name = "authentik-forward-auth", namespace = "traefik" },
+            { name = "analytics-identify", namespace = "traefik" },
+          ])
+          services = [{
+            name = kubernetes_service.rybbit.metadata[0].name
             port = 80
           }]
         },
