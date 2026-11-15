@@ -614,7 +614,7 @@ over the public Cloudflare path; it holds no tailnet node.
 
 **Contribute access (per non-admin, manual — the anca/tripit PAT precedent):**
 1. Add their Forgejo user as a **write** collaborator on `viktor/infra` (`PUT /api/v1/repos/viktor/infra/collaborators/<login>`).
-2. Mint a PAT — the admin REST endpoint 404s here, use the in-pod CLI: `kubectl -n forgejo exec deploy/forgejo -- su -s /bin/sh git -c "forgejo admin user generate-access-token --username <login> --token-name devvm-infra-git --scopes 'write:repository'"`.
+2. Mint a PAT — the admin REST endpoint 404s here, use the in-pod CLI: `kubectl -n forgejo exec deploy/forgejo -- su -s /bin/sh git -c "forgejo admin user generate-access-token --username <login> --token-name devvm-git --scopes 'write:repository,write:issue,write:user'"`. `write:issue` lets the `file-issue` skill file as the user; `write:user` lets `cloud new` create a repo the user owns (Forgejo checks it for that), and also lets the token change the account's own settings and keys. emo's token was re-minted this way on 2026-11-15.
 3. Install it in their `~/.git-credentials` (`https://<login>:<token>@forgejo.viktorbarzin.me`, mode 600) + `git config --global credential.helper store`, set `user.name`/`user.email`.
 4. The reconcile wires the clone side automatically (`wire_forgejo_remote`): `forgejo` remote + `master` tracking `forgejo/master` on every non-admin infra clone (origin stays the anonymous GitHub mirror). No manual step since 2026-06-10.
 5. (Optional — Viktor's call per user) Grant direct master push: add their login to the `master` branch-protection push + merge whitelists (`PATCH /api/v1/repos/viktor/infra/branch_protections/master`). Done for `ebarzin` 2026-06-10.

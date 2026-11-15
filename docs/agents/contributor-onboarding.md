@@ -46,7 +46,9 @@ To land a finished change from such a clone:
 If a push to `master` is rejected by branch protection (user not on the
 whitelist — e.g. new users before Viktor grants it), fall back to a
 `<os-user>/<short-topic>` branch + PR with the user's own PAT
-(`write:repository` suffices — verified 2026-06-10):
+(`write:repository` suffices for the PR, verified 2026-06-10; the PAT also
+carries `write:issue` for `file-issue` and `write:user` for `cloud new`, which
+creates a repo the user owns):
 
 ```bash
 TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)

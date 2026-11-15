@@ -74,10 +74,15 @@ reported as `protected` in the sync's output instead.
    curl -X PATCH -H "Authorization: token <admin_pat>" -H 'Content-Type: application/json' \
      https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/branch_protections/master \
      -d '{"push_whitelist_usernames":["viktor"],"merge_whitelist_usernames":["viktor"]}'
-   # revoke their devvm git PAT (token name: devvm-infra-git; admin PAT may
-   # manage other users' tokens — verified 2026-06-10; the CLI has no delete)
+   # revoke their devvm git PAT (token name devvm-git; devvm-infra-git or
+   # devvm-fixer-issues for tokens minted before 2026-11-15; admin PAT may
+   # manage other users' tokens, verified 2026-06-10; the CLI has no delete.
+   # If the API refuses, delete the row: `homelab k8s db forgejo --mysql --
+   # "DELETE t FROM access_token t JOIN user u ON u.id=t.uid WHERE
+   # u.lower_name='<forgejo_login>' AND t.name='<token name>'"`, as done for
+   # emo's devvm-fixer-issues on 2026-11-15)
    curl -X DELETE -H "Authorization: token <admin_pat>" \
-     https://forgejo.viktorbarzin.me/api/v1/users/<forgejo_login>/tokens/devvm-infra-git
+     https://forgejo.viktorbarzin.me/api/v1/users/<forgejo_login>/tokens/devvm-git
    ```
    Note: their already-running sessions keep dropped groups until cycled — restart
    `t3-serve@<os_user>` to enforce immediately.
