@@ -66,6 +66,11 @@ locals {
     # AERODATABOX_API_KEY arrives via the tripit-secrets ExternalSecret;
     # AERODATABOX_BASE_URL defaults to the RapidAPI host in config.
     FLIGHT_PROVIDER = "aerodatabox"
+    # Live plane positions for the public Radar page via the adsb.fi open data
+    # API (no key, 1 request/second per IP, personal non-commercial use, must
+    # credit adsb.fi). The backend caches each map cell and spaces all requests
+    # at least 1 s apart. tripit ADR-0079.
+    RADAR_PROVIDER = "adsbfi"
     # UK rail status via Realtime Trains (data.rtt.io). RTT_API_TOKEN (a
     # long-life refresh token, already in Vault) arrives via tripit-secrets; the
     # adapter exchanges it for short-life access tokens. On-demand only — no
