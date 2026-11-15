@@ -51,7 +51,7 @@ resource "kubernetes_deployment" "pve_exporter" {
       spec {
         container {
           name  = "proxmox-exporter"
-          image = "prompve/prometheus-pve-exporter:3.11.0"
+          image = "prompve/prometheus-pve-exporter:3.12.0"
 
           port {
             container_port = 9221
