@@ -342,7 +342,8 @@ cloud repo's `cli-release` workflow publishes to. To roll a new CLI out, wait
 for that workflow to publish the version, bump the variable, then
 `ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff --tags cloud-cli`
 and the same without `--check`. Users then run `cloud new <app>` with the
-Forgejo token git already holds for them; it needs `write:repository`.
+Forgejo token git already holds for them; it needs `write:repository` and
+`write:user` (Forgejo checks `write:user` before it creates a repo a user owns).
 
 ## Restart
 
