@@ -351,31 +351,39 @@ func (im *impersonation) me() (user, original string, err error) {
 	return v.User.Username, original, nil
 }
 
-// WriteStorageState writes the session as a Playwright storage state, mode
-// 0600: the Authentik cookies and nothing else.
-func (im *impersonation) WriteStorageState(path string) error {
-	type pwCookie struct {
-		Name     string  `json:"name"`
-		Value    string  `json:"value"`
-		Domain   string  `json:"domain"`
-		Path     string  `json:"path"`
-		Expires  float64 `json:"expires"`
-		HTTPOnly bool    `json:"httpOnly"`
-		Secure   bool    `json:"secure"`
-		SameSite string  `json:"sameSite"`
-	}
-	state := struct {
-		Cookies []pwCookie `json:"cookies"`
-		Origins []any      `json:"origins"`
-	}{Cookies: []pwCookie{}, Origins: []any{}}
+// pwCookie is a cookie in Playwright's shape, as addCookies and storage state take it.
+type pwCookie struct {
+	Name     string  `json:"name"`
+	Value    string  `json:"value"`
+	Domain   string  `json:"domain"`
+	Path     string  `json:"path"`
+	Expires  float64 `json:"expires"`
+	HTTPOnly bool    `json:"httpOnly"`
+	Secure   bool    `json:"secure"`
+	SameSite string  `json:"sameSite"`
+}
+
+// cookies is the session's Authentik cookies in Playwright's shape.
+func (im *impersonation) cookies() []pwCookie {
+	out := []pwCookie{}
 	for _, c := range im.client.Jar.Cookies(im.base) {
-		state.Cookies = append(state.Cookies, pwCookie{
+		out = append(out, pwCookie{
 			Name: c.Name, Value: c.Value, Domain: im.base.Hostname(), Path: "/", Expires: -1,
 			// The Authentik UI reads authentik_csrf from document.cookie.
 			HTTPOnly: c.Name != "authentik_csrf",
 			Secure:   im.base.Scheme == "https", SameSite: "Lax",
 		})
 	}
+	return out
+}
+
+// WriteStorageState writes the session as a Playwright storage state, mode
+// 0600: the Authentik cookies and nothing else.
+func (im *impersonation) WriteStorageState(path string) error {
+	state := struct {
+		Cookies []pwCookie `json:"cookies"`
+		Origins []any      `json:"origins"`
+	}{Cookies: im.cookies(), Origins: []any{}}
 	b, err := json.Marshal(state)
 	if err != nil {
 		return err

@@ -275,3 +275,49 @@ func TestAnalyticsUnderYaegi(t *testing.T) {
 		})
 	}
 }
+
+// The identify additions: the cookie-gated tag in inject mode, and identify
+// mode, which answers requests itself.
+func TestAnalyticsIdentifyUnderYaegi(t *testing.T) {
+	tryBuild := loadAnalytics(t)
+	page := "<html><head></head></html>"
+	inject, err := tryBuild(`{"siteId":"7","identifySrc":"/_t/id.js","identifyCookie":"authentik_proxy_abc"}`,
+		htmlBackend(map[string]string{"Content-Type": "text/html"}, []byte(page)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for cookie, want := range map[string]bool{"authentik_proxy_abc": true, "authentik_proxy_other": false, "": false} {
+		req := navRequest()
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: cookie, Value: "v"})
+		}
+		rec := httptest.NewRecorder()
+		inject.ServeHTTP(rec, req)
+		got := strings.Contains(rec.Body.String(), `<script src="/_t/id.js" defer></script>`+analyticsTag+"</head>")
+		if got != want || !strings.Contains(rec.Body.String(), analyticsTag) {
+			t.Fatalf("cookie %q: body %q, identify tag %v, want %v", cookie, rec.Body.String(), got, want)
+		}
+	}
+
+	called := false
+	identify, err := tryBuild(`{"mode":"identify"}`, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	if err != nil {
+		t.Fatalf("New identify: %v", err)
+	}
+	uid := "5e9a0647161c18dc66dbbb3d9a876eced545f27cca7a24e8cf54c11beaaf6480"
+	for id, want := range map[string]bool{uid: true, `a"b`: false, "": false} {
+		req := httptest.NewRequest(http.MethodGet, "http://app.example/_t/id.js", nil)
+		if id != "" {
+			req.Header.Set("X-Authentik-Uid", id)
+		}
+		rec := httptest.NewRecorder()
+		identify.ServeHTTP(rec, req)
+		got := strings.Contains(rec.Body.String(), `localStorage.setItem("rybbit-user-id","`+uid+`")`)
+		if called || rec.Code != 200 || got != want || rec.Header().Get("Cache-Control") != "no-store, private" {
+			t.Fatalf("id %q: called=%v code=%d body=%q", id, called, rec.Code, rec.Body.String())
+		}
+	}
+	if _, err := tryBuild(`{"mode":"nope"}`, http.NotFoundHandler()); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+}

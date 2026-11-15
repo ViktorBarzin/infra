@@ -905,6 +905,41 @@ resource "kubectl_manifest" "middleware_analytics_inject" {
           siteId       = "2"
           excludeHosts = local.analytics_inject_exclude_hosts
           includeHosts = local.analytics_inject_include_hosts
+          # Visitors signed in to Authentik also get /_t/id.js, which stores
+          # their Authentik uid for the Rybbit script (analytics-identify
+          # below). The cookie is the domain-wide session cookie of the
+          # catch-all forward-auth outpost (cookie_domain viktorbarzin.me,
+          # stacks/authentik/authentik_provider.tf); its name derives from
+          # that provider, so recreating the provider changes it.
+          identifySrc    = "/_t/id.js"
+          identifyCookie = "authentik_proxy_34f8da53"
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
+}
+
+# analytics-identify: the same plugin in identify mode. It answers
+# /_t/id.js (route in stacks/rybbit/ingest_path.tf, behind
+# authentik-forward-auth) with a script that stores the X-authentik-uid of the
+# signed-in user under `rybbit-user-id`, where the Rybbit script reads its
+# user id at start. Authentik's uid is the same hashed id our own apps send
+# as the OIDC sub, so third-party pageviews join the person those apps
+# identify. It never passes a request on.
+resource "kubectl_manifest" "middleware_analytics_identify" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "analytics-identify"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        analytics-inject = {
+          mode = "identify"
         }
       }
     }

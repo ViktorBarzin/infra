@@ -411,7 +411,9 @@ resource "helm_release" "traefik" {
         # of the third-party apps we host (ADR-0041,
         # analytics-inject-plugin/README.md). Wired as the Middleware
         # `analytics-inject` (middleware.tf); attached to the websecure
-        # entrypoint after compress, with its own host filters.
+        # entrypoint after compress, with its own host filters. The same
+        # plugin in identify mode is the Middleware `analytics-identify`,
+        # used only by the /_t/id.js route (stacks/rybbit/ingest_path.tf).
         analytics-inject = {
           moduleName = "github.com/viktorbarzin/analytics-inject-plugin"
           mountPath  = "/plugins-local/src/github.com/viktorbarzin/analytics-inject-plugin"
@@ -421,6 +423,7 @@ resource "helm_release" "traefik" {
             ".traefik.yml" = file("${path.module}/analytics-inject-plugin/.traefik.yml")
             "main.go"      = file("${path.module}/analytics-inject-plugin/main.go")
             "filters.go"   = file("${path.module}/analytics-inject-plugin/filters.go")
+            "identify.go"  = file("${path.module}/analytics-inject-plugin/identify.go")
           }
         }
         realip = {

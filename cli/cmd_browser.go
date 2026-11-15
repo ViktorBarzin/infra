@@ -16,6 +16,8 @@ func browserCommands() []Command {
 			Summary: "run a Playwright script against headful cluster Chrome: browser run <script.js> [--url U] [--shared-context]", Run: browserRun},
 		{Path: []string{"browser", "open"}, Tier: TierWrite,
 			Summary: "open a URL in headful cluster Chrome; print title + text + screenshot: browser open <url>", Run: browserOpen},
+		{Path: []string{"browser", "as"}, Tier: TierWrite,
+			Summary: "an Authentik session as another user for the T3 or Playwright MCP browser: browser as <user> --reason R [--format json|playwright|t3] | --end [user]", Run: browserAs},
 		{Path: []string{"browser", "ls"}, Tier: TierRead,
 			Summary: "list live pool browser sessions (owner, purpose, current URL, age)", Run: browserLs},
 	}
@@ -78,6 +80,9 @@ USAGE
   homelab browser run <script.js> [--url URL] [--shared-context] [--no-seed] [--viewport WxH | --tall] [--keep-open] [--timeout S]
   homelab browser open <url> [--shared-context] [--timeout S]
   homelab browser run|open ... --as <user> --reason "<why>"   # as another Authentik user
+  homelab browser as <user> --reason "<why>" --format t3|playwright
+                            # the same session for your T3 or Playwright MCP browser;
+                            # run: homelab browser as --help
   homelab browser ls        # list live pool sessions (owner, current URL, age)
   homelab browser bridge <cmd>   # the OTHER browser: the human's own Chrome,
                                  # their logins, their open tabs.

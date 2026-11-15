@@ -32,7 +32,7 @@ Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status
 
 `homelab browser run|open|ls` read `~/.config/chrome-hub/hub.json` (or `$HOMELAB_CHROME_HUB_CONFIG`). When it exists they call the pool broker at its `broker_url` over HTTPS with the hub's `read_token` as a bearer, instead of port-forwarding `svc/chrome-fleet`; the token picks the hub that seeds the worker and the namespace the worker runs in. `--shared-context` drives the caller's own hub: `svc/chrome-service` in `chrome-service` for Viktor, `svc/chrome-hub` in the hub's namespace for anyone else (`chrome-emo` for emo). Without hub.json nothing changes. A 401 means the token is wrong or rotated (re-run provisioning); an unreachable host or a 403 means the call did not come from the LAN. Details: `cli/README.md`, `docs/architecture/chrome-service.md`.
 
-`homelab browser run|open ... --as <user> --reason "<why>"` opens a clean context as another Authentik user, through impersonation by `svc-agent`. Each start is an `impersonation_started` event with the reason. Details: `docs/architecture/authentication.md`, "Agent impersonation".
+`homelab browser run|open ... --as <user> --reason "<why>"` opens a clean context as another Authentik user, through impersonation by `svc-agent`. Each start is an `impersonation_started` event with the reason. `homelab browser as <user> --reason "<why>" --format t3|playwright` prints the same session for your own T3 preview tab or Playwright MCP browser, and `homelab browser as --end` logs it out. Details: `docs/architecture/authentication.md`, "Agent impersonation".
 
 ## Session reflection from the store (v0.34.4, 2026-11-09)
 

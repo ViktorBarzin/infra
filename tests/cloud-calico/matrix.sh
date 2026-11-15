@@ -82,7 +82,7 @@ can    "${T[@]}" "$(ip "$ns" edge-recipes):8080"  "Traefik reaches a private App
 cannot "${T[@]}" "$(ip "$ns" edge-recipes-old):8080" "Traefik does not reach an edge pod without the Caddyfile digest label (pre-K1, no sign-in check)"
 cannot "${T[@]}" "$(ip "$ns" app-menu):8080"      "Traefik does not reach a public App's pods"
 cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"   "Traefik does not reach a private App's pods"
-cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"  "Traefik does not reach a private App's oauth2-proxy (Cloud's policy; the floor still passes it until the K1 follow-up)"
+cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"  "Traefik does not reach a private App's oauth2-proxy"
 cannot "${T[@]}" "$(ip "$ns" auth-menu):4180"     "Traefik does not reach a public App's oauth2-proxy"
 # The edges and the oauth2-proxies.
 can    "$ns" edge-recipes "$(ip "$ns" auth-recipes):4180" "the private App's edge reaches its own oauth2-proxy on 4180"
@@ -90,7 +90,7 @@ can    "$ns" edge-menu "$(ip "$ns" auth-menu):4180"       "the public App's edge
 cannot "$ns" edge-recipes "$(ip "$ns" auth-menu):4180"    "an edge does not reach another App's oauth2-proxy"
 cannot p-other edge-recipes "$(ip "$ns" auth-recipes):4180" "an edge pod in another Project does not reach this App's oauth2-proxy, even with its service label"
 cannot "$ns" app-recipes "$(ip "$ns" auth-recipes):4180"  "App pods do not reach their oauth2-proxy"
-cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "oauth2-proxy does not reach its edge (Cloud's policy; the floor still passes it until the K1 follow-up)"
+cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "oauth2-proxy does not reach its edge"
 cannot "$ns" auth-recipes "$(ip "$ns" app-recipes):8080"  "oauth2-proxy does not reach its App's pods"
 cannot "$ns" auth-recipes "$(ip "$ns" edge-menu):8080"    "oauth2-proxy does not reach another App's edge"
 can    "$ns" edge-recipes "$(ip "$ns" app-recipes):8080"  "the private App's edge reaches its own App"
@@ -121,6 +121,25 @@ cannot "$ns" app-recipes "92.5.132.215:9100"               "App pods do not reac
 if [ "${CALICO_INTERNET:-0}" = "1" ]; then
   can "$ns" app-recipes "1.1.1.1:443"                      "App pods reach the internet (1.1.1.1:443)"
 fi
+
+# The floor alone. A Project policy in the default tier that allows every
+# connection (a mistaken or hostile reconciler) opens only what the floor
+# passes. Traefik reaching the pre-K1 edge pod, which Cloud's policy refuses,
+# shows the allow-all is in force; the request path of a private App before
+# app-kit K1 (Traefik -> oauth2-proxy -> edge) stays denied by the floor.
+k apply -f - >/dev/null <<EOF
+{"apiVersion": "projectcalico.org/v3", "kind": "NetworkPolicy",
+ "metadata": {"name": "allow-all", "namespace": "$ns"},
+ "spec": {"order": 1, "selector": "all()", "types": ["Ingress"], "ingress": [{"action": "Allow"}]}}
+EOF
+old_edge="$(ip "$ns" edge-recipes-old):8080"
+for _ in $(seq 1 30); do reach "${T[@]}" "$old_edge" && break; done
+can    "${T[@]}" "$old_edge"                          "with an allow-all Project policy, Traefik reaches what the floor passes (an edge pod Cloud's policy refuses)"
+cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"     "with an allow-all Project policy, the floor still denies Traefik -> oauth2-proxy"
+cannot "${T[@]}" "$(ip "$ns" auth-menu):4180"        "with an allow-all Project policy, the floor still denies Traefik -> a public App's oauth2-proxy"
+cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "with an allow-all Project policy, the floor still denies oauth2-proxy -> edge"
+cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"      "with an allow-all Project policy, the floor still denies Traefik -> App pods"
+k delete networkpolicies.projectcalico.org allow-all -n "$ns" >/dev/null 2>&1 || bad "could not delete the allow-all Project policy"
 
 k delete pod --all -n "$ns" --wait=false >/dev/null 2>&1
 python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); [i["metadata"].pop(f, None) for i in o["items"] for f in ["uid","resourceVersion","creationTimestamp","managedFields"]]; [i.pop("status", None) for i in o["items"]]; print(json.dumps(o))' "$out.quota.json" \

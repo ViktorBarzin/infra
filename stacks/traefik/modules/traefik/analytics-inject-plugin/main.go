@@ -46,14 +46,32 @@ type Config struct {
 	ExcludeHosts []string `json:"excludeHosts,omitempty" yaml:"excludeHosts,omitempty"`
 	// IncludeHosts, when non-empty, are the only eligible hosts. Same syntax.
 	IncludeHosts []string `json:"includeHosts,omitempty" yaml:"includeHosts,omitempty"`
+
+	// Mode is "inject" (the default) or "identify". identify answers every
+	// request itself with a script that stores the signed-in user's id for
+	// the Rybbit script (identify.go); it is meant for a route behind
+	// forward auth, never for the entrypoint.
+	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	// IdentifySrc and IdentifyCookie (inject mode, both or neither): when the
+	// request carries the cookie IdentifyCookie, a deferred <script> for
+	// IdentifySrc goes in before the Rybbit tag, so it runs first.
+	IdentifySrc    string `json:"identifySrc,omitempty" yaml:"identifySrc,omitempty"`
+	IdentifyCookie string `json:"identifyCookie,omitempty" yaml:"identifyCookie,omitempty"`
+	// IdentifyHeader (identify mode) is the request header holding the user
+	// id, set by forward auth. IdentifyStorageKey is the localStorage key the
+	// Rybbit script reads its user id from at start.
+	IdentifyHeader     string `json:"identifyHeader,omitempty" yaml:"identifyHeader,omitempty"`
+	IdentifyStorageKey string `json:"identifyStorageKey,omitempty" yaml:"identifyStorageKey,omitempty"`
 }
 
 // CreateConfig returns the defaults Traefik overlays the Middleware config on.
 func CreateConfig() *Config {
 	return &Config{
-		ScriptSrc:       defaultScriptSrc,
-		MaxBodyBytes:    defaultMaxBodyBytes,
-		ExtraAttributes: map[string]string{},
+		ScriptSrc:          defaultScriptSrc,
+		MaxBodyBytes:       defaultMaxBodyBytes,
+		ExtraAttributes:    map[string]string{},
+		IdentifyHeader:     defaultIdentifyHeader,
+		IdentifyStorageKey: defaultIdentifyStorageKey,
 	}
 }
 
@@ -66,10 +84,21 @@ type Injector struct {
 	maxBodyBytes int64
 	exclude      *hostMatcher
 	include      *hostMatcher
+	// idTag is the identify tag plus the Rybbit tag, used when the request
+	// carries idCookie. nil when identify is not configured.
+	idTag    []byte
+	idCookie string
 }
 
 // New builds the middleware. It rejects a config it cannot render safely.
 func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http.Handler, error) {
+	switch strings.TrimSpace(cfg.Mode) {
+	case "", "inject":
+	case "identify":
+		return newIdentifier(cfg)
+	default:
+		return nil, fmt.Errorf("analytics-inject: unknown mode %q", cfg.Mode)
+	}
 	siteID := strings.TrimSpace(cfg.SiteID)
 	if siteID == "" {
 		return nil, errors.New("analytics-inject: siteId is required")
@@ -122,7 +151,22 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 		return nil, fmt.Errorf("analytics-inject: includeHosts: %w", err)
 	}
 
+	idSrc := strings.TrimSpace(cfg.IdentifySrc)
+	idCookie := strings.TrimSpace(cfg.IdentifyCookie)
+	if (idSrc == "") != (idCookie == "") {
+		return nil, errors.New("analytics-inject: identifySrc and identifyCookie go together")
+	}
+	var idTag []byte
+	if idSrc != "" {
+		if !strings.HasPrefix(idSrc, "/") || strings.HasPrefix(idSrc, "//") {
+			return nil, fmt.Errorf("analytics-inject: identifySrc %q must be a path on the app's own origin", idSrc)
+		}
+		idTag = []byte(`<script src="` + html.EscapeString(idSrc) + `" defer></script>` + b.String())
+	}
+
 	return &Injector{
+		idTag:        idTag,
+		idCookie:     idCookie,
 		next:         next,
 		name:         name,
 		tag:          []byte(b.String()),
@@ -162,7 +206,12 @@ func (p *Injector) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// websecure entrypoint list): it has then already read the client's
 	// Accept-Encoding and compresses what this plugin writes.
 	req.Header.Del("Accept-Encoding")
-	w := &injectWriter{p: p, rw: rw}
+	w := &injectWriter{p: p, rw: rw, tag: p.tag}
+	if p.idTag != nil {
+		if _, err := req.Cookie(p.idCookie); err == nil {
+			w.tag = p.idTag
+		}
+	}
 	p.next.ServeHTTP(w, req)
 	w.finish()
 }
@@ -209,7 +258,8 @@ type injectWriter struct {
 	state int
 	code  int
 	buf   *bytes.Buffer
-	sdk   bool // the backend sent X-Analytics: sdk
+	sdk   bool   // the backend sent X-Analytics: sdk
+	tag   []byte // what to insert: p.tag, or p.idTag for a signed-in visitor
 }
 
 func (w *injectWriter) Header() http.Header {
@@ -246,7 +296,7 @@ func (w *injectWriter) WriteHeader(code int) {
 		w.state = stateBuffering
 		w.buf = &bytes.Buffer{}
 		if size > 0 {
-			w.buf.Grow(int(size) + len(w.p.tag))
+			w.buf.Grow(int(size) + len(w.tag))
 		}
 		return
 	}
@@ -377,17 +427,17 @@ func (w *injectWriter) commit(final bool) {
 
 	h := w.rw.Header()
 	if final {
-		h.Set("Content-Length", strconv.Itoa(len(body)+len(w.p.tag)))
+		h.Set("Content-Length", strconv.Itoa(len(body)+len(w.tag)))
 	} else if cl := h.Get("Content-Length"); cl != "" {
 		if n, err := strconv.ParseInt(strings.TrimSpace(cl), 10, 64); err == nil {
-			h.Set("Content-Length", strconv.FormatInt(n+int64(len(w.p.tag)), 10))
+			h.Set("Content-Length", strconv.FormatInt(n+int64(len(w.tag)), 10))
 		}
 	}
 	w.rw.WriteHeader(w.code)
 	if _, err := w.rw.Write(body[:pos]); err != nil {
 		return
 	}
-	if _, err := w.rw.Write(w.p.tag); err != nil {
+	if _, err := w.rw.Write(w.tag); err != nil {
 		return
 	}
 	_, _ = w.rw.Write(body[pos:])
