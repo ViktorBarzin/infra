@@ -241,7 +241,7 @@ resource "kubernetes_deployment" "payslip_ingest" {
           }
           env {
             name  = "CLAUDE_AGENT_URL"
-            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
           }
 
           resources {
@@ -280,7 +280,7 @@ resource "kubernetes_deployment" "payslip_ingest" {
           }
           env {
             name  = "CLAUDE_AGENT_URL"
-            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
           }
 
           readiness_probe {

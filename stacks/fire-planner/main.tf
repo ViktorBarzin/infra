@@ -832,7 +832,7 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
 variable "claude_agent_service_url" {
   type        = string
   description = "claude-agent-service /v1/chat/completions endpoint for example extraction (Haiku, no-tools mode; the qwen tier was retired 2026-10-11)"
-  default     = "http://claude-agent-service.claude-agent.svc.cluster.local:8080/v1/chat/completions"
+  default     = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080/v1/chat/completions"
 }
 
 variable "run_examples_bulk_ingest" {

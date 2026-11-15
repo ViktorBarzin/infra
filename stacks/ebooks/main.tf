@@ -990,7 +990,7 @@ resource "kubernetes_deployment" "book_search" {
           # request. No token means no rescues, so that one is optional too.
           env {
             name  = "CLAUDE_AGENT_URL"
-            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
           }
           env {
             name = "CLAUDE_AGENT_TOKEN"

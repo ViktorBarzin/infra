@@ -284,7 +284,7 @@ resource "kubernetes_deployment" "recruiter_responder" {
           # Tier-2 LLM (deep_research only)
           env {
             name  = "CLAUDE_AGENT_URL"
-            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
           }
           # Telegram bot (no URL env needed — token in secret)
           # Public callback base URL for inline-keyboard URL buttons.

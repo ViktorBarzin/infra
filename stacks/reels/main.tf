@@ -32,7 +32,7 @@ locals {
   namespace     = "reels"
   worker_labels = { app = "reels-worker" }
   immich_url    = "http://immich-server.immich:2283"
-  trending_url  = "http://claude-agent-service.claude-agent.svc.cluster.local:8080/v1/reels/trending-songs"
+  trending_url  = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080/v1/reels/trending-songs"
 }
 
 # Renders and song audio. Photo images are never copied here: the web app

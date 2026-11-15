@@ -1184,7 +1184,7 @@ resource "kubernetes_deployment" "beadboard" {
 
           env {
             name  = "CLAUDE_AGENT_SERVICE_URL"
-            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+            value = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
           }
 
           env {

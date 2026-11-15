@@ -208,9 +208,13 @@ locals {
     # search AND LLM-proposal resolution — its fake default is the same class of
     # gap that shipped the feature dark, so set it explicitly.
     SIGHT_DISCOVERY_PROVIDER = "wikipedia+llm"
-    STORY_SOURCE_MODE        = "web"
-    SCRIPT_WRITER_MODE       = "chat"
-    PLACE_RESOLVER_MODE      = "wikipedia"
+    # claude-agent-restricted: the agent service pod with no infra rights
+    # (stacks/claude-agent-service/restricted.tf). The app's default is the
+    # main pod, which only Viktor-tier callers reach since 2026-11-15.
+    CLAUDE_AGENT_URL    = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
+    STORY_SOURCE_MODE   = "web"
+    SCRIPT_WRITER_MODE  = "chat"
+    PLACE_RESOLVER_MODE = "wikipedia"
     # Saved Place preview photos (tripit ADR-0035/0040): the Wikipedia lead-image
     # fetcher behind manual-add-time photos and the backfill sweep. Same fake-
     # default gap as the resolver above — never set, so prod silently ran the

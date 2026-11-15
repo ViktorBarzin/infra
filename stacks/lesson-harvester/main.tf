@@ -19,7 +19,7 @@ locals {
     # Extraction runs on claude-agent-service (Haiku, no-tools mode) since
     # 2026-10-11; llama-swap is kept for paperless-ngx's native AI only. The bearer is
     # LH_LLM_API_KEY from the ExternalSecret below.
-    LH_LLM_ENDPOINT = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+    LH_LLM_ENDPOINT = "http://claude-agent-restricted.claude-agent.svc.cluster.local:8080"
     LH_LLM_MODEL    = "haiku"
     # whisper extra is not in the image yet (v0.3.0) — keep ASR off so a
     # caption-less video parks needs_attention instead of crashing on import.
