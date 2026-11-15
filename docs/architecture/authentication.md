@@ -301,8 +301,11 @@ deliberately **not** in the Terraform, are in
 
 An agent can open a browser as a given Authentik user, to test an app as that
 user sees it. The user does not take part. The design decision is in
-`docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`:
-agents may impersonate any user, with a recorded reason.
+`docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`.
+Since 2026-11-15 (`docs/plans/2026-11-15-enforced-identity-design.md`, step 7)
+agents may impersonate only the members of the Authentik group "Agent
+impersonatable" (Viktor and `guest`), with a recorded reason; anyone else gets
+HTTP 403.
 
 ```
 homelab browser run <script.js> | open <url> --as <user> --reason "<why>"
@@ -319,7 +322,9 @@ How it works:
 2. It calls `POST /api/v3/core/users/<pk>/impersonate/` with the reason.
    `svc-agent` holds the role `agent impersonation`
    (`stacks/authentik/agent-service-account.tf`), which grants
-   `authentik_core.impersonate` and `authentik_core.view_user` globally.
+   `authentik_core.view_user` globally and `authentik_core.impersonate` on
+   each member of "Agent impersonatable" only (object permissions). Add a user
+   to `agent_impersonatable_usernames` there to allow it.
 3. The pool browser gets a fresh context with only that Authentik session, and
    no hub cookies. Forward-auth and OIDC apps then sign in as the target user.
 4. On exit the CLI runs `default-invalidation-flow`, which logs the session out
