@@ -232,6 +232,21 @@ for an email they know is that person's.
    that person. Users cannot set it themselves. The same rule decides
    `email_verified` in Cloud's sign-in profile (`stacks/cloud/email_claim.tf`),
    which the Forgejo owner check below also reads.
+4. Check that their Forgejo account links to their sign-in. Cloud builds a
+   private repo only for the Forgejo account linked to the owner, and
+   `cloud new` makes a private repo by default and stops when there is no
+   link. An account Forgejo made at an Authentik sign-in (login source 1)
+   is linked by its subject. A local Forgejo account (source 0) links only
+   by email: step 2's vouch, and the same address verified on the Forgejo
+   account (Site Administration, User Emails, activate it, only for an
+   address you know is theirs). After either change the person signs in to
+   Cloud again (`cloud login` or the console), because Cloud reads the
+   vouch from the newest sign-in. Check every Cloud User at once in Cloud's
+   database: `INSERT INTO forgejo_links (user_id) SELECT id FROM users
+   WHERE role <> 'operator' ON CONFLICT (user_id) DO UPDATE SET
+   requested_at = now();`, then 10 seconds later `SELECT u.email,
+   l.account, l.error FROM forgejo_links l JOIN users u ON u.id =
+   l.user_id;` (`homelab k8s db cloud`). `account` names the linked login.
 
 Cloud's round-4 end-to-end test hit step 2: a test account made by hand had
 no vouch, so Authentik refused its own private App.
