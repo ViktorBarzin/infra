@@ -183,7 +183,7 @@ Every browser above runs `@viktorbarzin/telemetry` 0.2.1 from Forgejo's npm regi
 
 Until 2026-11-12, Segment events and pageviews did not share a Rybbit `user_id` for a visitor who was not signed in. The Rybbit script (v2.9.2, and upstream master on 2026-11-12) keeps `rybbit-visitor-id` only for feature flags and experiments, and pageviews get an IP and user-agent fingerprint, while events sent with the visitor id hashed it instead (terminal-lobby: events `5d421c561c62`, pageviews `d867526b0b51`). Vector now leaves `anonymous_id` out of any event with a browser User-Agent and IP, so both get the fingerprint. The owner chose this over patching Rybbit's script and server. The cost: an anonymous visitor who changes network becomes a new Rybbit user, as their pageviews already did. Signed-in visits join through the identified user id. Android and background events keep their stable id.
 
-The server and browser events were checked by sending them by hand with real headers, and the served bundles were read. No real signed-in browser visit has been checked since the 2026-11-12 changes. Rybbit files headless browsers under `bot_events`, so automated checks never reach the counted tables; a signed-in visit settles it.
+The server and browser events were checked by sending them by hand with real headers, and the served bundles were read. Signed-in visits were checked on 2026-11-14 and 2026-11-15: tv visits from the owner's iPhone and from the cluster's headed Chrome (`homelab browser run --as`) map to one identified user. Rybbit files headless browsers under `bot_events`, so a check that must reach the counted tables uses that headed browser.
 
 ## Open questions
 
