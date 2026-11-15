@@ -11,19 +11,11 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "woodpecker"
 }
 
-data "vault_kv_secret_v2" "platform" {
-  mount = "secret"
-  name  = "platform"
-}
-
 locals {
-  k8s_users = jsondecode(data.vault_kv_secret_v2.platform.data["k8s_users"])
-
-  # Build admin list: existing admin + all namespace-owner usernames
-  woodpecker_admins = join(",", concat(
-    ["ViktorBarzin"],
-    [for name, user in local.k8s_users : name if user.role == "namespace-owner"]
-  ))
+  # Viktor alone. Until 2026-11-15 every namespace-owner was a Woodpecker admin
+  # too, which reads every repo's secrets and runs any pipeline; a repo owner
+  # needs no admin to run their own repo's pipelines.
+  woodpecker_admins = "ViktorBarzin"
 }
 
 resource "kubernetes_namespace" "woodpecker" {
@@ -268,43 +260,40 @@ resource "null_resource" "woodpecker_server_host_alias" {
   depends_on = [helm_release.woodpecker]
 }
 
-# ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces
-resource "kubernetes_cluster_role_binding" "woodpecker" {
-  metadata {
-    name = "woodpecker"
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = "woodpecker-agent"
-    namespace = kubernetes_namespace.woodpecker.metadata[0].name
-  }
-  role_ref {
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
-
-# Also bind the default SA (pipeline pods run as default)
-resource "kubernetes_cluster_role_binding" "woodpecker_default" {
-  metadata {
-    name = "woodpecker-default"
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = "default"
-    namespace = kubernetes_namespace.woodpecker.metadata[0].name
-  }
-  role_ref {
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
+# The agent and the step pods held cluster-admin through the woodpecker and
+# woodpecker-default ClusterRoleBindings until 2026-11-15. The agent needs only
+# the chart's Role in this namespace (pods, logs, PVCs, services, secrets), and
+# step pods now run as their repo's account (repo-accounts.tf).
 
 # --- Vault → Woodpecker Secret Sync ---
-# Syncs secrets from Vault KV (secret/ci/global) to Woodpecker global secrets via API.
-# Runs every 6 hours. Secrets are created/updated via Woodpecker REST API.
+# Copies keys of Vault KV secret/ci/global into Woodpecker as REPO secrets,
+# each into only the repos that use it. Runs every 6 hours.
+#
+# Until 2026-11-15 every key went in as a GLOBAL secret, which any pipeline in
+# any repo could read, and the keys included Viktor's Forgejo admin token and
+# the sops age key. The pipelines then used three of the fourteen. A key not
+# listed below stays in Vault and reaches no pipeline; the infra pipelines
+# read Vault directly with their own token. The sync deletes the old global
+# copies.
+locals {
+  # Vault key -> Woodpecker repo ids that may read it (from_secret uses in
+  # every repo's .woodpecker, counted 2026-11-15).
+  ci_repo_secrets = {
+    "slack_webhook"     = ["1"]      # ViktorBarzin/infra
+    "slack-webhook-url" = ["2", "6"] # Website, webhook-handler
+    "dockerhub-token"   = ["77"]     # viktor/claude-memory
+  }
+  ci_repo_secret_lines = join("\n", flatten([
+    for key, repos in local.ci_repo_secrets : [for r in repos : "${key} ${r}"]
+  ]))
+}
+
+resource "kubernetes_service_account" "vault_woodpecker_sync" {
+  metadata {
+    name      = "woodpecker-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+}
 
 resource "kubernetes_config_map" "vault_woodpecker_sync" {
   metadata {
@@ -313,56 +302,48 @@ resource "kubernetes_config_map" "vault_woodpecker_sync" {
   }
 
   data = {
-    "sync.sh" = <<-SCRIPT
+    "secrets.txt" = local.ci_repo_secret_lines
+    "sync.sh"     = <<-SCRIPT
       #!/bin/sh
       set -e
       VAULT_ADDR="http://vault-active.vault.svc.cluster.local:8200"
       WP_API="http://woodpecker-server.woodpecker.svc.cluster.local/api"
+      EVENTS='["cron","deployment","manual","push","tag"]'
 
-      # Authenticate to Vault via K8s SA
+      # Authenticate to Vault as the woodpecker-sync ServiceAccount
       SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
       VAULT_TOKEN=$(curl -sf -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
         -d "{\"role\":\"woodpecker-sync\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
-
       if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
         echo "ERROR: Failed to authenticate to Vault"
         exit 1
       fi
 
-      # Get Woodpecker API token from Vault
-      WP_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data.woodpecker_api_token // empty')
-
+      CIG=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/ci/global")
+      WP_TOKEN=$(echo "$CIG" | jq -r '.data.data.woodpecker_api_token // empty')
       if [ -z "$WP_TOKEN" ]; then
         echo "ERROR: No woodpecker_api_token in secret/ci/global"
         exit 1
       fi
+      wp() { curl -sf -H "Authorization: Bearer $WP_TOKEN" -H "Content-Type: application/json" "$@"; }
 
-      # Sync global secrets
-      SECRETS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data | to_entries[] | select(.key != "woodpecker_api_token") | @base64')
-
+      # Repo secrets: create, or update when present.
       synced=0
-      for entry in $SECRETS; do
-        NAME=$(echo "$entry" | base64 -d | jq -r .key)
-        VALUE=$(echo "$entry" | base64 -d | jq -r .value)
-
-        # Try PATCH first (update), fall back to POST (create)
-        # Include all event types so secrets work for manual/cron-triggered pipelines too
-        STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" -X PATCH "$WP_API/secrets/$NAME" \
-          -H "Authorization: Bearer $WP_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" 2>/dev/null || echo "000")
-
-        if [ "$STATUS" != "200" ]; then
-          curl -sf -X POST "$WP_API/secrets" \
-            -H "Authorization: Bearer $WP_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" > /dev/null
-        fi
+      while read -r NAME REPO; do
+        [ -n "$NAME" ] || continue
+        BODY=$(echo "$CIG" | jq -c --arg n "$NAME" --argjson e "$EVENTS" \
+          '{name: $n, value: .data.data[$n], events: $e} | select(.value != null)')
+        if [ -z "$BODY" ]; then echo "WARN: $NAME is not in secret/ci/global"; continue; fi
+        wp -o /dev/null -X PATCH "$WP_API/repos/$REPO/secrets/$NAME" -d "$BODY" 2>/dev/null \
+          || wp -o /dev/null -X POST "$WP_API/repos/$REPO/secrets" -d "$BODY"
         synced=$((synced + 1))
+      done < /scripts/secrets.txt
+      echo "Synced $synced repo secrets from Vault to Woodpecker"
+
+      # Global secrets reach every repo, so none is kept.
+      for NAME in $(wp "$WP_API/secrets" | jq -r '.[].name'); do
+        wp -o /dev/null -X DELETE "$WP_API/secrets/$NAME" && echo "Deleted global secret $NAME"
       done
-      echo "Synced $synced global secrets from Vault to Woodpecker"
     SCRIPT
   }
 }
@@ -383,6 +364,7 @@ resource "kubernetes_cron_job_v1" "vault_secret_sync" {
         template {
           metadata {}
           spec {
+            service_account_name = kubernetes_service_account.vault_woodpecker_sync.metadata[0].name
             container {
               name    = "sync"
               image   = "alpine"

@@ -34,7 +34,9 @@ server:
   env:
     WOODPECKER_HOST: "https://ci.viktorbarzin.me"
     WOODPECKER_ADMIN: "${woodpecker_admins}"
-    WOODPECKER_OPEN: "true"
+    # Closed since 2026-11-15 (enforced-identity plan): with it open, any Forgejo
+    # or GitHub account could sign in and register repos. Viktor adds users.
+    WOODPECKER_OPEN: "false"
     WOODPECKER_GITHUB: "true"
     WOODPECKER_GITHUB_URL: "https://github.com"
     WOODPECKER_GITHUB_CLIENT: "${github_client_id}"

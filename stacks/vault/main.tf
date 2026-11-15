@@ -941,9 +941,13 @@ resource "vault_policy" "ci_vault_admin" {
 }
 
 resource "vault_kubernetes_auth_backend_role" "ci" {
-  backend                          = vault_auth_backend.kubernetes.path
-  role_name                        = "ci"
-  bound_service_account_names      = ["default"]
+  backend   = vault_auth_backend.kubernetes.path
+  role_name = "ci"
+  # ci-infra is the account of ViktorBarzin/infra pipelines alone
+  # (stacks/woodpecker/repo-accounts.tf). Until 2026-11-15 this trusted
+  # `default`, which every repo's pipelines ran as, so any of them got
+  # ci-vault-admin.
+  bound_service_account_names      = ["ci-infra"]
   bound_service_account_namespaces = ["woodpecker"]
   # No terraform-state policy here (dropped 2026-10-10). It denies
   # secret/data/vault for the shared claude-agent pod, and a deny in any
@@ -1107,7 +1111,7 @@ resource "vault_policy" "woodpecker_sync" {
 resource "vault_kubernetes_auth_backend_role" "woodpecker_sync" {
   backend                          = vault_auth_backend.kubernetes.path
   role_name                        = "woodpecker-sync"
-  bound_service_account_names      = ["default"]
+  bound_service_account_names      = ["woodpecker-sync"]
   bound_service_account_namespaces = ["woodpecker"]
   token_policies                   = [vault_policy.woodpecker_sync.name]
   token_ttl                        = 691200 # 8d (staggered from others)
