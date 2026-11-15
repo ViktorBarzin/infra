@@ -1038,7 +1038,13 @@ header. The `output` chain now matches the calling socket's owner (`meta
 skuid`). The same chain closes the iOS rig on 127.0.0.1:8102, which checks
 nothing, to all but the admins, and each user's T3 server to all but its owner,
 the admins and `t3-dispatch`. Root is left out, because a docker group member
-is root. Both halves of the secret read Vault
+is root.
+
+The same chain logs, since 2026-11-15, each new connection from an account other
+than the admins to a private address outside a short list (Traefik, Forgejo SSH,
+Postgres, beads, adb, DNS, the API server, the registry caches): chain
+`nonadmin_egress`, prefix `devvm-egress-nonadmin`, read with `journalctl -k`.
+It drops nothing yet; the plan is to drop the same set after 7 days of logs. Both halves of the secret read Vault
 `secret/terminal-lobby` → `proxy_secret`: Traefik through the `tl-proxy-secret`
 middleware in `stacks/terminal`, the box through `playbooks/devvm.yml`. Rotating
 it means writing that key and re-running both, and the stack has to go first, or

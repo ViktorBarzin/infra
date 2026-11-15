@@ -3893,6 +3893,34 @@
           {% for name, u in (lookup('file', workstation_dir ~ '/roster.yaml') | from_yaml).users.items() if u.t3_port is defined %}
               tcp dport {{ u.t3_port }} meta skuid != { {{ ([name, 'wizard', 'breakglass', 't3-dispatch'] | unique | map('to_json') | join(', ')) }} } reject with tcp reset
           {% endfor %}
+
+              # Per-user egress, LOG-ONLY since 2026-11-15 (enforced-identity
+              # plan, step 10). Every account but the admins reaches the LAN
+              # and the cluster's service addresses today, so a non-admin
+              # session can talk to any internal port directly, past Traefik
+              # and its sign-in. This logs each new connection from a
+              # non-admin account to a private address that is not on the
+              # list in nonadmin_egress, for 7 days of data before the same
+              # list starts to drop. Read it with:
+              #   journalctl -k --grep devvm-egress-nonadmin
+              meta skuid >= 1000 meta skuid != { "wizard", "breakglass" } ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } jump nonadmin_egress
+            }
+
+            # What a non-admin account may reach on private addresses, from
+            # the cluster's LoadBalancer Services on 2026-11-15: Forgejo SSH,
+            # Postgres, beads (Dolt) and adb on 10.0.20.200; DNS on
+            # 10.0.20.201; Traefik on 10.0.20.203; the API server; the
+            # registry and its pull-through caches on 10.0.20.10; this box.
+            chain nonadmin_egress {
+              ct state established,related return
+              ip daddr 10.0.10.10 return
+              ip daddr 10.0.20.200 tcp dport { 22, 3306, 5432, 5555 } return
+              ip daddr 10.0.20.201 meta l4proto { tcp, udp } th dport 53 return
+              ip daddr 10.0.20.203 tcp dport { 80, 443 } return
+              ip daddr 10.0.20.203 udp dport 443 return
+              ip daddr 10.0.20.100 tcp dport 6443 return
+              ip daddr 10.0.20.10 tcp dport { 5000, 5010, 5020, 5030, 5040 } return
+              limit rate 20/minute burst 40 packets log prefix "devvm-egress-nonadmin: " level info
             }
 
             # Ports published with `docker run -p` stay on this box. dockerd

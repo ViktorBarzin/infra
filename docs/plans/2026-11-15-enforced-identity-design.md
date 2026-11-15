@@ -1,5 +1,5 @@
 ---
-status: draft
+status: executing
 plan: true
 ---
 
@@ -44,11 +44,11 @@ nodes:
   - {id: cert, label: shared admin cert, note: break-glass only, group: devvm, state: changed, risk: medium}
   - {id: groups, label: Authentik rights groups, note: not superuser, group: idp, state: new, risk: medium}
   - {id: tf, label: Terraform projection, note: "groups to RBAC, Vault, Forgejo, impersonation", group: idp, state: new, risk: medium}
-  - {id: vault, label: Vault, note: "group policies, AppRole for CI, token roles per tier", group: idp, state: changed, risk: high}
+  - {id: vault, label: Vault, note: "group policies, ci role for infra only, agent role", group: idp, state: changed, risk: high}
   - {id: k8s, label: kube-apiserver, note: "group bindings, agent issuer", group: cluster, state: changed, risk: high}
   - {id: wp, label: Woodpecker, note: "no rights on default, secrets per repo", group: cluster, state: changed, risk: high}
   - {id: eso, label: ExternalSecrets, note: one store per tenant, group: cluster, state: changed, risk: high}
-  - {id: bots, label: in-cluster agents, note: "dispatcher per author, openclaw scoped", group: cluster, state: changed, risk: high}
+  - {id: bots, label: in-cluster agents, note: "split by rights, openclaw unbound", group: cluster, state: changed, risk: high}
   - {id: forgejo, label: Forgejo, note: teams and push lists from groups, group: cluster, state: changed, risk: medium}
 edges:
   - {from: groups, to: tf, state: new, label: membership}
@@ -59,20 +59,21 @@ edges:
   - {from: agent, to: k8s, state: new, label: "agent: issuer"}
   - {from: agent, to: vault, state: new, label: OIDC role agent}
   - {from: agent, to: guard, state: new}
-  - {from: bots, to: vault, state: new, label: token for the author}
-  - {from: wp, to: vault, state: changed, label: infra repo only}
+  - {from: bots, to: vault, state: changed, label: main pod only}
+  - {from: wp, to: vault, state: changed, label: ci-infra only}
   - {from: eso, to: vault, state: changed, label: tenant path only}
 checks:
-  - {node: guard, text: "as emo, a request with a forged X-Authentik-Username gets 407", status: open}
-  - {node: guard, text: "as emo, docker run of LibreOffice works and -v /:/h cannot read /home/wizard", status: open}
-  - {node: wp, text: a pipeline pushed to viktor/tv cannot log in to Vault or list secrets, status: open}
-  - {node: eso, text: an ExternalSecret in plotting-book for secret/viktor is refused, status: open}
-  - {node: vault, text: "emo's agent token reads secret/emo and is refused on secret/viktor", status: open}
+  - {node: guard, text: "as emo, ttyd with a forged X-Authentik-Username, the iOS rig and wizard's T3 get a TCP reset", status: passed}
+  - {node: guard, text: "as emo, docker run works rootless and -v /:/h cannot read /home/wizard or /etc/shadow", status: passed}
+  - {node: wp, text: "a pipeline in an unmapped repo runs as default, which Vault refuses and RBAC gives nothing", status: passed}
+  - {node: wp, text: "a fire-planner pipeline pod runs as ci-deploy-fire-planner and cannot touch another namespace", status: passed}
+  - {node: eso, text: "in plotting-book, an ExternalSecret for another path is refused by both stores", status: passed}
+  - {node: vault, text: "a token from the Vault agent role carries role=agent and the person's policies", status: open}
   - {node: k8s, text: "kubectl auth whoami in an agent session shows agent:vbarzin@gmail.com", status: open}
-  - {node: bots, text: an issue filed by ebarzin runs with emo's agent rights and no infra-agent token, status: open}
-  - {node: forgejo, text: the Gitea provider plans team members on Forgejo with no diff, status: open}
-  - {node: guard, text: "as emo, 10.0.20.204:8554 is refused and Traefik 443 works", status: open}
-  - {node: tf, text: svc-agent impersonates a group member and is refused on a non-member, status: open}
+  - {node: bots, text: "a broken label by a read-only collaborator starts no run; the shared token gets 401 from the main pod", status: passed}
+  - {node: forgejo, text: "forgejo-acl plans with no diff after apply; ebarzin reads viktor/infra and pushes to his fork", status: passed}
+  - {node: guard, text: "as emo, a connection to 10.0.20.204:8554 is logged and Traefik 443 is not", status: passed}
+  - {node: tf, text: svc-agent impersonates a group member and is refused on a non-member, status: passed}
 left_out:
   - Authentik Enterprise Actors and Vault Enterprise agent registry, both paid
   - OpenFGA as a live ACL service
@@ -116,9 +117,10 @@ left_out:
   why: A write to viktor/infra is cluster admin through CI.
 - question: How does a pipeline get credentials?
   options:
-    - {name: "secrets set per repo; the namespace default account has no rights", chosen: true}
+    - {name: "a Kyverno policy sets each step pod's account from Woodpecker's repo label", chosen: true}
+    - {name: an AppRole and secrets per repo, note: "a credential to hand out, and edits in 21 app repos"}
     - {name: trusted and untrusted agents, note: v3.19 global agents still take viktor workflows}
-  why: Woodpecker already refuses a step-chosen service account, so default is the only one.
+  why: Woodpecker drops pipeline labels under its own prefix, so the repo label is trustworthy and no repo changes.
 - question: How do the rights groups relate to Authentik admin?
   options:
     - {name: new non-superuser groups for Vault and cluster rights, chosen: true}
@@ -136,38 +138,41 @@ left_out:
   why: The map is explicit, and unmapped users get no rights.
 - question: How does an agent act for an issue author?
   options:
-    - {name: a dispatcher mints a Vault token for the author's tier, chosen: true}
-    - {name: one shared agent identity, note: "what we have, and it reads everything"}
-  why: Vault token roles bind a token to one entity alias, for free.
+    - {name: "one pod per rights tier, and runs start only for labels by writers", chosen: true}
+    - {name: a dispatcher mints a Vault token for the author's tier, note: "the minting token sits in the run's own container"}
+    - {name: one shared agent identity, note: "what we had, and it read everything"}
+  why: Only a separate pod keeps the higher rights out of a run's reach.
 ```
 
 ## How it works
 
-**One list.** New Authentik groups carry each right: `vault-admins`,
-`kubernetes-admins`, `kubernetes-power-users` and one `namespace-owner-<ns>`
-per namespace. None is superuser. Terraform reads them and writes Kubernetes
-group bindings, Vault external-group policies, Forgejo teams and push lists,
-and impersonation object permissions. The per-person bindings go.
+**One list.** Authentik groups carry each right: `vault-admins`,
+`kubernetes-admins`, `kubernetes-power-users`, `kubernetes-namespace-owners`
+and one `kubernetes-namespace-owner-<ns>` per namespace. None is superuser.
+Terraform fills them from `k8s_users`. Kubernetes and Vault bind the groups.
+The per-person bindings are gone. Forgejo has no organisation, so it has no
+teams: the viktor/infra push list and collaborators are a Terraform list.
 
 **Agent identities.** In an agent session, the start hook points kubectl at
 the `agent:` issuer and logs Vault in through an OIDC role named `agent`.
 Each `agent:` group binding equals its human binding. Forgejo and web apps
 see the person.
 
-**Pipelines.** The `default` account in `woodpecker` loses its rights and its
-token mount. Each repo gets only its own secrets. The infra repo gets a Vault
-AppRole for the `ci` role. An app repo gets its namespace deployer from the
-Vault Kubernetes engine.
+**Pipelines.** Woodpecker labels each step pod with its repo. A Kyverno policy
+reads that label and sets the pod's account. The infra repo gets `ci-infra`,
+the only account the Vault `ci` role trusts. An app repo gets a deployer for its
+own namespace. Every other repo gets `default`, which has no rights. Each repo
+gets only its own secrets.
 
 **Tenants.** The `vault-kv` store serves platform namespaces only. Each tenant
-namespace gets a SecretStore limited to `secret/<tenant>/*`. Kyverno refuses
-any other store in a tenant namespace.
+namespace gets a SecretStore limited to `secret/<tenant>`. External Secrets
+applies the store conditions itself.
 
-**The issue hop.** The dispatcher maps the issue author through the Forgejo map.
-It mints a Vault token for that person's agent tier, and the pod holds nothing
-else. The agent reads comments from mapped users only. The keys baked into the
-pod move to Vault paths that only the Viktor tier reads. Each `/execute` caller
-gets its own named token role.
+**The issue hop.** The agent service runs as two pods. The main pod holds the
+Viktor tier and takes a token that only his callers hold. The restricted pod
+holds no Vault token, no keys and no cluster rights. Callers that read email or
+web pages use it. A fixer run starts only for a label by a collaborator with
+write access.
 
 **The devvm.** ttyd and the other loopback services check the proxy secret or
 listen on a socket. nftables matches `meta skuid`: non-admin users reach
@@ -179,29 +184,29 @@ Postgres.
 ```timeline
 caption: every step reverts with one commit; none deletes data
 steps:
-  - {when: 1, what: "ttyd checks the proxy secret; iOS rig and T3 ports gated; ~/.claude 700", rollback: previous terminal-lobby release}
-  - {when: 2, what: "emo drops docker in roster.yaml; provisioner removes unlisted groups; rootless Docker with the registry in daemon.json", rollback: re-add the group}
-  - {when: 3, what: "emo moves to fork PRs on viktor/infra; Forgejo map and push lists in Terraform", rollback: restore the push list}
-  - {when: 4, what: "Woodpecker default account stripped; secrets per repo; AppRole for infra CI; OPEN false; one admin", rollback: restore the binding}
-  - {when: 5, what: "vault-kv limited to platform namespaces; tenant SecretStores; Kyverno guard", rollback: drop the store conditions}
-  - {when: 6, what: "openclaw and claude-agent RBAC cut to the writes in 30 days of audit log; dispatcher; keys out of the pod", rollback: restore the bindings}
-  - {when: 7, what: "rights groups; Vault group policies; k8s group bindings; Forgejo teams; scoped impersonation", rollback: "revert vault, rbac, forgejo and authentik stacks"}
-  - {when: 8, what: "agent: issuer on, Vault agent role, session hook", rollback: set agent_oidc_enabled false}
+  - {when: 1, what: "done: nftables checks the caller's uid for ttyd, the iOS rig and T3; ~/.claude 700", rollback: revert the playbook commit}
+  - {when: 2, what: "done: emo leaves docker; the provisioner removes privileged groups the tier does not give; rootless Docker", rollback: re-add the group}
+  - {when: 3, what: "done: emo moves to fork PRs on viktor/infra; Forgejo map and push lists in Terraform", rollback: restore the push list}
+  - {when: 4, what: "done: repo accounts by Kyverno; default and the agent stripped; repo secrets; OPEN false; one admin", rollback: restore the bindings}
+  - {when: 5, what: "done: vault-kv refuses tenant namespaces; tenant SecretStores", rollback: drop the store conditions}
+  - {when: 6, what: "done: openclaw loses cluster-admin; git-crypt key out of ConfigMaps; agent service split by rights", rollback: restore the bindings}
+  - {when: 7, what: "done: rights groups; Vault group alias; k8s group bindings; scoped impersonation", rollback: "revert vault, rbac and authentik stacks"}
+  - {when: 8, what: "agent bindings and Vault agent role done; issuer on and session hook need Viktor's login", rollback: set agent_oidc_enabled false}
   - {when: 9, what: "Viktor applies through OIDC; the provisioner gets its own token; the cert becomes break-glass", rollback: point KUBECONFIG back at the cert}
-  - {when: 10, what: "nftables per-user egress, 7 days log-only, then enforced", rollback: flush the table}
+  - {when: 10, what: "log-only egress since 2026-11-15; enforce after 7 days of logs", rollback: flush the table}
 ```
 
 ## Configuration
 
 ```config
-- {key: TL_BIND and proxy secret for ttyd, where: terminal-lobby package, old: "0.0.0.0, header trusted", new: "proxy secret checked"}
+- {key: "output chain, meta skuid", where: playbooks/devvm.yml, old: "any local account reaches ttyd", new: "admins only"}
 - {key: extra_groups for emo, where: scripts/workstation/roster.yaml, old: "[docker]", new: "[]"}
 - {key: master push whitelist, where: viktor/infra branch protection, old: "ebarzin, infra-agent, renovate-bot, viktor", new: "infra-agent, renovate-bot, viktor"}
 - {key: woodpecker-default binding, where: stacks/woodpecker/main.tf, old: "cluster-admin", new: "removed"}
 - {key: WOODPECKER_OPEN, where: stacks/woodpecker/values.yaml, old: "true", new: "false"}
 - {key: woodpecker_admins, where: stacks/woodpecker/main.tf, old: "Viktor + namespace-owners", new: "ViktorBarzin"}
 - {key: vault-kv conditions, where: stacks/external-secrets, old: "none", new: "platform namespaces"}
-- {key: openclaw-cluster-admin, where: stacks/openclaw, old: "cluster-admin", new: "scoped role"}
+- {key: openclaw-cluster-admin, where: stacks/openclaw, old: "cluster-admin", new: "removed"}
 - {key: agent_oidc_enabled, where: stacks/rbac, old: "false", new: "true"}
 - {key: authentik_core.impersonate, where: stacks/authentik/agent-service-account.tf, old: "global", new: "per member of Agent impersonatable"}
 ```
