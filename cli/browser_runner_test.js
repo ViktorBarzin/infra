@@ -2,7 +2,14 @@
 // Run directly (`node cli/browser_runner_test.js`) or via TestBrowserRunnerJS.
 'use strict';
 const assert = require('assert');
-const { contextlessTargets, browserWSURL, exitCleanup } = require('./browser_runner.js');
+const {
+  contextlessTargets,
+  browserWSURL,
+  exitCleanup,
+  isTurnstileFrameURL,
+  solveTurnstileFrame,
+  watchTurnstile,
+} = require('./browser_runner.js');
 
 let failures = 0;
 function check(name, fn) {
@@ -118,8 +125,149 @@ check('keep-open on a created context closes only an unused runner page', () => 
   assert.strictEqual(exitCleanup({ createdContext: true, keepOpen: true, pageURL: 'https://x.test/' }), 'none');
 });
 
-if (failures) {
-  console.error(`${failures} test(s) failed`);
-  process.exit(1);
+// Cloudflare Turnstile checkbox. Measured 2026-11-15 on a pool worker against
+// turnstile-lab.viktorbarzin.me: a CDP mouse click on the checkbox fails with
+// error 600010, while focusing it and pressing Space passed 4 of 4 runs.
+check('recognises the Turnstile challenge frame and nothing else', () => {
+  assert.strictEqual(isTurnstileFrameURL('https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/abc/0x4AAA/auto/fbE/new/normal/auto/'), true);
+  assert.strictEqual(isTurnstileFrameURL('https://challenges.cloudflare.com.evil.test/x'), false);
+  assert.strictEqual(isTurnstileFrameURL('https://example.com/?u=https://challenges.cloudflare.com/'), false);
+  assert.strictEqual(isTurnstileFrameURL('about:blank'), false);
+  assert.strictEqual(isTurnstileFrameURL(undefined), false);
+});
+
+// A fake challenge frame. `appearsAfter` polls until the checkbox shows;
+// pressing Space hides it when `passes` is true, as Turnstile's "Success!" does.
+function fakeChallenge({ appearsAfter = 0, passes = true, token = '', neverShows = false } = {}) {
+  const calls = [];
+  let polls = 0;
+  let pressed = false;
+  const frame = {
+    url: () => 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile/if/x',
+    isDetached: () => false,
+    locator: (sel) => {
+      assert.strictEqual(sel, 'input[type="checkbox"]');
+      return {
+        isVisible: async () => {
+          polls++;
+          if (neverShows) return false;
+          if (pressed && passes) return false;
+          return polls > appearsAfter;
+        },
+        focus: async () => calls.push('focus'),
+      };
+    },
+  };
+  const page = {
+    keyboard: {
+      press: async (k) => {
+        calls.push('press:' + k);
+        pressed = true;
+      },
+    },
+    waitForTimeout: async () => {},
+    locator: (sel) => {
+      assert.strictEqual(sel, 'input[name="cf-turnstile-response"]');
+      return {
+        all: async () => {
+          const t = token || (pressed && passes ? '0.solved' : '');
+          return t ? [{ inputValue: async () => t }] : [];
+        },
+      };
+    },
+  };
+  frame.page = () => page;
+  return { frame, page, calls };
 }
-console.log('all browser_runner tests passed');
+
+const quick = { pollMS: 0, timeoutMS: 50, settleMS: 0, frameWaitMS: 0 };
+
+async function checkAsync(name, fn) {
+  try {
+    await fn();
+    console.log('ok   ' + name);
+  } catch (e) {
+    failures++;
+    console.log('FAIL ' + name + ': ' + e.message);
+  }
+}
+
+(async () => {
+  await checkAsync('waits for the checkbox, focuses it, presses Space once', async () => {
+    const c = fakeChallenge({ appearsAfter: 3 });
+    const got = await solveTurnstileFrame(c.page, c.frame, quick);
+    assert.strictEqual(got, 'solved');
+    assert.deepStrictEqual(c.calls, ['focus', 'press:Space']);
+  });
+
+  await checkAsync('reports unsolved when the checkbox stays after Space', async () => {
+    const c = fakeChallenge({ passes: false });
+    const got = await solveTurnstileFrame(c.page, c.frame, quick);
+    assert.strictEqual(got, 'unsolved');
+    assert.deepStrictEqual(c.calls, ['focus', 'press:Space']);
+  });
+
+  await checkAsync('an invisible pass (token set, no checkbox) needs no key press', async () => {
+    const c = fakeChallenge({ neverShows: true, token: '0.abc' });
+    const got = await solveTurnstileFrame(c.page, c.frame, quick);
+    assert.strictEqual(got, 'passed');
+    assert.deepStrictEqual(c.calls, []);
+  });
+
+  await checkAsync('a frame that detaches (interstitial reloaded) counts as solved', async () => {
+    const c = fakeChallenge({ neverShows: true });
+    let n = 0;
+    c.frame.isDetached = () => ++n > 2;
+    assert.strictEqual(await solveTurnstileFrame(c.page, c.frame, quick), 'solved');
+  });
+
+  await checkAsync('gives up quietly when no checkbox ever shows', async () => {
+    const c = fakeChallenge({ neverShows: true });
+    assert.strictEqual(await solveTurnstileFrame(c.page, c.frame, quick), 'no-checkbox');
+    assert.deepStrictEqual(c.calls, []);
+  });
+
+  await checkAsync('the watcher solves each challenge frame once and ignores other frames', async () => {
+    const c = fakeChallenge();
+    const handlers = {};
+    c.page.on = (ev, fn) => (handlers[ev] = fn);
+    c.page.frames = () => [];
+    const context = { on: () => {}, pages: () => [c.page] };
+    const solver = watchTurnstile(context, () => {}, quick);
+    handlers.framenavigated({ url: () => 'https://example.com/', page: () => c.page });
+    handlers.framenavigated(c.frame);
+    handlers.framenavigated(c.frame);
+    assert.strictEqual(await solver.settle(c.page), 'solved');
+    assert.deepStrictEqual(c.calls, ['focus', 'press:Space']);
+  });
+
+  // Hit live 2026-11-15: three visits in one run, and visits 2 and 3 got
+  // visit 1's 'solved' before their own checkbox had loaded.
+  await checkAsync('a new page load forgets the last result', async () => {
+    const c = fakeChallenge();
+    const handlers = {};
+    const main = { url: () => 'https://example.com/', page: () => c.page };
+    c.page.on = (ev, fn) => (handlers[ev] = fn);
+    c.page.frames = () => [];
+    c.page.mainFrame = () => main;
+    const solver = watchTurnstile({ on: () => {}, pages: () => [c.page] }, () => {}, quick);
+    handlers.framenavigated(c.frame);
+    assert.strictEqual(await solver.settle(c.page), 'solved');
+    handlers.framenavigated(main);
+    assert.strictEqual(await solver.settle(c.page), 'no-challenge');
+  });
+
+  await checkAsync('settle on a page with no challenge returns at once', async () => {
+    const c = fakeChallenge();
+    c.page.on = () => {};
+    c.page.frames = () => [];
+    const solver = watchTurnstile({ on: () => {}, pages: () => [c.page] }, () => {}, quick);
+    assert.strictEqual(await solver.settle(c.page), 'no-challenge');
+  });
+
+  if (failures) {
+    console.error(`${failures} test(s) failed`);
+    process.exit(1);
+  }
+  console.log('all browser_runner tests passed');
+})();

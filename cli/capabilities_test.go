@@ -301,6 +301,8 @@ func TestWideningVPNEgressDoesNotStealNeighbours(t *testing.T) {
 		{"a deployment is stuck pending", "k8s debug"},
 		{"cloudflare is blocking me with a captcha", "browser run"},
 		{"the site flags automation and returns 403", "browser run"},
+		{"bypass cloudflare turnstile in browser sessions", "browser run"},
+		{"stuck on verify you are human", "browser run"},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)

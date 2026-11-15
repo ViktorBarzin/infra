@@ -98,10 +98,24 @@ WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
   disable-devtool traps). It presents as a real Chrome and usually succeeds
   first try — but it's the shared cluster browser (slower startup, one batch
   run, no per-step feedback), so it's the escalation path, never the default.
+  A Cloudflare Turnstile checkbox ("Verify you are human", or the full-page
+  "Just a moment...") is also a reason to come here: headless fails it with
+  error 600010, and this browser passes it by itself (see CLOUDFLARE below).
   Need the HUMAN'S logged-in session, or a tab already open on their screen?
   Neither this nor the headless browser can reach it. That is
   homelab browser bridge, which drives their own Chrome through an extension.
   Anti-bot walls stay here, their session goes there.
+
+CLOUDFLARE
+  Every page is watched for a Turnstile challenge frame. When its checkbox
+  shows, the runner focuses it and presses Space (a mouse click over CDP fails
+  with 600010), then waits up to 15s for Cloudflare's token. Your script needs
+  no Cloudflare code. To wait for it before you read or submit, call
+      await solveCloudflare()        // or solveCloudflare(otherPage)
+  It returns 'solved' | 'passed' (token, no checkbox) | 'unsolved' (pressed,
+  no token: the site wants a human) | 'no-checkbox' | 'no-challenge' (none
+  within 5s). Do not type with page.keyboard while a checkbox is pending: the
+  solver moves focus to it. open waits for it before reading the page.
 
 ERROR-CODE CHEAT-SHEET (diagnose BEFORE retrying)
   ERR_FILE_NOT_FOUND (-6)   request intercepted/resolved locally by the

@@ -377,6 +377,7 @@ devvm:  homelab browser run flow.js
           │  assert /json/version Browser is "Chrome/…", not "HeadlessChrome"
           │  node + playwright-core@1.48.2 → connectOverCDP
           │  context.addInitScript(stealth.js)   ← same vendored file as in-cluster
+          │  watch every page for a Cloudflare Turnstile frame (see below)
           │  run the user's Playwright script with page/context/browser in scope
           └─ port-forward always torn down (success or error)
 ```
@@ -393,6 +394,21 @@ Key facts:
   pin" above).
 - **Default context is a fresh incognito one** (closed on exit), safe for the
   shared browser; `--shared-context` reuses the warmed persistent profile.
+- **Cloudflare Turnstile is passed by the runner (2026-11-15).** The runner
+  watches each page for a `challenges.cloudflare.com` frame. When the
+  checkbox shows, it focuses the checkbox and presses Space, then waits up to
+  15 s for a `cf-turnstile-response` token or for the frame to go away (the
+  full-page "Just a moment..." check reloads into the site). A CDP mouse click
+  on the same checkbox fails with error 600010, and headless Chrome fails even
+  with the key press, so this only works in the headed pool and hub browsers.
+  Scripts can `await solveCloudflare()` to wait for the result; `open` waits
+  for it before reading the page. Measured on `turnstile-lab.viktorbarzin.me`
+  (7 of 7 passes confirmed by siteverify) and on
+  `scrapingcourse.com/cloudflare-challenge`, where the runner without the
+  solver was still on "Just a moment..." after 25 s. Code:
+  `cli/browser_runner.js` (`watchTurnstile`). FlareSolverr
+  (`servarr`) also solves Turnstile but runs its own Chrome with no CDP, so
+  it cannot share a session with this browser.
 - **`stealth.js` is vendored** into the CLI (`cli/browser_stealth.js`) as a
   byte-identical copy of `files/stealth.js`, guarded by a drift test — so the
   CLI's stealth never diverges from the in-cluster callers'.

@@ -150,6 +150,125 @@ async function closeContextlessTargets(cdpURL, log) {
   }
 }
 
+// Cloudflare Turnstile: the "Verify you are human" checkbox, both the widget on
+// a site's own form and the full-page "Just a moment" check. Measured
+// 2026-11-15 on a pool worker against turnstile-lab.viktorbarzin.me: a CDP
+// mouse click on the checkbox fails with error 600010, while focusing the
+// checkbox and pressing Space passed 4 of 4 runs, each confirmed by
+// Cloudflare's siteverify. The checkbox shows about 5 s after load, so the
+// solver waits for it rather than pressing Tab blind. Headless Chrome on the
+// devvm still fails with 600010 after the same key press, so this only helps
+// a headed browser, which every pool worker is.
+function isTurnstileFrameURL(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'challenges.cloudflare.com';
+  } catch (_) {
+    return false;
+  }
+}
+
+// Solves the checkbox in one challenge frame. Returns:
+//   'solved'      Space pressed and Cloudflare issued a token, or the frame went
+//                 away (the full-page check reloads into the site);
+//   'passed'      Cloudflare issued a token with no checkbox shown;
+//   'unsolved'    Space pressed, no token within settleMS;
+//   'no-checkbox' neither a checkbox nor a token within timeoutMS.
+async function solveTurnstileFrame(page, frame, opts = {}) {
+  const pollMS = opts.pollMS ?? 500;
+  const timeoutMS = opts.timeoutMS ?? 30000;
+  const settleMS = opts.settleMS ?? 15000;
+  const box = frame.locator('input[type="checkbox"]');
+  const visible = () => box.isVisible().catch(() => false);
+  const hasToken = async () => {
+    try {
+      for (const input of await page.locator('input[name="cf-turnstile-response"]').all()) {
+        if (await input.inputValue().catch(() => '')) return true;
+      }
+    } catch (_) {
+      /* page navigated mid-check */
+    }
+    return false;
+  };
+
+  const deadline = Date.now() + timeoutMS;
+  for (;;) {
+    if (frame.isDetached()) return 'solved';
+    if (await visible()) break;
+    if (await hasToken()) return 'passed';
+    if (Date.now() >= deadline) return 'no-checkbox';
+    await page.waitForTimeout(pollMS);
+  }
+
+  // A short human-sized pause between the checkbox showing and the key press.
+  await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
+  await box.focus();
+  await page.keyboard.press('Space');
+
+  const until = Date.now() + settleMS;
+  for (;;) {
+    if (frame.isDetached() || (await hasToken())) return 'solved';
+    if (Date.now() >= until) return 'unsolved';
+    await page.waitForTimeout(pollMS);
+  }
+}
+
+// Watches every page in the context and solves each challenge frame once, in
+// the background, so a script needs no Cloudflare code of its own.
+// settle(page) waits for the page's challenge, if any, and returns its result.
+function watchTurnstile(context, log, opts = {}) {
+  const pollMS = opts.pollMS ?? 500;
+  const frameWaitMS = opts.frameWaitMS ?? 5000;
+  const seen = new WeakSet();
+  const inflight = new Map();
+  let stopped = false;
+
+  const start = (frame) => {
+    if (stopped || seen.has(frame) || !isTurnstileFrameURL(frame.url())) return;
+    seen.add(frame);
+    const page = frame.page();
+    const result = solveTurnstileFrame(page, frame, opts).then(
+      (r) => {
+        if (r === 'unsolved') log('cloudflare: pressed the checkbox but got no token; the site may need a human');
+        else if (r !== 'no-checkbox') log('cloudflare: challenge ' + r);
+        return r;
+      },
+      (e) => {
+        // A solve cut short by the run ending is not worth a line.
+        if (!stopped) log('cloudflare: solver failed: ' + (e && e.message ? e.message : e));
+        return 'error';
+      }
+    );
+    inflight.set(page, result);
+  };
+  const watch = (page) => {
+    page.on('framenavigated', (frame) => {
+      // A new page load: the last load's result says nothing about this one.
+      if (typeof page.mainFrame === 'function' && frame === page.mainFrame()) inflight.delete(page);
+      start(frame);
+    });
+    for (const f of page.frames()) start(f);
+  };
+  for (const p of context.pages()) watch(p);
+  context.on('page', watch);
+
+  return {
+    async settle(page) {
+      const deadline = Date.now() + frameWaitMS;
+      for (;;) {
+        for (const f of page.frames()) start(f);
+        const result = inflight.get(page);
+        if (result) return result;
+        if (Date.now() >= deadline) return 'no-challenge';
+        await page.waitForTimeout(pollMS);
+      }
+    },
+    stop() {
+      stopped = true;
+    },
+  };
+}
+
 // What to close on exit: 'context', 'page' or 'none'. The runner opens a page
 // of its own before every script, and a --shared-context script often drives an
 // existing tab instead (context.pages().find(...)). --keep-open means "keep what
@@ -218,6 +337,10 @@ async function main() {
     if (stealth.trim()) await context.addInitScript(stealth);
   }
 
+  // Started before the first page so its challenge frame is not missed.
+  const turnstile = watchTurnstile(context, log);
+  const solveCloudflare = (p) => turnstile.settle(p || page);
+
   const page = await context.newPage();
 
   let exitCode = 0;
@@ -226,6 +349,10 @@ async function main() {
       await page.goto(initURL, { waitUntil: 'domcontentloaded' });
     }
     if (mode === 'open') {
+      // The full-page check reloads into the site once it passes.
+      if ((await solveCloudflare(page)) === 'solved') {
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
+      }
       console.log('url:    ' + page.url());
       console.log('title:  ' + (await page.title()));
       const text = (await page.evaluate(() => (document.body ? document.body.innerText : ''))).trim();
@@ -238,11 +365,11 @@ async function main() {
     } else {
       if (!scriptPath) throw new Error('run mode requires HOMELAB_BROWSER_SCRIPT');
       const src = fs.readFileSync(scriptPath, 'utf8');
-      // Run the user's source with page/context/browser/log in lexical scope.
-      // AsyncFunction body permits top-level await.
+      // Run the user's source with page/context/browser/log/solveCloudflare in
+      // lexical scope. AsyncFunction body permits top-level await.
       const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-      const fn = new AsyncFunction('page', 'context', 'browser', 'log', src);
-      const result = await fn(page, context, browser, log);
+      const fn = new AsyncFunction('page', 'context', 'browser', 'log', 'solveCloudflare', src);
+      const result = await fn(page, context, browser, log, solveCloudflare);
       if (result !== undefined) {
         let out;
         try {
@@ -257,6 +384,7 @@ async function main() {
     console.error('homelab browser: script error:', e && e.stack ? e.stack : e);
     exitCode = 1;
   } finally {
+    turnstile.stop();
     try {
       // Close only what we created; never tear down the shared persistent context.
       const what = exitCleanup({ createdContext, keepOpen, pageURL: page.isClosed() ? '' : page.url() });
@@ -282,4 +410,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { contextlessTargets, browserWSURL, closeContextlessTargets, exitCleanup };
+module.exports = {
+  contextlessTargets,
+  browserWSURL,
+  closeContextlessTargets,
+  exitCleanup,
+  isTurnstileFrameURL,
+  solveTurnstileFrame,
+  watchTurnstile,
+};
