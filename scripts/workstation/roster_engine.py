@@ -66,11 +66,17 @@ TIER_GROUPS: dict[str, tuple[str, ...]] = {
     "power-user": ("codex-shared",),
     "namespace-owner": (),
 }
-# Groups a roster row may add beyond its tier's (`extra_groups`). docker is
-# root-equivalent, so it is granted per person in a reviewed diff rather than
-# by tier; emo keeps it (Viktor, 2026-11-11). sudo and code-shared stay
-# tier: admin's alone.
-EXTRA_GROUPS_ALLOWED: tuple[str, ...] = ("docker",)
+# Groups a roster row may add beyond its tier's (`extra_groups`). None today:
+# docker is root on the box, and emo, who held it for LibreOffice and his
+# Postgres tests, moved to rootless Docker on 2026-11-15 (Viktor). sudo and
+# code-shared stay tier: admin's alone. The field stays so a reviewed diff can
+# allow a harmless group later.
+EXTRA_GROUPS_ALLOWED: tuple[str, ...] = ()
+# The groups that grant rights over other users. A roster account in one its
+# tier does not give is removed from it: the reconcile stays additive for every
+# other group, but these must follow the roster, or a group granted by hand or
+# left over from an older tier keeps root on the box.
+PRIVILEGED_GROUPS: tuple[str, ...] = ("code-shared", "codex-shared", "docker", "sudo")
 DEFAULT_SHELL = "/bin/zsh"
 # The FLOOR a membership-driven provision lands on: the least privilege that
 # still makes the box useful, and the same default provision-user.yml already
@@ -153,6 +159,9 @@ class Account:
     repos: tuple[str, ...] = ()
     claude_auth: bool = True
     parked: bool = False
+    # PRIVILEGED_GROUPS this account must not hold; the provisioner removes it
+    # from any of them it is in.
+    revoked_groups: tuple[str, ...] = ()
     # The Authentik username, carried through because a per-user credential
     # minted against a service has to name the identity that owns it, not the
     # OS account. browser-bridge's CLI token is the first such credential;
@@ -523,6 +532,9 @@ def derive_desired_state(
             shell=DEFAULT_SHELL,
             login_locked=True,
             groups=tuple(sorted(set(TIER_GROUPS[u.tier]) | set(u.extra_groups))),
+            revoked_groups=tuple(
+                sorted(set(PRIVILEGED_GROUPS) - set(TIER_GROUPS[u.tier]) - set(u.extra_groups))
+            ),
             code_layout=u.code_layout,
             repos=u.repos,
             claude_auth=u.claude_auth and not u.parked,
@@ -775,6 +787,10 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "shell": a.shell,
                 "login_locked": a.login_locked,
                 "groups": list(a.groups),
+                "revoked_groups": list(a.revoked_groups),
+                # Docker without root: an account outside the docker group gets
+                # its own dockerd, which runs as that user.
+                "rootless_docker": "docker" not in a.groups,
                 "code_layout": a.code_layout,
                 "repos": list(a.repos),
                 "claude_auth": a.claude_auth,

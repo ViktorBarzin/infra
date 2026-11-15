@@ -367,7 +367,12 @@ func pushWithRetry(repoRoot string, flags []string, remote string, attempts int,
 // exit code must not believe the change is on master.
 func landFallback(repoRoot string, flags []string, remote, branch string, pushErr error) error {
 	fmt.Fprintf(os.Stderr, "homelab: direct push to master failed (%v)\n", pushErr)
-	fmt.Fprintf(os.Stderr, "homelab: falling back to pushing the feature branch %q for a PR\n", branch)
+	// A contributor's clone reads viktor/infra and pushes to their fork: the
+	// provisioner sets remote.pushDefault to it (enforced-identity plan).
+	if pd, err := gitOutput(repoRoot, "config", "--get", "remote.pushDefault"); err == nil && pd != "" {
+		remote = pd
+	}
+	fmt.Fprintf(os.Stderr, "homelab: falling back to pushing the feature branch %q to %s for a PR\n", branch, remote)
 	if err := gitStream(repoRoot, flags, "push", "-u", remote, branch); err != nil {
 		return fmt.Errorf("not landed: the server refused the master push and the fallback branch push also failed: %w", err)
 	}

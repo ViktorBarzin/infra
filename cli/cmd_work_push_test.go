@@ -186,6 +186,26 @@ func TestLandFallbackSaysNotLanded(t *testing.T) {
 	gitT(t, r.remote, "rev-parse", "--verify", "me/topic") // the branch is saved for a PR
 }
 
+// A contributor reads viktor/infra and writes only to a fork, so the fallback
+// branch goes to the push-default remote the provisioner sets, not the remote
+// master came from.
+func TestLandFallbackPushesToThePushDefaultRemote(t *testing.T) {
+	r := newLandRig(t)
+	r.mineCommits(t, "mine.txt", "mine\n")
+	fork := filepath.Join(filepath.Dir(r.remote), "fork.git")
+	gitT(t, filepath.Dir(r.remote), "init", "-q", "--bare", "-b", "master", fork)
+	gitT(t, r.mine, "remote", "add", "fork", fork)
+	gitT(t, r.mine, "config", "remote.pushDefault", "fork")
+	err := landFallback(r.mine, nil, "origin", "me/topic", errors.New("refused"))
+	if err == nil || !strings.Contains(err.Error(), "fork") {
+		t.Fatalf("the fallback should name the fork it pushed to, got %v", err)
+	}
+	gitT(t, fork, "rev-parse", "--verify", "me/topic")
+	if out, _ := exec.Command("git", "-C", r.remote, "rev-parse", "--verify", "-q", "me/topic").Output(); len(out) > 0 {
+		t.Fatal("the branch went to the read-only upstream instead of the fork")
+	}
+}
+
 func TestIsNonFastForward(t *testing.T) {
 	cases := []struct {
 		stderr string

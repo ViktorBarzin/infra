@@ -24,35 +24,39 @@ per-project clones: the infra clone at `~/code/infra`, plus each roster
 the user's own PAT. The reconcile auto-migrates a single-layout `~/code` when
 a user is flipped to `workspace`, and keeps every clone fresh either way.
 
-The model is **allow-then-audit** (Viktor, 2026-06-10): whitelisted users (emo)
-push straight to `master` — no PR gate — and the record of *what changed and
-why* is what matters. Force-push is disabled for everyone, so master history
-is append-only.
+Changes to viktor/infra land as **pull requests from your own fork**
+(enforced-identity plan, 2026-11-15). CI applies every push to master with
+cluster-admin rights, so a write to viktor/infra is admin: only Viktor and the
+bots `infra-agent` and `renovate-bot` push there (`stacks/forgejo-acl`), and
+everyone else reads it. Before this, whitelisted users (emo) pushed straight to
+master. Force-push is disabled for everyone, so master history is append-only.
+
+Each non-admin clone has two Forgejo remotes, wired by the provisioner:
+`forgejo` is viktor/infra, which `master` tracks and which is refreshed hourly;
+`fork` is `<your-forgejo-user>/infra`, forked with your own PAT, and it is the
+push default. Woodpecker runs a fork's pull request only after Viktor approves
+it, and Viktor merges it.
 
 **Feature-sized work is worktree-first** (org rule, 2026-06-10): develop in an
 isolated worktree (`.worktrees/<topic>`, branch `<os-user>/<topic>` off
-`forgejo/master`) so concurrent agent sessions never collide in the clone, then
-land by merging latest master into the branch and pushing it
-(`git push forgejo HEAD:master`, or the PR fallback below if not whitelisted).
-Locked (git-crypt) clones can use plain `git worktree add`. Trivial
-single-commit fixes may be committed directly on a clean `master`. Full
-lifecycle: your own AGENTS.md.
+`forgejo/master`) so concurrent agent sessions never collide in the clone.
+Locked (git-crypt) clones can use plain `git worktree add`. Full lifecycle:
+your own AGENTS.md.
 
-To land a finished change from such a clone:
+To land a finished change:
 
-1. Land it per the worktree paragraph above.
-2. Leave the clone on clean `master` so auto-refresh keeps working.
-
-If a push to `master` is rejected by branch protection (user not on the
-whitelist — e.g. new users before Viktor grants it), fall back to a
-`<os-user>/<short-topic>` branch + PR with the user's own PAT
-(`write:repository` suffices for the PR, verified 2026-06-10; the PAT also
-carries `write:issue` for `file-issue` and `write:user` for `cloud new`, which
-creates a repo the user owns):
+1. Merge the latest `forgejo/master` into the branch and push it to the fork:
+   `git push fork HEAD:<os-user>/<short-topic>`.
+2. Open the pull request with your own PAT (`write:repository` suffices; the
+   PAT also carries `write:issue` for `file-issue` and `write:user` for
+   `cloud new`, which creates a repo you own). `head` names the fork owner:
 
 ```bash
 TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
+ME=$(sed -E 's#https://([^:]+):.*#\1#' ~/.git-credentials)
 curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
   https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
-  -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
+  -d "{\"title\":\"<title>\",\"head\":\"$ME:<os-user>/<short-topic>\",\"base\":\"master\",\"body\":\"<what + why>\"}"
 ```
+
+3. Leave the clone on clean `master` so the hourly refresh keeps working.

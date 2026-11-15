@@ -167,8 +167,10 @@ Order inside that run: credentials for every existing account (step 3d: the
 admin kubeconfig is what the other users' kubeconfigs copy the cluster
 address from), the shared Codex login and chrome hub configs (step 3e), then
 per account: dotfiles, Forgejo's pinned SSH host key in
-`~/.ssh/known_hosts`, the admin's infra clone and its git-crypt unlock, groups (the tier's plus the
-row's `extra_groups`; emo keeps `docker`), clones, kubeconfigs,
+`~/.ssh/known_hosts`, the admin's infra clone and its git-crypt unlock, groups (the tier's; any of
+`docker`, `sudo`, `code-shared`, `codex-shared` the tier does not give is
+removed), rootless Docker for an account outside the `docker` group, clones,
+kubeconfigs,
 `vault-token-renew` with a first `~/.vault-token`, and for an admin on the
 live box's address whose token reads `secret/ios-rig`, the iOS rig's user
 units (`homelab ios bootstrap --units-only`, `ios-test-rig.md`); later the

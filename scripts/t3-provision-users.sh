@@ -3,7 +3,9 @@
 # of truth). roster_engine.py derives the desired state (accounts, per-tier groups,
 # sticky ports, /etc/ttyd-user-map, dispatch.json); this script APPLIES it.
 #
-# ADDITIVE-ONLY for existing users: never removes a group, never replaces a home,
+# ADDITIVE-ONLY for existing users: never removes a group outside
+# roster_engine.PRIVILEGED_GROUPS (docker, sudo, code-shared, codex-shared
+# follow the roster since 2026-11-15), never replaces a home,
 # never re-locks/re-chmods an existing account — so a routine (hourly) reconcile is
 # always safe for live users. Destructive offboarding (userdel) is a SEPARATE, gated
 # path, never here. Runs hourly as root via t3-provision-users.timer; root has no
@@ -184,6 +186,40 @@ wire_forgejo_remote() {
   runuser -u "$user" -- git -C "$dir" branch --set-upstream-to=forgejo/master master >/dev/null 2>&1 \
     && log "set $user:~/$sub master upstream -> forgejo/master" \
     || log "WARN: could not set $user:~/$sub master upstream to forgejo/master"
+}
+
+# A non-admin's infra changes go through a fork (enforced-identity plan,
+# 2026-11-15): CI applies every push to viktor/infra master as cluster admin,
+# so only Viktor and the bots write there, and everyone else reads it. This
+# adds a `fork` remote for <forgejo-user>/infra, forking viktor/infra with the
+# user's own PAT when the fork is missing, and makes it the push default. So
+# `git push` sends a branch to the fork; the pull request then goes from
+# <forgejo-user>:<branch> to viktor/infra master. master still tracks
+# forgejo/master, so the hourly fast-forward is unchanged. The Forgejo user
+# and PAT come from the user's ~/.git-credentials.
+wire_fork_remote() {
+  local user="$1" sub="$2" home dir cred login tok url
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  dir="$home/$sub"
+  [[ -n "$home" && -d "$dir/.git" && -s "$home/.git-credentials" ]] || return 0
+  cred="$(grep -m1 -E "^https://[^:]+:[^@]+@${FORGEJO_BASE#https://}/?$" "$home/.git-credentials" 2>/dev/null)" || return 0
+  login="$(sed -E 's#^https://([^:]+):.*#\1#' <<<"$cred")"
+  tok="$(sed -E 's#^https://[^:]+:([^@]+)@.*#\1#' <<<"$cred")"
+  [[ -n "$login" && -n "$tok" ]] || return 0
+  url="$FORGEJO_BASE/$login/infra.git"
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] fork remote $url -> $user:$sub"; return 0; fi
+  if ! curl -fsS -o /dev/null -H "Authorization: token $tok" "$FORGEJO_BASE/api/v1/repos/$login/infra" 2>/dev/null; then
+    curl -fsS -o /dev/null -X POST -H "Authorization: token $tok" -H 'Content-Type: application/json' \
+      -d '{}' "$FORGEJO_BASE/api/v1/repos/viktor/infra/forks" 2>/dev/null \
+      && log "forked viktor/infra -> $login/infra" \
+      || { log "WARN: could not fork viktor/infra for $login"; return 0; }
+  fi
+  if [[ "$(runuser -u "$user" -- git -C "$dir" remote get-url fork 2>/dev/null)" != "$url" ]]; then
+    runuser -u "$user" -- git -C "$dir" remote remove fork >/dev/null 2>&1 || true
+    runuser -u "$user" -- git -C "$dir" remote add fork "$url" && log "add fork remote $url -> $user:~/$sub"
+  fi
+  [[ "$(runuser -u "$user" -- git -C "$dir" config --get remote.pushDefault 2>/dev/null)" == fork ]] \
+    || runuser -u "$user" -- git -C "$dir" config remote.pushDefault fork
 }
 
 # Workspace layout: ~/code is a plain directory of per-project clones. A user
@@ -584,6 +620,41 @@ restore_user_credentials() {  # restore_user_credentials USER
 # first periodic token when ~/.vault-token is absent and this run holds admin
 # Vault access. Installed by hand before 2026-11-11
 # (docs/runbooks/vault-token-renew-devvm.md).
+# Rootless Docker for an account outside the docker group (roster_engine
+# rootless_docker). The user's own dockerd runs under their systemd user
+# manager, so a container's root is that user: `-v /:/h` reads only what the
+# user could. dockerd-rootless-setuptool.sh writes ~/.config/systemd/user/
+# docker.service and makes the `rootless` context current, so `docker` finds
+# it with no DOCKER_HOST. daemon.json carries the same in-cluster registry as
+# the system daemon's /etc/docker/daemon.json. Ubuntu's AppArmor profile for
+# /usr/bin/rootlesskit is what lets it make a user namespace.
+install_rootless_docker() {  # install_rootless_docker USER
+  local user="$1" home uid
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  [[ -n "$home" && -d "$home" ]] || return 0
+  command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1 || { log "WARN: docker-ce-rootless-extras missing -> no rootless Docker for $user"; return 0; }
+  grep -q "^$user:" /etc/subuid && grep -q "^$user:" /etc/subgid || { log "WARN: $user has no subuid/subgid range -> no rootless Docker"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] rootless Docker -> $user"; return 0; fi
+  mkdir_as "$user" 0700 "$home/.config/docker" || return 0
+  local want='{ "insecure-registries": ["10.0.20.10:5000"], "features": { "buildkit": true } }'
+  if [[ "$(cat "$home/.config/docker/daemon.json" 2>/dev/null)" != "$want" ]]; then
+    write_as "$user" 0600 "$home/.config/docker/daemon.json" <<<"$want"
+  fi
+  [[ "$(loginctl show-user "$user" -p Linger 2>/dev/null)" == "Linger=yes" ]] || loginctl enable-linger "$user" >/dev/null 2>&1 || true
+  local asu=(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" PATH=/usr/bin:/bin)
+  if [[ ! -s "$home/.config/systemd/user/docker.service" ]]; then
+    if "${asu[@]}" dockerd-rootless-setuptool.sh install >/dev/null 2>&1; then
+      log "installed rootless Docker -> $user"
+    else
+      log "WARN: rootless Docker setup failed for $user"; return 0
+    fi
+  fi
+  "${asu[@]}" systemctl --user is-active --quiet docker.service 2>/dev/null \
+    || "${asu[@]}" systemctl --user enable --now docker.service >/dev/null 2>&1 \
+    || log "WARN: could not start rootless Docker for $user"
+}
+
 install_vault_token_renew() {  # install_vault_token_renew USER
   local user="$1" home uid policies flags=() p token changed=0 f
   [[ -s "$VTR_SRC" && -s "$VTR_SERVICE" && -s "$VTR_TIMER" ]] || return 0
@@ -2075,8 +2146,9 @@ stage_shared_auth
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
 # the jq below emits "-" for empty groups/repos and we map it back here.
-while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth dotfiles; do
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth dotfiles revoked_csv rootless_docker; do
   [[ "$groups_csv" == "-" ]] && groups_csv=""
+  [[ "$revoked_csv" == "-" ]] && revoked_csv=""
   [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
     log "create account: $os_user (shell $shell)"
@@ -2098,11 +2170,24 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
+  # The one exception to additive groups: PRIVILEGED_GROUPS (roster_engine)
+  # follow the roster, so a docker or sudo membership granted by hand, or left
+  # from an older tier, is taken away. The user's running sessions keep the
+  # group until they log in again.
+  if [[ -n "$revoked_csv" ]]; then
+    IFS=',' read -ra drop <<< "$revoked_csv"
+    for g in "${drop[@]}"; do
+      id -nG "$os_user" 2>/dev/null | tr ' ' '\n' | grep -qx "$g" || continue
+      log "remove $os_user <- group $g (not given by the roster)"; run gpasswd -d "$os_user" "$g" >/dev/null
+    done
+  fi
+  [[ "$rootless_docker" == true ]] && install_rootless_docker "$os_user"
   if [[ "$tier" != admin ]]; then            # non-admins: locked clone(s) (kept fresh) + kubeconfig
     if [[ "$code_layout" == workspace ]]; then
       ensure_workspace_layout "$os_user"
       install_locked_clone "$os_user" code/infra
       wire_forgejo_remote  "$os_user" code/infra   # before refresh: ff targets the canonical upstream same-pass
+      wire_fork_remote     "$os_user" code/infra
       refresh_user_clone   "$os_user" code/infra
       IFS=',' read -ra extra_repos <<< "$repos_csv"
       for repo in "${extra_repos[@]}"; do
@@ -2114,6 +2199,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     else
       install_locked_clone "$os_user" code
       wire_forgejo_remote  "$os_user" code         # before refresh: ff targets the canonical upstream same-pass
+      wire_fork_remote     "$os_user" code
       refresh_user_clone   "$os_user" code
     fi
     install_user_kubeconfig "$os_user"
@@ -2124,7 +2210,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
   install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
   install_vault_token_renew "$os_user"       # every user vault-token-renew.sh has a token scope for
   install_ios_rig_units "$os_user" "$tier"   # admins, live box only, when the rig is configured
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-")] | @tsv' "$desired_file")
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring), (.dotfiles // "-"), (if (.revoked_groups|length)==0 then "-" else (.revoked_groups|join(",")) end), (.rootless_docker|tostring)] | @tsv' "$desired_file")
 
 # --- session-store (disposable devvm, 2026-11-11) ---
 # 4a) agent state from the session store. On a rebuilt box, each user's

@@ -244,21 +244,41 @@ def test_extra_groups_default_to_the_tier_groups_alone():
     assert eng.derive_desired_state(r, {}).accounts["emo"].groups == ("codex-shared",)
 
 
-def test_extra_groups_join_the_tier_groups_sorted_and_once():
-    # emo keeps docker (Viktor, 2026-11-11), which his tier does not give.
+def test_docker_is_no_longer_an_extra_group():
+    # docker is root on the box. emo had it for LibreOffice and his Postgres
+    # tests until 2026-11-15; he now gets rootless Docker instead (Viktor).
+    with pytest.raises(eng.RosterError, match="extra_groups"):
+        _roster(
+            "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user, "
+            "extra_groups: [docker]}}"
+        )
+
+
+def test_revoked_groups_are_the_privileged_groups_outside_the_tier():
     r = _roster(
-        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user, "
-        "extra_groups: [docker]}, "
-        "wizard: {authentik_user: v, k8s_user: wizard, tier: admin, extra_groups: [docker]}}"
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}, "
+        "ns: {authentik_user: n, k8s_user: ns, tier: namespace-owner, namespaces: [ns]}, "
+        "wizard: {authentik_user: v, k8s_user: wizard, tier: admin}}"
     )
     ds = eng.derive_desired_state(r, {})
-    assert ds.accounts["emo"].groups == ("codex-shared", "docker")
-    assert ds.accounts["wizard"].groups == ("code-shared", "codex-shared", "docker", "sudo")
+    assert ds.accounts["emo"].revoked_groups == ("code-shared", "docker", "sudo")
+    assert ds.accounts["ns"].revoked_groups == ("code-shared", "codex-shared", "docker", "sudo")
+    assert ds.accounts["wizard"].revoked_groups == ()
     d = eng._desired_state_to_dict(ds)
-    assert d["accounts"]["emo"]["groups"] == ["codex-shared", "docker"]
+    assert d["accounts"]["emo"]["revoked_groups"] == ["code-shared", "docker", "sudo"]
 
 
-@pytest.mark.parametrize("bad", [["sudo"], ["code-shared"], ["root"], "docker", [7], ["docker", "wheel"]])
+def test_rootless_docker_goes_to_every_account_without_the_docker_group():
+    r = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}, "
+        "wizard: {authentik_user: v, k8s_user: wizard, tier: admin}}"
+    )
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["emo"]["rootless_docker"] is True
+    assert d["accounts"]["wizard"]["rootless_docker"] is False
+
+
+@pytest.mark.parametrize("bad", [["sudo"], ["code-shared"], ["root"], ["docker"], "docker", [7], ["docker", "wheel"]])
 def test_rejects_extra_groups_outside_the_allowlist(bad):
     # sudo and the admin tree come only with tier: admin, which validate
     # checks against the cluster; a roster row cannot hand them out alone.

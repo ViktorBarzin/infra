@@ -233,8 +233,8 @@
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
     # Users whose mattpocock skill set the nightly timer keeps current. A user
-    # whose ~/.claude/skills is a symlink into someone else's home (breakglass
-    # points at wizard's) is updated with that user and must not be listed here.
+    # whose ~/.claude/skills is a symlink into someone else's home is updated
+    # with that user and must not be listed here.
     devvm_skills_users:
       - wizard
       - emo
@@ -3875,6 +3875,26 @@
               meta nfproto ipv6 tcp dport { 3773-3780, 7681, 7683-7688, 7690, 8710 } drop
             }
 
+            # Callers on this box. The input chain above admits loopback and
+            # this box's own address, so every OS user could reach these
+            # ports, and the source address says nothing about who is calling.
+            # ttyd hands a shell to whoever sends X-Authentik-Username, and
+            # the iOS rig on 127.0.0.1:8102 checks nothing. On 2026-11-15
+            # another account got a 200 from ttyd with a forged header. The
+            # kernel knows the calling socket's owner, so check that instead:
+            # only the admins reach ttyd and the rig, and a user's T3 server
+            # takes only its owner, the admins and t3-dispatch, which fronts
+            # them all. Root is left out on purpose: a docker group member is
+            # root on this box.
+            chain output {
+              type filter hook output priority -10; policy accept;
+
+              tcp dport { 7681, 8102 } meta skuid != { "wizard", "breakglass" } reject with tcp reset
+          {% for name, u in (lookup('file', workstation_dir ~ '/roster.yaml') | from_yaml).users.items() if u.t3_port is defined %}
+              tcp dport {{ u.t3_port }} meta skuid != { {{ ([name, 'wizard', 'breakglass', 't3-dispatch'] | unique | map('to_json') | join(', ')) }} } reject with tcp reset
+          {% endfor %}
+            }
+
             # Ports published with `docker run -p` stay on this box. dockerd
             # binds a bare `-p 18099:7681` to 0.0.0.0 and DNATs it in
             # prerouting, so that traffic is forwarded to the bridge and never
@@ -3912,6 +3932,18 @@
         name: nftables
         enabled: true
         state: started
+
+    # The admin home is 0751 so services can reach named paths under it, which
+    # let every account list ~/.claude (0775 on 2026-11-15) and read session
+    # transcripts, which hold tokens and cookies. Nothing outside the admin
+    # account reads it: breakglass's skills link into it is gone.
+    - name: Keep the admin's Claude state to the admin
+      ansible.builtin.file:
+        path: "/home/{{ devvm_admin_user }}/.claude"
+        state: directory
+        owner: "{{ devvm_admin_user }}"
+        group: "{{ devvm_admin_user }}"
+        mode: "0700"
 
     # SSH reaches the same account the lobby does, so leaving it on passwords
     # would just move the door. sshd takes the FIRST value it reads for a

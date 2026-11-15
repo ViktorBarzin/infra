@@ -126,6 +126,14 @@ terraform {
       # renovate: datasource=terraform-provider depName=telmate/proxmox
       version = "3.0.2-rc10"
     }
+    # Forgejo's own objects: push lists, collaborators and teams
+    # (stacks/forgejo-acl). Declared for all stacks like proxmox; only
+    # forgejo-acl configures it.
+    forgejo = {
+      source = "svalabs/forgejo"
+      # renovate: datasource=terraform-provider depName=svalabs/forgejo
+      version = "1.7.0"
+    }
   }
 }
 

@@ -567,7 +567,8 @@ Gaps it found, none fixed in the drill itself:
 - MINOR: emo is in `docker` on the live box by hand; the roster gives
   `docker` to admins only, so a rebuild drops it. A decision, since that
   group is root-equivalent. Viktor decided he keeps it: his row has
-  `extra_groups: [docker]`.
+  `extra_groups: [docker]`. Replaced on 2026-11-15 by rootless Docker; the
+  reconcile now removes the group.
 - MINOR: skills come back only when `claude-skills-update.timer` fires
   (05:45 daily); provisioning does not start it. After a manual run wizard
   still lacks `unslop` and emo `cluster-health` and his 20
