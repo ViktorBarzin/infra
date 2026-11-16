@@ -11,7 +11,8 @@
 set -uo pipefail
 k() { kubectl --kubeconfig "$ADMIN_KUBECONFIG" "$@"; }
 ns="$CLOUD_NAMESPACE"
-want="$(k get deployments -n "$ns" -o name | wc -l)"
+# One pod per replica: a suspended App's Deployment runs 0.
+want="$(k get deployments -n "$ns" -o jsonpath='{range .items[*]}{.spec.replicas}{"\n"}{end}' | awk '{s += $1} END {print s + 0}')"
 for _ in $(seq 1 60); do
   have="$(k get pods -n "$ns" -o name | wc -l)"
   failed="$(k get events -n "$ns" --field-selector reason=FailedCreate -o name | wc -l)"

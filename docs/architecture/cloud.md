@@ -313,7 +313,15 @@ flowchart LR
 ```
 
 `stacks/cloud/access_rules.tf` pins this. `cloud-managed-edge-config`
-accepts the public and the private Caddyfile, `cloud-managed-pod` and
+accepts the public and the private Caddyfile, and the fixed page of a
+suspended App or an App in maintenance (`cloud_edge_pages`: every request
+answers 503 with that page and nothing is proxied). A suspended App's
+Deployment `app-<app>` runs 0 replicas; `cloud-managed-deployment` admits
+0 on App Deployments only, so the edge and the oauth2-proxy always run and
+the App's address always answers. The rule reads Deployment writes, not
+the `deployments/scale` subresource (a Scale object has no pod template to
+tell an App from an edge). The reconciler's project role has no
+`deployments/scale`, so only an admin can scale that way. `cloud-managed-pod` and
 `cloud-managed-deployment` accept the edge with its one `secretKeyRef`
 env value (Secret `edge-<app>`, key `secret`) and the oauth2-proxy with
 exactly one of the emails file and `--email-domain=*`, and the ingress

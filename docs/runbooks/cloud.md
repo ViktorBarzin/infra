@@ -441,6 +441,24 @@ and the same without `--check`. Users then run `cloud new <app>` with the
 Forgejo token git already holds for them; it needs `write:repository` and
 `write:user` (Forgejo checks `write:user` before it creates a repo a user owns).
 
+## Suspended Apps and maintenance pages
+
+A User suspends an App (`cloud suspend`) or turns maintenance on
+(`cloud maintenance <p> <app> on`); the cloud repo's B06 renders it. A
+suspended App's `app-<app>` runs 0 replicas, and its edge answers every
+request 503 with the suspended page; in maintenance the App runs and the
+edge answers with the maintenance page. The pages are pinned in
+`stacks/cloud/access_rules.tf` (`cloud_edge_pages`) and in the cloud
+repo's `modules/app/edge.tf` (`edge_pages`); a change to either text needs
+both, applied infra first. An edge ConfigMap refused with "is one Cloud
+renders" after a Cloud release means the two differ. To see an App's state
+read-only:
+`kubectl -n p-<project> get deploy app-<app> -o jsonpath='{.spec.replicas}'`
+(0 while suspended) and
+`kubectl -n p-<project> get cm edge-<app> -o jsonpath='{.data.Caddyfile}' | grep respond`.
+The User resumes it; an Operator does not scale it by hand, since the next
+apply would put Cloud's replicas back.
+
 ## Restart
 
 The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:

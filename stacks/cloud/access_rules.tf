@@ -78,12 +78,15 @@
 #     oauth2-proxy Cloud renders (local.cloud_edge, local.cloud_oauth2_proxy):
 #     one container, the pinned image, fixed args and env, no command, hook or
 #     exec probe, fixed ports and mounts, and for the edge its readiness
-#     probe. App pods are free, within the rules above.
+#     probe. App pods are free, within the rules above. Only an App
+#     Deployment may run 0 replicas (a suspended App).
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is one Cloud renders (local
 #     cloud_caddyfile_variants: public and private): only the cookie list
 #     is free, the upstreams are the App's own Services, and the list strips
-#     at least the homelab's cookies.
+#     at least the homelab's cookies. Or it is the fixed page of a suspended
+#     App or an App in maintenance (cloud_caddyfile_page): every request
+#     answers 503 with that page, and nothing is proxied.
 #   cloud-managed-secretstore  a SecretStore is the in-cluster Vault, KV v2 at
 #     secret/, Kubernetes auth role cloud-project as service account
 #     cloud-secrets, and nothing else. Any other provider would let the ESO
@@ -431,10 +434,30 @@ locals {
       ["}", "}", "}"],
     )
   }
-  cloud_caddyfile_variants = {
+  # A suspended App, or one in maintenance (the cloud repo's B06, `state`
+  # in the Project File): the edge answers every request 503 with a fixed
+  # page and proxies nothing, so it has no upstream, reads no identity and
+  # strips no cookie (no request reaches App code). The pages are the cloud
+  # repo's modules/app/edge.tf edge_pages, byte for byte: plain HTML with no
+  # quote, brace or backslash, so each fits a CEL raw string and a Caddy
+  # backtick token as it is.
+  cloud_edge_pages = {
+    suspended   = "<!doctype html><html lang=en><meta charset=utf-8><title>Suspended</title><h1>This App is suspended</h1><p>Its owner has stopped it for now. Try again later.</p></html>"
+    maintenance = "<!doctype html><html lang=en><meta charset=utf-8><title>Maintenance</title><h1>This App is down for maintenance</h1><p>Try again in a few minutes.</p></html>"
+  }
+  cloud_caddyfile_page = {
+    for k, page in local.cloud_edge_pages : k => concat(local.cloud_caddyfile_head, [
+      "route {",
+      "header Content-Type text/html;charset=utf-8",
+      "header Cache-Control no-store",
+      "respond `${page}` 503",
+      "}", "}",
+    ])
+  }
+  cloud_caddyfile_variants = merge({
     public  = concat(local.cloud_caddyfile_head, local.cloud_caddyfile_k1.start, local.cloud_caddyfile_k1.public, local.cloud_caddyfile_k1.end)
     private = concat(local.cloud_caddyfile_head, local.cloud_caddyfile_k1.start, local.cloud_caddyfile_k1.private, local.cloud_caddyfile_k1.end)
-  }
+  }, { for k, lines in local.cloud_caddyfile_page : "page_${k}" => lines })
   # One cookie in the alternation: a name (a dot only escaped), optionally
   # followed by [^=;]* for a prefix.
   cloud_strip_cookie_re = "(?:[A-Za-z0-9_-]|\\\\[.])+(?:\\[\\^=;\\]\\*)?"
@@ -1158,6 +1181,9 @@ locals {
           # The one header_up Cookie line that strips cookies (a comment line
           # starts with #, so it cannot match).
           { name = "cookieLine", expression = "size(variables.caddyfile) <= 8192 ? variables.caddyfile.find(r'\\n[\\t ]*header_up Cookie `[^`\\n]*`') : ''" },
+          # A suspended App's or a maintenance page: it reaches no App, so
+          # it has no cookie line to check.
+          { name = "isPage", expression = "size(variables.caddyfile) <= 8192 && (${join(" || ", [for k in sort(keys(local.cloud_caddyfile_page)) : "variables.caddyfile.matches(r'${local.cloud_caddyfile_res["page_${k}"]}')"])})" },
         ]
         validations = [
           {
@@ -1167,11 +1193,11 @@ locals {
           },
           {
             expression = "size(variables.caddyfile) <= 8192 && (${join(" || ", [for k in sort(keys(local.cloud_caddyfile_res)) : "variables.caddyfile.matches(r'${local.cloud_caddyfile_res[k]}'.replace('@APP@', variables.app).replace('@NS@', request.namespace))"])})"
-            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile is one Cloud renders (modules/app/Caddyfile.tftpl), with only the strip list filled in and app-<app> and auth-<app> in this namespace as its upstreams"
+            message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile is one Cloud renders (modules/app/Caddyfile.tftpl): with only the strip list filled in and app-<app> and auth-<app> in this namespace as its upstreams, or the fixed suspended or maintenance page"
             reason     = "Forbidden"
           },
           {
-            expression = "${join(" && ", [for c in local.cloud_strip_cookies_required_re : "variables.cookieLine.matches(r'[:|]${c}[|)]')"])}"
+            expression = "variables.isPage || (${join(" && ", [for c in local.cloud_strip_cookies_required_re : "variables.cookieLine.matches(r'[:|]${c}[|)]')"])})"
             message    = "in a Cloud namespace, an ${local.cloud_edge.prefix}<app> Caddyfile strips at least ${join(", ", local.cloud_strip_cookies_required)}"
             reason     = "Forbidden"
           },
@@ -1256,11 +1282,22 @@ locals {
           }]
         }
         variables = [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }]
-        validations = [for r in local.cloud_pod_rules : {
+        validations = concat([for r in local.cloud_pod_rules : {
           expression = replace(r.expression, "@S", "object.spec.template.spec")
           message    = r.message
           reason     = "Forbidden"
-        }]
+          }], [{
+          # A suspended App runs 0 replicas, and its edge serves the
+          # suspended page; the edge and the oauth2-proxy always run, so the
+          # App's address always answers. The deployments/scale subresource
+          # is not matched: its Scale object has no pod template, so the
+          # component rules cannot read it here. The reconciler's project
+          # role grants no deployments/scale, so it cannot scale that way;
+          # only an admin can.
+          expression = "variables.component == 'app' || !has(object.spec.replicas) || object.spec.replicas >= 1"
+          message    = "in a Cloud namespace, only an App Deployment may run 0 replicas (a suspended App); the edge and the oauth2-proxy run at least one"
+          reason     = "Forbidden"
+        }])
       }
     }
     managed_deployment_binding = {

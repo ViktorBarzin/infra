@@ -52,7 +52,12 @@
 #     (image, args, env and its edge secret, port number, readiness probe,
 #     mounts, a second container) and its Caddyfile (structure, upstreams,
 #     the forged identity headers it deletes, the edge secret it adds and
-#     the homelab cookies it must strip), the oauth2-proxy pod (image, args,
+#     the homelab cookies it must strip; a suspended App's and a maintenance
+#     page admitted, and each with an upstream, other text, another status or
+#     a second site refused), 0 replicas admitted on an App Deployment and
+#     refused on an edge or oauth2-proxy Deployment, the App's preStop sleep
+#     (exec and the sleep action) admitted and refused on the edge, the
+#     oauth2-proxy pod (image, args,
 #     upstream, client id, the emails file or --email-domain=* but never
 #     both, env, port, mounts), each shape from before app-kit K1 (the
 #     Caddyfile with no sign-in check, the edge without its edge secret, the
@@ -750,7 +755,8 @@ failed = [e["message"] for e in events if e.get("reason") == "FailedCreate"]
 want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
 problems = []
 if failed: problems.append("pods refused: " + " | ".join(failed))
-if len(s["pods"]) < len(s["deployments"]): problems.append(f"{len(s['pods'])} pods for {len(s['deployments'])} Deployments {s['deployments']}")
+# One pod per replica: a suspended App's Deployment runs 0.
+if len(s["pods"]) < s.get("replicas", len(s["deployments"])): problems.append(f"{len(s['pods'])} pods for {s.get('replicas')} replicas of Deployments {s['deployments']}")
 if all_kinds and want - set(s["kinds"]): problems.append(f"kinds missing from the render: {sorted(want - set(s['kinds']))}")
 print("; ".join(problems) if problems else f"{len(s['pods'])} pods for Deployments {', '.join(s['deployments']) or '(none)'}")
 sys.exit(1 if problems else 0)
