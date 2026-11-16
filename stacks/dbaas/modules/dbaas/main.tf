@@ -1865,7 +1865,7 @@ resource "kubernetes_config_map" "pg_custom_queries" {
         metrics:
           - unlimited:
               usage: "GAUGE"
-              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 16. Should be 0."
+              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 20. Should be 0."
           - connlimit_sum:
               usage: "GAUGE"
               description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 80."

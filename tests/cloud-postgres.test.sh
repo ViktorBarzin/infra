@@ -28,7 +28,7 @@
 #     CREATEROLE;
 #   the audit behind alerts CloudProjectRoleUnlimited and
 #     CloudProjectConnectionsOverCeiling counts LOGIN roles cloud_provisioner
-#     administers with CONNECTION LIMIT -1 or above 16, and sums their limits.
+#     administers with CONNECTION LIMIT -1 or above 20, and sums their limits.
 # Needs docker and the postgres:18 image.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -259,19 +259,19 @@ n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a role made by a role the 
 # --- the audit behind CloudProjectRoleUnlimited and CloudProjectConnectionsOverCeiling
 # What the CNPG exporter runs (local.cloud_role_limits_audit_sql): over the
 # LOGIN roles cloud_provisioner administers, how many have CONNECTION LIMIT -1
-# or above 16, and the sum of their limits. Printed as "<unlimited> <sum>".
+# or above 20, and the sum of their limits. Printed as "<unlimited> <sum>".
 limits() { docker exec -i "$NAME" psql -U postgres -X -q -tA -F ' ' -f - <"$TMP/limits.sql"; }
 sup -c "DROP ROLE sneaky2" -c "ALTER ROLE p_dawarich_queue CONNECTION LIMIT 2" >/dev/null
 l="$(limits 2>&1)"; [ "$l" = "0 5" ] && ok "limits audit: no unlimited role, sum 5 (p_demo 3, p_dawarich_queue 2; NOLOGIN p_maker not counted)" || bad "limits audit baseline: $l"
 expect_ok "provisioner creates p_wide with no CONNECTION LIMIT" \
   as cloud_provisioner postgres -c "CREATE ROLE p_wide LOGIN CONNECTION LIMIT -1 IN ROLE cloud_projects"
 l="$(limits 2>&1)"; [ "$l" = "1 5" ] && ok "limits audit counts a role with CONNECTION LIMIT -1" || bad "limits audit after p_wide -1: $l"
-as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 17" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "1 22" ] && ok "limits audit counts a role above 16 and adds it to the sum" || bad "limits audit after p_wide 17: $l"
-as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 16" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit accepts 16, the largest Size" || bad "limits audit after p_wide 16: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 21" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "1 26" ] && ok "limits audit counts a role above 20 and adds it to the sum" || bad "limits audit after p_wide 21: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 20" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 25" ] && ok "limits audit accepts 20, the largest Size" || bad "limits audit after p_wide 20: $l"
 for r in p_more1 p_more2 p_more3 p_more4; do
-  as cloud_provisioner postgres -c "CREATE ROLE $r LOGIN CONNECTION LIMIT 15 IN ROLE cloud_projects" >/dev/null
+  as cloud_provisioner postgres -c "CREATE ROLE $r LOGIN CONNECTION LIMIT 14 IN ROLE cloud_projects" >/dev/null
 done
 l="$(limits 2>&1)"; [ "$l" = "0 81" ] && ok "limits audit sum passes the ceiling of 80 (81)" || bad "limits audit sum: $l"
 sup -c "CREATE ROLE outsider LOGIN CONNECTION LIMIT -1" >/dev/null

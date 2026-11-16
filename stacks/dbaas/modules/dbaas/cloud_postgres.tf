@@ -22,7 +22,7 @@
 # Cloud's console database (`cloud`) is the standard app_databases entry.
 #
 # Connection ceiling: the reconciler keeps the sum of the CONNECTION LIMITs of
-# all Project roles at or under 80, each 4, 8 or 16 by Size;
+# all Project roles at or under 80, each 4, 10 or 20 by Size;
 # docs/agents/databases.md ("Cloud on the shared CNPG cluster") shows the
 # arithmetic. Postgres cannot enforce a sum, so an audit pages when it does not
 # hold (local.cloud_role_limits_audit_sql in cloud_postgres_rules.tf).

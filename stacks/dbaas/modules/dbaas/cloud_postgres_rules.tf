@@ -111,7 +111,7 @@ locals {
   # Cloud-wide ceiling of 80 lives in the reconciler; this detects when it
   # does not hold. Over the LOGIN roles cloud_provisioner administers
   # (directly or through a role it administers, cloud_projects excluded):
-  #   unlimited       how many have CONNECTION LIMIT -1 (none) or above 16, the
+  #   unlimited       how many have CONNECTION LIMIT -1 (none) or above 20, the
   #                   largest Size's limit (medium); a stolen provisioner
   #                   credential could otherwise open connections until the
   #                   cluster's non-superuser slots run out
@@ -130,7 +130,7 @@ locals {
         JOIN administered a ON a.roleid = m.member
        WHERE m.admin_option
     )
-    SELECT count(*) FILTER (WHERE r.rolconnlimit < 0 OR r.rolconnlimit > 16) AS unlimited,
+    SELECT count(*) FILTER (WHERE r.rolconnlimit < 0 OR r.rolconnlimit > 20) AS unlimited,
            coalesce(sum(greatest(r.rolconnlimit, 0)), 0) AS connlimit_sum
       FROM administered a JOIN pg_catalog.pg_roles r ON r.oid = a.roleid
      WHERE r.rolname != 'cloud_projects' AND r.rolcanlogin

@@ -520,7 +520,7 @@ and apply `stacks/cloud` too, so the console shows the new address.
 
 B15 raises `pg-cluster-v18` to `max_connections` 300, memory 3328Mi
 request and 5Gi limit, `cloud_provisioner` to CONNECTION LIMIT 10, and the
-alerts to 16 and 80 ([docs/agents/databases.md](../agents/databases.md),
+alerts to 20 and 80 ([docs/agents/databases.md](../agents/databases.md),
 "Connection ceiling"). `max_connections` is a postmaster setting: CNPG
 restarts the replica, then the primary, and every homelab app reconnects
 within a few seconds.
@@ -546,7 +546,7 @@ apply:
    reads `Cluster in healthy state`. Record the after values of step 2
    (300 and 10).
 6. Deploy the Cloud release. Its new render applies every Project again,
-   which sets each Project role to 4, 8 or 16.
+   which sets each Project role to 4, 10 or 20.
 7. `presence release db:pg-cluster-v18`.
 
 Rollback: migration 0025 has no down path, and the old Cloud code
@@ -651,9 +651,9 @@ Every Project Postgres is a database on `pg-cluster-v18` named
 3. Restore as in `restore-postgresql.md`:
    `pg_restore -d <db> --clean --if-exists <dump>`. The role exists, so
    ownership comes back as it was.
-4. Set the limit back to the Size's (nano 4, small 8, medium 16):
+4. Set the limit back to the Size's (nano 4, small 10, medium 20):
    `ALTER ROLE <db> CONNECTION LIMIT <n>;`. The next apply of the Project sets
-   it again anyway. A limit above 16 or none pages `CloudProjectRoleUnlimited`.
+   it again anyway. A limit above 20 or none pages `CloudProjectRoleUnlimited`.
 
 The size loop measures the database again within 5 minutes.
 
