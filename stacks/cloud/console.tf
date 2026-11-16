@@ -61,6 +61,11 @@ module "console" {
   # secret: agents sign in on cloud-cli (cli_sign_in.tf).
   grant_types = ["authorization_code", "urn:ietf:params:oauth:grant-type:device_code"]
 
+  # Cloud B07: the key the Forgejo push webhook secrets derive from, its own
+  # property of secret/cloud-console (runbook, "Seed the console's secrets").
+  # Seed it before this apply: ESO fails the sync on a missing property.
+  app_secret_env = { WEBHOOK_KEY = "webhook_key" }
+
   extra_env = local.cloud_console_env
   # M5: SECRETS_PUBLIC_KEY and GITHUB_API_TOKEN from Secret
   # cloud-console-system (below), optional. TELEMETRY_WRITE_KEY, SENTRY_DSN

@@ -280,6 +280,22 @@ on. The console gets `PROMETHEUS_URL=http://prometheus-server.monitoring.svc.clu
 leave out the "Not deployed yet" placeholder and to tag each line with its
 Deploy. It adds no streams, because each container is one stream already.
 
+Push webhooks and Deploy Hooks (cloud B07): Forgejo posts push events to
+`https://cloud.viktorbarzin.me/hooks/forgejo`, and a User's Deploy Hook is a
+POST to `https://cloud.viktorbarzin.me/hooks/deploy/<token>`. Both enter
+through Traefik like any browser request, so the console's ingress policy
+(Traefik only) needs no change. Forgejo's `ALLOWED_HOST_LIST`
+(`stacks/forgejo/main.tf`) already admits `*.viktorbarzin.me`, and inside
+the cluster that name resolves to the internal Traefik. The routes take no
+session: an HMAC signature or the token is the credential, and every
+refusal is 404. The console derives each App's webhook secret from
+`WEBHOOK_KEY`, Vault `secret/cloud-console` `webhook_key` through the
+`cloud-secrets` ExternalSecret (`app_secret_env` in `stacks/cloud/console.tf`),
+and a per-App nonce; without the key it falls back to `BETTER_AUTH_SECRET`. The reconciler's branch poll stays the fallback. Traefik's access
+log records request paths, and a Deploy Hook's path holds its token: anyone
+who reads those logs can start that App's Deploy until the User regenerates
+the hook.
+
 Network: neither Deployment has an egress NetworkPolicy, and namespace
 `cloud` carries `tier=4-aux`, so Calico's `wave1-egress-observe-tier34`
 (order 2000, Allow) passes all its egress. Namespaces `forgejo` and

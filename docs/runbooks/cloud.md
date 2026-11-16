@@ -54,6 +54,22 @@ vault kv get secret/cloud-console >/dev/null 2>&1 && echo "already seeded" || \
   | vault kv put secret/cloud-console -
 ```
 
+Cloud B07 adds `webhook_key`, the key each App's Forgejo push webhook
+secret derives from (`WEBHOOK_KEY` on the console, through the
+`cloud-secrets` ExternalSecret). Seed it before the `cloud` apply that adds
+it, since External Secrets fails the sync on a missing property:
+
+```sh
+vault kv get -field=webhook_key secret/cloud-console >/dev/null 2>&1 && echo "already seeded" || \
+  printf '{"webhook_key":"%s"}' "$(openssl rand -base64 48)" \
+  | vault kv patch secret/cloud-console -
+```
+
+Rotating `webhook_key` changes every App's webhook secret: deliveries
+answer 404 until each owner runs `cloud webhook <project> <app>` again, and
+polling deploys meanwhile. One App's secret is rotated with `cloud webhook
+<project> <app> --rotate`.
+
 To rotate the client secret,
 `printf '{"oidc_client_secret":"%s"}' "$(openssl rand -hex 32)" | vault kv patch secret/cloud-console -`,
 then apply `cloud` (the Authentik provider takes the new secret) and wait for
@@ -220,6 +236,31 @@ matches only by a verified email on both sides. If Authentik has no social
 source or verified path for that person, an admin sets
 `cloud_apps_email_vouched: true` in the user's attributes in Authentik, only
 for an email they know is that person's.
+
+## Push webhooks and Deploy Hooks
+
+`cloud new` registers a Forgejo push webhook on each new App's repo with
+the User's own Forgejo token; `cloud webhook <project> <app>` adds it to an
+App made before (cloud B07). A delivery makes Cloud check that App's branch
+within one build tick (`BUILD_TICK_SECONDS`, 5 s); without it the poller
+still finds the push within 30 s to 5 min.
+
+- A push did not deploy at once: in Forgejo, the repo's Settings, Webhooks,
+  the hook to `cloud.viktorbarzin.me/hooks/forgejo` lists its recent
+  deliveries. 204 is a delivery Cloud verified; 404 means the signature
+  did not match (run `cloud webhook <project> <app>` again, which resets
+  the secret on the hook) or the App is gone.
+- The secrets derive from `webhook_key` in `secret/cloud-console` (above,
+  "Seed the console's secrets"); without it the console falls back to
+  `better_auth_secret`. Changing either key in use changes every App's
+  webhook secret. Deliveries then answer 404 until each owner runs `cloud
+  webhook` again; polling deploys meanwhile. One App whose secret may have
+  leaked: `cloud webhook <project> <app> --rotate`.
+- Rollback of the feature: delete the webhook on the repo. Polling still
+  deploys.
+- A Deploy Hook URL holds its token, and Traefik's access log keeps request
+  paths. If a hook URL leaks, the owner runs `cloud deploy-hook <project>
+  <app> --regenerate`; the old URL answers 404 at once.
 
 ## Add a Cloud User
 
