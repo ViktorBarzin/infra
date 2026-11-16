@@ -13,6 +13,8 @@
 # `guest`, not a service account, not a proxy-only invitee, and one of
 #   - a social source enrolled the account (goauthentik.io/user/sources),
 #   - the passkey signup verified the email (path users/email-verified),
+#   - an Operator vouched for it: direct membership of Cloud Email Vouched
+#     (Cloud's onboarding, stacks/authentik cloud-apps.tf),
 #   - an admin set attributes.cloud_apps_email_vouched to true.
 # Users cannot change their email or write those attributes (system-
 # settings.tf and the user settings flow in stacks/authentik). The two copies
@@ -22,6 +24,8 @@
 
 locals {
   cloud_email_verified_path = "users/email-verified"
+  # stacks/authentik creates the group (cloud-apps.tf); apply it first.
+  cloud_email_vouched_group = "Cloud Email Vouched"
 
   cloud_email_claim_expression = <<-EOT
     user = request.user
@@ -34,6 +38,7 @@ locals {
         and (
             bool(attrs.get("goauthentik.io/user/sources"))
             or user.path == "${local.cloud_email_verified_path}"
+            or user.groups.filter(name="${local.cloud_email_vouched_group}").exists()
             or attrs.get("cloud_apps_email_vouched") is True
         )
     )

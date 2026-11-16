@@ -57,6 +57,27 @@ locals {
   # The Authentik user path of accounts whose email a verification link
   # proved (signup-passkey.tf); cloud-apps-active-users admits them.
   cloud_apps_verified_path = "users/email-verified"
+  # Direct members are accounts an Operator vouched for (below).
+  cloud_apps_vouched_group = "Cloud Email Vouched"
+}
+
+# An Operator's email vouch, as group membership instead of a user
+# attribute: Cloud's onboarding (cloud-inviter.tf) adds an account here when
+# the Operator says its email belongs to that person, which needs only an
+# object permission on this group, never change_user. Only direct membership
+# counts (user.groups, not all_groups()), so a child group vouches for
+# nobody. No application binds it and it grants nothing else. Members are
+# added at run time; Terraform does not own them.
+resource "authentik_group" "cloud_email_vouched" {
+  name         = local.cloud_apps_vouched_group
+  is_superuser = false
+  attributes = jsonencode({
+    managed_by = "infra/stacks/authentik/cloud-apps.tf"
+    purpose    = "Accounts whose email an Operator vouched for (cloud users add). cloud-apps-active-users and Cloud's email claim trust their email. Grants nothing else."
+  })
+  lifecycle {
+    ignore_changes = [users]
+  }
 }
 
 # Without a signing key Authentik signs HS256 and publishes an empty JWKS;
@@ -145,10 +166,13 @@ resource "authentik_application" "cloud_apps" {
 #   - path users/email-verified: the passkey signup's write stage
 #     (signup-passkey.tf) puts its accounts there; they stay inactive until the
 #     emailed link is followed.
+#   - direct membership of Cloud Email Vouched: an Operator vouched for the
+#     email through Cloud's onboarding (`cloud users add`).
 #   - attributes.cloud_apps_email_vouched is true: an admin sets it on an
 #     account whose email they know, for example one made before Authentik
 #     recorded sources. Users cannot write top-level attributes (the user
-#     settings flow writes only attributes.settings).
+#     settings flow writes only attributes.settings). Kept for accounts
+#     vouched before the group existed.
 # It refuses service accounts (API tokens, not people), `guest`, whom the
 # public tier signs in automatically (guest.tf), and accounts carrying
 # attributes.proxy_only: the proxy invitation on invitation-enrollment stamps
@@ -174,6 +198,8 @@ resource "authentik_policy_expression" "cloud_apps_active_users" {
     if attrs.get("goauthentik.io/user/sources"):
         return True
     if user.path == "${local.cloud_apps_verified_path}":
+        return True
+    if user.groups.filter(name="${local.cloud_apps_vouched_group}").exists():
         return True
     return attrs.get("cloud_apps_email_vouched") is True
   EOT

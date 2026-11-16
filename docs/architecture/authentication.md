@@ -168,7 +168,10 @@ Group membership is auto-assigned from the invitation's `fixed_data` field. This
 
 Cloud's console mints invite codes for guests of private Cloud Apps, as the
 service account `cloud-inviter` (`stacks/authentik/cloud-inviter.tf`), whose
-role holds only `add_invitation`. Authentik's API lets an Invitation carry
+role holds `add_invitation` for codes. For one-step onboarding (`cloud users
+add`) it also holds global `view_user` and, as object permissions,
+`add_user_to_group` and `view_group` on Cloud Users and Cloud Email Vouched;
+no `change_user` and nothing on any other group. Authentik's API lets an Invitation carry
 any `fixed_data`, group or flow, so two guards bound the token:
 
 - `validate-invite-code` (`stacks/authentik/invite-flow.tf`, the order-0

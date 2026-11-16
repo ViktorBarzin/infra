@@ -26,6 +26,14 @@ kubectl exec -it -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d cloud
    run step 3 right after step 2.
 4. Sign in at `https://cloud.viktorbarzin.me` as Viktor (Cloud Users and Cloud
    Operators).
+5. Apply `authentik` after `cloud`. `stacks/cloud` creates the group Cloud
+   Users (module.console); `stacks/authentik/cloud-inviter.tf` looks it up
+   (`data.authentik_group.cloud_users`) to give `cloud-inviter` its
+   onboarding grants, so on a fresh bootstrap its plan fails there until
+   `cloud` has run. `cloud` does not wait for `authentik`: the console
+   starts without `CLOUD_INVITER_TOKEN` (invites and onboarding answer 503
+   until the token exists), and its email claim names Cloud Email Vouched
+   by name only. On an existing install either order works.
 
 ## Seed the console's secrets
 
@@ -215,49 +223,86 @@ for an email they know is that person's.
 
 ## Add a Cloud User
 
-1. Put the person's Authentik account in the group **Cloud Users** (or
-   **Cloud Operators** for operator rights). That lets them sign in to the
-   console.
-2. Check that Authentik vouches for their email. Without it, the shared
-   private-App client `cloud-apps` (policy `cloud-apps-active-users`,
-   `stacks/authentik/cloud-apps.tf`) refuses them at every private App,
-   their own included, with Authentik's "Request has been denied" page.
-   Cloud's Plan warns when this is the case. The account is vouched for when
-   one of these holds:
-   - a social source enrolled it (Google, GitHub, Facebook);
-   - the passkey signup verified the email (path `users/email-verified`);
-   - an admin set `cloud_apps_email_vouched: true` in its attributes.
-3. For an account made by hand or by invitation, set
-   `cloud_apps_email_vouched: true` only for an email you know belongs to
-   that person. Users cannot set it themselves. The same rule decides
-   `email_verified` in Cloud's sign-in profile (`stacks/cloud/email_claim.tf`),
-   which the Forgejo owner check below also reads.
-4. Check that their Forgejo account links to their sign-in. Cloud builds a
-   private repo only for the Forgejo account linked to the owner, and
-   `cloud new` makes a private repo by default and stops when there is no
-   link. An account Forgejo made at an Authentik sign-in (login source 1)
-   is linked by its subject. A local Forgejo account (source 0) links only
-   by email: step 2's vouch, and the same address verified on the Forgejo
-   account (Site Administration, User Emails, activate it, only for an
-   address you know is theirs). After either change the person signs in to
-   Cloud again (`cloud login` or the console), because Cloud reads the
-   vouch from the newest sign-in. Check every Cloud User at once in Cloud's
-   database: `INSERT INTO forgejo_links (user_id) SELECT id FROM users
-   WHERE role <> 'operator' ON CONFLICT (user_id) DO UPDATE SET
-   requested_at = now();`, then 10 seconds later `SELECT u.email,
-   l.account, l.error FROM forgejo_links l JOIN users u ON u.id =
-   l.user_id;` (`homelab k8s db cloud`). `account` names the linked login.
-   The link lets Cloud check that the owner may read the repo; Cloud then
-   reads the branch and builds it as `cloud-bot` (below), which sees a
-   private repo only as a collaborator. `cloud new` (CLI 0.6.0 and later)
-   adds `cloud-bot` with Read before the first push. A private repo made by
-   hand, or by `cloud new` before 0.6.0, needs `cloud-bot` added as a Read
-   collaborator (the repo's Settings, Collaborators); until then
-   `cloud deploys` says "Cloud's reader account cloud-bot cannot read this
-   private repo".
+The person needs an Authentik account first: their own sign-up, a guest
+invite, or one an admin made by hand. Then one Operator action does the
+rest, in the console (Operate, Users and Budgets, "Add a User") or the CLI
+with an Operator's all-Projects write Access Token:
 
-Cloud's round-4 end-to-end test hit step 2: a test account made by hand had
-no vouch, so Authentik refused its own private App.
+```sh
+CLOUD_TOKEN=cloud_... cloud users add <authentik-username-or-email>
+```
+
+Run without `--vouch` first: it shows the account and its email and
+changes nothing. Then `--vouch <that email>`, or `--no-vouch`. The console
+looks the account up and shows the email before its Add button. It reports
+each step: the account joins **Cloud Users** (sign-in); it joins **Cloud
+Email Vouched** when you vouch for its email. Cloud refuses a vouch for an
+email the account does not have, or that another account also has, and
+then changes nothing; Cloud makes the User and its
+default Budget; and it asks for the Forgejo link check and prints the
+answer. Vouch only for an email you know belongs to that person: the
+shared private-App client `cloud-apps` (policy `cloud-apps-active-users`,
+`stacks/authentik/cloud-apps.tf`) and Cloud's sign-in claim
+(`stacks/cloud/email_claim.tf`) trust a vouched email, and the Forgejo
+owner check reads that claim. Without a vouch Authentik refuses the person
+at every private App, their own included, with "Request has been denied".
+An email that a social sign-in or the passkey sign-up verified is vouched
+for already, and the step says so. Running it again is safe: it finishes
+what a failed run left and changes nothing that is done. Every run records
+a `user.onboard` change (Activity).
+
+After a vouch the person signs in to Cloud again (`cloud login` or the
+console), because Cloud reads the vouch from the newest sign-in. Then run
+`cloud users add` again to see the Forgejo answer; `forgejo_link` reads
+`linked` with the account, `unlinked`, or `checking` (the reconciler has
+not answered in 15 seconds). A local Forgejo account (login source 0)
+links only by an email verified on both sides: the vouch, and the same
+address activated on the Forgejo account (Site Administration, User
+Emails, only for an address you know is theirs). An account Forgejo made
+at an Authentik sign-in (login source 1) links by its subject.
+
+Operators are not added this way. **Cloud Operators** members are declared
+in `stacks/cloud/console.tf` (`admin_user_pks`); add the person's pk there
+and apply.
+
+What the console may do in Authentik for this, as `cloud-inviter`
+(`stacks/authentik/cloud-inviter.tf`): read accounts (global `view_user`)
+and add an account to Cloud Users or Cloud Email Vouched (object
+permissions on those two groups). It cannot edit a user or touch another
+group. `tests/cloud-deploy.test.sh` fails when `cloud-inviter`'s role gains
+or loses a permission, when another file grants that role anything, when
+the account or its group `cloud inviters` gains another group or role, or
+when that group becomes a superuser group or gets a parent.
+
+### By hand, when Cloud cannot
+
+When `cloud users add` answers `onboarding_unavailable` or
+`onboarding_failed` and you cannot wait for the fix:
+
+1. Put the account in **Cloud Users** (Authentik admin, the group's
+   Users tab).
+2. For an email you know is theirs, put it in **Cloud Email Vouched** too.
+   An older vouch, `cloud_apps_email_vouched: true` in the account's
+   attributes, still counts; users cannot set either themselves.
+3. The person signs in to Cloud, which makes their User and Budget.
+4. Check every Cloud User's Forgejo link at once in Cloud's database:
+   `INSERT INTO forgejo_links (user_id) SELECT id FROM users WHERE role <>
+   'operator' ON CONFLICT (user_id) DO UPDATE SET requested_at = now();`,
+   then 10 seconds later `SELECT u.email, l.account, l.error FROM
+   forgejo_links l JOIN users u ON u.id = l.user_id;` (`homelab k8s db
+   cloud`). `account` names the linked login.
+
+The link lets Cloud check that the owner may read the repo; Cloud then
+reads the branch and builds it as `cloud-bot` (below), which sees a private
+repo only as a collaborator. `cloud new` (CLI 0.6.0 and later) adds
+`cloud-bot` with Read before the first push. A private repo made by hand,
+or by `cloud new` before 0.6.0, needs `cloud-bot` added as a Read
+collaborator (the repo's Settings, Collaborators); until then `cloud
+deploys` says "Cloud's reader account cloud-bot cannot read this private
+repo".
+
+Cloud's round-4 end-to-end test hit the vouch: a test account made by hand
+had no vouch, so Authentik refused its own private App.
 
 ## Guest invites
 
@@ -275,7 +320,9 @@ makes no code.
 
 What holds it:
 
-- `cloud-inviter`'s role has one permission, `add_invitation`. Its token is in
+- `cloud-inviter`'s role has `add_invitation` for codes, plus global
+  `view_user` and `add_user_to_group` and `view_group` on Cloud Users and
+  Cloud Email Vouched for onboarding ("Add a Cloud User"). Its token is in
   Vault `secret/cloud/inviter` (key `token`), written by the authentik stack.
   The console reads it through ExternalSecret `cloud-console-inviter`
   (`CLOUD_INVITER_TOKEN`); the reconciler's own Vault policy cannot read that

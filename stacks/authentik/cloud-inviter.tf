@@ -13,9 +13,27 @@
 # (AGENTS.md, "Cloud-owned objects"): Cloud creates Invitations, as
 # cloud-inviter, and nothing else.
 #
-# What keeps a stolen token from doing more than that:
-#   - The role holds one global permission, add_invitation. The token cannot
-#     read, change or delete anything, users and groups included.
+# The same account onboards a Cloud User in one Operator step (cloud repo
+# B14, POST /api/v1/users, `cloud users add`): it puts an existing account in
+# Cloud Users, and, when the Operator vouches for the email, in Cloud Email
+# Vouched (cloud-apps.tf). Its role holds, besides add_invitation:
+#   - view_user, global: add_user finds the account through the caller's
+#     view_user (core/api/groups.py), and any account may be onboarded. The
+#     console's membership reader holds the same global read already.
+#   - add_user_to_group and view_group on exactly two groups, Cloud Users and
+#     Cloud Email Vouched, as object permissions (the same shape as the
+#     sign-up approvers', modules/authentik/app_signup).
+# It holds no change_user, so it cannot edit a user, set an attribute or a
+# password, and no permission on any other group: not Cloud Operators, not
+# Home Server Admins. Cloud Operators' members are declared in stacks/cloud
+# (admin_user_pks), so Operators stay a Terraform change.
+#
+# What keeps a stolen token from doing more than intended:
+#   - It can read every account (as the reader token can), add any account
+#     to Cloud Users (as the sign-up approver can), and vouch for any
+#     account's email. A vouch admits an account whose email nothing
+#     verified: today only accounts an admin made by hand. proxy_only
+#     accounts stay refused whatever vouches for them.
 #   - Authentik's API lets an Invitation carry any fixed_data, group and flow.
 #     So validate-invite-code (invite-flow.tf), the gate of every code-based
 #     sign-up, accepts a cloud-inviter invitation only when its fixed_data
@@ -73,6 +91,44 @@ resource "authentik_rbac_permission_role" "cloud_inviter_add_invitation" {
   permission = "authentik_stages_invitation.add_invitation"
 }
 
+# Onboarding (above). Global: the account to onboard may be anyone's.
+resource "authentik_rbac_permission_role" "cloud_inviter_view_user" {
+  role       = authentik_rbac_role.cloud_inviter.id
+  permission = "authentik_core.view_user"
+}
+
+# Cloud Users belongs to stacks/cloud (module.console, modules/authentik/
+# app_signup); it exists before this stack's apply.
+data "authentik_group" "cloud_users" {
+  name          = "Cloud Users"
+  include_users = false
+}
+
+locals {
+  # The only groups cloud-inviter may add accounts to.
+  cloud_inviter_onboard_groups = {
+    cloud_users         = data.authentik_group.cloud_users.id
+    cloud_email_vouched = authentik_group.cloud_email_vouched.id
+  }
+}
+
+resource "authentik_rbac_permission_role" "cloud_inviter_add_to_group" {
+  for_each   = local.cloud_inviter_onboard_groups
+  role       = authentik_rbac_role.cloud_inviter.id
+  permission = "authentik_core.add_user_to_group"
+  model      = "authentik_core.group"
+  object_id  = each.value
+}
+
+# Cloud finds each group's pk by name (GET /core/groups/?name=).
+resource "authentik_rbac_permission_role" "cloud_inviter_view_group" {
+  for_each   = local.cloud_inviter_onboard_groups
+  role       = authentik_rbac_role.cloud_inviter.id
+  permission = "authentik_core.view_group"
+  model      = "authentik_core.group"
+  object_id  = each.value
+}
+
 resource "authentik_group" "cloud_inviters" {
   name  = "cloud inviters"
   roles = [authentik_rbac_role.cloud_inviter.id]
@@ -84,14 +140,14 @@ resource "authentik_group" "cloud_inviters" {
 
 resource "authentik_user" "cloud_inviter" {
   username = local.cloud_inviter_username
-  name     = "Cloud (guest invites)"
+  name     = "Cloud (guest invites, onboarding)"
   type     = "service_account"
   path     = "goauthentik.io/service-accounts"
   groups   = [authentik_group.cloud_inviters.id]
 
   attributes = jsonencode({
     managed_by = "infra/stacks/authentik/cloud-inviter.tf"
-    purpose    = "Cloud's console creates single-use guest invite codes for Cloud App Guests"
+    purpose    = "Cloud's console creates single-use guest invite codes for Cloud App Guests, and adds accounts to Cloud Users and Cloud Email Vouched"
   })
 }
 
@@ -104,7 +160,7 @@ resource "authentik_token" "cloud_inviter" {
   # app_signup): a token that lapses on a date nobody watches turns invites
   # into silent failures. Rotate by tainting this resource.
   expiring    = false
-  description = "Cloud's guest invite codes. Rotate by tainting this resource."
+  description = "Cloud's guest invite codes and onboarding. Rotate by tainting this resource."
 }
 
 resource "vault_kv_secret_v2" "cloud_inviter" {

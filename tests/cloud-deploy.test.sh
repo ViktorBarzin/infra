@@ -27,7 +27,14 @@
 #      email_verified true for exactly the accounts stacks/authentik's
 #      cloud-apps-active-users policy admits, both run as Python on the same
 #      accounts, and both of Cloud's providers send it in place of the
-#      managed scope-email.
+#      managed scope-email. A direct member of Cloud Email Vouched is
+#      vouched for in both.
+#   6. cloud-inviter's role (stacks/authentik/cloud-inviter.tf) holds
+#      exactly add_invitation, global view_user, and add_user_to_group and
+#      view_group on Cloud Users and Cloud Email Vouched; the account holds
+#      it only through `cloud inviters`, which has no other role, parent or
+#      superuser flag; and no other file grants the role, group or account
+#      anything.
 #
 # The cloud code is read from CLOUD_ENV_SERVER (a path to env.server.ts), or
 # else from origin/master of ~/code/cloud.
@@ -239,7 +246,12 @@ if policy is None or claim is None:
     print("FAIL: cannot find the cloud-apps-active-users expression or cloud_email_claim_expression")
     sys.exit(1)
 policy = policy.replace("${local.cloud_apps_verified_path}", local(apps, "cloud_apps_verified_path"))
+policy = policy.replace("${local.cloud_apps_vouched_group}", local(apps, "cloud_apps_vouched_group") or "")
 claim = claim.replace("${local.cloud_email_verified_path}", local(claim_tf, "cloud_email_verified_path"))
+claim = claim.replace("${local.cloud_email_vouched_group}", local(claim_tf, "cloud_email_vouched_group") or "")
+VOUCHED = "Cloud Email Vouched"
+if local(apps, "cloud_apps_vouched_group") != VOUCHED or local(claim_tf, "cloud_email_vouched_group") != VOUCHED:
+    bad.append(f"the vouch group's name differs between cloud-apps.tf and email_claim.tf, or is not {VOUCHED!r} (Cloud's VOUCHED_GROUP)")
 if "${" in policy or "${" in claim:
     print("FAIL: an expression has an interpolation this test does not fill in")
     sys.exit(1)
@@ -250,9 +262,17 @@ def run(body, user):
     exec(src, scope)
     return scope["f"](NS(user=user))
 
-def user(**kw):
+class Groups:
+    """The direct groups, as Django's user.groups answers filter(name=...).exists()."""
+    def __init__(self, names):
+        self.names = list(names)
+    def filter(self, **kw):
+        assert list(kw) == ["name"], f"the expressions may filter groups by name only, got {kw}"
+        return NS(exists=lambda: kw["name"] in self.names)
+
+def user(groups=(), **kw):
     base = dict(is_authenticated=True, is_active=True, username="someone", type="internal",
-                path="users", attributes={}, email="someone@example.com")
+                path="users", attributes={}, email="someone@example.com", groups=Groups(groups))
     base.update(kw)
     return NS(**base)
 
@@ -270,7 +290,17 @@ cases = {
     "internal service account": user(type="internal_service_account", path="users/email-verified"),
     "no attributes": user(attributes=None),
     "empty sources list": user(attributes={"goauthentik.io/user/sources": []}),
+    "operator vouched by group": user(groups=["Cloud Users", VOUCHED]),
+    "only in Cloud Users": user(groups=["Cloud Users"]),
+    "proxy-only in the vouch group": user(groups=[VOUCHED], attributes={"proxy_only": True}),
+    "inactive in the vouch group": user(groups=[VOUCHED], is_active=False),
+    "service account in the vouch group": user(groups=[VOUCHED], type="service_account"),
 }
+for name, want in [("operator vouched by group", True), ("only in Cloud Users", False),
+                   ("proxy-only in the vouch group", False), ("inactive in the vouch group", False),
+                   ("service account in the vouch group", False)]:
+    if bool(run(policy, cases[name])) is not want:
+        bad.append(f"{name}: the policy says {not want}, want {want}")
 answers = []
 for name, u in cases.items():
     want = bool(run(policy, u))
@@ -299,6 +329,72 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
+# 6. cloud-inviter's role holds exactly what invites and onboarding need.
+python3 - "$HERE" <<'PY' || FAILS=$((FAILS + 1))
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+bad = []
+inviter = (root / "stacks/authentik/cloud-inviter.tf").read_text()
+
+def blocks(text, kind):
+    return re.findall(r'resource "' + kind + r'" "([^"]+)" \{(.*?)\n\}', text, re.S)
+
+def attr(body, name):
+    m = re.search(r'^\s*' + name + r'\s*=\s*(.+?)\s*$', body, re.M)
+    return m.group(1) if m else None
+
+grants = set()
+for name, body in blocks(inviter, "authentik_rbac_permission_role"):
+    if attr(body, "role") != "authentik_rbac_role.cloud_inviter.id":
+        continue
+    grants.add((attr(body, "permission"), attr(body, "model"), attr(body, "object_id"), attr(body, "for_each")))
+want = {
+    ('"authentik_stages_invitation.add_invitation"', None, None, None),
+    ('"authentik_core.view_user"', None, None, None),
+    ('"authentik_core.add_user_to_group"', '"authentik_core.group"', "each.value", "local.cloud_inviter_onboard_groups"),
+    ('"authentik_core.view_group"', '"authentik_core.group"', "each.value", "local.cloud_inviter_onboard_groups"),
+}
+if grants != want:
+    bad.append(f"cloud-inviter's role grants {sorted(map(str, grants))}, want exactly {sorted(map(str, want))}")
+m = re.search(r'cloud_inviter_onboard_groups\s*=\s*\{(.*?)\n\s*\}', inviter, re.S)
+groups = dict(re.findall(r'^\s*(\w+)\s*=\s*(\S+)\s*$', m.group(1), re.M)) if m else {}
+if groups != {"cloud_users": "data.authentik_group.cloud_users.id",
+              "cloud_email_vouched": "authentik_group.cloud_email_vouched.id"}:
+    bad.append(f"cloud-inviter may add accounts to {groups}; only Cloud Users and Cloud Email Vouched are allowed")
+m = re.search(r'data "authentik_group" "cloud_users" \{(.*?)\n\}', inviter, re.S)
+if not m or attr(m.group(1), "name") != '"Cloud Users"':
+    bad.append('data.authentik_group.cloud_users must look up "Cloud Users"')
+# The account reaches the role only through `cloud inviters`, which holds
+# only that role, no superuser flag and no parent: a grant through another
+# group or role would not show in the permission rows above.
+def resource(kind, name):
+    m = re.search(r'resource "' + kind + r'" "' + name + r'" \{(.*?)\n\}', inviter, re.S)
+    return m.group(1) if m else ""
+
+user = resource("authentik_user", "cloud_inviter")
+if attr(user, "groups") != "[authentik_group.cloud_inviters.id]":
+    bad.append(f"cloud-inviter is in groups {attr(user, 'groups')}; want only [authentik_group.cloud_inviters.id]")
+if attr(user, "roles") is not None or attr(user, "is_superuser") is not None:
+    bad.append("cloud-inviter's user resource must set no roles and no superuser flag")
+group = resource("authentik_group", "cloud_inviters")
+if attr(group, "roles") != "[authentik_rbac_role.cloud_inviter.id]":
+    bad.append(f"cloud inviters holds roles {attr(group, 'roles')}; want only [authentik_rbac_role.cloud_inviter.id]")
+for field in ("parent", "parents", "is_superuser"):
+    if attr(group, field) not in (None, "false"):
+        bad.append(f"cloud inviters sets {field}; it must have no parent and no superuser flag")
+if len(re.findall(r'authentik_group\.cloud_inviters\.id', inviter)) != 1:
+    bad.append("authentik_group.cloud_inviters is used elsewhere in cloud-inviter.tf; it must hold only the inviter account")
+# No other file grants the role anything, or puts anyone in its group.
+for tf in (root / "stacks").rglob("*.tf"):
+    text = tf.read_text()
+    if tf.name != "cloud-inviter.tf" and ("authentik_rbac_role.cloud_inviter" in text or "authentik_group.cloud_inviters" in text or "authentik_user.cloud_inviter" in text and "invite-flow" not in tf.name):
+        bad.append(f"{tf.relative_to(root)} refers to cloud-inviter's role, group or account; keep them in cloud-inviter.tf")
+for b in bad:
+    print("FAIL:", b)
+sys.exit(1 if bad else 0)
+PY
+
 # 3. promtool.
 # The unit tests compare labels; `check rules` above already parsed every
 # annotation template, so the copy they run on drops the annotations.
@@ -321,4 +417,4 @@ if ! docker run --rm --entrypoint promtool -v "$TMP/t:/w:ro" -w /w "$PROM_IMAGE"
   echo "FAIL: promtool test rules"; cat "$TMP/test.log"; FAILS=$((FAILS + 1))
 fi
 
-if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud deploy (console RBAC, env contract, alerts, metric allowlist, email claim)"; else echo "FAIL: $FAILS check group(s)"; exit 1; fi
+if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud deploy (console RBAC, env contract, alerts, metric allowlist, email claim, cloud-inviter grants)"; else echo "FAIL: $FAILS check group(s)"; exit 1; fi

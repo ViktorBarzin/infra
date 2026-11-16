@@ -38,7 +38,7 @@ flowchart LR
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
 | Sign-in | Authentik application `cloud` (console, confidential, authorization code and device code), `cloud-cli` (public, device code and refresh token, flow `cloud-cli-authorization` with an always-asked consent stage), groups `Cloud Users` and `Cloud Operators`; both providers send scope mapping `cloud: email (verified when vouched for)` instead of the managed `scope-email` | the module's `authentik.tf`, `stacks/cloud/cli_sign_in.tf`, `stacks/cloud/email_claim.tf` |
 | Apps' sign-in | Authentik application `cloud-apps`, shared by every App's oauth2-proxy, public or private (app-kit K1) | `stacks/authentik/cloud-apps.tf` (M2) |
-| Guest invites | Authentik service account `cloud-inviter` (role `add_invitation` only), group `Cloud App Guests`, the guard in `validate-invite-code` and a deny stage on `invitation-enrollment`; token in `secret/cloud/inviter`, read by the console as `CLOUD_INVITER_TOKEN` through ExternalSecret `cloud-console-inviter` (app-kit K5) | `stacks/authentik/cloud-inviter.tf`, `invite-flow.tf`, `stacks/cloud/console.tf` |
+| Guest invites and onboarding | Authentik service account `cloud-inviter` (role: `add_invitation`; for `cloud users add`, global `view_user` and `add_user_to_group` plus `view_group` on `Cloud Users` and `Cloud Email Vouched` only), group `Cloud App Guests`, group `Cloud Email Vouched` (an Operator's email vouch, in `stacks/authentik/cloud-apps.tf`), the guard in `validate-invite-code` and a deny stage on `invitation-enrollment`; token in `secret/cloud/inviter`, read by the console as `CLOUD_INVITER_TOKEN` through ExternalSecret `cloud-console-inviter` (app-kit K5) | `stacks/authentik/cloud-inviter.tf`, `invite-flow.tf`, `stacks/cloud/console.tf` |
 | The `cloud` CLI on the devvm | `@viktorbarzin/cloud` for every user, pinned (app-kit K4) | `playbooks/devvm.yml`, tag `cloud-cli` |
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
@@ -161,8 +161,9 @@ send `cloud: email (verified when vouched for)` instead
 (`stacks/cloud/email_claim.tf`). It sends `email_verified: true` only for an
 account the `cloud-apps-active-users` policy in `stacks/authentik/cloud-apps.tf`
 admits: active, not `guest`, not a service account, not proxy-only, and
-enrolled by a social source, on path `users/email-verified`, or carrying
-`attributes.cloud_apps_email_vouched: true`. The two expressions are copies;
+enrolled by a social source, on path `users/email-verified`, a direct
+member of `Cloud Email Vouched` (an Operator's vouch through `cloud users
+add`), or carrying `attributes.cloud_apps_email_vouched: true`. The two expressions are copies;
 `tests/cloud-deploy.test.sh` runs both on the same accounts and fails when
 they disagree.
 
