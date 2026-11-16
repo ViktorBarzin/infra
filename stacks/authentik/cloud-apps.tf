@@ -216,18 +216,24 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 # hand-written ones listed below:
 #   cloud_apps_client_id      the client id above.
 #   cloud_apps_client_secret  the client secret above.
-#   ghcr_pull_token           the GitHub token for pulling Project images,
-#                             copied from `secret/viktor`
-#                             `cloud_ghcr_pull_token`. Since 2026-11-14 that
-#                             key holds Viktor's classic `github_pat`, his
-#                             choice (docs/runbooks/cloud.md, "Turning builds
-#                             on"), so the reconciler copies the full PAT
-#                             into every Project namespace's pull secret.
-#                             To narrow it (cloud backlog B08b), Viktor mints
-#                             a read:packages-only token in the GitHub UI,
-#                             runs `vault kv patch secret/viktor cloud_ghcr_pull_token=<token>`,
-#                             and the next apply of this stack copies it
-#                             here. The reconciler treats empty as "not set".
+#   The four GitHub tokens, copied from `secret/cloud/github-narrow`
+#   (cloud backlog B08b, 2026-11-17). Viktor mints them in the GitHub UI
+#   and writes them there; the next apply of this stack copies them here.
+#   Each holds only what its job needs, in place of his `github_pat`:
+#   ghcr_pull_token           <- ghcr_pull: classic, read:packages. The
+#                             reconciler copies it into every Project
+#                             namespace's image pull secret.
+#   ghcr_delete_token         <- ghcr_delete: classic, read:packages and
+#                             delete:packages; deletes a gone App's images.
+#   github_dispatch_token     <- dispatch: fine-grained, repo
+#                             ViktorBarzin/cloud-builder only, Actions,
+#                             Contents and Workflows read and write,
+#                             Metadata read. It cannot read the billing
+#                             usage, which Cloud reads only while the
+#                             builder repo is private.
+#   github_owner_read_token   <- owner_read: fine-grained, Contents and
+#                             Metadata read; reads Viktor's private repos.
+#   The reconciler treats an empty value as "not set".
 # CI writes this path through its own policy grant (stacks/vault, policy ci),
 # so stacks/vault must be applied before this file's first CI apply.
 #
@@ -240,14 +246,8 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 # every App secret Cloud has sealed unreadable. Each key is read back from
 # the live secret and written again unchanged; a key not set yet stays absent.
 #   secrets_private_key, secrets_public_key  the App secrets key pair
-#   github_dispatch_token, github_owner_read_token, forgejo_read_token,
-#   forgejo_admin_token                      the reconciler's build tokens;
-#                                            both GitHub ones hold
-#                                            github_pat too (runbook)
+#   forgejo_read_token, forgejo_admin_token  the reconciler's Forgejo tokens
 #   github_api_token                         the console's private-repo check
-#   ghcr_delete_token                        deletes a gone App's ghcr images
-#                                            (Viktor's github_pat, which has
-#                                            delete:packages; his call 2026-11-14)
 #   build_log_key                            opens the build logs the public
 #                                            builder seals (cloud B05)
 #   smtp_password                            Cloud's mail account
@@ -257,12 +257,9 @@ locals {
   cloud_system_carried_keys = [
     "secrets_private_key",
     "secrets_public_key",
-    "github_dispatch_token",
-    "github_owner_read_token",
     "forgejo_read_token",
     "forgejo_admin_token",
     "github_api_token",
-    "ghcr_delete_token",
     # Builder v2 (cloud B05): Cloud's age identity for the sealed build logs.
     "build_log_key",
     # Notifications (cloud B04): the SMTP password of cloud@viktorbarzin.me.
@@ -285,9 +282,10 @@ data "vault_kv_secret_v2" "cloud_system_live" {
   name  = "cloud/system"
 }
 
-data "vault_kv_secret_v2" "viktor_cloud" {
+# Narrow GitHub tokens for Cloud (cloud backlog B08b), written by Viktor.
+data "vault_kv_secret_v2" "cloud_github_narrow" {
   mount = "secret"
-  name  = "viktor"
+  name  = "cloud/github-narrow"
 }
 
 resource "vault_kv_secret_v2" "cloud_system" {
@@ -298,7 +296,10 @@ resource "vault_kv_secret_v2" "cloud_system" {
     {
       cloud_apps_client_id     = authentik_provider_oauth2.cloud_apps.client_id
       cloud_apps_client_secret = random_password.cloud_apps_client_secret.result
-      ghcr_pull_token          = lookup(data.vault_kv_secret_v2.viktor_cloud.data, "cloud_ghcr_pull_token", "")
+      ghcr_pull_token          = lookup(data.vault_kv_secret_v2.cloud_github_narrow.data, "ghcr_pull", "")
+      ghcr_delete_token        = lookup(data.vault_kv_secret_v2.cloud_github_narrow.data, "ghcr_delete", "")
+      github_dispatch_token    = lookup(data.vault_kv_secret_v2.cloud_github_narrow.data, "dispatch", "")
+      github_owner_read_token  = lookup(data.vault_kv_secret_v2.cloud_github_narrow.data, "owner_read", "")
     },
   ))
 }

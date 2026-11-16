@@ -1022,12 +1022,11 @@ within 71 minutes.
   `read:packages` and `delete:packages`. With it, the reconciler deletes
   the ghcr packages of Apps that were removed or whose Project was
   destroyed, 10 minutes after the apply (`package_deletions` in Cloud's
-  database). Without it nothing is deleted. It holds Viktor's existing
-  `github_pat` (Vault `secret/viktor`), the same token as
-  `ghcr_pull_token`: on 2026-11-14 Viktor chose to reuse it over a
-  dedicated `read:packages` + `delete:packages` PAT. The stacks/authentik
-  apply carries the key (`cloud_system_carried_keys`); after a rotation of
-  `github_pat`, patch it here too. The reconciler deletes only repositories named
+  database). Without it nothing is deleted. Since 2026-11-17 (cloud
+  B08b) it is the narrow classic token `ghcr_delete` from
+  `secret/cloud/github-narrow`, `read:packages` and `delete:packages`
+  only; the stacks/authentik apply copies it ("Turning builds on" below).
+  The reconciler deletes only repositories named
   `ghcr.io/<owner>/cloud-<project>_<app>`, so Cloud's own image and infra
   images are never touched.
 
@@ -1056,22 +1055,31 @@ as an admin. Their passwords are random and not stored; nobody signs in as them.
 
 ## Turning builds on
 
-Builds are on since 2026-11-14. Viktor chose to use his existing classic PAT
-(`secret/viktor` `github_pat`) for all three GitHub tokens below, so each copy
-carries that token's full scope; replace them with narrow tokens to reduce it.
-Rotating the PAT means re-copying it into the three keys. The keys:
+Builds are on since 2026-11-14. From then until 2026-11-17 all of Cloud's
+GitHub tokens held Viktor's classic `github_pat`. Since cloud B08b
+(2026-11-17) each is a narrow token Viktor minted, in Vault
+`secret/cloud/github-narrow`; the authentik apply copies them into
+`secret/cloud/system` (`stacks/authentik/cloud-apps.tf`):
 
-1. `secret/viktor` `cloud_ghcr_pull_token`: a classic GitHub token, `read:packages`
-   only, on Viktor's account (Viktor accepted that it reads all his private
-   packages). The authentik apply copies it to `secret/cloud/system`.
-2. `secret/cloud/system` `github_dispatch_token`: fine-grained, repository
-   `ViktorBarzin/cloud-builder` only (the repo exists, empty), Actions read and
-   write, Metadata read, plus the account permission "Plan" read.
-3. `secret/cloud/system` `github_owner_read_token`: fine-grained, Contents and
-   Metadata read on the repos Operators build privately (required by
-   `scripts/publish-builder.sh`).
+| `github-narrow` key | `secret/cloud/system` key | Kind and scope |
+|---|---|---|
+| `ghcr_pull` | `ghcr_pull_token` | classic, `read:packages`; copied into every Project's image pull secret |
+| `ghcr_delete` | `ghcr_delete_token` | classic, `read:packages` and `delete:packages` |
+| `dispatch` | `github_dispatch_token` | fine-grained, `ViktorBarzin/cloud-builder` only: Actions, Contents and Workflows read and write, Metadata read |
+| `owner_read` | `github_owner_read_token` | fine-grained, Contents and Metadata read on the repos Operators build privately; also the builder repo's `GH_OWNER_READ_TOKEN` secret |
 
-Then: apply `authentik`, run the cloud repo's `scripts/publish-builder.sh
+The dispatch token has no account permission, so Cloud cannot read the
+Actions billing usage. Cloud reads it only while the builder repo is
+private (the 90% minutes stop); the repo is public since 2026-11-16.
+
+To rotate one: mint the new token, `vault kv patch secret/cloud/github-narrow
+<key>=-` from stdin, let CI apply `authentik` (or apply it), check the keys
+in `secret/cloud/system`, and for `owner_read` run `publish-builder.sh` again
+so the builder repo's secret follows. Setting repo secrets needs a token
+with the repo's Secrets permission, which none of the four holds; use
+Viktor's `github_pat` for that run (`GH_TOKEN`).
+
+To set builds up from scratch: apply `authentik`, run the cloud repo's `scripts/publish-builder.sh
 --forgejo-token secret/cloud/system#forgejo_read_token --owner-token
 secret/cloud/system#github_owner_read_token`, set `builds_enabled = true`,
 apply `cloud`, and run a live build of a public repo.

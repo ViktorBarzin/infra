@@ -7,9 +7,9 @@
 # resources; docs/architecture/cloud.md has the credentials table.
 
 # The M5 switch for builds and Deploys (buildsConfig() in the cloud code).
-# On since 2026-11-14: the GitHub tokens are Viktor's existing PAT
-# (secret/viktor github_pat), his choice (docs/runbooks/cloud.md, "Turning
-# builds on"). Off is the M5 rollback: the reconciler stops polling branches
+# On since 2026-11-14. Since 2026-11-17 the GitHub tokens are narrow ones
+# from secret/cloud/github-narrow (cloud B08b; docs/runbooks/cloud.md,
+# "Turning builds on"). Off is the M5 rollback: the reconciler stops polling branches
 # and dispatching builds, and everything else keeps working.
 variable "builds_enabled" {
   type    = bool

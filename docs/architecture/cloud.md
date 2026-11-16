@@ -62,7 +62,7 @@ Kuma monitor `[External] cloud` by itself.
 | Kubernetes API token | service account `cloud-console` | console | projected token |
 | `CLOUD_STATE_URL` (role `cloud_state`) | Vault static role `pg-cloud-state` | reconciler | ExternalSecret `cloud-reconciler-postgres`, file `/secrets/postgres/state-url` |
 | `POSTGRES_PROVISIONER_PASSWORD` | Vault static role `pg-cloud-provisioner` | reconciler | same ExternalSecret, file `/secrets/postgres/provisioner-password` |
-| `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-14 Viktor's `github_pat`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
+| `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-17 the narrow `read:packages` token from `secret/cloud/github-narrow`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
 | B09: the OpenTofu state encryption passphrase | Vault KV `secret/cloud/state-key` `passphrase`, written once by hand (runbook, "State encryption key"); backed up by `vault-raft-backup`; the broad `secret/data/*` policies deny it (`tests/cloud-state-key.test.sh`) | reconciler only, as `TF_ENCRYPTION` for OpenTofu | the reconciler reads it with its Vault token on every job (policy `cloud-reconciler`); no ExternalSecret, no file |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
