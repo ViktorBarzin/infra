@@ -801,3 +801,141 @@ Then: apply `authentik`, run the cloud repo's `scripts/publish-builder.sh
 --forgejo-token secret/cloud/system#forgejo_read_token --owner-token
 secret/cloud/system#github_owner_read_token`, set `builds_enabled = true`,
 apply `cloud`, and run a live build of a public repo.
+
+Since cloud B05 the builder also needs `--job-key secret/cloud/builder#job_key`
+and Cloud needs `build_log_key`; "Builder v2 keys and the public builder"
+below has the order.
+
+## Builder v2 keys and the public builder
+
+Cloud backlog B05, decision V12: `ViktorBarzin/cloud-builder` goes public so
+its Actions minutes are free. Its inputs, run logs and artifacts are public,
+so Cloud seals every build with [age](https://age-encryption.org):
+
+| Key | Identity (secret) | Recipient (public) |
+|---|---|---|
+| The builder's job key: seals the job (repo, commit, image, plain env) and the source tree | GitHub secret `CLOUD_JOB_KEY`; a copy in Vault `secret/cloud/builder` `job_key`, which no workload can read | `builder_job_recipient` in `stacks/cloud/deploy_rules.tf`, env `BUILD_JOB_RECIPIENT` on the reconciler |
+| Cloud's log key: the builder seals each job's output to it | Vault `secret/cloud/system` `build_log_key`, file `BUILD_LOG_KEY_FILE` on the reconciler | derived by Cloud and sent in each job |
+
+Plain env reaches the build; secrets never do. Cloud leaves out of the
+build, though not out of the App, the names that would steer the runner or
+its tools: `PATH`, `LD_*`, `DOCKER_*`, `BUILDX_*`, `BUILDKIT_*`,
+`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `NODE_OPTIONS`,
+`BUN_*` and `RAILPACK_CONFIG_FILE`, in any case.
+
+The values go from `age-keygen` to Vault and GitHub through pipes, never to
+the terminal or a file. Only the recipient is printed. Do the steps in this
+order; each needs the one before.
+
+1. Turn builds off: set `default = false` on `builds_enabled` in
+   `stacks/cloud/deploy_rules.tf`, land it, and check the apply of `cloud`.
+   A push made while builds are off is built when they come back on.
+2. Make the job key and print its recipient:
+
+   ```sh
+   vault login -method=oidc
+   age-keygen 2>/dev/null | grep '^AGE-SECRET-KEY-1' | tr -d '\n' \
+     | vault kv put secret/cloud/builder job_key=-
+   vault kv get -field=job_key secret/cloud/builder | age-keygen -y
+   ```
+
+   Put the printed `age1...` into `builder_job_recipient`.
+3. Land the cloud release with B05 and wait for its rollout.
+4. Land this stack's B05 change with the recipient, still with builds off.
+   Apply `authentik`, then `cloud`. `build_log_key` is in
+   `cloud_system_carried_keys` from then on; a key written before that
+   apply is dropped by it.
+5. Make Cloud's log key, then copy it to the reconciler:
+
+   ```sh
+   age-keygen 2>/dev/null | grep '^AGE-SECRET-KEY-1' | tr -d '\n' \
+     | vault kv patch secret/cloud/system build_log_key=-
+   vault kv get -format=json secret/cloud/system | jq '.data.data | keys'
+   kubectl -n cloud annotate externalsecret cloud-reconciler-system force-sync=$(date +%s) --overwrite
+   ```
+
+   The key list shows `build_log_key` beside the others. Reloader restarts
+   the reconciler after its running job.
+6. Publish the builder with the job key, and set its Actions settings, from
+   the cloud repo:
+
+   ```sh
+   scripts/publish-builder.sh \
+     --forgejo-token secret/cloud/system#forgejo_read_token \
+     --owner-token secret/cloud/system#github_owner_read_token \
+     --job-key secret/cloud/builder#job_key
+   scripts/publish-builder.sh --settings
+   ```
+
+   `--settings` also tries the approval rule for outside contributors;
+   GitHub takes it only once the repo is public, so the script says to run
+   it again after step 11.
+7. Turn builds on: `default = true` on `builds_enabled`, land, check the
+   apply.
+8. Test while the repo is still private. In a test App, set
+   `env: {VITE_GREETING: <a unique word>}` and push a commit whose
+   Dockerfile has `RUN exit 3`. Within 10 minutes `cloud deploys <p> <app>`
+   shows it `failed`, reason `build_failed`, with the last 20 lines of the
+   build. `cloud deploys log <p> <app> <id>` prints the whole build. Push
+   a good commit; its log prints too, and its page's JS holds the word.
+9. Check both runs read-only. The run id is the end of the Deploy's run
+   URL (Actions tab of the builder repo):
+
+   ```sh
+   scripts/publish-builder.sh --check-run <run id> \
+     --absent <repo URL> --absent <commit sha> --absent <the unique word> \
+     --absent cloud-<p>_<app> --package cloud-<p>_<app>
+   ```
+
+   It prints one line per check and `no findings`, or exits 1 with what it
+   found, never the value. At this point it still finds the plain
+   workflow's runs; step 10 removes them.
+10. Delete the runs of the first, plain workflow. Their logs and artifacts
+    show repo URLs, images, commits and build output, so they must be gone
+    before anyone else can read the repo:
+
+    ```sh
+    scripts/publish-builder.sh --delete-old-runs        # lists them, deletes nothing
+    scripts/publish-builder.sh --delete-old-runs --yes  # deletes them
+    ```
+
+    It lists every run first and stops at the first 401, 403 or 429. A plain
+    run still in progress is named; cancel it and run the step again. Then
+    run step 9 again. Do not go on to step 11 until it prints both
+    `no run of the plain workflow is left` and `no check run of the plain
+    workflow carries annotations or output`, and `no findings`.
+
+    What stays after the deletion: the check runs of the deleted runs can
+    outlive them on the builder commit. On 2026-11-16 the first builder
+    commit (`0d8353f`) had 48, two per plain run, named `fetch` and `build`,
+    each with its conclusion and times, no annotations and no output text;
+    their links lead to the deleted runs. They name no repo, commit, image
+    or env. If step 9 finds annotations or output on them, do not make this
+    repo public: publish the builder to a new repo instead
+    (`scripts/publish-builder.sh --repo <owner>/<new repo>`, `BUILDER_REPO`
+    on the reconciler) and make that one public.
+11. Make the repo public, then set the public-repo setting at once:
+
+    ```sh
+    gh repo edit ViktorBarzin/cloud-builder --visibility public --accept-visibility-change-consequences
+    scripts/publish-builder.sh --settings
+    ```
+
+12. Push another commit to the test App and run step 9 on its run. Then
+    check that no Cloud package went public:
+
+    ```sh
+    gh api --paginate 'user/packages?package_type=container' \
+      --jq '.[] | select(.name | startswith("cloud-")) | "\(.name) \(.visibility)"'
+    ```
+
+    Every line ends in `private`, and `--settings` says outside contributors
+    need approval. If any package says `public`, or step 9 finds
+    anything, make the repo private again:
+    `gh repo edit ViktorBarzin/cloud-builder --visibility private --accept-visibility-change-consequences`.
+    The sealed format works in a private repo too, so that is the whole
+    rollback.
+
+To rotate a key, repeat its step: for the job key, steps 2, 4 (the new
+recipient) and 6; for the log key, step 5. A build in flight during a log
+key rotation keeps no log; its Deploy result is not affected.
