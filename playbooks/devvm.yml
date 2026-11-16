@@ -3954,12 +3954,22 @@
             # kernel knows the calling socket's owner, so check that instead:
             # only the admins reach ttyd and the rig, and a user's T3 server
             # takes only its owner, the admins and t3-dispatch, which fronts
-            # them all. Root is left out on purpose: a docker group member is
-            # root on this box.
+            # them all.
+            #
+            # ttyd also admits root. terminal-lobby's postinst (tl-apply) runs
+            # as root and verifies each release with GET 127.0.0.1:7681,
+            # expecting 407; with root reset here, 0.142.4 failed verification
+            # and sat half-configured, failing every apt run (infra#195). Root
+            # was first left out because the docker group was root on this
+            # box; since 2026-11-15 only the admins are in it (everyone else
+            # gets rootless Docker, whose sockets carry the user's own uid),
+            # and root can delete this table anyway. The rig keeps root out:
+            # nothing root runs needs it.
             chain output {
               type filter hook output priority -10; policy accept;
 
-              tcp dport { 7681, 8102 } meta skuid != { "wizard", "breakglass" } reject with tcp reset
+              tcp dport 7681 meta skuid != { "wizard", "breakglass", "root" } reject with tcp reset
+              tcp dport 8102 meta skuid != { "wizard", "breakglass" } reject with tcp reset
           {% for name, u in (lookup('file', workstation_dir ~ '/roster.yaml') | from_yaml).users.items() if u.t3_port is defined %}
               tcp dport {{ u.t3_port }} meta skuid != { {{ ([name, 'wizard', 'breakglass', 't3-dispatch'] | unique | map('to_json') | join(', ')) }} } reject with tcp reset
           {% endfor %}

@@ -1028,7 +1028,7 @@ services differ in what they can check:
 | port | service | control |
 |---|---|---|
 | 7683, 7684, 7685, 7686, 7688 | clipboard-upload, tmux-api, session-events, file-api, skills-api | require `X-TL-Proxy-Secret`, which only Traefik sends |
-| 7681 | ttyd | `table inet devvm_lobby` in nftables: from other hosts, the Traefik node addresses only; from the box itself, only sockets owned by `wizard` or `breakglass` |
+| 7681 | ttyd | `table inet devvm_lobby` in nftables: from other hosts, the Traefik node addresses only; from the box itself, only sockets owned by `wizard`, `breakglass` or `root` |
 
 ttyd reads one identity header and has nowhere to check a second, which is why
 it gets the filter rather than the secret. The address check alone let every
@@ -1037,8 +1037,12 @@ admitted: on 2026-11-15 another account got a 200 from ttyd with a forged
 header. The `output` chain now matches the calling socket's owner (`meta
 skuid`). The same chain closes the iOS rig on 127.0.0.1:8102, which checks
 nothing, to all but the admins, and each user's T3 server to all but its owner,
-the admins and `t3-dispatch`. Root is left out, because a docker group member
-is root.
+the admins and `t3-dispatch`. ttyd also admits root: terminal-lobby's
+postinst runs as root and probes ttyd on loopback to verify each release, and
+with root reset the package could not finish configuring (infra#195). Only the
+admins are in the docker group since 2026-11-15, and root can remove the table
+anyway, so leaving root out protected nothing. The rig and the T3 servers still
+refuse root.
 
 The same chain logs, since 2026-11-15, each new connection from an account other
 than the admins to a private address outside a short list (Traefik, Forgejo SSH,
