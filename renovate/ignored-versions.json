@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "v3.33.1",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-16 pipeline #3997: stack monitoring failed after this bump: its terragrunt apply failed (commit bf5d5c20)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/timberio/vector"
+      ],
+      "matchNewValue": "0.62.0-debian",
+      "enabled": false
     }
   ]
 }
