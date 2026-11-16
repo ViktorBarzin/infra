@@ -16,21 +16,6 @@ variable "builds_enabled" {
   default = true
 }
 
-# Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals
-# each build's job to it; its identity is the GitHub secret CLOUD_JOB_KEY of
-# ViktorBarzin/cloud-builder, and a copy is in Vault secret/cloud/builder
-# (job_key), which the reconciler cannot read. A public key, so it is
-# committed here. Empty refuses every build (dispatch_failed) once the
-# cloud release with B05 runs. docs/runbooks/cloud.md, "Builder v2 keys".
-variable "builder_job_recipient" {
-  type    = string
-  default = "age1qepje2u80n6mpvcmx9dw3ysk2srlppgqakse0vk6awpwa63ufanqjdkqdp"
-  validation {
-    condition     = var.builder_job_recipient == "" || can(regex("^age1[02-9ac-hj-np-z]{58}$", var.builder_job_recipient))
-    error_message = "builder_job_recipient is an age X25519 recipient (age1...) or empty."
-  }
-}
-
 locals {
   # One name each, defined in access_rules.tf: the console module's name is
   # the namespace the admission policies name, and the reconciler's objects
@@ -130,9 +115,6 @@ locals {
     # key, so the delete token must come as a file too, or gone Apps' ghcr
     # images are never deleted (found 2026-11-14, rows stuck at 0 attempts).
     GHCR_DELETE_TOKEN = "ghcr_delete_token"
-    # Builder v2 (B05): Cloud's age identity, which opens the build logs the
-    # builder sealed to its recipient. Never the console's, never GitHub's.
-    BUILD_LOG_KEY = "build_log_key"
   }
   cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
 
@@ -213,8 +195,6 @@ locals {
       { name = "BUILDS_ENABLED", value = tostring(var.builds_enabled) },
       { name = "FORGEJO_URL", value = local.cloud_forgejo_url },
       { name = "FORGEJO_AUTH_SOURCE_ID", value = tostring(local.cloud_forgejo_auth_source_id) },
-      # B05: the builder's job recipient (variable above).
-      { name = "BUILD_JOB_RECIPIENT", value = var.builder_job_recipient },
       # The images every Project's edge and oauth2-proxy run, from the same
       # locals the admission policies pin (access_rules.tf), so a Renovate
       # bump here moves the rendered image and the policy together. A second

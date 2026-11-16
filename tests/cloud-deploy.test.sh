@@ -202,11 +202,6 @@ for who, tpl, keys in (("reconciler", loc["reconciler_system_template"], loc["re
         bad.append(f"the {who} system template is {sorted(tpl.values())}, want {sorted(want_vals)}")
     if "secrets_private_key" in keys.values() and who == "console":
         bad.append("the console must never get secrets_private_key")
-    if "build_log_key" in keys.values() and who == "console":
-        bad.append("the console must never get build_log_key")
-# B05: the builder's job recipient, a public key, empty until the keys exist.
-if not re.fullmatch(r"(age1[02-9ac-hj-np-z]{58})?", renv.get("BUILD_JOB_RECIPIENT", "missing")):
-    bad.append(f"the reconciler's BUILD_JOB_RECIPIENT is {renv.get('BUILD_JOB_RECIPIENT')!r}, want an age recipient or empty")
 for n in ("VAULT_TOKEN", "VAULT_TOKEN_FILE"):
     if n in renv:
         bad.append(f"the reconciler gets {n}; it must log in to Vault with its service account")
