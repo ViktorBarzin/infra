@@ -59,7 +59,7 @@ Kuma monitor `[External] cloud` by itself.
 | Kubernetes API token | service account `cloud-console` | console | projected token |
 | `CLOUD_STATE_URL` (role `cloud_state`) | Vault static role `pg-cloud-state` | reconciler | ExternalSecret `cloud-reconciler-postgres`, file `/secrets/postgres/state-url` |
 | `POSTGRES_PROVISIONER_PASSWORD` | Vault static role `pg-cloud-provisioner` | reconciler | same ExternalSecret, file `/secrets/postgres/provisioner-password` |
-| `REGISTRY_TOKEN` (read:packages ghcr token) | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
+| `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-14 Viktor's `github_pat`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
 | `cloud_apps_client_id`, `cloud_apps_client_secret` | Vault KV `secret/cloud/system` | read by the reconciler's OpenTofu through Vault | Vault policy `cloud-reconciler` |
@@ -227,7 +227,7 @@ so the Postgres series keep their own `service` label, the Cloud Service name.
 | `cloud_postgres_database_read_only{project,service}` | reconciler: 1 when the role is read-only because the database reached its Size's disk | `CloudPostgresReadOnly` |
 | `cloud_postgres_disk_enforcement_failed{project,service}` | reconciler: 1 while the last size pass did not enforce the disk limit | `CloudPostgresDiskEnforcementFailed` |
 | `cloud_project_converging_seconds{project}` | reconciler | `CloudProjectStuckConverging` |
-| `cloud_build_minutes_used`, `cloud_build_minutes_allowance` | not yet exported (M5, builds) | `CloudBuildMinutesHigh` |
+| `cloud_build_minutes_used`, `cloud_build_minutes_allowance` | reconciler: set when a build checks the account's minutes, which it does only while the builder repo is private; with the public builder both read 0 | `CloudBuildMinutesHigh` |
 | `up{namespace="cloud",service="cloud-reconciler"}` | Prometheus | `CloudReconcilerDown` |
 
 `cloud_project_converging_seconds` is the seconds since the oldest `queued`

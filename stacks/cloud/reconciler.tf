@@ -75,9 +75,10 @@ resource "kubernetes_manifest" "reconciler_postgres" {
   depends_on = [module.console]
 }
 
-# REGISTRY_TOKEN: the read:packages pull token in secret/cloud/system
+# REGISTRY_TOKEN: the image pull token in secret/cloud/system
 # (ghcr_pull_token, written by stacks/authentik cloud-apps.tf), which the
-# reconciler copies into each Project's pull secret.
+# reconciler copies into each Project's pull secret. Today it is Viktor's
+# github_pat (docs/runbooks/cloud.md, "Turning builds on").
 resource "kubernetes_manifest" "reconciler_registry" {
   field_manager {
     force_conflicts = true

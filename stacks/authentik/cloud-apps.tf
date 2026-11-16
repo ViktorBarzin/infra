@@ -216,14 +216,18 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 # hand-written ones listed below:
 #   cloud_apps_client_id      the client id above.
 #   cloud_apps_client_secret  the client secret above.
-#   ghcr_pull_token           a read:packages-only GitHub token for pulling
-#                             Project images. It does not exist yet and must
-#                             never be the admin PAT. Viktor mints it in the
-#                             GitHub UI and stores it as
-#                             `vault kv patch secret/viktor cloud_ghcr_pull_token=<token>`;
-#                             the next apply of this stack copies it here.
-#                             Empty until then, and the reconciler treats
-#                             empty as "not set".
+#   ghcr_pull_token           the GitHub token for pulling Project images,
+#                             copied from `secret/viktor`
+#                             `cloud_ghcr_pull_token`. Since 2026-11-14 that
+#                             key holds Viktor's classic `github_pat`, his
+#                             choice (docs/runbooks/cloud.md, "Turning builds
+#                             on"), so the reconciler copies the full PAT
+#                             into every Project namespace's pull secret.
+#                             To narrow it (cloud backlog B08b), Viktor mints
+#                             a read:packages-only token in the GitHub UI,
+#                             runs `vault kv patch secret/viktor cloud_ghcr_pull_token=<token>`,
+#                             and the next apply of this stack copies it
+#                             here. The reconciler treats empty as "not set".
 # CI writes this path through its own policy grant (stacks/vault, policy ci),
 # so stacks/vault must be applied before this file's first CI apply.
 #
@@ -237,7 +241,9 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 # the live secret and written again unchanged; a key not set yet stays absent.
 #   secrets_private_key, secrets_public_key  the App secrets key pair
 #   github_dispatch_token, github_owner_read_token, forgejo_read_token,
-#   forgejo_admin_token                      the reconciler's build tokens
+#   forgejo_admin_token                      the reconciler's build tokens;
+#                                            both GitHub ones hold
+#                                            github_pat too (runbook)
 #   github_api_token                         the console's private-repo check
 #   ghcr_delete_token                        deletes a gone App's ghcr images
 #                                            (Viktor's github_pat, which has
