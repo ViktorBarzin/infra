@@ -228,9 +228,9 @@ locals {
       # once no plain state is left (runbook, "State encryption key").
       { name = "RECONCILE_STATE_READ_UNENCRYPTED", value = "true" },
       # B24: reconcile workers, each on another Project. Two need
-      # cloud_provisioner CONNECTION LIMIT 10 (stacks/dbaas, B15): set "2"
-      # only after that apply. "1" is also the rollback.
-      { name = "RECONCILER_WORKERS", value = "1" },
+      # cloud_provisioner CONNECTION LIMIT 10 (stacks/dbaas, B15, applied
+      # 2026-11-16). "1" is the rollback.
+      { name = "RECONCILER_WORKERS", value = "2" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )
