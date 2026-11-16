@@ -784,7 +784,7 @@ if job_file.exists():
         ("other-app", lambda o: o["metadata"].update({"name": "app-recipes-m0f9a8b7c1"}), "is named app-<its App>"),
         ("owned", lambda o: o["metadata"].update({"ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "app-menu", "uid": "00000000-0000-4000-8000-000000000017"}]}), "has no owner"),
         ("label-mismatch", lambda o: o["metadata"]["labels"].update({SERVICE: "recipes"}), "carries its pod's"),
-        ("init", lambda o: o["spec"]["template"]["spec"].update({"initContainers": [dict(copy.deepcopy(jc(o)), name="migrate")]}), "only an App pod may have an init container"),
+        ("init", lambda o: o["spec"]["template"]["spec"].update({"initContainers": [dict(copy.deepcopy(jc(o)), name="setup")]}), "only an App pod may have an init container"),
         ("serviceaccount", lambda o: o["spec"]["template"]["spec"].update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
         ("hostpath", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "hostPath": {"path": "/"}}), "may use only emptyDir"),
         ("app-no-cronjob", as_cron_run, "a run of a CronJob cron-"),
