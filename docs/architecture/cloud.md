@@ -61,6 +61,7 @@ Kuma monitor `[External] cloud` by itself.
 | `POSTGRES_PROVISIONER_PASSWORD` | Vault static role `pg-cloud-provisioner` | reconciler | same ExternalSecret, file `/secrets/postgres/provisioner-password` |
 | `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-14 Viktor's `github_pat`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
+| B09: the OpenTofu state encryption passphrase | Vault KV `secret/cloud/state-key` `passphrase`, written once by hand (runbook, "State encryption key"); backed up by `vault-raft-backup` | reconciler only, as `TF_ENCRYPTION` for OpenTofu | the reconciler reads it with its Vault token on every job (policy `cloud-reconciler`); no ExternalSecret, no file |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
 | `cloud_apps_client_id`, `cloud_apps_client_secret` | Vault KV `secret/cloud/system` | read by the reconciler's OpenTofu through Vault | Vault policy `cloud-reconciler` |
 | M5: `GITHUB_DISPATCH_TOKEN`, `GITHUB_OWNER_READ_TOKEN`, `FORGEJO_READ_TOKEN`, `FORGEJO_ADMIN_TOKEN`, `SECRETS_PRIVATE_KEY` | Vault KV `secret/cloud/system` keys `github_dispatch_token`, `github_owner_read_token`, `forgejo_read_token`, `forgejo_admin_token`, `secrets_private_key`, written by hand | reconciler | ExternalSecret `cloud-reconciler-system`, files `/secrets/system/<key with dashes>`; the reconciler also reads the same keys from Vault itself |
@@ -117,7 +118,8 @@ nothing: both processes read the password file on each new connection.
 2. The reconciler claims the job (`FOR UPDATE SKIP LOCKED`), reads the
    cluster's taken hosts again, renders the Project as OpenTofu JSON into
    `/tmp`, logs in to Vault, and runs `init`, `plan` and `apply` with state in
-   `cloud_state`, schema `p_<project>`.
+   `cloud_state`, schema `p_<project>`. State and saved plans are encrypted
+   with the passphrase in `secret/cloud/state-key` (B09).
 3. OpenTofu writes the `p-<project>` namespace and its objects through the
    reconciler's RBAC and the admission policies, the Project's Postgres role
    and database as `cloud_provisioner`, and the Project's Vault entries under

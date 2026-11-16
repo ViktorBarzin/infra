@@ -617,6 +617,57 @@ Every Project Postgres is a database on `pg-cluster-v18` named
 
 The size loop measures the database again within 5 minutes.
 
+## State encryption key
+
+Cloud backlog B09. Every Project's OpenTofu state and saved plan is
+encrypted with AES-GCM. The key comes from one passphrase in Vault
+`secret/cloud/state-key`, field `passphrase`. Only the `cloud-reconciler`
+policy reads it, and no workload writes it. The reconciler reads it on every
+job. A job with no passphrase fails before tofu runs, with
+`state_key_missing`, `state_key_unreadable` or `state_key_invalid` (under
+32 characters).
+
+**A lost or changed passphrase is lost state.** Every Project's next apply
+then fails with `decryption failed`. Its namespace, database and Vault
+entries stay, but Cloud no longer manages them until each is imported by
+hand. The backup is Vault itself: the weekly `vault-raft-backup` snapshot,
+kept 30 days ([docs/architecture/secrets.md](../architecture/secrets.md),
+"Vault Backup"; restore with [restore-vault.md](restore-vault.md)). KV
+keeps old versions, so a wrong `kv put` is undone with `vault kv rollback
+-version=1 secret/cloud/state-key`. Never run `vault kv metadata delete` on
+it. Never rotate it: the reconciler has no second key to read old states
+with.
+
+Create it once, before the first release with B09 rolls out. The value goes
+from `openssl` to Vault through a pipe, never to the terminal or a file.
+`-cas=0` refuses to write when the key exists already:
+
+```sh
+vault login -method=oidc
+openssl rand -base64 48 | tr -d '\n' | vault kv put -cas=0 secret/cloud/state-key passphrase=-
+vault kv get -format=json secret/cloud/state-key | jq '.data.data | keys, (.passphrase | length)'
+kubectl -n vault create job --from=cronjob/vault-raft-backup vault-raft-backup-state-key
+```
+
+The third line prints `["passphrase"]` and `64`. The job writes a snapshot
+with the key at once, so the backup does not wait for Sunday.
+
+The release that encrypts applies every Project again (the render digest
+holds the encryption scheme). While `RECONCILE_STATE_READ_UNENCRYPTED` is
+`true`, the default in `stacks/cloud` `deploy_rules.tf`, a state written
+before is read and the apply writes it encrypted. Jobs log OpenTofu's
+warning "Method unencrypted is present in configuration" until then. When
+every state is encrypted, set it to `false` and apply `cloud`: tofu then
+refuses unencrypted data and never writes it. Count the plain states first;
+the answer must be empty:
+
+```sh
+PRIMARY=$(kubectl get cluster -n dbaas pg-cluster-v18 -o jsonpath='{.status.currentPrimary}')
+for s in $(kubectl exec -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d cloud_state -Atc "select nspname from pg_namespace where nspname like 'p\_%'"); do
+  kubectl exec -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d cloud_state -Atc "select '$s' from $s.states where data::jsonb ? 'resources'"
+done
+```
+
 ## Revoke a token
 
 - **Access Token** (`cloud_...`): its owner revokes it on the console's Access

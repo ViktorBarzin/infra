@@ -222,6 +222,11 @@ locals {
       # refused.
       { name = "EDGE_IMAGE", value = local.cloud_edge.image },
       { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
+      # B09: OpenTofu state encryption. The passphrase is read from Vault
+      # secret/cloud/state-key by the reconciler itself, never as a file.
+      # true: a state written before encryption is still read; set false
+      # once no plain state is left (runbook, "State encryption key").
+      { name = "RECONCILE_STATE_READ_UNENCRYPTED", value = "true" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

@@ -95,8 +95,9 @@
 #     never secret/cloud/system;
 #   - the cloud-reconciler policy writes and patches secret/cloud/p-*, nothing
 #     else under secret/cloud, reads but cannot change secret/cloud/system
-#     (the shared Cloud Apps client), and reads only its two database
-#     credentials;
+#     (the shared Cloud Apps client) or secret/cloud/state-key (the state
+#     encryption passphrase, which no Project token reads), and reads only
+#     its two database credentials;
 #   - stacks/authentik writes the client id the oauth2-proxy pin expects.
 #
 # Needs docker, kind, kubectl, helm (Calico's operator, Kyverno, the External
@@ -937,6 +938,7 @@ vault kv put secret/cloud/p-demo/_cloud/registry server=ghcr.io username=u passw
 vault kv put secret/cloud/p-other/app a=other >/dev/null
 vault kv put secret/cloud/p-other/_cloud/registry server=ghcr.io username=u password=p >/dev/null
 vault kv put secret/cloud/system cloud_apps_client_id=cloud-apps cloud_apps_client_secret=s ghcr_pull_token=g >/dev/null
+vault kv put secret/cloud/state-key passphrase=state-key-for-the-kind-test-0123456789 >/dev/null
 vault kv put secret/viktor x=y >/dev/null
 
 login() { # role namespace sa
@@ -957,6 +959,7 @@ expect_fail "p-demo token cannot read secret/cloud/p-other/app" "permission deni
 expect_fail "p-demo token cannot read secret/cloud/p-other/_cloud/registry" "permission denied" vtok "$PT" kv get secret/cloud/p-other/_cloud/registry
 expect_fail "p-demo token cannot read secret/cloud/system" "permission denied" vtok "$PT" kv get secret/cloud/system
 expect_fail "p-demo token cannot read secret/viktor" "permission denied" vtok "$PT" kv get secret/viktor
+expect_fail "p-demo token cannot read the state key secret/cloud/state-key" "permission denied" vtok "$PT" kv get secret/cloud/state-key
 expect_fail "p-demo token cannot write its own tree" "permission denied" vtok "$PT" kv put secret/cloud/p-demo/app a=x
 
 RT="$(login cloud-reconciler cloud cloud-reconciler 2>/dev/null)"
@@ -974,6 +977,10 @@ expect_fail "reconciler cannot patch outside the p-* trees" "permission denied" 
 expect_ok   "reconciler reads the shared client from secret/cloud/system" vtok "$RT" kv get -field=cloud_apps_client_secret secret/cloud/system
 expect_fail "reconciler cannot change secret/cloud/system" "permission denied" vtok "$RT" kv put secret/cloud/system cloud_apps_client_secret=x
 expect_fail "reconciler cannot delete secret/cloud/system" "permission denied" vtok "$RT" kv metadata delete secret/cloud/system
+expect_ok   "reconciler reads the state key from secret/cloud/state-key (B09)" vtok "$RT" kv get -field=passphrase secret/cloud/state-key
+expect_fail "reconciler cannot change secret/cloud/state-key" "permission denied" vtok "$RT" kv put secret/cloud/state-key passphrase=x
+expect_fail "reconciler cannot patch secret/cloud/state-key" "permission denied" vtok "$RT" kv patch -method=patch secret/cloud/state-key passphrase=x
+expect_fail "reconciler cannot delete secret/cloud/state-key" "permission denied" vtok "$RT" kv metadata delete secret/cloud/state-key
 expect_fail "reconciler cannot read secret/viktor" "permission denied" vtok "$RT" kv get secret/viktor
 expect_fail "reconciler cannot write a Vault policy" "permission denied" vtok "$RT" policy write x "$TMP/project.hcl"
 caps() { vtok "$RT" token capabilities "$1" 2>&1; }

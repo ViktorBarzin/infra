@@ -20,6 +20,11 @@
 #                               through its own ExternalSecret (ESO's reader
 #                               role); the reconciler's policy below and the
 #                               cloud-project policy do not reach it.
+#   secret/cloud/state-key      written by hand (docs/runbooks/cloud.md, "State
+#                               encryption key"): the passphrase that
+#                               encrypts every Project's OpenTofu state
+#                               (cloud backlog B09). Only the reconciler
+#                               reads it; nothing writes it but an Operator.
 #   secret/cloud/<namespace>/<service>
 #                               a Service's secrets: an App's own (created empty
 #                               by the reconciler, filled through Cloud's API)
@@ -39,8 +44,9 @@
 locals {
   # Kubernetes auth role cloud-reconciler (service account cloud-reconciler in
   # namespace cloud). Write on the Project trees (secret/cloud/p-*), read on
-  # secret/cloud/system and on its two database credentials, nothing else: no
-  # policy, auth role or other secret path. It deletes through the metadata
+  # secret/cloud/system, on the state encryption key secret/cloud/state-key
+  # and on its two database credentials, nothing else: no policy, auth role
+  # or other secret path. It deletes through the metadata
   # path (delete_all_versions in Cloud's modules). `patch` (M5): App secrets
   # are written as KV v2 merge patches, so the keys a write does not name
   # stay. Only on the Project trees; secret/cloud/system stays read-only.
@@ -55,6 +61,9 @@ locals {
       capabilities = ["read"]
     }
     path "secret/metadata/cloud/system" {
+      capabilities = ["read"]
+    }
+    path "secret/data/cloud/state-key" {
       capabilities = ["read"]
     }
     path "database/static-creds/pg-cloud-provisioner" {
