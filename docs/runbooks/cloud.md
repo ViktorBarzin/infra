@@ -516,6 +516,46 @@ policy keeps its own Deny until a Cloud release removes it.
 When the home WAN address changes, update `public_ip` in `config.tfvars`
 and apply `stacks/cloud` too, so the console shows the new address.
 
+## Apply B15 (Postgres limits)
+
+B15 raises `pg-cluster-v18` to `max_connections` 300, memory 3328Mi
+request and 5Gi limit, `cloud_provisioner` to CONNECTION LIMIT 10, and the
+alerts to 20 and 80 ([docs/agents/databases.md](../agents/databases.md),
+"Connection ceiling"). `max_connections` is a postmaster setting: CNPG
+restarts the replica, then the primary, and every homelab app reconnects
+within a few seconds.
+
+`stacks/dbaas` cannot be applied from a workstation (it resolves
+`vault-active.vault.svc`, in-cluster only). Woodpecker applies it, and
+`stacks/monitoring`, in full on the push that changes them
+(`PLATFORM_STACKS` in `.woodpecker/default.yml`). So the landing is the
+apply:
+
+1. Re-measure the 7-day backend peak:
+   `homelab metrics query 'max_over_time(max(sum by (pod)(cnpg_backends_total{pod=~"pg-cluster-v18-.*"}))[7d:1m])'`.
+   Above 180, lower the ceiling in the Cloud release to keep 20 spare.
+2. Record the before values: `homelab k8s db cloud -- "SHOW max_connections"`
+   (200) and `homelab k8s db cloud -- "SELECT rolconnlimit FROM pg_roles WHERE rolname = 'cloud_provisioner'"` (5).
+3. In a quiet window: `presence claim db:pg-cluster-v18 --purpose "B15: max_connections 300, rolling restart"`.
+4. Land the infra commit on master without `[ci skip]` and watch the
+   pipeline that contains it (`homelab ci watch`). Its dbaas step applies
+   the whole stack, not only this change; check that its plan holds only
+   `null_resource.pg_cluster_v18`, `null_resource.pg_cloud_roles` and
+   `kubernetes_config_map.pg_custom_queries`.
+5. Wait for both instances: `kubectl -n dbaas get cluster pg-cluster-v18`
+   reads `Cluster in healthy state`. Record the after values of step 2
+   (300 and 10).
+6. Deploy the Cloud release. Its new render applies every Project again,
+   which sets each Project role to 4, 10 or 20.
+7. `presence release db:pg-cluster-v18`.
+
+Rollback: migration 0025 has no down path, and the old Cloud code
+refuses a Size above 8 (`size_invalid`). So roll forward first: a Cloud
+release with a migration that sets the Sizes back to 2, 4 and 8 and the
+ceiling to 20, then wait while it applies every Project again (each role
+back to 2, 4 or 8). Only then revert the Cloud code, and last revert the
+infra commit, which CI applies with the same rolling restart.
+
 ## CrowdSec shadow for the home address
 
 The live CrowdSec whitelists the home address, so it never bans abuse that
@@ -615,9 +655,9 @@ Every Project Postgres is a database on `pg-cluster-v18` named
 3. Restore as in `restore-postgresql.md`:
    `pg_restore -d <db> --clean --if-exists <dump>`. The role exists, so
    ownership comes back as it was.
-4. Set the limit back to the Size's (nano 2, small 4, medium 8):
+4. Set the limit back to the Size's (nano 4, small 10, medium 20):
    `ALTER ROLE <db> CONNECTION LIMIT <n>;`. The next apply of the Project sets
-   it again anyway. A limit above 8 or none pages `CloudProjectRoleUnlimited`.
+   it again anyway. A limit above 20 or none pages `CloudProjectRoleUnlimited`.
 
 The size loop measures the database again within 5 minutes.
 

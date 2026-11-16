@@ -111,8 +111,9 @@ nothing: both processes read the password file on each new connection.
 ## Data flow of a change
 
 1. A User or an agent saves a Project change in the console or through
-   `/api/v1`. The console checks it (Plan): names, Budget, the 20-connection
-   Postgres ceiling and taken hosts, which it reads from the cluster with its
+   `/api/v1`. The console checks it (Plan): names, Budget, the 80-connection
+   Postgres ceiling, each Postgres's Size against the processes that connect
+   to it, and taken hosts, which it reads from the cluster with its
    ClusterRole. It writes a new desired version and queues a reconcile job in
    the `cloud` database.
 2. The reconciler claims the job (`FOR UPDATE SKIP LOCKED`), reads the

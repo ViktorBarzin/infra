@@ -1865,10 +1865,10 @@ resource "kubernetes_config_map" "pg_custom_queries" {
         metrics:
           - unlimited:
               usage: "GAUGE"
-              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 8. Should be 0."
+              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 20. Should be 0."
           - connlimit_sum:
               usage: "GAUGE"
-              description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 20."
+              description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 80."
     EOT
   }
 }
@@ -1881,9 +1881,9 @@ resource "null_resource" "pg_cluster_v18" {
     image          = var.pg_cluster_v18_image
     storage_size   = "40Gi"
     storage_class  = "proxmox-lvm-encrypted-sas"
-    memory_limit   = "4Gi"
-    memory_request = "2816Mi"
-    pg_params      = "v2-checkpoint-30min-wal-keep-2gb"
+    memory_limit   = "5Gi"
+    memory_request = "3328Mi"
+    pg_params      = "v3-max-connections-300"
     affinity       = "required-hostname-v1"
     monitoring     = "custom-queries-v1"
     probes         = "isolation-check-relaxed-v1"
@@ -1978,9 +1978,17 @@ resource "null_resource" "pg_cluster_v18" {
             search_path: '"$user", public'
             pg_prewarm.autoprewarm: "on"
             pg_prewarm.autoprewarm_interval: "300"
-            max_connections: "200"
+            # 200 -> 300, 2026-11-16 (Cloud backlog B15, decision V1: Project
+            # databases stay on this cluster with raised limits). The 7-day
+            # peak of client backends on the primary was 163 (30-day 163, 7-day p95
+            # 150), so 200 left Cloud's ceiling of 20 almost no spare. 300 gives
+            # Cloud 80 (POSTGRES_CONNECTION_CEILING) with 24 spare:
+            # 297 - 163 - 20 (cloud_provisioner, cloud_state) - 10 (role cloud).
+            # A postmaster setting: CNPG restarts the replica, then the primary.
+            max_connections: "300"
             shared_buffers: "2048MB"
-            effective_cache_size: "3072MB"
+            # 3072MB -> 4096MB with the 5Gi limit, 2026-11-16. A planner hint only.
+            effective_cache_size: "4096MB"
             work_mem: "16MB"
             wal_compression: "zstd"
             random_page_cost: "4"
@@ -2017,11 +2025,19 @@ resource "null_resource" "pg_cluster_v18" {
           # by being rebuilt one at a time (docs/architecture/storage.md).
           storageClass: proxmox-lvm-encrypted-sas
         resources:
+          # 2816Mi/4Gi -> 3328Mi/5Gi, 2026-11-16 (B15), for the 100 extra
+          # backends. Measured: (3404 MiB working set - 2048 MB shared_buffers)
+          # / 141 backends = 9.6 MiB per backend at most, so 100 more need
+          # about 960 MiB above the 7-day peak of 4067 MiB (0 OOM in 30 days).
+          # The request rises by 512Mi per instance: k8s-node2 keeps ~3.4 GiB
+          # of free requests and the N-1 margin of
+          # ClusterCannotTolerateNonGpuNodeLoss drops from 12.7 to 11.7 GiB
+          # (measured 2026-11-16).
           requests:
             cpu: "50m"
-            memory: "2816Mi"
+            memory: "3328Mi"
           limits:
-            memory: "4Gi"
+            memory: "5Gi"
       EOF
     EOT
   }

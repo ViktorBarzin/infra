@@ -3963,15 +3963,20 @@
             # was first left out because the docker group was root on this
             # box; since 2026-11-15 only the admins are in it (everyone else
             # gets rootless Docker, whose sockets carry the user's own uid),
-            # and root can delete this table anyway. The rig keeps root out:
-            # nothing root runs needs it.
+            # and root can delete this table anyway. The T3 ports admit root
+            # for the same reason: t3-watchdog and t3-safe-restart run as root
+            # and probe each serve on loopback. With root reset, every probe
+            # read as a dead port, and from 2026-11-15 19:34 the watchdog
+            # restarted both serves every ~20 min and restored each one's DB
+            # to its pre-restart snapshot. The rig keeps root out: nothing
+            # root runs needs it.
             chain output {
               type filter hook output priority -10; policy accept;
 
               tcp dport 7681 meta skuid != { "wizard", "breakglass", "root" } reject with tcp reset
               tcp dport 8102 meta skuid != { "wizard", "breakglass" } reject with tcp reset
           {% for name, u in (lookup('file', workstation_dir ~ '/roster.yaml') | from_yaml).users.items() if u.t3_port is defined %}
-              tcp dport {{ u.t3_port }} meta skuid != { {{ ([name, 'wizard', 'breakglass', 't3-dispatch'] | unique | map('to_json') | join(', ')) }} } reject with tcp reset
+              tcp dport {{ u.t3_port }} meta skuid != { {{ ([name, 'wizard', 'breakglass', 't3-dispatch', 'root'] | unique | map('to_json') | join(', ')) }} } reject with tcp reset
           {% endfor %}
 
               # Per-user egress, LOG-ONLY since 2026-11-15 (enforced-identity

@@ -1041,8 +1041,10 @@ the admins and `t3-dispatch`. ttyd also admits root: terminal-lobby's
 postinst runs as root and probes ttyd on loopback to verify each release, and
 with root reset the package could not finish configuring (infra#195). Only the
 admins are in the docker group since 2026-11-15, and root can remove the table
-anyway, so leaving root out protected nothing. The rig and the T3 servers still
-refuse root.
+anyway, so leaving root out protected nothing. The T3 servers admit root for
+the same reason: t3-watchdog and t3-safe-restart probe them as root on
+loopback, and with root reset the watchdog took every serve for dead and
+restarted it every ~20 min. The rig still refuses root.
 
 The same chain logs, since 2026-11-15, each new connection from an account other
 than the admins to a private address outside a short list (Traefik, Forgejo SSH,

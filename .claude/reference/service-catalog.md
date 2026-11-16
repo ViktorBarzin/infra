@@ -51,6 +51,7 @@
 | wa-bot | WhatsApp access to Terminal Lobby sessions (Meta Cloud API), `wa.viktorbarzin.me` | wa-bot |
 | tuya-bridge | Smart home bridge | tuya-bridge |
 | ecovacs-video-proxy | On-demand camera of the London robot vacuum Yiko for HA London (RTSP 10.0.20.200:8554, 0 replicas until HA turns it on; runbook london-yiko.md) | ecovacs-video-proxy |
+| camera-import | Wi-Fi photo import from the Nikon Z5 II: camera uploads over SFTP (10.0.20.213:22, LAN and tunnel only) to SFTPGo, an Immich CLI loop hands each photo to Immich on Viktor's account; runbook camera-import.md | camera-import |
 | android-emulator | Shared Android 16 test emulator (adb 10.0.20.200:5555, noVNC android-emulator.viktorbarzin.lan) | android-emulator |
 | anisette | Self-hosted Apple anisette-data server (Dadoum/anisette-v3-server, digest-pinned) for sideloading the TripIt iOS Shell via SideStore; internal-only http://anisette.viktorbarzin.lan, auth=none, LAN-only, stateless | anisette |
 | dawarich | Location history | dawarich |
