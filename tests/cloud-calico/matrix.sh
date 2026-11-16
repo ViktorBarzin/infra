@@ -55,6 +55,24 @@ probe "$ns" auth-recipes "{\"$C\": \"oauth2-proxy\", \"$S\": \"recipes\"}" 4180
 probe "$ns" app-menu "{\"$C\": \"app\", \"$S\": \"menu\"}"
 probe "$ns" edge-menu "{\"$C\": \"edge\", \"$S\": \"menu\", \"$E\": \"fedcba9876543210\"}"
 probe "$ns" auth-menu "{\"$C\": \"oauth2-proxy\", \"$S\": \"menu\"}" 4180
+# A pod of the private App that listens on the mail ports and on 8080
+# (agnhost porter; the sysctl lets it bind ports under 1024 as non-root).
+# Its own edge reaches it, so a refused mail port shows the Deny rule.
+k apply -f - >/dev/null <<EOF
+{"apiVersion": "v1", "kind": "Pod",
+ "metadata": {"name": "mail-recipes", "namespace": "$ns", "labels": {"$C": "app", "$S": "recipes"}},
+ "spec": {
+   "securityContext": {"runAsNonRoot": true, "runAsUser": 65534, "seccompProfile": {"type": "RuntimeDefault"},
+     "sysctls": [{"name": "net.ipv4.ip_unprivileged_port_start", "value": "0"}]},
+   "containers": [{"name": "probe", "image": "$AGNHOST_IMAGE", "args": ["porter"],
+     "env": [{"name": "SERVE_PORT_8080", "value": "ok"}, {"name": "SERVE_PORT_25", "value": "ok"},
+             {"name": "SERVE_PORT_465", "value": "ok"}, {"name": "SERVE_PORT_587", "value": "ok"},
+             {"name": "SERVE_PORT_2525", "value": "ok"}],
+     "readinessProbe": {"tcpSocket": {"port": 25}, "periodSeconds": 2},
+     "securityContext": {"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}},
+     "resources": {"requests": {"cpu": "10m", "memory": "32Mi", "ephemeral-storage": "16Mi"},
+                   "limits": {"cpu": "100m", "memory": "64Mi", "ephemeral-storage": "32Mi"}}}]}}
+EOF
 # Another Project, with an edge pod claiming to front recipes.
 probe p-other edge-recipes "{\"$C\": \"edge\", \"$S\": \"recipes\", \"$E\": \"0123456789abcdef\"}"
 probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
@@ -62,7 +80,7 @@ probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
 # Every probe answers its kubelet readiness probe, which comes from the node:
 # the floors must not block it.
 # Cloud's own pods may still be terminating, so wait for the probes by name.
-if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu --timeout=180s >/dev/null 2>&1 \
+if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu --timeout=180s >/dev/null 2>&1 \
   && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1; then
   ok "every probe pod in $ns and p-other passes the kubelet's readiness probe"
 else
@@ -118,8 +136,27 @@ node_ip="$(k get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="Inter
 cannot "$ns" app-recipes "$node_ip:10250"                  "App pods do not reach the node's kubelet ($node_ip, a private address)"
 cannot "$ns" app-recipes "176.12.22.76:443"                "App pods do not reach the home WAN IP 176.12.22.76"
 cannot "$ns" app-recipes "92.5.132.215:9100"               "App pods do not reach backup-mx 92.5.132.215 (node_exporter, admitted from the home WAN IP)"
+# The mail ports (V8): the pod listens on all of them (its readiness probe
+# on 25 passes), its own edge reaches it on 8080, and on none of them.
+mail="$(ip "$ns" mail-recipes)"
+can    "$ns" edge-recipes "$mail:8080"                     "the private App's edge reaches the mail-port probe on 8080"
+for port in 25 465 587 2525; do
+  cannot "$ns" edge-recipes "$mail:$port"                  "TCP $port is denied, even to a pod the sender may reach"
+done
 if [ "${CALICO_INTERNET:-0}" = "1" ]; then
   can "$ns" app-recipes "1.1.1.1:443"                      "App pods reach the internet (1.1.1.1:443)"
+  # Resolved here: kind's DNS may not resolve public names, and a lookup
+  # failure would make the refusals pass for the wrong reason.
+  smtp="$(getent ahostsv4 smtp.gmail.com | awk 'NR==1 {print $1}')"
+  if [ -z "$smtp" ]; then
+    bad "could not resolve smtp.gmail.com on the test host"
+  else
+    # smtp.gmail.com answers on 25 and 587 from the devvm, but not on 443
+    # (checked 2026-11-16), so 1.1.1.1:443 above is the positive control.
+    for port in 25 465 587 2525; do
+      cannot "$ns" app-recipes "$smtp:$port"               "App pods do not reach smtp.gmail.com ($smtp) on TCP $port"
+    done
+  fi
 fi
 
 # The floor alone. A Project policy in the default tier that allows every
@@ -130,7 +167,7 @@ fi
 k apply -f - >/dev/null <<EOF
 {"apiVersion": "projectcalico.org/v3", "kind": "NetworkPolicy",
  "metadata": {"name": "allow-all", "namespace": "$ns"},
- "spec": {"order": 1, "selector": "all()", "types": ["Ingress"], "ingress": [{"action": "Allow"}]}}
+ "spec": {"order": 1, "selector": "all()", "types": ["Ingress", "Egress"], "ingress": [{"action": "Allow"}], "egress": [{"action": "Allow"}]}}
 EOF
 old_edge="$(ip "$ns" edge-recipes-old):8080"
 for _ in $(seq 1 30); do reach "${T[@]}" "$old_edge" && break; done
@@ -139,6 +176,10 @@ cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"     "with an allow-all Project 
 cannot "${T[@]}" "$(ip "$ns" auth-menu):4180"        "with an allow-all Project policy, the floor still denies Traefik -> a public App's oauth2-proxy"
 cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "with an allow-all Project policy, the floor still denies oauth2-proxy -> edge"
 cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"      "with an allow-all Project policy, the floor still denies Traefik -> App pods"
+can    "$ns" edge-recipes "$mail:8080"                     "with an allow-all Project policy, the edge still reaches the mail-port probe on 8080"
+for port in 25 465 587 2525; do
+  cannot "$ns" edge-recipes "$mail:$port"                  "with an allow-all Project policy, the floor still denies TCP $port"
+done
 k delete networkpolicies.projectcalico.org allow-all -n "$ns" >/dev/null 2>&1 || bad "could not delete the allow-all Project policy"
 
 k delete pod --all -n "$ns" --wait=false >/dev/null 2>&1

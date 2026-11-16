@@ -82,6 +82,14 @@ locals {
     # it, and the Deploys tab and the Add Service wizard say pushes do not
     # deploy while it is false. Unset, the console counts builds as on.
     { name = "BUILDS_ENABLED", value = tostring(var.builds_enabled) },
+    # B38: the one address Apps reach the internet from, which the console's
+    # Connect panel, /help/apps and `cloud help apps` print. Project pods
+    # leave through the home WAN, SNATed to config.tfvars public_ip (the same
+    # value the non-proxied A records use), so a new WAN address reaches
+    # Cloud with the next apply of this stack. A DNS name would not do: the
+    # cluster's resolvers answer *.viktorbarzin.me with internal addresses.
+    # Pod IPv6 is ULA with no NAT66, so Apps reach the internet over IPv4 only.
+    { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
   ]
 
   cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"

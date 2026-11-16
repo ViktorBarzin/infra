@@ -18,6 +18,10 @@ variable "image_tag" {
 
 variable "postgresql_host" { type = string }
 
+# The home WAN IPv4 (config.tfvars), where Project traffic leaves; the
+# console shows it as the Apps' outbound address (deploy_rules.tf).
+variable "public_ip" { type = string }
+
 variable "tls_secret_name" {
   type      = string
   sensitive = true

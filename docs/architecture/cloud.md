@@ -307,6 +307,17 @@ pods: the reconciler reached Forgejo, Prometheus, Loki, `api.github.com`,
 tier 4-aux egress is ever restricted, namespace `cloud` needs these allowed
 first. The Calico tier `cloud` applies to `p-*` namespaces only.
 
+Project egress (B38, 2026-11-16): the floor `cloud.project-egress-floor`
+denies TCP 25, 465, 587 and 2525 to every address before any Pass, so Apps
+cannot send email directly (Viktor's decision V8); Cloud's Project policy
+denies the same ports. Project pods leave through the home WAN, SNATed to
+`config.tfvars` `public_ip`, and pod IPv6 is ULA with no NAT66, so Apps
+egress over IPv4 only. The console gets that address as
+`CLOUD_OUTBOUND_IPV4` (`deploy_rules.tf`) and shows it in `/help/apps`, the
+Connect dialog and `cloud help apps`. A new WAN address reaches Cloud with
+the next apply of `stacks/cloud`. CrowdSec still whitelists the home
+address (`docs/agents/security.md`, "Open risk").
+
 ## A request to a Project App, and what admission allows
 
 Since app-kit K1 (the cloud repo's `docs/plans/2026-11-14-cloud-app-kit.md`)

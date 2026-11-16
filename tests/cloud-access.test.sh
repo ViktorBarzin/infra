@@ -27,8 +27,10 @@
 #     namespace where only RBAC would allow it;
 #   - Cloud's renderer and infra agree on the edge and oauth2-proxy images,
 #     the strip list, the Authentik slug and the egress exclusions; the egress
-#     floor mixes no IP families in a rule, allows DNS both ways, and ends in
-#     Deny; the ingress floor lets Traefik reach only edge pods, App pods only
+#     floor mixes no IP families in a rule, allows DNS both ways, denies
+#     TCP 25, 465, 587 and 2525 to every address before any Pass (the same
+#     ports Cloud's EGRESS_DENIED_TCP_PORTS denies), and ends in Deny; the
+#     ingress floor lets Traefik reach only edge pods, App pods only
 #     edge pods, oauth2-proxy pods only edge pods on TCP 4180, passes nothing
 #     from Traefik to oauth2-proxy pods or from oauth2-proxy pods to edge
 #     pods, and ends in Deny; each oauth2-proxy shape holds exactly one of
@@ -169,7 +171,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -289,6 +291,27 @@ for fam, net in [("ipv4", "0.0.0.0/0"), ("ipv6", "::/0")]:
     internet = [r for r in egress if r.get("destination", {}).get("nets") == [net]]
     if len(internet) != 1 or internet[0]["action"] != "Pass" or sorted(internet[0]["destination"].get("notNets", [])) != sorted(k["egress"][fam]):
         problems.append(f"floor: no single Pass to {net} minus the {fam} exclusions: {internet}")
+# The mail ports (V8): Cloud denies the same ones, and the floor denies them
+# in one TCP rule with no addresses (so both IP families) before every Pass.
+want_ports = [25, 465, 587, 2525]
+if sorted(k["denied_ports"]) != want_ports:
+    problems.append(f"denied TCP ports: infra {k['denied_ports']}, want {want_ports}")
+if sorted(contract.get("egressDeniedTcpPorts") or []) != sorted(k["denied_ports"]):
+    problems.append(f"denied TCP ports: Cloud {contract.get('egressDeniedTcpPorts')}, infra {k['denied_ports']}")
+smtp = [i for i, r in enumerate(egress) if r.get("action") == "Deny" and r.get("protocol") == "TCP"
+        and sorted(r.get("destination", {}).get("ports", [])) == sorted(k["denied_ports"])
+        and set(r.get("destination", {})) == {"ports"} and "source" not in r]
+first_pass = min([i for i, r in enumerate(egress) if r.get("action") == "Pass"], default=len(egress))
+if len(smtp) != 1 or smtp[0] > first_pass:
+    problems.append(f"floor: no single Deny of TCP {k['denied_ports']} to every address before the first Pass (rule {smtp}, first Pass {first_pass})")
+# Nothing before the Deny may let a mail port through: every earlier Allow or
+# Pass names ports, none of them a mail port, or is not TCP.
+for i, r in enumerate(egress[:smtp[0] if smtp else 0]):
+    if r.get("action") not in ("Allow", "Pass") or r.get("protocol") not in (None, "TCP"):
+        continue
+    ports = r.get("destination", {}).get("ports")
+    if not ports or set(ports) & set(k["denied_ports"]):
+        problems.append(f"floor rule {i} comes before the mail-port Deny and lets a mail port through: {r}")
 dns = [r for r in egress if r.get("action") == "Allow" and 53 in r.get("destination", {}).get("ports", [])]
 if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or not any("kube-dns" in r["destination"].get("selector", "") for r in dns):
     problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
@@ -433,7 +456,7 @@ apply_as() { local who="$1"; shift; "$who" apply --server-side --force-conflicts
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
 if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every ESO Vault auth method is allowed or refused"; fi
-if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug and egress exclusions; both floors are well formed; no policy takes a parameter; the taken hosts are written in"; fi
+if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug, egress exclusions and denied mail ports; both floors are well formed; no policy takes a parameter; the taken hosts are written in"; fi
 # calico-apiserver fails its readiness check some seconds after a policy it
 # cannot serve arrives, so the API is sampled for a minute.
 calico_api_steady() { # <what>

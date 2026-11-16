@@ -1714,7 +1714,10 @@ serverFiles:
             # agent parses only the traefik pod on its own node, so the crawl
             # appears on whichever agent holds the access log. Summing is
             # correct here, unlike the LAPI series where all replicas duplicate.
-            expr: sum(rate(cs_bucket_overflowed_total{name=~"viktor/.*crawl.*"}[1h])) * 3600 > 5
+            # job="crowdsec-agent" keeps out the crowdsec-shadow instance
+            # (stacks/crowdsec shadow.tf), which counts what the home address
+            # would trigger and bans nothing.
+            expr: sum(rate(cs_bucket_overflowed_total{job="crowdsec-agent", name=~"viktor/.*crawl.*"}[1h])) * 3600 > 5
             for: 15m
             labels:
               severity: warning

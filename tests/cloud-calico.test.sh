@@ -24,11 +24,14 @@
 #      oauth2-proxy reaches no edge and no App; App pods reach the CNPG primary and DNS, and
 #      not the Authentik server, a replica, Vault, other namespaces, the API
 #      server ClusterIP, the node or the home WAN IP; oauth2-proxy reaches the
-#      Authentik server; the kubelet's readiness probes pass the floors.
+#      Authentik server; the kubelet's readiness probes pass the floors; TCP
+#      25, 465, 587 and 2525 are denied even to a pod the sender may reach on
+#      8080 (and to smtp.gmail.com with CLOUD_CALICO_INTERNET=1, where
+#      1.1.1.1:443 connects).
 #      Then, with an allow-all Project policy in the default tier, the floor
 #      alone still denies Traefik to oauth2-proxy pods, oauth2-proxy pods to
-#      edge pods (the private App's path before app-kit K1) and Traefik to
-#      App pods.
+#      edge pods (the private App's path before app-kit K1), Traefik to
+#      App pods, and the mail ports.
 #
 # Needs docker, kind, kubectl, helm, python3 with PyYAML, bun, terraform (for
 # `terraform console`) and a cloud repo checkout with its pinned OpenTofu and

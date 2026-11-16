@@ -561,8 +561,10 @@ locals {
   #     SNATed and leaves as 176.12.22.76 too, and homelab controls trust that
   #     source: CrowdSec whitelists it (so a Project request through
   #     Cloudflare to a homelab host, which Traefik sees by Cf-Connecting-Ip,
-  #     is never banned), and backup-mx admits it (next entry). Viktor
-  #     decides the CrowdSec part (docs/agents/security.md, "Open risk").
+  #     is never banned), and backup-mx admits it (next entry). The
+  #     whitelist stays: CrowdSec cannot tell Project traffic from the
+  #     household's, which arrives with the same address, so a ban scoped
+  #     to Projects is not possible (docs/agents/security.md, "Open risk").
   #   92.5.132.215/32  backup-mx (mx2) on OCI, docs/runbooks/backup-mx.md. Its
   #     OCI security list (stacks/backup-mx) admits the home WAN IP on 22
   #     (break-glass SSH, key only) and 9100 (node_exporter). A Project pod
@@ -576,6 +578,16 @@ locals {
     ipv4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8", "176.12.22.76/32", "92.5.132.215/32"]
     ipv6 = ["fc00::/7", "fe80::/10", "::1/128", "2001:470:5a7f::/48", "2001:470:6f:43d::/64", "2001:470:6e:43d::/64"]
   }
+
+  # TCP ports no Project pod may reach, in either IP family (Viktor's
+  # decision V8, cloud critique M1): SMTP 25, SMTPS 465, submission 587 and
+  # the common alternative 2525. Project traffic leaves with the home WAN
+  # address, so one App sending spam could put that address on block lists,
+  # which would hurt the homelab mail server and every household service.
+  # Cloud's Project policy denies the same ports (EGRESS_DENIED_TCP_PORTS in
+  # render.ts; tests/cloud-access.test.sh compares them). Never empty: a
+  # Calico rule with no ports matches every port.
+  cloud_egress_denied_tcp_ports = [25, 465, 587, 2525]
 
   # Calico tier "cloud", which holds both floors below (main.tf applies it).
   cloud_tier = {
@@ -597,7 +609,8 @@ locals {
   # Service without its own NetworkPolicy. The floor allows what every
   # Project needs, passes the internet (minus cloud_egress_excluded) and
   # other managed namespaces to the default tier, where the Project policy
-  # can only narrow it, and denies the rest.
+  # can only narrow it, and denies the rest. Before any Pass it denies the
+  # mail ports (cloud_egress_denied_tcp_ports) everywhere.
   #
   # Calico refuses a rule whose nets mix IPv4 and IPv6 (libcalico-go
   # validator, validateRule), so each family has its own rule.
@@ -647,6 +660,11 @@ locals {
             ports             = [9000]
           }
         },
+        # The mail ports, to every destination: the rule names no addresses,
+        # so it covers IPv4 and IPv6. It sits before every Pass, so no
+        # Project policy can undo it. Rollback: revert the commit that added
+        # it and apply stacks/cloud.
+        { action = "Deny", protocol = "TCP", destination = { ports = local.cloud_egress_denied_tcp_ports } },
         # Pods in a managed namespace: the Project policy allows only its own
         # namespace. A GlobalNetworkPolicy cannot say "the same namespace".
         { action = "Pass", destination = { namespaceSelector = "${local.cloud_managed_label} == 'true'" } },

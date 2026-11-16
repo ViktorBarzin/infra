@@ -5,6 +5,9 @@
 variable "tls_secret_name" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
+# The home WAN IPv4 (config.tfvars), the only source the shadow instance
+# reads (modules/crowdsec/shadow.tf).
+variable "public_ip" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -21,6 +24,7 @@ module "crowdsec" {
   tls_secret_name                = var.tls_secret_name
   mysql_host                     = var.mysql_host
   postgresql_host                = var.postgresql_host
+  public_ip                      = var.public_ip
   homepage_username              = local.homepage_credentials["crowdsec"]["username"]
   homepage_password              = local.homepage_credentials["crowdsec"]["password"]
   enroll_key                     = data.vault_kv_secret_v2.secrets.data["crowdsec_enroll_key"]

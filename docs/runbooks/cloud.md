@@ -500,6 +500,57 @@ read-only:
 The User resumes it; an Operator does not scale it by hand, since the next
 apply would put Cloud's replicas back.
 
+## Apply B37 and B38 (mail ports, outbound address)
+
+Apply `stacks/cloud` from the main checkout before the Cloud release that
+carries B38 (cloud `docs/build/b37-b38-infra.md`). The floor's mail-port
+Deny takes effect for every Project at once. Check it from a fixture App:
+`/tcp?host=smtp.gmail.com&port=587` times out within 10 s, and
+`/tcp?host=1.1.1.1&port=443` connects (smtp.gmail.com does not answer on
+443 from anywhere). `cloud help apps` then prints the home address once.
+
+Rollback of the mail-port block: revert the commit that added the Deny to
+`cloud_project_egress_floor` and apply `stacks/cloud`. Cloud's Project
+policy keeps its own Deny until a Cloud release removes it.
+
+When the home WAN address changes, update `public_ip` in `config.tfvars`
+and apply `stacks/cloud` too, so the console shows the new address.
+
+## CrowdSec shadow for the home address
+
+The live CrowdSec whitelists the home address, so it never bans abuse that
+Project Apps send to homelab hosts through Cloudflare. Deployment
+`crowdsec-shadow` in namespace `crowdsec` (`stacks/crowdsec`, `shadow.tf`)
+counts which scenarios that address would trigger without the whitelist.
+It bans nothing: no bouncer reads it, its profile makes no decision, and it
+does not talk to the Central API. `docs/agents/security.md`, "Open risk",
+says why the live whitelist stays.
+
+It counts from the apply of `stacks/crowdsec` (2026-11-16 or later). On or
+after 2026-11-19, Viktor decides which scenarios, if any, may ban the home
+address. Read the counts two ways:
+
+```sh
+# Per scenario, kept in Prometheus across pod restarts:
+homelab metrics query 'sum by (name) (increase(cs_bucket_overflowed_total{app_kubernetes_io_name="crowdsec-shadow"}[3d]))'
+
+# Each alert, with its time and the line count. The list survives a container
+# restart and empties when the pod is replaced (emptyDir):
+kubectl -n crowdsec exec deploy/crowdsec-shadow -- cscli alerts list --limit 0
+kubectl -n crowdsec exec deploy/crowdsec-shadow -- cscli alerts inspect <id> --details
+```
+
+Every alert has the home address as its source, from a household device or
+from a Project App; the alert details show the hosts and paths, which tell
+the two apart. A scenario with household alerts would lock the household out
+of every homelab host if it banned the home address. `cscli decisions list`
+stays empty; any decision there is a fault.
+
+Remove it after the decision: delete `stacks/crowdsec/modules/crowdsec/shadow.tf`
+and the `public_ip` lines it added in `stacks/crowdsec/main.tf`, then apply
+`stacks/crowdsec`. A later scenario-scoped exception for the home address
+is a change to the live profiles and whitelist, made from those counts.
+
 ## Restart
 
 The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:

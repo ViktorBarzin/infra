@@ -98,6 +98,7 @@ await writeFile(
 			namespace: rendered.namespace,
 			images: renderer.IMAGES,
 			egressExcluded: renderer.EGRESS_EXCLUDED,
+			egressDeniedTcpPorts: renderer.EGRESS_DENIED_TCP_PORTS ?? null,
 			stripCookies: fixtures.INSTANCE.stripCookies,
 			authentik: fixtures.INSTANCE.authentik,
 			apps: Object.keys(rendered.tfvarsJson.apps),

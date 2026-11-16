@@ -45,7 +45,7 @@
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 200 }] } } },
-      "targets": [{ "expr": "cs_active_decisions", "legendFormat": "Decisions", "refId": "A" }]
+      "targets": [{ "expr": "cs_active_decisions{job=\"crowdsec\"}", "legendFormat": "Decisions", "refId": "A" }]
     },
     {
       "id": 5, "title": "DNS Queries (Last Hour)", "type": "stat",
@@ -96,9 +96,9 @@
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
       "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15, "lineWidth": 2, "drawStyle": "line", "showPoints": "never" } } },
       "targets": [
-        { "expr": "cs_active_decisions", "legendFormat": "Active Decisions", "refId": "A" },
-        { "expr": "cs_alerts", "legendFormat": "Total Alerts", "refId": "B" },
-        { "expr": "sum(rate(cs_lapi_route_requests_total[5m]))", "legendFormat": "LAPI req/s", "refId": "C" }
+        { "expr": "cs_active_decisions{job=\"crowdsec\"}", "legendFormat": "Active Decisions", "refId": "A" },
+        { "expr": "cs_alerts{job=\"crowdsec\"}", "legendFormat": "Total Alerts", "refId": "B" },
+        { "expr": "sum(rate(cs_lapi_route_requests_total{job=\"crowdsec\"}[5m]))", "legendFormat": "LAPI req/s", "refId": "C" }
       ]
     },
     {
@@ -107,8 +107,8 @@
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 1, "drawStyle": "line", "showPoints": "never" } } },
       "targets": [
-        { "expr": "histogram_quantile(0.50, sum(rate(cs_lapi_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
-        { "expr": "histogram_quantile(0.99, sum(rate(cs_lapi_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "B" }
+        { "expr": "histogram_quantile(0.50, sum(rate(cs_lapi_request_duration_seconds_bucket{job=\"crowdsec\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.99, sum(rate(cs_lapi_request_duration_seconds_bucket{job=\"crowdsec\"}[5m])) by (le))", "legendFormat": "p99", "refId": "B" }
       ]
     },
     {
