@@ -26,7 +26,7 @@ locals {
   # Upgrades: Renovate proposes newer vNNN-cuda-bNNNNN tags (a packageRule in
   # renovate.json5 reads the llama-swap release as major and the llama.cpp
   # build as minor). After a bump, check generation output on each model.
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:v273-cuda-b12429@sha256:46406ce2766b9269bda3d154c728bba70aa32db0676469c218bd049694476d62"
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:v273-cuda-b12429@sha256:455fb560c326afd866c214fdedd2bc145e9ca98d3ec1c6ce31751ada922862f4"
 
   # Model set: one text-only LLM (qwen3-8b), for paperless-ngx's native AI
   # (paperless-ai until 2026-10-12, now scaled to 0). Since 2026-10-11
