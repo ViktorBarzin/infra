@@ -74,6 +74,16 @@
 #     backends and homelab hosts, quota and limit range labels, names, scope
 #     and ephemeral storage, SecretStore and ExternalSecret stores, and any
 #     Traefik Middleware;
+#   - the migrate Job Cloud's own code builds (migrate-job.ts, B16) is
+#     admitted as the reconciler, and so is a pod the Job controller would
+#     make from it; each variant cloud-managed-job forbids is refused (a
+#     second container, a command, no args or too many, an image by tag, a
+#     port or probe, restartPolicy OnFailure, retries, no deadline or TTL,
+#     more than one pod, another name, an owner, the component app without
+#     a CronJob owner, another component), as are a migrate pod with no Job
+#     owner and a Deployment of migrate pods; the reconciler may create,
+#     get, list and delete Jobs and read pod logs in its namespaces only,
+#     and may not create pods itself;
 #   - the reconciler cannot read Secrets outside a Project namespace;
 #   - it creates only p-* namespaces carrying the contract's labels, cannot
 #     label or delete other namespaces, and writes only in managed namespaces,
@@ -545,6 +555,20 @@ expect_fail "reconciler cannot bind the project role to system:authenticated" "m
   apply_as kr < <(rb_subject_doc p-demo '{kind: Group, apiGroup: rbac.authorization.k8s.io, name: "system:authenticated"}')
 expect_ok   "reconciler writes a ConfigMap in p-demo" apply_as kr < <(cm_doc p-demo)
 expect_ok   "reconciler reads Secrets in p-demo" kr get secrets -n p-demo
+# A Deploy's migrations (B16): the reconciler starts, reads, lists and
+# deletes Jobs and reads its pods' logs in its own namespaces only, and
+# changes no Job in place.
+expect_ok   "reconciler lists Jobs in p-demo" kr get jobs -n p-demo
+for verb in create get list delete; do
+  can "$verb" jobs.batch -n p-demo && ok "reconciler may $verb Jobs in p-demo" || bad "reconciler may not $verb Jobs in p-demo"
+done
+for verb in update patch; do
+  cannot "$verb" jobs.batch -n p-demo && ok "reconciler may not $verb Jobs in p-demo" || bad "reconciler may $verb Jobs in p-demo"
+done
+can get pods/log -n p-demo && ok "reconciler reads pod logs in p-demo" || bad "reconciler cannot read pod logs in p-demo"
+cannot create jobs.batch -n default && ok "reconciler cannot create Jobs outside its namespaces" || bad "reconciler creates Jobs anywhere"
+cannot get pods/log -n kube-system && ok "reconciler cannot read pod logs in kube-system" || bad "reconciler reads pod logs in kube-system"
+cannot create pods -n p-demo && ok "reconciler cannot create pods itself, only Jobs" || bad "reconciler creates pods"
 expect_fail "reconciler cannot write in p-other before binding there" "forbidden" apply_as kr < <(cm_doc p-other)
 expect_ok   "admin binds the project role in unlabelled p-adopt (a mistake)" apply_as ka < <(rb_doc p-adopt "$PROJECT_ROLE")
 expect_fail "admission still stops the reconciler writing in p-adopt" "cloud-reconciler may write only" apply_as kr < <(cm_doc p-adopt)
@@ -822,6 +846,9 @@ api_after() { # <dump dir> <what>
   fi
 }
 api_after "$TMP/dump" "combined Project"
+# The migrate Job Cloud's own code builds for the public App (render.ts),
+# checked with the Project's objects (variants.py).
+cp "$TMP/tofu/migrate-job.json" "$TMP/dump/" 2>/dev/null
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
   check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.

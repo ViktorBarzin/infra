@@ -353,8 +353,9 @@ Traefik reach only edge pods with the `edge-config` label.
 flowchart LR
   T[Traefik] -->|Ingress app-app| E["edge-app<br/>Caddy"]
   E -->|"/oauth2/auth, /oauth2/*<br/>TCP 4180"| O["auth-app<br/>oauth2-proxy"]
-  E -->|"X-Cloud-User-* +<br/>X-Cloud-Edge-Secret"| A["app-app<br/>App code, init container migrate"]
+  E -->|"X-Cloud-User-* +<br/>X-Cloud-Edge-Secret"| A["app-app<br/>App code"]
   O -->|"TCP 9000"| AK[Authentik server]
+  R[cloud-reconciler] -->|"once per Deploy,<br/>before the rollout"| J["Job app-app-m&lt;deploy&gt;<br/>container migrate"]
 ```
 
 `stacks/cloud/access_rules.tf` pins this. `cloud-managed-edge-config`
@@ -375,6 +376,24 @@ one init container, `migrate` (app-kit K3), with the App container's image
 and no `restartPolicy`; edge and oauth2-proxy pods may have none, and every
 container rule (extended resources, ephemeral limits, probe and hook
 hosts) covers init containers too.
+
+A Deploy's migrations (cloud backlog B16) run once per Deploy, before its
+rollout, as a Job the reconciler starts through the Kubernetes API (the
+cloud repo's `src/reconciler/migrate-job.ts`; the App pod's init container
+stays only behind `RECONCILE_MIGRATE_AS=init` for one release). The
+project role grants `create`, `get`, `list` and `delete` on `jobs` and
+`get` on `pods/log`, and no `create` on pods. `cloud-managed-job` admits a
+Job whose pod template passes every pod rule and which runs one pod once
+(`backoffLimit` 0, `restartPolicy: Never`, a deadline up to 12 h, a TTL up
+to a day). It is either a Deploy's migrations, component `migrate`, named
+`app-<app>-m<9 hex>`, with no owner, or a cron run (B19), component `app`,
+owned by a CronJob `cron-*`. A `migrate` pod has one container `migrate`
+running an image by digest with no command and 1 to 8 args, no port, probe
+or hook. Only its Job makes it: `cloud-managed-pod` wants a controlling Job
+owner, and `cloud-managed-deployment` refuses the component. The App's
+Kubernetes Service selects component `app`, so it never sends the Job a
+request. The ingress floor has no rule for `migrate` pods; egress is the
+Project's, as for the App.
 
 The shapes from before K1 are refused: `cloud-managed-ingress` admits
 only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge

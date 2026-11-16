@@ -12,6 +12,8 @@
  *                          oauth2-proxy images, the egress exclusions, the
  *                          strip list, the Authentik slug and the namespace
  *
+ *   migrate-job.json       the migrate Job Cloud starts for a Deploy of the
+ *                          public App (src/reconciler/migrate-job.ts, B16)
  *   fixtures/<n>/          the same two files for each of Cloud's snapshot
  *                          fixtures (render.fixtures.ts FIXTURES), and
  *   fixtures.json          [{dir, name, namespace}] listing them in order
@@ -81,6 +83,27 @@ async function writeRoot(dir: string, projectFile: unknown, images = {}) {
 }
 
 const rendered = await writeRoot(out, spec, { menu: MENU_IMAGE });
+
+// The migrate Job Cloud starts for a Deploy of menu (B16), built by Cloud's
+// own code from menu's rendered variables. A cloud checkout from before B16
+// has no migrate-job.ts and writes none.
+const migrateJobFile = join(repo, "src/reconciler/migrate-job.ts");
+if (await Bun.file(migrateJobFile).exists()) {
+	const { migrateJob } = await import(migrateJobFile);
+	const { APP_EPHEMERAL } = await import(join(repo, "src/lib/plan.ts"));
+	const job = migrateJob({
+		namespace: rendered.namespace,
+		project: rendered.tfvarsJson.project,
+		app: "menu",
+		deployId: "0f9a8b7c-1d2e-4f30-8a9b-0c1d2e3f4a5b",
+		args: ["entrypoints/migrate.js"],
+		vars: rendered.tfvarsJson.apps.menu,
+		appPort: fixtures.INSTANCE.appPort,
+		ephemeral: APP_EPHEMERAL,
+		activeDeadlineSeconds: 900,
+	});
+	await writeFile(join(out, "migrate-job.json"), JSON.stringify(job, null, 2));
+}
 
 const list: { dir: string; name: string; namespace: string }[] = [];
 for (const [i, [name, projectFile]] of Object.entries(

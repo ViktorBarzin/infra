@@ -866,6 +866,27 @@ An Event is missing when the reconciler cannot read the namespace (its log
 says "cannot read the Project's pods" at debug level) or the Project is
 converging: the rollout check judges new pods then.
 
+## A Deploy failed its migrations
+
+Since cloud backlog B16 an App's `migrate` runs once per Deploy, before the
+rollout, as Job `app-<app>-m<first 9 hex of the Deploy id>` in
+`p-<project>` (component `migrate`). A failure fails the Deploy before the
+apply, so the version before keeps serving; `cloud deploys log <project>
+<app> <id>` ends with the migrations' output after a `==> migrate` line,
+and `cloud logs <project> <app> --deploy <version>` shows their lines. Read
+the Job read-only while it lasts (an hour after it ends):
+`kubectl -n p-<project> get jobs -l cloud.viktorbarzin.me/component=migrate`
+and `kubectl -n p-<project> describe job <name>`. A Job the reconciler gave
+up on (its pod never started within 10 min, or ran past
+`RECONCILE_ROLLOUT_SECONDS`) is deleted with its pod. A Deploy whose Job
+needs a Secret its own apply creates (a Postgres connected in the same
+apply) stays `deploying`, and a follow-up apply runs it.
+
+Rollback for one release: set `RECONCILE_MIGRATE_AS=init` on the
+`cloud-reconciler` Deployment (`stacks/cloud`, a Terraform change). Each
+App's next apply renders the init container `migrate` again, and no Job
+starts.
+
 ## Alerts
 
 | Alert | Pages | First step |
