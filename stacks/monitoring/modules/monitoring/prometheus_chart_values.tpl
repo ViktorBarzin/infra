@@ -7278,6 +7278,26 @@ serverFiles:
             annotations:
               summary: "Dawarich ingestion freshness monitor has never pushed"
               description: "Expected `dawarich_ingestion_monitor_last_push_timestamp` to appear once the daily CronJob runs. Check the CronJob in dawarich namespace."
+          # Camera import (stacks/camera-import): the uploader container pushes
+          # these gauges every 30 s round. A photo the camera has sent sits in
+          # the inbox until Immich takes it, and the camera already shows it as
+          # sent, so a stuck inbox is a silent gap in the library.
+          - alert: CameraImportStuck
+            expr: camera_import_oldest_waiting_seconds > 3600
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Camera import: {{ $value | humanizeDuration }} since the oldest photo reached the inbox, still not in Immich"
+              description: "Photos from the Z5 II reached the SFTP inbox but the Immich CLI has not taken them. `kubectl -n camera-import logs deploy/camera-import -c uploader` shows the CLI's reason per file. Runbook: docs/runbooks/camera-import.md."
+          - alert: CameraImportUploaderStale
+            expr: (time() - camera_import_last_run_timestamp) > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Camera import uploader has not reported for 30m"
+              description: "The uploader loop in camera-import pushes every 30 s. Check `kubectl -n camera-import get pods` and the uploader container's logs. Runbook: docs/runbooks/camera-import.md."
           # Dawarich Sidekiq, from the yabeda exporter enabled 2026-09-04
           # (code-1q5). Metric names below were read off the live endpoint, not
           # the yabeda-sidekiq README — note `sidekiq_queue_latency` carries no
