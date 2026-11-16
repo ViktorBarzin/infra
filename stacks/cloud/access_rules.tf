@@ -124,7 +124,8 @@
 # oauth2-proxy pods only from edge pods on 4180; Cloud's Project policy
 # narrows that to the App's own pods. An internal App has no edge, no
 # oauth2-proxy and no Ingress, so nothing outside the cluster reaches it:
-# the floor also passes App pods to App pods on the App port
+# the floor also passes App pods to an internal App's pods (label
+# cloud.viktorbarzin.me/access=internal) on the App port
 # (local.cloud_app_port), and Cloud's Project policy admits there only the
 # App pods of its own namespace whose App lists the internal App in
 # connects. Cloud's edge.test.ts runs the
@@ -310,6 +311,9 @@ locals {
   # its pods on this port, and the ingress floor passes App to App on this
   # port only. tests/cloud-access.test.sh compares it with Cloud's.
   cloud_app_port = 3000
+  # The pod label that marks an internal App's pods (the cloud repo's
+  # modules/app, app_pod_labels).
+  cloud_access_label = "cloud.viktorbarzin.me/access"
 
   # Anything looser would let the reconciler change what the edge strips
   # without touching its Caddyfile: a command or exec hook runs another
@@ -760,16 +764,21 @@ locals {
           source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
           destination = { selector = "${local.cloud_component_label} == 'app'" }
         },
-        # An internal App's callers: App pods to App pods, on the App port
-        # only, inside managed namespaces. Cloud's Project policy admits
-        # only its own namespace's callers (the cloud repo's
-        # modules/project, internal_callers); Traefik and the LAN never
-        # match this rule.
+        # An internal App's callers: App pods to the pods of an internal
+        # App (label access=internal, which the cloud repo's modules/app
+        # sets on those pods only), on the App port only, inside managed
+        # namespaces. A public or private App's pods never match, so they
+        # stay reachable through their edge only, even in a Project whose
+        # policy is not there yet. A GlobalNetworkPolicy cannot say "the
+        # same namespace": Cloud's Project policy admits only its own
+        # namespace's callers (modules/project, internal_callers), and
+        # modules/app starts App pods only once that policy exists. Traefik
+        # and the LAN never match this rule.
         {
           action      = "Pass"
           protocol    = "TCP"
           source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == 'app'" }
-          destination = { selector = "${local.cloud_component_label} == 'app'", ports = [local.cloud_app_port] }
+          destination = { selector = "${local.cloud_component_label} == 'app' && ${local.cloud_access_label} == 'internal'", ports = [local.cloud_app_port] }
         },
         { action = "Deny" },
       ]

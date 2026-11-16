@@ -31,8 +31,9 @@
 #     TCP 25, 465, 587 and 2525 to every address before any Pass (the same
 #     ports Cloud's EGRESS_DENIED_TCP_PORTS denies), and ends in Deny; the
 #     ingress floor lets Traefik reach only edge pods, App pods only
-#     edge pods and App pods of managed namespaces on TCP 3000 (Cloud's
-#     App port, an internal App's callers), oauth2-proxy pods only edge
+#     edge pods, internal App pods (access=internal) also App pods of
+#     managed namespaces on TCP 3000 (Cloud's App port, an internal App's
+#     callers), oauth2-proxy pods only edge
 #     pods on TCP 4180, passes nothing
 #     from Traefik to oauth2-proxy pods or from oauth2-proxy pods to edge
 #     pods, and ends in Deny; each oauth2-proxy shape holds exactly one of
@@ -344,9 +345,9 @@ if contract.get("appPort") != k["app_port"]:
     problems.append(f"App port: Cloud renders {contract.get('appPort')}, infra's floor passes {k['app_port']}")
 app_to_app = {"action": "Pass", "protocol": "TCP",
               "source": {"namespaceSelector": managed, "selector": "cloud.viktorbarzin.me/component == 'app'"},
-              "destination": {"selector": "cloud.viktorbarzin.me/component == 'app'", "ports": [k["app_port"]]}}
+              "destination": {"selector": "cloud.viktorbarzin.me/component == 'app' && cloud.viktorbarzin.me/access == 'internal'", "ports": [k["app_port"]]}}
 if [r for r in ing["ingress"] if r == app_to_app] != [app_to_app]:
-    problems.append(f"ingress floor: no single Pass of App pods to App pods on TCP {k['app_port']} inside managed namespaces")
+    problems.append(f"ingress floor: no single Pass of App pods to internal App pods (access=internal) on TCP {k['app_port']} inside managed namespaces")
 if ing.get("types") != ["Ingress"] or ing.get("tier") != "cloud" or ing["ingress"][-1] != {"action": "Deny"}:
     problems.append(f"ingress floor: not an Ingress policy in tier cloud ending in Deny: {ing}")
 comp = "cloud.viktorbarzin.me/component"

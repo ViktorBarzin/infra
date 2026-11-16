@@ -596,8 +596,8 @@ design, at creation and before every delivery.
 ## Apply B17 (internal Apps)
 
 Apply `stacks/cloud` from the main checkout before the Cloud release that
-carries B17: the ingress floor gains the Pass of App pods to App pods on
-TCP 3000. Until it is applied, an internal App's callers time out. Check
+carries B17: the ingress floor gains the Pass of App pods to internal App
+pods (label `cloud.viktorbarzin.me/access=internal`) on TCP 3000. Until it is applied, an internal App's callers time out. Check
 it with two fixture Apps in one Project, `a` with `access: internal` and
 `b` with `connects: [a]`: `https://a.viktorbarzin.me` answers 404, b's
 `/fetch?url=http://app-a.p-<project>.svc.cluster.local/info` answers 200,

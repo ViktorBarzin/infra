@@ -406,12 +406,16 @@ to edge pods, so a Project policy cannot open the old path either.
 
 Internal Apps (B17, 2026-11-16): an App with `access: internal` runs only
 its App Deployment and Kubernetes Service `app-<app>`, with no edge,
-oauth2-proxy or Ingress. Its https address answers 404 like any unknown
-host, and Cloud keeps its name held. The Apps of its Project that list it
+oauth2-proxy or Ingress. Its https address answers 404 from the internet
+like any unknown host, and external-dns-cloud writes no LAN record, since
+there is no Ingress. Cloud keeps its name held. The Apps of its Project that list it
 in `connects` call `http://app-<app>.p-<project>.svc.cluster.local` from
-their `CLOUD_URL_<NAME>`. The ingress floor passes App pods to App pods on
-TCP 3000 (`cloud_app_port`, Cloud's App port) inside managed namespaces
-only, and Cloud's Project policy admits only its own namespace's callers.
+their `CLOUD_URL_<NAME>`. The ingress floor passes App pods to internal App
+pods (label `cloud.viktorbarzin.me/access=internal`) on TCP 3000
+(`cloud_app_port`, Cloud's App port) inside managed namespaces only, and
+Cloud's Project policy admits only its own namespace's callers. The floor
+cannot say "the same namespace"; Cloud starts App pods only after the
+Project policy exists.
 Admission needs no new rule: an App Deployment never needed an edge
 sibling, and `tests/cloud-access.test.sh` applies one through every policy.
 

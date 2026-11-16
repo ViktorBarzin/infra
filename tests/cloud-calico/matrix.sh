@@ -43,6 +43,7 @@ EOF
 C=cloud.viktorbarzin.me/component
 S=cloud.viktorbarzin.me/service
 E=cloud.viktorbarzin.me/edge-config
+A=cloud.viktorbarzin.me/access
 # recipes is the private App, menu the public one; both have an oauth2-proxy,
 # which listens on its real port, 4180 (app-kit K1: the edge asks it). Edge
 # pods carry the Caddyfile digest label E, as modules/app sets it;
@@ -57,7 +58,7 @@ probe "$ns" edge-menu "{\"$C\": \"edge\", \"$S\": \"menu\", \"$E\": \"fedcba9876
 probe "$ns" auth-menu "{\"$C\": \"oauth2-proxy\", \"$S\": \"menu\"}" 4180
 # pricing is the internal App: no edge, no oauth2-proxy; its pod listens on
 # the App port, 3000. menu lists it in connects; recipes does not.
-probe "$ns" app-pricing "{\"$C\": \"app\", \"$S\": \"pricing\"}" 3000
+probe "$ns" app-pricing "{\"$C\": \"app\", \"$S\": \"pricing\", \"$A\": \"internal\"}" 3000
 # A pod of the private App that listens on the mail ports and on 8080
 # (agnhost porter; the sysctl lets it bind ports under 1024 as non-root).
 # Its own edge reaches it, so a refused mail port shows the Deny rule.
@@ -79,12 +80,18 @@ EOF
 # Another Project, with an edge pod claiming to front recipes.
 probe p-other edge-recipes "{\"$C\": \"edge\", \"$S\": \"recipes\", \"$E\": \"0123456789abcdef\"}"
 probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
+# A third Project with no Project policy at all (its first apply, or a
+# failed Calico apply): a public App's pod and an internal App's pod, both
+# on the App port. Only the floor stands between them and p-other.
+probe p-third app-shop "{\"$C\": \"app\", \"$S\": \"shop\"}" 3000
+probe p-third app-quotes "{\"$C\": \"app\", \"$S\": \"quotes\", \"$A\": \"internal\"}" 3000
 
 # Every probe answers its kubelet readiness probe, which comes from the node:
 # the floors must not block it.
 # Cloud's own pods may still be terminating, so wait for the probes by name.
 if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu pod/app-pricing --timeout=180s >/dev/null 2>&1 \
-  && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1; then
+  && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1 \
+  && k wait --for=condition=Ready -n p-third pod/app-shop pod/app-quotes --timeout=60s >/dev/null 2>&1; then
   ok "every probe pod in $ns and p-other passes the kubelet's readiness probe"
 else
   bad "probe pods not Ready: $( (k get pods -n "$ns" --no-headers; k get pods -n p-other --no-headers) 2>&1 | tr '\n' ';')"
@@ -126,6 +133,9 @@ cannot p-other app-other "$pricing"                      "an App in another Proj
 cannot "${T[@]}" "$pricing"                              "Traefik does not reach the internal App"
 cannot "$ns" edge-menu "$pricing"                        "an edge does not reach the internal App"
 cannot homelab-app client "$pricing"                     "a homelab namespace does not reach the internal App"
+# With no Project policy in p-third, the floor alone decides.
+cannot p-other app-other "$(ip p-third app-shop):3000"   "with no Project policy, an App in another Project does not reach a public App's pod on the App port (the floor needs access=internal)"
+can    p-other app-other "$(ip p-third app-quotes):3000" "with no Project policy, the floor alone passes an internal App's pod on the App port (the Project policy, which modules/app waits for, narrows it)"
 # Other namespaces.
 cannot p-other edge-recipes "$(ip "$ns" app-recipes):8080" "an edge pod in another Project does not reach this App, even with its service label"
 cannot "$ns" app-recipes "$(ip p-other app-other):8080"    "App pods do not reach another Project's pods"

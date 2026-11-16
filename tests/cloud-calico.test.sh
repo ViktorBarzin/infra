@@ -23,7 +23,9 @@
 #      each edge reaches only its own App and its own oauth2-proxy on 4180;
 #      oauth2-proxy reaches no edge and no App; only the App that connects
 #      to the internal App reaches it, on the App port 3000, and no other
-#      App, edge, Traefik, homelab namespace or other Project does; App pods reach the CNPG primary and DNS, and
+#      App, edge, Traefik, homelab namespace or other Project does; in a
+#      Project with no policy the floor alone keeps another Project off a
+#      public App's pods on 3000 (it passes only access=internal pods); App pods reach the CNPG primary and DNS, and
 #      not the Authentik server, a replica, Vault, other namespaces, the API
 #      server ClusterIP, the node or the home WAN IP; oauth2-proxy reaches the
 #      Authentik server; the kubelet's readiness probes pass the floors; TCP
@@ -159,16 +161,18 @@ standin dbaas replica '{"cnpg.io/cluster": "pg", "cnpg.io/instanceRole": "replic
 standin vault vault '{"app.kubernetes.io/name": "vault"}' 8200
 kubectl create service clusterip pg -n dbaas --tcp=5432:5432 >/dev/null
 kubectl set selector service pg -n dbaas 'cnpg.io/instanceRole=primary' >/dev/null
-# A second Project namespace for the cross-Project checks.
-cat <<'EOF' | kubectl apply -f - >/dev/null
+# Two more Project namespaces for the cross-Project checks, with no Project
+# policy: p-third holds the floor-alone cases.
+for n in p-other p-third; do cat <<EOF | kubectl apply -f - >/dev/null
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: p-other
+  name: $n
   labels:
     cloud.viktorbarzin.me/managed: "true"
     pod-security.kubernetes.io/enforce: restricted
 EOF
+done
 for n in traefik homelab-app authentik dbaas vault; do
   kubectl wait --for=condition=Ready pod --all -n "$n" --timeout=180s >/dev/null || { bad "stand-in pods in $n not Ready"; }
 done
