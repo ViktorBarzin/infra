@@ -894,6 +894,30 @@
         path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         state: absent
 
+    # PostgreSQL's own repo (PGDG), for postgresql-client-18: Ubuntu noble
+    # ships client 16, and Cloud's Projects run on PostgreSQL 18
+    # (pg-cluster-v18), whose pg_dump refuses an older client. Installing it
+    # moves libpq5 and postgresql-client-common to PGDG builds; the psql
+    # wrapper then picks the newest client. Key pinned by checksum like the
+    # two above (fingerprint B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8).
+    - name: Install the PostgreSQL signing key
+      tags: [packages]
+      ansible.builtin.get_url:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        dest: /etc/apt/keyrings/postgresql.asc
+        checksum: sha256:0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
+        mode: "0644"
+
+    - name: Declare the PostgreSQL apt source
+      tags: [packages]
+      register: devvm_pgdg_source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pgdg.list
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          deb [signed-by=/etc/apt/keyrings/postgresql.asc] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main
+
     - name: Install the declared apt packages
       ansible.builtin.apt:
         name: "{{ devvm_packages }}"
@@ -924,6 +948,16 @@
           {{ (devvm_docker_source.changed | default(false))
              or (devvm_kubernetes_source.changed | default(false))
              or (devvm_hashicorp_source.changed | default(false)) }}
+      tags: [packages]
+
+    # A --check run does not write the PGDG source, so on a box without it
+    # the package cannot resolve yet; the task is skipped in that one case.
+    - name: Install the PostgreSQL 18 client
+      ansible.builtin.apt:
+        name: postgresql-client-18
+        state: present
+        update_cache: "{{ devvm_pgdg_source.changed | default(false) }}"
+      when: not (ansible_check_mode and (devvm_pgdg_source.changed | default(false)))
       tags: [packages]
 
     # Google Chrome, which T3's headless browser and the agents' Playwright
@@ -1682,10 +1716,10 @@
     # lobby at all -- found by installing the package on a blank VM, where ttyd
     # was the one service that would not start.
     #
-    # This is the ONLY account this playbook creates. Everyone else comes from
-    # the roster (infra#88). Strictly additive: groups are appended, an existing
-    # account is never re-shelled, re-homed or re-permissioned, so this is a
-    # no-op against the live box.
+    # This and the e2e persona below are the only accounts this playbook
+    # creates. Every person comes from the roster (infra#88). Strictly
+    # additive: groups are appended, an existing account is never re-shelled,
+    # re-homed or re-permissioned, so this is a no-op against the live box.
     - name: Create the shared code group
       ansible.builtin.group:
         name: code-shared
@@ -1706,6 +1740,42 @@
         key: "{{ devvm_admin_ssh_key }}"
         state: present
       when: devvm_admin_ssh_key | length > 0
+
+    # ---- 5c) the Cloud e2e persona ----------------------------------------
+    # A test account, not a person: Viktor's agents run Cloud's blind
+    # end-to-end tests as it (cloud repo, render-parity backlog item B00;
+    # docs/runbooks/cloud.md, "E2e persona"). Its tests may use only the
+    # `cloud` CLI, the console and Cloud's User docs, never the cloud or infra
+    # repos or kubectl. So it is made here and not from the roster: a roster
+    # row gives every non-admin a locked infra clone, an infra fork and a
+    # kubeconfig, needs a tier and a k8s_user, and t3-membership-sync comments
+    # the row out unless the account is in "T3 Users". The provisioner acts
+    # only on roster rows, so it leaves this account alone.
+    #
+    # No password (sudo -u persona only), no supplementary group: code-shared
+    # guards wizard's ~/code, and docker and sudo are root on the box. `cloud`
+    # and psql are machine-wide (7a1c, 1b). Its credentials are files in its
+    # home, written by an admin from Vault secret/cloud/persona.
+    - name: Create the Cloud e2e persona account
+      ansible.builtin.user:
+        name: persona
+        comment: Cloud e2e persona (test account)
+        shell: /bin/bash
+        create_home: true
+        password_lock: true
+        groups: ""
+        append: false
+        state: present
+      tags: [persona]
+
+    - name: Keep the persona's home private
+      ansible.builtin.file:
+        path: /home/persona
+        state: directory
+        owner: persona
+        group: persona
+        mode: "0700"
+      tags: [persona]
 
     # ---- 6) the apt source that delivers terminal-lobby ---------------------
     # The package is built off-infra and published to Forgejo's Debian registry.

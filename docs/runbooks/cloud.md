@@ -304,6 +304,52 @@ repo".
 Cloud's round-4 end-to-end test hit the vouch: a test account made by hand
 had no vouch, so Authentik refused its own private App.
 
+## E2e persona
+
+`persona` is a test account, not a person. Viktor's agents run Cloud's blind
+end-to-end tests as it (cloud repo `docs/build/render-parity`, item B00). Its
+tests may use only the `cloud` CLI, the console and Cloud's User docs.
+
+| Part | Where | Made by |
+|---|---|---|
+| Authentik user `persona`, email `persona@viktorbarzin.me`, no password | `stacks/authentik/e2e-persona.tf` | Terraform |
+| Group "Agent impersonatable", so `homelab browser ... --as persona` works | `stacks/authentik/agent-service-account.tf` | Terraform |
+| Groups Cloud Users and Cloud Email Vouched | Authentik, runtime | `cloud users add persona --vouch persona@viktorbarzin.me --yes` |
+| OS user `persona` on the devvm, no supplementary group, home 0700 | `playbooks/devvm.yml`, tag `persona` | Ansible |
+| Local Forgejo account `persona` (source 0), email verified; token `cloud-e2e` with `write:repository` and `write:user` | Forgejo, runtime | admin API |
+| Credentials: `forgejo_user`, `forgejo_password`, `forgejo_token`, `authentik_user`, `email` | Vault `secret/cloud/persona` | by hand |
+| Budget | Cloud's database | Operator `PATCH /api/v1/users/<id>/budget` |
+
+The OS user comes from the playbook, not from `roster.yaml`:
+
+- a roster row gives every non-admin a locked infra clone, a Forgejo fork of
+  `viktor/infra` and a kubeconfig, which the tests forbid;
+- the roster requires a `tier` and a `k8s_user`, and the persona has neither;
+- `t3-membership-sync` comments out every non-admin row whose user is not in
+  "T3 Users", and that group admits its members to `t3.viktorbarzin.me`.
+
+The provisioner acts only on roster rows, so it leaves the account alone.
+The Forgejo account links to the persona's Cloud sign-in by email: the vouch
+from `cloud users add` and the verified address on Forgejo (step 4 of "Add
+a Cloud User"). Mail to `persona@` goes to the domain catch-all until the
+mailserver has a `persona@` mailbox.
+
+To sign the persona in to the CLI with no person, an admin starts
+`sudo -u persona -H cloud login` and approves the device code in the cluster
+browser as `persona` (`homelab browser run <script> --as persona`). Its git
+login is `~persona/.git-credentials`, mode 0600, written from Vault:
+
+```sh
+vault kv get -field=forgejo_token secret/cloud/persona | sudo -u persona -H sh -c \
+  'umask 077; read -r t; printf "https://persona:%s@forgejo.viktorbarzin.me\n" "$t" > ~/.git-credentials;
+   git config --global credential.helper store'
+```
+
+To disable the persona, set `is_active = false` on `authentik_user.persona`
+and apply `authentik`. That stops impersonation and every sign-in. Then
+revoke its Forgejo token: `DELETE /api/v1/users/persona/tokens/cloud-e2e` as
+an admin. Its Projects stay until an Operator deletes them.
+
 ## Guest invites
 
 A private App's owner, or an Operator, invites an email from the console

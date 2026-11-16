@@ -327,8 +327,9 @@ How it works:
    (`stacks/authentik/agent-service-account.tf`), which grants
    `authentik_core.view_user` globally and `authentik_core.impersonate` on
    each member of "Agent impersonatable" only (object permissions). Add a user
-   to `agent_impersonatable_usernames` there to allow it. Members: Viktor, emo
-   and the guest account.
+   to `agent_impersonatable_usernames` there to allow it. Members: Viktor, emo,
+   the guest account and the Cloud e2e persona `persona`
+   (`stacks/authentik/e2e-persona.tf`, which joins by resource reference).
 3. The pool browser gets a fresh context with only that Authentik session, and
    no hub cookies. Forward-auth and OIDC apps then sign in as the target user.
 4. On exit the CLI runs `default-invalidation-flow`, which logs the session out

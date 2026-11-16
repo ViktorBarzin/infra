@@ -118,8 +118,10 @@ resource "authentik_rbac_role" "agent_impersonation" {
 # POST /api/v3/core/users/<pk>/impersonate/.
 #
 # Members: Viktor, whose agents test apps as him; emo, whose Cloud sign-ins
-# and apps Viktor's agents set up and test as him (added 2026-11-16); and the
-# guest account. Only Viktor-tier credentials read svc-agent's login (Vault
+# and apps Viktor's agents set up and test as him (added 2026-11-16); the
+# guest account; and the Cloud e2e persona (e2e-persona.tf), which is a
+# resource in this stack and so joins by reference, not by the lookup below.
+# Only Viktor-tier credentials read svc-agent's login (Vault
 # secret/authentik-agent).
 locals {
   agent_impersonatable_usernames = ["vbarzin@gmail.com", "emil.barzin@gmail.com", "guest"]
@@ -131,8 +133,11 @@ data "authentik_user" "agent_impersonatable" {
 }
 
 resource "authentik_group" "agent_impersonatable" {
-  name  = "Agent impersonatable"
-  users = [for u in data.authentik_user.agent_impersonatable : u.id]
+  name = "Agent impersonatable"
+  users = concat(
+    [for u in data.authentik_user.agent_impersonatable : u.id],
+    [authentik_user.persona.id],
+  )
 }
 
 resource "authentik_rbac_permission_role" "agent_impersonate" {
@@ -141,6 +146,13 @@ resource "authentik_rbac_permission_role" "agent_impersonate" {
   permission = "authentik_core.impersonate"
   model      = "authentik_core.user"
   object_id  = tostring(each.value.pk)
+}
+
+resource "authentik_rbac_permission_role" "agent_impersonate_persona" {
+  role       = authentik_rbac_role.agent_impersonation.id
+  permission = "authentik_core.impersonate"
+  model      = "authentik_core.user"
+  object_id  = authentik_user.persona.id
 }
 
 resource "authentik_rbac_permission_role" "agent_view_user" {
