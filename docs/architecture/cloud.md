@@ -363,7 +363,7 @@ accepts the public and the private Caddyfile, and the fixed page of a
 suspended App or an App in maintenance (`cloud_edge_pages`: every request
 answers 503 with that page and nothing is proxied). A suspended App's
 Deployment `app-<app>` runs 0 replicas; `cloud-managed-deployment` admits
-0 on App Deployments only, so the edge and the oauth2-proxy always run and
+0 on App and worker Deployments only, so the edge and the oauth2-proxy always run and
 the App's address always answers. The rule reads Deployment writes, not
 the `deployments/scale` subresource (a Scale object has no pod template to
 tell an App from an edge). The reconciler's project role has no
@@ -395,6 +395,38 @@ owner, and `cloud-managed-deployment` refuses the component. The App's
 Kubernetes Service selects component `app`, so it never sends the Job a
 request. The ingress floor has no rule for `migrate` pods; egress is the
 Project's, as for the App.
+
+Worker and cron Services (the cloud repo's B18 and B19) run App code with
+no edge, no oauth2-proxy and no Ingress. Their pods carry the label of the
+App they run from (`cloud.viktorbarzin.me/app=<app>`), component `worker`
+or `cron`, and run one container `app` with the App's image and a command.
+
+| Service | Object in `p-<project>` | What admits it |
+|---|---|---|
+| Worker | Deployment `worker-<name>`, component `worker`, 0 or 1 replicas, RollingUpdate with `maxSurge: 0` and `maxUnavailable: 1`, no ports, probes or init container | `cloud-managed-deployment`: the pod rules, no init container (App pods only), 0 replicas allowed |
+| Cron | CronJob `cron-<name>`, component `cron`, time zone `Etc/UTC`, `concurrencyPolicy: Forbid`, `startingDeadlineSeconds: 60`, Job `backoffLimit: 0`, `activeDeadlineSeconds: 43200`, `ttlSecondsAfterFinished: 86400` | `cloud-managed-cronjob`: every pod rule on the Job template's pod, plus component `cron`, no init container, `restartPolicy` Never or OnFailure, and `activeDeadlineSeconds` set and at most 43200 |
+| Scheduled run | Job `cron-<name>-<digits>`, made by the CronJob controller, owned by the CronJob as its controller | `cloud-managed-cron-job`: the same pod and deadline rules, one owner, CronJob `cron-<service>`, and that name |
+| Manual run | Job `cron-<name>-m<run id>`, created by the reconciler from the CronJob's `jobTemplate`, label `cloud.viktorbarzin.me/run=<id>`, owned by the CronJob, not as its controller | `cloud-managed-cron-job`, as above; the reconciler's `jobs` create right |
+
+`cloud-managed-cron-job` matches only Jobs whose pod is component `cron`;
+`cloud-managed-job` (the cloud repo's B16, migrations) checks every other
+Job. The pods of both kinds of run meet `cloud-managed-pod`.
+
+For crons the project role grants `cronjobs` with the full write verbs;
+a manual run uses the `jobs` create right that B16 added. A finished Job is removed by its
+`ttlSecondsAfterFinished`, and with its CronJob by the owner reference, so
+the reconciler never updates or deletes a cron run. `concurrencyPolicy: Forbid`
+keeps two scheduled runs apart, and a manual run asked for while a run is
+active is skipped. A scheduled start during a manual run still starts,
+because the CronJob controller counts only the Jobs it controls, so those
+two can overlap.
+
+Network: the egress floor selects every pod in a managed namespace, so
+worker and cron pods reach DNS, the Project's Postgres and the internet
+like App pods, within Cloud's own Project policy. The ingress floor passes
+connections only to edge, oauth2-proxy and App pods, so nothing connects
+to a worker or cron pod. The floor passes App-to-App traffic into an internal App only from
+component `app` pods, so a worker or cron pod cannot call an internal App.
 
 The shapes from before K1 are refused: `cloud-managed-ingress` admits
 only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge

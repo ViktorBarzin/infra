@@ -501,6 +501,36 @@ read-only:
 The User resumes it; an Operator does not scale it by hand, since the next
 apply would put Cloud's replicas back.
 
+## Worker and cron Services
+
+A worker Service (the cloud repo's B18) is Deployment `worker-<name>` in
+`p-<project>`, component `worker`; a cron Service (B19) is CronJob
+`cron-<name>`, component `cron`. Its runs are Jobs: `cron-<name>-<digits>`
+from the CronJob controller, and `cron-<name>-m<run id>` for a manual run,
+which the reconciler creates. Both kinds run the App's image with a command.
+
+Apply `stacks/cloud` before the first Cloud release that renders them.
+Before that apply, the admission policies refuse components `worker` and
+`cron`, and the project role has no `cronjobs` right, so every
+apply of a Project with a worker or a cron fails. Order: `homelab tf apply
+cloud` from the main checkout; check that
+`kubectl get validatingadmissionpolicy cloud-managed-cronjob cloud-managed-cron-job`
+lists both and that
+`kubectl auth can-i create cronjobs.batch -n p-<project> --as=system:serviceaccount:cloud:cloud-reconciler`
+answers yes; then deploy Cloud.
+
+Read-only checks:
+`kubectl -n p-<project> get deploy,cronjob,job -l 'cloud.viktorbarzin.me/component in (worker,cron)'`
+lists them, and `kubectl -n p-<project> get events --field-selector reason=FailedCreate`
+shows a run's pod that admission refused. A CronJob or a cron Job refused
+by `cloud-managed-cronjob` or `cloud-managed-cron-job` means Cloud rendered
+a shape infra does not admit; fix it in the cloud repo, not here. A
+scheduled run refused by `cloud-managed-cron-job` shows as a
+`FailedCreate` event on the CronJob. A run past 12 hours is stopped
+by its deadline (Job condition `DeadlineExceeded`). An Operator does not
+create, suspend or delete these by hand: the next reconcile puts them back
+as the Project File says.
+
 ## Apply B37 and B38 (mail ports, outbound address)
 
 Apply `stacks/cloud` from the main checkout before the Cloud release that

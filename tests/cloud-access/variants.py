@@ -131,7 +131,7 @@ if not admitted_only:
          variant(ns, lambda o: o["metadata"]["labels"].update({"chrome-service.viktorbarzin.me/client": "true"})))
 
 # --- every object as rendered, admitted --------------------------------------
-KINDS = ["ConfigMap", "Service", "Deployment", "Ingress", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding"]
+KINDS = ["ConfigMap", "Service", "Deployment", "CronJob", "Ingress", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding"]
 MANAGED = {"cloud.viktorbarzin.me/managed": "true"}
 for kind in KINDS:
     for o in of_kind(kind, **MANAGED):
@@ -140,6 +140,11 @@ for kind in KINDS:
 if admitted_only:
     for d in of_kind("Deployment", **MANAGED):
         case(f"pod-of-{d['metadata']['name']}", "ka", "ok", f"a pod from the rendered {d['metadata']['name']} template", as_pod(d, f"rendered-{d['metadata']['name']}"))
+    for cj in of_kind("CronJob", **MANAGED):
+        t = cj["spec"]["jobTemplate"]["spec"]["template"]
+        case(f"pod-of-{cj['metadata']['name']}", "ka", "ok", f"a pod from the rendered {cj['metadata']['name']} template",
+             {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": f"rendered-{cj['metadata']['name']}", "namespace": target,
+              "labels": t["metadata"]["labels"], "annotations": t["metadata"].get("annotations", {})}, "spec": copy.deepcopy(t["spec"])})
     finish()
     sys.exit(0)
 
@@ -188,7 +193,7 @@ def drop_component(o):
 
 COMPONENT_MSG = "a pod is labelled cloud.viktorbarzin.me/component"
 case("deploy-no-component", "kr", COMPONENT_MSG, "Deployment whose pods carry no component label", variant(proxy, drop_component))
-case("deploy-component-other", "kr", COMPONENT_MSG, "Deployment whose pods are component=worker", variant(app, relabel("worker")))
+case("deploy-component-other", "kr", COMPONENT_MSG, "Deployment whose pods are component=batch", variant(app, relabel("batch")))
 
 
 def app_container_alone():
@@ -369,7 +374,7 @@ case("edge-pod-port-9090", "ka", E_PORT, "edge pod with port edge = 9090", varia
 case("app-as-edge", "kr", "only an App pod may have an init container|" + E_ONE, "App Deployment labelled component=edge", variant(app, relabel("edge")))
 # Replicas (the cloud repo's B06): a suspended App runs 0 replicas, and only
 # an App may; its edge and oauth2-proxy always run, so its address answers.
-E_REPLICAS = "only an App Deployment may run 0 replicas"
+E_REPLICAS = "only an App or a worker Deployment may run 0 replicas"
 case("app-zero-replicas", "kr", "ok", "App Deployment with 0 replicas (a suspended App)",
      variant(app, lambda o: o["spec"].update({"replicas": 0})))
 case("edge-zero-replicas", "kr", E_REPLICAS, "edge Deployment with 0 replicas",
@@ -809,5 +814,156 @@ case("mw-buffering", "kr", "forbidden|no Traefik Middleware", "a buffering Middl
 case("mw-buffering-admin", "ka", "no Traefik Middleware", "a buffering Middleware from admin", mw)
 case("mw-headers-admin", "ka", "no Traefik Middleware", "a headers Middleware from admin",
      dict(mw, spec={"headers": {"customResponseHeaders": {"X-Frame-Options": "DENY"}}}))
+
+# --- Worker and cron Services (the cloud repo's B18 and B19) --------------------------------
+# Built from the rendered public App, as Cloud's reconciler renders them: the
+# App's image, env and envFrom, one container app with a command, and no
+# ports, probes, lifecycle hook or init container. A worker's pods are
+# component worker, a cron's component cron.
+APP_LABEL = "cloud.viktorbarzin.me/app"
+
+
+def proc_spec(restart_policy=None):
+    s = copy.deepcopy(spec_of(app))
+    s.pop("initContainers", None)
+    c = app_c(s)
+    c["command"] = ["bun", "run", "jobs.ts"]
+    for f in ["ports", "readinessProbe", "livenessProbe", "startupProbe", "lifecycle"]:
+        c.pop(f, None)
+    s["containers"] = [c]
+    if restart_policy:
+        s["restartPolicy"] = restart_policy
+    return s
+
+
+def proc_labels(service, component):
+    labels = dict(app["spec"]["template"]["metadata"]["labels"])
+    labels.update({SERVICE: service, COMPONENT: component, APP_LABEL: "menu"})
+    return labels
+
+
+def worker_deployment(replicas):
+    o = copy.deepcopy(app)
+    labels = proc_labels("menu-jobs", "worker")
+    o["metadata"]["name"] = "worker-menu-jobs"
+    o["metadata"]["labels"] = dict(o["metadata"].get("labels", {}), **{SERVICE: "menu-jobs", COMPONENT: "worker", APP_LABEL: "menu"})
+    o["spec"]["replicas"] = replicas
+    # Never two workers at once: the old pod stops before the new one starts.
+    o["spec"]["strategy"] = {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1}}
+    o["spec"]["selector"]["matchLabels"] = {k: labels[k] for k in o["spec"]["selector"]["matchLabels"]}
+    o["spec"]["template"]["metadata"]["labels"] = labels
+    o["spec"]["template"]["spec"] = proc_spec()
+    return o
+
+
+worker = worker_deployment(1)
+case("worker", "kr", "ok", "worker Deployment worker-menu-jobs (a command, no ports, probes or init container)", worker)
+case("worker-zero-replicas", "kr", "ok", "worker Deployment with 0 replicas", worker_deployment(0))
+case("pod-worker", "ka", "ok", "a pod from the worker template", as_pod(worker, "worker-pod"))
+case("worker-init", "kr", "only an App pod may have an init container", "worker Deployment with a migrate init container",
+     variant(worker, lambda o: spec_of(o).update({"initContainers": [migrate_container(spec_of(o))]})))
+
+
+def cronjob(name):
+    labels = proc_labels(name, "cron")
+    return {
+        "apiVersion": "batch/v1", "kind": "CronJob",
+        "metadata": {"name": f"cron-{name}", "namespace": target, "labels": dict(labels)},
+        "spec": {
+            "schedule": "17 3 * * *", "timeZone": "Etc/UTC", "concurrencyPolicy": "Forbid",
+            "startingDeadlineSeconds": 60, "suspend": False,
+            "successfulJobsHistoryLimit": 3, "failedJobsHistoryLimit": 3,
+            "jobTemplate": {
+                "metadata": {"labels": dict(labels)},
+                "spec": {
+                    "backoffLimit": 0, "activeDeadlineSeconds": 43200, "ttlSecondsAfterFinished": 86400,
+                    "template": {"metadata": {"labels": dict(labels)}, "spec": proc_spec("Never")},
+                },
+            },
+        },
+    }
+
+
+def cron_spec(o):
+    return o["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+
+def cron_relabel(component):
+    def f(o):
+        for m in [o["metadata"], o["spec"]["jobTemplate"]["metadata"], o["spec"]["jobTemplate"]["spec"]["template"]["metadata"]]:
+            m["labels"][COMPONENT] = component
+    return f
+
+
+C_DEADLINE = "sets activeDeadlineSeconds, at most 43200"
+cron = cronjob("nightly")
+case("cron", "kr", "ok", "CronJob cron-nightly as Cloud renders it", cron)
+case("cron-suspended", "kr", "ok", "a suspended CronJob", variant(cron, lambda o: o["spec"].update({"suspend": True})))
+case("cron-onfailure", "kr", "ok", "CronJob whose pod restarts OnFailure", variant(cron, lambda o: cron_spec(o).update({"restartPolicy": "OnFailure"})))
+case("cron-edge", "kr", "an edge pod has one container|a CronJob's pod is labelled", "CronJob whose pod is component=edge", variant(cron, cron_relabel("edge")))
+case("cron-proxy", "kr", "an oauth2-proxy pod has one container|a CronJob's pod is labelled", "CronJob whose pod is component=oauth2-proxy",
+     variant(cron, cron_relabel("oauth2-proxy")))
+case("cron-app", "kr", "a CronJob's pod is labelled cloud.viktorbarzin.me/component cron", "CronJob whose pod is component=app", variant(cron, cron_relabel("app")))
+case("cron-worker", "kr", "a CronJob's pod is labelled cloud.viktorbarzin.me/component cron", "CronJob whose pod is component=worker", variant(cron, cron_relabel("worker")))
+case("cron-no-component", "kr", COMPONENT_MSG, "CronJob whose pod carries no component label",
+     variant(cron, lambda o: o["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"].pop(COMPONENT)))
+case("cron-no-deadline", "kr", C_DEADLINE, "CronJob without activeDeadlineSeconds",
+     variant(cron, lambda o: o["spec"]["jobTemplate"]["spec"].pop("activeDeadlineSeconds")))
+case("cron-long-deadline", "kr", C_DEADLINE, "CronJob with activeDeadlineSeconds 43201",
+     variant(cron, lambda o: o["spec"]["jobTemplate"]["spec"].update({"activeDeadlineSeconds": 43201})))
+case("cron-init", "kr", "only an App pod may have an init container|has no init container", "CronJob with a migrate init container",
+     variant(cron, lambda o: cron_spec(o).update({"initContainers": [migrate_container(cron_spec(o))]})))
+# Pod Security enforces only on pods, so on a CronJob the policy alone
+# refuses these.
+for name in ["hostpath", "nfs", "pvc", "emptydir-unbounded", "no-ephemeral-limit", "hostnetwork", "serviceaccount", "gpu", "nodename", "toleration", "probe-host"]:
+    change, expect = [(ch, ex) for n, ch, ex in POD_RULES if n == name][0]
+    case(f"cron-{name}", "kr", expect, f"CronJob with {name}", variant(cron, lambda o, ch=change: ch(cron_spec(o))))
+cron_pod = {"apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "cron-nightly-pod", "namespace": target, "labels": dict(cron["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"])},
+            "spec": copy.deepcopy(cron_spec(cron))}
+case("pod-cron", "ka", "ok", "a pod from the cron template, as its Jobs make it (cloud-managed-pod)", cron_pod)
+# The Jobs of a cron (cloud-managed-cron-job). The CronJob controller names a
+# scheduled run cron-<name>-<minutes since the epoch> and owns it as its
+# controller; the reconciler names a manual run cron-<name>-m<run id> and
+# owns it by the CronJob, not as its controller.
+J_OWNER = "is owned by CronJob cron-<its service> alone"
+
+
+def cron_job(name, controller, run_id=None):
+    j = copy.deepcopy(cron["spec"]["jobTemplate"])
+    if run_id:
+        for m in [j["metadata"], j["spec"]["template"]["metadata"]]:
+            m["labels"]["cloud.viktorbarzin.me/run"] = run_id
+    j["metadata"].update({"name": name, "namespace": target,
+                          "ownerReferences": [{"apiVersion": "batch/v1", "kind": "CronJob", "name": "cron-nightly",
+                                               "uid": "00000000-0000-4000-8000-000000000042", "controller": controller}]})
+    return dict({"apiVersion": "batch/v1", "kind": "Job"}, **j)
+
+
+def job_spec(o):
+    return o["spec"]["template"]["spec"]
+
+
+manual = cron_job("cron-nightly-m42", False, "42")
+scheduled = cron_job("cron-nightly-29391437", True)
+case("cron-manual-run", "kr", "ok", "Job cron-nightly-m42, a manual run of cron-nightly", manual)
+case("cron-scheduled-run", "ka", "ok", "Job cron-nightly-29391437, a scheduled run as the CronJob controller makes it", scheduled)
+case("cron-job-other-owner", "kr", J_OWNER, "cron Job owned by CronJob cron-other",
+     variant(manual, lambda o: o["metadata"]["ownerReferences"][0].update({"name": "cron-other"})))
+case("cron-job-owner-kind", "kr", J_OWNER, "cron Job owned by a Deployment cron-nightly",
+     variant(manual, lambda o: o["metadata"]["ownerReferences"][0].update({"apiVersion": "apps/v1", "kind": "Deployment"})))
+case("cron-job-no-owner", "kr", J_OWNER, "cron Job with no owner", variant(manual, lambda o: o["metadata"].pop("ownerReferences")))
+case("cron-job-two-owners", "kr", J_OWNER, "cron Job with a second owner",
+     variant(manual, lambda o: o["metadata"]["ownerReferences"].append(dict(o["metadata"]["ownerReferences"][0], name="cron-other", uid="00000000-0000-4000-8000-000000000043"))))
+case("cron-job-name", "kr", J_OWNER, "cron Job named cron-nightly-x42", variant(manual, lambda o: o["metadata"].update({"name": "cron-nightly-x42"})))
+case("cron-job-other-name", "kr", J_OWNER, "cron Job named cron-other-m42", variant(manual, lambda o: o["metadata"].update({"name": "cron-other-m42"})))
+case("cron-job-no-deadline", "kr", "a cron Job sets activeDeadlineSeconds", "cron Job without activeDeadlineSeconds",
+     variant(manual, lambda o: o["spec"].pop("activeDeadlineSeconds")))
+case("cron-job-long-deadline", "kr", "a cron Job sets activeDeadlineSeconds", "cron Job with activeDeadlineSeconds 43201",
+     variant(manual, lambda o: o["spec"].update({"activeDeadlineSeconds": 43201})))
+case("cron-job-init", "kr", "only an App pod may have an init container|a cron Job's pod has no init container", "cron Job with a migrate init container",
+     variant(manual, lambda o: job_spec(o).update({"initContainers": [migrate_container(job_spec(o))]})))
+case("cron-job-hostpath", "kr", "may use only emptyDir", "cron Job with a hostPath volume",
+     variant(manual, lambda o: job_spec(o)["volumes"].append({"name": "x", "hostPath": {"path": "/"}})))
 
 finish()

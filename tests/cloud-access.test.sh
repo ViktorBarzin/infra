@@ -89,6 +89,21 @@
 #     owner and a Deployment of migrate pods; the reconciler may create,
 #     get, list and delete Jobs and read pod logs in its namespaces only,
 #     and may not create pods itself;
+#   - worker and cron Services (the cloud repo's B18 and B19), built from the
+#     rendered App: a worker Deployment (component worker, a command, no
+#     ports, probes or init container, 1 or 0 replicas) and a pod from it are
+#     admitted, and one with an init container refused; a CronJob as Cloud
+#     renders it (component cron), suspended or with restartPolicy
+#     OnFailure, and a pod from its Job template are admitted; a CronJob is
+#     refused whose pod is component app, worker, edge, oauth2-proxy or none,
+#     has an init container, lacks activeDeadlineSeconds or sets more than
+#     43200, or breaks a pod rule (hostPath, nfs, PVC, unbounded emptyDir,
+#     no ephemeral-storage limit, host network, service account, GPU,
+#     nodeName, toleration, probe host); a cron Job, scheduled and manual,
+#     is admitted, and refused with another owner, an owner of another kind,
+#     no owner or two, another name, no or a longer deadline, an init
+#     container or a hostPath; the reconciler may create CronJobs and Jobs
+#     in p-demo, not in default, and admission refuses both in p-adopt;
 #   - the reconciler cannot read Secrets outside a Project namespace;
 #   - it creates only p-* namespaces carrying the contract's labels, cannot
 #     label or delete other namespaces, and writes only in managed namespaces,
@@ -590,6 +605,16 @@ expect_fail "admission still stops the reconciler writing in p-adopt" "cloud-rec
 expect_ok   "admin creates homelab-labelled, labelled managed though not named p-* (a mistake)" apply_as ka < <(ns_doc homelab-labelled true 4-aux)
 expect_ok   "admin binds the project role in homelab-labelled (a mistake)" apply_as ka < <(rb_doc homelab-labelled "$PROJECT_ROLE")
 expect_fail "admission stops the reconciler writing in a labelled namespace not named p-*" "namespaces named p-\\*" apply_as kr < <(cm_doc homelab-labelled)
+
+# --- CronJobs and Jobs (the cloud repo's B19) -------------------------------------
+# A cron Service is a CronJob; a manual run is a Job the reconciler creates.
+# The variants below admit Cloud's shapes in p-demo; here, only where.
+can create cronjobs.batch -n p-demo && ok "reconciler may create CronJobs in p-demo" || bad "reconciler cannot create CronJobs in p-demo"
+cannot create cronjobs.batch -n default && ok "reconciler cannot create CronJobs in default" || bad "reconciler creates CronJobs in default"
+expect_fail "admission stops the reconciler creating a CronJob in p-adopt, where only RBAC allows it" "cloud-reconciler may write only" \
+  kr create cronjob probe -n p-adopt --image=busybox --schedule='0 3 * * *' --dry-run=server
+expect_fail "admission stops the reconciler creating a Job in p-adopt, where only RBAC allows it" "cloud-reconciler may write only" \
+  kr create job probe -n p-adopt --image=busybox --dry-run=server
 
 # --- Kyverno's tier-quota --------------------------------------------------------
 # Kyverno generates tier-quota without Cloud's managed-by label wherever

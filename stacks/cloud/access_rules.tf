@@ -73,13 +73,16 @@
 #     may have an init container: at most one, named migrate, with no
 #     restartPolicy (no sidecar) and the image of the pod's first container
 #     (Cloud's migrations, app-kit K3). Every pod is labelled
-#     cloud.viktorbarzin.me/component app, edge or oauth2-proxy. An edge pod
+#     cloud.viktorbarzin.me/component app, edge, oauth2-proxy, worker, cron
+#     or migrate. An edge pod
 #     runs exactly the edge Cloud renders and an oauth2-proxy pod exactly the
 #     oauth2-proxy Cloud renders (local.cloud_edge, local.cloud_oauth2_proxy):
 #     one container, the pinned image, fixed args and env, no command, hook or
 #     exec probe, fixed ports and mounts, and for the edge its readiness
-#     probe. App pods are free, within the rules above. Only an App
-#     Deployment may run 0 replicas (a suspended App). A migrate pod (B16)
+#     probe. App, worker and cron pods are free, within the rules above.
+#     Only an App or a worker Deployment may run 0 replicas (a suspended
+#     App, a stopped worker). A worker Service is Deployment worker-<name>,
+#     component worker (B18). A migrate pod (B16)
 #     has one container migrate, an image by digest, no command, 1 to 8
 #     args, restartPolicy Never, no port, probe or hook, and is made only by
 #     a Job; no Deployment runs one.
@@ -89,6 +92,16 @@
 #     (component migrate, named app-<App>-m<9 hex>, no owner, labelled
 #     like its pod; the reconciler's). A Job whose pod is component cron
 #     (B19's cron run) is left to cloud-managed-cron-job.
+#   cloud-managed-cronjob  a CronJob (a cron Service, cron-<name>, B19)
+#     meets every rule of cloud-managed-pod in its Job template's pod, and
+#     that pod is component cron with no init container and restartPolicy
+#     Never or OnFailure; its Job sets activeDeadlineSeconds of at most
+#     43200 (12 hours).
+#   cloud-managed-cron-job  a Job whose pod is component cron: the same
+#     rules on its pod and deadline, exactly one ownerReference, to CronJob
+#     cron-<its service>, and the name cron-<service>-<digits> (the CronJob
+#     controller's) or cron-<service>-m<digits> (a manual run the reconciler
+#     creates).
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is one Cloud renders (local
 #     cloud_caddyfile_variants: public and private): only the cookie list
@@ -284,7 +297,11 @@ locals {
   # IMAGES.oauth2Proxy in its src/reconciler/render.ts;
   # tests/cloud-access.test.sh applies Cloud's real modules, so a mismatch
   # fails the test. Change both repos together.
-  cloud_workload_components = ["app", "edge", "oauth2-proxy", "migrate"]
+  # A worker Service's pods are component worker and a cron Service's pods
+  # component cron (the cloud repo's B18 and B19): App code like an App pod,
+  # with no init container, no edge and no way in (the ingress floor below
+  # admits no connection to them).
+  cloud_workload_components = ["app", "edge", "oauth2-proxy", "worker", "cron", "migrate"]
 
   # A Deploy's migrations (backlog B16): a Job the reconciler starts once per
   # Deploy, before the rollout, from the App's own pod (the cloud repo's
@@ -591,6 +608,13 @@ locals {
     # deletes a Job it gave up on. cloud-managed-job admits only that shape.
     { api_groups = ["batch"], resources = ["jobs"], verbs = ["create", "get", "list", "delete"], resource_names = [] },
     { api_groups = [""], resources = ["pods/log"], verbs = ["get"], resource_names = [] },
+    # Cron Services (the cloud repo's B19): CronJob cron-<name>. A manual run
+    # is a Job cron-<name>-m<run id> the reconciler creates from its
+    # jobTemplate with the jobs row above; it never changes one: its
+    # ttlSecondsAfterFinished removes it, and its ownerReference removes it
+    # with its CronJob. cloud-managed-cronjob checks the CronJob,
+    # cloud-managed-cron-job each Job, and cloud-managed-pod the Job's pods.
+    { api_groups = ["batch"], resources = ["cronjobs"], verbs = local.cloud_write_verbs, resource_names = [] },
     { api_groups = ["networking.k8s.io"], resources = ["ingresses"], verbs = local.cloud_write_verbs, resource_names = [] },
     { api_groups = ["external-secrets.io"], resources = ["externalsecrets", "secretstores"], verbs = local.cloud_write_verbs, resource_names = [] },
     # Calico checks both the plain resource and its per-tier pseudo-resource.
@@ -1394,8 +1418,8 @@ locals {
           # component rules cannot read it here. The reconciler's project
           # role grants no deployments/scale, so it cannot scale that way;
           # only an admin can.
-          expression = "variables.component == 'app' || !has(object.spec.replicas) || object.spec.replicas >= 1"
-          message    = "in a Cloud namespace, only an App Deployment may run 0 replicas (a suspended App); the edge and the oauth2-proxy run at least one"
+          expression = "variables.component in ['app', 'worker'] || !has(object.spec.replicas) || object.spec.replicas >= 1"
+          message    = "in a Cloud namespace, only an App or a worker Deployment may run 0 replicas (a suspended App, a stopped worker); the edge and the oauth2-proxy run at least one"
           reason     = "Forbidden"
           }, {
           expression = "variables.component != '${local.cloud_migrate.component}'"
@@ -1485,6 +1509,122 @@ locals {
       kind       = "ValidatingAdmissionPolicyBinding"
       metadata   = { name = "cloud-managed-job" }
       spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-job" })
+    }
+    # Cron Services (the cloud repo's B19). Every pod rule applies to the
+    # Job template's pod, so a CronJob the reconciler writes fails at apply
+    # time, not at its first run. Its pod is component cron: never an App,
+    # edge or oauth2-proxy pod, and no init container (a cron runs no
+    # migrations). The deadline caps how long one run may hold its quota, 12
+    # hours at most.
+    managed_cronjob = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-cronjob" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["batch"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["cronjobs"]
+          }]
+        }
+        variables = [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.jobTemplate.spec.template.metadata") }]
+        validations = concat([for r in local.cloud_pod_rules : {
+          expression = replace(r.expression, "@S", "object.spec.jobTemplate.spec.template.spec")
+          message    = r.message
+          reason     = "Forbidden"
+          }], [
+          {
+            expression = "variables.component == 'cron'"
+            message    = "in a Cloud namespace, a CronJob's pod is labelled ${local.cloud_component_label} cron"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "!has(object.spec.jobTemplate.spec.template.spec.initContainers) || size(object.spec.jobTemplate.spec.template.spec.initContainers) == 0"
+            message    = "in a Cloud namespace, a CronJob's pod has no init container"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.jobTemplate.spec.template.spec.restartPolicy) && object.spec.jobTemplate.spec.template.spec.restartPolicy in ['Never', 'OnFailure']"
+            message    = "in a Cloud namespace, a CronJob's pod sets restartPolicy Never or OnFailure"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.jobTemplate.spec.activeDeadlineSeconds) && object.spec.jobTemplate.spec.activeDeadlineSeconds <= ${local.cloud_job_max_deadline_seconds}"
+            message    = "in a Cloud namespace, a CronJob's Job sets activeDeadlineSeconds, at most ${local.cloud_job_max_deadline_seconds}"
+            reason     = "Forbidden"
+          },
+        ])
+      }
+    }
+    managed_cronjob_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-cronjob" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-cronjob" })
+    }
+    # The Jobs of a cron Service: the CronJob controller's scheduled runs and
+    # the reconciler's manual runs, both component cron. Any other Job is
+    # cloud-managed-job's, which skips component cron. CREATE only: a Job's
+    # pod template cannot change after it is created, the reconciler may not
+    # update a Job, and the garbage collector updates ownerReferences when
+    # it orphans one.
+    managed_cron_job = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-cron-job" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["batch"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE"]
+            resources   = ["jobs"]
+          }]
+        }
+        matchConditions = [{
+          name       = "is-cron-job"
+          expression = "has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == 'cron'"
+        }]
+        variables = [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }]
+        validations = concat([for r in local.cloud_pod_rules : {
+          expression = replace(r.expression, "@S", "object.spec.template.spec")
+          message    = r.message
+          reason     = "Forbidden"
+          }], [
+          {
+            expression = "!has(object.spec.template.spec.initContainers) || size(object.spec.template.spec.initContainers) == 0"
+            message    = "in a Cloud namespace, a cron Job's pod has no init container"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.template.spec.restartPolicy) && object.spec.template.spec.restartPolicy in ['Never', 'OnFailure']"
+            message    = "in a Cloud namespace, a cron Job's pod sets restartPolicy Never or OnFailure"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_job_max_deadline_seconds}"
+            message    = "in a Cloud namespace, a cron Job sets activeDeadlineSeconds, at most ${local.cloud_job_max_deadline_seconds}"
+            reason     = "Forbidden"
+          },
+          {
+            # A service name is a DNS label, so it holds no regex
+            # metacharacter.
+            expression = "variables.service.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?$') && has(object.metadata.ownerReferences) && size(object.metadata.ownerReferences) == 1 && object.metadata.ownerReferences.all(o, o.apiVersion == 'batch/v1' && o.kind == 'CronJob' && o.name == 'cron-' + variables.service) && object.metadata.name.matches('^cron-' + variables.service + '-m?[0-9]+$')"
+            message    = "in a Cloud namespace, a cron Job is owned by CronJob cron-<its service> alone and named cron-<service>-<digits> or cron-<service>-m<digits>"
+            reason     = "Forbidden"
+          },
+        ])
+      }
+    }
+    managed_cron_job_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-cron-job" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-cron-job" })
     }
     managed_secretstore = {
       apiVersion = "admissionregistration.k8s.io/v1"
