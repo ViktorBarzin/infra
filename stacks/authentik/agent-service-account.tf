@@ -117,10 +117,12 @@ resource "authentik_rbac_role" "agent_impersonation" {
 # users, admins included. Authentik checks the object permission on
 # POST /api/v3/core/users/<pk>/impersonate/.
 #
-# Members: Viktor, whose agents test apps as him, and the guest account. Only
-# Viktor-tier credentials read svc-agent's login (Vault secret/authentik-agent).
+# Members: Viktor, whose agents test apps as him; emo, whose Cloud sign-ins
+# and apps Viktor's agents set up and test as him (added 2026-11-16); and the
+# guest account. Only Viktor-tier credentials read svc-agent's login (Vault
+# secret/authentik-agent).
 locals {
-  agent_impersonatable_usernames = ["vbarzin@gmail.com", "guest"]
+  agent_impersonatable_usernames = ["vbarzin@gmail.com", "emil.barzin@gmail.com", "guest"]
 }
 
 data "authentik_user" "agent_impersonatable" {
