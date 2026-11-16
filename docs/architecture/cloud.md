@@ -32,7 +32,7 @@ flowchart LR
 | Piece | Where | Defined in |
 |---|---|---|
 | Console and API | Deployment `cloud` (init container `migrate`), Kubernetes Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
-| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate, `RECONCILER_WORKERS` 2 workers inside, each on another Project), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
+| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate, `RECONCILER_WORKERS` workers inside, each on another Project: 1 until B15's `cloud_provisioner` limit of 10 is applied, then 2), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
 | Env and credential files of both | locals | `stacks/cloud/deploy_rules.tf` |
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
@@ -61,7 +61,7 @@ Kuma monitor `[External] cloud` by itself.
 | `POSTGRES_PROVISIONER_PASSWORD` | Vault static role `pg-cloud-provisioner` | reconciler | same ExternalSecret, file `/secrets/postgres/provisioner-password` |
 | `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-14 Viktor's `github_pat`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
-| B09: the OpenTofu state encryption passphrase | Vault KV `secret/cloud/state-key` `passphrase`, written once by hand (runbook, "State encryption key"); backed up by `vault-raft-backup` | reconciler only, as `TF_ENCRYPTION` for OpenTofu | the reconciler reads it with its Vault token on every job (policy `cloud-reconciler`); no ExternalSecret, no file |
+| B09: the OpenTofu state encryption passphrase | Vault KV `secret/cloud/state-key` `passphrase`, written once by hand (runbook, "State encryption key"); backed up by `vault-raft-backup`; the broad `secret/data/*` policies deny it (`tests/cloud-state-key.test.sh`) | reconciler only, as `TF_ENCRYPTION` for OpenTofu | the reconciler reads it with its Vault token on every job (policy `cloud-reconciler`); no ExternalSecret, no file |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
 | `cloud_apps_client_id`, `cloud_apps_client_secret` | Vault KV `secret/cloud/system` | read by the reconciler's OpenTofu through Vault | Vault policy `cloud-reconciler` |
 | M5: `GITHUB_DISPATCH_TOKEN`, `GITHUB_OWNER_READ_TOKEN`, `FORGEJO_READ_TOKEN`, `FORGEJO_ADMIN_TOKEN`, `SECRETS_PRIVATE_KEY` | Vault KV `secret/cloud/system` keys `github_dispatch_token`, `github_owner_read_token`, `forgejo_read_token`, `forgejo_admin_token`, `secrets_private_key`, written by hand | reconciler | ExternalSecret `cloud-reconciler-system`, files `/secrets/system/<key with dashes>`; the reconciler also reads the same keys from Vault itself |

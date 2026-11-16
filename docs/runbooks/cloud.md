@@ -571,10 +571,10 @@ pass; the next reconciler requeues it, and OpenTofu continues from the state.
 
 ## Drain the queue
 
-Let the reconciler work the queue down; it runs `RECONCILER_WORKERS` (2) jobs
-at a time, never two of one Project. Rollback to one at a time: set
-`RECONCILER_WORKERS` to `1` in `stacks/cloud/deploy_rules.tf` and apply
-`cloud`. To see it:
+Let the reconciler work the queue down; it runs `RECONCILER_WORKERS` jobs
+at a time (2 once B15's `cloud_provisioner` limit of 10 is applied), never
+two of one Project. Rollback to one at a time: set `RECONCILER_WORKERS` to
+`1` in `stacks/cloud/deploy_rules.tf` and apply `cloud`. To see it:
 
 ```sql
 SELECT state, kind, count(*) FROM reconcile_jobs GROUP BY 1, 2;
@@ -625,11 +625,18 @@ The size loop measures the database again within 5 minutes.
 
 Cloud backlog B09. Every Project's OpenTofu state and saved plan is
 encrypted with AES-GCM. The key comes from one passphrase in Vault
-`secret/cloud/state-key`, field `passphrase`. Only the `cloud-reconciler`
-policy reads it, and no workload writes it. The reconciler reads it on every
-job. A job with no passphrase fails before tofu runs, with
-`state_key_missing`, `state_key_unreadable` or `state_key_invalid` (under
-32 characters).
+`secret/cloud/state-key`, field `passphrase`. Of the workload policies only
+`cloud-reconciler` reads it: the four broad `secret/data/*` readers in
+`stacks/vault/main.tf` (`ci`, `eso-reader`, `openclaw-k8s`,
+`terraform-state`) deny it and its metadata, and no workload writes it.
+`tests/cloud-state-key.test.sh` checks this against a dev Vault in
+seconds, and fails when a new `secret/data/*` reader appears without the
+deny. The reconciler reads the key on every job. A missing key, a 403 (the
+`vault` stack not applied yet) or one under 32 characters fails the job at
+once with `state_key_missing` or `state_key_invalid`, before tofu runs.
+Once the key reads back, the reconciler applies every Project that failed
+that way again, within a minute; nothing needs requeueing. Vault not
+answering is `state_key_unreadable`, which the job retries.
 
 **A lost or changed passphrase is lost state.** Every Project's next apply
 then fails with `decryption failed`. Its namespace, database and Vault
@@ -656,13 +663,21 @@ kubectl -n vault create job --from=cronjob/vault-raft-backup vault-raft-backup-s
 The third line prints `["passphrase"]` and `64`. The job writes a snapshot
 with the key at once, so the backup does not wait for Sunday.
 
+**Rolling the reconciler back past B09 is one way.** A reconciler image
+from before B09 has no `TF_ENCRYPTION`, so it cannot read an encrypted
+state: each of its jobs fails with "This state file is encrypted". Once any
+state is encrypted, roll forward with a fix instead of back. To slow the
+reconciler without a new image, set `RECONCILER_WORKERS` to `1`.
+
 The release that encrypts applies every Project again (the render digest
 holds the encryption scheme). While `RECONCILE_STATE_READ_UNENCRYPTED` is
 `true`, the default in `stacks/cloud` `deploy_rules.tf`, a state written
-before is read and the apply writes it encrypted. Jobs log OpenTofu's
+before is read, and every job applies its saved plan even when nothing
+changes, because a plan writes no state: the apply writes it encrypted. Jobs log OpenTofu's
 warning "Method unencrypted is present in configuration" until then. When
 every state is encrypted, set it to `false` and apply `cloud`: tofu then
-refuses unencrypted data and never writes it. Count the plain states first;
+refuses unencrypted data and never writes it, and a job with nothing to
+change skips the apply again. Count the plain states first;
 the answer must be empty:
 
 ```sh

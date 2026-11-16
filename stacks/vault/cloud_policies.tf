@@ -23,8 +23,11 @@
 #   secret/cloud/state-key      written by hand (docs/runbooks/cloud.md, "State
 #                               encryption key"): the passphrase that
 #                               encrypts every Project's OpenTofu state
-#                               (cloud backlog B09). Only the reconciler
-#                               reads it; nothing writes it but an Operator.
+#                               (cloud backlog B09). Of the workload
+#                               policies only the reconciler's reads it:
+#                               every broad secret/data/* reader in main.tf
+#                               denies it (tests/cloud-state-key.test.sh).
+#                               Nothing writes it but an Operator.
 #   secret/cloud/<namespace>/<service>
 #                               a Service's secrets: an App's own (created empty
 #                               by the reconciler, filled through Cloud's API)

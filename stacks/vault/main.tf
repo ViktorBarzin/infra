@@ -849,6 +849,15 @@ resource "vault_policy" "ci" {
     path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
+    # Cloud's OpenTofu state key (cloud repo backlog B09): only the
+    # cloud-reconciler policy reads it (cloud_policies.tf), so the
+    # secret/data/* grant above stops short of it.
+    path "secret/data/cloud/state-key" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/cloud/state-key" {
+      capabilities = ["deny"]
+    }
     # SOPS state encrypt/decrypt (per-stack Transit keys)
     path "transit/encrypt/sops-state-*" {
       capabilities = ["update"]
@@ -1118,6 +1127,15 @@ resource "vault_policy" "eso_reader" {
     path "secret/metadata/workstation/devvm/*" {
       capabilities = ["deny"]
     }
+    # Cloud's OpenTofu state key (cloud repo backlog B09): only the
+    # cloud-reconciler policy reads it (cloud_policies.tf), so the
+    # secret/data/* grant above stops short of it.
+    path "secret/data/cloud/state-key" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/cloud/state-key" {
+      capabilities = ["deny"]
+    }
     path "database/static-creds/*" {
       capabilities = ["read"]
     }
@@ -1197,6 +1215,15 @@ resource "vault_policy" "openclaw_k8s" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    # Cloud's OpenTofu state key (cloud repo backlog B09): only the
+    # cloud-reconciler policy reads it (cloud_policies.tf), so the
+    # secret/data/* grant above stops short of it.
+    path "secret/data/cloud/state-key" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/cloud/state-key" {
       capabilities = ["deny"]
     }
   EOT
@@ -1299,6 +1326,15 @@ resource "vault_policy" "terraform_state" {
       capabilities = ["deny"]
     }
     path "secret/metadata/workstation/devvm/*" {
+      capabilities = ["deny"]
+    }
+    # Cloud's OpenTofu state key (cloud repo backlog B09): only the
+    # cloud-reconciler policy reads it (cloud_policies.tf), so the
+    # secret/data/* grant above stops short of it.
+    path "secret/data/cloud/state-key" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/cloud/state-key" {
       capabilities = ["deny"]
     }
   EOT
