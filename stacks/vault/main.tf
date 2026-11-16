@@ -780,6 +780,16 @@ resource "vault_policy" "ci" {
     path "secret/data/cloud/inviter" {
       capabilities = ["create", "read", "update"]
     }
+    # The vault_kv_secret_v2 resource writes the secret's metadata after its
+    # data, so the two paths above need metadata write too. Without it every
+    # CI apply of stacks/authentik that touched cloud/system wrote the data,
+    # then failed 403 on secret/metadata/cloud/system (infra#197).
+    path "secret/metadata/cloud/system" {
+      capabilities = ["create", "read", "update", "list"]
+    }
+    path "secret/metadata/cloud/inviter" {
+      capabilities = ["create", "read", "update", "list"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {
