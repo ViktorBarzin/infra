@@ -32,7 +32,7 @@ flowchart LR
 | Piece | Where | Defined in |
 |---|---|---|
 | Console and API | Deployment `cloud` (init container `migrate`), Kubernetes Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
-| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
+| Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate, `RECONCILER_WORKERS` 2 workers inside, each on another Project), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
 | Env and credential files of both | locals | `stacks/cloud/deploy_rules.tf` |
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |
 | Console identity | service account `cloud-console` with a token, ClusterRole `cloud-console` (get, list on namespaces, Ingresses, IngressRoutes) | `stacks/cloud/console.tf`, `deploy_rules.tf` |
@@ -388,7 +388,7 @@ to edge pods, so a Project policy cannot open the old path either.
 | reconciler pool, role `cloud` | 4 |
 | `migrate` init container while it runs | 1 |
 | **role `cloud` at most** | **10**, the figure in [docs/agents/databases.md](../agents/databases.md) |
-| `cloud_provisioner` | 5 (CONNECTION LIMIT) |
+| `cloud_provisioner` | 10 (CONNECTION LIMIT, B15): 2 workers x 4 + the size loop 1 = 9 |
 | `cloud_state` | 10 (CONNECTION LIMIT) |
 
 A second replica of either Deployment needs this budget raised first.

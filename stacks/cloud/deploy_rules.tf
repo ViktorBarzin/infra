@@ -227,6 +227,9 @@ locals {
       # true: a state written before encryption is still read; set false
       # once no plain state is left (runbook, "State encryption key").
       { name = "RECONCILE_STATE_READ_UNENCRYPTED", value = "true" },
+      # B24: two workers, each on another Project. 1 is the rollback. Needs
+      # cloud_provisioner CONNECTION LIMIT 10 (stacks/dbaas, B15) first.
+      { name = "RECONCILER_WORKERS", value = "2" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

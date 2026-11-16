@@ -21,7 +21,7 @@ locals {
   cloud_reconciler_metrics_port = 9090
   # A job runs init, plan and apply, each up to RECONCILE_STEP_TIMEOUT_SECONDS
   # (1200), then the rollout check (180). On SIGTERM the reconciler finishes
-  # the running job, so a Reloader restart, a pod delete or a CI rollout never
+  # the running jobs (one per worker, in parallel), so a Reloader restart, a pod delete or a CI rollout never
   # cuts an apply short. A drain or eviction with a shorter grace period does
   # (the automated node upgrade drains with --grace-period=300): the job stays
   # `running` until RECONCILE_STALE_SECONDS, is requeued and resumes from the
@@ -178,8 +178,9 @@ resource "kubernetes_deployment" "reconciler" {
   }
 
   spec {
-    # One worker: cloud_provisioner's CONNECTION LIMIT 5 fits one reconciler
-    # (stacks/dbaas cloud_postgres.tf), and Recreate never runs two.
+    # One replica with RECONCILER_WORKERS (2) workers inside: two workers
+    # hold at most 9 of cloud_provisioner's CONNECTION LIMIT 10 (stacks/dbaas
+    # cloud_postgres.tf, B15), and Recreate never runs two replicas.
     replicas = 1
     strategy {
       type = "Recreate"
@@ -257,11 +258,13 @@ resource "kubernetes_deployment" "reconciler" {
           # answers even while a job runs for minutes. A crash restarts the
           # pod; a hang shows as CloudReconcileQueueStuck.
 
-          # Estimate, not measured: OpenTofu with the kubernetes, vault,
-          # postgresql and random providers, parallelism 2.
+          # One worker peaked at 496 MiB over the 7 days to 2026-11-16
+          # (container_memory_working_set_bytes); two run two OpenTofu
+          # processes with the kubernetes, vault, postgresql and random
+          # providers at once (B24).
           resources {
-            requests = { cpu = "100m", memory = "384Mi" }
-            limits   = { memory = "1Gi" }
+            requests = { cpu = "100m", memory = "512Mi" }
+            limits   = { memory = "1536Mi" }
           }
         }
 

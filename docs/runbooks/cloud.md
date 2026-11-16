@@ -559,7 +559,8 @@ Recreate, so the new pod starts after the old one is gone. Deleting the pod,
 not `rollout restart`, keeps the pod template equal to Terraform's.
 
 On a pod delete, a Reloader restart or a CI rollout, the reconciler finishes
-its running job before it exits (grace period 3780 s). A node drain or
+its running jobs, at most one per worker, before it exits (grace period
+3780 s). A node drain or
 eviction with a shorter grace period cuts the job: the automated node upgrade
 drains with `--grace-period=300`. A terminating pod is not scraped, so if the
 running job takes longer than 15 more minutes, `CloudReconcilerDown` pages;
@@ -570,7 +571,10 @@ pass; the next reconciler requeues it, and OpenTofu continues from the state.
 
 ## Drain the queue
 
-Let the reconciler work the queue down; it runs one job at a time. To see it:
+Let the reconciler work the queue down; it runs `RECONCILER_WORKERS` (2) jobs
+at a time, never two of one Project. Rollback to one at a time: set
+`RECONCILER_WORKERS` to `1` in `stacks/cloud/deploy_rules.tf` and apply
+`cloud`. To see it:
 
 ```sql
 SELECT state, kind, count(*) FROM reconcile_jobs GROUP BY 1, 2;
@@ -716,7 +720,7 @@ SELECT j.id, p.slug, j.kind, j.attempts, j.last_error, j.log_excerpt
 | `admission webhook ... denied` / `ValidatingAdmissionPolicy 'cloud-...' denied` | the Project asks for something the policies refuse | the message names the rule; the User changes the Project. A homelab host taken since the last `cloud` apply is refused by `cloud-ingress-live-hosts` |
 | `Error acquiring the state lock` | another session holds the pg backend's advisory lock on schema `p_<project>` | see below |
 | `already exists` | an object exists in `p-<project>` that the state does not know, after an apply died between create and state write | delete only the object the error names, in that namespace, then requeue |
-| `too many connections for role "cloud_provisioner"` | more than 5 connections as the provisioner | one reconciler only; check for a second pod or a stray session in `pg_stat_activity` |
+| `too many connections for role "cloud_provisioner"` | more than 10 connections as the provisioner (two workers hold at most 9) | one reconciler only; check for a second pod or a stray session in `pg_stat_activity`. Before B15's limit of 10 is applied, set `RECONCILER_WORKERS` to `1` |
 
 **State lock.** The pg backend's lock is a Postgres advisory lock held by a
 session, so it goes when that session ends. With no job running (see
