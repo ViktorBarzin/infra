@@ -59,6 +59,9 @@ mkdir -p "$TMP/locals"
 cp "$HERE/stacks/cloud/deploy_rules.tf" "$HERE/stacks/cloud/access_rules.tf" "$TMP/locals/" \
   || { echo "FAIL: stacks/cloud/deploy_rules.tf is missing"; exit 1; }
 cat >"$TMP/locals/stub.tf" <<'EOF'
+variable "public_ip" {
+  default = "203.0.113.1"
+}
 variable "postgresql_host" {
   default = "pg.example"
 }
