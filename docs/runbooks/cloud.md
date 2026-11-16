@@ -631,9 +631,11 @@ is a change to the live profiles and whitelist, made from those counts.
 ## Restart
 
 The console: `kubectl -n cloud rollout restart deployment/cloud`. It runs 2
-pods with RollingUpdate (maxSurge 1, maxUnavailable 0), a 10 s preStop sleep
-and a PodDisruptionBudget of minAvailable 1, so a restart, a CI rollout or a
-node drain answers every request. The reconciler: `kubectl -n cloud delete
+pods, preferably on different nodes, with RollingUpdate (maxSurge 1,
+maxUnavailable 0), a 10 s preStop sleep and a PodDisruptionBudget of
+minAvailable 1, so a restart, a CI rollout or a node drain answers every
+request. `tanstack_app` ignores the `restartedAt` annotation the restart
+adds, so it leaves no Terraform drift. The reconciler: `kubectl -n cloud delete
 pod -l app=cloud-reconciler`. It stays 1 pod with Recreate, so the new pod
 starts after the old one is gone; deleting the pod, not `rollout restart`,
 keeps its pod template equal to Terraform's.

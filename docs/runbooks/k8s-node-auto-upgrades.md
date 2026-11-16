@@ -83,13 +83,22 @@ kured uncordons, sets cloud.viktorbarzin.me/drain=done, posts Slack notification
   `/scripts/cloud-drain-handoff.sh` (ConfigMap
   `kured-sentinel-gate-scripts`, from `infra/scripts/cloud-drain-handoff.sh`)
   and rollout-restarts every Deployment in namespace `cloud` or `p-*` that
-  has one replica, the RollingUpdate strategy and a pod on the node. It waits
-  up to 240 s for them, then sets the label to `handed-off`. kured's
+  has one replica, the RollingUpdate strategy, a pod on the node, one pod
+  available and no rollout under way. It waits up to 240 s for them, then
+  sets the label to `handed-off`. A `kubectl wait` failure other than its
+  timeout is logged and the rest of the 300 s is slept out. kured's
   `drainDelay` of 5 min holds the drain until then. A Deployment not ready in
   time keeps its old pod, and the drain evicts it as before. The 2-pod
   console has a PodDisruptionBudget instead; the Recreate reconciler is left
   to the drain. The gate's ClusterRole has nodes get, watch and patch and
-  Deployments get, list, watch and patch for this.
+  Deployments get, list, watch and patch for this. ValidatingAdmissionPolicy
+  `kured-sentinel-gate-scope` (`infra/stacks/kured/gate_admission.tf`)
+  narrows them: Deployments only in `cloud` or a managed `p-*` namespace and
+  only a rollout restart (nothing but the `restartedAt` template annotation
+  changes); only the gate pod's own Node (its token's
+  `authentication.kubernetes.io/node-name`), and only `spec.unschedulable`
+  and the drain label (`pending`, `handed-off`, `done`). Test:
+  `bash tests/kured-gate-admission.test.sh` (kind).
   The upgrade chain's `drain_node` (`stacks/k8s-version-upgrade`) runs the
   same script after its cordon. Tests: `bash scripts/cloud-drain-handoff.test.sh`,
   `pytest stacks/k8s-version-upgrade/scripts/test_upgrade_step_drain.py`.

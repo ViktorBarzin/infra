@@ -33,7 +33,7 @@ flowchart LR
 
 | Piece | Where | Defined in |
 |---|---|---|
-| Console and API | Deployment `cloud` (2 replicas, RollingUpdate maxSurge 1 maxUnavailable 0, 10 s preStop sleep, init container `migrate`), PodDisruptionBudget `cloud` (minAvailable 1), Kubernetes Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
+| Console and API | Deployment `cloud` (2 replicas preferring different nodes, RollingUpdate maxSurge 1 maxUnavailable 0, 10 s preStop sleep, init container `migrate`), PodDisruptionBudget `cloud` (minAvailable 1), Kubernetes Service `cloud`, ingress `cloud.viktorbarzin.me` (`auth = "app"`), namespace `cloud` | `stacks/cloud/console.tf`, one `modules/kubernetes/tanstack_app` call |
 | Reconciler | Deployment `cloud-reconciler` (1 replica, Recreate, `RECONCILER_WORKERS` workers inside, each on another Project: 1 until B15's `cloud_provisioner` limit of 10 is applied, then 2), Kubernetes Service `cloud-reconciler` (metrics only) | `stacks/cloud/reconciler.tf` |
 | Env and credential files of both | locals | `stacks/cloud/deploy_rules.tf` |
 | Reconciler identity and limits | service account `cloud-reconciler`, ClusterRoles, admission policies, Calico tier `cloud` | `stacks/cloud/main.tf`, `access_rules.tf` (M2) |

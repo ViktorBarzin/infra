@@ -319,14 +319,26 @@ resource "kubernetes_cluster_role" "kured_sentinel_gate" {
     verbs      = ["list"]
   }
   # The Cloud handoff reads Deployments and rollout-restarts the one-pod ones
-  # in namespace cloud and p-* (the script's scope; RBAC cannot name a
-  # namespace pattern). The pod already holds the host's /var/run, the
-  # container runtime's socket included, so this widens little.
+  # in namespace cloud and p-*. RBAC cannot name a namespace pattern or a
+  # field, so ValidatingAdmissionPolicy kured-sentinel-gate-scope
+  # (gate_admission.tf) admits only a rollout restart there, and only a
+  # cordon and the drain label on the gate's own Node.
   rule {
     api_groups = ["apps"]
     resources  = ["deployments"]
     verbs      = ["get", "list", "watch", "patch"]
   }
+}
+
+# The admission policy that narrows the two rules above to the handoff
+# (gate_admission.tf).
+resource "kubernetes_manifest" "kured_gate_admission_policy" {
+  manifest = local.kured_gate_admission.policy
+}
+
+resource "kubernetes_manifest" "kured_gate_admission_binding" {
+  manifest   = local.kured_gate_admission.binding
+  depends_on = [kubernetes_manifest.kured_gate_admission_policy]
 }
 
 # The Cloud drain handoff, shared with stacks/k8s-version-upgrade.
@@ -506,13 +518,25 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 # pre-drain label on this node (one kubectl, no polling).
                 # kured then waits its drainDelay before it drains, and this
                 # hands the one-pod Cloud Deployments off the node first.
-                if kubectl wait "node/$NODE_NAME" --for=jsonpath='{.metadata.labels.cloud\.viktorbarzin\.me/drain}'=pending --timeout=300s >/dev/null 2>&1; then
+                # Any other failure (API unreachable, RBAC) is logged, and the
+                # rest of the 300 s is slept out so the loop keeps its pace.
+                WAIT_START=$(date +%s)
+                if WAIT_ERR=$(kubectl wait "node/$NODE_NAME" --for=jsonpath='{.metadata.labels.cloud\.viktorbarzin\.me/drain}'=pending --timeout=300s 2>&1 >/dev/null); then
                   echo "  kured is about to drain $NODE_NAME: Cloud handoff"
                   kubectl cordon "$NODE_NAME"
                   # shellcheck source=/dev/null
                   . /scripts/cloud-drain-handoff.sh
                   cloud_drain_handoff "$NODE_NAME" 240 || echo "  Cloud handoff incomplete; kured drains anyway"
                   kubectl label node "$NODE_NAME" cloud.viktorbarzin.me/drain=handed-off --overwrite
+                else
+                  case "$WAIT_ERR" in
+                    *"timed out waiting"*) ;;
+                    *)
+                      echo "  waiting for kured's drain label failed: $WAIT_ERR"
+                      REST=$((300 - ($(date +%s) - WAIT_START)))
+                      if [ "$REST" -gt 0 ]; then sleep "$REST"; fi
+                      ;;
+                  esac
                 fi
               done
             EOT

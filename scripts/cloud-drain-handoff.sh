@@ -11,7 +11,10 @@
 # is Ready. The drain that follows finds nothing of theirs left to evict.
 #
 # Scope: namespace `cloud` and every `p-*` namespace, Deployments with one
-# replica and the RollingUpdate strategy. A Deployment with 2 or more pods
+# replica and the RollingUpdate strategy, settled: one pod available and no
+# rollout under way (updatedReplicas equals replicas). A Deployment that is
+# down or mid-rollout gains nothing from a restart, and the restart would
+# replace a rollout that is on its way. A Deployment with 2 or more pods
 # (the console) keeps serving through its PodDisruptionBudget. A Recreate
 # one (the reconciler) stops before it starts again, so a restart gains
 # nothing. Pods with no Deployment are left to the drain.
@@ -44,6 +47,7 @@ cloud_drain_targets() {
       [ -n "$name" ] || continue
       $KUBECTL -n "$ns" get deployment "$name" -o json 2>/dev/null | jq -r --arg ns "$ns" '
         select((.spec.replicas // 1) == 1 and (.spec.strategy.type // "RollingUpdate") == "RollingUpdate")
+        | select((.status.availableReplicas // 0) >= 1 and (.status.updatedReplicas // 0) == (.spec.replicas // 1))
         | "\($ns) \(.metadata.name)"'
     done
 }

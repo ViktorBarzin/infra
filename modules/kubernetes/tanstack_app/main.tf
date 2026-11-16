@@ -163,6 +163,25 @@ resource "kubernetes_deployment" "this" {
           }
         }
 
+        # With more than one pod, prefer to put them on different nodes, so
+        # one node going away leaves a pod serving.
+        dynamic "affinity" {
+          for_each = var.replicas > 1 ? [1] : []
+          content {
+            pod_anti_affinity {
+              preferred_during_scheduling_ignored_during_execution {
+                weight = 100
+                pod_affinity_term {
+                  topology_key = "kubernetes.io/hostname"
+                  label_selector {
+                    match_labels = local.labels
+                  }
+                }
+              }
+            }
+          }
+        }
+
         security_context {
           run_as_non_root = true
           run_as_user     = 10001
@@ -336,6 +355,7 @@ resource "kubernetes_deployment" "this" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"],        # set by `kubectl rollout restart` and the Cloud drain handoff
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
       spec[0].template[0].spec[0].init_container[0].image,                                     # CI_SETS_IMAGE: the migrate init container moves with the app image

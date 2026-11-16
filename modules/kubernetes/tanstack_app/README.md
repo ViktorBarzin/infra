@@ -100,7 +100,7 @@ module "app" {
 | `ingress.anti_ai_scraping` | `false` | Every page past the sign-in wall needs a session, so there is nothing to mine, and the bot-block forwardAuth would sit on every API call. |
 | `ingress.turnstile` | `false` | Installed PWAs run in a standalone webview, and a Turnstile pass is tied to the network that solved it, so a phone changing networks would meet the challenge page mid-session. |
 | `strategy` | `Recreate` | One realtime LISTEN connection and one writer during a rollout. `RollingUpdate` surges one pod and removes none until it is Ready (maxSurge 1, maxUnavailable 0); use it only when the app keeps no state that one process alone may hold. |
-| `replicas` | `1` | Each pod uses 5 connections of the shared Postgres (pool 4 + LISTEN 1), plus 1 for the `migrate` init container while it runs. |
+| `replicas` | `1` | Each pod uses 5 connections of the shared Postgres (pool 4 + LISTEN 1), plus 1 for the `migrate` init container while it runs. Above 1, the pods prefer different nodes (soft anti-affinity on `kubernetes.io/hostname`). |
 | `pre_stop_sleep_seconds` | `0` | Seconds a stopping pod keeps serving before SIGTERM, so Traefik drops it first. Runs `/usr/local/bin/bun -e` (distroless has no `sleep`). 0 to 25. |
 | `min_available` | `null` | A PodDisruptionBudget with this minimum, below `replicas`. |
 | `signup_mode` | `request` | New accounts wait for an admin to approve them in the app. |

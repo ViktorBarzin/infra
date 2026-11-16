@@ -18,9 +18,10 @@ pod() { # <ns> <deployment> <hash> [owner kind]
     '{metadata:{namespace:$ns,name:"\($d)-\($h)-x1",labels:{"pod-template-hash":$h},
       ownerReferences:[{kind:$k,name:"\($d)-\($h)"}]}}'
 }
-deploy() { # <ns> <name> <replicas> <strategy>
-  jq -n --arg ns "$1" --arg n "$2" --argjson r "$3" --arg s "$4" \
-    '{metadata:{namespace:$ns,name:$n},spec:{replicas:$r,strategy:{type:$s}}}' >"$WORK/deploy-$1-$2.json"
+deploy() { # <ns> <name> <replicas> <strategy> [available] [updated]
+  jq -n --arg ns "$1" --arg n "$2" --argjson r "$3" --arg s "$4" --argjson a "${5:-$3}" --argjson u "${6:-$3}" \
+    '{metadata:{namespace:$ns,name:$n},spec:{replicas:$r,strategy:{type:$s}},
+      status:{availableReplicas:$a,updatedReplicas:$u}}' >"$WORK/deploy-$1-$2.json"
 }
 
 # node5 runs: a Project's App, edge and oauth2-proxy (one pod each), a second
@@ -37,6 +38,8 @@ deploy() { # <ns> <name> <replicas> <strategy>
   pod immich immich-server 1a2b
   pod p-shop seed-job-x 9z9z Job
   pod p-gone app-gone 3e3e | jq '.metadata.deletionTimestamp = "2026-11-16T02:00:00Z"'
+  pod p-down app-down 4d4d
+  pod p-roll app-roll 8e8e
 } | jq -s '{items: .}' >"$WORK/pods.json"
 deploy p-shop app-shop 1 RollingUpdate
 deploy p-shop edge-shop 1 RollingUpdate
@@ -45,6 +48,9 @@ deploy cloud cloud 2 RollingUpdate
 deploy cloud cloud-reconciler 1 Recreate
 deploy immich immich-server 1 RollingUpdate
 deploy p-gone app-gone 1 RollingUpdate
+# Down (no pod available), and mid-rollout (the new pod not updated yet).
+deploy p-down app-down 1 RollingUpdate 0 1
+deploy p-roll app-roll 1 RollingUpdate 1 0
 
 cat >"$WORK/kubectl" <<'STUB'
 #!/bin/bash
@@ -81,6 +87,8 @@ restarts=$(grep -c "rollout restart" "$WORK/calls")
 grep -q "^-n p-shop rollout restart deployment/app-shop$" "$WORK/calls" && ok "the App restarts" || bad "no App restart"
 ! grep -q "cloud-reconciler\|immich\|deployment/cloud$\|app-gone\|seed-job" <(grep "rollout" "$WORK/calls") \
   && ok "console, reconciler, homelab, Job and terminating pods are left alone" || bad "touched: $(grep rollout "$WORK/calls")"
+! grep -q "app-down\|app-roll" <(grep "rollout" "$WORK/calls") \
+  && ok "a Deployment that is down or mid-rollout is left alone" || bad "touched: $(grep rollout "$WORK/calls")"
 last_restart=$(grep -n "rollout restart" "$WORK/calls" | tail -1 | cut -d: -f1)
 first_status=$(grep -n "rollout status" "$WORK/calls" | head -1 | cut -d: -f1)
 [ "$last_restart" -lt "$first_status" ] && ok "all restarts start before the first wait" || bad "order: $(cat "$WORK/calls")"

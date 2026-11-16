@@ -228,6 +228,10 @@ run "recreate_one_pod_no_hook_no_budget_by_default" {
     condition     = length(kubernetes_pod_disruption_budget_v1.this) == 0
     error_message = "no PodDisruptionBudget by default"
   }
+  assert {
+    condition     = length(kubernetes_deployment.this.spec[0].template[0].spec[0].affinity) == 0
+    error_message = "no affinity with one pod"
+  }
 }
 
 run "two_pods_rolling_one_at_a_time" {
@@ -257,6 +261,10 @@ run "two_pods_rolling_one_at_a_time" {
   assert {
     condition     = kubernetes_pod_disruption_budget_v1.this[0].spec[0].min_available == "1" && kubernetes_pod_disruption_budget_v1.this[0].spec[0].selector[0].match_labels == kubernetes_deployment.this.spec[0].selector[0].match_labels
     error_message = "the budget keeps one of the Deployment's own pods"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].affinity[0].pod_anti_affinity[0].preferred_during_scheduling_ignored_during_execution[0].pod_affinity_term[0].topology_key == "kubernetes.io/hostname" && kubernetes_deployment.this.spec[0].template[0].spec[0].affinity[0].pod_anti_affinity[0].preferred_during_scheduling_ignored_during_execution[0].pod_affinity_term[0].label_selector[0].match_labels == kubernetes_deployment.this.spec[0].selector[0].match_labels
+    error_message = "the two pods prefer different nodes"
   }
 }
 
