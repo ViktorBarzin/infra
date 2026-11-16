@@ -245,6 +245,12 @@ locals {
       { name = "SMTP_USERNAME", value = "cloud@viktorbarzin.me" },
       { name = "NOTIFY_FROM", value = "Cloud <cloud@viktorbarzin.me>" },
       { name = "CLOUD_CONSOLE_URL", value = "https://cloud.viktorbarzin.me" },
+      # The home WAN address, as the console has it: webhooks to it are
+      # refused, since from inside it leads back to the homelab's edge.
+      { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
+      # The size pass every 5 minutes (code default 10), so a Postgres at
+      # 80% sends storage_high within P24's 10 minutes.
+      { name = "RECONCILE_DATABASE_SIZE_SECONDS", value = "300" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )
