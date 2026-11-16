@@ -13,7 +13,7 @@
 # and dispatching builds, and everything else keeps working.
 variable "builds_enabled" {
   type    = bool
-  default = true
+  default = false
 }
 
 # Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals
