@@ -90,6 +90,37 @@ migration. Break-glass tarballs of `infra-ci` are still produced on
 each build to `/opt/registry/data/private/_breakglass/` — see
 `docs/runbooks/forgejo-registry-breakglass.md`.
 
+## No in-memory blob-descriptor cache, on purpose
+
+The five pull-through configs carry no `storage.cache.blobdescriptor`.
+The proxy keeps one 168h expiry per **repo and blob** in
+`scheduler-state.json`, but stores the blob data **once** for every repo
+that shares it. When the first repo's entry expires, the registry deletes
+the shared data and the other repos keep their `_layers` links. With
+`blobdescriptor: inmemory` the registry still believed the blob existed:
+it answered `200` with the right `Content-Length` and then an empty body,
+containerd failed with `short read: expected N bytes but got 0: unexpected
+EOF`, and nothing repaired it until the 02:00 maintenance restart.
+Without the cache the registry stats the filesystem, sees a miss, and
+re-fetches from upstream on the next pull.
+
+Blobs shared by many images break this way. The worst is the 32-byte
+empty layer `sha256:4f4fb700…acc1`, which had 18 expiry entries on :5000.
+It took a vector bump down on 2026-11-16 (infra#199). Diagnose a 0-byte
+blob with:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{size_download}\n' \
+  http://10.0.20.10:5000/v2/<repo>/blobs/sha256:<digest>   # 200 0 = broken
+ls /opt/registry/data/<cache>/docker/registry/v2/blobs/sha256/<2>/<digest>/   # data missing
+```
+
+A `docker restart registry-<cache>` (then `registry-nginx`) clears it.
+Do not re-add the cache stanza. The legacy `modules/docker-registry`
+templates still carry it. They only seed a rebuilt VM through cloud-init
+(`stacks/infra`), so run `playbooks/registry-cache.yml` after a rebuild:
+it overwrites them with the declared configs.
+
 ## DNS configuration
 
 Ubuntu ships `systemd-resolved` and uses netplan to declare per-link

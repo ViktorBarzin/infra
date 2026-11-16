@@ -3,8 +3,14 @@ log:
   fields:
     service: registry-kyverno
 storage:
-  cache:
-    blobdescriptor: inmemory
+  # No `cache: blobdescriptor: inmemory`, on purpose (infra#199). A proxy cache
+  # expires each repo's copy of a blob on its own 168h timer, but the blob data
+  # is stored once and shared by every repo that has it. When the first repo's
+  # timer fires, the data goes and the other repos keep their links. With the
+  # in-memory descriptor cache the registry still believed the blob was there and
+  # answered 200 with 0 bytes, so containerd failed with "unexpected EOF" until
+  # the 02:00 restart. Without it, a missing blob is a miss and is re-fetched
+  # from upstream on the next pull.
   filesystem:
     rootdirectory: /var/lib/registry
   delete:
