@@ -63,6 +63,18 @@ pending_commits() {
   done
 }
 
+# Commits in base..head, oldest first, that a renovate-bot push brought: those
+# with a Renovate-Dep trailer, plus <pushed> (CI_COMMIT_SHA) when it is in range.
+# Never a human commit that only happens to sit in the same range.
+renovate_pushed_commits() {
+  local base=$1 head=$2 pushed=${3:-} c
+  git rev-list --reverse "$base..$head" | while read -r c; do
+    if [ "$c" = "$pushed" ] || git log -1 --format=%B "$c" | grep -q '^Renovate-Dep: '; then
+      echo "$c"
+    fi
+  done
+}
+
 # Terragrunt stacks a commit changes. verify.sh is read by the verify runner,
 # not by Terraform, so a commit touching only that file applies nothing.
 # A file under modules/ maps to the stacks whose HCL references that module
@@ -553,9 +565,13 @@ stage_prepare() {
 
   pending=$(pending_commits "$base" "$head")
   # A push by renovate-bot is a Renovate commit even if its git author were
-  # ever configured differently.
+  # ever configured differently. Only its own commits, though: diffbase..head
+  # also holds every [ci skip] commit pushed since the last pipeline, and on
+  # 2026-11-16 (pipeline 3988, infra#197) the rails reverted one of Viktor's
+  # for an unrelated failure. A Renovate commit carries a Renovate-Dep trailer
+  # (renovate.json5 commitBody); the pushed commit itself counts as well.
   if [ "${CI_COMMIT_AUTHOR:-}" = "$RENOVATE_LOGIN" ]; then
-    pending=$(printf '%s\n%s\n' "$pending" "$(git rev-list --reverse "$diffbase..$head")" | awk 'NF && !seen[$0]++')
+    pending=$(printf '%s\n%s\n' "$pending" "$(renovate_pushed_commits "$diffbase" "$head" "${CI_COMMIT_SHA:-}")" | awk 'NF && !seen[$0]++')
   fi
   if [ -z "$pending" ]; then
     log "no Renovate commits to verify"

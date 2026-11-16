@@ -36,7 +36,7 @@ Commit subjects read `<stack>: bump <dep> <old> -> <new>`. The body lists each p
 
 ## Rails
 
-The infra pipeline (`.woodpecker/default.yml`, apply step) runs `scripts/renovate-rails` around its usual apply loop. It acts on commits whose git author is `renovate-bot@viktorbarzin.me`, plus every commit of a push made by the `renovate-bot` account. For any other push it finds nothing to do and returns within a second.
+The infra pipeline (`.woodpecker/default.yml`, apply step) runs `scripts/renovate-rails` around its usual apply loop. It acts on commits whose git author is `renovate-bot@viktorbarzin.me`, plus the commits of a push made by the `renovate-bot` account that carry a `Renovate-Dep:` trailer, and the pushed commit itself. A human commit that sits in the same range (a `[ci skip]` push no pipeline ran) is never one of them: before infra#197 the rails counted every commit since the last pipeline, and reverted a human commit for an unrelated apply failure. For any other push it finds nothing to do and returns within a second.
 
 ```mermaid
 flowchart TD

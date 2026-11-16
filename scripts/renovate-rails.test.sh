@@ -65,6 +65,12 @@ eq "pending: range starts after the marker" "$R2" "$(pending_commits "$H1" HEAD 
 git revert --no-edit "$R1" >/dev/null
 eq "pending: a reverted renovate commit is no longer pending" "$R2" "$(pending_commits "$BASE" HEAD | tr '\n' ' ' | sed 's/ $//')"
 
+# --- renovate_pushed_commits (infra#197) --------------------------------------
+# A renovate-bot push counts its own commits, never a human commit in range.
+mkrepo
+eq "pushed: trailer commits only, the human one left out" "$R1 $R2" "$(renovate_pushed_commits "$BASE" HEAD "$R2" | tr '\n' ' ' | sed 's/ $//')"
+eq "pushed: the pushed commit counts without a trailer" "$R1 $H1 $R2" "$(renovate_pushed_commits "$BASE" HEAD "$H1" | tr '\n' ' ' | sed 's/ $//')"
+
 # --- commit_stacks -----------------------------------------------------------
 mkrepo
 eq "stacks: renovate commit -> its stack" "app" "$(commit_stacks "$R1")"
@@ -276,6 +282,14 @@ out=$(CI_COMMIT_SHA=$R1 stage_finish)
 case "$out" in *SHOULD-NOT-RUN*) bad "apply fail: verify skipped" ;; *) ok "apply fail: verify skipped" ;; esac
 eq "apply fail: reverted" "This reverts commit $R1." "$(git log -1 --format=%B | grep '^This reverts')"
 eq "apply fail: ignore entry" "v1.1.0" "$(jq -r '.packageRules[0].matchNewValue' renovate/ignored-versions.json)"
+
+# infra#197: a renovate-bot push whose diff-base range also holds a human
+# commit (a [ci skip] push no pipeline ran) must not make that commit pending.
+mkrepo; mkdir -p scripts/verify
+printf '#!/bin/bash\nexit 0\n' >scripts/verify/run
+echo "$BASE" >.diff_base; : >.platform_apply; : >.app_apply; : >.platform_failed; : >.app_failed; MARKER=""
+CI_COMMIT_AUTHOR=renovate-bot CI_COMMIT_SHA=$R2 stage_prepare >/dev/null
+eq "renovate push: the human commit in range is not pending" "$R1 $R2" "$(tr '\n' ' ' <.rails_commits | sed 's/ $//')"
 
 # Apply failed on a CI-side error after the loop's retries (the loop lists the
 # stack in .apply_transient: provider download, Vault): the bump was never
