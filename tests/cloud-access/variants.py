@@ -155,6 +155,12 @@ edge = one("Deployment", "edge-menu")
 proxy = one("Deployment", "auth-recipes")
 public_proxy = one("Deployment", "auth-menu")
 assert [c["name"] for c in app["spec"]["template"]["spec"].get("initContainers", [])] == ["migrate"], "the public App runs its migrations as init container migrate"
+# The public App has a healthCheckPath: its App container carries httpGet
+# readiness, liveness and startup probes on the App port with no host, and
+# the rendered Deployment (and a pod from it, below) must be admitted.
+for probe in ["readinessProbe", "livenessProbe", "startupProbe"]:
+    got = [c for c in app["spec"]["template"]["spec"]["containers"] if c["name"] == "app"][0].get(probe, {})
+    assert got.get("httpGet", {}).get("path") == "/healthz" and "host" not in got["httpGet"], f"the public App's {probe} is httpGet /healthz with no host"
 assert len(proxies) == 2, "every App has an oauth2-proxy, public or private"
 assert all(c["name"] != "cookie-strip" for o in apps for c in o["spec"]["template"]["spec"]["containers"]), "the edge runs in its own pod"
 
@@ -216,6 +222,13 @@ def probe_host(s):
     app_c(s)["livenessProbe"] = {"httpGet": {"host": "192.168.1.1", "path": "/", "port": 80}}
 
 
+def probe_host_on(probe):
+    """The App's own httpGet probe (healthCheckPath), pointed at a host."""
+    def f(s):
+        app_c(s)[probe]["httpGet"]["host"] = "192.168.1.1"
+    return f
+
+
 # Pod-level rules, checked on the App Deployment and on a pod made from its
 # template. Each: name, change, expected message.
 POD_RULES = [
@@ -245,6 +258,8 @@ POD_RULES = [
     ("init-no-ephemeral-limit", lambda s: init_of(s)["resources"]["limits"].pop("ephemeral-storage"), "sets an ephemeral-storage limit"),
     ("share-pid", lambda s: s.update({"shareProcessNamespace": True}), "may not share its process namespace"),
     ("probe-host", probe_host, "may not name a host|violates PodSecurity"),
+    ("readiness-host", probe_host_on("readinessProbe"), "may not name a host|violates PodSecurity"),
+    ("startup-host", probe_host_on("startupProbe"), "may not name a host|violates PodSecurity"),
 ]
 for name, change, expect in POD_RULES:
     case(f"deploy-{name}", "kr", expect, f"App Deployment with {name}", variant(app, lambda o, ch=change: ch(spec_of(o))))
@@ -256,6 +271,19 @@ pod = as_pod(app, "rendered-app-pod")
 # migrate or before its first Deploy.
 case("deploy-no-init", "kr", "ok", "App Deployment without an init container",
      variant(app, lambda o: spec_of(o).pop("initContainers")))
+# The App pod without a healthCheckPath: the TCP readiness probe alone.
+def tcp_probe(o):
+    c = app_c(spec_of(o))
+    port = c["readinessProbe"]["httpGet"]["port"]
+    c["readinessProbe"] = {"tcpSocket": {"port": port}, "initialDelaySeconds": 2, "periodSeconds": 10}
+    c.pop("livenessProbe")
+    c.pop("startupProbe")
+
+
+case("deploy-tcp-probe", "kr", "ok", "App Deployment with the TCP readiness probe and no liveness or startup probe",
+     variant(app, tcp_probe))
+case("pod-http-probes", "ka", "ok", "a pod from the rendered App template keeps its httpGet readiness, liveness and startup probes with no host",
+     variant(pod, lambda o: None))
 case("pod", "ka", "ok", "a pod from the rendered App template (Pod Security restricted and cloud-managed-pod)", pod)
 case("pod-edge", "ka", "ok", "a pod from the rendered edge template", as_pod(edge, "rendered-edge-pod"))
 case("pod-proxy", "ka", "ok", "a pod from the rendered oauth2-proxy template", as_pod(proxy, "rendered-proxy-pod"))

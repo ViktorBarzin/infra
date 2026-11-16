@@ -123,6 +123,16 @@ nothing: both processes read the password file on each new connection.
 4. The reconciler waits for the Project's pods (180 s), records the result,
    duration and a redacted log excerpt on the job, and sets the Project's
    applied version. A failed job is retried up to 3 times with backoff.
+5. After that, the reconciler's health watch reads every live App's pods
+   every 30 s (every 10 s for an App that is not healthy), with the same
+   get and list on pods and events in `p-*` namespaces, and records an
+   Event in the `cloud` database (`service_events`, kept 30 days) when an
+   App starts crashing, turns unhealthy or recovers. It skips a Project
+   with a reconcile job in flight and judges only pods of the App's live
+   Deploy. It needs no RBAC beyond the project role. An App with
+   `healthCheckPath` in its Project File has `httpGet` readiness, liveness
+   and startup probes on that path with no host, which
+   `cloud-managed-pod` admits (probes may not name a host).
 
 ## Agent sign-in
 

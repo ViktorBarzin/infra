@@ -33,8 +33,9 @@
 #     from Traefik to oauth2-proxy pods or from oauth2-proxy pods to edge
 #     pods, and ends in Deny; each oauth2-proxy shape holds exactly one of
 #     the emails file and --email-domain=*;
-#   - Cloud's modules apply a private App, a public App (with a built image
-#     and a migrate init container) and a Postgres Service as the
+#   - Cloud's modules apply a private App, a public App (with a built image,
+#     a migrate init container and httpGet readiness, liveness and startup
+#     probes from its healthCheckPath) and a Postgres Service as the
 #     reconciler, every Deployment's pod is admitted (Pod Security
 #     restricted, cloud-managed-pod), and the destroy succeeds; then the same
 #     for each of Cloud's snapshot fixtures (render.fixtures.ts FIXTURES: one
@@ -48,7 +49,9 @@
 #     affinity, tolerations, host network, priority, GPU, service account,
 #     init containers (only one, named migrate, on App pods, with the App's
 #     image and no restartPolicy, and every container rule on it too), probe
-#     hosts, prometheus.io annotations, the component label, the edge pod
+#     hosts (liveness, readiness and startup; the App's own httpGet probes
+#     with no host and the TCP probe alone are admitted), prometheus.io
+#     annotations, the component label, the edge pod
 #     (image, args, env and its edge secret, port number, readiness probe,
 #     mounts, a second container) and its Caddyfile (structure, upstreams,
 #     the forged identity headers it deletes, the edge secret it adds and

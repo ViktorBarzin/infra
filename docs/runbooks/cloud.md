@@ -601,6 +601,21 @@ A failed destroy is queued again by the reconciler itself every hour
 live: [docs/architecture/cloud.md](../architecture/cloud.md), "How to debug a
 stuck Project".
 
+## An App reads crashing or unhealthy
+
+The reconciler's health watch reads every live App's pods every 30 s
+(every 10 s while one is not healthy) and records an Event when an App
+starts crashing, turns unhealthy or recovers. Events are kept 30 days.
+`cloud events <project> <app>` lists them with the reason (`exited` and
+the exit code, `OOMKilled`, `migrate_failed`, `health_check`,
+`not_listening`), and `cloud projects` names the Apps that are not healthy
+now. The App's own logs (`cloud logs`) usually say why. To look closer,
+read the pod read-only: `kubectl -n p-<project> describe pod -l
+cloud.viktorbarzin.me/service=<app>,cloud.viktorbarzin.me/component=app`.
+An Event is missing when the reconciler cannot read the namespace (its log
+says "cannot read the Project's pods" at debug level) or the Project is
+converging: the rollout check judges new pods then.
+
 ## Alerts
 
 | Alert | Pages | First step |

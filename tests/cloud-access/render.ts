@@ -17,7 +17,8 @@
  *   fixtures.json          [{dir, name, namespace}] listing them in order
  *
  * The combined Project holds a private App, a public App connected to a
- * Postgres Service (with a built image and a migrate init container), and
+ * Postgres Service (with a built image, a migrate init container and HTTP
+ * health check probes), and
  * the Postgres Service, so every object kind Cloud renders appears at least
  * once; the forbidden variants are built from it.
  * The fixtures are the shapes Cloud's own tests render (a Postgres-only
@@ -47,13 +48,15 @@ const spec = {
 			allow: ["ana@example.com"],
 		}),
 		// A built image, so its migrations render as init container migrate
-		// (the placeholder runs none). The image need not exist: the test
-		// checks admission, not that the App runs.
+		// and its health check as httpGet probes (the placeholder runs
+		// neither). The image need not exist: the test checks admission, not
+		// that the App runs.
 		menu: fixtures.app({
 			access: "public",
 			size: "nano",
 			connects: ["db"],
 			migrate: ["entrypoints/migrate.js"],
+			healthCheckPath: "/healthz",
 		}),
 		db: { kind: "postgres", size: "small" },
 	},
