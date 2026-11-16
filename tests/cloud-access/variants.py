@@ -807,6 +807,90 @@ if job_file.exists():
         s_["containers"] = [copy.deepcopy(jc(job))]
     case("deploy-migrate", "kr", "runs only from a Job|a migrate pod runs once", "a Deployment of migrate pods", variant(app, migrate_deployment))
 
+# --- the one-off job (B20) ---------------------------------------------------------------
+# render.ts wrote a one-off job of menu as Cloud's job loop (job-runs.ts)
+# starts it for `cloud run`; a cloud checkout from before B20 writes none.
+run_file = dump / "one-off-job.json"
+if run_file.exists():
+    run = json.loads(run_file.read_text())
+    run["metadata"]["namespace"] = target
+    ONE = "a one-off job pod has one container"
+
+    def rc(o):
+        return o["spec"]["template"]["spec"]["containers"][0]
+
+    def run_labels(key, value):
+        def f(o):
+            o["metadata"]["labels"][key] = value
+            o["spec"]["template"]["metadata"]["labels"][key] = value
+        return f
+
+    def run_pod(j, owned=True):
+        t = j["spec"]["template"]
+        md = {"name": j["metadata"]["name"] + "-x2k9q", "namespace": target, "labels": dict(t["metadata"]["labels"])}
+        if owned:
+            md["ownerReferences"] = [{"apiVersion": "batch/v1", "kind": "Job", "name": j["metadata"]["name"],
+                                      "uid": "00000000-0000-4000-8000-000000000020", "controller": True, "blockOwnerDeletion": True}]
+        return {"apiVersion": "v1", "kind": "Pod", "metadata": md, "spec": copy.deepcopy(t["spec"])}
+
+    case("run-job", "kr", "ok", "the one-off job Cloud builds for `cloud run` of menu", run)
+    case("run-job-pod", "ka", "ok", "a pod the Job controller makes from the one-off job", run_pod(run))
+    case("run-job-pod-unowned", "ka", "made only by its Job", "a one-off job pod with no Job owner", run_pod(run, owned=False))
+    case("run-job-64", "kr", "ok", "a one-off job with 64 command items of 4096 characters",
+         variant(run, lambda o: rc(o).update({"command": ["x" * 4096] * 64})))
+
+    def as_app_pod(o):
+        run_labels(COMPONENT, "app")(o)
+        rc(o)["name"] = "app"
+
+    RUN_RULES = [
+        ("second-container", lambda o: o["spec"]["template"]["spec"]["containers"].append(dict(copy.deepcopy(rc(o)), name="x")), ONE),
+        ("container-app", lambda o: rc(o).update({"name": "app"}), ONE),
+        ("no-command", lambda o: rc(o).pop("command"), ONE),
+        ("empty-command", lambda o: rc(o).update({"command": []}), ONE),
+        ("args", lambda o: rc(o).update({"args": ["-c", "exit 7"]}), ONE),
+        ("long-command", lambda o: rc(o).update({"command": ["x"] * 65}), ONE),
+        ("long-item", lambda o: rc(o).update({"command": ["x" * 4097]}), ONE),
+        ("image-tag", lambda o: rc(o).update({"image": "ghcr.io/viktorbarzin/cloud-recipe-box_menu:latest"}), ONE),
+        ("port", lambda o: rc(o).update({"ports": [{"name": "app", "containerPort": 3000}]}), "listens on no port"),
+        ("probe", lambda o: rc(o).update({"livenessProbe": {"tcpSocket": {"port": 3000}}}), "listens on no port"),
+        ("prestop", lambda o: rc(o).update({"lifecycle": {"preStop": {"exec": {"command": ["sleep", "5"]}}}}), "listens on no port"),
+        ("on-failure", lambda o: o["spec"]["template"]["spec"].update({"restartPolicy": "OnFailure"}), "restartPolicy Never"),
+        ("retries", lambda o: o["spec"].update({"backoffLimit": 1}), "runs one pod once"),
+        ("parallel", lambda o: o["spec"].update({"parallelism": 2}), "runs one pod once"),
+        ("completions", lambda o: o["spec"].update({"completions": 3}), "runs one pod once"),
+        ("failure-policy", lambda o: o["spec"].update({"podFailurePolicy": {"rules": [{"action": "Ignore", "onExitCodes": {"operator": "In", "values": [7]}}]}}), "runs one pod once"),
+        ("no-deadline", lambda o: o["spec"].pop("activeDeadlineSeconds"), "sets activeDeadlineSeconds"),
+        ("long-deadline", lambda o: o["spec"].update({"activeDeadlineSeconds": 4261}), "sets activeDeadlineSeconds"),
+        ("migrate-deadline", lambda o: o["spec"].update({"activeDeadlineSeconds": 43200}), "sets activeDeadlineSeconds"),
+        ("no-ttl", lambda o: o["spec"].pop("ttlSecondsAfterFinished"), "sets activeDeadlineSeconds"),
+        ("long-ttl", lambda o: o["spec"].update({"ttlSecondsAfterFinished": 100000}), "sets activeDeadlineSeconds"),
+        ("other-name", lambda o: o["metadata"].update({"name": "job-menu-anything"}), "is named job-<its App>"),
+        ("other-app", lambda o: o["metadata"].update({"name": "job-recipes-7a1b2c3d4"}), "is named job-<its App>"),
+        ("migrate-name", lambda o: o["metadata"].update({"name": "app-menu-m7a1b2c3d4"}), "is named job-<its App>"),
+        ("owned", lambda o: o["metadata"].update({"ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "app-menu", "uid": "00000000-0000-4000-8000-000000000021"}]}), "has no owner"),
+        ("label-mismatch", lambda o: o["metadata"]["labels"].update({SERVICE: "recipes"}), "carries its pod's"),
+        ("job-label-off", lambda o: o["metadata"]["labels"].update({COMPONENT: "migrate"}), "carries its pod's"),
+        ("init", lambda o: o["spec"]["template"]["spec"].update({"initContainers": [dict(copy.deepcopy(rc(o)), name="setup")]}), "only an App pod may have an init container"),
+        ("serviceaccount", lambda o: o["spec"]["template"]["spec"].update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
+        ("hostpath", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "hostPath": {"path": "/"}}), "may use only emptyDir"),
+        # Relabelled app or migrate, it leaves this policy for
+        # cloud-managed-job, which refuses an app Job and a migrate Job
+        # with a command.
+        ("app-component", as_app_pod, "a Job is a Deploy's migrations"),
+        ("migrate-component", run_labels(COMPONENT, "migrate"), "a migrate pod has one container"),
+    ]
+    for name, change, expect in RUN_RULES:
+        case(f"run-{name}", "kr", expect, f"one-off job with {name}", variant(run, change))
+
+    # No Deployment runs one-off job pods: they come from a Job only.
+    def run_deployment(o):
+        relabel("job")(o)
+        s_ = spec_of(o)
+        s_.pop("initContainers", None)
+        s_["containers"] = [copy.deepcopy(rc(run))]
+    case("deploy-run-job", "kr", "runs only from a Job|a one-off job pod runs once", "a Deployment of one-off job pods", variant(app, run_deployment))
+
 # --- Middlewares -------------------------------------------------------------------------
 mw = {"apiVersion": "traefik.io/v1alpha1", "kind": "Middleware", "metadata": {"name": "buffer", "namespace": target},
       "spec": {"buffering": {"maxRequestBodyBytes": 10737418240, "memRequestBodyBytes": 10737418240}}}

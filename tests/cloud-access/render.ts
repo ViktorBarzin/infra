@@ -14,6 +14,9 @@
  *
  *   migrate-job.json       the migrate Job Cloud starts for a Deploy of the
  *                          public App (src/reconciler/migrate-job.ts, B16)
+ *   one-off-job.json       a one-off job of the public App, as the reconciler
+ *                          starts it for `cloud run` (src/reconciler/job-runs.ts,
+ *                          B20)
  *   fixtures/<n>/          the same two files for each of Cloud's snapshot
  *                          fixtures (render.fixtures.ts FIXTURES), and
  *   fixtures.json          [{dir, name, namespace}] listing them in order
@@ -107,6 +110,41 @@ if (await Bun.file(migrateJobFile).exists()) {
 		activeDeadlineSeconds: 900,
 	});
 	await writeFile(join(out, "migrate-job.json"), JSON.stringify(job, null, 2));
+}
+
+// A one-off job of menu (B20), built by Cloud's own code as its job loop
+// builds it: the App's rendered variables, the argv as the command. A cloud
+// checkout from before B20 has no job-runs.ts and writes none.
+const jobRunsFile = join(repo, "src/reconciler/job-runs.ts");
+if (await Bun.file(jobRunsFile).exists()) {
+	const { oneOffJob } = await import(migrateJobFile);
+	const runs = await import(jobRunsFile);
+	const { APP_EPHEMERAL } = await import(join(repo, "src/lib/plan.ts"));
+	const runId = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+	const job = oneOffJob({
+		namespace: rendered.namespace,
+		project: rendered.tfvarsJson.project,
+		app: "menu",
+		name: runs.jobRunName("menu", runId),
+		component: runs.JOB_COMPONENT,
+		container: "job",
+		vars: rendered.tfvarsJson.apps.menu,
+		image: MENU_IMAGE,
+		command: ["sh", "-c", "exit 7"],
+		args: [],
+		extraEnv: [
+			{
+				name: "CLOUD_DATABASE_POOL_SIZE",
+				value: String(runs.JOB_DATABASE_CONNECTIONS),
+			},
+		],
+		labels: { "cloud.viktorbarzin.me/job": runId },
+		appPort: fixtures.INSTANCE.appPort,
+		ephemeral: APP_EPHEMERAL,
+		activeDeadlineSeconds: runs.JOB_ACTIVE_DEADLINE_SECONDS,
+		ttlSecondsAfterFinished: runs.JOB_RUN_TTL_SECONDS,
+	});
+	await writeFile(join(out, "one-off-job.json"), JSON.stringify(job, null, 2));
 }
 
 const list: { dir: string; name: string; namespace: string }[] = [];

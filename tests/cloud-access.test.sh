@@ -86,7 +86,19 @@
 #     port or probe, restartPolicy OnFailure, retries, no deadline or TTL,
 #     more than one pod, another name, an owner, the component app or
 #     another component), as are a migrate pod with no Job
-#     owner and a Deployment of migrate pods; the reconciler may create,
+#     owner and a Deployment of migrate pods;
+#   - the one-off job Cloud's own code builds for `cloud run` (oneOffJob
+#     and job-runs.ts, B20) is admitted as the reconciler, with 64 command
+#     items of 4096 characters too, and so is a pod the Job controller would
+#     make from it; each variant cloud-managed-one-off-job forbids is
+#     refused (a second container, no command, more than 64 items or a
+#     longer one, args, an image by tag, a port, probe or hook,
+#     restartPolicy OnFailure, retries, more than one pod, a failure
+#     policy, no deadline, one past 4260 s, no TTL or a longer one, another
+#     name or App, an owner, labels unlike its pod's, an init container,
+#     another service account, a hostPath, or relabelled app or migrate), as
+#     are a one-off job pod with no Job owner and a Deployment of one-off
+#     job pods; the reconciler may create,
 #     get, list and delete Jobs and read pod logs in its namespaces only,
 #     and may not create pods itself;
 #   - worker and cron Services (the cloud repo's B18 and B19), built from the
@@ -889,6 +901,11 @@ api_after "$TMP/dump" "combined Project"
 # The migrate Job Cloud's own code builds for the public App (render.ts),
 # checked with the Project's objects (variants.py).
 cp "$TMP/tofu/migrate-job.json" "$TMP/dump/" 2>/dev/null
+# And the one-off job it builds for `cloud run` of the same App (B20).
+cp "$TMP/tofu/one-off-job.json" "$TMP/dump/" 2>/dev/null
+if [ -f "$CLOUD_REPO/src/reconciler/job-runs.ts" ]; then
+  [ -s "$TMP/dump/one-off-job.json" ] && ok "Cloud's own code built a one-off job to check" || bad "Cloud has job-runs.ts but render.ts wrote no one-off job"
+fi
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
   check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.

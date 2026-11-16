@@ -410,7 +410,7 @@ or `cron`, and run one container `app` with the App's image and a command.
 
 `cloud-managed-cron-job` matches only Jobs whose pod is component `cron`;
 `cloud-managed-job` (the cloud repo's B16, migrations) checks every other
-Job. The pods of both kinds of run meet `cloud-managed-pod`.
+Job but a one-off job's (below). The pods of both kinds of run meet `cloud-managed-pod`.
 
 For crons the project role grants `cronjobs` with the full write verbs;
 a manual run uses the `jobs` create right that B16 added. A finished Job is removed by its
@@ -427,6 +427,22 @@ like App pods, within Cloud's own Project policy. The ingress floor passes
 connections only to edge, oauth2-proxy and App pods, so nothing connects
 to a worker or cron pod. The floor passes App-to-App traffic into an internal App only from
 component `app` pods, so a worker or cron pod cannot call an internal App.
+
+A one-off job (cloud backlog B20, `cloud run <project> <app> -- <command>`)
+is a Job the reconciler starts when a User asks, with the App's live image,
+env, secrets and Size and the User's command as the container's command,
+never through a shell (the cloud repo's `src/reconciler/job-runs.ts`). The
+B16 Job rights cover it. `cloud-managed-job` skips a Job whose pod is
+component `job`, and `cloud-managed-one-off-job` admits it: every pod rule,
+one pod once (`backoffLimit` 0, `restartPolicy: Never`), a deadline up to
+4,260 s (10 min to start, 1 h to run and a minute), a TTL up to a day,
+named `job-<app>-<9 hex>`, labelled like its pod, no owner. A `job` pod has
+one container `job` running an image by digest with a command of 1 to 64
+items of at most 4,096 characters, no args, port, probe, hook or init
+container. Only its Job makes it, and no Deployment runs one. No
+Kubernetes Service selects component `job`, and the ingress floor has no
+rule for it; egress is the Project's. Like a worker or cron pod, a job
+pod cannot call an internal App.
 
 The shapes from before K1 are refused: `cloud-managed-ingress` admits
 only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge

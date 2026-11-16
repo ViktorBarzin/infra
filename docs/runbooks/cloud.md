@@ -934,6 +934,28 @@ Rollback for one release: set `RECONCILE_MIGRATE_AS=init` on the
 App's next apply renders the init container `migrate` again, and no Job
 starts.
 
+## A one-off job
+
+Since cloud backlog B20 `cloud run <project> <app> -- <command>` runs a
+command once as Job `job-<app>-<first 9 hex of the job id>` in
+`p-<project>` (component `job`), with the App's live image, env and
+secrets. A Project runs one job at a time (`job_running`), and its quota
+keeps room for that one job's pod. `cloud jobs <project> <app> [<id>]`
+lists the App's last 20 jobs with their exit codes, or prints one with
+its output. A job that never ran to an end has no exit code and a
+`failure`: `refused` (admission or RBAC refused the Job: check
+`cloud-managed-one-off-job` is applied), `quota_full` (a Deploy or
+restart in progress held the room; the job may wait up to the 10 min
+start cap), `image_pull_failed`, `still_starting`, `timed_out` (it ran
+past 1 h, or Cloud did not see it end within 76 min of its start) or
+`gone` (its Job was deleted while it ran, or the reconciler never
+started it in time). A job pod cannot call an internal App, as a worker
+or cron pod cannot. Read the Job read-only while it
+lasts (an hour after it ends): `kubectl -n p-<project> get jobs -l
+cloud.viktorbarzin.me/component=job` and `kubectl -n p-<project> describe
+job <name>`. Cloud has no cancel for a job yet; its deadline ends it
+within 71 minutes.
+
 ## Alerts
 
 | Alert | Pages | First step |

@@ -85,13 +85,17 @@
 #     component worker (B18). A migrate pod (B16)
 #     has one container migrate, an image by digest, no command, 1 to 8
 #     args, restartPolicy Never, no port, probe or hook, and is made only by
-#     a Job; no Deployment runs one.
+#     a Job; no Deployment runs one. A one-off job pod (B20) has one
+#     container job, an image by digest, a command of 1 to 64 items of at
+#     most 4096 characters and no args, restartPolicy Never, no port, probe
+#     or hook, and is made only by a Job; no Deployment runs one.
 #   cloud-managed-job  a Job's pod template passes the pod rules above; it
 #     runs one pod once (backoffLimit 0) with restartPolicy Never, a
 #     deadline up to 12 h and a TTL up to a day. It is a Deploy's migrations
 #     (component migrate, named app-<App>-m<9 hex>, no owner, labelled
 #     like its pod; the reconciler's). A Job whose pod is component cron
-#     (B19's cron run) is left to cloud-managed-cron-job.
+#     (B19's cron run) is left to cloud-managed-cron-job, and one whose pod
+#     is component job to cloud-managed-one-off-job.
 #   cloud-managed-cronjob  a CronJob (a cron Service, cron-<name>, B19)
 #     meets every rule of cloud-managed-pod in its Job template's pod, and
 #     that pod is component cron with no init container and restartPolicy
@@ -102,6 +106,11 @@
 #     cron-<its service>, and the name cron-<service>-<digits> (the CronJob
 #     controller's) or cron-<service>-m<digits> (a manual run the reconciler
 #     creates).
+#   cloud-managed-one-off-job  a one-off job (B20, `cloud run`): a Job whose
+#     pod is component job passes the pod rules above and runs one pod once
+#     (backoffLimit 0, restartPolicy Never), with a deadline up to 4260 s
+#     and a TTL up to a day. It is named job-<App>-<9 hex>, is labelled
+#     like its pod and has no owner: the reconciler's.
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is one Cloud renders (local
 #     cloud_caddyfile_variants: public and private): only the cookie list
@@ -301,7 +310,7 @@ locals {
   # component cron (the cloud repo's B18 and B19): App code like an App pod,
   # with no init container, no edge and no way in (the ingress floor below
   # admits no connection to them).
-  cloud_workload_components = ["app", "edge", "oauth2-proxy", "worker", "cron", "migrate"]
+  cloud_workload_components = ["app", "edge", "oauth2-proxy", "worker", "cron", "migrate", "job"]
 
   # A Deploy's migrations (backlog B16): a Job the reconciler starts once per
   # Deploy, before the rollout, from the App's own pod (the cloud repo's
@@ -317,6 +326,24 @@ locals {
     max_args = 8
     max_arg  = 200
   }
+  # A one-off job (backlog B20, `cloud run`): a Job the reconciler starts
+  # when a User asks, from the App's own pod with the User's command as the
+  # container's command (the cloud repo's src/reconciler/job-runs.ts). Its
+  # pod is labelled component job, so no Kubernetes Service selects it.
+  cloud_one_off_job = {
+    component = "job"
+    container = "job"
+    # job-<App>-<the first 9 hex digits of the run id>.
+    name_re     = "^job-[a-z][a-z0-9-]*-[0-9a-f]{9}$"
+    max_command = 64
+    max_arg     = 4096
+    # Cloud's JOB_ACTIVE_DEADLINE_SECONDS: 10 min to start, 1 h to run and
+    # a minute. tests/cloud-access.test.sh sends the Job Cloud's own code
+    # builds, so a change on either side fails the test.
+    max_deadline_seconds = 4260
+  }
+  cloud_one_off_job_component_is = "has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == '${local.cloud_one_off_job.component}'"
+
   # Every Cloud Job runs once: no retry, a deadline, and a TTL so it does
   # not pile up. B19's cron runs need the 12 h deadline and a day of TTL.
   cloud_job_max_deadline_seconds = 43200
@@ -824,6 +851,7 @@ locals {
   #
   # @EDGE and @AUTH below stand for "this pod is not an edge pod, or" and the
   # same for oauth2-proxy; each pinned rule applies to its component only.
+  # @MIG and @JOB do the same for a migrate pod and a one-off job pod.
   cloud_pod_rules = [for r in [
     {
       expression = "variables.component in ${jsonencode(local.cloud_workload_components)}"
@@ -957,6 +985,17 @@ locals {
       expression = "@MIG (has(@S.restartPolicy) && @S.restartPolicy == 'Never' && @S.containers.all(c, !has(c.lifecycle) && !has(c.ports) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe)))"
       message    = "in a Cloud namespace, a migrate pod runs once (restartPolicy Never), listens on no port and has no probe or lifecycle hook"
     },
+    # A one-off job pod (local.cloud_one_off_job): one container named job
+    # that runs the User's command, given as a list and never through a
+    # shell, once. No args: the whole command is in command.
+    {
+      expression = "@JOB (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_one_off_job.container}' && has(@S.containers[0].command) && size(@S.containers[0].command) >= 1 && size(@S.containers[0].command) <= ${local.cloud_one_off_job.max_command} && @S.containers[0].command.all(a, size(a) <= ${local.cloud_one_off_job.max_arg}) && (!has(@S.containers[0].args) || size(@S.containers[0].args) == 0) && @S.containers[0].image.contains('@sha256:'))"
+      message    = "in a Cloud namespace, a one-off job pod has one container, ${local.cloud_one_off_job.container}, running an image by digest with a command of 1 to ${local.cloud_one_off_job.max_command} items of at most ${local.cloud_one_off_job.max_arg} characters and no args"
+    },
+    {
+      expression = "@JOB (has(@S.restartPolicy) && @S.restartPolicy == 'Never' && @S.containers.all(c, !has(c.lifecycle) && !has(c.ports) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe)))"
+      message    = "in a Cloud namespace, a one-off job pod runs once (restartPolicy Never), listens on no port and has no probe or lifecycle hook"
+    },
     # The oauth2-proxy (local.cloud_oauth2_proxy).
     {
       expression = "@AUTH (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_oauth2_proxy.container}' && @S.containers[0].image == '${local.cloud_oauth2_proxy.image}')"
@@ -977,9 +1016,9 @@ locals {
       message    = "in a Cloud namespace, the oauth2-proxy mounts only ConfigMap ${local.cloud_oauth2_proxy.prefix}<its App>, read-only, at ${local.cloud_oauth2_proxy.emails_dir}, and with ${local.cloud_oauth2_proxy_any_email} nothing at all"
     },
     ] : {
-    expression = replace(replace(replace(
+    expression = replace(replace(replace(replace(
       try("@S.containers.all(c, ${r.each_container}) && (!has(@S.initContainers) || @S.initContainers.all(c, ${r.each_container}))", r.expression),
-    "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || "), "@MIG ", "variables.component != '${local.cloud_migrate.component}' || ")
+    "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || "), "@MIG ", "variables.component != '${local.cloud_migrate.component}' || "), "@JOB ", "variables.component != '${local.cloud_one_off_job.component}' || ")
     message = r.message
   }]
 
@@ -1377,10 +1416,11 @@ locals {
           message    = r.message
           reason     = "Forbidden"
           }], [{
-          # Only the Job controller makes a migrate pod, for a Job that
-          # cloud-managed-job admitted.
-          expression = "variables.component != '${local.cloud_migrate.component}' || (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller))"
-          message    = "in a Cloud namespace, a migrate pod is made only by its Job"
+          # Only the Job controller makes a migrate or one-off job pod, for
+          # a Job that cloud-managed-job or cloud-managed-one-off-job
+          # admitted.
+          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}']) || (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller))"
+          message    = "in a Cloud namespace, a migrate or one-off job pod is made only by its Job"
           reason     = "Forbidden"
         }])
       }
@@ -1422,8 +1462,8 @@ locals {
           message    = "in a Cloud namespace, only an App or a worker Deployment may run 0 replicas (a suspended App, a stopped worker); the edge and the oauth2-proxy run at least one"
           reason     = "Forbidden"
           }, {
-          expression = "variables.component != '${local.cloud_migrate.component}'"
-          message    = "in a Cloud namespace, a migrate pod runs only from a Job"
+          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}'])"
+          message    = "in a Cloud namespace, a migrate or one-off job pod runs only from a Job"
           reason     = "Forbidden"
         }])
       }
@@ -1438,8 +1478,9 @@ locals {
     # could never make its pod is refused at once. Every Job runs once, with
     # a deadline and a TTL. It is a Deploy's migrations (B16): the
     # reconciler's own, named for its Deploy and owned by nothing. A cron
-    # run (B19, pod component cron) is cloud-managed-cron-job's, so this
-    # policy skips it; every other Job is refused here.
+    # run (B19, pod component cron) is cloud-managed-cron-job's and a
+    # one-off job (B20, pod component job) cloud-managed-one-off-job's, so
+    # this policy skips both; every other Job is refused here.
     managed_job = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicy"
@@ -1457,6 +1498,9 @@ locals {
         matchConditions = [{
           name       = "not-a-cron-run"
           expression = "!(has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == 'cron')"
+          }, {
+          name       = "not-a-one-off-job"
+          expression = "!(${local.cloud_one_off_job_component_is})"
         }]
         variables = concat(
           [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }],
@@ -1493,7 +1537,7 @@ locals {
             # Not app: the App's Kubernetes Service selects component app, so
             # an App-labelled Job pod would get its requests.
             expression = "variables.component == '${local.cloud_migrate.component}'"
-            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}); a cron run is component cron"
+            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}); a cron run is component cron and a one-off job component ${local.cloud_one_off_job.component}"
             reason     = "Forbidden"
           },
           {
@@ -1509,6 +1553,73 @@ locals {
       kind       = "ValidatingAdmissionPolicyBinding"
       metadata   = { name = "cloud-managed-job" }
       spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-job" })
+    }
+    # A one-off job (B20): the command a User runs once with an App's live
+    # image, env and secrets. The reconciler starts it; nothing else in a
+    # Project namespace may make a Job whose pod is component job, since
+    # this policy and the pod rules admit only that shape.
+    managed_one_off_job = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-one-off-job" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["batch"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["jobs"]
+          }]
+        }
+        matchConditions = [{
+          name       = "a-one-off-job"
+          expression = local.cloud_one_off_job_component_is
+        }]
+        variables = concat(
+          [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }],
+          [{ name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" }],
+        )
+        validations = concat([for r in local.cloud_pod_rules : {
+          expression = replace(r.expression, "@S", "object.spec.template.spec")
+          message    = r.message
+          reason     = "Forbidden"
+          }], [
+          {
+            expression = "has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.parallelism) || object.spec.parallelism <= 1) && (!has(object.spec.completions) || object.spec.completions == 1) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && (!has(object.spec.manualSelector) || !object.spec.manualSelector)"
+            message    = "in a Cloud namespace, a one-off job runs one pod once: backoffLimit 0, at most one pod, no failure or success policy and no manual selector"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_one_off_job.max_deadline_seconds} && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished <= ${local.cloud_job_max_ttl_seconds}"
+            message    = "in a Cloud namespace, a one-off job sets activeDeadlineSeconds up to ${local.cloud_one_off_job.max_deadline_seconds} and ttlSecondsAfterFinished up to ${local.cloud_job_max_ttl_seconds}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.template.spec.restartPolicy) && object.spec.template.spec.restartPolicy == 'Never'"
+            message    = "in a Cloud namespace, a one-off job's pod sets restartPolicy Never"
+            reason     = "Forbidden"
+          },
+          {
+            # The Job's labels name the same Service and component as its
+            # pod's, so what lists Jobs reads the same as what lists pods.
+            expression = "has(object.metadata.labels) && '${local.cloud_component_label}' in object.metadata.labels && object.metadata.labels['${local.cloud_component_label}'] == variables.component && '${local.cloud_service_label}' in object.metadata.labels && object.metadata.labels['${local.cloud_service_label}'] == variables.service"
+            message    = "in a Cloud namespace, a one-off job carries its pod's ${local.cloud_component_label} and ${local.cloud_service_label} labels"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "object.metadata.name.matches('${local.cloud_one_off_job.name_re}') && object.metadata.name.startsWith('job-' + variables.service + '-') && size(object.metadata.name) == size(variables.service) + 14 && size(variables.owners) == 0"
+            message    = "in a Cloud namespace, a one-off job is named job-<its App>-<9 hex digits> and has no owner"
+            reason     = "Forbidden"
+          },
+        ])
+      }
+    }
+    managed_one_off_job_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-one-off-job" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-one-off-job" })
     }
     # Cron Services (the cloud repo's B19). Every pod rule applies to the
     # Job template's pod, so a CronJob the reconciler writes fails at apply
