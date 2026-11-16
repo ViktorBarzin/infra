@@ -101,7 +101,7 @@ resource "kubernetes_deployment" "ntfy" {
       }
       spec {
         container {
-          image = "binwiederhier/ntfy:v2.38.0"
+          image = "binwiederhier/ntfy:v2.38.1"
           name  = "ntfy"
           args  = ["serve"]
 
