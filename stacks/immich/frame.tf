@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "immich-frame" {
           # <= v1.0.33.0 crashed deserializing Immich v3 API responses
           # (immichFrame/immichFrame#653), so this ran the floating immich_v3
           # compat tag until 2026-10-12; v1.0.34+ supports Immich v3.
-          image = "ghcr.io/immichframe/immichframe:v1.0.39.0@sha256:b4bd2ac6ec75c0117a24bd627dc0b449d485ac87ec3a410c73d5db05a4bbfcaf"
+          image = "ghcr.io/immichframe/immichframe:v1.0.40.0@sha256:907902c8be42629ea71b13e5f5b7996d83f2420270e2c404ebf282d2fd00c39a"
           name  = "immich-frame"
           resources {
             requests = {
