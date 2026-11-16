@@ -85,10 +85,10 @@
 #     a Job; no Deployment runs one.
 #   cloud-managed-job  a Job's pod template passes the pod rules above; it
 #     runs one pod once (backoffLimit 0) with restartPolicy Never, a
-#     deadline up to 12 h and a TTL up to a day. It is either a Deploy's migrations
+#     deadline up to 12 h and a TTL up to a day. It is a Deploy's migrations
 #     (component migrate, named app-<App>-m<9 hex>, no owner, labelled
-#     like its pod; the reconciler's) or a run of a CronJob cron-* (component app, owned by
-#     that CronJob; B19). Nothing else is a Job in a Project.
+#     like its pod; the reconciler's). A Job whose pod is component cron
+#     (B19's cron run) is left to cloud-managed-cron-job.
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is one Cloud renders (local
 #     cloud_caddyfile_variants: public and private): only the cookie list
@@ -1379,9 +1379,10 @@ locals {
     }
     # A Job's pod template passes the pod rules at write time, so a Job that
     # could never make its pod is refused at once. Every Job runs once, with
-    # a deadline and a TTL. A migrate Job (B16) is the reconciler's own,
-    # named for its Deploy and owned by nothing; an App-component Job is a
-    # cron run (B19), owned by a CronJob cron-*. Nothing else is a Job here.
+    # a deadline and a TTL. It is a Deploy's migrations (B16): the
+    # reconciler's own, named for its Deploy and owned by nothing. A cron
+    # run (B19, pod component cron) is cloud-managed-cron-job's, so this
+    # policy skips it; every other Job is refused here.
     managed_job = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicy"
@@ -1396,6 +1397,10 @@ locals {
             resources   = ["jobs"]
           }]
         }
+        matchConditions = [{
+          name       = "not-a-cron-run"
+          expression = "!(has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == 'cron')"
+        }]
         variables = concat(
           [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }],
           [{ name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" }],
@@ -1428,8 +1433,10 @@ locals {
             reason     = "Forbidden"
           },
           {
-            expression = "variables.component == '${local.cloud_migrate.component}' || (variables.component == 'app' && variables.owners.exists(o, o.apiVersion == 'batch/v1' && o.kind == 'CronJob' && o.name.startsWith('cron-')))"
-            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}) or a run of a CronJob cron-* (component app)"
+            # Not app: the App's Kubernetes Service selects component app, so
+            # an App-labelled Job pod would get its requests.
+            expression = "variables.component == '${local.cloud_migrate.component}'"
+            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}); a cron run is component cron"
             reason     = "Forbidden"
           },
           {

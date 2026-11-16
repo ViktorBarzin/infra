@@ -385,9 +385,10 @@ project role grants `create`, `get`, `list` and `delete` on `jobs` and
 `get` on `pods/log`, and no `create` on pods. `cloud-managed-job` admits a
 Job whose pod template passes every pod rule and which runs one pod once
 (`backoffLimit` 0, `restartPolicy: Never`, a deadline up to 12 h, a TTL up
-to a day). It is either a Deploy's migrations, component `migrate`, named
-`app-<app>-m<9 hex>`, with no owner, or a cron run (B19), component `app`,
-owned by a CronJob `cron-*`. A `migrate` pod has one container `migrate`
+to a day). It is a Deploy's migrations, component `migrate`, named
+`app-<app>-m<9 hex>`, with no owner; never component `app`, which the App's
+Kubernetes Service would select. A Job whose pod is component `cron` (B19's
+cron run) is left to its own policy. A `migrate` pod has one container `migrate`
 running an image by digest with no command and 1 to 8 args, no port, probe
 or hook. Only its Job makes it: `cloud-managed-pod` wants a controlling Job
 owner, and `cloud-managed-deployment` refuses the component. The App's

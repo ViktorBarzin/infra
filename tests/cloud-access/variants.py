@@ -787,8 +787,8 @@ if job_file.exists():
         ("init", lambda o: o["spec"]["template"]["spec"].update({"initContainers": [dict(copy.deepcopy(jc(o)), name="setup")]}), "only an App pod may have an init container"),
         ("serviceaccount", lambda o: o["spec"]["template"]["spec"].update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
         ("hostpath", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "hostPath": {"path": "/"}}), "may use only emptyDir"),
-        ("app-no-cronjob", as_cron_run, "a run of a CronJob cron-"),
-        ("edge", job_labels(COMPONENT, "edge"), "an edge pod has one container|a run of a CronJob cron-"),
+        ("app-component", as_cron_run, "a Job is a Deploy's migrations"),
+        ("edge", job_labels(COMPONENT, "edge"), "an edge pod has one container|a Job is a Deploy's migrations"),
         ("unlabelled", lambda o: [o["metadata"]["labels"].pop(COMPONENT), o["spec"]["template"]["metadata"]["labels"].pop(COMPONENT)], "a pod is labelled"),
     ]
     for name, change, expect in JOB_RULES:

@@ -79,8 +79,8 @@
 #     make from it; each variant cloud-managed-job forbids is refused (a
 #     second container, a command, no args or too many, an image by tag, a
 #     port or probe, restartPolicy OnFailure, retries, no deadline or TTL,
-#     more than one pod, another name, an owner, the component app without
-#     a CronJob owner, another component), as are a migrate pod with no Job
+#     more than one pod, another name, an owner, the component app or
+#     another component), as are a migrate pod with no Job
 #     owner and a Deployment of migrate pods; the reconciler may create,
 #     get, list and delete Jobs and read pod logs in its namespaces only,
 #     and may not create pods itself;
