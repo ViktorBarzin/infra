@@ -209,3 +209,70 @@ run "own_email_mapping_replaces_the_managed_one" {
     error_message = "the managed scope-email is not sent beside the app's own"
   }
 }
+
+run "recreate_one_pod_no_hook_no_budget_by_default" {
+  command = plan
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].replicas == "1" && kubernetes_deployment.this.spec[0].strategy[0].type == "Recreate"
+    error_message = "one pod, Recreate, as before"
+  }
+  assert {
+    condition     = length(kubernetes_deployment.this.spec[0].strategy[0].rolling_update) == 0
+    error_message = "no rolling_update block with Recreate"
+  }
+  assert {
+    condition     = length(kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].lifecycle) == 0
+    error_message = "no preStop hook by default, so existing apps render unchanged"
+  }
+  assert {
+    condition     = length(kubernetes_pod_disruption_budget_v1.this) == 0
+    error_message = "no PodDisruptionBudget by default"
+  }
+}
+
+run "two_pods_rolling_one_at_a_time" {
+  command = plan
+  variables {
+    replicas               = 2
+    strategy               = "RollingUpdate"
+    pre_stop_sleep_seconds = 10
+    min_available          = 1
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].replicas == "2" && kubernetes_deployment.this.spec[0].strategy[0].type == "RollingUpdate"
+    error_message = "two pods, RollingUpdate"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].strategy[0].rolling_update[0].max_surge == "1" && kubernetes_deployment.this.spec[0].strategy[0].rolling_update[0].max_unavailable == "0"
+    error_message = "surge one, remove none until it is Ready"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].lifecycle[0].pre_stop[0].exec[0].command == tolist(["/usr/local/bin/bun", "-e", "await Bun.sleep(10000)"])
+    error_message = "preStop sleeps 10 s with bun (distroless has no sleep)"
+  }
+  assert {
+    condition     = kubernetes_deployment.this.spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].path == "/healthz"
+    error_message = "a new pod takes traffic only once the server answers"
+  }
+  assert {
+    condition     = kubernetes_pod_disruption_budget_v1.this[0].spec[0].min_available == "1" && kubernetes_pod_disruption_budget_v1.this[0].spec[0].selector[0].match_labels == kubernetes_deployment.this.spec[0].selector[0].match_labels
+    error_message = "the budget keeps one of the Deployment's own pods"
+  }
+}
+
+run "budget_must_leave_a_pod_to_evict" {
+  command = plan
+  variables {
+    replicas      = 2
+    min_available = 2
+  }
+  expect_failures = [var.min_available]
+}
+
+run "unknown_strategy_is_refused" {
+  command = plan
+  variables {
+    strategy = "Rolling"
+  }
+  expect_failures = [var.strategy]
+}

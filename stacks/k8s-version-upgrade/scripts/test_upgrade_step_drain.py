@@ -57,7 +57,7 @@ def function(name: str) -> str:
     return match.group(0)
 
 
-def run_drain(tmp_path: pathlib.Path) -> list[str]:
+def run_drain(tmp_path: pathlib.Path, handoff: str = "") -> list[str]:
     stub = tmp_path / "kubectl"
     stub.write_text(STUB)
     stub.chmod(0o755)
@@ -65,6 +65,7 @@ def run_drain(tmp_path: pathlib.Path) -> list[str]:
     calls = tmp_path / "calls"
     calls.touch()
     body = ('release_node_lock() { echo "release-lock" >> "$CALLS"; }\n'
+            + handoff
             + function("predrain_unstick") + function("drain_node")
             + 'drain_node k8s-node5\necho "after-drain" >> "$CALLS"\n')
     subprocess.run(
@@ -116,3 +117,27 @@ def test_phases_take_the_node_lock_before_draining():
         body = function(phase)
         assert "take_node_lock" in body, phase
         assert body.index("take_node_lock") < body.index("drain_node"), phase
+
+
+HANDOFF = 'cloud_drain_handoff() { echo "handoff $1 $2" >> "$CALLS"; return %d; }\n'
+
+
+def test_cloud_handoff_runs_after_cordon_and_before_any_eviction(tmp_path):
+    calls = run_drain(tmp_path, HANDOFF % 0)
+    handoff = calls.index("handoff k8s-node5 240")
+    assert calls.index("cordon k8s-node5") < handoff, calls
+    first_delete = min(i for i, c in enumerate(calls) if " delete " in f" {c} ")
+    drain = next(i for i, c in enumerate(calls) if c.startswith("drain k8s-node5 "))
+    assert handoff < first_delete and handoff < drain, calls
+
+
+def test_an_incomplete_cloud_handoff_still_drains(tmp_path):
+    calls = run_drain(tmp_path, HANDOFF % 1)
+    assert "handoff k8s-node5 240" in calls, calls
+    assert any(c.startswith("drain k8s-node5 ") for c in calls), calls
+
+
+def test_without_the_handoff_library_the_drain_runs_as_before(tmp_path):
+    calls = run_drain(tmp_path)
+    assert not any(c.startswith("handoff") for c in calls), calls
+    assert any(c.startswith("drain k8s-node5 ") for c in calls), calls

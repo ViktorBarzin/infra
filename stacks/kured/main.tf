@@ -146,6 +146,17 @@ resource "helm_release" "kured" {
       # and waits for the next period; node stays Schedulable so the cluster
       # doesn't lose capacity. Fixed 2026-05-16.
       drainTimeout = "30m"
+      # Cloud's drain handoff (Cloud backlog B10, scripts/cloud-drain-handoff.sh).
+      # kured labels the node, waits drainDelay, then cordons and drains it
+      # (kured 1.23.0 cmd/kured/main.go drain()). The sentinel gate on that
+      # node sees the label, cordons the node itself and rollout-restarts each
+      # one-pod Cloud Deployment there, so its new pod is Ready on another
+      # node before the drain evicts the old one. 5m covers an App's image
+      # pull and start; the gate gives up after 4m and the drain goes on as
+      # before. kured requires the same label keys before and after.
+      drainDelay           = "5m"
+      preRebootNodeLabels  = ["cloud.viktorbarzin.me/drain=pending"]
+      postRebootNodeLabels = ["cloud.viktorbarzin.me/drain=done"]
       # Halt rolling reboots when ANY firing Prometheus alert is not in the
       # ignore-list. The ignore-list excludes self-referential / always-firing
       # alerts that would otherwise deadlock kured. alertFilterMatchOnly stays
@@ -295,15 +306,37 @@ resource "kubernetes_cluster_role" "kured_sentinel_gate" {
   metadata {
     name = "kured-sentinel-gate"
   }
+  # get, watch and patch: the Cloud handoff waits for kured's label on its own
+  # node and cordons it.
   rule {
     api_groups = [""]
     resources  = ["nodes"]
-    verbs      = ["list"]
+    verbs      = ["get", "list", "watch", "patch"]
   }
   rule {
     api_groups = [""]
     resources  = ["pods"]
     verbs      = ["list"]
+  }
+  # The Cloud handoff reads Deployments and rollout-restarts the one-pod ones
+  # in namespace cloud and p-* (the script's scope; RBAC cannot name a
+  # namespace pattern). The pod already holds the host's /var/run, the
+  # container runtime's socket included, so this widens little.
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments"]
+    verbs      = ["get", "list", "watch", "patch"]
+  }
+}
+
+# The Cloud drain handoff, shared with stacks/k8s-version-upgrade.
+resource "kubernetes_config_map" "kured_sentinel_gate_scripts" {
+  metadata {
+    name      = "kured-sentinel-gate-scripts"
+    namespace = kubernetes_namespace.kured.metadata[0].name
+  }
+  data = {
+    "cloud-drain-handoff.sh" = file("${path.module}/../../scripts/cloud-drain-handoff.sh")
   }
 }
 
@@ -468,7 +501,19 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 # All checks passed — create gated sentinel
                 echo "  ALL CHECKS PASSED — creating /var/run/gated-reboot-required"
                 touch /host/var-run/gated-reboot-required
-                sleep 300
+
+                # Instead of sleeping 300 s, wait up to 300 s for kured's
+                # pre-drain label on this node (one kubectl, no polling).
+                # kured then waits its drainDelay before it drains, and this
+                # hands the one-pod Cloud Deployments off the node first.
+                if kubectl wait "node/$NODE_NAME" --for=jsonpath='{.metadata.labels.cloud\.viktorbarzin\.me/drain}'=pending --timeout=300s >/dev/null 2>&1; then
+                  echo "  kured is about to drain $NODE_NAME: Cloud handoff"
+                  kubectl cordon "$NODE_NAME"
+                  # shellcheck source=/dev/null
+                  . /scripts/cloud-drain-handoff.sh
+                  cloud_drain_handoff "$NODE_NAME" 240 || echo "  Cloud handoff incomplete; kured drains anyway"
+                  kubectl label node "$NODE_NAME" cloud.viktorbarzin.me/drain=handed-off --overwrite
+                fi
               done
             EOT
           ]
@@ -487,9 +532,23 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               memory = "512Mi"
             }
           }
+          # The node this pod runs on, for the Cloud handoff.
+          env {
+            name = "NODE_NAME"
+            value_from {
+              field_ref {
+                field_path = "spec.nodeName"
+              }
+            }
+          }
           volume_mount {
             name       = "var-run"
             mount_path = "/host/var-run"
+          }
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/scripts"
+            read_only  = true
           }
         }
         volume {
@@ -497,6 +556,12 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           host_path {
             path = "/var/run"
             type = "Directory"
+          }
+        }
+        volume {
+          name = "scripts"
+          config_map {
+            name = kubernetes_config_map.kured_sentinel_gate_scripts.metadata[0].name
           }
         }
       }

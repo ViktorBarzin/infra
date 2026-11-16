@@ -43,6 +43,18 @@ module "console" {
   postgresql_host = var.postgresql_host
   tls_secret_name = var.tls_secret_name
 
+  # Two pods that roll one at a time, so a Cloud deploy or a node drain
+  # answers every request (cloud backlog, ops fixes). The console holds no
+  # state only one process may have: sessions, rate limits and jobs are in
+  # Postgres, realtime is LISTEN/NOTIFY, and its loops run in the
+  # reconciler, which stays one pod with Recreate (reconciler.tf). Each pod
+  # holds 5 connections to the shared primary, so 10, and 16 while a
+  # rollout surges a third pod and its migrate init container.
+  replicas               = 2
+  strategy               = "RollingUpdate"
+  pre_stop_sleep_seconds = 10
+  min_available          = 1
+
   # secret/cloud is the Project subtree (secret/cloud/system,
   # secret/cloud/p-*), so the console's own secrets live beside it.
   vault_kv_name = "cloud-console"

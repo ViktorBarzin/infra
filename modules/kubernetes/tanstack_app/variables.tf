@@ -52,7 +52,31 @@ variable "replicas" {
 variable "strategy" {
   type        = string
   default     = "Recreate"
-  description = "Deployment strategy. Recreate keeps one realtime LISTEN connection and one writer during a rollout."
+  description = "Deployment strategy. Recreate keeps one realtime LISTEN connection and one writer during a rollout. RollingUpdate surges one pod and removes none until it is Ready (maxSurge 1, maxUnavailable 0); the app must then hold no state that only one process may have."
+  validation {
+    condition     = contains(["Recreate", "RollingUpdate"], var.strategy)
+    error_message = "strategy is Recreate or RollingUpdate."
+  }
+}
+
+variable "pre_stop_sleep_seconds" {
+  type        = number
+  default     = 0
+  description = "Seconds a stopping pod keeps serving before it gets SIGTERM, so Traefik drops it from the Service first. 0 adds no preStop hook. Runs `bun -e` in the app container (distroless images have no sleep binary). Keep it under 25: the pod has 30 s in all, and the app drains for up to 5 s after SIGTERM."
+  validation {
+    condition     = var.pre_stop_sleep_seconds >= 0 && var.pre_stop_sleep_seconds <= 25
+    error_message = "pre_stop_sleep_seconds is 0 to 25."
+  }
+}
+
+variable "min_available" {
+  type        = number
+  default     = null
+  description = "When set, a PodDisruptionBudget keeps at least this many pods during a node drain. Set it below replicas, or a drain can never evict a pod."
+  validation {
+    condition     = var.min_available == null || (var.min_available >= 1 && var.min_available < var.replicas)
+    error_message = "min_available is at least 1 and below replicas."
+  }
 }
 
 variable "http_port" {

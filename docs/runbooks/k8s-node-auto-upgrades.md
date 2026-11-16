@@ -38,11 +38,17 @@ kured checks Prometheus before draining:
   │ Ignore-list: ^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$
   │
   ▼ no blockers
-kured drains the node (priority-ordered, 310s budget)
+kured labels the node cloud.viktorbarzin.me/drain=pending, waits 5 min
+  │ (drainDelay); the sentinel gate on that node sees the label, cordons
+  │ the node and rollout-restarts each one-pod Cloud Deployment there
+  │ (scripts/cloud-drain-handoff.sh), so its new pod is Ready elsewhere
+  │
+  ▼
+kured cordons and drains the node (priority-ordered, 310s budget)
 kured runs /bin/systemctl reboot
   │
   ▼ node returns
-kured uncordons + posts Slack notification (KURED_NOTIFY_URL)
+kured uncordons, sets cloud.viktorbarzin.me/drain=done, posts Slack notification (KURED_NOTIFY_URL)
   │
   ▼ 24h cool-down begins (sentinel-gate Check 4)
 ```
@@ -70,6 +76,23 @@ kured uncordons + posts Slack notification (KURED_NOTIFY_URL)
 - **Image**: `bitnami/kubectl:latest`
 - **Loop period**: every 300s
 - **Gate logic**: 4 checks — see Architecture diagram
+- **Cloud drain handoff** (Cloud backlog B10): with the gate open, the loop
+  waits up to 300 s for kured's `cloud.viktorbarzin.me/drain=pending` label
+  on its own node (`kubectl wait`, one process, instead of `sleep 300`).
+  On the label it cordons the node, sources
+  `/scripts/cloud-drain-handoff.sh` (ConfigMap
+  `kured-sentinel-gate-scripts`, from `infra/scripts/cloud-drain-handoff.sh`)
+  and rollout-restarts every Deployment in namespace `cloud` or `p-*` that
+  has one replica, the RollingUpdate strategy and a pod on the node. It waits
+  up to 240 s for them, then sets the label to `handed-off`. kured's
+  `drainDelay` of 5 min holds the drain until then. A Deployment not ready in
+  time keeps its old pod, and the drain evicts it as before. The 2-pod
+  console has a PodDisruptionBudget instead; the Recreate reconciler is left
+  to the drain. The gate's ClusterRole has nodes get, watch and patch and
+  Deployments get, list, watch and patch for this.
+  The upgrade chain's `drain_node` (`stacks/k8s-version-upgrade`) runs the
+  same script after its cordon. Tests: `bash scripts/cloud-drain-handoff.test.sh`,
+  `pytest stacks/k8s-version-upgrade/scripts/test_upgrade_step_drain.py`.
 
 ### Upgrade Gates Prometheus alerts
 - **Source**: `infra/stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` group `Upgrade Gates`
@@ -178,9 +201,12 @@ workloads for a kured reboot.
 - **Not urgent:** `sudo touch /var/run/reboot-required` on the node. The
   sentinel gate and kured take it from there in the 02:00-06:00 London window,
   with the alert gate and the 24 h soak.
-- **Now:** claim presence, then `kubectl drain <node> --ignore-daemonsets
-  --delete-emptydir-data --grace-period=300`, reboot, wait for Ready,
-  `kubectl uncordon <node>`. Do not reboot a second node within 24 h.
+- **Now:** claim presence, then `kubectl cordon <node>`, hand Cloud's
+  one-pod Deployments off it (`. scripts/cloud-drain-handoff.sh &&
+  cloud_drain_handoff <node>`, from the infra checkout), then `kubectl drain
+  <node> --ignore-daemonsets --delete-emptydir-data --grace-period=300`,
+  reboot, wait for Ready, `kubectl uncordon <node>`. Do not reboot a second
+  node within 24 h.
 
 ### kured halted — investigate which alert is blocking
 ```bash

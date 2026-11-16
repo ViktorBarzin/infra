@@ -62,6 +62,8 @@
 #     a second site refused), 0 replicas admitted on an App Deployment and
 #     refused on an edge or oauth2-proxy Deployment, the App's preStop sleep
 #     (exec and the sleep action) admitted and refused on the edge, the
+#     App, edge and oauth2-proxy Deployments each admitted after the drain
+#     handoff's rollout restart (the restartedAt template annotation), the
 #     oauth2-proxy pod (image, args,
 #     upstream, client id, the emails file or --email-domain=* but never
 #     both, env, port, mounts), each shape from before app-kit K1 (the

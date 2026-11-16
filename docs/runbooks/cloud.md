@@ -630,10 +630,19 @@ is a change to the live profiles and whitelist, made from those counts.
 
 ## Restart
 
-The console: `kubectl -n cloud delete pod -l app=cloud`. The reconciler:
-`kubectl -n cloud delete pod -l app=cloud-reconciler`. Both Deployments use
-Recreate, so the new pod starts after the old one is gone. Deleting the pod,
-not `rollout restart`, keeps the pod template equal to Terraform's.
+The console: `kubectl -n cloud rollout restart deployment/cloud`. It runs 2
+pods with RollingUpdate (maxSurge 1, maxUnavailable 0), a 10 s preStop sleep
+and a PodDisruptionBudget of minAvailable 1, so a restart, a CI rollout or a
+node drain answers every request. The reconciler: `kubectl -n cloud delete
+pod -l app=cloud-reconciler`. It stays 1 pod with Recreate, so the new pod
+starts after the old one is gone; deleting the pod, not `rollout restart`,
+keeps its pod template equal to Terraform's.
+
+A node drain (kured or the upgrade chain) first rollout-restarts every
+one-pod Cloud Deployment on the node, Apps, edges and oauth2-proxies, so
+their new pods start on another node before the drain evicts the old ones:
+`docs/runbooks/k8s-node-auto-upgrades.md`, "Cloud drain handoff". Cloud's App
+module ignores the `restartedAt` annotation this adds.
 
 On a pod delete, a Reloader restart or a CI rollout, the reconciler finishes
 its running jobs, at most one per worker, before it exits (grace period

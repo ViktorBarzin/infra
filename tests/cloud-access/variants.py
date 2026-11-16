@@ -384,6 +384,17 @@ case("app-prestop-sleep-action", "kr", "ok", "App Deployment with a preStop slee
      variant(app, lambda o: app_c(spec_of(o)).update({"lifecycle": {"preStop": {"sleep": {"seconds": 5}}}})))
 case("edge-prestop-sleep", "kr", E_RUNS, "edge Deployment with a preStop sleep action",
      variant(edge, lambda o: ec(spec_of(o)).update({"lifecycle": {"preStop": {"sleep": {"seconds": 5}}}})))
+# The drain handoff (Cloud backlog B10, scripts/cloud-drain-handoff.sh): a
+# rollout restart adds only kubectl.kubernetes.io/restartedAt to the pod
+# template, and the App, edge and oauth2-proxy are each admitted with it.
+# Admin stands in for the kured-sentinel-gate and k8s-upgrade accounts.
+def restarted(o):
+    t = o["spec"]["template"]["metadata"]
+    t["annotations"] = dict(t.get("annotations") or {}, **{"kubectl.kubernetes.io/restartedAt": "2026-11-16T02:00:00Z"})
+
+
+for name, obj in [("app", app), ("edge", edge), ("auth", proxy)]:
+    case(f"{name}-drain-restart", "ka", "ok", f"{name} Deployment after a drain handoff's rollout restart", variant(obj, restarted))
 # The edge from before app-kit K1, without the edge secret (two env values),
 # is refused.
 case("edge-v1-env", "kr", E_RUNS, "edge Deployment without CLOUD_EDGE_SECRET, as before app-kit K1",

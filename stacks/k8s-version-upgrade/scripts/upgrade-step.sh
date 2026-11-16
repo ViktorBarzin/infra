@@ -111,6 +111,13 @@ KURED_LOCK_LIB=${KURED_LOCK_LIB:-/scripts/kured-lock.sh}
 [ -r "$KURED_LOCK_LIB" ] && . "$KURED_LOCK_LIB"
 KURED_LOCK_HOLDER=k8s-upgrade-chain
 
+# Cloud's drain handoff (scripts/cloud-drain-handoff.sh, Cloud backlog B10):
+# drain_node restarts each one-pod Cloud Deployment off the cordoned node
+# before the drain evicts its pod.
+CLOUD_HANDOFF_LIB=${CLOUD_HANDOFF_LIB:-/scripts/cloud-drain-handoff.sh}
+# shellcheck source=../../../scripts/cloud-drain-handoff.sh
+[ -r "$CLOUD_HANDOFF_LIB" ] && . "$CLOUD_HANDOFF_LIB"
+
 # Set to 1 by record_blocked/record_held when the compat-gate refuses the
 # target. spawn_next() then declines to advance the chain — but the Job still
 # exits 0, because a gate refusal is a DECISION, not a failure (no Failed Job,
@@ -361,13 +368,20 @@ predrain_unstick() {
   done
 }
 
-# Drain wrapper: kick predrain_unstick before drain, then again every 60s in
-# the background while drain runs (in case new pods land mid-drain). Drain
-# exits when the node has no non-daemonset workload.
+# Drain wrapper: hand Cloud's one-pod Deployments off the node, kick
+# predrain_unstick before drain, then again every 60s in the background while
+# drain runs (in case new pods land mid-drain). Drain exits when the node has
+# no non-daemonset workload.
 drain_node() {
   local node="$1"
-  # Cordon first, so pods predrain_unstick deletes cannot land back here.
+  # Cordon first, so pods predrain_unstick deletes, and the new pods of the
+  # Cloud handoff, cannot land back here.
   $KUBECTL cordon "$node"
+  # Best effort: a Deployment not ready in 4 min keeps its old pod, and the
+  # drain evicts it as before.
+  if declare -F cloud_drain_handoff >/dev/null; then
+    cloud_drain_handoff "$node" 240 || echo "drain_node: Cloud handoff incomplete on $node; draining anyway"
+  fi
   predrain_unstick "$node"
   ( while kill -0 $$ 2>/dev/null; do sleep 60; predrain_unstick "$node"; done ) &
   local watcher=$!

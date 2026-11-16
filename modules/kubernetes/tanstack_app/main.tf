@@ -129,6 +129,14 @@ resource "kubernetes_deployment" "this" {
     replicas = var.replicas
     strategy {
       type = var.strategy
+      # Surge first, remove after: the pod count never drops below replicas.
+      dynamic "rolling_update" {
+        for_each = var.strategy == "RollingUpdate" ? [1] : []
+        content {
+          max_surge       = "1"
+          max_unavailable = "0"
+        }
+      }
     }
 
     selector {
@@ -278,6 +286,20 @@ resource "kubernetes_deployment" "this" {
             period_seconds        = 30
           }
 
+          # A stopping pod is removed from the Service's endpoints at once, but
+          # Traefik learns of it a moment later. The sleep keeps the pod
+          # serving until then; SIGTERM, and the app's drain, come after it.
+          dynamic "lifecycle" {
+            for_each = var.pre_stop_sleep_seconds > 0 ? [1] : []
+            content {
+              pre_stop {
+                exec {
+                  command = ["/usr/local/bin/bun", "-e", "await Bun.sleep(${var.pre_stop_sleep_seconds * 1000})"]
+                }
+              }
+            }
+          }
+
           resources {
             requests = var.resources.requests
             limits   = var.resources.limits
@@ -325,6 +347,24 @@ resource "kubernetes_deployment" "this" {
     kubernetes_manifest.db_creds,
     kubernetes_manifest.auth_secrets,
   ]
+}
+
+# Only with var.min_available: a node drain evicts a pod only while enough
+# others are ready.
+resource "kubernetes_pod_disruption_budget_v1" "this" {
+  count = var.min_available == null ? 0 : 1
+
+  metadata {
+    name      = var.name
+    namespace = kubernetes_namespace.this.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    min_available = tostring(var.min_available)
+    selector {
+      match_labels = local.labels
+    }
+  }
 }
 
 resource "kubernetes_service" "this" {

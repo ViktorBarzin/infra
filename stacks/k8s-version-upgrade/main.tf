@@ -340,13 +340,14 @@ resource "kubernetes_config_map" "k8s_upgrade_scripts" {
     labels    = local.labels
   }
   data = {
-    "upgrade-step.sh"   = file("${path.module}/scripts/upgrade-step.sh")
-    "kured-lock.sh"     = file("${path.module}/../../scripts/kured-lock.sh")
-    "update_k8s.sh"     = file("${path.module}/../../scripts/update_k8s.sh")
-    "compat-gate.py"    = file("${path.module}/scripts/compat-gate.py")
-    "coredns-sync.py"   = file("${path.module}/scripts/coredns-sync.py")
-    "addon-compat.json" = file("${path.module}/scripts/addon-compat.json")
-    "nightly-report.py" = file("${path.module}/scripts/nightly-report.py")
+    "upgrade-step.sh"        = file("${path.module}/scripts/upgrade-step.sh")
+    "kured-lock.sh"          = file("${path.module}/../../scripts/kured-lock.sh")
+    "cloud-drain-handoff.sh" = file("${path.module}/../../scripts/cloud-drain-handoff.sh")
+    "update_k8s.sh"          = file("${path.module}/../../scripts/update_k8s.sh")
+    "compat-gate.py"         = file("${path.module}/scripts/compat-gate.py")
+    "coredns-sync.py"        = file("${path.module}/scripts/coredns-sync.py")
+    "addon-compat.json"      = file("${path.module}/scripts/addon-compat.json")
+    "nightly-report.py"      = file("${path.module}/scripts/nightly-report.py")
   }
 }
 
