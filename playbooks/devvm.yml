@@ -252,7 +252,7 @@
     # repos and Projects), so the version is a reviewed choice. Bump it after
     # the cloud repo's cli-release workflow has published the new version to
     # this registry, which serves the package without a login.
-    devvm_cloud_cli_version: "0.7.0"
+    devvm_cloud_cli_version: "0.8.0"
     devvm_cloud_cli_registry: "https://forgejo.viktorbarzin.me/api/packages/viktor/npm/"
     # Users whose Claude Code the nightly timer keeps current. Claude Code
     # installs PER USER (~/.local/share/claude/versions), so unlike codex there
