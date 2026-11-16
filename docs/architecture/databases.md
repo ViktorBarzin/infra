@@ -73,7 +73,7 @@ graph TB
    - Auto-failover on primary failure
    - Replicas for read scaling
 
-2. **Connections**: apps connect directly to the primary. There is no pooler in `dbaas`; PgBouncer runs only in front of Authentik (`stacks/authentik/modules/authentik/pgbouncer.tf`). `max_connections` is 200 (live, 2026-10-16), so each app's pool size counts against one shared budget.
+2. **Connections**: apps connect directly to the primary. There is no pooler in `dbaas`; PgBouncer runs only in front of Authentik (`stacks/authentik/modules/authentik/pgbouncer.tf`). `max_connections` is 300 on `pg-cluster-v18` (raised from 200 on 2026-11-16 for Cloud, backlog B15), so each app's pool size counts against one shared budget.
 
 3. **Credential Rotation**: Vault DB engine rotates credentials every 7 days
    - Apps fetch credentials from Vault on startup
@@ -83,7 +83,7 @@ graph TB
 
 5. **Verify probe**: the pg-cluster verify Job (`stacks/dbaas/verify.sh`, run by `scripts/verify/run`, see `docs/runbooks/verify-jobs.md`) logs in as `verify_probe`. It owns only the `verify_probe` scratch database, where it writes a row on the primary, reads it back on a replica and drops the table; it has `pg_monitor` for `pg_stat_replication` and CONNECT on `dawarich` and `claude_memory` for the PostGIS and pgvector queries. Connection limit 3, no superuser. The role and database are created by `null_resource.pg_verify_probe` in `stacks/dbaas`; the password is a Vault static role (`pg-verify-probe`, 7-day rotation) delivered to the `verify` namespace by ESO (added 2026-10-10).
 
-6. **Metrics and alerts**: Prometheus scrapes CNPG's built-in exporter (port 9187) with the `cnpg` job, which adds `cnpg_cluster` and `cnpg_role` labels. On top of CNPG's default queries, `pg-cluster-v18` loads the ConfigMap `dbaas/pg-custom-queries` (`kubernetes_config_map.pg_custom_queries` in `stacks/dbaas`; labelled `cnpg.io/reload`, so an edit reloads without a restart). It exports `cnpg_pg_notification_queue_usage`, the fraction of the cluster-wide `NOTIFY` queue in use, from the primary only (added 2026-10-16 for the realtime contract in the default app stack ADR, app-kit `docs/adr/0001-default-app-stack.md`), `cnpg_cloud_provisioner_foreign_roles_count`, the number of roles Cloud's `cloud_provisioner` administers whose name is not `p_*`, and `cnpg_cloud_provisioner_role_limits_unlimited` and `cnpg_cloud_provisioner_role_limits_connlimit_sum`, Cloud's LOGIN roles with no CONNECTION LIMIT or one above 8 and the sum of their limits (added 2026-11-13; `docs/agents/databases.md`, "Cloud on the shared CNPG cluster"). Alerts: `PGConnectionsHigh` (>85% of `max_connections` for 10m), `PGConnectionsCritical` (>95% for 3m), `PGNotifyQueueHigh` (`NOTIFY` queue above 50% for 5m, warning), `CloudProvisionerForeignRole` (any such role for 2m), `CloudProjectRoleUnlimited` (any such role for 2m) and `CloudProjectConnectionsOverCeiling` (sum above 20 for 5m); the last three are critical and page. The queue holds 8 GB for every database on the cluster; once it is full, every `NOTIFY` fails at `COMMIT`. The usual cause is a `LISTEN` session left idle inside an open transaction. The rollback copy `pg-cluster` does not load the custom queries.
+6. **Metrics and alerts**: Prometheus scrapes CNPG's built-in exporter (port 9187) with the `cnpg` job, which adds `cnpg_cluster` and `cnpg_role` labels. On top of CNPG's default queries, `pg-cluster-v18` loads the ConfigMap `dbaas/pg-custom-queries` (`kubernetes_config_map.pg_custom_queries` in `stacks/dbaas`; labelled `cnpg.io/reload`, so an edit reloads without a restart). It exports `cnpg_pg_notification_queue_usage`, the fraction of the cluster-wide `NOTIFY` queue in use, from the primary only (added 2026-10-16 for the realtime contract in the default app stack ADR, app-kit `docs/adr/0001-default-app-stack.md`), `cnpg_cloud_provisioner_foreign_roles_count`, the number of roles Cloud's `cloud_provisioner` administers whose name is not `p_*`, and `cnpg_cloud_provisioner_role_limits_unlimited` and `cnpg_cloud_provisioner_role_limits_connlimit_sum`, Cloud's LOGIN roles with no CONNECTION LIMIT or one above 16 and the sum of their limits (added 2026-11-13; `docs/agents/databases.md`, "Cloud on the shared CNPG cluster"). Alerts: `PGConnectionsHigh` (>85% of `max_connections` for 10m), `PGConnectionsCritical` (>95% for 3m), `PGNotifyQueueHigh` (`NOTIFY` queue above 50% for 5m, warning), `CloudProvisionerForeignRole` (any such role for 2m), `CloudProjectRoleUnlimited` (any such role for 2m) and `CloudProjectConnectionsOverCeiling` (sum above 80 for 5m); the last three are critical and page. The queue holds 8 GB for every database on the cluster; once it is full, every `NOTIFY` fails at `COMMIT`. The usual cause is a `LISTEN` session left idle inside an open transaction. The rollback copy `pg-cluster` does not load the custom queries.
 
 **Used by**:
 - trading-bot
@@ -298,7 +298,7 @@ resource "kubernetes_secret" "db_creds" {
 
 ### Why no pooler for app databases?
 
-Earlier versions of this page described a shared 3-replica PgBouncer in `dbaas`. As of 2026-10-16 none runs there, and `postgresql_host` points at the primary. Direct connections keep session features such as `LISTEN/NOTIFY` and prepared statements working. The trade-off is that every app's pool counts against `max_connections` (200).
+Earlier versions of this page described a shared 3-replica PgBouncer in `dbaas`. As of 2026-10-16 none runs there, and `postgresql_host` points at the primary. Direct connections keep session features such as `LISTEN/NOTIFY` and prepared statements working. The trade-off is that every app's pool counts against `max_connections` (300).
 
 ### Why a single MySQL instance?
 
@@ -337,7 +337,7 @@ The cluster ran MySQL InnoDB Cluster until 2026-04-16, when MySQL moved to the s
 
 ### PostgreSQL: "Too many connections"
 
-**Cause**: the sum of app connection pools has reached `max_connections` (200). There is no pooler in front of app databases.
+**Cause**: the sum of app connection pools has reached `max_connections` (300). There is no pooler in front of app databases.
 
 **Fix**: find which roles hold the connections, then lower that app's pool size in its stack.
 ```bash

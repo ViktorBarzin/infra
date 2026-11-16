@@ -108,10 +108,10 @@ locals {
   # The audit behind alerts CloudProjectRoleUnlimited and
   # CloudProjectConnectionsOverCeiling (stacks/monitoring), M2 contract point
   # 9. Postgres cannot cap the sum of CONNECTION LIMITs across roles, so the
-  # Cloud-wide ceiling of 20 lives in the reconciler; this detects when it
+  # Cloud-wide ceiling of 80 lives in the reconciler; this detects when it
   # does not hold. Over the LOGIN roles cloud_provisioner administers
   # (directly or through a role it administers, cloud_projects excluded):
-  #   unlimited       how many have CONNECTION LIMIT -1 (none) or above 8, the
+  #   unlimited       how many have CONNECTION LIMIT -1 (none) or above 16, the
   #                   largest Size's limit (medium); a stolen provisioner
   #                   credential could otherwise open connections until the
   #                   cluster's non-superuser slots run out
@@ -130,7 +130,7 @@ locals {
         JOIN administered a ON a.roleid = m.member
        WHERE m.admin_option
     )
-    SELECT count(*) FILTER (WHERE r.rolconnlimit < 0 OR r.rolconnlimit > 8) AS unlimited,
+    SELECT count(*) FILTER (WHERE r.rolconnlimit < 0 OR r.rolconnlimit > 16) AS unlimited,
            coalesce(sum(greatest(r.rolconnlimit, 0)), 0) AS connlimit_sum
       FROM administered a JOIN pg_catalog.pg_roles r ON r.oid = a.roleid
      WHERE r.rolname != 'cloud_projects' AND r.rolcanlogin
@@ -151,7 +151,7 @@ locals {
     END
     $$;
     ALTER ROLE cloud_projects NOLOGIN NOCREATEDB NOCREATEROLE;
-    ALTER ROLE cloud_provisioner LOGIN CREATEDB CREATEROLE CONNECTION LIMIT 5;
+    ALTER ROLE cloud_provisioner LOGIN CREATEDB CREATEROLE CONNECTION LIMIT 10;
     ALTER ROLE cloud_state LOGIN NOCREATEDB NOCREATEROLE CONNECTION LIMIT 10;
     GRANT cloud_projects TO cloud_provisioner WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
     GRANT SET ON PARAMETER temp_file_limit TO cloud_provisioner;

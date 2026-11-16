@@ -154,7 +154,7 @@ Prometheus query, not by curling `/metrics`.
 ## Connection budget
 
 Each pod holds a pool of 4 plus 1 LISTEN connection on the shared primary
-(`max_connections` 200), and the `migrate` init container holds 1 while it
+(`max_connections` 300), and the `migrate` init container holds 1 while it
 runs. More replicas, CronJobs or workers multiply this.
 
 ## Rotation

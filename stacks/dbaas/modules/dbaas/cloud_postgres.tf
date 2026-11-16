@@ -7,13 +7,13 @@
 #                      is a member, for grants only. pg_hba keeps each p_*
 #                      role in the database of its own name by matching the
 #                      name, not this group.
-#   cloud_provisioner  LOGIN CREATEDB CREATEROLE, CONNECTION LIMIT 5, ADMIN
+#   cloud_provisioner  LOGIN CREATEDB CREATEROLE, CONNECTION LIMIT 10, ADMIN
 #                      OPTION on cloud_projects. Vault static role
-#                      pg-cloud-provisioner. The reconciler stays within 5:
-#                      OpenTofu -parallelism=2, each operation holding at
-#                      most 2 of a provider pool of 3 (4), plus its
-#                      database-size loop (1); databases.md has the budget.
-#                      A second replica needs a higher limit.
+#                      pg-cloud-provisioner. Each reconciler worker's
+#                      OpenTofu holds at most 4 (-parallelism=2, each
+#                      operation at most 2 of a provider pool of 3), plus the
+#                      database-size loop (1): 2 workers (Cloud backlog B24)
+#                      use 9 of 10. databases.md has the budget.
 #   cloud_state        LOGIN, CONNECTION LIMIT 10, owns database cloud_state
 #                      (the reconciler's OpenTofu state, one schema per
 #                      Project). Vault static role pg-cloud-state. It has no
@@ -22,7 +22,7 @@
 # Cloud's console database (`cloud`) is the standard app_databases entry.
 #
 # Connection ceiling: the reconciler keeps the sum of the CONNECTION LIMITs of
-# all Project roles at or under 20, each 2, 4 or 8 by Size;
+# all Project roles at or under 80, each 4, 8 or 16 by Size;
 # docs/agents/databases.md ("Cloud on the shared CNPG cluster") shows the
 # arithmetic. Postgres cannot enforce a sum, so an audit pages when it does not
 # hold (local.cloud_role_limits_audit_sql in cloud_postgres_rules.tf).

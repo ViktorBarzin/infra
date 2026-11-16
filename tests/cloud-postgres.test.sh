@@ -28,7 +28,7 @@
 #     CREATEROLE;
 #   the audit behind alerts CloudProjectRoleUnlimited and
 #     CloudProjectConnectionsOverCeiling counts LOGIN roles cloud_provisioner
-#     administers with CONNECTION LIMIT -1 or above 8, and sums their limits.
+#     administers with CONNECTION LIMIT -1 or above 16, and sums their limits.
 # Needs docker and the postgres:18 image.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -132,7 +132,7 @@ expect_fail "cloud_state has no password before Vault sets one" "password authen
 sup -c "ALTER ROLE cloud_provisioner PASSWORD 'pw-cloud_provisioner'; ALTER ROLE cloud_state PASSWORD 'pw-cloud_state';"
 
 attrs="$(sup -tAc "select string_agg(rolname||':'||rolcanlogin||':'||rolcreatedb||':'||rolcreaterole||':'||rolconnlimit, ' ' order by rolname) from pg_roles where rolname in ('cloud_projects','cloud_provisioner','cloud_state')")"
-[ "$attrs" = "cloud_projects:false:false:false:-1 cloud_provisioner:true:true:true:5 cloud_state:true:false:false:10" ] \
+[ "$attrs" = "cloud_projects:false:false:false:-1 cloud_provisioner:true:true:true:10 cloud_state:true:false:false:10" ] \
   && ok "role attributes ($attrs)" || bad "role attributes: $attrs"
 grant="$(sup -tAc "select admin_option||':'||inherit_option||':'||set_option from pg_auth_members where roleid='cloud_projects'::regrole and member='cloud_provisioner'::regrole")"
 [ "$grant" = "true:false:false" ] && ok "cloud_provisioner holds ADMIN, not INHERIT or SET, on cloud_projects" || bad "membership options: $grant"
@@ -259,21 +259,23 @@ n="$(audit 2>&1)"; [ "$n" = "1" ] && ok "audit counts a role made by a role the 
 # --- the audit behind CloudProjectRoleUnlimited and CloudProjectConnectionsOverCeiling
 # What the CNPG exporter runs (local.cloud_role_limits_audit_sql): over the
 # LOGIN roles cloud_provisioner administers, how many have CONNECTION LIMIT -1
-# or above 8, and the sum of their limits. Printed as "<unlimited> <sum>".
+# or above 16, and the sum of their limits. Printed as "<unlimited> <sum>".
 limits() { docker exec -i "$NAME" psql -U postgres -X -q -tA -F ' ' -f - <"$TMP/limits.sql"; }
 sup -c "DROP ROLE sneaky2" -c "ALTER ROLE p_dawarich_queue CONNECTION LIMIT 2" >/dev/null
 l="$(limits 2>&1)"; [ "$l" = "0 5" ] && ok "limits audit: no unlimited role, sum 5 (p_demo 3, p_dawarich_queue 2; NOLOGIN p_maker not counted)" || bad "limits audit baseline: $l"
 expect_ok "provisioner creates p_wide with no CONNECTION LIMIT" \
   as cloud_provisioner postgres -c "CREATE ROLE p_wide LOGIN CONNECTION LIMIT -1 IN ROLE cloud_projects"
 l="$(limits 2>&1)"; [ "$l" = "1 5" ] && ok "limits audit counts a role with CONNECTION LIMIT -1" || bad "limits audit after p_wide -1: $l"
-as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 9" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "1 14" ] && ok "limits audit counts a role above 8 and adds it to the sum" || bad "limits audit after p_wide 9: $l"
-as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 8" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "0 13" ] && ok "limits audit accepts 8, the largest Size" || bad "limits audit after p_wide 8: $l"
-as cloud_provisioner postgres -c "CREATE ROLE p_more LOGIN CONNECTION LIMIT 8 IN ROLE cloud_projects" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit sum passes the ceiling of 20 (21)" || bad "limits audit sum: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 17" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "1 22" ] && ok "limits audit counts a role above 16 and adds it to the sum" || bad "limits audit after p_wide 17: $l"
+as cloud_provisioner postgres -c "ALTER ROLE p_wide CONNECTION LIMIT 16" >/dev/null
+l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit accepts 16, the largest Size" || bad "limits audit after p_wide 16: $l"
+for r in p_more1 p_more2 p_more3 p_more4; do
+  as cloud_provisioner postgres -c "CREATE ROLE $r LOGIN CONNECTION LIMIT 15 IN ROLE cloud_projects" >/dev/null
+done
+l="$(limits 2>&1)"; [ "$l" = "0 81" ] && ok "limits audit sum passes the ceiling of 80 (81)" || bad "limits audit sum: $l"
 sup -c "CREATE ROLE outsider LOGIN CONNECTION LIMIT -1" >/dev/null
-l="$(limits 2>&1)"; [ "$l" = "0 21" ] && ok "limits audit ignores a role cloud_provisioner does not administer" || bad "limits audit with outsider: $l"
+l="$(limits 2>&1)"; [ "$l" = "0 81" ] && ok "limits audit ignores a role cloud_provisioner does not administer" || bad "limits audit with outsider: $l"
 
 # --- nothing else changed ----------------------------------------------------
 expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'

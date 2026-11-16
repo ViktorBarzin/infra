@@ -516,6 +516,34 @@ policy keeps its own Deny until a Cloud release removes it.
 When the home WAN address changes, update `public_ip` in `config.tfvars`
 and apply `stacks/cloud` too, so the console shows the new address.
 
+## Apply B15 (Postgres limits)
+
+B15 raises `pg-cluster-v18` to `max_connections` 300, memory 3328Mi
+request and 5Gi limit, `cloud_provisioner` to CONNECTION LIMIT 10, and the
+alerts to 16 and 80 ([docs/agents/databases.md](../agents/databases.md),
+"Connection ceiling"). `max_connections` is a postmaster setting: CNPG
+restarts the replica, then the primary, and every homelab app reconnects
+within a few seconds. Do it in the nightly window.
+
+1. Re-measure the 7-day backend peak:
+   `homelab metrics query 'max_over_time(max(sum by (pod)(cnpg_backends_total{pod=~"pg-cluster-v18-.*"}))[7d:1m])'`.
+   Above 180, lower the ceiling in the cloud release to keep 20 spare.
+2. `presence claim db:pg-cluster-v18 --purpose "B15: max_connections 300, rolling restart"`.
+3. From the main checkout: `scripts/tg apply` in `stacks/dbaas` with
+   `-target=module.dbaas.null_resource.pg_cluster_v18
+   -target=module.dbaas.null_resource.pg_cloud_roles
+   -target=module.dbaas.kubernetes_config_map.pg_custom_queries`.
+4. Wait for both instances: `kubectl -n dbaas get cluster pg-cluster-v18`
+   reads `Cluster in healthy state`, then check
+   `homelab k8s db cloud -- "SHOW max_connections"` (300) and
+   `SELECT rolconnlimit FROM pg_roles WHERE rolname = 'cloud_provisioner'` (10).
+5. Apply `stacks/monitoring`, then deploy the Cloud release. Its new render
+   applies every Project again, which sets each Project role to 4, 8 or 16.
+6. `presence release db:pg-cluster-v18`.
+
+Rollback: revert the commit and apply the same targets; CNPG restarts the
+same way. Revert the Cloud release first, so no role is above the old 8.
+
 ## CrowdSec shadow for the home address
 
 The live CrowdSec whitelists the home address, so it never bans abuse that
@@ -611,9 +639,9 @@ Every Project Postgres is a database on `pg-cluster-v18` named
 3. Restore as in `restore-postgresql.md`:
    `pg_restore -d <db> --clean --if-exists <dump>`. The role exists, so
    ownership comes back as it was.
-4. Set the limit back to the Size's (nano 2, small 4, medium 8):
+4. Set the limit back to the Size's (nano 4, small 8, medium 16):
    `ALTER ROLE <db> CONNECTION LIMIT <n>;`. The next apply of the Project sets
-   it again anyway. A limit above 8 or none pages `CloudProjectRoleUnlimited`.
+   it again anyway. A limit above 16 or none pages `CloudProjectRoleUnlimited`.
 
 The size loop measures the database again within 5 minutes.
 
