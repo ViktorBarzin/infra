@@ -77,7 +77,10 @@ reading Vault itself. The console holds no Vault token and gets only the
 public key and the GitHub API token, never `secrets_private_key`. The
 reconciler's Vault policy has `patch` on `secret/data/cloud/p-*`, because
 App secrets are written as KV v2 merge patches; `secret/cloud/system` stays
-read-only for it.
+read-only for it. For a generated secret (`{generate: true}` in a Project
+File) it first reads the App's entry with the `read` it already has, and
+patches with check-and-set, so it writes a random value only for a key the
+entry lacks.
 
 `secret/cloud/system` is written by stacks/authentik (`cloud-apps.tf`), and a
 write replaces the whole secret. That stack reads the hand-written M5 keys

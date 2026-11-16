@@ -510,10 +510,16 @@ The size loop measures the database again within 5 minutes.
 ## Revoke a token
 
 - **Access Token** (`cloud_...`): its owner revokes it on the console's Access
-  Tokens screen. An Operator can revoke any:
+  Tokens screen or with `cloud tokens revoke <id or name>` after `cloud
+  login`. An Operator can revoke any:
   `UPDATE access_tokens SET revoked_at = now() WHERE id = '<id>' AND revoked_at IS NULL;`
-  (`SELECT id, user_id, name, created_at FROM access_tokens WHERE revoked_at IS NULL;`).
-  The API refuses it on the next request.
+  (`SELECT id, user_id, name, created_at, expires_at FROM access_tokens WHERE revoked_at IS NULL;`).
+  The API refuses it on the next request. Every token also expires, at most
+  90 days after it was made (`expires_at`; the tokens made before cloud
+  migration 0021 got 90 days from it), and then answers 401
+  `token_expired`. An Access Token cannot make or extend another, and one
+  made with `cloud login` (`user_scope`) reaches only its User's own
+  Projects, even an Operator's.
 - **Device sign-in** (an Authentik JWT): an access token cannot be revoked
   before it expires (15 minutes from `cloud`, 1 hour from `cloud-cli`). Delete
   the person's `cloud-cli` refresh tokens in the Authentik admin (Directory,
