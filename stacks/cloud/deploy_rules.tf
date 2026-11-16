@@ -133,6 +133,10 @@ locals {
     # Builder v2 (B05): Cloud's age identity, which opens the build logs the
     # builder sealed to its recipient. Never the console's, never GitHub's.
     BUILD_LOG_KEY = "build_log_key"
+    # Notifications (cloud B04): the password of Cloud's own mail account
+    # (SMTP_USERNAME below). An empty file turns email off; the reconciler
+    # logs it and keeps email deliveries pending.
+    SMTP_PASSWORD = "smtp_password"
   }
   cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
 
@@ -231,6 +235,16 @@ locals {
       # cloud_provisioner CONNECTION LIMIT 10 (stacks/dbaas, B15, applied
       # 2026-11-16). "1" is the rollback.
       { name = "RECONCILER_WORKERS", value = "2" },
+      # Notifications (cloud B04, notifySettings()). Submission with
+      # STARTTLS, the certificate checked against this name; inside the
+      # cluster it resolves to pfSense (10.0.20.1), whose HAProxy passes
+      # 587 to the mailserver. The account is in secret/platform
+      # mailserver_accounts (runbook, "Notifications").
+      { name = "SMTP_HOST", value = "mail.viktorbarzin.me" },
+      { name = "SMTP_PORT", value = "587" },
+      { name = "SMTP_USERNAME", value = "cloud@viktorbarzin.me" },
+      { name = "NOTIFY_FROM", value = "Cloud <cloud@viktorbarzin.me>" },
+      { name = "CLOUD_CONSOLE_URL", value = "https://cloud.viktorbarzin.me" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

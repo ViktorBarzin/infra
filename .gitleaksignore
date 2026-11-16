@@ -31,3 +31,9 @@ cli/paste_golden_test.go:generic-api-key:20
 # here because the phrasing puts it after a comma in backticks, which reads
 # like an assignment.
 CONTEXT.md:generic-api-key:265
+
+# False positive: the `hashicorp-tf-password` rule matches the env-to-Vault-key
+# map entry SMTP_PASSWORD = "smtp_password" in cloud_reconciler_system_keys.
+# "smtp_password" is the Vault key's name; the value stays in
+# secret/cloud/system and reaches the pod through an ExternalSecret.
+stacks/cloud/deploy_rules.tf:hashicorp-tf-password:139

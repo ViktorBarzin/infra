@@ -24,6 +24,8 @@ flowchart LR
   R -->|login cloud-reconciler,<br/>write secret/cloud/p-*| V[Vault]
   R -->|apply| P["p-* namespaces<br/>(Cloud-owned)"]
   R -->|M5: dispatch builds,<br/>read repos| GH["api.github.com,<br/>ghcr.io, Forgejo"]
+  R -->|B04: email, 587 STARTTLS| MS["mail.viktorbarzin.me<br/>(pfSense HAProxy, mailserver)"]
+  R -->|B04: signed webhooks, 443;<br/>DNS over HTTPS at 1.1.1.1| WH["Users' webhook URLs"]
   C -->|M5: Metrics, logs| M["Prometheus, Loki<br/>ns monitoring"]
   A[Authentik] -. sign-in .- C
   P -. oauth2-proxy .- A
@@ -43,6 +45,7 @@ flowchart LR
 | Postgres roles | `cloud` (console), `cloud_state`, `cloud_provisioner`, `cloud_projects` | `stacks/dbaas` |
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
 | Images | `ghcr.io/viktorbarzin/cloud` and `ghcr.io/viktorbarzin/cloud-reconciler`, private; Kyverno copies `ghcr-credentials` into `cloud` | `stacks/kyverno` `ghcr-credentials.tf` |
+| Notifications (cloud B04) | The reconciler emails as `cloud@viktorbarzin.me` (an account in Vault `secret/platform` `mailserver_accounts`; password also in `secret/cloud/system` `smtp_password`, carried by `stacks/authentik`, reaching the reconciler as `SMTP_PASSWORD_FILE`) through `mail.viktorbarzin.me:587`, and POSTs signed webhooks on 443. Webhook hosts are resolved through DNS over HTTPS at 1.1.1.1, since the cluster's DNS answers internal addresses for `*.viktorbarzin.me`, and private answers are refused. The `cloud` namespace has no egress policy, so no Calico rule is needed; the paths a future lockdown must keep are in cloud `docs/build/b04-infra.md` | `stacks/cloud/deploy_rules.tf`, `stacks/authentik/cloud-apps.tf` |
 | Alerts | group `Cloud` | `stacks/monitoring` `prometheus_chart_values.tpl` |
 | App hosts in internal DNS | Helm release `external-dns-cloud` (namespace `technitium`) writes `CNAME <host> -> viktorbarzin.me` plus an owner TXT record in Technitium within seconds of an App Ingress appearing, and deletes both with the Ingress. It reads only Ingresses labelled `cloud.viktorbarzin.me/managed=true`, which Cloud's `modules/app` sets. Publicly the hosts ride the Cloudflare wildcard. See `docs/architecture/dns.md`, "Cloud App hosts" | `stacks/technitium` `external_dns.tf` |
 

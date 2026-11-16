@@ -250,6 +250,9 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 #                                            delete:packages; his call 2026-11-14)
 #   build_log_key                            opens the build logs the public
 #                                            builder seals (cloud B05)
+#   smtp_password                            Cloud's mail account
+#                                            cloud@viktorbarzin.me, for
+#                                            notification email (cloud B04)
 locals {
   cloud_system_carried_keys = [
     "secrets_private_key",
@@ -262,6 +265,8 @@ locals {
     "ghcr_delete_token",
     # Builder v2 (cloud B05): Cloud's age identity for the sealed build logs.
     "build_log_key",
+    # Notifications (cloud B04): the SMTP password of cloud@viktorbarzin.me.
+    "smtp_password",
   ]
   cloud_system_live = length(data.vault_kv_secret_v2.cloud_system_live) > 0 ? data.vault_kv_secret_v2.cloud_system_live[0].data : {}
 }

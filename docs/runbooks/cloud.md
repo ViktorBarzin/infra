@@ -373,7 +373,8 @@ The provisioner acts only on roster rows, so it leaves the account alone.
 The Forgejo account links to the persona's Cloud sign-in by email: the vouch
 from `cloud users add` and the verified address on Forgejo (step 4 of "Add
 a Cloud User"). Mail to `persona@` goes to the domain catch-all until the
-mailserver has a `persona@` mailbox.
+mailserver has a `persona@` mailbox; "Notifications", step 1, adds it, and
+step 5 stores its IMAP password as `imap_password` in `secret/cloud/persona`.
 
 To sign the persona in to the CLI with no person, an admin starts
 `sudo -u persona -H cloud login` and approves the device code in the cluster
@@ -555,6 +556,36 @@ release with a migration that sets the Sizes back to 2, 4 and 8 and the
 ceiling to 20, then wait while it applies every Project again (each role
 back to 2, 4 or 8). Only then revert the Cloud code, and last revert the
 infra commit, which CI applies with the same rolling restart.
+
+## Notifications
+
+Cloud (backlog B04) emails Notifications as `cloud@viktorbarzin.me` and
+POSTs signed webhooks; the reconciler sends both. The full steps and live
+checks are in cloud `docs/build/b04-infra.md`. In order:
+
+1. Add `cloud@viktorbarzin.me` and `persona@viktorbarzin.me` to Vault
+   `secret/platform` `mailserver_accounts`, then
+   `scripts/tg apply mailserver -- -replace=module.mailserver.kubernetes_config_map.mailserver_config`.
+   A plain apply ignores new accounts (`ignore_changes` on the ConfigMap).
+2. `vault kv patch secret/cloud/system smtp_password=<cloud@'s password>`.
+3. Apply `stacks/authentik`, which carries `smtp_password`
+   (`cloud_system_carried_keys`); an apply from a branch without that key
+   deletes it.
+4. Apply `stacks/cloud`: `SMTP_PASSWORD_FILE` and the `SMTP_*` settings on
+   the reconciler.
+5. For P67: `vault kv patch secret/cloud/persona imap_password=<persona@'s password>`.
+
+Without the password the reconciler logs "email is not set up" at start,
+and email deliveries stay pending and fail after 24 hours; webhooks still
+go out. To rotate: change the account's password in `mailserver_accounts`
+(step 1 with `-replace`), then steps 2 to 4; Reloader restarts the
+reconciler.
+
+Debug a delivery: `kubectl -n cloud logs deploy/cloud-reconciler | grep
+cloud.notify` shows each failed attempt with the Channel id and the
+error, and `cloud notifications channels` shows the User the last result.
+A webhook to a host that resolves to a private address is refused by
+design, at creation and before every delivery.
 
 ## CrowdSec shadow for the home address
 
