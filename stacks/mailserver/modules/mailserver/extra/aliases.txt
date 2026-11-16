@@ -34,3 +34,10 @@ docs@viktorbarzin.me docs@viktorbarzin.me
 # as spam@ and sends From: f1@viktorbarzin.me; the same SPOOF_PROTECTION
 # exact-match rule as plans@ above. Also routes any reply to f1@ to spam@.
 f1@viktorbarzin.me spam@viktorbarzin.me
+
+# Cloud notifications (cloud B04): cloud@ sends Cloud's notification email
+# and receives its bounces; persona@ is the Render-parity test User's
+# mailbox (P67). Each needs a self-alias, or the @viktorbarzin.me catch-all
+# above routes its mail to spam@.
+cloud@viktorbarzin.me cloud@viktorbarzin.me
+persona@viktorbarzin.me persona@viktorbarzin.me

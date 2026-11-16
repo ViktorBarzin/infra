@@ -567,6 +567,12 @@ checks are in cloud `docs/build/b04-infra.md`. In order:
    `secret/platform` `mailserver_accounts`, then
    `scripts/tg apply mailserver -- -replace=module.mailserver.kubernetes_config_map.mailserver_config`.
    A plain apply ignores new accounts (`ignore_changes` on the ConfigMap).
+   Each address also needs a self-alias in
+   `stacks/mailserver/modules/mailserver/extra/aliases.txt`, or the
+   `@viktorbarzin.me` catch-all delivers its mail to `spam@`. Reloader does
+   not watch that ConfigMap, and the files are `subPath` mounts, so
+   `kubectl -n mailserver rollout restart deploy/mailserver` afterwards
+   (about a minute without mail; senders retry).
 2. `vault kv patch secret/cloud/system smtp_password=<cloud@'s password>`.
 3. Apply `stacks/authentik`, which carries `smtp_password`
    (`cloud_system_carried_keys`); an apply from a branch without that key
