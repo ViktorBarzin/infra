@@ -1865,7 +1865,7 @@ resource "kubernetes_config_map" "pg_custom_queries" {
         metrics:
           - unlimited:
               usage: "GAUGE"
-              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 8. Should be 0."
+              description: "LOGIN roles that Cloud's cloud_provisioner administers with CONNECTION LIMIT -1 or above 16. Should be 0."
           - connlimit_sum:
               usage: "GAUGE"
               description: "Sum of the CONNECTION LIMITs of the LOGIN roles Cloud's cloud_provisioner administers. Cloud keeps it at or under 80."
@@ -1980,7 +1980,7 @@ resource "null_resource" "pg_cluster_v18" {
             pg_prewarm.autoprewarm_interval: "300"
             # 200 -> 300, 2026-11-16 (Cloud backlog B15, decision V1: Project
             # databases stay on this cluster with raised limits). The 7-day
-            # peak of client backends on the primary was 163 (30-day 163, p95
+            # peak of client backends on the primary was 163 (30-day 163, 7-day p95
             # 150), so 200 left Cloud's ceiling of 20 almost no spare. 300 gives
             # Cloud 80 (POSTGRES_CONNECTION_CEILING) with 24 spare:
             # 297 - 163 - 20 (cloud_provisioner, cloud_state) - 10 (role cloud).
