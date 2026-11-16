@@ -55,6 +55,9 @@ probe "$ns" auth-recipes "{\"$C\": \"oauth2-proxy\", \"$S\": \"recipes\"}" 4180
 probe "$ns" app-menu "{\"$C\": \"app\", \"$S\": \"menu\"}"
 probe "$ns" edge-menu "{\"$C\": \"edge\", \"$S\": \"menu\", \"$E\": \"fedcba9876543210\"}"
 probe "$ns" auth-menu "{\"$C\": \"oauth2-proxy\", \"$S\": \"menu\"}" 4180
+# pricing is the internal App: no edge, no oauth2-proxy; its pod listens on
+# the App port, 3000. menu lists it in connects; recipes does not.
+probe "$ns" app-pricing "{\"$C\": \"app\", \"$S\": \"pricing\"}" 3000
 # A pod of the private App that listens on the mail ports and on 8080
 # (agnhost porter; the sysctl lets it bind ports under 1024 as non-root).
 # Its own edge reaches it, so a refused mail port shows the Deny rule.
@@ -80,7 +83,7 @@ probe p-other app-other "{\"$C\": \"app\", \"$S\": \"other\"}"
 # Every probe answers its kubelet readiness probe, which comes from the node:
 # the floors must not block it.
 # Cloud's own pods may still be terminating, so wait for the probes by name.
-if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu --timeout=180s >/dev/null 2>&1 \
+if k wait --for=condition=Ready -n "$ns" pod/app-recipes pod/mail-recipes pod/edge-recipes pod/edge-recipes-old pod/auth-recipes pod/app-menu pod/edge-menu pod/auth-menu pod/app-pricing --timeout=180s >/dev/null 2>&1 \
   && k wait --for=condition=Ready -n p-other pod/edge-recipes pod/app-other --timeout=60s >/dev/null 2>&1; then
   ok "every probe pod in $ns and p-other passes the kubelet's readiness probe"
 else
@@ -115,6 +118,14 @@ can    "$ns" edge-recipes "$(ip "$ns" app-recipes):8080"  "the private App's edg
 can    "$ns" edge-menu "$(ip "$ns" app-menu):8080"        "the public App's edge reaches its own App"
 cannot "$ns" edge-recipes "$(ip "$ns" app-menu):8080"     "an edge does not reach another App's pods"
 cannot "$ns" app-menu "$(ip "$ns" app-recipes):8080"      "App pods do not reach another App's pods"
+# The internal App: only the App that lists it in connects, on the App port.
+pricing="$(ip "$ns" app-pricing):3000"
+can    "$ns" app-menu "$pricing"                         "an App reaches the internal App it connects to, on the App port"
+cannot "$ns" app-recipes "$pricing"                      "an App that does not list the internal App in connects does not reach it"
+cannot p-other app-other "$pricing"                      "an App in another Project does not reach the internal App"
+cannot "${T[@]}" "$pricing"                              "Traefik does not reach the internal App"
+cannot "$ns" edge-menu "$pricing"                        "an edge does not reach the internal App"
+cannot homelab-app client "$pricing"                     "a homelab namespace does not reach the internal App"
 # Other namespaces.
 cannot p-other edge-recipes "$(ip "$ns" app-recipes):8080" "an edge pod in another Project does not reach this App, even with its service label"
 cannot "$ns" app-recipes "$(ip p-other app-other):8080"    "App pods do not reach another Project's pods"
@@ -176,6 +187,9 @@ cannot "${T[@]}" "$(ip "$ns" auth-recipes):4180"     "with an allow-all Project 
 cannot "${T[@]}" "$(ip "$ns" auth-menu):4180"        "with an allow-all Project policy, the floor still denies Traefik -> a public App's oauth2-proxy"
 cannot "$ns" auth-recipes "$(ip "$ns" edge-recipes):8080" "with an allow-all Project policy, the floor still denies oauth2-proxy -> edge"
 cannot "${T[@]}" "$(ip "$ns" app-recipes):8080"      "with an allow-all Project policy, the floor still denies Traefik -> App pods"
+cannot "${T[@]}" "$pricing"                          "with an allow-all Project policy, the floor still denies Traefik -> the internal App"
+cannot "$ns" app-menu "$(ip "$ns" app-recipes):8080" "with an allow-all Project policy, the floor still denies App pods -> App pods off the App port"
+cannot homelab-app client "$pricing"                 "with an allow-all Project policy, the floor still denies a homelab namespace -> the internal App"
 can    "$ns" edge-recipes "$mail:8080"                     "with an allow-all Project policy, the edge still reaches the mail-port probe on 8080"
 for port in 25 465 587 2525; do
   cannot "$ns" edge-recipes "$mail:$port"                  "with an allow-all Project policy, the floor still denies TCP $port"

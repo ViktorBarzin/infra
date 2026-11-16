@@ -404,6 +404,17 @@ sign-in check, never `respond /oauth2/* 404` alone. The ingress floor
 passes nothing from Traefik to oauth2-proxy pods or from oauth2-proxy pods
 to edge pods, so a Project policy cannot open the old path either.
 
+Internal Apps (B17, 2026-11-16): an App with `access: internal` runs only
+its App Deployment and Kubernetes Service `app-<app>`, with no edge,
+oauth2-proxy or Ingress. Its https address answers 404 like any unknown
+host, and Cloud keeps its name held. The Apps of its Project that list it
+in `connects` call `http://app-<app>.p-<project>.svc.cluster.local` from
+their `CLOUD_URL_<NAME>`. The ingress floor passes App pods to App pods on
+TCP 3000 (`cloud_app_port`, Cloud's App port) inside managed namespaces
+only, and Cloud's Project policy admits only its own namespace's callers.
+Admission needs no new rule: an App Deployment never needed an edge
+sibling, and `tests/cloud-access.test.sh` applies one through every policy.
+
 ## Connections on the shared primary
 
 | Holder | Connections |

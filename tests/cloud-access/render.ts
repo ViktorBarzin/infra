@@ -19,10 +19,12 @@
  *   fixtures.json          [{dir, name, namespace}] listing them in order
  *
  * The combined Project holds a private App, a public App connected to a
- * Postgres Service (with a built image, a migrate init container and HTTP
- * health check probes), and
+ * Postgres Service and to an internal App (with a built image, a migrate
+ * init container and HTTP health check probes), the internal App (no edge,
+ * oauth2-proxy or Ingress) and
  * the Postgres Service, so every object kind Cloud renders appears at least
- * once; the forbidden variants are built from it.
+ * once; the forbidden variants are built from it. tests/cloud-calico
+ * checks the internal App's callers against it.
  * The fixtures are the shapes Cloud's own tests render (a Postgres-only
  * Project, a single App, a Service removed, hostile env values), so each one
  * is applied as well and its objects must be admitted as they are.
@@ -56,10 +58,12 @@ const spec = {
 		menu: fixtures.app({
 			access: "public",
 			size: "nano",
-			connects: ["db"],
+			connects: ["db", "pricing"],
 			migrate: ["entrypoints/migrate.js"],
 			healthCheckPath: "/healthz",
 		}),
+		// Internal: only menu reaches it, on the App port.
+		pricing: fixtures.app({ access: "internal", size: "nano" }),
 		db: { kind: "postgres", size: "small" },
 	},
 };
@@ -123,6 +127,7 @@ await writeFile(
 			egressExcluded: renderer.EGRESS_EXCLUDED,
 			egressDeniedTcpPorts: renderer.EGRESS_DENIED_TCP_PORTS ?? null,
 			stripCookies: fixtures.INSTANCE.stripCookies,
+			appPort: fixtures.INSTANCE.appPort,
 			authentik: fixtures.INSTANCE.authentik,
 			apps: Object.keys(rendered.tfvarsJson.apps),
 			postgres: Object.keys(rendered.tfvarsJson.postgres),

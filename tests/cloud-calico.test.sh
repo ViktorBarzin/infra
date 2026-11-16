@@ -13,15 +13,17 @@
 #      apiserver refuses the reconciler a policy in any tier but `default`,
 #      and refuses it the floors, GlobalNetworkPolicies and Tiers.
 #   3. Cloud's renderer and real OpenTofu modules apply a Project (a private
-#      App, a public App connected to a Postgres Service, the Postgres
-#      Service) as the reconciler, so Cloud's own Project policy goes through
+#      App, a public App connected to a Postgres Service and to an internal
+#      App, the internal App, the Postgres Service) as the reconciler, so Cloud's own Project policy goes through
 #      calico-apiserver and the reconciler's RBAC there. While it exists,
 #      tests/cloud-calico/matrix.sh checks a connectivity matrix with probe
 #      pods carrying Cloud's labels: Traefik reaches every App's edge only,
 #      and only an edge pod with the Caddyfile digest label (none from before
 #      app-kit K1);
 #      each edge reaches only its own App and its own oauth2-proxy on 4180;
-#      oauth2-proxy reaches no edge and no App; App pods reach the CNPG primary and DNS, and
+#      oauth2-proxy reaches no edge and no App; only the App that connects
+#      to the internal App reaches it, on the App port 3000, and no other
+#      App, edge, Traefik, homelab namespace or other Project does; App pods reach the CNPG primary and DNS, and
 #      not the Authentik server, a replica, Vault, other namespaces, the API
 #      server ClusterIP, the node or the home WAN IP; oauth2-proxy reaches the
 #      Authentik server; the kubelet's readiness probes pass the floors; TCP
@@ -31,7 +33,8 @@
 #      Then, with an allow-all Project policy in the default tier, the floor
 #      alone still denies Traefik to oauth2-proxy pods, oauth2-proxy pods to
 #      edge pods (the private App's path before app-kit K1), Traefik to
-#      App pods, and the mail ports.
+#      App pods (the internal App too), App pods to App pods off the App
+#      port, a homelab namespace to the internal App, and the mail ports.
 #
 # Needs docker, kind, kubectl, helm, python3 with PyYAML, bun, terraform (for
 # `terraform console`) and a cloud repo checkout with its pinned OpenTofu and
@@ -219,7 +222,7 @@ tofu() {
 if ! tofu init -backend=false -input=false -no-color -plugin-dir="$TOFU_PLUGINS" >"$TMP/tofu-init.log" 2>&1; then
   bad "tofu init of Cloud's modules: $(tail -20 "$TMP/tofu-init.log")"
 elif tofu test -no-color >"$TMP/tofu-test.log" 2>&1 && grep -q "1 passed, 0 failed" "$TMP/tofu-test.log"; then
-  ok "Cloud's modules apply and destroy a private App, a public App and a Postgres Service in $NS as the reconciler, through calico-apiserver"
+  ok "Cloud's modules apply and destroy a private App, a public App, an internal App and a Postgres Service in $NS as the reconciler, through calico-apiserver"
 else
   bad "Cloud's modules did not apply and destroy cleanly as the reconciler: $(grep -v '^\s*$' "$TMP/tofu-test.log" | tail -40)"
 fi

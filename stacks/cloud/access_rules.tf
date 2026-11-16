@@ -122,7 +122,12 @@
 # never own the edge's socket. The Calico floor below lets App pods accept
 # connections only from edge pods, edge pods only from Traefik, and
 # oauth2-proxy pods only from edge pods on 4180; Cloud's Project policy
-# narrows that to the App's own pods. Cloud's edge.test.ts runs the
+# narrows that to the App's own pods. An internal App has no edge, no
+# oauth2-proxy and no Ingress, so nothing outside the cluster reaches it:
+# the floor also passes App pods to App pods on the App port
+# (local.cloud_app_port), and Cloud's Project policy admits there only the
+# App pods of its own namespace whose App lists the internal App in
+# connects. Cloud's edge.test.ts runs the
 # Caddyfile in the pinned image against a stand-in oauth2-proxy; M4's live
 # cookie test checks it end to end.
 #
@@ -298,6 +303,13 @@ locals {
   # not pile up. B19's cron runs need the 12 h deadline and a day of TTL.
   cloud_job_max_deadline_seconds = 43200
   cloud_job_max_ttl_seconds      = 86400
+
+  # The port App containers listen on: the cloud repo's APP_PORT, 3000 by
+  # default (appPort in its src/app.config.ts). An internal App (access:
+  # internal) has no edge; the Apps of its Project that connect to it call
+  # its pods on this port, and the ingress floor passes App to App on this
+  # port only. tests/cloud-access.test.sh compares it with Cloud's.
+  cloud_app_port = 3000
 
   # Anything looser would let the reconciler change what the edge strips
   # without touching its Caddyfile: a command or exec hook runs another
@@ -709,8 +721,9 @@ locals {
   }
 
   # Who may connect to a Project pod (M2 contract, Addendum v2 point 8;
-  # app-kit K1). The edge is the only way to App code, so App pods accept
-  # connections only from edge pods, edge pods only from Traefik, and
+  # app-kit K1). The edge is the only way to App code from outside, so App
+  # pods accept connections only from edge pods, and from App pods on the
+  # App port (an internal App's callers), edge pods only from Traefik, and
   # oauth2-proxy pods only from edge pods on 4180. Everything else is denied
   # here, before the default tier, so a Project policy cannot let Traefik,
   # another namespace or the LAN reach App pods directly. A GlobalNetworkPolicy
@@ -746,6 +759,17 @@ locals {
           action      = "Pass"
           source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == '${local.cloud_edge.component}'" }
           destination = { selector = "${local.cloud_component_label} == 'app'" }
+        },
+        # An internal App's callers: App pods to App pods, on the App port
+        # only, inside managed namespaces. Cloud's Project policy admits
+        # only its own namespace's callers (the cloud repo's
+        # modules/project, internal_callers); Traefik and the LAN never
+        # match this rule.
+        {
+          action      = "Pass"
+          protocol    = "TCP"
+          source      = { namespaceSelector = "${local.cloud_managed_label} == 'true'", selector = "${local.cloud_component_label} == 'app'" }
+          destination = { selector = "${local.cloud_component_label} == 'app'", ports = [local.cloud_app_port] }
         },
         { action = "Deny" },
       ]

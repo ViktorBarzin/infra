@@ -31,13 +31,17 @@
 #     TCP 25, 465, 587 and 2525 to every address before any Pass (the same
 #     ports Cloud's EGRESS_DENIED_TCP_PORTS denies), and ends in Deny; the
 #     ingress floor lets Traefik reach only edge pods, App pods only
-#     edge pods, oauth2-proxy pods only edge pods on TCP 4180, passes nothing
+#     edge pods and App pods of managed namespaces on TCP 3000 (Cloud's
+#     App port, an internal App's callers), oauth2-proxy pods only edge
+#     pods on TCP 4180, passes nothing
 #     from Traefik to oauth2-proxy pods or from oauth2-proxy pods to edge
 #     pods, and ends in Deny; each oauth2-proxy shape holds exactly one of
 #     the emails file and --email-domain=*;
 #   - Cloud's modules apply a private App, a public App (with a built image,
 #     a migrate init container and httpGet readiness, liveness and startup
-#     probes from its healthCheckPath) and a Postgres Service as the
+#     probes from its healthCheckPath, connected to an internal App), an
+#     internal App (an App Deployment with no edge, oauth2-proxy or
+#     Ingress) and a Postgres Service as the
 #     reconciler, every Deployment's pod is admitted (Pod Security
 #     restricted, cloud-managed-pod), and the destroy succeeds; then the same
 #     for each of Cloud's snapshot fixtures (render.fixtures.ts FIXTURES: one
@@ -184,7 +188,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -331,8 +335,18 @@ if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or no
 if any(r.get("action") == "Allow" and r.get("destination", {}).get("nets", [None])[0] in ("0.0.0.0/0", "::/0") for r in egress):
     problems.append("floor: an Allow to the internet would stop the Project policy narrowing it")
 # The ingress floor: Traefik reaches only edge pods, App pods accept only edge
-# pods, oauth2-proxy pods only edge pods, and everything else is denied.
+# pods and, on Cloud's App port only, App pods of managed namespaces (an
+# internal App's callers), oauth2-proxy pods only edge pods, and everything
+# else is denied.
 ing = k["ingress_floor"]["spec"]
+managed = "cloud.viktorbarzin.me/managed == 'true'"
+if contract.get("appPort") != k["app_port"]:
+    problems.append(f"App port: Cloud renders {contract.get('appPort')}, infra's floor passes {k['app_port']}")
+app_to_app = {"action": "Pass", "protocol": "TCP",
+              "source": {"namespaceSelector": managed, "selector": "cloud.viktorbarzin.me/component == 'app'"},
+              "destination": {"selector": "cloud.viktorbarzin.me/component == 'app'", "ports": [k["app_port"]]}}
+if [r for r in ing["ingress"] if r == app_to_app] != [app_to_app]:
+    problems.append(f"ingress floor: no single Pass of App pods to App pods on TCP {k['app_port']} inside managed namespaces")
 if ing.get("types") != ["Ingress"] or ing.get("tier") != "cloud" or ing["ingress"][-1] != {"action": "Deny"}:
     problems.append(f"ingress floor: not an Ingress policy in tier cloud ending in Deny: {ing}")
 comp = "cloud.viktorbarzin.me/component"
@@ -341,8 +355,8 @@ for r in ing["ingress"][:-1]:
         problems.append(f"ingress floor: a rule other than Pass before the Deny: {r}")
     dst = r.get("destination", {}).get("selector", "")
     src = r.get("source", {})
-    if "'app'" in dst and src.get("selector") != f"{comp} == 'edge'":
-        problems.append(f"ingress floor: App pods reachable from something other than edge pods: {r}")
+    if "'app'" in dst and src.get("selector") != f"{comp} == 'edge'" and r != app_to_app:
+        problems.append(f"ingress floor: App pods reachable from something other than edge pods and the App port's callers: {r}")
     if "traefik" in src.get("namespaceSelector", "") and ("'app'" in dst or not dst):
         problems.append(f"ingress floor: Traefik reaches App pods: {r}")
     if "traefik" in src.get("namespaceSelector", "") and "'oauth2-proxy'" in dst:
@@ -831,7 +845,7 @@ run_cases() { # <cases dir>
 if ! tofu init -backend=false -input=false -no-color -plugin-dir="$TOFU_PLUGINS" >"$TMP/tofu-init.log" 2>&1; then
   bad "tofu init of Cloud's modules: $(tail -20 "$TMP/tofu-init.log")"
 elif tofu test -no-color >"$TMP/tofu-test.log" 2>&1 && grep -q "1 passed, 0 failed" "$TMP/tofu-test.log"; then
-  ok "Cloud's modules apply and destroy a private App, a public App and a Postgres Service in $NS as the reconciler"
+  ok "Cloud's modules apply and destroy a private App, a public App, an internal App and a Postgres Service in $NS as the reconciler"
 else
   bad "Cloud's modules did not apply and destroy cleanly as the reconciler: $(grep -v '^\s*$' "$TMP/tofu-test.log" | tail -40)"
 fi

@@ -593,6 +593,23 @@ error, and `cloud notifications channels` shows the User the last result.
 A webhook to a host that resolves to a private address is refused by
 design, at creation and before every delivery.
 
+## Apply B17 (internal Apps)
+
+Apply `stacks/cloud` from the main checkout before the Cloud release that
+carries B17: the ingress floor gains the Pass of App pods to App pods on
+TCP 3000. Until it is applied, an internal App's callers time out. Check
+it with two fixture Apps in one Project, `a` with `access: internal` and
+`b` with `connects: [a]`: `https://a.viktorbarzin.me` answers 404, b's
+`/fetch?url=http://app-a.p-<project>.svc.cluster.local/info` answers 200,
+and the same `/fetch` from a fixture App in another Project fails to
+connect (it needs `FIXTURE_FETCH_ALLOW` set to that URL).
+
+Rollback: revert the commit that added the App-to-App Pass to
+`cloud_project_ingress_floor` and apply `stacks/cloud`. Internal Apps then
+stop answering their callers; public and private Apps are unaffected.
+
+If Cloud's `APP_PORT` changes, change `cloud_app_port` in the same release.
+
 ## CrowdSec shadow for the home address
 
 The live CrowdSec whitelists the home address, so it never bans abuse that
