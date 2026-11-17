@@ -8747,6 +8747,60 @@ serverFiles:
             annotations:
               summary: "MyProtein daily digest has never posted successfully"
               description: "The myprotein-watch-digest CronJob has no successful run on record, so the daily heartbeat has never arrived. Most likely a deploy-time problem — missing SLACK_WEBHOOK_URL from ESO, or the script ConfigMap not mounted — rather than anything about MyProtein's page."
+      # Deal watches: changedetection.io watches in the "deals" group
+      # (docs/runbooks/deal-watches.md). changedetection itself posts the
+      # price drops to Slack; these rules catch the silent failures, where a
+      # watch stopped checking or lost the price, which otherwise look exactly
+      # like a price that did not move. Gauges come from the deal-watch-exporter
+      # CronJob (stacks/changedetection, every 15 min) via the Pushgateway.
+      - name: Deal Watches
+        rules:
+          # The exporter reads changedetection's API, so this also fires when
+          # changedetection is down or its API key stopped working.
+          - alert: DealWatchExporterStale
+            expr: (time() - deal_watches_exporter_last_success_timestamp_seconds) > 3600
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deal-watch exporter has not reported in {{ $value | humanizeDuration }}"
+              description: "The deal-watch-exporter CronJob (ns changedetection, every 15 min) has not pushed for over an hour, so deal-watch health is unknown. Either changedetection is down or its API refused the key (kubectl -n changedetection get pods; last job logs: kubectl -n changedetection logs job/<newest deal-watch-exporter job>), or the push to the Pushgateway failed. Runbook: docs/runbooks/deal-watches.md."
+          - alert: DealWatchExporterAbsent
+            expr: absent(deal_watches_exporter_last_success_timestamp_seconds)
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deal-watch exporter has never reported"
+              description: "No deal_watches_exporter_last_success_timestamp_seconds in Prometheus. The deal-watch-exporter CronJob in ns changedetection has not run successfully since the Pushgateway last lost its data, or it was never deployed. Runbook: docs/runbooks/deal-watches.md."
+          # Three missed check intervals (12 h for a 4 h watch). A paused
+          # watch is a user choice, not a fault, so it is excluded.
+          - alert: DealWatchNotChecked
+            expr: (time() - deal_watch_last_checked_timestamp_seconds) > 3 * deal_watch_check_interval_seconds and deal_watch_paused == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deal watch '{{ $labels.title }}' has not been checked for {{ $value | humanizeDuration }}"
+              description: "changedetection has not checked this deal watch for more than three of its intervals, so a price drop would go unreported. Check the changedetection pod and its fetch queue in the UI (https://changedetection.viktorbarzin.me). Runbook: docs/runbooks/deal-watches.md."
+          # A one-off fetch error clears on the next check; 5 h is more than
+          # one 4 h interval, so this fires only on a repeated failure.
+          - alert: DealWatchFailing
+            expr: deal_watch_check_failing == 1 and deal_watch_paused == 0
+            for: 5h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deal watch '{{ $labels.title }}' cannot read its price"
+              description: "The watch's last_error has been set for 5 h, so it no longer reads a price and cannot alert on a drop. Usual causes: the shop changed its page layout (fix the include filter), served a captcha or another currency, or the product is gone. Open the watch in https://changedetection.viktorbarzin.me to see the error. Runbook: docs/runbooks/deal-watches.md, Troubleshooting."
+          - alert: DealWatchNotificationFailing
+            expr: deal_watch_notification_failing == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deal watch '{{ $labels.title }}' could not post its alert to Slack"
+              description: "changedetection recorded a notification error on this watch, so a price-drop alert did not reach Slack. Check the 'deals' group's notification URL (Vault secret/changedetection key deals_slack_webhook) and the watch's last_notification_error. Runbook: docs/runbooks/deal-watches.md."
       # Broker feeds reconcile what a broker says it holds against what
       # Wealthfolio derives from its own activity ledger. broker-sync pushes
       # the comparison to Pushgateway at the end of each daily run

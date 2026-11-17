@@ -21,6 +21,8 @@ product page ──fetch every N h──> changedetection (restock_diff processo
   notification URL, so a new watch needs no notification settings of its own.
 - With only `price_change_min` set, the watch is silent while the price is at
   or above the target. It posts on each change while the price is below it.
+  To hear about any discount, set `price_change_min` to today's price; to
+  hear only about a deep one, set it to the price you would pay.
 - The watch list lives in changedetection's datastore on NFS
   (`/srv/nfs/changedetection`), not in this repo. The repo is public, and a
   shopping list is personal data.
@@ -75,13 +77,16 @@ it shows EUR by default. Set both on the watch:
   "Accept-Language": "en-GB",
   "Cookie": "i18n-prefs=GBP; lc-acbuk=en_GB"
 },
-"include_filters": ["xpath:(//div[@id='corePrice_feature_div']//span[contains(@class,'apex-pricetopay-value')]/span[contains(@class,'a-offscreen')])[1]"]
+"include_filters": ["xpath:(//div[@id='corePrice_feature_div'][not(ancestor::*[contains(@id,'used')])]//span[contains(@class,'apex-pricetopay-value')]/span[contains(@class,'a-offscreen')])[1]"]
 ```
 
 The page can carry two `corePrice_feature_div` blocks, one for the new offer
-and one for a used offer. A CSS selector matches both, and the watch then
-fails with "matched more than one price". The XPath takes the first block,
-which is the new offer.
+(inside `newAccordionRow_0`) and one for a used offer (inside
+`usedAccordionRow`). A CSS selector matches both, and the watch then fails
+with "matched more than one price". The XPath skips every block inside a
+`used` row and takes the first one left, so the watch reads only the price of
+a new item. When Amazon lists no new offer, the filter matches nothing and the
+watch errors (`DealWatchFailing`) instead of reporting a used price.
 
 **camelcamelcamel.** It answers a plain fetch from our egress with a
 Cloudflare challenge (HTTP 403), so changedetection cannot read it. Use its
@@ -90,6 +95,30 @@ own email alerts on an account.
 **Pages with several products.** restock_diff reads one price per page. For
 a page with many variants and per-variant rules, write a dedicated job, as
 `stacks/myprotein-watch/` does.
+
+## Alerts
+
+changedetection posts only when a price drops, so a dead watch is silent too.
+The `deal-watch-exporter` CronJob (`stacks/changedetection`, every 15 min,
+script `deal_watch_exporter.py`) reads every watch in the group through the
+API and pushes gauges to the Pushgateway (job `deal-watches`). It replaces the
+whole group on each push, so a deleted watch drops out. Rules are in the
+`Deal Watches` group of `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`:
+
+| alert | fires when |
+|---|---|
+| `DealWatchExporterStale` | no push for 1 h: changedetection is down, the API key fails, or the push fails |
+| `DealWatchExporterAbsent` | the success gauge has never existed for 1 h |
+| `DealWatchNotChecked` | a watch that is not paused went 3 check intervals without a check |
+| `DealWatchFailing` | a watch's `last_error` stayed set for 5 h, so it reads no price |
+| `DealWatchNotificationFailing` | a watch recorded a Slack notification error |
+
+Gauges, each labelled `uuid` and `title`: `deal_watch_last_checked_timestamp_seconds`,
+`deal_watch_check_interval_seconds`, `deal_watch_check_failing`,
+`deal_watch_notification_failing`, `deal_watch_paused`, `deal_watch_price`,
+`deal_watch_target_price`; plus `deal_watches_total` and
+`deal_watches_exporter_last_success_timestamp_seconds`. Tests:
+`python3 -m pytest stacks/changedetection/test_deal_watch_exporter.py -q`.
 
 ## Troubleshooting
 

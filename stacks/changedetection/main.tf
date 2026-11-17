@@ -231,3 +231,116 @@ module "ingress" {
     "gethomepage.dev/widget.key"   = local.homepage_credentials["changedetection"]["api_key"]
   }
 }
+
+# Deal-watch health exporter (docs/runbooks/deal-watches.md).
+#
+# changedetection posts to Slack only when a watched price drops, so a watch
+# that stopped checking or lost the price looks the same as a quiet price.
+# This job reads every watch in the "deals" group through the API and pushes
+# gauges to the Pushgateway; the DealWatch* alerts in stacks/monitoring read
+# them. Stdlib Python from a ConfigMap, no image to build, like myprotein-watch.
+resource "kubernetes_config_map_v1" "deal_watch_exporter" {
+  metadata {
+    name      = "deal-watch-exporter"
+    namespace = kubernetes_namespace.changedetection.metadata[0].name
+  }
+  data = {
+    "deal_watch_exporter.py" = file("${path.module}/deal_watch_exporter.py")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "deal_watch_exporter" {
+  metadata {
+    name      = "deal-watch-exporter"
+    namespace = kubernetes_namespace.changedetection.metadata[0].name
+    labels = {
+      app  = "deal-watch-exporter"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    schedule                      = "*/15 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 300
+
+    job_template {
+      metadata {
+        labels = {
+          app = "deal-watch-exporter"
+        }
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 3600
+        # A run takes about a second. Bounded so a black-holed connection
+        # cannot leave a Forbid CronJob wedged and skipping every later run.
+        active_deadline_seconds = 120
+
+        template {
+          metadata {
+            labels = {
+              app = "deal-watch-exporter"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+
+            container {
+              name              = "export"
+              image             = "docker.io/library/python:3.15-alpine"
+              image_pull_policy = "IfNotPresent"
+              command           = ["python3", "/scripts/deal_watch_exporter.py"]
+
+              env {
+                name  = "CHANGEDETECTION_URL"
+                value = "http://changedetection.changedetection.svc.cluster.local"
+              }
+              env {
+                name  = "PUSHGATEWAY_URL"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/deal-watches"
+              }
+              env {
+                name = "CHANGEDETECTION_CREDENTIALS"
+                value_from {
+                  secret_key_ref {
+                    name = "changedetection-secrets"
+                    key  = "homepage_credentials"
+                  }
+                }
+              }
+
+              volume_mount {
+                name       = "script"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map_v1.deal_watch_exporter.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
