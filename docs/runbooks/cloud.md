@@ -1065,7 +1065,7 @@ GitHub tokens held Viktor's classic `github_pat`. Since cloud B08b
 |---|---|---|
 | `ghcr_pull` | `ghcr_pull_token` | classic, `read:packages`; copied into every Project's image pull secret |
 | `ghcr_delete` | `ghcr_delete_token` | classic, `read:packages` and `delete:packages` |
-| `dispatch` | `github_dispatch_token` | fine-grained, `ViktorBarzin/cloud-builder` only: Actions, Contents and Workflows read and write, Metadata read |
+| `dispatch` | `github_dispatch_token` | fine-grained, `ViktorBarzin/cloud-builder` only: Actions, Contents and Workflows read and write, Metadata read. Cloud's calls need only Actions read and write and Metadata read; Contents and Workflows write would let a leaked copy rewrite the builder's workflow, so the next re-mint should drop them |
 | `owner_read` | `github_owner_read_token` | fine-grained, Contents and Metadata read on the repos Operators build privately; also the builder repo's `GH_OWNER_READ_TOKEN` secret |
 
 The dispatch token has no account permission, so Cloud cannot read the
