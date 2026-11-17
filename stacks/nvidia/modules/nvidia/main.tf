@@ -163,12 +163,62 @@ resource "helm_release" "nvidia-gpu-operator" {
   # Every chart bump also changes the helm.sh/chart label on the driver
   # DaemonSet, which is OnDelete with driver.upgradePolicy.autoUpgrade off,
   # so the ClusterPolicy stays notReady on state-driver until the driver pod
-  # is deleted by hand: about 10 minutes without GPU (v26.7.2, 2026-10-13).
+  # is restarted. null_resource.roll_driver_on_chart_bump below does that
+  # restart in the same apply, so Renovate bumps pass the rails (infra#200;
+  # v26.7.2 and v26.7.3 were both reverted for this). Expect 4-10 minutes
+  # without GPU per chart bump.
   version = "v26.7.3"
   timeout = 6000
 
   values     = [templatefile("${path.module}/values.yaml", {})]
   depends_on = [kubernetes_config_map.time_slicing_config]
+}
+
+# The driver DaemonSet is OnDelete (the operator sets it; autoUpgrade is off so
+# a driver *version* change stays a supervised step). A chart bump changes only
+# the helm.sh/chart label in its template, but the pod never rolls by itself and
+# the ClusterPolicy stays notReady. This step waits for the operator to rewrite
+# the template with the new chart label, deletes only driver pods whose label
+# differs, and waits until the replacement is Ready, so the verify that follows
+# sees a converged stack. It is a no-op when the pods already match.
+resource "null_resource" "roll_driver_on_chart_bump" {
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      ns=${kubernetes_namespace.nvidia.metadata[0].name}
+      ds=nvidia-driver-daemonset
+      want="gpu-operator-${helm_release.nvidia-gpu-operator.version}"
+      deadline=$((SECONDS + 900))
+      until [ "$(kubectl -n "$ns" get ds "$ds" -o jsonpath='{.spec.template.metadata.labels.helm\.sh/chart}' 2>/dev/null)" = "$want" ]; do
+        [ $SECONDS -lt $deadline ] || { echo "driver DaemonSet template never reached $want"; exit 1; }
+        sleep 10
+      done
+      desired=$(kubectl -n "$ns" get ds "$ds" -o jsonpath='{.status.desiredNumberScheduled}')
+      [ "$${desired:-0}" -gt 0 ] || { echo "no GPU node schedules $ds; nothing to roll"; exit 0; }
+      kubectl -n "$ns" get pods -l app="$ds" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.labels.helm\.sh/chart}{"\n"}{end}' |
+        while read -r pod chart; do
+          if [ "$chart" != "$want" ]; then
+            echo "restarting $pod ($chart -> $want)"
+            kubectl -n "$ns" delete pod "$pod" --wait=false
+          fi
+        done
+      deadline=$((SECONDS + 1800))
+      while :; do
+        ready=$(kubectl -n "$ns" get pods -l "app=$ds,helm.sh/chart=$want" \
+          -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -c '^True$' || true)
+        [ "$ready" -ge "$desired" ] && break
+        [ $SECONDS -lt $deadline ] || { echo "driver pods on $want not Ready after 30 min"; exit 1; }
+        sleep 15
+      done
+      echo "driver DaemonSet on $want: $ready/$desired Ready"
+    EOT
+  }
+  triggers = {
+    chart_version = helm_release.nvidia-gpu-operator.version
+    command_hash  = "roll-driver-on-chart-bump-v1"
+  }
 }
 
 # CONSOLIDATED 2026-07-18 (Viktor: "fix the nvidia issues, consolidate tf"):
