@@ -54,9 +54,10 @@ locals {
   # Groups this stack creates. Looked up by resource, because a data source
   # cannot read a group that the same apply is creating.
   forward_auth_tf_groups = {
-    "Home Users"   = authentik_group.home_users.id
-    "Chrome Users" = authentik_group.chrome_users.id
-    "Proxy Users"  = authentik_group.proxy_users.id
+    "Home Users"    = authentik_group.home_users.id
+    "Chrome Users"  = authentik_group.chrome_users.id
+    "Proxy Users"   = authentik_group.proxy_users.id
+    "Deal Watchers" = authentik_group.deal_watchers.id
   }
 
   forward_auth_group_ids = merge(
