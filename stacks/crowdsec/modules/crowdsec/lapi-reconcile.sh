@@ -26,7 +26,8 @@ while IFS="$(printf '\t')" read -r name comment; do
   dynamic="$dynamic $ip"
 done < /tmp/allowlist-dns.txt
 
-have=$(cscli allowlists inspect "$LIST" -o raw 2>/dev/null | awk -F, 'NR > 1 && $1 != "" {print $1}')
+# -o raw columns: name,description,value,comment,...; the value is the third.
+have=$(cscli allowlists inspect "$LIST" -o raw 2>/dev/null | awk -F, 'NR > 1 && $3 != "" {print $3}')
 added=0
 while IFS="$(printf '\t')" read -r value comment; do
   [ -n "$value" ] || continue
