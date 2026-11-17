@@ -1,7 +1,7 @@
 # What the console and the reconciler Deployments get (milestones M4 and M5):
 # the console's cluster role, the env both processes read and the
-# reconciler's credential files. Locals only (plus var.postgresql_host and
-# var.builds_enabled, which have no other inputs), so
+# reconciler's credential files. Locals only (plus var.postgresql_host,
+# var.builds_enabled and var.image_prune, which have no other inputs), so
 # tests/cloud-deploy.test.sh checks them offline against the cloud repo's
 # src/server/env.server.ts. console.tf and reconciler.tf turn them into
 # resources; docs/architecture/cloud.md has the credentials table.
@@ -14,6 +14,21 @@
 variable "builds_enabled" {
   type    = bool
   default = true
+}
+
+# Pruning old App images from ghcr (cloud backlog B36,
+# src/reconciler/packages.ts): each App keeps its newest 10 images and every
+# one a Deploy or job still uses. "dry-run" logs each version it would
+# delete and deletes none; "off" is the rollback. docs/runbooks/cloud.md,
+# "Old App images". The first release runs dry-run; "on" follows once the
+# dry-run lines in the reconciler log read right.
+variable "image_prune" {
+  type    = string
+  default = "dry-run"
+  validation {
+    condition     = contains(["on", "dry-run", "off"], var.image_prune)
+    error_message = "image_prune is on, dry-run or off."
+  }
 }
 
 # Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals
@@ -252,6 +267,8 @@ locals {
       # 80% sends storage_high within P67's 2 minutes. Each pass is one
       # pg_database_size per Project database.
       { name = "RECONCILE_DATABASE_SIZE_SECONDS", value = "60" },
+      # B36's switch, var.image_prune above.
+      { name = "RECONCILE_IMAGE_PRUNE", value = var.image_prune },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

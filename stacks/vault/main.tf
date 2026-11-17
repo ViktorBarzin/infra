@@ -815,6 +815,16 @@ resource "vault_policy" "ci" {
     path "secret/metadata/cloud/inviter" {
       capabilities = ["create", "read", "update", "list"]
     }
+    # stacks/redis writes the shared Redis's ACL user passwords here
+    # (modules/redis/acl.tf, B40). Data and metadata, for the same reason
+    # as the two paths above, and delete, so reverting that change can
+    # destroy the secret instead of failing every later redis apply on 403.
+    path "secret/data/redis/users" {
+      capabilities = ["create", "read", "update", "delete"]
+    }
+    path "secret/metadata/redis/users" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
     path "auth/token/create/devvm-bootstrap" {
@@ -1175,6 +1185,31 @@ resource "vault_kubernetes_auth_backend_role" "eso" {
   token_policies                   = [vault_policy.eso_reader.name]
   token_ttl                        = 864000 # 10d (staggered from ci/openclaw)
   token_period                     = 864000 # periodic: auto-renews indefinitely
+}
+
+# --- Redis ACL sync Policy & Role (B40, stacks/redis/modules/redis/acl.tf) ---
+#
+# The redis-acl-sync CronJob reads the users' passwords, hashes them and
+# keeps the shared Redis's ACL users in step. Read on that one secret only.
+
+resource "vault_policy" "redis_acl_sync" {
+  name   = "redis-acl-sync"
+  policy = <<-EOT
+    path "secret/data/redis/users" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "redis_acl_sync" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "redis-acl-sync"
+  bound_service_account_names      = ["redis-acl-sync"]
+  bound_service_account_namespaces = ["redis"]
+  token_policies                   = [vault_policy.redis_acl_sync.name]
+  # One run lasts under a minute and logs in again on the next.
+  token_ttl     = 300
+  token_max_ttl = 300
 }
 
 # --- Woodpecker Secret Sync Policy & Role ---

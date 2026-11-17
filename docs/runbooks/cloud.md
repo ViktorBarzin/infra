@@ -1190,14 +1190,33 @@ within 71 minutes.
 
 ### The pull token, the ghcr cache and a rotation
 
-- An `UNAUTHORIZED` or a 500 from the ghcr cache at 10.0.20.10:5010 in a
-  Project pod's events is normal for a private image. The cache holds no
-  credentials by design (`playbooks/files/registry-cache/config-ghcr.yml`);
-  containerd then pulls from ghcr.io directly with the Project's
-  `cloud-registry` Secret (`hosts.toml` from
+- Cloud App images reach nodes through the ghcr cache at 10.0.20.10:5010
+  (cloud backlog B36). nginx there sends
+  `/v2/viktorbarzin/cloud-<project>_<app>/manifests/...` and `/blobs/...`
+  from the six k8s nodes to `registry-ghcr-cloud`, which signs in to ghcr
+  with Cloud's `ghcr_pull` token (Vault `secret/cloud/github-narrow`,
+  rendered into `/opt/registry/config-ghcr-cloud.yml` by
+  `playbooks/registry-cache.yml`). Every other ghcr path stays on
+  `registry-ghcr`, which holds no credentials
+  (`playbooks/files/registry-cache/config-ghcr.yml`). The token reads every
+  private package of the account, so the route is narrow: only App image
+  names, only GET and HEAD, only manifests and blobs by `sha256` digest,
+  and only from the six node addresses; anyone else gets 403. The node
+  addresses do not tell tenants apart, since the kubelet pulls for every
+  pod on its node, so any namespace on the cluster could ask for a Cloud
+  App image through a node. The digest is what keeps them out: Cloud runs
+  every App by digest and nobody else knows it, while a tag is a commit
+  sha, public for a public repo, so tags are refused. Project pods cannot
+  reach the VM at all: the egress floor denies them 10.0.0.0/8
+  (`cloud_project_egress_floor`). After a rotation of `ghcr_pull`, run the
+  playbook again and restart `registry-ghcr-cloud`.
+- An `UNAUTHORIZED`, a 403 or a 500 from 10.0.20.10:5010 in a Project
+  pod's events does not stop the pull: containerd then pulls from ghcr.io
+  directly with the Project's `cloud-registry` Secret (`hosts.toml` from
   `playbooks/k8s-node-tuning.yml`), and the kubelet reports only the first
   host's error. Look at the second pull attempt, or at whether the pod
-  started.
+  started. Before B36's registry apply, every App image pull went that
+  way.
 - The reconciler refuses every apply while `ghcr_pull_token` is empty
   (`registry_token_missing` on the change and in Notifications). Set the
   key, then apply the Project File again.
@@ -1220,6 +1239,49 @@ within 71 minutes.
   The reconciler deletes only repositories named
   `ghcr.io/<owner>/cloud-<project>_<app>`, so Cloud's own image and infra
   images are never touched.
+
+### Old App images
+
+Since cloud B36 the reconciler also prunes the images of Apps that still
+run, every hour, with the same `ghcr_delete_token` (cloud
+`src/reconciler/packages.ts`, `pruneImagesOnce`). Only tagged versions go:
+an untagged one may be a child manifest of an index. Each App keeps its newest
+10 package versions, the image of every Deploy that is building, deploying
+or live (its workers and crons run that one), the images of its newest 10
+live or replaced Deploys (the rollback targets) and the image of a queued
+or running one-off job. A deleted Project, or one soft deleted and waiting
+for its purge, keeps every image. A pass makes at most 60 GitHub calls and
+20 deletes, goes on where the last one stopped, and stops at the first 401,
+403 or 429 without retrying. Each pruned version is a log line ("pruned an
+image version", with the repository, digest and tags), and a rollback to
+it answers `image_pruned` with the `cloud deploy --commit` command that
+builds it again.
+
+- The switch: `image_prune` in `stacks/cloud` (`deploy_rules.tf`), the
+  reconciler's `RECONCILE_IMAGE_PRUNE`. It starts at `dry-run` (2026-11-17)
+  and moves to `on` after the dry-run lines are read; `dry-run` logs
+  "would prune an image version" for each version and deletes none; `off`
+  is the rollback. Change the variable and let CI apply `cloud`.
+- Metrics: `cloud_image_versions_pruned_total{mode}`,
+  `cloud_image_prune_errors_total{reason}` (unauthorized, forbidden,
+  rate_limited, list_failed, delete_failed), `cloud_image_prune_api_calls`
+  and `cloud_image_prune_stopped`.
+- `CloudImagePruneStopped` (warning): GitHub answered 401 or 403, and
+  pruning is off until the reconciler restarts. Check `ghcr_delete` in
+  `secret/cloud/github-narrow` (`read:packages` and `delete:packages`),
+  then restart the reconciler. A 429 only skips to the next pass.
+- The cache on 10.0.20.10 keeps what it fetched for up to 168 h
+  (`proxy.ttl`), and nginx keeps blobs for 24 h, so a pruned version, or
+  the images of a purged Project, can still be pulled by digest through the
+  cache for up to a week after GitHub deleted them. Only the nodes can ask,
+  by digest. To drop them at once, delete their directories under
+  `/opt/registry/data/ghcr-cloud/docker/registry/v2/repositories/viktorbarzin/`
+  and restart `registry-ghcr-cloud`.
+- A version deleted by mistake can be restored for 30 days:
+  `POST /users/viktorbarzin/packages/container/<package>/versions/<id>/restore`
+  with a token that has `write:packages` (the id is in GitHub's deleted
+  versions list, `?state=deleted`). Then clear `image_pruned_at` on its
+  Deploys in Cloud's database so a rollback to it is allowed again.
 
 ## Forgejo bot accounts (created 2026-11-14)
 
