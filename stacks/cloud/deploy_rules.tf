@@ -228,9 +228,9 @@ locals {
       { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
       # B09: OpenTofu state encryption. The passphrase is read from Vault
       # secret/cloud/state-key by the reconciler itself, never as a file.
-      # true: a state written before encryption is still read; set false
-      # once no plain state is left (runbook, "State encryption key").
-      { name = "RECONCILE_STATE_READ_UNENCRYPTED", value = "true" },
+      # false since 2026-11-17: every Project state was rewritten encrypted
+      # (runbook, "State encryption key"), so tofu now refuses plain state.
+      { name = "RECONCILE_STATE_READ_UNENCRYPTED", value = "false" },
       # B24: reconcile workers, each on another Project. Two need
       # cloud_provisioner CONNECTION LIMIT 10 (stacks/dbaas, B15, applied
       # 2026-11-16). "1" is the rollback.
