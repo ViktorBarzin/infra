@@ -164,7 +164,7 @@ resource "helm_release" "nvidia-gpu-operator" {
   # DaemonSet, which is OnDelete with driver.upgradePolicy.autoUpgrade off,
   # so the ClusterPolicy stays notReady on state-driver until the driver pod
   # is deleted by hand: about 10 minutes without GPU (v26.7.2, 2026-10-13).
-  version = "v26.7.3"
+  version = "v26.7.2"
   timeout = 6000
 
   values     = [templatefile("${path.module}/values.yaml", {})]
