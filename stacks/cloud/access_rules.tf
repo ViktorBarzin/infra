@@ -804,6 +804,9 @@ locals {
   cloud_reconciler_cloud_rules = [
     { api_groups = ["batch"], resources = ["jobs"], verbs = ["create", "get", "list", "delete", "patch"], resource_names = [] },
     { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
+    # RBAC cannot narrow these to the task pods: resource_names takes exact
+    # names, and a Job's pod gets a random suffix. The reconciler reads
+    # only its own Jobs' pods; nothing it reads here is a Secret.
     { api_groups = [""], resources = ["pods/log"], verbs = ["get"], resource_names = [] },
     { api_groups = [""], resources = ["secrets"], verbs = ["create"], resource_names = [] },
   ]
@@ -1288,7 +1291,9 @@ locals {
           { name = "isLimitRange", expression = "request.resource.group == '' && request.resource.resource == 'limitranges'" },
           # A Postgres task's Job, or its Secret, in the reconciler's own
           # namespace; cloud-pg-task and cloud-pg-task-secret check the shape.
-          { name = "isPgTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs') || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
+          # A delete names a Job by its old object, which no other policy
+          # checks, so the name is checked here.
+          { name = "isPgTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs' && (request.operation != 'DELETE' || (oldObject != null && oldObject.metadata.name.matches('${local.cloud_pg_task.name_re}')))) || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
         ]
         validations = [
           {

@@ -116,10 +116,12 @@ resource "kubernetes_role_binding" "cloud_reconciler_tasks" {
 }
 
 # Task pods take no connection, but for an export's: the console fetches
-# the dump from the pod on its export port, with the task's token.
+# the dump from the pod on its export port, with the task's token. They
+# reach only DNS and the shared Postgres (dbaas, both CNPG clusters' pods,
+# so a switch of the active cluster needs no change here).
 resource "kubernetes_network_policy_v1" "cloud_pg_tasks" {
   metadata {
-    name      = "cloud-pg-tasks-ingress"
+    name      = "cloud-pg-tasks"
     namespace = module.console.namespace
   }
   spec {
@@ -130,7 +132,7 @@ resource "kubernetes_network_policy_v1" "cloud_pg_tasks" {
         values   = [for k in local.cloud_pg_task.kinds : "pg-${k}"]
       }
     }
-    policy_types = ["Ingress"]
+    policy_types = ["Ingress", "Egress"]
     ingress {
       from {
         pod_selector {
@@ -139,6 +141,43 @@ resource "kubernetes_network_policy_v1" "cloud_pg_tasks" {
       }
       ports {
         port     = tostring(local.cloud_pg_task.export_port)
+        protocol = "TCP"
+      }
+    }
+    egress {
+      to {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "kube-system" }
+        }
+        pod_selector {
+          match_labels = { "k8s-app" = "kube-dns" }
+        }
+      }
+      to {
+        ip_block {
+          cidr = "10.96.0.10/32"
+        }
+      }
+      ports {
+        port     = "53"
+        protocol = "UDP"
+      }
+      ports {
+        port     = "53"
+        protocol = "TCP"
+      }
+    }
+    egress {
+      to {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "dbaas" }
+        }
+        pod_selector {
+          match_labels = { "cnpg.io/podRole" = "instance" }
+        }
+      }
+      ports {
+        port     = "5432"
         protocol = "TCP"
       }
     }

@@ -138,7 +138,7 @@
 #     but on an export, a writable nightly volume or mount, a subPath), as is
 #     a Secret with another name, owner, key or type, and the same Job in
 #     namespace default; the reconciler may create and patch Jobs and create
-#     Secrets in cloud, but not read, change or delete a Secret there, and
+#     Secrets in cloud, delete task Jobs there but no other Job, but not read, change or delete a Secret there, and
 #     creates no pod or Deployment there;
 #   - worker and cron Services (the cloud repo's B18 and B19), built from the
 #     rendered App: a worker Deployment (component worker, a command, no
@@ -1029,6 +1029,12 @@ if [ -f "$CLOUD_REPO/src/reconciler/pg-task-jobs.ts" ]; then
   for verb in get list update delete; do
     can "$verb" secrets -n cloud && bad "reconciler may $verb Secrets in cloud" || ok "reconciler may not $verb Secrets in cloud"
   done
+  # It deletes the task Jobs it gave up on, and no other Job in cloud.
+  ka create -f "$TMP/pg-cases/delete-task-job.json" >/dev/null 2>&1 && ka create -f "$TMP/pg-cases/delete-other-job.json" >/dev/null 2>&1 \
+    || bad "could not create the Jobs for the delete checks"
+  expect_ok "reconciler may delete a task Job in cloud" kr delete job -n cloud "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$TMP/pg-cases/delete-task-job.json")" --dry-run=server
+  expect_fail "reconciler may not delete another Job in cloud" "may write only in namespaces named p-" kr delete job -n cloud cloud-other-job --dry-run=server
+  ka delete job -n cloud --all >/dev/null 2>&1
   can create pods -n cloud && bad "reconciler may create pods in cloud" || ok "reconciler creates no pod in cloud"
   can create deployments.apps -n cloud && bad "reconciler may create Deployments in cloud" || ok "reconciler may not create Deployments in cloud"
 fi

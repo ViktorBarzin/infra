@@ -133,6 +133,16 @@ for kind in ["backups", "backup", "export", "restore"]:
 job = tasks["backups"]["job"]
 case("default-ns", "kr", "is forbidden|" + SCOPE, "a backups Job in namespace default", variant(job, lambda o: o["metadata"].update({"namespace": "default"})))
 
+# For the delete checks in cloud-access.test.sh: a task Job and another
+# Job in cloud, both suspended so no pod starts.
+task_job = copy.deepcopy(tasks["backups"]["job"])
+task_job["spec"]["suspend"] = True
+(out / "delete-task-job.json").write_text(json.dumps(task_job))
+other = copy.deepcopy(task_job)
+other["metadata"] = {"name": "cloud-other-job", "namespace": "cloud"}
+other["spec"]["template"]["metadata"] = {"labels": {"app": "other"}}
+(out / "delete-other-job.json").write_text(json.dumps(other))
+
 with open(out / "cases.tsv", "w") as f:
     for row in cases:
         f.write("\t".join(row) + "\n")
