@@ -36,6 +36,15 @@ FROM
     FROM netsec.eve
     WHERE event_type = 'alert'
       AND ts > now() - INTERVAL 15 MINUTE
+      -- xray REALITY fallback: an unauthenticated connection to REALITY (scans
+      -- of Sofia :8080 and of the Valchedrym :443 relay) is passed verbatim to
+      -- its dest, www.cloudflare.com:443 (stacks/xray xray_config.json.tpl),
+      -- from the node that runs the xray pod. The scanner's own malware
+      -- handshakes then look like our node talking to a C2.
+      AND NOT (isIPAddressInRange(IPv6NumToString(src_ip), '::ffff:10.0.20.96/124')
+               AND dest_port = 443
+               AND dest_ip IN (toIPv6('104.16.123.96'), toIPv6('104.16.124.96'),
+                               toIPv6('2606:4700::6810:7b60'), toIPv6('2606:4700::6810:7c60')))
       AND (arrayExists(c -> isIPAddressInRange(IPv6NumToString(src_ip), c), ours)
            OR arrayExists(c -> isIPAddressInRange(IPv6NumToString(dest_ip), c), ours))
       AND (
