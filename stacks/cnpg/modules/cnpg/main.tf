@@ -34,7 +34,7 @@ resource "helm_release" "cnpg" {
   # jump: upstream lists no required intermediate release, and the only 1.29
   # chart (0.28.3, operator 1.29.1) lacks the June CVE fixes. CRDs are chart
   # templates (crds.create), so helm upgrades them; 0.29 adds DatabaseRole.
-  version = "0.29.1"
+  version = "0.29.2"
 
   values = [yamlencode({
     crds = {
