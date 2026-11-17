@@ -110,6 +110,20 @@
 #
 #   shred -u /tmp/rc-htpasswd /tmp/rc-fullchain /tmp/rc-privkey
 #
+# A fourth secret comes from Cloud's own Vault path (cloud backlog B36):
+#
+#   secret/cloud/github-narrow  ghcr_pull   the classic read:packages token
+#                                           Cloud copies into every Project's
+#                                           pull secret. registry-ghcr-cloud
+#                                           signs in to ghcr with it.
+#
+# Read with `vault kv get -field=ghcr_pull`; it already exists (B08b). A
+# classic token reads every private package of the account, so nginx.conf
+# routes only Cloud App image paths (ghcr.io/viktorbarzin/cloud-<p>_<a>
+# manifests and blobs) to that registry, and only from the six k8s nodes.
+# Project pods cannot reach this VM: the Calico floor in stacks/cloud
+# (cloud_project_egress_floor) denies 10.0.0.0/8 to them.
+#
 # ONE `vault kv put` with every key, not five: KV v2 `put` REPLACES the whole
 # secret, so five sequential puts leave only the last key. Use `vault kv patch`
 # to change one field later. Verify with `vault kv get -format=json
@@ -145,6 +159,11 @@
   vars:
     registry_dir: /opt/registry
     registry_vault_path: secret/registry-cache
+    # Cloud's read:packages token for registry-ghcr-cloud (cloud B36). Any
+    # non-empty user name works with a token; this is the account's own.
+    registry_cloud_vault_path: secret/cloud/github-narrow
+    registry_cloud_vault_field: ghcr_pull
+    registry_cache_cloud_ghcr_username: viktorbarzin
     # The htpasswd + TLS material that no running service currently reads.
     registry_cache_manage_unused_secrets: true
     # Off by default. `docker compose up -d` re-creates containers, which takes
@@ -258,6 +277,46 @@
           file's header.
         success_msg: all expected keys present at {{ registry_vault_path }}
 
+    # Same pattern for Cloud's pull token: one field, read on the controller,
+    # never printed. `-e registry_cloud_ghcr_token=x` skips the read for a
+    # --check without Vault; the placeholder guard below refuses it on an
+    # apply.
+    - name: Read Cloud's ghcr pull token from Vault
+      ansible.builtin.command:
+        argv:
+          - vault
+          - kv
+          - get
+          - "-field={{ registry_cloud_vault_field }}"
+          - "{{ registry_cloud_vault_path }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: registry_cloud_vault_raw
+      changed_when: false
+      check_mode: false
+      no_log: true
+      failed_when: registry_cloud_vault_raw.rc != 0
+      when: registry_cloud_ghcr_token is not defined
+
+    - name: Keep it
+      ansible.builtin.set_fact:
+        registry_cloud_ghcr_token: "{{ registry_cloud_vault_raw.stdout | trim }}"
+      no_log: true
+      when: registry_cloud_ghcr_token is not defined
+
+    - name: Cloud's pull token must be present
+      ansible.builtin.assert:
+        that:
+          - registry_cloud_ghcr_token | length > 0
+          - (ansible_check_mode) or (registry_cloud_ghcr_token is not search('(?i)placeholder|changeme|^x+$'))
+        fail_msg: >-
+          {{ registry_cloud_vault_path }} field {{ registry_cloud_vault_field }}
+          is empty or a placeholder. registry-ghcr-cloud would sign in with
+          nothing and every Cloud App pull would fall back to ghcr.io.
+        success_msg: Cloud's pull token is present
+      no_log: true
+
     # The -e escape hatch documented above is a real footgun without this: the
     # same command run WITHOUT --check would write "PLACEHOLDER" over the live
     # TLS private key and the Docker Hub PAT. An apply refuses any value that
@@ -324,6 +383,27 @@
         registry_cache_dockerhub_username: "{{ registry_secrets.dockerhub_username }}"
         registry_cache_dockerhub_token: "{{ registry_secrets.dockerhub_token }}"
       no_log: true
+
+    # The second ghcr cache, for Cloud App images (cloud B36). 0600 for the
+    # same reason as config-dockerhub.yml: it holds a token in plaintext.
+    - name: config-ghcr-cloud.yml, with Cloud's pull token from Vault
+      ansible.builtin.template:
+        src: files/registry-cache/config-ghcr-cloud.yml.j2
+        dest: "{{ registry_dir }}/config-ghcr-cloud.yml"
+        owner: root
+        group: root
+        mode: "0600"
+      vars:
+        registry_cache_cloud_ghcr_token: "{{ registry_cloud_ghcr_token }}"
+      no_log: true
+
+    - name: The data directory of registry-ghcr-cloud
+      ansible.builtin.file:
+        path: "{{ registry_dir }}/data/ghcr-cloud"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
     # nginx_registry.conf is byte-identical to nginx.conf on the box
     # (md5 0d2e23645da4f2f0c1c7e9bfe928785d for both) and docker-compose.yml
@@ -498,3 +578,10 @@
           - "Free space floor: ssh wizard@10.0.20.10 'df -B1 /'  — expect tens of GB, stable across a day."
           - "Prometheus: the registry-cache scrape job in prometheus_chart_values.tpl must be deployed too."
           - "Pruning the ~20 GB is a human step, BY EXPLICIT LIST. Never `docker image prune -a` here."
+          - >-
+            registry-ghcr-cloud (cloud B36) without touching the other caches:
+            docker compose -f /opt/registry/docker-compose.yml up -d --no-deps registry-ghcr-cloud,
+            wait until docker ps shows it healthy, then docker restart registry-nginx.
+            A reload is not enough: nginx.conf is a single-file bind mount, and the
+            copy replaced the file, so only a restart reads the new one. Every node
+            falls back to the upstream registries for the seconds nginx is down.

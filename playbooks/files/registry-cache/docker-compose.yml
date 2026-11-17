@@ -5,7 +5,7 @@ networks:
 services:
   # registry:2 is pinned after the 2026-04-13 + 2026-04-19 orphan-index incidents.
   # Floating tags were swapping to regressed versions between GC runs. Upgrade
-  # path: bump all six registry-* services in lockstep and bounce via
+  # path: bump all registry-* services in lockstep and bounce via
   # `systemctl restart docker-compose-registry.service`.
   registry-dockerhub:
     image: registry:2.8.3
@@ -32,6 +32,28 @@ services:
     volumes:
       - /opt/registry/data/ghcr:/var/lib/registry
       - /opt/registry/config-ghcr.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Cloud App images (ghcr.io/viktorbarzin/cloud-*), which are private: this
+  # one signs in to ghcr with Cloud's read:packages token (config-ghcr-cloud.yml,
+  # rendered from Vault by playbooks/registry-cache.yml). nginx.conf routes only
+  # cloud-<project>_<app> manifests and blobs by digest, from the k8s nodes,
+  # here (cloud backlog B36). nginx does not depend on it: it resolves this
+  # name per request, so a bad token render cannot take down the other mirrors.
+  registry-ghcr-cloud:
+    image: registry:2.8.3
+    container_name: registry-ghcr-cloud
+    restart: always
+    volumes:
+      - /opt/registry/data/ghcr-cloud:/var/lib/registry
+      - /opt/registry/config-ghcr-cloud.yml:/etc/docker/registry/config.yml:ro
     networks:
       - registry
     healthcheck:
