@@ -1,0 +1,51 @@
+# promtool unit tests for the Redis ACL alerts (stacks/monitoring
+# prometheus_chart_values.tpl, rules RedisAclSync*). tests/redis-acl.test.sh
+# cuts those rules out into redis-acl.rules.yml. The pushgateway series keep
+# their job label (honor_labels: true).
+rule_files:
+  - redis-acl.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # A healthy sync: the timestamp moves every minute. Nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'redis_acl_sync_last_success_timestamp_seconds{job="redis-acl-sync"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RedisAclSyncStale
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: RedisAclSyncNeverSucceeded
+        exp_alerts: []
+
+  # The last success was at minute 5: still quiet at minute 15, stale once
+  # it is over 10 minutes old and the 1-minute hold has passed.
+  - interval: 1m
+    input_series:
+      - series: 'redis_acl_sync_last_success_timestamp_seconds{job="redis-acl-sync"}'
+        values: '0+60x5 300x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RedisAclSyncStale
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: RedisAclSyncStale
+        exp_alerts:
+          - exp_labels: {severity: warning, job: redis-acl-sync}
+
+  # The CronJob never pushed: fires after 15 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="other"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisAclSyncNeverSucceeded
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: RedisAclSyncNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: warning, job: redis-acl-sync}

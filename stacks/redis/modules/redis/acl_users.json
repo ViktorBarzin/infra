@@ -1,0 +1,23 @@
+{
+  "acl-admin": "resetchannels -@all +ping +acl +client|list +multi +exec",
+  "exporter": "resetchannels -@all +ping +client|setname +client|getname +client|id +client|info +info +config|get +slowlog|len +slowlog|get +latency|latest +latency|histogram +command|info +cluster|info +select +dbsize",
+  "backup": "resetchannels -@all +ping +bgsave +sync +psync +replconf",
+  "probe": "resetchannels -@all +ping",
+  "verify": "~* &* +@all",
+  "affine": "~* &* +@all",
+  "browser-bridge": "~* &* +@all",
+  "dawarich": "~* &* +@all",
+  "grampsweb": "~* &* +@all",
+  "immich": "~* &* +@all",
+  "mailserver": "~* &* +@all",
+  "netbox": "~* &* +@all",
+  "nextcloud": "~* &* +@all",
+  "paperless-ngx": "~* &* +@all",
+  "realestate-crawler": "~* &* +@all",
+  "rybbit": "~* &* +@all",
+  "trading-bot": "~* &* +@all",
+  "turnstile-gate": "~* &* +@all",
+  "tv": "~* &* +@all",
+  "uptime-kuma": "~* &* +@all",
+  "ytdlp": "~* &* +@all"
+}

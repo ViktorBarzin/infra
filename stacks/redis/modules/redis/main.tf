@@ -124,6 +124,13 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       databases 16
 
       loglevel notice
+
+      # ACL users (B40, acl.tf; runbook docs/runbooks/redis-acl.md). The file
+      # is on the data PVC. The acl-seed init container writes the first one,
+      # because Redis does not start when its aclfile is missing; after that
+      # redis-acl-sync keeps it (ACL SETUSER, then ACL SAVE). aclfile cannot be
+      # set at runtime, so adding this line restarted Redis once.
+      aclfile /data/acl/users.acl
     EOT
   }
 }
@@ -226,6 +233,32 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         # 90s (was 30) so a slow AOF/RDB flush finishes cleanly on shutdown
         # instead of self-SIGKILLing at 30 (2026-07-19 shutdown tuning).
         termination_grace_period_seconds = 90
+
+        # Writes /data/acl/users.acl from the redis-acl-seed Secret when it is
+        # missing, and refreshes its acl-admin line otherwise (acl_init.sh).
+        init_container {
+          name    = "acl-seed"
+          image   = "docker.io/library/redis:8.10.3-alpine"
+          command = ["/bin/sh", "-c", file("${path.module}/acl_init.sh")]
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+          volume_mount {
+            name       = "acl-seed"
+            mount_path = "/seed"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              memory = "32Mi"
+            }
+          }
+        }
 
         container {
           name = "redis"
@@ -330,6 +363,12 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           name = "conf"
           config_map {
             name = kubernetes_config_map.redis_v2_conf.metadata[0].name
+          }
+        }
+        volume {
+          name = "acl-seed"
+          secret {
+            secret_name = kubernetes_secret.redis_acl_seed.metadata[0].name
           }
         }
       }

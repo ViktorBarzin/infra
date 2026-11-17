@@ -5280,6 +5280,26 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Redis pod {{ $labels.pod }} AOF rewrite running >10m — COW memory risk, investigate"
+          - alert: RedisAclSyncStale
+            # redis-acl-sync (stacks/redis/modules/redis/acl.tf, B40) runs
+            # every minute and pushes this only after a run that applied the
+            # ACL users and checked AUTH for each. It fails closed, so a
+            # stale value means user changes are not reaching Redis; no
+            # client loses access. Its log names the reason:
+            # docs/runbooks/redis-acl.md.
+            expr: time() - redis_acl_sync_last_success_timestamp_seconds{job="redis-acl-sync"} > 600
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "redis-acl-sync has not succeeded for {{ $value | humanizeDuration }}; Redis ACL users are not being kept in step"
+          - alert: RedisAclSyncNeverSucceeded
+            expr: absent(redis_acl_sync_last_success_timestamp_seconds{job="redis-acl-sync"})
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "redis-acl-sync has never pushed a success to the pushgateway; check the CronJob in namespace redis (docs/runbooks/redis-acl.md)"
           - alert: HeadscaleReplicasMismatch
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m

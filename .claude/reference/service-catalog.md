@@ -21,7 +21,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | vaultwarden | Bitwarden-compatible password manager | platform |
-| redis | Shared Redis 8.x via HAProxy at `redis-master.redis.svc.cluster.local` — 3-pod raw StatefulSet `redis-v2` (redis+sentinel+exporter per pod), quorum=2. Clients use HAProxy only, no sentinel fallback. | redis |
+| redis | Shared Redis 8.x at `redis-master.redis.svc.cluster.local`: one standalone pod `redis-v2-0` (redis + exporter), no Sentinel or HAProxy since 2026-05-30. Named ACL users per consumer, passwords in Vault `secret/redis/users`, kept by CronJob `redis-acl-sync`; `default` stays open until B40 R4 (`docs/runbooks/redis-acl.md`). | redis |
 | immich | Photo management (GPU) | immich |
 | nvidia | GPU device plugin | nvidia |
 | metrics-server | K8s metrics | metrics-server |
