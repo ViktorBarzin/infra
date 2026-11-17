@@ -1388,7 +1388,7 @@ as an admin. Their passwords are random and not stored; nobody signs in as them.
 
 Cloud backlog B13. Renovate (`renovate-cloud-apps`, `docs/runbooks/renovate.md`) opens one pull request a week on each App repo with the topic `cloud-app`, as the Forgejo account `cloud-renovate`. Cloud builds each commit of a `renovate/*` branch as a check build that never deploys and posts the Forgejo commit status `cloud/build`. Renovate merges once every status of the commit is success, `cloud/build` among them. The merge is a push, so it deploys like any other and goes live only past its health check.
 
-Operator steps, before the job is unsuspended. Each token goes from the pod straight to Vault through a pipe, so it is never printed:
+Operator steps, before the job is unsuspended. Each token is held in a shell variable, checked to be non-empty, then piped to Vault, so it is never printed and an empty answer writes nothing:
 
 ```sh
 fj() { kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c "$1"; }
@@ -1397,13 +1397,17 @@ fj() { kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c
 fj "forgejo admin user create --username cloud-renovate --email cloud-renovate@viktorbarzin.me --fullname 'Cloud Renovate' --random-password --must-change-password=false --restricted"
 
 # 2. Its token, into its own Vault path (Secret renovate-cloud-env).
-fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud --scopes 'write:repository,read:user,write:issue' --raw" \
-  | vault kv put secret/renovate-cloud forgejo_token=-
+tok=$(fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud --scopes 'write:repository,read:user,write:issue' --raw")
+[ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv put secret/renovate-cloud forgejo_token=-
+unset tok
 
 # 3. cloud-bot's status token, next to its read token.
-fj "forgejo admin user generate-access-token --username cloud-bot --token-name cloud-status --scopes 'write:repository' --raw" \
-  | vault kv patch secret/cloud/system forgejo_status_token=-
+tok=$(fj "forgejo admin user generate-access-token --username cloud-bot --token-name cloud-status --scopes 'write:repository' --raw")
+[ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv patch secret/cloud/system forgejo_status_token=-
+unset tok
 ```
+
+Until step 2 is done, the ExternalSecret `renovate/renovate-cloud-env` reports a sync error (no `secret/renovate-cloud` in Vault). That is expected while the job is suspended, and no alert reads it. ESO retries a failed sync on its own backoff, and the 1 h refresh at the latest reads the key after step 2; check with `kubectl -n renovate get externalsecret renovate-cloud-env` (Ready) before you unsuspend the job.
 
 The random password is not stored; nobody signs in as either account. `stacks/authentik` carries `forgejo_status_token` over on every apply (`cloud_system_carried_keys`), so land the infra change before an authentik apply can run after step 3. The reconciler reads the key within 5 minutes; from then on it check-builds.
 

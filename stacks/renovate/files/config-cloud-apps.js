@@ -24,7 +24,13 @@
 // What a User's repo can make this job run: package manager lock file
 // updates, with install scripts off (ignoreScripts, allowScripts false),
 // no post-upgrade commands (allowedCommands empty) and no plugins. The
-// managers are the template's: bun, npm, dockerfile.
+// managers are the template's, bun, npm and dockerfile, forced below.
+//
+// @viktorbarzin/* lookups go to Forgejo's npm registry as cloud-renovate.
+// A restricted account may read them: Forgejo gives any signed-in user
+// Read on the packages of a public user (services/packages/perm.go,
+// DeterminePackageAccessMode), and viktor is public; the registry also
+// answers anonymous reads.
 //
 // The merge gate: every update is grouped into one pull request
 // (`renovate/all`) a week, merged by Renovate itself (automergeType pr,
@@ -74,7 +80,6 @@ module.exports = {
   gitAuthor: 'Cloud Renovate <cloud-renovate@viktorbarzin.me>',
   username: 'cloud-renovate',
 
-  enabledManagers: ['bun', 'npm', 'dockerfile'],
   ignoreScripts: true,
   allowScripts: false,
   allowedCommands: [],
@@ -112,6 +117,9 @@ module.exports = {
     "Why: Cloud's Renovate job groups every dependency update of the week into one pull request. Cloud builds it as a check build that never deploys, and Renovate merges it once the cloud/build status is success.",
 
   force: {
+    // Forced, so a repo's renovate.json cannot turn on other managers
+    // (bundler, pip, ...), whose lock file updates run more tools.
+    enabledManagers: ['bun', 'npm', 'dockerfile'],
     automerge: true,
     automergeType: 'pr',
     platformAutomerge: false,
