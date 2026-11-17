@@ -410,9 +410,11 @@ locals {
   # it Traefik uses its global responseHeaderTimeout of 30 s (stacks/traefik)
   # and answers 504 to an App request whose headers take longer. 125 s is
   # the request timeout `cloud help limits` states, Cloudflare's Proxy Read
-  # Timeout (Render-parity P08, 2026-11-17). Dial and idle times are the
-  # global ones: a CRD ServersTransport without them gets Traefik's
-  # defaults instead.
+  # Timeout (Render-parity P08, 2026-11-17). The dial and idle times and
+  # the idle connection pool are the global transport's
+  # (--serversTransport.* in stacks/traefik): a CRD ServersTransport without
+  # them gets Traefik's defaults instead, 2 idle connections per host among
+  # them. tests/cloud-access.test.sh compares them.
   cloud_edge_transport = {
     name                    = "app-edge"
     annotation              = "traefik.ingress.kubernetes.io/service.serverstransport"
@@ -420,6 +422,24 @@ locals {
     dial_timeout            = "60s"
     response_header_timeout = "125s"
     idle_conn_timeout       = "90s"
+    max_idle_conns_per_host = 100
+  }
+  # The object main.tf applies.
+  cloud_edge_transport_manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = local.cloud_edge_transport.name
+      namespace = local.cloud_namespace
+    }
+    spec = {
+      maxIdleConnsPerHost = local.cloud_edge_transport.max_idle_conns_per_host
+      forwardingTimeouts = {
+        dialTimeout           = local.cloud_edge_transport.dial_timeout
+        responseHeaderTimeout = local.cloud_edge_transport.response_header_timeout
+        idleConnTimeout       = local.cloud_edge_transport.idle_conn_timeout
+      }
+    }
   }
 
   # The shared Authentik client (stacks/authentik cloud-apps.tf, the same

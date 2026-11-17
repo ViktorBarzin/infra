@@ -81,21 +81,9 @@ resource "kubernetes_cluster_role" "cloud_reconciler_project" {
 # says why). Apply it before a Cloud release whose edge Services name it:
 # Traefik cannot route a Service whose ServersTransport does not exist.
 resource "kubernetes_manifest" "cloud_edge_transport" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "ServersTransport"
-    metadata = {
-      name      = local.cloud_edge_transport.name
-      namespace = module.console.namespace
-    }
-    spec = {
-      forwardingTimeouts = {
-        dialTimeout           = local.cloud_edge_transport.dial_timeout
-        responseHeaderTimeout = local.cloud_edge_transport.response_header_timeout
-        idleConnTimeout       = local.cloud_edge_transport.idle_conn_timeout
-      }
-    }
-  }
+  manifest = local.cloud_edge_transport_manifest
+  # The namespace `cloud` is the console module's.
+  depends_on = [module.console]
 }
 
 # The policies with the homelab's taken hosts written in (taken_hosts.tf).

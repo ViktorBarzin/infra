@@ -10,7 +10,8 @@
  *   terraform.tfvars.json  the Project's variables
  *   contract.json          the names infra matches: the edge and
  *                          oauth2-proxy images, the egress exclusions, the
- *                          strip list, the Authentik slug and the namespace
+ *                          strip list, the Authentik slug, the namespace and
+ *                          the ServersTransport the edge Service names
  *
  *   migrate-job.json       the migrate Job Cloud starts for a Deploy of the
  *                          public App (src/reconciler/migrate-job.ts, B16)
@@ -46,6 +47,7 @@ const out = resolve(outArg);
 
 const renderer = await import(join(repo, "src/reconciler/render.ts"));
 const fixtures = await import(join(repo, "src/reconciler/render.fixtures.ts"));
+const appConfig = await import(join(repo, "src/app.config.ts"));
 
 const spec = {
 	project: fixtures.CTX.project,
@@ -170,6 +172,10 @@ await writeFile(
 			stripCookies: fixtures.INSTANCE.stripCookies,
 			appPort: fixtures.INSTANCE.appPort,
 			authentik: fixtures.INSTANCE.authentik,
+			// What every edge Service names unless an Operator sets
+			// EDGE_SERVERS_TRANSPORT; null before Cloud had it.
+			edgeServersTransport:
+				appConfig.app.reconciler.edgeServersTransport ?? null,
 			apps: Object.keys(rendered.tfvarsJson.apps),
 			postgres: Object.keys(rendered.tfvarsJson.postgres),
 		},

@@ -223,7 +223,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -236,8 +236,8 @@ render "$HERE/stacks/kyverno/modules/kyverno/generate-conditions.tf" \
 (cd "$CLOUD_REPO" && HOME="$TMP/home" "$BUN" "$HERE/tests/cloud-access/render.ts" "$CLOUD_REPO" "$TMP/tofu") >"$TMP/render.log" 2>&1 \
   || { echo "FAIL: Cloud's renderer ($CLOUD_REPO)"; cat "$TMP/render.log"; exit 1; }
 
-python3 - "$TMP" <<'PY' || exit 1
-import json, sys, pathlib, yaml
+python3 - "$TMP" "$HERE/stacks/traefik/modules/traefik/main.tf" <<'PY' || exit 1
+import json, re, sys, pathlib, yaml
 d = pathlib.Path(sys.argv[1])
 k = json.loads(json.loads((d / "k8s.raw").read_text()))
 v = json.loads(json.loads((d / "vault.raw").read_text()))
@@ -404,6 +404,34 @@ if not any("traefik" in r.get("source", {}).get("namespaceSelector", "") and r["
 to_auth = [r for r in ing["ingress"][:-1] if r.get("source", {}).get("selector") == f"{comp} == 'edge'" and "'oauth2-proxy'" in r["destination"].get("selector", "")]
 if len(to_auth) != 1 or to_auth[0].get("protocol") != "TCP" or to_auth[0]["destination"].get("ports") != [4180]:
     problems.append(f"ingress floor: edge pods should reach oauth2-proxy pods on TCP 4180 only: {to_auth}")
+# The edge's ServersTransport: the name Cloud's edge Service gives
+# (EDGE_SERVERS_TRANSPORT's default), the 125 s header wait, and the global
+# transport's other settings (stacks/traefik), so only the wait differs.
+et, em = k["edge_transport"], k["edge_transport_manifest"]
+if contract.get("edgeServersTransport") != et["ref"]:
+    problems.append(f"edge ServersTransport: Cloud names {contract.get('edgeServersTransport')}, infra declares {et['ref']}")
+if et["ref"] != f"{em['metadata']['namespace']}-{em['metadata']['name']}@kubernetescrd":
+    problems.append(f"edge ServersTransport: {et['ref']} does not name {em['metadata']}")
+traefik_tf = pathlib.Path(sys.argv[2]).read_text()
+def global_arg(flag):
+    m = re.search(r'"--serversTransport\.' + re.escape(flag) + r'=([^"]+)"', traefik_tf)
+    return m.group(1) if m else None
+spec = em["spec"]
+want = {
+    "maxIdleConnsPerHost": global_arg("maxIdleConnsPerHost"),
+    "forwardingTimeouts.dialTimeout": global_arg("forwardingTimeouts.dialTimeout"),
+    "forwardingTimeouts.idleConnTimeout": global_arg("forwardingTimeouts.idleConnTimeout"),
+    "forwardingTimeouts.responseHeaderTimeout": "125s",
+}
+have = {
+    "maxIdleConnsPerHost": str(spec.get("maxIdleConnsPerHost")),
+    "forwardingTimeouts.dialTimeout": spec.get("forwardingTimeouts", {}).get("dialTimeout"),
+    "forwardingTimeouts.idleConnTimeout": spec.get("forwardingTimeouts", {}).get("idleConnTimeout"),
+    "forwardingTimeouts.responseHeaderTimeout": spec.get("forwardingTimeouts", {}).get("responseHeaderTimeout"),
+}
+if None in want.values() or have != want:
+    problems.append(f"edge ServersTransport spec {have}, want {want} (the global transport in stacks/traefik, and 125s)")
+(d / "edge-transport.yaml").write_text(yaml.safe_dump(em))
 (d / "contract-problems.txt").write_text("\n".join(problems))
 
 vdocs = [
@@ -439,9 +467,9 @@ helm template traefik traefik --repo https://traefik.github.io/charts --version 
 python3 - "$TMP" <<'PY' || exit 1
 import json, sys, pathlib, yaml
 d = pathlib.Path(sys.argv[1])
-want = {"middlewares.traefik.io", "ingressroutes.traefik.io"}
+want = {"middlewares.traefik.io", "ingressroutes.traefik.io", "serverstransports.traefik.io"}
 crds = [c for c in yaml.safe_load_all(open(d / "traefik.yaml")) if c and c.get("kind") == "CustomResourceDefinition" and c["metadata"]["name"] in want]
-assert len(crds) == 2, [c["metadata"]["name"] for c in crds]
+assert len(crds) == 3, [c["metadata"]["name"] for c in crds]
 (d / "traefik-crds.yaml").write_text(yaml.safe_dump_all(crds))
 t = json.loads((d / "types.json").read_text())
 problems = []
@@ -518,7 +546,10 @@ apply_as() { local who="$1"; shift; "$who" apply --server-side --force-conflicts
 
 if grep -q '\[' <<<"$(sed 's/^[^:]*: //' <<<"$warn" | tr -d '\n')"; then bad "policy type-check warnings: $warn"; else ok "policies type-check cleanly against the ESO $ESO_VERSION and Traefik $TRAEFIK_VERSION CRDs"; fi
 if [ -s "$TMP/tripwire.txt" ]; then bad "CRD fields the policies do not sort: $(cat "$TMP/tripwire.txt")"; else ok "every ESO Vault auth method is allowed or refused"; fi
-if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug, egress exclusions and denied mail ports; both floors are well formed; no policy takes a parameter; the taken hosts are written in"; fi
+if [ -s "$TMP/contract-problems.txt" ]; then bad "Cloud and infra disagree: $(cat "$TMP/contract-problems.txt")"; else ok "Cloud ($CLOUD_REPO) and infra agree on the edge and oauth2-proxy images, strip list, Authentik slug, egress exclusions, denied mail ports and the edge's ServersTransport (its name, 125s, and the global transport's other settings); both floors are well formed; no policy takes a parameter; the taken hosts are written in"; fi
+# Strict field validation: a field Traefik's CRD does not know fails here.
+expect_ok "the edge's ServersTransport is valid against Traefik $TRAEFIK_VERSION's CRD" \
+  ka apply --server-side --field-manager=cloud-access-test --validate=strict -f "$TMP/edge-transport.yaml"
 # calico-apiserver fails its readiness check some seconds after a policy it
 # cannot serve arrives, so the API is sampled for a minute.
 calico_api_steady() { # <what>
