@@ -901,7 +901,8 @@ in a real restore, too: it takes about a minute.
 ### Safety rails
 
 - The entrypoint refuses to start unless `DATABASE_URL` and
-  `CLOUD_STATE_URL` point at `127.0.0.1` or `localhost`, and while
+  `CLOUD_STATE_URL` point at `127.0.0.1` or `localhost` with no query key
+  but `sslmode` (libpq would take `host=` from the query), and while
   `KUBERNETES_SERVICE_HOST`, a service account token, a `KUBECONFIG`
   other than `/dev/null` or `VAULT_TOKEN` is present.
 - It runs `tofu init`, `tofu state pull`, `tofu plan -refresh=false
@@ -913,7 +914,8 @@ in a real restore, too: it takes about a minute.
   the job directory, so it finds no kubeconfig. The Vault and Postgres
   provider credentials are empty.
 - The state key lives only in a mode-600 file in a mode-700 scratch
-  directory. Delete the directory and the container at the end.
+  directory. A trap on EXIT deletes the directory, the worktree and the
+  container.
 
 ### What the Plan covers
 
@@ -942,14 +944,23 @@ had synced every App's secrets (the drill assumes it had).
 
 ### Commands
 
-From a clean cloud checkout at the commit the reconciler image runs
-(`kubectl -n cloud get deploy cloud-reconciler -o
-jsonpath='{..image}'`; the tag is the short SHA), with the pinned tofu and
-provider mirror in `.tools/` (cloud README, "Reconciler"):
+The drill builds from a throwaway worktree of the cloud clone at the
+commit the reconciler image runs, so the shared clone stays on its
+branch. The image tag is that commit's short SHA:
+`kubectl -n cloud get deploy cloud-reconciler -o jsonpath='{..image}'`.
+The pinned tofu and provider mirror come from the clone's `.tools/`
+(cloud README, "Reconciler"). Run the block in one shell: the trap
+removes the container, the worktree, the dumps and the key file however
+the block ends.
 
 ```sh
+SHA=<short sha of the reconciler image>
+CLOUD=~/code/cloud BUN=/usr/local/bin/bun
 umask 077; D=$(mktemp -d /var/tmp/cloud-dr.XXXXXX)   # mode 700
-cd ~/code/cloud && git checkout <sha> && bun install --frozen-lockfile && bun run build:entrypoints
+trap 'docker rm -f cloud-dr-pg >/dev/null 2>&1; git -C "$CLOUD" worktree remove --force "$D/src" 2>/dev/null; rm -rf "$D"' EXIT
+
+git -C "$CLOUD" worktree add --detach "$D/src" "$SHA"
+(cd "$D/src" && $BUN install --frozen-lockfile && $BUN run build:entrypoints)
 
 # 1. The newest dumps, read-only from the NFS host
 #    (mirrors: /mnt/backup/nfs-mirror/postgresql-backup/ there, and Synology).
@@ -957,7 +968,7 @@ for db in cloud cloud_state; do
   f=$(ssh root@192.168.1.127 "ls -t /srv/nfs/postgresql-backup/per-db/$db/dump_*.dump | head -1")
   scp -q "root@192.168.1.127:$f" "$D/$db.dump"
 done
-ls -l "$D"
+ls -l "$D"/*.dump
 
 # 2. A scratch Postgres on 127.0.0.1 only; the server major must be at
 #    least the dump's (pg_restore -l prints it).
@@ -970,7 +981,8 @@ for db in cloud cloud_state; do
   docker exec cloud-dr-pg pg_restore -U postgres -d $db --no-owner --no-acl --exit-on-error /tmp/$db.dump
 done
 
-# 3. The state key, straight into a mode-600 file; never printed.
+# 3. The state key, straight into a mode-600 file; never printed. The
+#    state URL holds the password, so it goes in a file too.
 vault kv get -field=passphrase secret/cloud/state-key > "$D/state-key"
 printf 'postgres://postgres:%s@127.0.0.1:55611/cloud_state?sslmode=disable' "$(cat "$D/pgpass")" > "$D/state-url"
 
@@ -978,33 +990,34 @@ printf 'postgres://postgres:%s@127.0.0.1:55611/cloud_state?sslmode=disable' "$(c
 #    (stacks/cloud deploy_rules.tf, cloud_reconciler_env).
 mkdir "$D/work"
 env -i PATH=/usr/bin:/bin HOME="$D/work" KUBECONFIG=/dev/null \
-  DATABASE_URL="postgres://postgres:$(cat "$D/pgpass")@127.0.0.1:55611/cloud" \
+  DATABASE_URL=postgres://postgres@127.0.0.1:55611/cloud DATABASE_PASSWORD_FILE="$D/pgpass" \
   CLOUD_STATE_URL_FILE="$D/state-url" TOFU_STATE_PASSPHRASE_FILE="$D/state-key" \
-  TOFU_BIN=$PWD/.tools/tofu TOFU_PLUGIN_DIR=$PWD/.tools/providers \
-  RECONCILER_MODULES_DIR=$PWD/modules RECONCILER_WORK_DIR="$D/work" \
+  TOFU_BIN="$CLOUD/.tools/tofu" TOFU_PLUGIN_DIR="$CLOUD/.tools/providers" \
+  RECONCILER_MODULES_DIR="$D/src/modules" RECONCILER_WORK_DIR="$D/work" \
   RECONCILE_STATE_READ_UNENCRYPTED=false \
   VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200 \
   POSTGRES_HOST=pg-cluster-rw.dbaas.svc.cluster.local \
   EDGE_IMAGE=<local.cloud_edge.image> OAUTH2_PROXY_IMAGE=<local.cloud_oauth2_proxy.image> \
-  /usr/local/bin/bun .output/entrypoints/offline-plan.js > "$D/report.json"; echo "exit $?"
-jq '{renderDigestMatches, registryTokenMismatches, projects: [.projects[] | {project, result, compared, stateResources, changes}]}' "$D/report.json"
-
-# 5. Clean up.
-docker rm -f cloud-dr-pg && rm -rf "$D"
+  $BUN "$D/src/.output/entrypoints/offline-plan.js" > "$D/report.json"; echo "exit $?"
+jq '{renderDigestMatches, registryTokenMismatches, projects: [.projects[] | {project, result, desiredVersion, appliedVersion, compared, stateResources, changes}]}' "$D/report.json"
+# Leaving the shell (or `trap - EXIT; ...` by hand) runs the cleanup.
 ```
 
 `VAULT_ADDR` and `POSTGRES_HOST` are only rendered into the plan; nothing
-connects to them.
+connects to them. No password reaches a command line: the scratch
+password, the state URL and the key are read from files.
 
 ### What success looks like
 
-Exit 0, `renderDigestMatches: true`, `registryTokenMismatches: []`, and
-`result: no_changes` for every Project. `renderDigestMatches` is false when
-the checkout's modules or render differ from the release the dumps were
-taken under; check out that release's commit and run again. Exit 2 means a Plan has changes:
-read `changes` for the addresses. Exit 1 means a Plan failed (`error`, with
-credentials redacted) or the drill refused to start (`refused`).
-`no_state` means the Project's state schema is missing from `cloud_state`.
+Exit 0 alone is success: every Project's `result` is `no_changes`,
+`renderDigestMatches` is true and `registryTokenMismatches` is empty. The
+other codes:
+
+| Exit | Meaning |
+|---|---|
+| 1 | A Plan failed (`error`, credentials redacted), a Project has no state schema in `cloud_state` (`no_state`), or the drill refused to start (`refused`) |
+| 2 | A Plan has changes: read `changes`. A Project whose `desiredVersion` is above its `appliedVersion` was converging when the dump was taken, so changes are expected for it |
+| 3 | Every Plan is empty, but a cross-check does not agree: `renderDigestMatches` false (or null: nothing recorded) means the worktree renders other than the release the dumps were taken under, so check out that release; a name in `registryTokenMismatches` holds a pull token the reconciler did not record |
 
 ### Result on 2026-11-17
 
@@ -1019,12 +1032,12 @@ the edge Deployment's `tier = "4-aux"` label was in the state but not in
 the configuration. Kyverno's `sync-tier-label-from-namespace` adds it to
 every Deployment without one, so every plan proposed removing it. Cloud
 now ignores that label key on every Deployment it renders
-(`src/reconciler/kyverno-drift.test.ts`). The run with that build gave
-exit 0 and `no_changes` for both Projects, with `renderDigestMatches`
-false: the module change moves the render digest, so the live reconciler
-applies every Project once when the release deploys, and the next drill
-reads true again. A replay of the commands above, from the copy to the
-cleanup, took 43 s.
+(`src/reconciler/kyverno-drift.test.ts`). With that build, the commands above
+(106 s, a fresh worktree and build included) gave `no_changes` for both
+Projects and exit 3, because `renderDigestMatches` is false: the module
+change moves the render digest. The live reconciler applies every Project
+once when that release deploys and records the new digest, and the next
+drill reads true and exits 0.
 
 ## Revoke a token
 
