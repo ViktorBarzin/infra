@@ -382,6 +382,35 @@ locals {
     # builds, so a change on either side fails the test.
     max_deadline_seconds = 4260
   }
+  # A Postgres task (the cloud repo's B28b and B28c: `cloud pg backups`,
+  # `backup`, `export`, `restore`): a Job the reconciler starts in its own
+  # namespace `cloud`, never in a Project's, from the cloud repo's
+  # src/reconciler/pg-task-jobs.ts. Its pod mounts only Cloud's two dump
+  # directories (pg_backups.tf): the nightly `p_*` dumps read-only, and
+  # the manual ones, which only a backup Job writes. The image is pinned
+  # here and in Cloud's PG_TASK_IMAGE; tests/cloud-access.test.sh sends the
+  # Jobs Cloud's own code builds, so a change on either side fails the test.
+  cloud_pg_task = {
+    container = "pg"
+    image     = "docker.io/library/postgres:18.7-trixie@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc"
+    # The image's postgres user, who owns the manual dump directory
+    # (stacks/dbaas postgresql-backup makes it).
+    uid = 999
+    # pg-<kind>-<the first 9 hex digits of the task id>, and its Secret
+    # pg-task-<the same 9>.
+    kinds          = ["backups", "backup", "export", "restore"]
+    name_re        = "^pg-(backups|backup|export|restore)-[0-9a-f]{9}$"
+    secret_re      = "^pg-task-[0-9a-f]{9}$"
+    nightly_claim  = "cloud-pg-backups-nightly"
+    manual_claim   = "cloud-pg-backups-manual"
+    export_port    = 8080
+    task_label     = "cloud.viktorbarzin.me/postgres-task"
+    secret_keys    = ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "CLOUD_EXPORT_TOKEN"]
+    max_deadline   = 4200
+    max_ttl        = 3600
+    max_command    = 6
+    max_script_len = 8000
+  }
   cloud_one_off_job_component_is = "has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == '${local.cloud_one_off_job.component}'"
 
   # A psql toolbox (the cloud repo's B22, `cloud psql`): a Job the
@@ -762,6 +791,21 @@ locals {
     # Calico requires `get` on a tier to manage policies in it. Project
     # policies live in the default tier.
     { api_groups = ["projectcalico.org"], resources = ["tiers"], verbs = ["get"], resource_names = ["default"] },
+  ]
+
+  # Bound in namespace `cloud` only (main.tf, Role cloud-reconciler-tasks):
+  # the Postgres task Jobs (B28b, B28c). It creates a task's Job suspended,
+  # creates the Secret with the task's credentials (owned by the Job, so
+  # Kubernetes deletes it with the Job), lets the Job go with a patch, reads
+  # its pod and log, and deletes a Job it gave up on. It may create Secrets
+  # here but not read, change or delete any, and it creates no pod: the Job
+  # controller does. cloud-pg-task and cloud-pg-task-secret admit only the
+  # task shapes, and cloud-reconciler-scope nothing else in this namespace.
+  cloud_reconciler_cloud_rules = [
+    { api_groups = ["batch"], resources = ["jobs"], verbs = ["create", "get", "list", "delete", "patch"], resource_names = [] },
+    { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
+    { api_groups = [""], resources = ["pods/log"], verbs = ["get"], resource_names = [] },
+    { api_groups = [""], resources = ["secrets"], verbs = ["create"], resource_names = [] },
   ]
 
   # Bound per Project namespace by a RoleBinding the reconciler creates there.
@@ -1242,13 +1286,16 @@ locals {
           { name = "isRoleBinding", expression = "request.resource.group == 'rbac.authorization.k8s.io' && request.resource.resource == 'rolebindings'" },
           { name = "isQuota", expression = "request.resource.group == '' && request.resource.resource == 'resourcequotas'" },
           { name = "isLimitRange", expression = "request.resource.group == '' && request.resource.resource == 'limitranges'" },
+          # A Postgres task's Job, or its Secret, in the reconciler's own
+          # namespace; cloud-pg-task and cloud-pg-task-secret check the shape.
+          { name = "isPgTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs') || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
         ]
         validations = [
           {
             # The name check too: a homelab namespace someone labels by
             # mistake must not become reconciler-writable.
-            expression = "variables.isNamespace || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
-            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true"
+            expression = "variables.isNamespace || variables.isPgTask || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
+            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true, and Postgres task Jobs and their Secrets in ${local.cloud_namespace}"
             reason     = "Forbidden"
           },
           {
@@ -1987,6 +2034,76 @@ locals {
         ]
       }
     }
+    # A Postgres task's Job (the cloud repo's B28b, B28c) in the reconciler's
+    # own namespace; cloud-pg-task-secret below checks the Secret that holds
+    # the Project role's credentials for it. The only writes
+    # cloud-reconciler-scope lets the
+    # reconciler make in `cloud`, so this is the whole of what it may run
+    # there: the pinned postgres image as uid 999, with the task's fixed
+    # script, no service account token, no capability, a read-only root,
+    # and of the NFS claims only Cloud's two dump directories, the nightly
+    # one read-only and the manual one writable for a backup Job alone.
+    pg_task = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-pg-task" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = ["batch"], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["jobs"] },
+          ]
+        }
+        matchConditions = [{
+          name       = "is-cloud-reconciler"
+          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+        }]
+        variables = [
+          { name = "labels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
+          { name = "component", expression = "'${local.cloud_component_label}' in variables.labels ? variables.labels['${local.cloud_component_label}'] : ''" },
+          { name = "pod", expression = "object.spec.template.spec" },
+          { name = "podLabels", expression = "has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) ? object.spec.template.metadata.labels : {}" },
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "(variables.component in ${jsonencode([for k in local.cloud_pg_task.kinds : "pg-${k}"])} && object.metadata.name.matches('${local.cloud_pg_task.name_re}') && object.metadata.name.startsWith(variables.component + '-') && size(object.metadata.name) == size(variables.component) + 10 && '${local.cloud_component_label}' in variables.podLabels && variables.podLabels['${local.cloud_component_label}'] == variables.component && '${local.cloud_pg_task.task_label}' in variables.labels && '${local.cloud_pg_task.task_label}' in variables.podLabels && variables.podLabels['${local.cloud_pg_task.task_label}'] == variables.labels['${local.cloud_pg_task.task_label}'] && size(variables.owners) == 0)"
+            message    = "in ${local.cloud_namespace}, a Postgres task Job is named pg-<kind>-<9 hex digits>, carries its pod's ${local.cloud_component_label} and ${local.cloud_pg_task.task_label} labels and has no owner"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.parallelism) || object.spec.parallelism <= 1) && (!has(object.spec.completions) || object.spec.completions == 1) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_pg_task.max_deadline} && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished <= ${local.cloud_pg_task.max_ttl})"
+            message    = "in ${local.cloud_namespace}, a Postgres task Job runs one pod once (backoffLimit 0, no failure or success policy), with activeDeadlineSeconds up to ${local.cloud_pg_task.max_deadline} and ttlSecondsAfterFinished up to ${local.cloud_pg_task.max_ttl}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(has(variables.pod.restartPolicy) && variables.pod.restartPolicy == 'Never' && has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false && (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == 'default') && (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) && (!has(variables.pod.hostPID) || !variables.pod.hostPID) && (!has(variables.pod.hostIPC) || !variables.pod.hostIPC) && !has(variables.pod.initContainers) && !has(variables.pod.ephemeralContainers) && !has(variables.pod.nodeName) && has(variables.pod.securityContext) && has(variables.pod.securityContext.runAsNonRoot) && variables.pod.securityContext.runAsNonRoot && has(variables.pod.securityContext.runAsUser) && variables.pod.securityContext.runAsUser == ${local.cloud_pg_task.uid})"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod sets restartPolicy Never, mounts no service account token, runs as uid ${local.cloud_pg_task.uid} with runAsNonRoot, and has no host namespaces, init containers or nodeName"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(size(variables.pod.containers) == 1 && variables.pod.containers.all(c, c.name == '${local.cloud_pg_task.container}' && c.image == '${local.cloud_pg_task.image}' && has(c.command) && size(c.command) >= 4 && size(c.command) <= ${local.cloud_pg_task.max_command} && c.command[0] == '/bin/bash' && c.command[1] == '-c' && size(c.command[2]) <= ${local.cloud_pg_task.max_script_len} && c.command[3] == 'pg-task' && (!has(c.args) || size(c.args) == 0) && !has(c.lifecycle) && has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem && (!has(c.securityContext.privileged) || !c.securityContext.privileged) && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && !has(c.securityContext.capabilities.add)))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod has one container ${local.cloud_pg_task.container} running ${local.cloud_pg_task.image} with /bin/bash -c and a task script, no privilege escalation, a read-only root and every capability dropped"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, (!has(c.ports) || size(c.ports) == 0 || (variables.component == 'pg-export' && c.ports.all(p, p.containerPort == ${local.cloud_pg_task.export_port} && !has(p.hostPort)))) && (!has(c.env) || c.env.all(e, !has(e.valueFrom))) && (!has(c.envFrom) || size(c.envFrom) == 0 || (variables.component != 'pg-backups' && size(c.envFrom) == 1 && has(c.envFrom[0].secretRef) && c.envFrom[0].secretRef.name == 'pg-task-' + object.metadata.name.substring(size(object.metadata.name) - 9) && !has(c.envFrom[0].prefix))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod listens only for an export, on ${local.cloud_pg_task.export_port}, and reads its credentials only from its own Secret pg-task-<the Job's 9 hex digits>"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(!has(variables.pod.volumes) || variables.pod.volumes.all(v, (has(v.emptyDir) && has(v.emptyDir.sizeLimit)) || (has(v.persistentVolumeClaim) && ((v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.nightly_claim}' && variables.component in ['pg-backups', 'pg-restore'] && has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly) || (v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.manual_claim}' && variables.component != 'pg-export' && ((has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly) || variables.component == 'pg-backup'))))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod may use only bounded emptyDirs, ${local.cloud_pg_task.nightly_claim} read-only (a list or a restore) and ${local.cloud_pg_task.manual_claim} (read-only unless it is a backup)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(variables.pod.volumes) && variables.pod.volumes.exists(v, v.name == m.name && (!has(v.persistentVolumeClaim) || (has(m.readOnly) && m.readOnly) || (variables.component == 'pg-backup' && v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.manual_claim}')))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod mounts the dump directories read-only, but for a backup's manual one, and with no subPath"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
     console_exec_binding = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicyBinding"
@@ -1994,6 +2111,59 @@ locals {
       spec = {
         policyName        = "cloud-console-exec"
         validationActions = ["Deny"]
+      }
+    }
+    pg_task_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-pg-task" }
+      spec = {
+        policyName        = "cloud-pg-task"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
+      }
+    }
+    # The Secret of a Postgres task: the Project role's credentials, owned by
+    # its Job so that Kubernetes deletes it with the Job.
+    pg_task_secret = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-pg-task-secret" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = [""], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["secrets"] },
+          ]
+        }
+        matchConditions = [{
+          name       = "is-cloud-reconciler"
+          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+        }]
+        variables = [
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "(request.operation == 'CREATE' && object.metadata.name.matches('${local.cloud_pg_task.secret_re}') && has(object.type) && object.type == 'Opaque' && size(variables.owners) == 1 && variables.owners.all(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller && o.name.matches('${local.cloud_pg_task.name_re}') && o.name.endsWith('-' + object.metadata.name.substring(8))) && (!has(object.data) || object.data.all(k, k in ${jsonencode(local.cloud_pg_task.secret_keys)})) && (!has(object.stringData) || object.stringData.all(k, k in ${jsonencode(local.cloud_pg_task.secret_keys)})))"
+            message    = "in ${local.cloud_namespace}, cloud-reconciler creates only Secrets pg-task-<9 hex digits> of type Opaque, owned by their Postgres task Job, holding only ${join(", ", local.cloud_pg_task.secret_keys)}"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    pg_task_secret_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-pg-task-secret" }
+      spec = {
+        policyName        = "cloud-pg-task-secret"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
       }
     }
     # Cron Services (the cloud repo's B19). Every pod rule applies to the

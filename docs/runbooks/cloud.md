@@ -881,6 +881,29 @@ were in `/backup/per-db/` and age out of it by 2026-12-03.
 [restore-postgresql.md](restore-postgresql.md), "Restore Single Database",
 has the general steps.
 
+Users restore themselves (cloud B28c): `cloud pg backups <p> <db>` lists
+both kinds, and `cloud pg restore <p> <db> --backup <id> --into <new>` adds
+a new Postgres through an apply and runs `pg_restore` into it as its own
+role. It never writes into the existing database, so first point the User
+there. Each backup list, backup, export and restore is a Job the reconciler
+runs in namespace `cloud`:
+
+```sh
+kubectl -n cloud get jobs -l cloud.viktorbarzin.me/component=pg-restore   # or pg-backups, pg-backup, pg-export
+kubectl -n cloud logs job/pg-restore-<9 hex>
+```
+
+A Job and its credentials Secret `pg-task-<9 hex>` go 10 minutes after it
+ends. A task the reconciler lost track of fails as `task_stale` after 2
+hours. The manual dumps directory belongs to uid 999 (the postgres user of
+the task image); `postgresql-backup` makes it with that owner on every
+run, so a Job that cannot write there means the directory was changed by
+hand. Rollback of the task Jobs: delete the `cloud-pg-task` and
+`cloud-pg-task-secret` policies with their bindings and the Role `cloud-reconciler-tasks` (in `stacks/cloud`
+`pg_backups.tf` and `access_rules.tf`); every task then fails as
+`job_refused`, and the nightly dumps keep running. Restores below are the
+Operator's way into the existing database.
+
 1. Find the database:
    `SELECT datname FROM pg_database WHERE datname LIKE 'p\_<project>\_%';`
 2. Stop the App's writes for the restore: `ALTER ROLE <db> CONNECTION LIMIT 0;`

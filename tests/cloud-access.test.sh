@@ -126,6 +126,20 @@
 #     namespace (even with a binding there by mistake); the egress floor
 #     denies toolbox pods before any Pass, and Cloud and infra pin the same
 #     toolbox image;
+#   - the Postgres task Jobs Cloud's own code builds (pg-task-jobs.ts, B28b
+#     and B28c: a backup list, a backup, an export, a restore) and their
+#     credentials Secrets are admitted as the reconciler in namespace cloud,
+#     with Cloud's image equal to infra's pin; each variant cloud-pg-task
+#     forbids is refused (another name or owner, retries, a longer deadline,
+#     no TTL, a service account token or account, root, host network, an init
+#     or second container, an image by tag or another image, another command
+#     or args, privilege, a writable root, an added capability, another
+#     Secret, a hostPath, the homelab's dumps, an unbounded emptyDir, a port
+#     but on an export, a writable nightly volume or mount, a subPath), as is
+#     a Secret with another name, owner, key or type, and the same Job in
+#     namespace default; the reconciler may create and patch Jobs and create
+#     Secrets in cloud, but not read, change or delete a Secret there, and
+#     creates no pod or Deployment there;
 #   - worker and cron Services (the cloud repo's B18 and B19), built from the
 #     rendered App: a worker Deployment (component worker, a command, no
 #     ports, probes or init container, 1 or 0 replicas) and a pod from it are
@@ -241,7 +255,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest, console_exec = local.cloud_console_exec, toolbox = local.cloud_toolbox})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest, console_exec = local.cloud_console_exec, toolbox = local.cloud_toolbox, cloud_rules = local.cloud_reconciler_cloud_rules, pg_task = local.cloud_pg_task})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -284,8 +298,14 @@ docs = [
     # Cloud's modules/project in each Project namespace.
     {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": k["console_exec"]["service_account"], "namespace": "cloud"}},
     {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": k["console_exec"]["role"]}, "rules": rules(k["console_exec"]["rules"])},
+    # Postgres task Jobs (the cloud repo's B28b, B28c) in namespace cloud.
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "cloud-reconciler-tasks", "namespace": "cloud"}, "rules": rules(k["cloud_rules"])},
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": {"name": "cloud-reconciler-tasks", "namespace": "cloud"},
+     "subjects": [sa("cloud-reconciler", "cloud")],
+     "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "cloud-reconciler-tasks"}},
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
+(d / "pg_task.json").write_text(json.dumps(k["pg_task"]))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
 # cloud-managed-ingress as it would be applied without the taken hosts.
 (d / "vap-ingress-unfilled.yaml").write_text(yaml.safe_dump(k["raw_policies"]["managed_ingress"]))
@@ -989,6 +1009,28 @@ if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants
   [ "$CASES_RUN" -gt 80 ] && ok "$CASES_RUN cases built from Cloud's real objects" || bad "only $CASES_RUN cases built from Cloud's real objects"
 else
   bad "no objects from Cloud's modules to check: $(cat "$TMP/variants.log" 2>/dev/null)"
+fi
+
+# --- Postgres task Jobs in namespace cloud (the cloud repo's B28b, B28c) --------
+# render.ts built each kind's Job and credentials Secret with Cloud's own
+# code; pg_tasks.py checks Cloud's image against infra's pin and writes the
+# admitted shapes and the refused variants. The reconciler may run them in
+# cloud only, create Secrets there but not read them, and create no pod.
+if [ -f "$CLOUD_REPO/src/reconciler/pg-task-jobs.ts" ]; then
+  if python3 "$HERE/tests/cloud-access/pg_tasks.py" "$TMP/tofu/pg-tasks.json" "$TMP/pg_task.json" "$TMP/pg-cases" >"$TMP/pg-tasks.log" 2>&1; then
+    run_cases "$TMP/pg-cases"
+    [ "$CASES_RUN" -gt 60 ] && ok "$CASES_RUN Postgres task cases built from Cloud's own Jobs" || bad "only $CASES_RUN Postgres task cases"
+  else
+    bad "Postgres task cases: $(cat "$TMP/pg-tasks.log")"
+  fi
+  can create jobs.batch -n cloud && ok "reconciler may create Jobs in cloud" || bad "reconciler cannot create Jobs in cloud"
+  can patch jobs.batch -n cloud && ok "reconciler may patch Jobs in cloud (to let a suspended task go)" || bad "reconciler cannot patch Jobs in cloud"
+  can create secrets -n cloud && ok "reconciler may create Secrets in cloud" || bad "reconciler cannot create Secrets in cloud"
+  for verb in get list update delete; do
+    can "$verb" secrets -n cloud && bad "reconciler may $verb Secrets in cloud" || ok "reconciler may not $verb Secrets in cloud"
+  done
+  can create pods -n cloud && bad "reconciler may create pods in cloud" || ok "reconciler creates no pod in cloud"
+  can create deployments.apps -n cloud && bad "reconciler may create Deployments in cloud" || ok "reconciler may not create Deployments in cloud"
 fi
 
 # --- Cloud's snapshot fixtures, each applied as the reconciler -----------------
