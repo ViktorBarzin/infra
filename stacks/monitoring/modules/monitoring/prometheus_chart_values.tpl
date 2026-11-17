@@ -5293,6 +5293,17 @@ serverFiles:
               severity: warning
             annotations:
               summary: "redis-acl-sync has not succeeded for {{ $value | humanizeDuration }}; Redis ACL users are not being kept in step"
+          - alert: RedisAuthDenied
+            # B40 R4: once `default` is locked, a client that sends no or a
+            # wrong password is refused. Any refusal is a consumer still on
+            # default or on a stale password. redis_exporter publishes
+            # Redis's acl_access_denied_auth counter.
+            expr: increase(redis_acl_access_denied_auth_total{namespace="redis"}[5m]) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis refused {{ $value | humanize }} AUTH attempts in 5 min; a client uses a wrong password or the locked default user (docs/runbooks/redis-acl.md)"
           - alert: RedisAclSyncNeverSucceeded
             expr: absent(redis_acl_sync_last_success_timestamp_seconds{job="redis-acl-sync"})
             for: 15m

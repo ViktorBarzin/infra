@@ -49,3 +49,20 @@ tests:
         alertname: RedisAclSyncNeverSucceeded
         exp_alerts:
           - exp_labels: {severity: warning, job: redis-acl-sync}
+
+  # R4: one refused AUTH fires at once; a flat counter stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'redis_acl_access_denied_auth_total{namespace="redis", pod="redis-v2-0"}'
+        values: '3x10 4 4x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisAuthDenied
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: RedisAuthDenied
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: redis, pod: redis-v2-0}
+      - eval_time: 20m
+        alertname: RedisAuthDenied
+        exp_alerts: []
