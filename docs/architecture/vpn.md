@@ -2,7 +2,7 @@
 
 <!-- showcase: Remote access goes through Headscale, a self-hosted Tailscale control server, with OPNsense advertising the home networks to the tailnet. WireGuard links the sites. -->
 
-Last updated: 2026-11-10
+Last updated: 2026-11-17
 
 > **Amendment (2026-11-10): OPNsense replaced pfSense as the edge firewall** (ADR-0038).
 > It took over pfSense's addresses, MACs and WireGuard key, so the hub address
@@ -384,6 +384,39 @@ dns_config:
 - WireGuard IP: `10.3.2.5`
 - Remote endpoint: Sofia public IP
 - LAN: `192.168.0.0/24`
+
+#### Valchedrym as a second REALITY entrypoint
+
+The router relays REALITY from its own public address to Sofia, so a client
+has a second address for the same server: `valchedrym.ddns.net:443`, with
+Sofia's REALITY profile otherwise unchanged (SNI `www.cloudflare.com`, same
+UUID and key). Port 443 helps on a network that blocks Sofia's `:8080`.
+
+```mermaid
+flowchart LR
+  C["client"] -->|"tcp/443"| V["Valchedrym OpenWrt<br/>valchedrym.ddns.net"]
+  V -->|"DNAT + masquerade"| S["Sofia WAN<br/>176.12.22.76:8080"]
+  S -->|"OPNsense NAT"| X["xray-reality<br/>10.0.20.200:7443"]
+  X -->|"failed handshake"| CF["www.cloudflare.com:443"]
+```
+
+- **Rule**: uci `firewall.@redirect[8]`, name `vless + reality`, WAN tcp/443
+  to `176.12.22.76:8080`. It lives only in the router's own config. The VPN
+  portal does not hand out this address, so a client adds it by hand.
+- **Address**: Valchedrym's WAN is a dynamic A1 address in `85.130.32.0/19`
+  that changes about once a day. `valchedrym.ddns.net` follows it.
+- **Masquerade**: Sofia sees every relayed connection with Valchedrym's
+  address as the source, including internet scans of Valchedrym's port 443.
+  REALITY passes each failed handshake on to `www.cloudflare.com:443` from
+  the node that runs the xray pod. Two consequences, both handled in
+  [network-security-monitoring.md](network-security-monitoring.md):
+  `netsec-alerts` leaves out node to www.cloudflare.com:443, and CrowdSec
+  allowlists Valchedrym's current address through `lapi_allowlist_dns`, so a
+  relayed scan cannot ban the site.
+- **Older forwards**: `@redirect[5]` (WAN 53 to `176.12.22.76:70`) and
+  `@redirect[6]` (WAN 54 to `87.97.187.45:70`), both named `shadowsocks`.
+  Sofia forwards nothing on port 70 (`playbooks/files/opnsense/nat_port_forwards.yml`),
+  and Suricata saw no Valchedrym traffic to port 70 from 2026-11-03 to 11-17.
 
 ### WireGuard (Mladost 3 — OpenWRT)
 

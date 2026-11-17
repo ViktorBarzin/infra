@@ -217,7 +217,8 @@ flowchart TD
   each name, allowlists the current address and deletes any decision on it.
   Valchedrym (`valchedrym.ddns.net`) needs it because its router forwards WAN
   :443 to Sofia's xray REALITY, a second VPN entrypoint, with masquerade, so
-  scans of Valchedrym reach Suricata with Valchedrym as the source.
+  scans of Valchedrym reach Suricata with Valchedrym as the source
+  ([vpn.md](vpn.md#valchedrym-as-a-second-reality-entrypoint)).
 - **C2 blocks**: the local parser `viktor/abusech-c2` re-labels abuse.ch alerts
   (Feodo Tracker, SSL Blacklist) so the alert's source is the C2 address, never
   our host, and the hub's Suricata scenarios skip them. Scenario
