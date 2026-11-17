@@ -410,6 +410,31 @@ resource "vault_identity_group_alias" "admins" {
   canonical_id   = vault_identity_group.admins.id
 }
 
+# Deal Watchers (stacks/authentik/deal-watchers.tf): read the changedetection
+# API key that `homelab deals` uses (docs/runbooks/deal-watches.md). This
+# reaches OIDC logins; devvm periodic tokens carry no group, so each member's
+# token policy names the path as well (projects-emo).
+resource "vault_policy" "deal_watchers" {
+  name   = "deal-watchers"
+  policy = <<-EOT
+    path "secret/data/workstation/shared/deal-watches" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_identity_group" "deal_watchers" {
+  name     = "deal-watchers"
+  type     = "external"
+  policies = [vault_policy.deal_watchers.name]
+}
+
+resource "vault_identity_group_alias" "deal_watchers" {
+  name           = "Deal Watchers"
+  mount_accessor = vault_jwt_auth_backend.oidc.accessor
+  canonical_id   = vault_identity_group.deal_watchers.id
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Vault has its own auth (OIDC, K8s, tokens). External CLI clients,
@@ -2245,6 +2270,12 @@ resource "vault_policy" "projects_emo" {
     }
     # Read the shared Geoapify key for `homelab map` (ADR-0028, 2026-10-08)
     path "secret/data/workstation/shared/maps" {
+      capabilities = ["read"]
+    }
+    # Read the changedetection API key for `homelab deals` (2026-11-17): emo
+    # is in the Authentik group "Deal Watchers", but his devvm periodic token
+    # carries no group, so the deal-watchers policy below does not reach it.
+    path "secret/data/workstation/shared/deal-watches" {
       capabilities = ["read"]
     }
     # Read the tv release credential for `homelab deploy tv` (infra#153,

@@ -39,6 +39,7 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"what do we monitor for black friday price monitoring", []string{"changedetection", "deal-watches"}},
 		{"alert me when this product gets a discount", []string{"changedetection", "deal-watches"}},
 		{"watch an amazon price drop", []string{"changedetection", "deal-watches"}},
+		{"monitor price for this keyboard", []string{"homelab deals add", "deal-watches"}},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)

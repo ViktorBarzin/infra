@@ -219,6 +219,8 @@ module "ingress" {
   name            = "changedetection"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  # Deal Watchers add and remove deal watches (stacks/authentik/deal-watchers.tf).
+  allowed_groups = ["Home Server Admins", "Deal Watchers"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Changedetection"
@@ -230,6 +232,26 @@ module "ingress" {
     "gethomepage.dev/widget.url"   = "http://changedetection.changedetection.svc.cluster.local"
     "gethomepage.dev/widget.key"   = local.homepage_credentials["changedetection"]["api_key"]
   }
+}
+
+# The API for `homelab deals` on the devvm (docs/runbooks/deal-watches.md).
+# Forward-auth would answer a CLI with a login redirect, so /api gets its own
+# host. Internal-only: the A record holds the internal LB IP and shadows the
+# * wildcard, and home-lans-only drops any other source at Traefik.
+module "ingress_api" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.changedetection.metadata[0].name
+  name            = "changedetection-api"
+  service_name    = "changedetection"
+  ingress_path    = ["/api"]
+  tls_secret_name = var.tls_secret_name
+  # auth = "app": changedetection's own API key (x-api-key) gates /api.
+  auth              = "app"
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  external_monitor  = false
+  anti_ai_scraping  = false
+  homepage_enabled  = false
 }
 
 # Deal-watch health exporter (docs/runbooks/deal-watches.md).

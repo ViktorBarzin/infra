@@ -40,6 +40,7 @@ func buildRegistry() []Command {
 	reg = append(reg, qualityCommands()...)
 	reg = append(reg, shareCommands()...)
 	reg = append(reg, mapCommands()...)
+	reg = append(reg, dealsCommands()...)
 	reg = append(reg, videoCommands()...)
 	reg = append(reg, pasteCommands()...)
 	reg = append(reg, crowdsecCommands()...)

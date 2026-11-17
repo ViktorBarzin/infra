@@ -5,6 +5,11 @@ It runs on the changedetection.io that the cluster already hosts
 (`stacks/changedetection/`, `https://changedetection.viktorbarzin.me`). It
 needs no new service and no code per product.
 
+Anyone in the Authentik group **Deal Watchers** can say "monitor the price of
+X" to their agent. `homelab how "monitor price"` sends the agent to
+`homelab deals add <url>`. There is one shared list. The terms are in
+`GLOSSARY.md` under "Deal watches".
+
 ## How it works
 
 ```
@@ -18,7 +23,13 @@ product page ──fetch every N h──> changedetection (restock_diff processo
   in the UI). It reads one price per page from JSON-LD or microdata, or from
   the element that the watch's include filter selects.
 - Every deal watch belongs to the group **deals**. The group holds the Slack
-  notification URL, so a new watch needs no notification settings of its own.
+  notification URL. Each watch holds its own one-line message, which names
+  its target: title `{{watch_title}}`, body
+  `Now {{restock.currency}}{{restock.price}}, target £35.67. {{watch_url}}`.
+  changedetection resolves each notification field on its own, watch first,
+  then group, then global.
+- A watch title starts with the requester's Authentik short name, for
+  example `[emil.barzin] ...`, so a shared channel shows who asked.
 - With only `price_change_min` set, the watch is silent while the price is at
   or above the target. It posts on each change while the price is below it.
   To hear about any discount, set `price_change_min` to today's price; to
@@ -29,47 +40,102 @@ product page ──fetch every N h──> changedetection (restock_diff processo
 
 | what | where |
 |---|---|
-| UI | `https://changedetection.viktorbarzin.me` (Authentik) |
-| API | `http://localhost:5000/api/v1/` inside the pod, header `x-api-key` |
-| API key | Vault `secret/changedetection`, key `homepage_credentials`, field `.changedetection.api_key` |
+| UI | `https://changedetection.viktorbarzin.me` (Authentik: Home Server Admins, Deal Watchers) |
+| API | `https://changedetection-api.viktorbarzin.me/api/v1/` from home LANs only, header `x-api-key`; `http://localhost:5000/api/v1/` inside the pod |
+| API key | Vault `secret/changedetection`, key `homepage_credentials`, field `.changedetection.api_key`; a copy for `homelab deals` at `secret/workstation/shared/deal-watches`, key `api_key` |
 | Slack webhook of the group | Vault `secret/changedetection`, key `deals_slack_webhook` |
 | Datastore | NFS `/srv/nfs/changedetection` (file-based JSON) |
 
 ## Add a watch
 
-1. Find the group UUID: `GET /api/v1/tags`, title `deals`.
-2. Create the watch:
+```sh
+homelab deals add <product url> [--below PRICE] [--name NAME] [--every HOURS]
+homelab deals list
+homelab deals target <id-prefix> <price>
+homelab deals remove <id-prefix|url>
+```
 
-   ```json
-   POST /api/v1/watch
-   {
-     "url": "<product page>",
-     "title": "<what it is> (<shop>)",
-     "processor": "restock_diff",
-     "tags": ["<deals uuid>"],
-     "time_between_check": {"hours": 4},
-     "processor_config_restock_diff": {
-       "in_stock_processing": "off",
-       "follow_price_changes": true,
-       "price_change_min": <target price>
-     }
-   }
-   ```
+`deals add` does these steps:
 
-3. Read the watch back after the first check (about 10 s):
-   `processor_state_restock_diff.price` must hold today's price, and
-   `last_error` must be `false`. A price of `null` means the page needs a
-   filter (next section).
+1. It picks the shop settings (next section) and cuts an Amazon link to
+   `/dp/<ASIN>`. It refuses a URL that is already on the list.
+2. It creates the watch muted, with a target of 0.01, so that setup never
+   posts to Slack.
+3. It waits for the first check, up to 150 s. If no price was read, it sets
+   `fetch_backend` to `html_webdriver` (the sockpuppetbrowser sidecar) and
+   checks once more. If that also reads no price, it deletes the watch and
+   prints the last error. Every watch on the list has read a real price.
+4. It sets the target: `--below`, or else today's price, which alerts on any
+   drop. Then it unmutes the watch and sets the one-line message.
+5. For Amazon, it prints Keepa's price history (below), so the agent can
+   suggest a deeper target for `deals target`.
 
-Run the API calls from inside the pod, for example
-`kubectl -n changedetection exec -i deploy/changedetection -c changedetection -- python3 -`
-with `urllib.request`. Keep checks at 4 h or longer: every check is a request
-to someone else's shop.
+Checks run every 4 h at most, because every check is a request to someone
+else's shop.
+
+### Access
+
+| who | how they reach the key |
+|---|---|
+| OIDC login in the Deal Watchers group | Vault external group `deal-watchers`, policy `deal-watchers` (`stacks/vault/main.tf`) |
+| wizard on the devvm | `vault-admin` |
+| emo on the devvm | `projects-emo`: a devvm periodic token carries no group, so the path is in his token policy too |
+
+To add a member: add their `data "authentik_user"` to
+`stacks/authentik/deal-watchers.tf`. If they use the devvm, add read on
+`secret/data/workstation/shared/deal-watches` to the policy that their devvm
+token carries, and invite them to Slack #changenotifications. The API host is
+reachable from home LANs only; the API key is its only gate there.
+
+### Keepa price history
+
+Keepa sells its price data through a paid API, so we use neither the API nor
+an account. `deals add` loads one Keepa product page
+(`keepa.com/#!product/<site>-<ASIN>`, site 2 is amazon.co.uk and 3 is
+amazon.de) in the cluster's real Chrome through `homelab browser run`.
+Keepa blocks headless browsers ("Sorry, you have been blocked"). The page
+receives the history over a websocket from `push.keepa.com`, in frames that
+are JSON or zstd-compressed JSON. In the frame `basicProducts[].csv`, index 1
+is the new-item price: pairs of (minutes since 2011-01-01, price in cents),
+where -1 means no offer. The command prints the lowest new price over 90
+days, 365 days and all time, with dates.
+
+When that fails, it saves Keepa's public chart image instead, which needs
+no browser: `https://graph.keepa.com/pricehistory.png?asin=<ASIN>&domain=co.uk&amazon=1&new=1&used=0&range=365`,
+to `~/.cache/homelab/deals/`.
+
+### By hand
+
+The command is the supported path. To change a watch it cannot express, use
+the API. The fields are those in the template below:
+
+```json
+POST /api/v1/watch
+{
+  "url": "<product page>",
+  "title": "[<requester>] <what it is>",
+  "processor": "restock_diff",
+  "tags": ["<deals uuid, from GET /api/v1/tags>"],
+  "time_between_check": {"hours": 4},
+  "processor_config_restock_diff": {
+    "in_stock_processing": "off",
+    "follow_price_changes": true,
+    "price_change_min": <target price>
+  }
+}
+```
+
+After the first check, `processor_state_restock_diff.price` must hold
+today's price, and `last_error` must be `false`. `last_checked` changes when
+a check starts, so wait for `check_count` to go up before you read the
+result.
 
 ## Shops that need settings
 
-**Amazon UK.** Amazon has no JSON-LD price, and our egress is in Bulgaria, so
-it shows EUR by default. Set both on the watch:
+**Amazon (amazon.co.uk, amazon.de).** `deals add` sets these headers and
+the filter. Amazon has no JSON-LD price, and our egress is in Bulgaria, so
+amazon.co.uk shows EUR by default. amazon.de uses `i18n-prefs=EUR;
+lc-acbde=en_GB`. The amazon.co.uk settings are:
 
 ```json
 "headers": {
@@ -91,6 +157,10 @@ watch errors (`DealWatchFailing`) instead of reporting a used price.
 **camelcamelcamel.** It answers a plain fetch from our egress with a
 Cloudflare challenge (HTTP 403), so changedetection cannot read it. Use its
 own email alerts on an account.
+
+**Other Amazon sites.** These are not in the command yet. To add one, add a
+row to `amazonShops` in `cli/cmd_deals.go` with its currency cookie and Keepa
+site number, then check it with a live watch.
 
 **Pages with several products.** restock_diff reads one price per page. For
 a page with many variants and per-variant rules, write a dedicated job, as

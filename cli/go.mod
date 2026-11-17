@@ -10,6 +10,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
+	github.com/klauspost/compress v1.20.4
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
