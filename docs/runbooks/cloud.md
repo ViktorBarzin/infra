@@ -1249,6 +1249,58 @@ cloud.viktorbarzin.me/component=job` and `kubectl -n p-<project> describe
 job <name>`. Cloud has no cancel for a job yet; its deadline ends it
 within 71 minutes.
 
+## Shell and psql sessions
+
+Since cloud backlog B22 `cloud shell <project> <app>` runs `sh` in the
+`app` container of a ready App pod, and `cloud psql <project> <postgres>`
+runs `psql` in a toolbox pod the reconciler starts for that one session
+(Job `toolbox-<first 9 hex of the session id>`, component `toolbox`,
+image `postgres:18-alpine` pinned in `cloud_toolbox`). Both go through
+`pods/exec` as the console's service account `cloud/cloud-console`, which
+holds ClusterRole `cloud-console-exec` (pods get and list, pods/exec
+get and create) only through RoleBinding `cloud-console-exec` in each `p-*`
+namespace, made by Cloud's `modules/project`. Admission policy
+`cloud-console-exec` lets it run only `sh` in container `app` and `psql`
+in container `toolbox`, in managed `p-*` namespaces. The toolbox holds the
+Postgres's own role from Secret `pg-<postgres>`, no Kubernetes token, and
+the egress floor lets it reach DNS and the CNPG primary only. A session
+lasts at most 1 h and ends after 15 min with no bytes either way; a
+Project runs one psql session at a time.
+
+See sessions:
+
+- `cloud changes <project>` lists each session as a `shell` or `psql`
+  change, started at `createdAt`, ended at `finishedAt`, with the bytes
+  and how it ended in its log excerpt.
+- On the `cloud` database, the open ones: `select id, kind,
+  service_name, pod, user_id, created_at, connected_at, last_seen_at,
+  bytes_in, bytes_out from exec_sessions where ended_at is null;`
+- Kubernetes records every exec at Metadata level (the live audit policy,
+  `scripts/k8s-apiserver-audit-policy.yaml`, rule 4; a WebSocket exec is
+  verb `create`). In Loki: `{job="kubernetes-audit"} |= "/exec?" |=
+  "system:serviceaccount:cloud:cloud-console"`. The `requestURI` holds the
+  command (`sh`, or `psql`); SQL a User pipes in is stdin and is not in
+  the audit log.
+
+Cut one off: on the `cloud` database, `update exec_sessions set cut_off_at
+= now() where id = '<session id>';`. The console that runs it ends it at
+its next beat, within 15 s, and records `cut_off`. If no console answers
+(it stopped without a word), the reconciler ends the session as `lost`
+90 s after the last beat and deletes its toolbox Job.
+
+Sessions fail with `exec_unavailable` when the console has no service
+account token, `exec_refused` when Kubernetes refuses the exec (check that
+ClusterRole and policy `cloud-console-exec` are applied, and that the
+Project's RoleBinding exists: apply the Project again), and
+`toolbox_not_ready` when the toolbox pod did not run within 2 min (quota
+full during a Deploy, or an image pull; `kubectl -n p-<project> get jobs
+-l cloud.viktorbarzin.me/component=toolbox`, read-only).
+
+Rollback: remove `kubernetes_cluster_role.cloud_console_exec` from
+`stacks/cloud/main.tf` and apply. Every shell and psql session stops
+(the RoleBindings then name a role that does not exist and grant
+nothing); nothing else changes.
+
 ## Alerts
 
 | Alert | Pages | First step |

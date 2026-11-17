@@ -491,6 +491,33 @@ Kubernetes Service selects component `job`, and the ingress floor has no
 rule for it; egress is the Project's. Like a worker or cron pod, a job
 pod cannot call an internal App.
 
+Shell and psql sessions (cloud backlog B22, Viktor's decision V4) are the
+one path where the console reaches into a Project. The CLI asks the API
+for a session (owner only, through `cloud login` or an Access Token made
+with `--allow-shell`, never a console cookie) and opens the WebSocket
+`/api/exec/<session>` with the one-time ticket the API answered. The
+console then runs `pods/exec` as `cloud/cloud-console`. Three layers keep
+that narrow. RBAC: ClusterRole `cloud-console-exec` (pods get and list,
+pods/exec get and create) is bound only by RoleBinding `cloud-console-exec` in
+each `p-*` namespace, which the reconciler may create (`bind` on that
+role) and `cloud-reconciler-scope` pins to that name, role and subject.
+Admission: `cloud-console-exec` (CONNECT on pods/exec, attach and
+portforward, for the console only, in every namespace) admits only exec,
+only in managed `p-*` namespaces, and only `sh` in container `app` or
+`psql` in container `toolbox`, so never the edge or the oauth2-proxy.
+Network: a `psql` toolbox is a Job the reconciler starts per session,
+admitted by `cloud-managed-toolbox-job` and the pod rules (one container
+`toolbox` running the pinned `postgres:18-alpine` with the command
+`sleep <seconds>`, env only plain values and keys of Secret
+`pg-<its Postgres>`, no token, a read-only root, no port, probe or envFrom,
+only emptyDir volumes, no owner, a deadline up to 3,780 s, only its Job
+makes the pod and no Deployment runs one). The egress floor lets toolbox
+pods reach DNS and the CNPG primary and then denies them, before any
+Pass, so a toolbox reaches neither the internet nor another pod. The
+ingress floor has no rule for it. The reconciler gets the image as
+`TOOLBOX_POSTGRES_IMAGE` from the same local the policy pins. The
+apiserver audit policy logs every exec. Rollback: remove the ClusterRole.
+
 The shapes from before K1 are refused: `cloud-managed-ingress` admits
 only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge
 must carry its edge secret; the oauth2-proxy must use

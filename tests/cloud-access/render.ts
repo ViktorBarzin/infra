@@ -18,6 +18,9 @@
  *   one-off-job.json       a one-off job of the public App, as the reconciler
  *                          starts it for `cloud run` (src/reconciler/job-runs.ts,
  *                          B20)
+ *   toolbox-job.json       the psql toolbox Job of a session on the Postgres,
+ *                          as the reconciler starts it for `cloud psql`
+ *                          (src/reconciler/toolbox.ts, B22)
  *   fixtures/<n>/          the same two files for each of Cloud's snapshot
  *                          fixtures (render.fixtures.ts FIXTURES), and
  *   fixtures.json          [{dir, name, namespace}] listing them in order
@@ -152,6 +155,23 @@ if (await Bun.file(jobRunsFile).exists()) {
 	await writeFile(join(out, "one-off-job.json"), JSON.stringify(job, null, 2));
 }
 
+// The psql toolbox of a session on the Postgres (B22), built by Cloud's own
+// code with the image Cloud pins. A cloud checkout from before B22 has no
+// toolbox.ts and writes none.
+const toolboxFile = join(repo, "src/reconciler/toolbox.ts");
+if (await Bun.file(toolboxFile).exists()) {
+	const { toolboxJob } = await import(toolboxFile);
+	const [postgres] = Object.keys(rendered.tfvarsJson.postgres);
+	const job = toolboxJob({
+		project: rendered.tfvarsJson.project,
+		sessionId: "5c4d3e2f-1a0b-4c9d-8e7f-6a5b4c3d2e1f",
+		target: "postgres",
+		service: postgres,
+		image: renderer.TOOLBOX_IMAGES.postgres,
+	});
+	await writeFile(join(out, "toolbox-job.json"), JSON.stringify(job, null, 2));
+}
+
 const list: { dir: string; name: string; namespace: string }[] = [];
 for (const [i, [name, projectFile]] of Object.entries(
 	fixtures.FIXTURES as Record<string, unknown>,
@@ -167,6 +187,8 @@ await writeFile(
 		{
 			namespace: rendered.namespace,
 			images: renderer.IMAGES,
+			// Null before B22.
+			toolboxImages: renderer.TOOLBOX_IMAGES ?? null,
 			egressExcluded: renderer.EGRESS_EXCLUDED,
 			egressDeniedTcpPorts: renderer.EGRESS_DENIED_TCP_PORTS ?? null,
 			stripCookies: fixtures.INSTANCE.stripCookies,
