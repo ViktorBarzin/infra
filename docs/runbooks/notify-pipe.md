@@ -43,5 +43,6 @@ Open https://authentik.viktorbarzin.me/flows/-/default/authentication/?next=/if/
 ## When it breaks
 
 - `failed` with HTTP 424 in the adapter log: a Channel refused it. A wrong notify service, or an extra field in the JSON body, gives HA 400 ("Unsupported Parameters": the push URL must keep `:version`, `:type` and `:attachments`); an expired HA token gives 401 (the tokens are in Vault `secret/openclaw` -> `skill_secrets`). Apprise's own log names the URL: `kubectl -n notify logs deploy/apprise`.
-- `no_recipients` for a Topic someone did subscribe to: Apprise does not hold their Channel. The config is rebuilt on the next User change: save the settings page again. If that does not help, check the Authentik worker log for the `notify-apprise-config` transport (`kubectl -n authentik logs deploy/goauthentik-worker | grep -i notify`).
-- Apprise lost its config (the volume was replaced): save any Recipient's settings page once.
+- `no_recipients` for a Topic someone did subscribe to: Apprise does not hold their Channel. The config is rebuilt on the next User change: change one field on the settings page and save. A save that changes nothing records no event, so it pushes nothing. If that does not help, check the Authentik worker log for the `notify-apprise-config` transport (`kubectl -n authentik logs deploy/goauthentik-worker | grep -i notify`).
+- Apprise lost its config (the volume was replaced): change and save any Recipient's settings page once.
+- A Recipient's settings must be rendered again after a renderer change (`files/notify_render.py`): the new expression runs only on the next User change, so change one field on a settings page and save.

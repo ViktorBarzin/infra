@@ -1,11 +1,11 @@
 ---
-status: accepted
+status: executing
 plan: true
 ---
 
 # The notify pipe: infra events reach people on apps they already have
 
-emo does not want to install new apps, and the Home Assistant Companion app is the only push channel on his phone. This plan adds one pipe: an alert with a Topic or a Recipient label reaches each person on HA push or email, as that person chooses on an Authentik page.
+emo does not want to install new apps, and the Home Assistant Companion app is the only push channel on his phone. This plan adds one pipe. An alert with a Topic or a Recipient label reaches each person on HA push or email. Each person chooses the Channel on an Authentik page.
 
 ## In numbers
 
@@ -45,9 +45,9 @@ edges:
   - {from: ap, to: ha, state: new}
   - {from: ap, to: smtp, state: new}
 checks:
-  - {node: ad, text: "25 unit tests; a test alert reaches Viktor's phone", status: open}
-  - {node: rule, text: "a settings page save changes the tags Apprise holds", status: open}
-  - {node: ap, text: "a direct send to person-vbarzin arrives by email", status: open}
+  - {node: ad, text: "25 unit tests; a test alert to the internet Topic was accepted by ha-london for Viktor's phone, 2026-11-17", status: passed}
+  - {node: rule, text: "a settings page save changed the tags Apprise holds within seconds", status: passed}
+  - {node: ap, text: "a direct send to person-vbarzin-gmail-com was sent by email", status: passed}
 left_out:
   - WhatsApp and iMessage (a paid business API, and a Mac we do not have)
   - household events, which stay in HA
@@ -125,7 +125,14 @@ steps:
 - {key: "secrets in Apprise config", where: "apprise-api", old: "n/a", new: "none; APPRISE_TEMPLATE_* from Vault"}
 ```
 
-The settings page is `https://authentik.viktorbarzin.me/if/flow/notify-settings/`. Each Recipient sets an HA instance and the notify service of their Companion app, an email address, a Channel for each Topic, and a default channel. A save records a `user_write` event, and the Notification Rule sends the new config to Apprise in seconds.
+The settings page is `https://authentik.viktorbarzin.me/if/flow/notify-settings/`. Each Recipient sets these values:
+
+- an HA instance and the notify service of their Companion app;
+- an email address;
+- a Channel for each Topic;
+- a default channel.
+
+A save that changes a value records a `user_write` event, and the Notification Rule sends the new config to Apprise in seconds.
 
 The adapter makes one Notification from each alert group. It reads `notification_title` and `notification_body` first, then `summary` and `description`. A resolved group gets a short "Resolved" Notification on the same Channel. A Topic with no Subscription sends nothing and counts as `no_recipients`, not as a failure.
 
