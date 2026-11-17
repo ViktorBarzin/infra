@@ -97,6 +97,15 @@ devicePlugin:
 # ServiceMonitor CRD here (Prometheus scrapes the nvidia-exporter Service
 # through the `nvidia` job), so keep it off explicitly.
 dcgmExporter:
+  # Pinned to the image gpu-operator v26.7.2 shipped (infra#200). v26.7.3's
+  # default, 4.7.0-4.9.0, renames every metric with a unit suffix
+  # (DCGM_FI_DEV_GPU_TEMP -> _GPU_TEMP_CELSIUS, FB_USED -> FB_USED_BYTES,
+  # GPU_UTIL -> GPU_UTIL_RATIO, POWER_USAGE -> BOARD_POWER_WATTS). The
+  # NvidiaExporterDown/GPU alerts, the nvidia and cluster_health dashboards,
+  # this stack's verify.sh and the HA Sofia tesla_t4_gpu_* REST sensors all
+  # read the old names. Drop this pin only together with moving those
+  # consumers to the new names.
+  version: 4.6.1-4.8.4-distroless
   serviceMonitor:
     enabled: false
   resources:
