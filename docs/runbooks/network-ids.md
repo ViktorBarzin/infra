@@ -146,12 +146,11 @@ If `flows.bytes` is 0 for every row, check that goflow2 still runs with
 ## Alerts into bans (phase 3)
 
 Suricata's stock `eve.json` feeds OPNsense's CrowdSec agent (machine
-`opnsense-edge`). Every scenario on that agent is **simulated** until the
-phase 6 review: decisions are recorded with `simulated=true` and no bouncer,
-pf table or mirror receives them.
+`opnsense-edge`). Its bans are enforced since 2026-11-11 (see "Turning bans
+on" below).
 
 ```sh
-ssh root@10.0.10.1 'cscli simulation status'          # global simulation: enabled
+ssh root@10.0.10.1 'cscli simulation status'          # global simulation: disabled
 ssh root@10.0.10.1 'grep performed /var/log/crowdsec/crowdsec.log | tail'
 # On the LAPI: alerts and would-be decisions from the firewall
 L=$(kubectl get pods -n crowdsec -l type=lapi -o name | head -1)
@@ -162,7 +161,13 @@ kubectl exec -n crowdsec $L -- cscli decisions list --all -o raw   # last column
 An alert whose source is in the `trusted-infra` allowlist (our ranges and
 what we depend on, `stacks/crowdsec` `lapi_allowlist`) never reaches the
 alerts list: the firewall agent has no parser whitelist of its own, so the
-LAPI allowlist is what keeps our hosts from being banned.
+LAPI allowlist is what keeps our hosts from being banned. Sites with a dynamic
+public IP are names in `lapi_allowlist_dns`; check the current address is on
+the list:
+
+```sh
+kubectl exec -n crowdsec $L -- cscli allowlists inspect trusted-infra | grep -i ddns
+```
 
 ### Reviewing the would-be bans (phase 6)
 
@@ -228,7 +233,10 @@ homelab netsec sql "SELECT dst_ip, sum(bytes) FROM netsec.flows WHERE src_ip = t
 ```
 
 A k8s node's address means a pod on that node (Calico NAT) until phase 4 adds
-pod DNS. The query and its test: `stacks/netsec/files/alerts.sql`,
+pod DNS. A node to www.cloudflare.com:443 is xray REALITY passing a scan
+through to its fallback `dest`, so the query leaves it out. A REALITY scan
+that comes in through the Valchedrym relay shows Valchedrym's A1 address as
+the inbound source. The query and its test: `stacks/netsec/files/alerts.sql`,
 `sh stacks/netsec/files/alerts_test.sh` (read-only against the live
 ClickHouse with fixed rows).
 
@@ -275,13 +283,11 @@ homelab metrics query 'cs_node_hits_ok_total{pod=~"crowdsec-journals.*", name="c
 ```
 
 If the agent cannot log in to the LAPI, the machine `journals` is not
-registered yet: the `crowdsec-lapi-reconcile` CronJob registers it every 15
+registered yet: the `crowdsec-lapi-reconcile` CronJob registers it every 5
 minutes, or run it now with
 `kubectl -n crowdsec create job --from=cronjob/crowdsec-lapi-reconcile reconcile-now`.
 
-Its decisions are simulated until the phase 6 review, together with the
-OPNsense agent's; turning bans on means setting `simulation: false` in
-`kubernetes_config_map.crowdsec_journals` too.
+Its bans are enforced since 2026-11-11, together with the OPNsense agent's.
 
 ### Which pod looked up a name?
 

@@ -12,8 +12,8 @@ As-built record of the network IDS pipeline. Plan and decisions:
 | 0b | Suricata capture fix: 32 MB capture buffer, stream bypass after 1 MB, 13 ET Open categories off (63,816 to 43,082 active rules), `SuricataCaptureDrops` alert | live 2026-11-11 |
 | 1 | `netsec` database, its own Vector, NetFlow into ClickHouse, `homelab netsec sql` | live 2026-11-10 |
 | 2 | Suricata alert, dns, tls and http events into `netsec.eve` | live 2026-11-10 |
-| 3 | Suricata alerts into CrowdSec decisions (simulated), outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, simulation until the phase 6 review |
-| 4 | Server sshd journals into CrowdSec (simulated), pod DNS queries into `netsec.dns_queries` | live 2026-11-10, simulation until the phase 6 review |
+| 3 | Suricata alerts into CrowdSec decisions, outbound C2 blocks, `netsec-alerts`, camera VLAN alert | live 2026-11-10, bans enforced since 2026-11-11 |
+| 4 | Server sshd journals into CrowdSec, pod DNS queries into `netsec.dns_queries` | live 2026-11-10, bans enforced since 2026-11-11 |
 | 4b | Tetragon process starts and outbound connects into `netsec.tetragon`, watch-only | live 2026-11-10 |
 | 5 | Squid decryption for machines in alias `opted_in` (empty), JSON log into `netsec.proxy` | live 2026-11-10, nobody opted in |
 | 7 | Every table kept 365 days; Suricata `ssh` events into `netsec.eve`; mail-port connections with the real client address into `netsec.haproxy` | live 2026-11-11 |
@@ -193,7 +193,7 @@ for example). Collapse with `LIMIT 1 BY community_id, event_type` (runbook).
 
 ```mermaid
 flowchart TD
-  EVE["/var/log/suricata/eve.json<br/>alerts only"] --> AG["CrowdSec agent on OPNsense<br/>simulation: true, every scenario"]
+  EVE["/var/log/suricata/eve.json<br/>alerts only"] --> AG["CrowdSec agent on OPNsense<br/>bans enforced"]
   AG -->|opnsense-edge, 10.0.20.210:8080| LAPI["CrowdSec LAPI<br/>trusted-infra allowlist"]
   LAPI -->|type ban| BOUNCERS["OPNsense bouncer (in: WAN, HE)<br/>Traefik plugin, node nftables"]
   LAPI -->|type c2-block| MIRROR["crowdsec-c2-mirror<br/>10.0.20.212:41412"]
@@ -206,13 +206,18 @@ flowchart TD
   `playbooks/files/opnsense/crowdsec/`): the os-crowdsec agent registered as
   machine `opnsense-edge` reads the filter, GUI and audit logs plus Suricata's
   stock `eve.json` (`acquis.d/suricata.yaml`, collection
-  `crowdsecurity/suricata`). `simulation.yaml` sets `simulation: true`, so
-  every scenario's decisions are recorded as simulated and no bouncer receives
-  them; the playbook asserts it after every run. No scenario bans on UDP.
+  `crowdsecurity/suricata`). `simulation.yaml` sets `simulation: false` since
+  2026-11-11, so decisions go to the bouncers; the playbook asserts it after
+  every run. No scenario bans on UDP.
 - **Allowlist**: the LAPI's `trusted-infra` list (`stacks/crowdsec`
   `lapi_allowlist`, kept by the `crowdsec-lapi-reconcile` CronJob) holds our
   address space plus what we depend on: the HE tunnel server, upstream
-  resolvers, Cloudflare and GitHub's own ranges.
+  resolvers, Cloudflare and GitHub's own ranges. `lapi_allowlist_dns` adds our
+  sites with a dynamic public IPv4: the CronJob (every 5 minutes) resolves
+  each name, allowlists the current address and deletes any decision on it.
+  Valchedrym (`valchedrym.ddns.net`) needs it because its router forwards WAN
+  :443 to Sofia's xray REALITY, a second VPN entrypoint, with masquerade, so
+  scans of Valchedrym reach Suricata with Valchedrym as the source.
 - **C2 blocks**: the local parser `viktor/abusech-c2` re-labels abuse.ch alerts
   (Feodo Tracker, SSL Blacklist) so the alert's source is the C2 address, never
   our host, and the hub's Suricata scenarios skip them. Scenario
@@ -233,7 +238,10 @@ flowchart TD
   `files/alerts_test.sh`): every minute, malware and C2 alerts that involve one
   of our hosts (abuse.ch, `ET MALWARE`, `ET TROJAN`, `ET MOBILE_MALWARE`,
   `ET CNC`, outbound `ET COMPROMISED`) go to Alertmanager as
-  `NetsecHomeHostMalware` with `lane=security`. CrowdSec drops private sources,
+  `NetsecHomeHostMalware` with `lane=security`. Excluded: a k8s node to
+  www.cloudflare.com:443. That is xray REALITY's fallback, which passes every
+  unauthenticated connection, a scanner's malware handshakes included,
+  verbatim to its `dest`. CrowdSec drops private sources,
   so this is the path that reports an infected host. ClickHouse user
   `netsec_alerts` reads `netsec.eve` only.
 - **Camera VLAN**: Loki rule `CameraVlanBlockedTraffic` fires on any
@@ -246,7 +254,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  J["sshd journals in Loki<br/>pve, devvm, rpi-sofia, k8s nodes"] --> CJ["crowdsec-journals<br/>one agent, simulation"]
+  J["sshd journals in Loki<br/>pve, devvm, rpi-sofia, k8s nodes"] --> CJ["crowdsec-journals<br/>one agent, bans enforced"]
   CJ --> LAPI["CrowdSec LAPI"]
   P["pod DNS query"] --> NL["node-local-dns<br/>log, .:53 block only"]
   NL --> AL["Alloy on the node<br/>netsec-dns lines"]
@@ -263,8 +271,7 @@ flowchart TD
   replica. The journal lines in Loki are bare messages, so each LogQL query
   rebuilds `<time> <host> sshd[1]: <message>` with `line_format`, and the stock
   `crowdsecurity/sshd` and `crowdsecurity/linux` parsers apply unchanged.
-  `simulation.yaml` sets `simulation: true` for every scenario until the phase 6
-  review. Sources: `{job="sshd-pve"}`, `{job="sshd-devvm"}`,
+  Bans are enforced since 2026-11-11 (`simulation: false` in `journals.tf`). Sources: `{job="sshd-pve"}`, `{job="sshd-devvm"}`,
   `{job="systemd-journal", host="rpi-sofia", unit="ssh.service"}`,
   `{job="node-journal", unit="ssh.service"}`. Windows VM 300 ships no logs and
   is not covered. Scraped by the `crowdsec-agent` job (`type=agent-journals`).

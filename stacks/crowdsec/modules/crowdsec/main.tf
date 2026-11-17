@@ -2005,6 +2005,15 @@ locals {
     { value = "2606:50c0::/32", comment = "GitHub and ghcr.io" },
     { value = "2a0a:a440::/29", comment = "GitHub and ghcr.io" },
   ]
+  # Our sites with a dynamic public IPv4. The CronJob resolves each name on
+  # every run and allowlists the current address. Valchedrym's router forwards
+  # its WAN :443 to Sofia's xray REALITY (a second VPN entrypoint) and
+  # masquerades, so every internet scan of Valchedrym reaches Suricata with
+  # Valchedrym's own address as the source. Without this entry CrowdSec bans
+  # the site and that entrypoint, as it did on 2026-11-14.
+  lapi_allowlist_dns = [
+    { name = "valchedrym.ddns.net", comment = "Valchedrym WAN (dynamic A1 IP, VPN relay to Sofia)" },
+  ]
 }
 
 resource "kubernetes_config_map" "crowdsec_lapi_reconcile" {
@@ -2015,6 +2024,7 @@ resource "kubernetes_config_map" "crowdsec_lapi_reconcile" {
   data = {
     "lapi-reconcile.sh" = file("${path.module}/lapi-reconcile.sh")
     "allowlist.txt"     = join("", [for e in local.lapi_allowlist : "${e.value}\t${e.comment}\n"])
+    "allowlist-dns.txt" = join("", [for e in local.lapi_allowlist_dns : "${e.name}\t${e.comment}\n"])
   }
 }
 
@@ -2060,7 +2070,9 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
   }
 
   spec {
-    schedule                      = "*/15 * * * *"
+    # Every 5 minutes: a dynamic site address (lapi_allowlist_dns) is
+    # unprotected from its change until the next run.
+    schedule                      = "*/5 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
@@ -2122,8 +2134,11 @@ resource "kubernetes_cron_job_v1" "crowdsec_lapi_reconcile" {
                   printf "cat > /tmp/allowlist.txt <<'ALLOWLIST'\n"
                   cat /config/allowlist.txt
                   printf "ALLOWLIST\n"
+                  printf "cat > /tmp/allowlist-dns.txt <<'ALLOWLIST'\n"
+                  cat /config/allowlist-dns.txt
+                  printf "ALLOWLIST\n"
                   cat /config/lapi-reconcile.sh
-                  printf "rm -f /tmp/allowlist.txt\n"
+                  printf "rm -f /tmp/allowlist.txt /tmp/allowlist-dns.txt\n"
                 } | kubectl exec -i -n crowdsec "$LAPI_POD" -c crowdsec-lapi -- sh -s
                 EOF
               ]
