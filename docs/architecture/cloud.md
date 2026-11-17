@@ -142,6 +142,14 @@ nothing: both processes read the password file on each new connection.
    `healthCheckPath` in its Project File has `httpGet` readiness, liveness
    and startup probes on that path with no host, which
    `cloud-managed-pod` admits (probes may not name a host).
+6. A delete is soft (the cloud repo's B28d). The first apply after it
+   stops the Project: every App suspended, no edge, oauth2-proxy or
+   Ingress, and its running one-off and cron Jobs deleted, while its
+   Postgres, Vault entries and state stay. Its owner can restore it for 7
+   days; then the reconciler queues the destroy (the purge). A delete
+   with `--purge`, and one of a Project with no Services, destroys at
+   once. The runbook, "Deleted Projects: restore and early purge", has
+   the Operator steps.
 
 ## Agent sign-in
 

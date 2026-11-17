@@ -501,6 +501,60 @@ read-only:
 The User resumes it; an Operator does not scale it by hand, since the next
 apply would put Cloud's replicas back.
 
+## Deleted Projects: restore and early purge
+
+Since the cloud repo's B28d, a delete is soft. `cloud projects delete <p>`
+stops the Project: the reconciler applies it with every App suspended and
+no `edge-*` or `auth-*` Deployment and no Ingress, deletes its running
+one-off and cron Jobs, and keeps its Postgres, Vault entries, OpenTofu
+state, Deploys and images. Its address answers 404. For 7 days
+(`PROJECT_RESTORE_SECONDS` on the console, default 604800) its owner can
+run `cloud projects restore <p>`, or press Restore under Deleted Projects
+on the Projects page. Then the reconciler purges it with the old destroy
+(change `project.purge`). While held it counts only its Postgres storage
+in its owner's Budget. A Project with no Services, and a delete with
+`--purge` (`DELETE /api/v1/projects/<p>?purge=true`), are destroyed at
+once. Nothing in infra changed for this: the reconciler already deletes
+edge Deployments and Ingresses when an App is removed, and may delete
+Jobs in Project namespaces.
+
+The held Projects, read-only, in the `cloud` database:
+
+```sql
+SELECT slug, deleted_at, purge_after FROM projects
+ WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purged_at IS NULL
+ ORDER BY purge_after;
+```
+
+A stopped Project, read-only:
+`kubectl --context kubernetes-admin@kubernetes -n p-<project> get deploy,ingress,jobs`
+shows each `app-<app>` at 0 replicas, no `edge-*` or `auth-*` and no
+Ingress.
+
+**Purge early** when a User asks, or to free a held Project's storage: the
+owner runs `cloud projects delete <p> --purge`. An Operator can end the
+hold instead; the reconciler purges it within `RECONCILE_POLL_SECONDS`
+(5 s) and records `project.purge` in the name of whoever deleted it:
+
+```sql
+UPDATE projects SET purge_after = now()
+ WHERE slug = '<p>' AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purged_at IS NULL;
+```
+
+**Restore** is the owner's: Cloud has no Operator restore, because a
+restore plans against the owner's Budget. To give an owner more time,
+move the purge later before it passes:
+
+```sql
+UPDATE projects SET purge_after = purge_after + interval '7 days'
+ WHERE slug = '<p>' AND deleted_at IS NOT NULL AND purged_at IS NULL;
+```
+
+After the purge only the nightly dumps are left; see "Restore a Project
+database" below. A restore refused with `plan_invalid` and "no longer fits
+your Budget" means the owner's other Projects took the room; the owner
+frees some, or an Operator raises the Budget.
+
 ## Worker and cron Services
 
 A worker Service (the cloud repo's B18) is Deployment `worker-<name>` in
