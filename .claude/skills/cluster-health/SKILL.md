@@ -222,7 +222,8 @@ DNS provider secret, rate-limit from Let's Encrypt.
 
 ```bash
 # Per-DB dumps: last successful run of each backup CronJob (the dumps live
-# on NFS, /srv/nfs/{mysql,postgresql}-backup/per-db/, not in the DB pods)
+# on NFS, /srv/nfs/{mysql,postgresql}-backup/per-db/ and, for Cloud's p_*
+# databases, /srv/nfs/postgresql-backup/cloud-per-db/, not in the DB pods)
 kubectl -n dbaas get cronjob mysql-backup postgresql-backup \
     -o custom-columns=NAME:.metadata.name,LAST_OK:.status.lastSuccessfulTime
 

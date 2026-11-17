@@ -794,9 +794,16 @@ User saves a new change.
 
 Every Project Postgres is a database on `pg-cluster-v18` named
 `p_<project>_<service>_<hash>`, owned by the role of the same name. The nightly
-`postgresql-backup` dumps it with every other database
-(`/backup/per-db/<db>/dump_<ts>.dump`; [restore-postgresql.md](restore-postgresql.md),
-"Restore Single Database").
+`postgresql-backup` dumps it in the same pass as every other database, but
+into its own directory: `/backup/cloud-per-db/<db>/dump_<ts>.dump`
+(`/srv/nfs/postgresql-backup/cloud-per-db/` on the Proxmox host), apart from
+the homelab's `/backup/per-db/`. Dumps a User takes on demand are in
+`/backup/cloud-manual/<db>/manual_<ts>.dump`, a directory owned by uid 999
+that only Cloud's backup Jobs write. Both keep 14 days; the nightly job
+deletes older files. Before 2026-11-19 the nightly dumps of `p_*` databases
+were in `/backup/per-db/` and age out of it by 2026-12-03.
+[restore-postgresql.md](restore-postgresql.md), "Restore Single Database",
+has the general steps.
 
 1. Find the database:
    `SELECT datname FROM pg_database WHERE datname LIKE 'p\_<project>\_%';`
