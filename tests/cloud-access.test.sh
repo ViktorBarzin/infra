@@ -72,7 +72,8 @@
 #     or a percentage, maxUnavailable, another eviction policy, edge pods,
 #     matchExpressions, a second name), the App pods' soft spread over
 #     nodes admitted and each other spread refused, a Caddyfile with and without the App leg's retry
-#     lines admitted, the App's preStop sleep
+#     lines and its keepalive off admitted (another keepalive refused), the
+#     App's preStop sleep
 #     (exec and the sleep action) admitted and refused on the edge, the
 #     App, edge and oauth2-proxy Deployments each admitted after the drain
 #     handoff's rollout restart (the restartedAt template annotation), the

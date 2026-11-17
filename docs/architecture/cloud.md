@@ -352,7 +352,10 @@ Traefik reach only edge pods with the `edge-config` label. Every Service
 (`stacks/cloud/main.tf`), so Traefik waits 125 s for an App's response
 headers, the request timeout `cloud help limits` states, instead of its
 global 30 s. `cloud-managed-service` admits no other `traefik.*` Service
-annotation.
+annotation. The edge opens one connection to the App per request
+(`keepalive off` in its Caddyfile): the App's Kubernetes Service balances
+connections, and a kept connection would stay on a stopping pod through
+its preStop delay.
 
 ```mermaid
 flowchart LR

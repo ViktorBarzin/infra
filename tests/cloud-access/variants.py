@@ -668,6 +668,15 @@ case("edge-cm-retry-all", "kr", RENDERED, "Caddyfile that retries requests the A
      variant(public_cf, edit("\t\t\tlb_retry_match expression false\n", "")))
 case("edge-cm-retry-long", "kr", RENDERED, "Caddyfile that holds requests 60 s for an App",
      variant(public_cf, edit("lb_try_duration 5s", "lb_try_duration 60s")))
+# One connection per request to the App (the cloud repo's P08 fix): admitted
+# with and without it while Cloud releases it; any other keepalive is not a
+# Cloud render.
+KEEPALIVE = "\t\t\t\tkeepalive off\n"
+assert KEEPALIVE in public_cf["data"][CADDY], "the App leg keeps no connection"
+case("edge-cm-no-keepalive-line", "kr", "ok", "Caddyfile from before the App leg's keepalive off",
+     variant(public_cf, edit(KEEPALIVE, "")))
+case("edge-cm-keepalive-on", "kr", RENDERED, "Caddyfile that keeps App connections for 10 minutes",
+     variant(public_cf, edit("keepalive off", "keepalive 10m")))
 case("edge-cm-comment", "kr", "ok", "Caddyfile with a comment line before it", variant(public_cf, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
 for cookie in COOKIE_LIST.split("|")[:4]:
     short = cookie.split("[")[0].rstrip("_").replace("\\.", ".")

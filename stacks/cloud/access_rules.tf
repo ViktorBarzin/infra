@@ -534,7 +534,7 @@ locals {
     ":8080 {",
   ]
   cloud_caddyfile_app_leg = [
-    "transport http {", "max_response_header 64KB", "}",
+    "transport http {", "max_response_header 64KB", "@KEEPALIVE@", "}",
     "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
     "header_up Cookie `^;\\s*` \"\"",
   ]
@@ -543,7 +543,13 @@ locals {
   # Service for a second or two). Optional while Cloud releases it: a
   # Caddyfile rendered before has no such lines. A later change makes them
   # required. @RETRY@ stands for the group in cloud_caddyfile_res.
-  cloud_caddyfile_retry      = ["lb_try_duration 5s", "lb_try_interval 250ms", "lb_retry_match expression false"]
+  cloud_caddyfile_retry = ["lb_try_duration 5s", "lb_try_interval 250ms", "lb_retry_match expression false"]
+  # The edge opens one connection to the App per request (the cloud repo's
+  # Render-parity P08 fix): the App's Kubernetes Service balances
+  # connections, and a kept connection stays on its pod through that pod's
+  # preStop delay. Optional while Cloud releases it, like the retry lines.
+  # @KEEPALIVE@ stands for it in cloud_caddyfile_res.
+  cloud_caddyfile_keepalive  = "keepalive off"
   cloud_caddyfile_set_cookie = "header_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` \"\""
   cloud_caddyfile_k1 = {
     start = [
@@ -617,7 +623,7 @@ locals {
   cloud_caddyfile_res = {
     for k, lines in local.cloud_caddyfile_variants : k => replace(join("", concat(
       ["^(?:[\\t ]*(?:#[^\\n]*)?\\n)*"],
-      [for l in lines : l == "@RETRY@" ? "(?:${join("", [for r in local.cloud_caddyfile_retry : "[\\t ]*${r}\\n"])})?" : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"],
+      [for l in lines : l == "@RETRY@" ? "(?:${join("", [for r in local.cloud_caddyfile_retry : "[\\t ]*${r}\\n"])})?" : l == "@KEEPALIVE@" ? "(?:[\\t ]*${local.cloud_caddyfile_keepalive}\\n)?" : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"],
       ["(?:[\\t ]*\\n)*$"],
     )), "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
   }
