@@ -31,6 +31,19 @@ variable "image_prune" {
   }
 }
 
+# Cloud backlog B13: Renovate on App repos. The Forgejo login of the bot the
+# renovate-cloud-apps CronJob runs as (stacks/renovate). Set, the console
+# names it on GET /api/v1/instance, and `cloud new` and `cloud renovate
+# enable` add it, the topic cloud-app and Cloud's status account (cloud-bot)
+# to App repos. Empty keeps Renovate off on Cloud. Set it only after Vault
+# secret/cloud/system holds forgejo_status_token (runbook, "Renovate on App
+# repos"): without that token Cloud runs no check builds and posts no
+# status, so Renovate's pull requests would wait forever.
+variable "renovate_account" {
+  type    = string
+  default = ""
+}
+
 # Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals
 # each build's job to it; its identity is the GitHub secret CLOUD_JOB_KEY of
 # ViktorBarzin/cloud-builder, and a copy is in Vault secret/cloud/builder
@@ -77,7 +90,7 @@ locals {
 
   # Appended to the tanstack_app module's platform env (DATABASE_URL,
   # OIDC_DISCOVERY_URL, the group names and the rest).
-  cloud_console_env = [
+  cloud_console_env = concat([
     # Plans ask the cluster for taken hosts; needs the token and the role above.
     { name = "TAKEN_HOSTS_FROM_CLUSTER", value = "true" },
     # Bearer tokens from both Authentik clients: the console's own (device
@@ -105,7 +118,9 @@ locals {
     # cluster's resolvers answer *.viktorbarzin.me with internal addresses.
     # Pod IPv6 is ULA with no NAT66, so Apps reach the internet over IPv4 only.
     { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
-  ]
+    ], var.renovate_account == "" ? [] : [
+    { name = "RENOVATE_ACCOUNT", value = var.renovate_account },
+  ])
 
   cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"
   cloud_loki_url       = "http://loki.monitoring.svc.cluster.local:3100"

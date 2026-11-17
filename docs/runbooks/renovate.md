@@ -174,6 +174,30 @@ Adding an app repo:
 
 Run by hand: `kubectl -n renovate create job renovate-apps-manual --from=cronjob/renovate-apps`, then `kubectl -n renovate logs -f job/renovate-apps-manual`. For a dry run, use the infra recipe above with `cronjob/renovate-apps`. A healthy run logs `Repository started` and `Repository finished` for each repo, with no `WARN` or `ERROR` lines.
 
+## Cloud App repos (renovate-cloud-apps)
+
+A third CronJob, `renovate/renovate-cloud-apps`, updates the App repos of Cloud's Users (Cloud backlog B13, Viktor's decision V13: merge every update, majors too). It shares the `renovate-bot` account, the `renovate-env` Secret, the image pin and `run-renovate.sh`; nothing else.
+
+| What | Where |
+|---|---|
+| Global config, the whole policy | `stacks/renovate/files/config-cloud-apps.js`, ConfigMap `renovate/renovate-cloud-apps` |
+| Which repos | autodiscover by the Forgejo topic `cloud-app`, among repos where `renovate-bot` is a collaborator; every `viktor/*` repo is filtered out (`autodiscoverFilter`) |
+| Schedule and kill switch | `variable "cloud_apps_schedule"` (`7 */2 * * *`) and `variable "cloud_apps_suspended"` in `stacks/renovate/main.tf` |
+| Cache | PVC `renovate/renovate-cloud-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
+| Metrics and alert | Pushgateway `job="renovate"`, `instance="cloud-apps"`; `RenovateCloudAppsNotSucceeding` after 7 hours without a success |
+
+Policy:
+
+- One pull request per repo a week, branch `renovate/all`, with every update grouped, majors included. Renovate creates and updates branches only in its window, Monday 00:00 to 05:59 UTC; the CronJob runs three times in it, and the other runs merge.
+- Renovate merges the pull request itself (`automergeType: pr`, `platformAutomerge: false`) only when the branch status is green. Cloud posts the commit status `cloud/build` from a check build of the branch, which never deploys. A commit with no status reads as pending on Forgejo, so nothing merges before Cloud has built it, and a failed check build is never merged. `ignoreTests` stays false. Forgejo's own "merge when checks succeed" is off on purpose: with no required status checks on the branch it merges at once.
+- `force` holds the merge rules and the grouping against a repo's own `renovate.json`. A User can still hold a package back with `ignoreDeps`, or turn Renovate off in the repo with `"enabled": false`.
+- npm releases wait 3 days, except `@viktorbarzin/*`, which come from Forgejo's npm registry. `rebaseWhen: conflicted`: a stale but mergeable branch merges without a rebase; the merge's own Deploy is the gate after it.
+- `prCommitsPerRunLimit: 20` across all repos.
+
+Repos come and go without a change here: `cloud new` (unless `--no-renovate`) and `cloud renovate enable <project> <app>` add the topic, `renovate-bot` and Cloud's status account (`cloud-bot`) as Write collaborators with the User's own Forgejo token; `cloud renovate disable` removes them. Cloud's side is in `docs/runbooks/cloud.md`, "Renovate on App repos".
+
+Run by hand: `kubectl -n renovate create job renovate-cloud-apps-manual --from=cronjob/renovate-cloud-apps`, then `kubectl -n renovate logs -f job/renovate-cloud-apps-manual`. `Autodiscovered repositories` lists what it found.
+
 ## Alert
 
 `RenovateNotSucceeding` fires when `instance="infra"` has not pushed a success timestamp for 13 hours (six 2-hourly runs, so a night of runs skipped by the calm gate during the backup window stays quiet; it was 2 hours while the CronJob ran every 10 minutes), unless the CronJob is suspended or was suspended at any point in the last 13 hours (`max_over_time(kube_cronjob_spec_suspend[13h])`), so a resumed CronJob gets one full window before the alert can fire. Check, in order:

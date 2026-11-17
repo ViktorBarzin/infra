@@ -298,6 +298,16 @@ on. The console gets `PROMETHEUS_URL=http://prometheus-server.monitoring.svc.clu
 leave out the "Not deployed yet" placeholder and to tag each line with its
 Deploy. It adds no streams, because each container is one stream already.
 
+Dependency updates (cloud B13): the `renovate-cloud-apps` CronJob
+(`stacks/renovate`) opens one weekly pull request on each App repo with the
+Forgejo topic `cloud-app`. The reconciler builds each `renovate/*` commit as
+a check build that never deploys and posts the commit status `cloud/build`
+to Forgejo in-cluster as `cloud-bot`, with `forgejo_status_token` from
+`secret/cloud/system`; Renovate merges only after that status is success.
+The push webhook's branch filter includes `renovate/*`, so those pushes
+reach Cloud at once. Runbook: `docs/runbooks/cloud.md`, "Renovate on App
+repos".
+
 Push webhooks and Deploy Hooks (cloud B07): Forgejo posts push events to
 `https://cloud.viktorbarzin.me/hooks/forgejo`, and a User's Deploy Hook is a
 POST to `https://cloud.viktorbarzin.me/hooks/deploy/<token>`. Both enter

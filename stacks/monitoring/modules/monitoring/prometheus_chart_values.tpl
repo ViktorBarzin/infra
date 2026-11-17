@@ -6103,6 +6103,24 @@ serverFiles:
             annotations:
               summary: "Renovate has not completed a successful run in the last 13h (or has never pushed one), and its CronJob has not been suspended in that time"
               description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate exited non-zero or a repository aborted with external-host-error). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
+          # The renovate-cloud-apps CronJob (Cloud Users' App repos, Cloud B13)
+          # runs every 2 hours, so 7h is three runs in a row that did not
+          # succeed (the etcd calm gate skips count as not succeeding). Quiet
+          # while that CronJob is suspended, as above.
+          - alert: RenovateCloudAppsNotSucceeding
+            expr: |
+              (
+                (time() - max(renovate_last_success_timestamp_seconds{job="renovate", instance="cloud-apps"})) > 25200
+                or
+                absent(renovate_last_success_timestamp_seconds{job="renovate", instance="cloud-apps"})
+              )
+              unless on() (max(max_over_time(kube_cronjob_spec_suspend{namespace="renovate", cronjob="renovate-cloud-apps"}[7h])) == 1)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Renovate for Cloud App repos has not completed a successful run in 7h, and its CronJob has not been suspended in that time"
+              description: "Cloud Users' dependency updates are not landing. renovate_last_run_exit_code{instance=\"cloud-apps\"} shows the last outcome. kubectl -n renovate get jobs -l app=renovate-cloud-apps; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md, Cloud App repos"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
