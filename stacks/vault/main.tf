@@ -435,26 +435,6 @@ resource "vault_identity_group_alias" "deal_watchers" {
   canonical_id   = vault_identity_group.deal_watchers.id
 }
 
-# Adopt the deal-watchers objects into state. CI created them on 2026-11-17
-# (pipeline 4053), but that run failed on stacks/authentik before its push
-# step, so the encrypted vault state on master never recorded them and the
-# next apply would try to create them again. Delete these blocks once an
-# apply has imported them.
-import {
-  to = vault_policy.deal_watchers
-  id = "deal-watchers"
-}
-
-import {
-  to = vault_identity_group.deal_watchers
-  id = "e3247f01-343c-70ea-c843-877dbcd2d388"
-}
-
-import {
-  to = vault_identity_group_alias.deal_watchers
-  id = "fe8b92a5-f155-cbea-ff27-a50666bdd15b"
-}
-
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Vault has its own auth (OIDC, K8s, tokens). External CLI clients,
