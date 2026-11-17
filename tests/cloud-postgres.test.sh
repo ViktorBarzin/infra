@@ -28,16 +28,23 @@
 #     CREATEROLE;
 #   the audit behind alerts CloudProjectRoleUnlimited and
 #     CloudProjectConnectionsOverCeiling counts LOGIN roles cloud_provisioner
-#     administers with CONNECTION LIMIT -1 or above 20, and sums their limits.
-# Needs docker and the postgres:18 image.
+#     administers with CONNECTION LIMIT -1 or above 20, and sums their limits;
+#   on the operand image pg-cluster-v18 runs (var.pg_cluster_v18_image in
+#     stacks/dbaas/modules/dbaas/main.tf, or CLOUD_PG_EXT_IMAGE), a Project
+#     database owner creates the trusted extensions vector and pg_trgm and
+#     cannot create postgis, which stays superuser-only.
+# Needs docker, the postgres:18 image and the operand image.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$HERE/stacks/dbaas/modules/dbaas/cloud_postgres_rules.tf"
 IMAGE="${CLOUD_PG_TEST_IMAGE:-postgres:18}"
 NAME="cloud-pg-test-$$"
+# The image pg-cluster-v18 runs, as pinned (tag and digest).
+EXT_IMAGE="${CLOUD_PG_EXT_IMAGE:-$(sed -n '/^variable "pg_cluster_v18_image"/,/^}/s/^ *default *= *"\(.*\)"$/\1/p' "$HERE/stacks/dbaas/modules/dbaas/main.tf")}"
+EXT_NAME="cloud-pg-ext-test-$$"
 
 TMP="$(mktemp -d)"
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$TMP"; }
+cleanup() { docker rm -f "$NAME" "$EXT_NAME" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT
 
 cp "$SRC" "$TMP/" || { echo "FAIL: cannot copy $SRC"; exit 1; }
@@ -280,6 +287,40 @@ l="$(limits 2>&1)"; [ "$l" = "0 81" ] && ok "limits audit ignores a role cloud_p
 # --- nothing else changed ----------------------------------------------------
 expect_ok "an existing app role still reaches its database" as tasks tasks -c 'select 1'
 expect_ok "terraform_state still reaches its database" as terraform_state terraform_state -c 'select count(*) from dbaas.states'
+
+# --- extensions on the operand image -----------------------------------------
+# A Project database owner is no superuser, so PostgreSQL lets it CREATE
+# EXTENSION only for extensions marked trusted. The CNPG operand image has no
+# entrypoint that runs initdb, so this starts the server by hand, with trust on
+# the local socket only. The role SQL runs first, so p_ext is made the way
+# Cloud makes a Project role.
+[ -n "$EXT_IMAGE" ] || bad "no operand image: pg_cluster_v18_image default not found in main.tf"
+if [ -n "$EXT_IMAGE" ] && docker run -d --name "$EXT_NAME" --entrypoint sh "$EXT_IMAGE" -c \
+  'B=/usr/lib/postgresql/18/bin; $B/initdb -D /tmp/pg -U postgres --auth=trust >/dev/null && exec $B/postgres -D /tmp/pg -c listen_addresses= -k /tmp' >/dev/null; then
+  for _ in $(seq 1 60); do
+    docker exec "$EXT_NAME" psql -h /tmp -U postgres -tAc 'select 1' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  ext() { local role="$1" db="$2"; shift 2
+    docker exec -i "$EXT_NAME" psql -h /tmp -U "$role" -d "$db" -v ON_ERROR_STOP=1 -X -q -tA "$@"; }
+  expect_ok "operand image: role SQL runs as the superuser" ext postgres postgres -f - <"$TMP/cloud.sql"
+  expect_ok "operand image: provisioner creates p_ext and its database" \
+    ext cloud_provisioner postgres -c "CREATE ROLE p_ext LOGIN CONNECTION LIMIT 2 IN ROLE cloud_projects" \
+      -c "GRANT p_ext TO cloud_provisioner WITH SET TRUE" -c "CREATE DATABASE p_ext OWNER p_ext" \
+      -c "REVOKE CONNECT, TEMPORARY ON DATABASE p_ext FROM PUBLIC"
+  expect_ok "operand image: p_ext creates vector and pg_trgm" \
+    ext p_ext p_ext -c 'CREATE EXTENSION IF NOT EXISTS vector' -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm'
+  v="$(ext p_ext p_ext -c "select '[1,2]'::vector, similarity('cloud', 'clout')" 2>&1)"
+  [ "$v" = "[1,2]|0.5" ] && ok "operand image: p_ext uses vector and pg_trgm ($v)" || bad "operand image: vector and pg_trgm in use: $v"
+  owners="$(ext postgres p_ext -c "select string_agg(extname||':'||pg_get_userbyid(extowner), ' ' order by extname) from pg_extension where extname in ('vector','pg_trgm')" 2>&1)"
+  [ "$owners" = "pg_trgm:p_ext vector:p_ext" ] && ok "operand image: p_ext owns both extensions" || bad "operand image: extension owners: $owners"
+  expect_fail "operand image: p_ext cannot create postgis" "permission denied to create extension" \
+    ext p_ext p_ext -c 'CREATE EXTENSION postgis'
+  expect_fail "operand image: p_ext cannot create postgis through CASCADE" "permission denied to create extension" \
+    ext p_ext p_ext -c 'CREATE EXTENSION postgis_topology CASCADE'
+else
+  bad "operand image: cannot start $EXT_IMAGE"
+fi
 
 echo
 if [ "$FAILS" -eq 0 ]; then echo "PASS: cloud postgres roles and pg_hba"; else echo "FAIL: $FAILS check(s)"; exit 1; fi
