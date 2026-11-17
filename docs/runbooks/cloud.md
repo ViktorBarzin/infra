@@ -1297,9 +1297,12 @@ full during a Deploy, or an image pull; `kubectl -n p-<project> get jobs
 -l cloud.viktorbarzin.me/component=toolbox`, read-only).
 
 Rollback: remove `kubernetes_cluster_role.cloud_console_exec` from
-`stacks/cloud/main.tf` and apply. Every shell and psql session stops
+`stacks/cloud/main.tf` and apply. No new shell or psql session can start
 (the RoleBindings then name a role that does not exist and grant
-nothing); nothing else changes.
+nothing); nothing else changes. Sessions already open keep their exec
+stream, so end them too on the `cloud` database: `update exec_sessions
+set cut_off_at = now() where ended_at is null`. The console ends each
+within 15 s, at its next beat.
 
 ## Alerts
 
