@@ -36,6 +36,9 @@ func TestCapabilitiesCoverTheMeasuredMisses(t *testing.T) {
 		{"check whether a service is reachable from outside", []string{"homelab net check"}},
 		{"wait for a deployment rollout", []string{"homelab deploy wait"}},
 		{"wait until my pods are rolled out", []string{"homelab deploy wait"}},
+		{"what do we monitor for black friday price monitoring", []string{"changedetection", "deal-watches"}},
+		{"alert me when this product gets a discount", []string{"changedetection", "deal-watches"}},
+		{"watch an amazon price drop", []string{"changedetection", "deal-watches"}},
 	}
 	for _, c := range cases {
 		hits := matchCapabilities(capabilities(), c.task)

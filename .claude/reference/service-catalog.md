@@ -109,7 +109,7 @@
 | homepage | Dashboard/startpage | homepage |
 | matrix | Matrix homeserver (tuwunel — Rust, RocksDB; native password auth) | matrix |
 | linkwarden | Bookmark manager | linkwarden |
-| changedetection | Web change detection | changedetection |
+| changedetection | Web change detection; price-drop deal watches in group `deals` -> Slack (docs/runbooks/deal-watches.md) | changedetection |
 | tandoor | Recipe manager | tandoor |
 | real-estate-crawler | Property crawler | real-estate-crawler |
 | tor-proxy | Tor proxy | tor-proxy |

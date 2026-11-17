@@ -484,6 +484,23 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "watch a product's price and get told when it drops (deals, Black Friday, Amazon, restock)",
+			Use:     "changedetection.viktorbarzin.me: a restock_diff watch in the 'deals' group (posts to Slack #changenotifications)",
+			Instead: "a hand-written scraper on a systemd timer or a cron job on the devvm",
+			Synonyms: []string{"price", "prices", "discount", "discounts", "deal", "deals", "sale",
+				"black friday", "cyber monday", "price drop", "price alert", "price watch",
+				"cheaper", "amazon", "camelcamelcamel", "restock", "back in stock", "shopping"},
+			Detail: []string{
+				"how:    POST /api/v1/watch with processor restock_diff, tags [deals uuid] and",
+				"        processor_config_restock_diff.price_change_min = the target price.",
+				"        Key: Vault secret/changedetection homepage_credentials.",
+				"amazon: send Cookie i18n-prefs=GBP, else our egress gets EUR prices, and pin the",
+				"        new-offer price with an xpath filter (the used offer is a second price).",
+				"limits: one product per page; MyProtein keeps its own rule-based myprotein-watch.",
+				"runbook: docs/runbooks/deal-watches.md",
+			},
+		},
+		{
 			Intent:   "see everything we self-host",
 			Use:      "homelab services [--search X]",
 			Synonyms: []string{"what do we run", "inventory", "services", "catalog", "self-hosted"},
