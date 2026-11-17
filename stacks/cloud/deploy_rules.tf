@@ -248,9 +248,10 @@ locals {
       # The home WAN address, as the console has it: webhooks to it are
       # refused, since from inside it leads back to the homelab's edge.
       { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
-      # The size pass every 5 minutes (code default 10), so a Postgres at
-      # 80% sends storage_high within P24's 10 minutes.
-      { name = "RECONCILE_DATABASE_SIZE_SECONDS", value = "300" },
+      # The size pass every minute (code default 10 min), so a Postgres at
+      # 80% sends storage_high within P67's 2 minutes. Each pass is one
+      # pg_database_size per Project database.
+      { name = "RECONCILE_DATABASE_SIZE_SECONDS", value = "60" },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )
