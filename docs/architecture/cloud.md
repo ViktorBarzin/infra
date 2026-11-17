@@ -347,7 +347,12 @@ access change answers 503 or 502 until the new pods are ready instead of
 serving with the old rules. The Project quota holds a surge pod for every
 edge and oauth2-proxy beside the App's own, so the new pods start while
 the App's new pod is still getting ready. Cloud's Project policy lets
-Traefik reach only edge pods with the `edge-config` label.
+Traefik reach only edge pods with the `edge-config` label. Every Service
+`edge-<app>` names the ServersTransport `cloud/app-edge`
+(`stacks/cloud/main.tf`), so Traefik waits 125 s for an App's response
+headers, the request timeout `cloud help limits` states, instead of its
+global 30 s. `cloud-managed-service` admits no other `traefik.*` Service
+annotation.
 
 ```mermaid
 flowchart LR

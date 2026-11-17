@@ -58,7 +58,8 @@
 #     image and no restartPolicy, and every container rule on it too), probe
 #     hosts (liveness, readiness and startup; the App's own httpGet probes
 #     with no host and the TCP probe alone are admitted), prometheus.io
-#     annotations, the component label, the edge pod
+#     annotations, a traefik.* Service annotation other than the edge
+#     Service's own ServersTransport (cloud-app-edge), the component label, the edge pod
 #     (image, args, env and its edge secret, port number, readiness probe,
 #     mounts, a second container) and its Caddyfile (structure, upstreams,
 #     the forged identity headers it deletes, the edge secret it adds and

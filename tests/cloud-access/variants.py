@@ -577,6 +577,15 @@ case("svc-auth-port", "kr", A_SVC, "oauth2-proxy Service port targeting app",
      variant(auth_svc, lambda o: o["spec"]["ports"][0].update({"targetPort": "app"})))
 case("svc-nodeport", "kr", "must be type ClusterIP", "NodePort Service",
      variant(edge_svc, lambda o: o["spec"].update({"type": "NodePort"})))
+TRANSPORT_KEY = "traefik.ingress.kubernetes.io/service.serverstransport"
+E_TRANSPORT = "the only traefik.* annotation a Kubernetes Service may carry"
+assert edge_svc["metadata"].get("annotations", {}).get(TRANSPORT_KEY) == "cloud-app-edge@kubernetescrd", "the edge Service names Cloud's ServersTransport"
+case("svc-edge-other-transport", "kr", E_TRANSPORT, "edge Service naming another ServersTransport",
+     variant(edge_svc, lambda o: o["metadata"]["annotations"].update({TRANSPORT_KEY: "traefik-insecure-skip-verify@kubernetescrd"})))
+case("svc-auth-transport", "kr", E_TRANSPORT, "oauth2-proxy Service naming Cloud's ServersTransport",
+     variant(auth_svc, lambda o: o["metadata"].setdefault("annotations", {}).update({TRANSPORT_KEY: "cloud-app-edge@kubernetescrd"})))
+case("svc-edge-sticky", "kr", E_TRANSPORT, "edge Service with another traefik.* annotation",
+     variant(edge_svc, lambda o: o["metadata"]["annotations"].update({"traefik.ingress.kubernetes.io/service.sticky.cookie": "true"})))
 case("svc-prometheus", "kr", PROM, "Service asking to be scraped",
      variant(one("Service", "app-menu"), lambda o: o["metadata"].setdefault("annotations", {}).update({"prometheus.io/scrape": "true", "prometheus.io/port": "3000"})))
 

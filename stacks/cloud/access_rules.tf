@@ -34,7 +34,9 @@
 #     SecretStore, never the vault-kv or vault-database ClusterSecretStore
 #     (which read all of secret/*).
 #   cloud-managed-service  a Kubernetes Service is ClusterIP with no
-#     externalIPs and no prometheus.io/* annotation. An edge Service (edge-*)
+#     externalIPs and no prometheus.io/* annotation. Its only traefik.*
+#     annotation is service.serverstransport naming Cloud's ServersTransport
+#     cloud/app-edge, on an edge Service only. An edge Service (edge-*)
 #     selects only that App's edge pods and has one port, edge, targeting the
 #     container port edge; an oauth2-proxy Service (auth-*) selects only that
 #     App's oauth2-proxy pods on port http. Traefik follows ExternalName
@@ -401,6 +403,23 @@ locals {
     secret_key = "secret"
     config_dir = "/etc/caddy"
     run_dir    = "/run/caddy"
+  }
+
+  # The Traefik ServersTransport every edge Service names (main.tf; the
+  # cloud repo's EDGE_SERVERS_TRANSPORT and modules/app edge.tf). Without
+  # it Traefik uses its global responseHeaderTimeout of 30 s (stacks/traefik)
+  # and answers 504 to an App request whose headers take longer. 125 s is
+  # the request timeout `cloud help limits` states, Cloudflare's Proxy Read
+  # Timeout (Render-parity P08, 2026-11-17). Dial and idle times are the
+  # global ones: a CRD ServersTransport without them gets Traefik's
+  # defaults instead.
+  cloud_edge_transport = {
+    name                    = "app-edge"
+    annotation              = "traefik.ingress.kubernetes.io/service.serverstransport"
+    ref                     = "${local.cloud_namespace}-app-edge@kubernetescrd"
+    dial_timeout            = "60s"
+    response_header_timeout = "125s"
+    idle_conn_timeout       = "90s"
   }
 
   # The shared Authentik client (stacks/authentik cloud-apps.tf, the same
@@ -1237,6 +1256,15 @@ locals {
           {
             expression = "variables.anns.all(k, !k.startsWith('prometheus.io/'))"
             message    = "in a Cloud namespace, a Kubernetes Service may not carry prometheus.io/* annotations"
+            reason     = "Forbidden"
+          },
+          {
+            # Traefik reads service.* annotations from the Kubernetes
+            # Service. Only the edge names a ServersTransport, and only
+            # Cloud's (local.cloud_edge_transport); no other traefik.*
+            # annotation, so a Service cannot pick another transport.
+            expression = "variables.anns.all(k, !k.startsWith('traefik.') || (k == '${local.cloud_edge_transport.annotation}' && object.metadata.name.startsWith('${local.cloud_edge.prefix}') && variables.anns[k] == '${local.cloud_edge_transport.ref}'))"
+            message    = "in a Cloud namespace, the only traefik.* annotation a Kubernetes Service may carry is ${local.cloud_edge_transport.annotation}: ${local.cloud_edge_transport.ref}, on Service ${local.cloud_edge.prefix}<app>"
             reason     = "Forbidden"
           },
           {

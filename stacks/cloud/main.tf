@@ -76,6 +76,28 @@ resource "kubernetes_cluster_role" "cloud_reconciler_project" {
   }
 }
 
+# How long Traefik waits for an App: every Cloud edge Service names this
+# ServersTransport (local.cloud_edge_transport in access_rules.tf, which
+# says why). Apply it before a Cloud release whose edge Services name it:
+# Traefik cannot route a Service whose ServersTransport does not exist.
+resource "kubernetes_manifest" "cloud_edge_transport" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = local.cloud_edge_transport.name
+      namespace = module.console.namespace
+    }
+    spec = {
+      forwardingTimeouts = {
+        dialTimeout           = local.cloud_edge_transport.dial_timeout
+        responseHeaderTimeout = local.cloud_edge_transport.response_header_timeout
+        idleConnTimeout       = local.cloud_edge_transport.idle_conn_timeout
+      }
+    }
+  }
+}
+
 # The policies with the homelab's taken hosts written in (taken_hosts.tf).
 resource "kubernetes_manifest" "cloud_admission_policy" {
   for_each = { for k, v in local.cloud_admission_policies_applied : k => v if v.kind == "ValidatingAdmissionPolicy" }
