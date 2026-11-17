@@ -511,8 +511,17 @@ state, Deploys and images. Its address answers 404. For 7 days
 (`PROJECT_RESTORE_SECONDS` on the console, default 604800) its owner can
 run `cloud projects restore <p>`, or press Restore under Deleted Projects
 on the Projects page. Then the reconciler purges it with the old destroy
-(change `project.purge`). While held it counts only its Postgres storage
-in its owner's Budget. A Project with no Services, and a delete with
+(change `project.purge`).
+
+The Budget rule for a held Project (the parity lead's decision,
+2026-11-17, so the test suites' create and delete churn fits a Budget):
+it counts 0 Projects, 0 CPU and 0 memory, and only its Postgres storage.
+Its Postgres leaves the shared 80-connection ceiling too. Its restore
+plans again and is refused when the Budget or the ceiling no longer fits.
+Its App names stay held and count in the owner's 20 held names
+(`HELD_APP_NAMES_MAX`, with the names released in the last 30 days); a
+delete that would pass 20 is refused as `held_names_full`, and only
+`--purge` deletes then. A Project with no Services, and a delete with
 `--purge` (`DELETE /api/v1/projects/<p>?purge=true`), are destroyed at
 once. Nothing in infra changed for this: the reconciler already deletes
 edge Deployments and Ingresses when an App is removed, and may delete
@@ -551,7 +560,20 @@ UPDATE projects SET purge_after = purge_after + interval '7 days'
 ```
 
 After the purge only the nightly dumps are left; see "Restore a Project
-database" below. A restore refused with `plan_invalid` and "no longer fits
+database" below.
+
+**Rolling back** the console and reconciler to a release before B28d:
+the old code knows no hold. It never purges a held Project, a re-apply
+of one (a Size change, a stop that is retried) renders it running again,
+so its address serves again, and its failed stop is retried as a
+destroy. Roll forward instead when you can. If you must roll back, purge
+the held Projects first: set `purge_after = now()` on all of them (the
+`UPDATE` above without the slug), wait until every one has `purged_at`
+and its destroy is done (`SELECT slug FROM projects WHERE purge_after IS
+NOT NULL AND purged_at IS NULL` returns nothing, and no destroy job is
+queued or running), then roll back. Tell their owners first: a purge
+cannot be undone. Migration 0031 is additive, so the old release runs on
+the new columns. A restore refused with `plan_invalid` and "no longer fits
 your Budget" means the owner's other Projects took the room; the owner
 frees some, or an Operator raises the Budget.
 
