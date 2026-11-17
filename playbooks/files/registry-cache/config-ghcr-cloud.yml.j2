@@ -1,0 +1,52 @@
+version: 0.1
+log:
+  fields:
+    service: registry-ghcr-cloud
+storage:
+  # No `cache: blobdescriptor: inmemory`, on purpose (infra#199). A proxy cache
+  # expires each repo's copy of a blob on its own 168h timer, but the blob data
+  # is stored once and shared by every repo that has it. When the first repo's
+  # timer fires, the data goes and the other repos keep their links. With the
+  # in-memory descriptor cache the registry still believed the blob was there and
+  # answered 200 with 0 bytes, so containerd failed with "unexpected EOF" until
+  # the 02:00 restart. Without it, a missing blob is a miss and is re-fetched
+  # from upstream on the next pull.
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+  maintenance:
+    uploadpurging:
+      enabled: true
+      age: 24h
+      interval: 4h
+      dryrun: false
+http:
+  addr: :5000
+  draintimeout: 60s
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+# Cloud App images only (cloud backlog B36). ghcr.io/viktorbarzin/cloud-*
+# packages are private, so this second ghcr cache signs in with Cloud's
+# read:packages token from Vault, rendered at apply time and never committed:
+#
+#   vault kv get -field=ghcr_pull secret/cloud/github-narrow
+#
+# A classic token cannot be scoped to some packages: it reads every private
+# package of the account. So nginx.conf sends this registry only GET and HEAD
+# of /v2/viktorbarzin/cloud-<project>_<app>/manifests|blobs/sha256:<digest>,
+# and only from the six k8s nodes; every other ghcr path stays on
+# registry-ghcr, which holds no credentials. The node addresses do not tell
+# tenants apart (the kubelet pulls for every pod); the digest does, since
+# only Cloud knows an App image's digest. Project pods cannot reach this VM at all: the Calico
+# floor in stacks/cloud (cloud_project_egress_floor) denies 10.0.0.0/8.
+proxy:
+  remoteurl: https://ghcr.io
+  username: {{ registry_cache_cloud_ghcr_username }}
+  password: {{ registry_cache_cloud_ghcr_token }}
+  ttl: 168h

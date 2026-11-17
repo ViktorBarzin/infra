@@ -14,7 +14,7 @@ caches only:
 | Port | Upstream |
 |---|---|
 | 5000 | docker.io (Docker Hub) — auth via dockerhub_registry_password |
-| 5010 | ghcr.io |
+| 5010 | ghcr.io; Cloud App images (`viktorbarzin/cloud-<project>_<app>` manifests and blobs by digest, GET and HEAD, k8s nodes only) go to `registry-ghcr-cloud`, which signs in with Cloud's `ghcr_pull` token (`secret/cloud/github-narrow`, cloud B36). nginx resolves that container per request and does not depend on it, so the other mirrors start without it |
 | 5020 | quay.io |
 | 5030 | registry.k8s.io |
 | 5040 | reg.kyverno.io |

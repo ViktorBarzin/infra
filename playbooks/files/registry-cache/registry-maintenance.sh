@@ -54,8 +54,8 @@ set -uo pipefail
 LOG=/var/log/registry-maintenance.log
 LOCK=/var/lock/registry-maintenance.lock
 KEEP_TAGS=10
-GC_CONTAINERS=(registry-dockerhub registry-ghcr)
-RESTART_CONTAINERS=(registry-dockerhub registry-ghcr)
+GC_CONTAINERS=(registry-dockerhub registry-ghcr registry-ghcr-cloud)
+RESTART_CONTAINERS=(registry-dockerhub registry-ghcr registry-ghcr-cloud)
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 
