@@ -8598,6 +8598,25 @@ serverFiles:
             annotations:
               summary: "Cloud builds used {{ $value | humanizePercentage }} of this month's GitHub Actions minutes"
               description: "Private GitHub Actions minutes are shared by Cloud builds and every other private repo. At 100% every private build stops until the month ends."
+          - alert: CloudNotificationsStuck
+            # cloud_notification_oldest_pending_seconds{kind}: age of the
+            # oldest delivery still waiting (0 when none), set after each
+            # notification pass; cloud_notification_pass_last_success_timestamp_seconds:
+            # when a pass last succeeded (cloud repo, src/reconciler/metrics.ts).
+            # Email only: it goes to Cloud's own mail server, so a waiting one
+            # means Cloud cannot send (smtp_password gone after an authentik
+            # apply, the mail server down). A webhook retries for 24 h against
+            # a User's endpoint, which may be down for its own reasons, so its
+            # age alerts nothing. The second clause catches a loop that keeps
+            # failing, which stops updating the age.
+            expr: max(cloud_notification_oldest_pending_seconds{kind="email"}) > 900 or (time() - max(cloud_notification_pass_last_success_timestamp_seconds)) > 900
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud notifications are stuck: an email has waited over 15 minutes, or the notification loop stopped"
+              description: "Cloud's oldest pending notification email is older than 15 minutes, or no notification pass succeeded for 15 minutes, for 10 minutes. Users miss failed Deploys and crashes. Check smtp_password in Vault secret/cloud/system (an authentik apply without it in cloud_system_carried_keys deletes it), the reconciler's cloud.notify log lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.notify\"'), and the mail server (kubectl -n mailserver get pods). Runbook: docs/runbooks/cloud.md, \"Notifications are stuck\"."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown

@@ -234,6 +234,7 @@ so the Postgres series keep their own `service` label, the Cloud Service name.
 | `cloud_postgres_disk_enforcement_failed{project,service}` | reconciler: 1 while the last size pass did not enforce the disk limit | `CloudPostgresDiskEnforcementFailed` |
 | `cloud_project_converging_seconds{project}` | reconciler | `CloudProjectStuckConverging` |
 | `cloud_build_minutes_used`, `cloud_build_minutes_allowance` | reconciler: set when a build checks the account's minutes, which it does only while the builder repo is private; with the public builder both read 0 | `CloudBuildMinutesHigh` |
+| `cloud_notification_oldest_pending_seconds{kind}`, `cloud_notification_pass_last_success_timestamp_seconds`, `cloud_notification_deliveries_failed_total{kind}` | reconciler: the oldest notification delivery still waiting (email or webhook, 0 when none), when a notification pass last succeeded, deliveries that gave up after 24 h | `CloudNotificationsStuck` (email and the pass only) |
 | `up{namespace="cloud",service="cloud-reconciler"}` | Prometheus | `CloudReconcilerDown` |
 
 `cloud_project_converging_seconds` is the seconds since the oldest `queued`

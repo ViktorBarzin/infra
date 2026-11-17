@@ -296,3 +296,50 @@ tests:
         alertname: CloudBuildMinutesHigh
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud}
+
+  # An email waiting over 15 minutes, for 10 minutes: warning, no page. A
+  # webhook that waits as long alerts nothing (the User's endpoint).
+  - interval: 2m
+    input_series:
+      - series: 'cloud_notification_oldest_pending_seconds{namespace="cloud", service="cloud-reconciler", kind="email"}'
+        values: '0+120x20'
+      - series: 'cloud_notification_oldest_pending_seconds{namespace="cloud", service="cloud-reconciler", kind="webhook"}'
+        values: '0+120x20'
+      - series: 'cloud_notification_pass_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler"}'
+        values: '0+120x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudNotificationsStuck
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CloudNotificationsStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}
+  - interval: 2m
+    input_series:
+      - series: 'cloud_notification_oldest_pending_seconds{namespace="cloud", service="cloud-reconciler", kind="email"}'
+        values: '0x20'
+      - series: 'cloud_notification_oldest_pending_seconds{namespace="cloud", service="cloud-reconciler", kind="webhook"}'
+        values: '0+120x20'
+      - series: 'cloud_notification_pass_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler"}'
+        values: '0+120x20'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: CloudNotificationsStuck
+        exp_alerts: []
+
+  # The loop stops succeeding: the age stays 0, but the last pass grows old.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_notification_oldest_pending_seconds{namespace="cloud", service="cloud-reconciler", kind="email"}'
+        values: '0x20'
+      - series: 'cloud_notification_pass_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudNotificationsStuck
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CloudNotificationsStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud}

@@ -651,6 +651,33 @@ error, and `cloud notifications channels` shows the User the last result.
 A webhook to a host that resolves to a private address is refused by
 design, at creation and before every delivery.
 
+### Notifications are stuck
+
+`CloudNotificationsStuck` fires when Cloud's oldest pending notification
+email is older than 15 minutes, or no notification pass succeeded for 15
+minutes, for 10 minutes. Webhooks alone never fire it: they retry for 24
+hours against a User's own endpoint. Check, in order:
+
+1. `vault kv get -field=smtp_password secret/cloud/system` answers. An
+   authentik apply from a branch without `smtp_password` in
+   `cloud_system_carried_keys` deletes it; patch it back (step 2 above),
+   then Reloader restarts the reconciler.
+2. The reconciler's log: `homelab logs query '{namespace="cloud",
+   container="reconciler"} |= "cloud.notify"'`. "the mail server refused
+   it: 535" is a wrong password; "no answer in 60 s" or a connection error
+   is the mail server or the path to `mail.viktorbarzin.me:587`; "the
+   notification pass failed" is Cloud's database.
+3. The mail server: `kubectl -n mailserver get pods`, and the account:
+   `kubectl -n mailserver exec deploy/mailserver -c docker-mailserver --
+   doveadm user cloud@viktorbarzin.me`.
+
+The metrics are `cloud_notification_oldest_pending_seconds{kind}`,
+`cloud_notification_deliveries_failed_total{kind}` (deliveries that gave
+up after 24 hours) and
+`cloud_notification_pass_last_success_timestamp_seconds`. Pending emails
+go out by themselves once sending works again, if they are under 24
+hours old.
+
 ## Apply B17 (internal Apps)
 
 Apply `stacks/cloud` from the main checkout before the Cloud release that
