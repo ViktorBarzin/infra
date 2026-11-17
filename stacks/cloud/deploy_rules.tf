@@ -168,6 +168,12 @@ locals {
     # (SMTP_USERNAME below). An empty file turns email off; the reconciler
     # logs it and keeps email deliveries pending.
     SMTP_PASSWORD = "smtp_password"
+    # Check builds (cloud B13): cloud-bot's write:repository token that posts
+    # the commit status cloud/build. Optional like the delete token, and for
+    # the same reason a file: with every other key a file, the reconciler
+    # never asks Vault, so without this it posts nothing and makes no check
+    # builds (found 2026-11-17 after the token went into Vault).
+    FORGEJO_STATUS_TOKEN = "forgejo_status_token"
   }
   cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
 
