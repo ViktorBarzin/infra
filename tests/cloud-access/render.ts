@@ -23,7 +23,8 @@
  *
  * The combined Project holds a private App, a public App connected to a
  * Postgres Service and to an internal App (with a built image, a migrate
- * init container and HTTP health check probes), the internal App (no edge,
+ * init container, HTTP health check probes and 2 instances, so a
+ * PodDisruptionBudget), the internal App (no edge,
  * oauth2-proxy or Ingress) and
  * the Postgres Service, so every object kind Cloud renders appears at least
  * once; the forbidden variants are built from it. tests/cloud-calico
@@ -64,6 +65,8 @@ const spec = {
 			connects: ["db", "pricing"],
 			migrate: ["entrypoints/migrate.js"],
 			healthCheckPath: "/healthz",
+			// Two App pods and the PodDisruptionBudget that keeps one.
+			instances: 2,
 		}),
 		// Internal: only menu reaches it, on the App port.
 		pricing: fixtures.app({ access: "internal", size: "nano" }),

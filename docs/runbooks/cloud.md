@@ -531,6 +531,32 @@ by its deadline (Job condition `DeadlineExceeded`). An Operator does not
 create, suspend or delete these by hand: the next reconcile puts them back
 as the Project File says.
 
+## Instances and the App's PodDisruptionBudget (B21)
+
+An App runs `instances` pods (Project File, 1 to 3). With 2 or more,
+`app-<app>` has a PodDisruptionBudget of the same name with `minAvailable:
+1` and `unhealthyPodEvictionPolicy: AlwaysAllow`, so a node drain evicts its
+pods one at a time and never waits to evict a pod that is not ready. A
+drain does wait to evict an App's last ready pod while its other instance
+is not ready (Pending, starting or crashing). The drain script's rollout
+restart of the App (cloud repo B10) starts a new pod on another node
+first, and the wait ends once a second pod is ready; if it stays unready,
+read why with `kubectl -n p-<project> describe pod` and `cloud events`. Read-only:
+`kubectl -n p-<project> get pdb app-<app>` (ALLOWED DISRUPTIONS 1 when both
+run) and `kubectl -n p-<project> get deploy app-<app> -o jsonpath='{.spec.replicas}'`.
+An Operator does not delete the PDB or scale the App by hand; the next
+apply puts both back.
+
+Apply `stacks/cloud` from the main checkout before the Cloud release that
+carries B21: the reconciler's project role gains `poddisruptionbudgets`,
+`cloud-managed-pdb` and the 3-replica cap arrive, and
+`cloud-managed-edge-config` admits the edge's new retry lines. In the
+other order, the first apply of an App with 2 instances fails on its PDB,
+and every running App's new edge ConfigMap is refused with "is one Cloud
+renders". The release rolls every App's pods once (`CLOUD_INSTANCE_ID` is
+new in the pod template) and every edge once (the Caddyfile changed), each
+App in turn as the render digest re-applies its Project.
+
 ## Apply B37 and B38 (mail ports, outbound address)
 
 Apply `stacks/cloud` from the main checkout before the Cloud release that

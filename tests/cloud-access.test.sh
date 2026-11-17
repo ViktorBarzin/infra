@@ -65,7 +65,13 @@
 #     the homelab cookies it must strip; a suspended App's and a maintenance
 #     page admitted, and each with an upstream, other text, another status or
 #     a second site refused), 0 replicas admitted on an App Deployment and
-#     refused on an edge or oauth2-proxy Deployment, the App's preStop sleep
+#     refused on an edge or oauth2-proxy Deployment, 3 replicas admitted and
+#     4 refused on any Deployment, the App's PodDisruptionBudget (2
+#     instances) admitted and each loosening of it refused (minAvailable 2
+#     or a percentage, maxUnavailable, another eviction policy, edge pods,
+#     matchExpressions, a second name), the App pods' soft spread over
+#     nodes admitted and each other spread refused, a Caddyfile with and without the App leg's retry
+#     lines admitted, the App's preStop sleep
 #     (exec and the sleep action) admitted and refused on the edge, the
 #     App, edge and oauth2-proxy Deployments each admitted after the drain
 #     handoff's rollout restart (the restartedAt template annotation), the
@@ -857,7 +863,7 @@ dump, cases, all_kinds = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), s
 s = json.loads((cases / "summary.json").read_text())
 events = json.loads((dump / "events.json").read_text())["items"]
 failed = [e["message"] for e in events if e.get("reason") == "FailedCreate"]
-want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
+want = {"Deployment", "Service", "Ingress", "ConfigMap", "ResourceQuota", "LimitRange", "PodDisruptionBudget", "SecretStore", "ExternalSecret", "RoleBinding", "NetworkPolicy", "Pod"}
 problems = []
 if failed: problems.append("pods refused: " + " | ".join(failed))
 # One pod per replica: a suspended App's Deployment runs 0.

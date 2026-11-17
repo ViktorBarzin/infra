@@ -367,7 +367,25 @@ Deployment `app-<app>` runs 0 replicas; `cloud-managed-deployment` admits
 the App's address always answers. The rule reads Deployment writes, not
 the `deployments/scale` subresource (a Scale object has no pod template to
 tell an App from an edge). The reconciler's project role has no
-`deployments/scale`, so only an admin can scale that way. `cloud-managed-pod` and
+`deployments/scale`, so only an admin can scale that way. No Deployment
+runs more than 3 replicas (an App's `instances`, the cloud repo's B21).
+An App with 2 or more instances has a PodDisruptionBudget `app-<app>`;
+`cloud-managed-pdb` admits only that name, `minAvailable: 1`, no
+`maxUnavailable`, `unhealthyPodEvictionPolicy: AlwaysAllow` and a
+`matchLabels` selector on one App's `component=app` pods, so no PDB holds
+an edge or oauth2-proxy pod and an unready App pod never holds a drain. A
+drain does wait on an App's last ready pod while its other instances are
+not ready; the drain script's rollout restart (B10) starts a replacement on
+another node first, and the wait ends once that pod is ready. App pods
+spread over nodes when they can: `cloud-managed-pod` admits exactly one
+`topologySpreadConstraints` entry on App pods, `maxSkew` 1 on
+`kubernetes.io/hostname`, `ScheduleAnyway`, over the App's own pods. The running
+Caddyfile's App leg has three retry lines (`lb_try_duration 5s`,
+`lb_try_interval 250ms`, `lb_retry_match expression false`): a refused
+connection to a crashed instance is dialled again, and a request that
+reached the App is never sent twice. `cloud-managed-edge-config` admits
+the file with and without them (`cloud_caddyfile_retry`) until a later
+change requires them. `cloud-managed-pod` and
 `cloud-managed-deployment` accept the edge with its one `secretKeyRef`
 env value (Secret `edge-<app>`, key `secret`) and the oauth2-proxy with
 exactly one of the emails file and `--email-domain=*`, and the ingress

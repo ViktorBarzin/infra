@@ -21,7 +21,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 k get namespace "$ns" -o json >"$CLOUD_DUMP_DIR/namespace.json"
-k get deployments,cronjobs.batch,services,ingresses,configmaps,serviceaccounts,rolebindings,resourcequotas,limitranges,externalsecrets,secretstores,networkpolicies.projectcalico.org,pods \
+k get deployments,cronjobs.batch,services,ingresses,configmaps,serviceaccounts,rolebindings,resourcequotas,limitranges,poddisruptionbudgets,externalsecrets,secretstores,networkpolicies.projectcalico.org,pods \
   -n "$ns" -o json >"$CLOUD_DUMP_DIR/objects.json"
 k get events -n "$ns" -o json >"$CLOUD_DUMP_DIR/events.json"
 k get apiservice v3.projectcalico.org -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' >"$CLOUD_DUMP_DIR/apiservice.txt" 2>/dev/null

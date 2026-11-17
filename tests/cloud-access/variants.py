@@ -131,7 +131,7 @@ if not admitted_only:
          variant(ns, lambda o: o["metadata"]["labels"].update({"chrome-service.viktorbarzin.me/client": "true"})))
 
 # --- every object as rendered, admitted --------------------------------------
-KINDS = ["ConfigMap", "Service", "Deployment", "CronJob", "Ingress", "ResourceQuota", "LimitRange", "SecretStore", "ExternalSecret", "RoleBinding"]
+KINDS = ["ConfigMap", "Service", "Deployment", "CronJob", "Ingress", "ResourceQuota", "LimitRange", "PodDisruptionBudget", "SecretStore", "ExternalSecret", "RoleBinding"]
 MANAGED = {"cloud.viktorbarzin.me/managed": "true"}
 for kind in KINDS:
     for o in of_kind(kind, **MANAGED):
@@ -381,6 +381,69 @@ case("edge-zero-replicas", "kr", E_REPLICAS, "edge Deployment with 0 replicas",
      variant(edge, lambda o: o["spec"].update({"replicas": 0})))
 case("auth-zero-replicas", "kr", E_REPLICAS, "oauth2-proxy Deployment with 0 replicas",
      variant(proxy, lambda o: o["spec"].update({"replicas": 0})))
+# Instances (the cloud repo's B21): an App runs 1 to 3, so no Deployment
+# runs more than 3; the App's PodDisruptionBudget keeps one pod and no more.
+E_MAX_REPLICAS = "runs at most 3 replicas"
+assert app["spec"].get("replicas") == 2, "the public App runs 2 instances (tests/cloud-access/render.ts)"
+case("app-three-replicas", "kr", "ok", "App Deployment with 3 replicas (3 instances)",
+     variant(app, lambda o: o["spec"].update({"replicas": 3})))
+case("app-four-replicas", "kr", E_MAX_REPLICAS, "App Deployment with 4 replicas",
+     variant(app, lambda o: o["spec"].update({"replicas": 4})))
+case("edge-four-replicas", "kr", E_MAX_REPLICAS, "edge Deployment with 4 replicas",
+     variant(edge, lambda o: o["spec"].update({"replicas": 4})))
+pdb = one("PodDisruptionBudget", "app-menu")
+assert pdb["spec"].get("minAvailable") == 1 and pdb["spec"].get("unhealthyPodEvictionPolicy") == "AlwaysAllow", "the App's PDB keeps one pod and lets an unhealthy one go"
+assert not of_kind("PodDisruptionBudget", **{SERVICE: "recipes"}), "an App with one instance has no PDB"
+E_PDB_MIN = "sets minAvailable 1 and no maxUnavailable"
+E_PDB_POLICY = "unhealthyPodEvictionPolicy AlwaysAllow"
+E_PDB_SELECT = "selects the pods of one App by matchLabels only"
+# App pods spread over nodes when they can: exactly one soft constraint.
+E_SPREAD = "only an App pod may set topologySpreadConstraints"
+spread = app["spec"]["template"]["spec"].get("topologySpreadConstraints")
+assert spread and len(spread) == 1 and spread[0]["whenUnsatisfiable"] == "ScheduleAnyway", "the App's pods spread over nodes, softly"
+
+
+def spread_edit(change):
+    def f(o):
+        change(o["spec"]["template"]["spec"]["topologySpreadConstraints"][0])
+    return f
+
+
+case("spread-hard", "kr", E_SPREAD, "App pods that must spread (DoNotSchedule)",
+     variant(app, spread_edit(lambda c: c.update({"whenUnsatisfiable": "DoNotSchedule"}))))
+case("spread-zone", "kr", E_SPREAD, "App pods spread over another topology key",
+     variant(app, spread_edit(lambda c: c.update({"topologyKey": "topology.kubernetes.io/zone"}))))
+case("spread-skew", "kr", E_SPREAD, "App pods spread with maxSkew 2",
+     variant(app, spread_edit(lambda c: c.update({"maxSkew": 2}))))
+case("spread-other-app", "kr", E_SPREAD, "App pods spread over another App's pods",
+     variant(app, spread_edit(lambda c: c["labelSelector"]["matchLabels"].update({SERVICE: "recipes"}))))
+case("spread-expressions", "kr", E_SPREAD, "App pods spread over pods matched by expressions",
+     variant(app, spread_edit(lambda c: c["labelSelector"].update({"matchExpressions": [{"key": COMPONENT, "operator": "Exists"}]}))))
+case("spread-two", "kr", E_SPREAD, "App pods with two spread constraints",
+     variant(app, lambda o: o["spec"]["template"]["spec"]["topologySpreadConstraints"].append(dict(o["spec"]["template"]["spec"]["topologySpreadConstraints"][0], topologyKey="topology.kubernetes.io/zone"))))
+case("spread-edge", "kr", E_SPREAD, "edge pods with a spread constraint",
+     variant(edge, lambda o: o["spec"]["template"]["spec"].update({"topologySpreadConstraints": [{"maxSkew": 1, "topologyKey": "kubernetes.io/hostname", "whenUnsatisfiable": "ScheduleAnyway", "labelSelector": {"matchLabels": {COMPONENT: "edge", SERVICE: "menu"}}}]})))
+case("pdb-min-two", "kr", E_PDB_MIN, "PodDisruptionBudget with minAvailable 2",
+     variant(pdb, lambda o: o["spec"].update({"minAvailable": 2})))
+case("pdb-min-percent", "kr", E_PDB_MIN, "PodDisruptionBudget with minAvailable 100%",
+     variant(pdb, lambda o: o["spec"].update({"minAvailable": "100%"})))
+case("pdb-max-unavailable", "kr", E_PDB_MIN, "PodDisruptionBudget with maxUnavailable 0 instead",
+     variant(pdb, lambda o: (o["spec"].pop("minAvailable"), o["spec"].update({"maxUnavailable": 0}))))
+case("pdb-if-healthy", "kr", E_PDB_POLICY, "PodDisruptionBudget with unhealthyPodEvictionPolicy IfHealthyBudget",
+     variant(pdb, lambda o: o["spec"].update({"unhealthyPodEvictionPolicy": "IfHealthyBudget"})))
+case("pdb-no-policy", "kr", E_PDB_POLICY, "PodDisruptionBudget without unhealthyPodEvictionPolicy",
+     variant(pdb, lambda o: o["spec"].pop("unhealthyPodEvictionPolicy")))
+case("pdb-edge", "kr", E_PDB_SELECT, "PodDisruptionBudget on edge pods",
+     variant(pdb, lambda o: o["spec"]["selector"]["matchLabels"].update({COMPONENT: "edge"})))
+# Without the service label the name rule refuses it first.
+case("pdb-no-service", "kr", "is named app-<its App>", "PodDisruptionBudget on every App pod of the namespace",
+     variant(pdb, lambda o: o["spec"]["selector"]["matchLabels"].pop(SERVICE)))
+case("pdb-expressions", "kr", E_PDB_SELECT, "PodDisruptionBudget with matchExpressions",
+     variant(pdb, lambda o: o["spec"]["selector"].update({"matchExpressions": [{"key": COMPONENT, "operator": "Exists"}]})))
+case("pdb-other-name", "kr", "is named app-<its App>", "a second PodDisruptionBudget for the same App",
+     variant(pdb, lambda o: o["metadata"].update({"name": "app-menu-more"})))
+case("pdb-admin-edge", "ka", E_PDB_SELECT, "PodDisruptionBudget on edge pods, as admin",
+     variant(pdb, lambda o: o["spec"]["selector"]["matchLabels"].update({COMPONENT: "edge"})))
 # The App's preStop delay (B06): Cloud renders exec sleep 5 (the rendered
 # App Deployment above); the native sleep action passes too, for when the
 # provider renders it. The edge may have no hook at all (edge-poststart).
@@ -585,6 +648,17 @@ COOKIE_LIST = "authentik_proxy_[^=;]*|tsgate[^=;]*|anubis[^=;]*|techaro\\.lol-an
 RENDERED = "Caddyfile is one Cloud renders"
 case("edge-cm-more-cookies", "kr", "ok", "Caddyfile stripping one more cookie, in another order",
      variant(public_cf, edit(COOKIE_LIST, "__Host-oauth2_proxy[^=;]*|_oauth2_proxy[^=;]*|techaro\\.lol-anubis-[^=;]*|anubis[^=;]*|grafana_session|tsgate[^=;]*|authentik_proxy_[^=;]*")))
+# The App leg's retry (the cloud repo's B21): admitted with and without it
+# while Cloud releases it; a retry of requests that reached the App, or a
+# longer wait, is not a Cloud render.
+RETRY = "\t\t\tlb_try_duration 5s\n\t\t\tlb_try_interval 250ms\n\t\t\tlb_retry_match expression false\n"
+assert RETRY in public_cf["data"][CADDY], "the App leg retries a refused connection"
+case("edge-cm-no-retry", "kr", "ok", "Caddyfile from before the App leg's retry",
+     variant(public_cf, edit(RETRY, "")))
+case("edge-cm-retry-all", "kr", RENDERED, "Caddyfile that retries requests the App already got",
+     variant(public_cf, edit("\t\t\tlb_retry_match expression false\n", "")))
+case("edge-cm-retry-long", "kr", RENDERED, "Caddyfile that holds requests 60 s for an App",
+     variant(public_cf, edit("lb_try_duration 5s", "lb_try_duration 60s")))
 case("edge-cm-comment", "kr", "ok", "Caddyfile with a comment line before it", variant(public_cf, lambda o: o["data"].update({CADDY: "# reviewed\n" + o["data"][CADDY]})))
 for cookie in COOKIE_LIST.split("|")[:4]:
     short = cookie.split("[")[0].rstrip("_").replace("\\.", ".")
@@ -804,6 +878,7 @@ if job_file.exists():
         relabel("migrate")(o)
         s_ = spec_of(o)
         s_.pop("initContainers", None)
+        s_.pop("topologySpreadConstraints", None)
         s_["containers"] = [copy.deepcopy(jc(job))]
     case("deploy-migrate", "kr", "runs only from a Job|a migrate pod runs once", "a Deployment of migrate pods", variant(app, migrate_deployment))
 
@@ -888,6 +963,7 @@ if run_file.exists():
         relabel("job")(o)
         s_ = spec_of(o)
         s_.pop("initContainers", None)
+        s_.pop("topologySpreadConstraints", None)
         s_["containers"] = [copy.deepcopy(rc(run))]
     case("deploy-run-job", "kr", "runs only from a Job|a one-off job pod runs once", "a Deployment of one-off job pods", variant(app, run_deployment))
 
@@ -910,6 +986,8 @@ APP_LABEL = "cloud.viktorbarzin.me/app"
 def proc_spec(restart_policy=None):
     s = copy.deepcopy(spec_of(app))
     s.pop("initContainers", None)
+    # Cloud spreads only App pods over nodes (B21); workers and crons have none.
+    s.pop("topologySpreadConstraints", None)
     c = app_c(s)
     c["command"] = ["bun", "run", "jobs.ts"]
     for f in ["ports", "readinessProbe", "livenessProbe", "startupProbe", "lifecycle"]:

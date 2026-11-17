@@ -68,6 +68,8 @@
 #     nodeName, nodeSelector, affinity, extra tolerations, host network, PID
 #     or IPC, shared process namespace, service account other than default,
 #     priority class other than tier-4-aux, or prometheus.io/* annotation;
+#     sets topologySpreadConstraints only on an App pod, and then exactly
+#     one soft spread over its own App's pods on kubernetes.io/hostname;
 #     requests no GPU or other extended resource; and limits the ephemeral
 #     storage of every container, init containers included. Only an App pod
 #     may have an init container: at most one, named migrate, with no
@@ -81,7 +83,8 @@
 #     exec probe, fixed ports and mounts, and for the edge its readiness
 #     probe. App, worker and cron pods are free, within the rules above.
 #     Only an App or a worker Deployment may run 0 replicas (a suspended
-#     App, a stopped worker). A worker Service is Deployment worker-<name>,
+#     App, a stopped worker), and no Deployment more than 3 (an App's
+#     `instances`, the cloud repo's B21). A worker Service is Deployment worker-<name>,
 #     component worker (B18). A migrate pod (B16)
 #     has one container migrate, an image by digest, no command, 1 to 8
 #     args, restartPolicy Never, no port, probe or hook, and is made only by
@@ -111,6 +114,17 @@
 #     (backoffLimit 0, restartPolicy Never), with a deadline up to 4260 s
 #     and a TTL up to a day. It is named job-<App>-<9 hex>, is labelled
 #     like its pod and has no owner: the reconciler's.
+#   cloud-managed-pdb  a PodDisruptionBudget is named app-<its App> (one
+#     per App), keeps exactly one App pod (minAvailable 1, no
+#     maxUnavailable) of the App its matchLabels name, selects
+#     component=app pods by labels only, and lets an unready pod be evicted
+#     (unhealthyPodEvictionPolicy AlwaysAllow). Cloud renders one for an App
+#     with 2 or more instances, so a node drain keeps one serving. No PDB
+#     holds an edge or oauth2-proxy pod. A drain still waits on an App's
+#     last ready pod while its other instances are not ready (Pending,
+#     starting); the drain script's rollout restart of the App (the cloud
+#     repo's B10) starts a replacement on another node, which ends that
+#     wait once it is ready.
 #   cloud-managed-edge-config  a ConfigMap named edge-* holds only the key
 #     Caddyfile, and that file is one Cloud renders (local
 #     cloud_caddyfile_variants: public and private): only the cookie list
@@ -228,6 +242,9 @@ locals {
   cloud_base_domain_re = "viktorbarzin[.]me"
 
   cloud_write_verbs = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The most replicas any Deployment in a Project runs: an App's
+  # `instances` cap (the cloud repo's MAX_INSTANCES in project-file.ts).
+  cloud_max_replicas = 3
 
   # The labels every namespace the reconciler creates or changes must carry,
   # with these values. The two resource-governance labels keep Kyverno from
@@ -482,6 +499,12 @@ locals {
     "header_up Cookie `(?:^\\s*|;\\s*)(?:@COOKIES@)=[^;]*` \"\"",
     "header_up Cookie `^;\\s*` \"\"",
   ]
+  # The App leg retries a refused connection for 5 s (the cloud repo's B21:
+  # with 2 or more instances, a crashed one stays in the App's Kubernetes
+  # Service for a second or two). Optional while Cloud releases it: a
+  # Caddyfile rendered before has no such lines. A later change makes them
+  # required. @RETRY@ stands for the group in cloud_caddyfile_res.
+  cloud_caddyfile_retry      = ["lb_try_duration 5s", "lb_try_interval 250ms", "lb_retry_match expression false"]
   cloud_caddyfile_set_cookie = "header_down Set-Cookie `(?i)^.*;\\s*domain\\s*=.*$` \"\""
   cloud_caddyfile_k1 = {
     start = [
@@ -516,7 +539,7 @@ locals {
       "respond `{\"error\":{\"code\":\"sign_in_required\"}}` 401",
     ]
     end = concat(
-      ["}", "}", "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {"],
+      ["}", "}", "reverse_proxy app-@APP@.@NS@.svc.cluster.local:80 {", "@RETRY@"],
       local.cloud_caddyfile_app_leg,
       ["header_up X-Cloud-Edge-Secret {env.CLOUD_EDGE_SECRET}", local.cloud_caddyfile_set_cookie],
       ["}", "}", "}"],
@@ -555,7 +578,7 @@ locals {
   cloud_caddyfile_res = {
     for k, lines in local.cloud_caddyfile_variants : k => replace(join("", concat(
       ["^(?:[\\t ]*(?:#[^\\n]*)?\\n)*"],
-      [for l in lines : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"],
+      [for l in lines : l == "@RETRY@" ? "(?:${join("", [for r in local.cloud_caddyfile_retry : "[\\t ]*${r}\\n"])})?" : "[\\t ]*${replace(l, "/[\\\\.+*?()|\\[\\]{}^$]/", "\\$0")}\\n"],
       ["(?:[\\t ]*\\n)*$"],
     )), "@COOKIES@", "${local.cloud_strip_cookie_re}(?:\\|${local.cloud_strip_cookie_re})*")
   }
@@ -626,6 +649,9 @@ locals {
   cloud_reconciler_project_rules = [
     { api_groups = [""], resources = ["resourcequotas", "limitranges", "serviceaccounts", "services", "secrets", "configmaps"], verbs = local.cloud_write_verbs, resource_names = [] },
     { api_groups = ["apps"], resources = ["deployments"], verbs = local.cloud_write_verbs, resource_names = [] },
+    # An App with 2 or more instances keeps one through a drain
+    # (cloud-managed-pdb).
+    { api_groups = ["policy"], resources = ["poddisruptionbudgets"], verbs = local.cloud_write_verbs, resource_names = [] },
     # Read only: why a Deploy's new pods are not ready (image pull, quota,
     # exit, readiness). Cloud never writes pods or ReplicaSets itself.
     { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
@@ -911,6 +937,14 @@ locals {
     {
       expression = "!has(@S.affinity)"
       message    = "in a Cloud namespace, a pod may not set affinity"
+    },
+    {
+      # An App's pods spread over nodes when they can (the cloud repo's
+      # B21): one soft constraint on the hostname, over its own App's pods.
+      # A hard one, or one over other pods, could hold pods Pending or
+      # steer them by others' placement.
+      expression = "!has(@S.topologySpreadConstraints) || size(@S.topologySpreadConstraints) == 0 || (variables.component == 'app' && size(@S.topologySpreadConstraints) == 1 && @S.topologySpreadConstraints.all(c, c.maxSkew == 1 && c.topologyKey == 'kubernetes.io/hostname' && c.whenUnsatisfiable == 'ScheduleAnyway' && !has(c.minDomains) && (!has(c.matchLabelKeys) || size(c.matchLabelKeys) == 0) && (!has(c.nodeAffinityPolicy) || c.nodeAffinityPolicy == 'Honor') && (!has(c.nodeTaintsPolicy) || c.nodeTaintsPolicy == 'Ignore') && has(c.labelSelector) && !has(c.labelSelector.matchExpressions) && has(c.labelSelector.matchLabels) && '${local.cloud_component_label}' in c.labelSelector.matchLabels && c.labelSelector.matchLabels['${local.cloud_component_label}'] == 'app' && '${local.cloud_service_label}' in c.labelSelector.matchLabels && c.labelSelector.matchLabels['${local.cloud_service_label}'] == variables.service))"
+      message    = "in a Cloud namespace, only an App pod may set topologySpreadConstraints: one, maxSkew 1 on kubernetes.io/hostname, ScheduleAnyway, over its own App's pods by matchLabels"
     },
     {
       expression = "!has(@S.tolerations) || @S.tolerations.all(t, has(t.key) && t.key in ${jsonencode(local.cloud_pod_default_tolerations)} && has(t.effect) && t.effect == 'NoExecute')"
@@ -1465,8 +1499,66 @@ locals {
           expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}'])"
           message    = "in a Cloud namespace, a migrate or one-off job pod runs only from a Job"
           reason     = "Forbidden"
+          }, {
+          # An App runs 1 to 3 instances (the Project File's `instances`),
+          # the most its Postgres role's connection limit takes; the edge
+          # and the oauth2-proxy run one.
+          expression = "!has(object.spec.replicas) || object.spec.replicas <= ${local.cloud_max_replicas}"
+          message    = "in a Cloud namespace, a Deployment runs at most ${local.cloud_max_replicas} replicas (an App's instances)"
+          reason     = "Forbidden"
         }])
       }
+    }
+    managed_pdb = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-pdb" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["policy"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["poddisruptionbudgets"]
+          }]
+        }
+        variables = [
+          { name = "labels", expression = "has(object.spec.selector) && has(object.spec.selector.matchLabels) ? object.spec.selector.matchLabels : {}" },
+        ]
+        validations = [
+          {
+            # An int 1, never a percentage: "100%" would hold every pod.
+            expression = "has(object.spec.minAvailable) && type(object.spec.minAvailable) == int && object.spec.minAvailable == 1 && !has(object.spec.maxUnavailable)"
+            message    = "in a Cloud namespace, a PodDisruptionBudget sets minAvailable 1 and no maxUnavailable"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.unhealthyPodEvictionPolicy) && object.spec.unhealthyPodEvictionPolicy == 'AlwaysAllow'"
+            message    = "in a Cloud namespace, a PodDisruptionBudget sets unhealthyPodEvictionPolicy AlwaysAllow, so an unready App pod never holds a drain"
+            reason     = "Forbidden"
+          },
+          {
+            # One PDB per App, named for it, so two cannot add up.
+            expression = "'${local.cloud_service_label}' in variables.labels && object.metadata.name == 'app-' + variables.labels['${local.cloud_service_label}']"
+            message    = "in a Cloud namespace, a PodDisruptionBudget is named app-<its App>, one per App"
+            reason     = "Forbidden"
+          },
+          {
+            # Labels only: matchExpressions could select every pod of the
+            # namespace, edge and oauth2-proxy pods included.
+            expression = "has(object.spec.selector) && !has(object.spec.selector.matchExpressions) && '${local.cloud_component_label}' in variables.labels && variables.labels['${local.cloud_component_label}'] == 'app' && '${local.cloud_service_label}' in variables.labels && variables.labels['${local.cloud_service_label}'] != ''"
+            message    = "in a Cloud namespace, a PodDisruptionBudget selects the pods of one App by matchLabels only: ${local.cloud_component_label}=app and ${local.cloud_service_label}=<its App>"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    managed_pdb_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-pdb" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-pdb" })
     }
     managed_deployment_binding = {
       apiVersion = "admissionregistration.k8s.io/v1"
