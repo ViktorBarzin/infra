@@ -59,6 +59,23 @@ alertmanager:
       repeat_interval: 8760h
       receiver: slack-warning
       routes:
+        # The notify pipe (stacks/notify, docs/plans/2026-11-17-notify-pipe-
+        # design.md). A rule with a `topic` label (one of stacks/notify/
+        # topics.json) reaches the Recipients subscribed to that Topic; a rule
+        # with a `recipient` label (an Authentik username) reaches that
+        # person's default channel. continue: true, so every other route below
+        # still sees the alert: the pipe is an extra copy, never a diversion.
+        - receiver: notify-pipe
+          group_by: ["alertname", "topic"]
+          matchers:
+            - topic =~ ".+"
+          continue: true
+        - receiver: notify-pipe
+          group_by: ["alertname", "recipient"]
+          matchers:
+            - topic !~ ".+"
+            - recipient =~ ".+"
+          continue: true
         # Email copy for Emil (infra#142, 2026-10-25). Alerts that set
         # `notify_emo = "true"` go to his Gmail and then, via the next route,
         # to #alerts as usual. continue: true keeps the Slack route in play;
@@ -435,6 +452,12 @@ alertmanager:
     receivers:
       # No notifier on purpose: the sink for alerts without notify=page.
       - name: silent
+      # The notify pipe's adapter turns each alert group into one Notification
+      # for apprise-api. A 503 from it (Apprise down) makes Alertmanager retry.
+      - name: notify-pipe
+        webhook_configs:
+          - url: "http://notify-adapter.notify.svc.cluster.local:8080/alertmanager"
+            send_resolved: true
       - name: email-viktor
         email_configs:
           - to: "me@viktorbarzin.me"
@@ -1936,6 +1959,8 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
+              # notify pipe Topic (stacks/notify/topics.json).
+              topic: internet
             annotations:
               summary: "R730 is running on its backup uplink eno2 (SW2 P5) - primary eno1 / AX6000 port 1 failed"
               description: "eno2 has transmitted packets in the last 5m, so bond0 made it the active slave. Services keep working through SW2 and AX6000 port 2. Check AX6000 port 1 and cable SRV1; `cat /proc/net/bonding/bond0` on pve shows the active slave and failure counts. Context: infra#142."
@@ -1952,6 +1977,8 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
+              # notify pipe Topic (stacks/notify/topics.json).
+              topic: internet
             annotations:
               summary: "R730 backup uplink eno2 (SW2 P5) is down - the host has no second path"
               description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."
@@ -6750,6 +6777,30 @@ serverFiles:
               description: "The scheduler should never place more than 20. Above it means ghost attachments or pods placed before the cap changed. Compare 'qm config' with VolumeAttachments (healthcheck #47) and move a volume pod off the node."
       - name: "Application Health"
         rules:
+          - alert: NotifyPipeDown
+            # stacks/notify: the adapter Alertmanager posts to, or apprise-api
+            # behind it. While either is down no Topic or Recipient gets a
+            # Notification, so this pages on Slack, outside the pipe.
+            expr: |
+              (max(up{job="kubernetes-service-endpoints", namespace="notify", service="notify-adapter"}) or on() vector(0)) < 1
+              or (max(kube_deployment_status_replicas_available{namespace="notify", deployment="apprise"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "The notify pipe (notify-adapter or apprise in namespace notify) has been down for 10m: Topic and Recipient notifications are not delivered"
+          - alert: NotifyDeliveryFailing
+            # result="failed": apprise-api did not answer, or a Channel refused
+            # the Notification (a wrong HA notify service, an expired HA token,
+            # SMTP refused). Runbook: docs/runbooks/notify-pipe.md.
+            expr: sum(increase(notify_notifications_total{result="failed"}[30m])) > 0
+            for: 1m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "The notify pipe failed to deliver a Notification in the last 30m: check `kubectl -n notify logs deploy/notify-adapter` and docs/runbooks/notify-pipe.md"
           - alert: ClickHouseDown
             # ClickHouse (rybbit analytics event store) exposes its built-in
             # Prometheus endpoint since 2026-10-10. `or on() vector(0)` makes a
