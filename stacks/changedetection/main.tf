@@ -88,7 +88,6 @@ resource "kubernetes_deployment" "changedetection" {
     }
   }
   spec {
-    # Disabled: chronic OOM at 64Mi limit, not worth the memory cost to increase
     replicas = 1
     strategy {
       type = "Recreate"
@@ -122,13 +121,16 @@ resource "kubernetes_deployment" "changedetection" {
               add = ["SYS_ADMIN"]
             }
           }
+          # Chrome needs far more than idle usage suggests: at 128Mi it hit
+          # the cap thousands of times, took 20 s to start and every browser
+          # fetch failed. 1Gi covers one rendered shop page with headroom.
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "1Gi"
             }
           }
         }
