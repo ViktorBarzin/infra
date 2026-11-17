@@ -91,7 +91,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 - **Skills**: `.claude/skills/` (cluster-health, home-assistant).
 - **Agents**: `.claude/agents/` (10 files).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
-  - **Other**: issue-responder, postmortem-todo-resolver, source-fixer (tv sources: Channels the tv Watcher reports down, F1 Live, and dormant sites the daily probe finds answering again), tv-feedback-fixer (approved User reports on viktor/tv), payslip-extractor
+  - **Other**: issue-responder, postmortem-todo-resolver, source-fixer (tv sources: Channels the tv Watcher reports down, F1 Live, and dormant sites the daily probe finds answering again), tv-feedback-fixer (approved User reports on viktor/tv), payslip-extractor, book-rescuer (finds another file for a book book-search could not fetch; dispatched by book-search only)
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
 
 ## Contributor Onboarding
