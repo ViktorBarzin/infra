@@ -837,12 +837,13 @@ resource "vault_policy" "ci" {
     }
     # stacks/redis writes the shared Redis's ACL user passwords here
     # (modules/redis/acl.tf, B40). Data and metadata, for the same reason
-    # as the two paths above.
+    # as the two paths above, and delete, so reverting that change can
+    # destroy the secret instead of failing every later redis apply on 403.
     path "secret/data/redis/users" {
-      capabilities = ["create", "read", "update"]
+      capabilities = ["create", "read", "update", "delete"]
     }
     path "secret/metadata/redis/users" {
-      capabilities = ["create", "read", "update", "list"]
+      capabilities = ["create", "read", "update", "delete", "list"]
     }
     # stacks/devvm: the bootstrap handoff (scripts/devvm-drill-handoff) mints
     # one wrapped token per new devvm through this role, nothing wider.
