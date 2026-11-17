@@ -1094,12 +1094,13 @@ GitHub tokens held Viktor's classic `github_pat`. Since cloud B08b
 |---|---|---|
 | `ghcr_pull` | `ghcr_pull_token` | classic, `read:packages`; copied into every Project's image pull secret |
 | `ghcr_delete` | `ghcr_delete_token` | classic, `read:packages` and `delete:packages` |
-| `dispatch` | `github_dispatch_token` | fine-grained, `ViktorBarzin/cloud-builder` only: Actions, Contents and Workflows read and write, Metadata read. Cloud's calls need only Actions read and write and Metadata read; Contents and Workflows write would let a leaked copy rewrite the builder's workflow, so the next re-mint should drop them |
+| `dispatch` | `github_dispatch_token` | fine-grained, `ViktorBarzin/cloud-builder` only: Actions read and write, Metadata read, and the account permission Plan read (Contents and Workflows dropped 2026-11-17) |
 | `owner_read` | `github_owner_read_token` | fine-grained, Contents and Metadata read on the repos Operators build privately; also the builder repo's `GH_OWNER_READ_TOKEN` secret |
 
-The dispatch token has no account permission, so Cloud cannot read the
-Actions billing usage. Cloud reads it only while the builder repo is
-private (the 90% minutes stop); the repo is public since 2026-11-16.
+The dispatch token's Plan read lets Cloud read the Actions billing usage.
+Cloud reads it only while the builder repo is private (the 90% minutes
+stop); the repo is public since 2026-11-16. A fine-grained token's
+permissions can be edited in GitHub without changing its value.
 
 To rotate one: mint the new token, `vault kv patch secret/cloud/github-narrow
 <key>=-` from stdin, let CI apply `authentik` (or apply it), check the keys
