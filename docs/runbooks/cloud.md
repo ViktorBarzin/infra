@@ -999,7 +999,9 @@ connects to them.
 ### What success looks like
 
 Exit 0, `renderDigestMatches: true`, `registryTokenMismatches: []`, and
-`result: no_changes` for every Project. Exit 2 means a Plan has changes:
+`result: no_changes` for every Project. `renderDigestMatches` is false when
+the checkout's modules or render differ from the release the dumps were
+taken under; check out that release's commit and run again. Exit 2 means a Plan has changes:
 read `changes` for the addresses. Exit 1 means a Plan failed (`error`, with
 credentials redacted) or the drill refused to start (`refused`).
 `no_state` means the Project's state schema is missing from `cloud_state`.
@@ -1012,13 +1014,17 @@ no errors. `cloud` held 128 Projects, 2 of them live and applied
 (`p03-rzhop0`, `p67-5fh7rt`), and `cloud_state` held exactly their 2 state
 schemas (serials 13 and 5). The offline Plan took 32 s:
 `renderDigestMatches` true, no token mismatch, 20 of 31 instances
-compared per Project, exit 2. Each Project had one change: the edge
-Deployment's `tier = "4-aux"` label is in the state but not in the
-configuration. Kyverno's `sync-tier-label-from-namespace` adds it to
-every Deployment without one, and `modules/app` neither sets nor ignores
-it, so every plan proposes removing it and the next apply gets it back.
-Nothing else differed. A replay of the commands above, from the copy to
-the cleanup, took 43 s.
+compared per Project, exit 2. The first run found one change in each Project:
+the edge Deployment's `tier = "4-aux"` label was in the state but not in
+the configuration. Kyverno's `sync-tier-label-from-namespace` adds it to
+every Deployment without one, so every plan proposed removing it. Cloud
+now ignores that label key on every Deployment it renders
+(`src/reconciler/kyverno-drift.test.ts`). The run with that build gave
+exit 0 and `no_changes` for both Projects, with `renderDigestMatches`
+false: the module change moves the render digest, so the live reconciler
+applies every Project once when the release deploys, and the next drill
+reads true again. A replay of the commands above, from the copy to the
+cleanup, took 43 s.
 
 ## Revoke a token
 
