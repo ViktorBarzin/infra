@@ -884,6 +884,142 @@ for s in $(kubectl exec -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d c
 done
 ```
 
+## Disaster recovery drill
+
+Cloud backlog B11. The drill shows that the nightly dumps alone can bring
+Cloud back: the `cloud` database holds each Project's desired state, and
+`cloud_state` holds the OpenTofu state its last apply wrote. The drill
+restores both into a scratch Postgres on the devvm and plans every live
+Project against them with the cloud repo's `offline-plan` entrypoint
+(`src/reconciler/offline-plan.ts`). It never touches the cluster, the
+shared Postgres or Vault after it reads the state key.
+
+Run it after a change to the backup job, the state encryption or the
+reconciler's render, and once a quarter. Run it before you trust the dumps
+in a real restore, too: it takes about a minute.
+
+### Safety rails
+
+- The entrypoint refuses to start unless `DATABASE_URL` and
+  `CLOUD_STATE_URL` point at `127.0.0.1` or `localhost`, and while
+  `KUBERNETES_SERVICE_HOST`, a service account token, a `KUBECONFIG`
+  other than `/dev/null` or `VAULT_TOKEN` is present.
+- It runs `tofu init`, `tofu state pull`, `tofu plan -refresh=false
+  -lock=false` and `tofu show` only. It never applies, and it starts none
+  of the reconciler's loops. Do not start the stock reconciler
+  (`reconciler.js`) on restored data: its notification loop would send the
+  restored outbox's emails and webhooks again.
+- OpenTofu gets only `PATH` and the job's own variables, with `HOME` set to
+  the job directory, so it finds no kubeconfig. The Vault and Postgres
+  provider credentials are empty.
+- The state key lives only in a mode-600 file in a mode-700 scratch
+  directory. Delete the directory and the container at the end.
+
+### What the Plan covers
+
+Two kinds of resources need a live API even with `-refresh=false`: every
+`kubernetes_manifest` (the provider reads the object's OpenAPI schema from
+the cluster at plan time) and every data source (OpenTofu reads them on
+each plan; Cloud's read Vault). The drill leaves them out with `-exclude`,
+and OpenTofu leaves out everything that depends on them. The report lists
+each instance it did not compare in `notCompared`. Today that is 11 of 31
+per Project: the 7 `kubernetes_manifest` objects (SecretStore,
+ExternalSecrets, the Calico policy), the App and oauth2-proxy Deployments,
+the oauth2-proxy Service and Vault entry, and `terraform_data.isolation`.
+The other 20 are compared: the namespace, quota, limit range,
+RoleBinding, service accounts, the edge, the App's Service and Ingress,
+the Postgres role, database and password, and the Vault entries.
+
+The report also checks two things across the dumps. `renderDigestMatches`
+is true when the build renders what the live reconciler last recorded
+(`reconciler_state.render`), so the drill used the same instance settings.
+`registryTokenMismatches` lists Projects whose state holds a pull token
+whose sha256 is not the one in `reconciler_state.registry_token`.
+
+What the drill does not prove: that the excluded objects match, that the
+live cluster still matches the state (that needs a refresh), and that ESO
+had synced every App's secrets (the drill assumes it had).
+
+### Commands
+
+From a clean cloud checkout at the commit the reconciler image runs
+(`kubectl -n cloud get deploy cloud-reconciler -o
+jsonpath='{..image}'`; the tag is the short SHA), with the pinned tofu and
+provider mirror in `.tools/` (cloud README, "Reconciler"):
+
+```sh
+umask 077; D=$(mktemp -d /var/tmp/cloud-dr.XXXXXX)   # mode 700
+cd ~/code/cloud && git checkout <sha> && bun install --frozen-lockfile && bun run build:entrypoints
+
+# 1. The newest dumps, read-only from the NFS host
+#    (mirrors: /mnt/backup/nfs-mirror/postgresql-backup/ there, and Synology).
+for db in cloud cloud_state; do
+  f=$(ssh root@192.168.1.127 "ls -t /srv/nfs/postgresql-backup/per-db/$db/dump_*.dump | head -1")
+  scp -q "root@192.168.1.127:$f" "$D/$db.dump"
+done
+ls -l "$D"
+
+# 2. A scratch Postgres on 127.0.0.1 only; the server major must be at
+#    least the dump's (pg_restore -l prints it).
+head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$D/pgpass"
+docker run -d --name cloud-dr-pg -p 127.0.0.1:55611:5432 --user root \
+  -e POSTGRES_PASSWORD_FILE=/run/pgpass -v "$D/pgpass:/run/pgpass:ro" postgres:18
+until docker exec cloud-dr-pg pg_isready -U postgres -q; do sleep 1; done
+for db in cloud cloud_state; do
+  docker cp "$D/$db.dump" cloud-dr-pg:/tmp/ && docker exec cloud-dr-pg createdb -U postgres $db
+  docker exec cloud-dr-pg pg_restore -U postgres -d $db --no-owner --no-acl --exit-on-error /tmp/$db.dump
+done
+
+# 3. The state key, straight into a mode-600 file; never printed.
+vault kv get -field=passphrase secret/cloud/state-key > "$D/state-key"
+printf 'postgres://postgres:%s@127.0.0.1:55611/cloud_state?sslmode=disable' "$(cat "$D/pgpass")" > "$D/state-url"
+
+# 4. The offline Plan. The instance settings are the live reconciler's
+#    (stacks/cloud deploy_rules.tf, cloud_reconciler_env).
+mkdir "$D/work"
+env -i PATH=/usr/bin:/bin HOME="$D/work" KUBECONFIG=/dev/null \
+  DATABASE_URL="postgres://postgres:$(cat "$D/pgpass")@127.0.0.1:55611/cloud" \
+  CLOUD_STATE_URL_FILE="$D/state-url" TOFU_STATE_PASSPHRASE_FILE="$D/state-key" \
+  TOFU_BIN=$PWD/.tools/tofu TOFU_PLUGIN_DIR=$PWD/.tools/providers \
+  RECONCILER_MODULES_DIR=$PWD/modules RECONCILER_WORK_DIR="$D/work" \
+  RECONCILE_STATE_READ_UNENCRYPTED=false \
+  VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200 \
+  POSTGRES_HOST=pg-cluster-rw.dbaas.svc.cluster.local \
+  EDGE_IMAGE=<local.cloud_edge.image> OAUTH2_PROXY_IMAGE=<local.cloud_oauth2_proxy.image> \
+  /usr/local/bin/bun .output/entrypoints/offline-plan.js > "$D/report.json"; echo "exit $?"
+jq '{renderDigestMatches, registryTokenMismatches, projects: [.projects[] | {project, result, compared, stateResources, changes}]}' "$D/report.json"
+
+# 5. Clean up.
+docker rm -f cloud-dr-pg && rm -rf "$D"
+```
+
+`VAULT_ADDR` and `POSTGRES_HOST` are only rendered into the plan; nothing
+connects to them.
+
+### What success looks like
+
+Exit 0, `renderDigestMatches: true`, `registryTokenMismatches: []`, and
+`result: no_changes` for every Project. Exit 2 means a Plan has changes:
+read `changes` for the addresses. Exit 1 means a Plan failed (`error`, with
+credentials redacted) or the drill refused to start (`refused`).
+`no_state` means the Project's state schema is missing from `cloud_state`.
+
+### Result on 2026-11-17
+
+Dumps from 2026-11-17 19:21 UTC, 2 h 12 min old at the copy: `cloud`
+1,084,391 bytes, `cloud_state` 304,633 bytes. The restore took 2.1 s with
+no errors. `cloud` held 128 Projects, 2 of them live and applied
+(`p03-rzhop0`, `p67-5fh7rt`), and `cloud_state` held exactly their 2 state
+schemas (serials 13 and 5). The offline Plan took 32 s:
+`renderDigestMatches` true, no token mismatch, 20 of 31 instances
+compared per Project, exit 2. Each Project had one change: the edge
+Deployment's `tier = "4-aux"` label is in the state but not in the
+configuration. Kyverno's `sync-tier-label-from-namespace` adds it to
+every Deployment without one, and `modules/app` neither sets nor ignores
+it, so every plan proposes removing it and the next apply gets it back.
+Nothing else differed. A replay of the commands above, from the copy to
+the cleanup, took 43 s.
+
 ## Revoke a token
 
 - **Access Token** (`cloud_...`): its owner revokes it on the console's Access
