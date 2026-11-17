@@ -40,8 +40,9 @@ variable "image_prune" {
 # repos"): without that token Cloud runs no check builds and posts no
 # status, so Renovate's pull requests would wait forever.
 variable "renovate_account" {
-  type    = string
-  default = ""
+  type = string
+  # On since 2026-11-17: secret/cloud/system holds forgejo_status_token.
+  default = "cloud-renovate"
 }
 
 # Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals

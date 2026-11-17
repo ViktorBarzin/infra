@@ -185,7 +185,7 @@ A third CronJob, `renovate/renovate-cloud-apps`, updates the App repos of Cloud'
 | Token | Vault `secret/renovate-cloud`, property `forgejo_token` (`write:repository`, `read:user`, `write:issue`), Secret `renovate/renovate-cloud-env`, which holds that token only. No GitHub or Docker Hub token |
 | Which repos | autodiscover by the Forgejo topic `cloud-app`, among repos where `cloud-renovate` is a collaborator; every `viktor/*` repo is filtered out too (`autodiscoverFilter`) |
 | Managers | `bun`, `npm`, `dockerfile` (the template's), forced (`force.enabledManagers`), so a repo's `renovate.json` cannot turn on another manager; install scripts off, no post-upgrade commands, no plugins |
-| Schedule and kill switch | `variable "cloud_apps_schedule"` (`7 */2 * * *`) and `variable "cloud_apps_suspended"` (default `true` until the Operator steps are done) in `stacks/renovate/main.tf` |
+| Schedule and kill switch | `variable "cloud_apps_schedule"` (`7 */2 * * *`) and `variable "cloud_apps_suspended"` (default `false` since 2026-11-17; `true` stops the job) in `stacks/renovate/main.tf` |
 | Cache | PVC `renovate/renovate-cloud-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
 | Metrics and alert | Pushgateway `job="renovate"`, `instance="cloud-apps"`; `RenovateCloudAppsNotSucceeding` after 7 hours without a success, quiet while suspended |
 

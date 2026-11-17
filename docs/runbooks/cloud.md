@@ -1413,7 +1413,7 @@ The random password is not stored; nobody signs in as either account. `stacks/au
 
 Then:
 
-1. Set `cloud_apps_suspended = false` in `stacks/renovate` and `renovate_account = "cloud-renovate"` in `stacks/cloud` (`deploy_rules.tf`), and push; CI applies both. The console then names Renovate on `GET /api/v1/instance`, and `cloud new` and `cloud renovate enable` set up repos.
+1. Set `cloud_apps_suspended = false` in `stacks/renovate` and `renovate_account = "cloud-renovate"` in `stacks/cloud` (`deploy_rules.tf`), and push; CI applies both. Done 2026-11-17; both are now the defaults. The console then names Renovate on `GET /api/v1/instance`, and `cloud new` and `cloud renovate enable` set up repos.
 
 Setting `renovate_account` before step 3 leaves Renovate's pull requests waiting forever: with no status token Cloud runs no check builds, and a commit with no status never merges.
 

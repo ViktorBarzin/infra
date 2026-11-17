@@ -56,9 +56,10 @@ variable "apps_schedule" {
 variable "cloud_apps_suspended" {
   type        = bool
   description = "Kill switch for the renovate-cloud-apps CronJob only. true suspends it; the other jobs are unaffected."
-  # Suspended until the Operator steps in docs/runbooks/cloud.md ("Renovate
-  # on App repos") have made cloud-renovate and its token.
-  default = true
+  # On since 2026-11-17, after the Operator steps in docs/runbooks/cloud.md
+  # ("Renovate on App repos") made cloud-renovate and its token. Set back to
+  # true to stop it.
+  default = false
 }
 
 variable "cloud_apps_schedule" {
