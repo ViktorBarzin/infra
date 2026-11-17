@@ -119,7 +119,7 @@ resource "kubernetes_deployment" "vector" {
       spec {
         container {
           name  = "vector"
-          image = "docker.io/timberio/vector:0.61.0-debian"
+          image = "docker.io/timberio/vector:0.62.0-debian"
           args  = ["--config", "/etc/vector/vector.yaml"]
           port {
             name           = "opnsense"
