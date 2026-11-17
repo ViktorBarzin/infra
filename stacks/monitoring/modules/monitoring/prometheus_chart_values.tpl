@@ -8617,6 +8617,19 @@ serverFiles:
             annotations:
               summary: "Cloud notifications are stuck: an email has waited over 15 minutes, or the notification loop stopped"
               description: "Cloud's oldest pending notification email is older than 15 minutes, or no notification pass succeeded for 15 minutes, for 10 minutes. Users miss failed Deploys and crashes. Check smtp_password in Vault secret/cloud/system (an authentik apply without it in cloud_system_carried_keys deletes it), the reconciler's cloud.notify log lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.notify\"'), and the mail server (kubectl -n mailserver get pods). Runbook: docs/runbooks/cloud.md, \"Notifications are stuck\"."
+          - alert: CloudImagePruneStopped
+            # cloud_image_prune_stopped: 1 once GitHub answered 401 or 403 to
+            # Cloud's image pruning (cloud B36, src/reconciler/packages.ts).
+            # Pruning then stays off until the reconciler restarts, so App
+            # images pile up again in ghcr. Nothing else breaks.
+            expr: max(cloud_image_prune_stopped) == 1
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud stopped pruning old App images: GitHub refused ghcr_delete_token"
+              description: "GitHub answered 401 or 403 to the reconciler's image pruning, so it stopped until the reconciler restarts. Check ghcr_delete in Vault secret/cloud/github-narrow (read:packages and delete:packages), then restart the reconciler. Runbook: docs/runbooks/cloud.md, \"Old App images\"."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
