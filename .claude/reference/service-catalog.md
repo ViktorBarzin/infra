@@ -85,7 +85,7 @@
 | vault | HashiCorp Vault | vault |
 | reloader | ConfigMap/Secret reloader | reloader |
 | trivy-operator | Image CVE, image secret, config/RBAC and node scanning; reports as CRDs, `trivy_*` metrics (docs/architecture/trivy.md) | trivy-operator |
-| renovate | Renovate CronJobs as `renovate-bot`: `renovate` (every 6 h) lands one third-party version bump per run on infra master; `renovate-apps` (every 6 h) lands `bun.lock` updates on app repos (`viktor/tasks`) per ADR-0001; `renovate-cloud-apps` (every 2 h) opens one weekly pull request on Cloud Users' App repos (topic `cloud-app`) and merges it after Cloud's check build passed (cloud B13) (docs/runbooks/renovate.md) | renovate |
+| renovate | Renovate CronJobs as `renovate-bot`: `renovate` (every 6 h) lands one third-party version bump per run on infra master; `renovate-apps` (every 6 h) lands `bun.lock` updates on app repos (`viktor/tasks`) per ADR-0001; `renovate-cloud-apps` (every 2 h, as `cloud-renovate`, not `renovate-bot`) opens one weekly pull request on Cloud Users' App repos (topic `cloud-app`) and merges it when every status, Cloud's check build among them, is success (cloud B13) (docs/runbooks/renovate.md) | renovate |
 | city-guesser | Game | city-guesser |
 | echo | Echo server | echo |
 | url | URL shortener | url |

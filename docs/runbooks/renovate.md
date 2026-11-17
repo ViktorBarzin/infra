@@ -176,25 +176,36 @@ Run by hand: `kubectl -n renovate create job renovate-apps-manual --from=cronjob
 
 ## Cloud App repos (renovate-cloud-apps)
 
-A third CronJob, `renovate/renovate-cloud-apps`, updates the App repos of Cloud's Users (Cloud backlog B13, Viktor's decision V13: merge every update, majors too). It shares the `renovate-bot` account, the `renovate-env` Secret, the image pin and `run-renovate.sh`; nothing else.
+A third CronJob, `renovate/renovate-cloud-apps`, updates the App repos of Cloud's Users (Cloud backlog B13, Viktor's decision V13: merge every update, majors too). Users enrol their own repos, so it runs as its own Forgejo account and shares only the image and `run-renovate.sh` with the other two jobs.
 
 | What | Where |
 |---|---|
 | Global config, the whole policy | `stacks/renovate/files/config-cloud-apps.js`, ConfigMap `renovate/renovate-cloud-apps` |
-| Which repos | autodiscover by the Forgejo topic `cloud-app`, among repos where `renovate-bot` is a collaborator; every `viktor/*` repo is filtered out (`autodiscoverFilter`) |
-| Schedule and kill switch | `variable "cloud_apps_schedule"` (`7 */2 * * *`) and `variable "cloud_apps_suspended"` in `stacks/renovate/main.tf` |
+| Account | Forgejo `cloud-renovate`, restricted: it sees only repos it is a collaborator of. Not on `viktor/infra` or any non-Cloud repo. Made by an Operator (`docs/runbooks/cloud.md`, "Renovate on App repos") |
+| Token | Vault `secret/renovate-cloud`, property `forgejo_token` (`write:repository`, `read:user`, `write:issue`), Secret `renovate/renovate-cloud-env`, which holds that token only. No GitHub or Docker Hub token |
+| Which repos | autodiscover by the Forgejo topic `cloud-app`, among repos where `cloud-renovate` is a collaborator; every `viktor/*` repo is filtered out too (`autodiscoverFilter`) |
+| Managers | `bun`, `npm`, `dockerfile` (the template's); install scripts off, no post-upgrade commands, no plugins |
+| Schedule and kill switch | `variable "cloud_apps_schedule"` (`7 */2 * * *`) and `variable "cloud_apps_suspended"` (default `true` until the Operator steps are done) in `stacks/renovate/main.tf` |
 | Cache | PVC `renovate/renovate-cloud-apps-cache`, 5Gi with autoresize to 20Gi, no backup |
-| Metrics and alert | Pushgateway `job="renovate"`, `instance="cloud-apps"`; `RenovateCloudAppsNotSucceeding` after 7 hours without a success |
+| Metrics and alert | Pushgateway `job="renovate"`, `instance="cloud-apps"`; `RenovateCloudAppsNotSucceeding` after 7 hours without a success, quiet while suspended |
 
 Policy:
 
 - One pull request per repo a week, branch `renovate/all`, with every update grouped, majors included. Renovate creates and updates branches only in its window, Monday 00:00 to 05:59 UTC; the CronJob runs three times in it, and the other runs merge.
-- Renovate merges the pull request itself (`automergeType: pr`, `platformAutomerge: false`) only when the branch status is green. Cloud posts the commit status `cloud/build` from a check build of the branch, which never deploys. A commit with no status reads as pending on Forgejo, so nothing merges before Cloud has built it, and a failed check build is never merged. `ignoreTests` stays false. Forgejo's own "merge when checks succeed" is off on purpose: with no required status checks on the branch it merges at once.
+- Renovate merges the pull request itself (`automergeType: pr`, `platformAutomerge: false`) only when the branch status is green: every commit status of the head commit is success. Cloud's `cloud/build` is one of them. Cloud builds each `renovate/*` commit as a check build that never deploys and posts pending, then success or failure, so a failed check build is never merged. A commit with no status at all reads as pending, so nothing merges before some status exists. Renovate cannot require one named status: in a repo with other CI, that CI's statuses count too, and if it succeeds while Cloud posts nothing (builds off, no status token), Renovate merges without a Cloud build. The merge is then gated only by its own Deploy, which goes live only past its health check. `ignoreTests` and `internalChecksAsSuccess` stay false. Forgejo's own "merge when checks succeed" is off on purpose: with no required status checks on the branch it merges at once.
+- Renovate's merge call names no head commit (Renovate 44.240.0, gitea `mergePr` sends only `Do`). A push to `renovate/all` between Renovate's status check and its merge would merge a commit nobody checked; only `cloud-renovate` pushes that branch.
 - `force` holds the merge rules and the grouping against a repo's own `renovate.json`. A User can still hold a package back with `ignoreDeps`, or turn Renovate off in the repo with `"enabled": false`.
 - npm releases wait 3 days, except `@viktorbarzin/*`, which come from Forgejo's npm registry. `rebaseWhen: conflicted`: a stale but mergeable branch merges without a rebase; the merge's own Deploy is the gate after it.
-- `prCommitsPerRunLimit: 20` across all repos.
 
-Repos come and go without a change here: `cloud new` (unless `--no-renovate`) and `cloud renovate enable <project> <app>` add the topic, `renovate-bot` and Cloud's status account (`cloud-bot`) as Write collaborators with the User's own Forgejo token; `cloud renovate disable` removes them. Cloud's side is in `docs/runbooks/cloud.md`, "Renovate on App repos".
+Limits:
+
+- `prCommitsPerRunLimit: 20` pushes per run across all repos, so about 20 repos get their weekly branch per run and about 60 in the Monday window; the rest wait a week. A run ends at the Job's 25-minute deadline (`active_deadline_seconds`), and repos it did not reach wait for the next run. Past about 60 enrolled repos, raise the limit or widen the window.
+- Docker Hub lookups (the `oven/bun` base image) are anonymous: the home address shares 100 manifest reads an hour with every anonymous client. The lookup cache keeps this to a few reads per run. Add a Docker Hub hostRule only with a pull token made for this job, in its own Secret.
+- No github.com token, so no release notes in the pull requests.
+
+User-to-User risk: one account writes every enrolled repo. A User's repo config cannot read its token (scripts and commands are off), but anyone who got the token, or code running in the pod through a package manager flaw, could push to every enrolled User's repo. It cannot reach `viktor/*` or any repo whose owner did not enrol it.
+
+Repos come and go without a change here: `cloud new` (unless `--no-renovate`) and `cloud renovate enable <project> <app>` add the topic, `cloud-renovate` and Cloud's status account (`cloud-bot`) as Write collaborators with the User's own Forgejo token. `cloud renovate disable` removes the topic and `cloud-renovate`, and removes `cloud-bot` from a public repo; on a private repo `cloud-bot` stays as Read, which Cloud needs to build it. Cloud's side is in `docs/runbooks/cloud.md`, "Renovate on App repos".
 
 Run by hand: `kubectl -n renovate create job renovate-cloud-apps-manual --from=cronjob/renovate-cloud-apps`, then `kubectl -n renovate logs -f job/renovate-cloud-apps-manual`. `Autodiscovered repositories` lists what it found.
 

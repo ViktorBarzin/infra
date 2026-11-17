@@ -23,9 +23,12 @@
 # A third CronJob, renovate-cloud-apps (bottom of this file), updates Cloud
 # Users' App repos (Cloud backlog B13, decision V13): repos found by the
 # Forgejo topic cloud-app, every update in one weekly pull request, merged
-# only after Cloud's check build posts the status cloud/build success
-# (files/config-cloud-apps.js). It shares the account, the Secret and the
-# wrapper too, and never touches viktor/* repos.
+# only when every commit status, Cloud's check build cloud/build among
+# them, is success (files/config-cloud-apps.js). It runs as its own
+# restricted Forgejo account, cloud-renovate, from its own Secret
+# renovate-cloud-env, which holds that token only: Users enrol their own
+# repos, so it must not hold renovate-bot's token or the GitHub and Docker
+# Hub ones. It shares only the image and the wrapper.
 #
 # Kyverno: the image is referenced as docker.io/renovate/renovate, which the
 # existing "docker.io/*" entry in require-trusted-registries already admits.
@@ -53,7 +56,9 @@ variable "apps_schedule" {
 variable "cloud_apps_suspended" {
   type        = bool
   description = "Kill switch for the renovate-cloud-apps CronJob only. true suspends it; the other jobs are unaffected."
-  default     = false
+  # Suspended until the Operator steps in docs/runbooks/cloud.md ("Renovate
+  # on App repos") have made cloud-renovate and its token.
+  default = true
 }
 
 variable "cloud_apps_schedule" {
@@ -505,12 +510,45 @@ resource "kubernetes_cron_job_v1" "renovate_apps" {
 # ---------------------------------------------------------------------------
 # renovate-cloud-apps: Cloud Users' App repos (Cloud backlog B13, 2026-11-17).
 # Repos come from the Forgejo topic cloud-app, which `cloud new` and `cloud
-# renovate enable` set with the User's own token, together with renovate-bot
-# as a Write collaborator. The merge gate and the weekly group live in
+# renovate enable` set with the User's own token, together with
+# cloud-renovate as a Write collaborator. The merge gate and the weekly group live in
 # files/config-cloud-apps.js. Same image pin as the other jobs. No Woodpecker
 # guard (Cloud builds App repos) and no rails cool-down; the etcd calm gate
 # stays on.
 # ---------------------------------------------------------------------------
+
+# cloud-renovate's PAT (write:repository, read:user, write:issue), made by
+# an Operator with Forgejo's in-pod CLI (docs/runbooks/cloud.md, "Renovate
+# on App repos"). The only key: this job gets no other credential.
+resource "kubernetes_manifest" "cloud_apps_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "renovate-cloud-env"
+      namespace = kubernetes_namespace.renovate.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "renovate-cloud-env"
+      }
+      data = [
+        {
+          secretKey = "RENOVATE_TOKEN"
+          remoteRef = { key = "renovate-cloud", property = "forgejo_token" }
+        },
+      ]
+    }
+  }
+}
 
 resource "kubernetes_config_map" "renovate_cloud_apps" {
   metadata {
@@ -588,7 +626,7 @@ resource "kubernetes_cron_job_v1" "renovate_cloud_apps" {
               args  = ["/opt/renovate/run-renovate.sh"]
               env_from {
                 secret_ref {
-                  name = "renovate-env"
+                  name = "renovate-cloud-env"
                 }
               }
               env {
@@ -650,5 +688,5 @@ resource "kubernetes_cron_job_v1" "renovate_cloud_apps" {
     # KYVERNO_LIFECYCLE_V1
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
-  depends_on = [kubernetes_manifest.external_secret]
+  depends_on = [kubernetes_manifest.cloud_apps_external_secret]
 }

@@ -31,11 +31,11 @@ variable "image_prune" {
   }
 }
 
-# Cloud backlog B13: Renovate on App repos. The Forgejo login of the bot the
-# renovate-cloud-apps CronJob runs as (stacks/renovate). Set, the console
-# names it on GET /api/v1/instance, and `cloud new` and `cloud renovate
-# enable` add it, the topic cloud-app and Cloud's status account (cloud-bot)
-# to App repos. Empty keeps Renovate off on Cloud. Set it only after Vault
+# Cloud backlog B13: Renovate on App repos. The Forgejo login the
+# renovate-cloud-apps CronJob runs as (stacks/renovate): "cloud-renovate",
+# never renovate-bot. Set, the console names it on GET /api/v1/instance, and
+# `cloud new` and `cloud renovate enable` add it, the topic cloud-app and
+# Cloud's status account (cloud-bot) to App repos. Empty keeps Renovate off on Cloud. Set it only after Vault
 # secret/cloud/system holds forgejo_status_token (runbook, "Renovate on App
 # repos"): without that token Cloud runs no check builds and posts no
 # status, so Renovate's pull requests would wait forever.

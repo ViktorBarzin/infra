@@ -1369,7 +1369,8 @@ secret, `stacks/authentik/cloud-apps.tf`):
 |---|---|---|---|---|
 | `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret; reads a private App repo only as a Read collaborator, which `cloud new` adds (Cloud's `FORGEJO_READER`, default `cloud-bot`) |
 | `cloud-admin-reader` | yes | `forgejo_admin_token` | read:admin, read:repository, read:user | reconciler only (the Project owner's repo-access check); never copied anywhere |
-| `cloud-bot` | no | `forgejo_status_token` (a second token) | write:repository | reconciler only: posts the commit status `cloud/build` of check builds (B13). Write access comes only from repos with Renovate on, where `cloud new` or `cloud renovate enable` makes `cloud-bot` a Write collaborator; elsewhere it stays Read. Never copied to the builder |
+| `cloud-bot` | no | `forgejo_status_token` (a second token) | write:repository | reconciler only: posts the commit status `cloud/build` of check builds (B13). Write comes only from repos with Renovate on, where `cloud new` or `cloud renovate enable` makes `cloud-bot` a Write collaborator; elsewhere it stays Read or absent. Write lets this token push any branch of those repos, the deploy branch included; it is Forgejo's minimum for posting a status (`reqRepoWriter`), and no narrower role exists. Never copied to the builder |
+| `cloud-renovate` | no, restricted | in Vault `secret/renovate-cloud` `forgejo_token` | write:repository, read:user, write:issue | the `renovate-cloud-apps` CronJob only (`docs/runbooks/renovate.md`); a Write collaborator of enrolled App repos, and of nothing else |
 
 Both were made with the in-pod CLI (the admin REST endpoint cannot mint
 tokens for another user):
@@ -1385,17 +1386,34 @@ as an admin. Their passwords are random and not stored; nobody signs in as them.
 
 ## Renovate on App repos
 
-Cloud backlog B13. Renovate (`renovate-cloud-apps`, `docs/runbooks/renovate.md`) opens one pull request a week on each App repo with the topic `cloud-app`. Cloud builds each commit of a `renovate/*` branch as a check build that never deploys, posts the Forgejo commit status `cloud/build`, and Renovate merges once it is success. The merge is a push, so it deploys like any other and goes live only past its health check.
+Cloud backlog B13. Renovate (`renovate-cloud-apps`, `docs/runbooks/renovate.md`) opens one pull request a week on each App repo with the topic `cloud-app`, as the Forgejo account `cloud-renovate`. Cloud builds each commit of a `renovate/*` branch as a check build that never deploys and posts the Forgejo commit status `cloud/build`. Renovate merges once every status of the commit is success, `cloud/build` among them. The merge is a push, so it deploys like any other and goes live only past its health check.
 
-Turn it on, in this order:
+Operator steps, before the job is unsuspended. Each token goes from the pod straight to Vault through a pipe, so it is never printed:
 
-1. Mint `cloud-bot`'s status token with the in-pod CLI (above, "Forgejo bot accounts"): `--username cloud-bot --token-name cloud-status --scopes 'write:repository'`. Write it with `vault kv patch secret/cloud/system forgejo_status_token=-` from stdin. `stacks/authentik` carries the key over on its next apply (`cloud_system_carried_keys`). The reconciler reads it within 5 minutes; from then on it check-builds `renovate/*` heads.
-2. Apply `stacks/renovate` (the CronJob) and `stacks/monitoring` (the alert).
-3. Set `renovate_account = "renovate-bot"` in `stacks/cloud` (`deploy_rules.tf`) and apply. The console then names Renovate on `GET /api/v1/instance`, and `cloud new` and `cloud renovate enable` set up repos.
+```sh
+fj() { kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c "$1"; }
 
-Step 3 before step 1 leaves Renovate's pull requests waiting forever: with no status token Cloud runs no check builds, and a commit with no status never merges. Nothing breaks; nothing merges either.
+# 1. The account: restricted, so it sees only repos it is a collaborator of.
+fj "forgejo admin user create --username cloud-renovate --email cloud-renovate@viktorbarzin.me --fullname 'Cloud Renovate' --random-password --must-change-password=false --restricted"
 
-What Cloud checks before it check-builds: the repo is on Cloud's Forgejo, the App has `autoDeploy` and is not suspended, and the App's owner is an Operator or is linked to the Forgejo account that owns the repo (`forgejo_links`). So another User's App of the same public repo cannot post the status. A pending status Forgejo refuses (no write access) fails the check build as `status_refused` before any build minutes are spent.
+# 2. Its token, into its own Vault path (Secret renovate-cloud-env).
+fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud --scopes 'write:repository,read:user,write:issue' --raw" \
+  | vault kv put secret/renovate-cloud forgejo_token=-
+
+# 3. cloud-bot's status token, next to its read token.
+fj "forgejo admin user generate-access-token --username cloud-bot --token-name cloud-status --scopes 'write:repository' --raw" \
+  | vault kv patch secret/cloud/system forgejo_status_token=-
+```
+
+The random password is not stored; nobody signs in as either account. `stacks/authentik` carries `forgejo_status_token` over on every apply (`cloud_system_carried_keys`), so land the infra change before an authentik apply can run after step 3. The reconciler reads the key within 5 minutes; from then on it check-builds.
+
+Then:
+
+1. Set `cloud_apps_suspended = false` in `stacks/renovate` and `renovate_account = "cloud-renovate"` in `stacks/cloud` (`deploy_rules.tf`), and push; CI applies both. The console then names Renovate on `GET /api/v1/instance`, and `cloud new` and `cloud renovate enable` set up repos.
+
+Setting `renovate_account` before step 3 leaves Renovate's pull requests waiting forever: with no status token Cloud runs no check builds, and a commit with no status never merges.
+
+What Cloud checks before it check-builds a commit: the repo is on Cloud's Forgejo and has the topic `cloud-app`, and this App is the oldest App of the repo that runs, deploys pushes and whose owner is an Operator or is linked to the Forgejo account that owns the repo (`forgejo_links`). So one App checks each commit, and another User's App of the same public repo cannot post the status. The owner check runs again before every post, and a status goes only to the repo the check build was made for. A failure that says nothing about the commit (no runner, the dispatch, the Budget, a refused status) is built again an hour after it ended, at most 3 builds per commit.
 
 Off for one repo: `cloud renovate disable <project> <app>`. Off for all: `cloud_apps_suspended = true` in `stacks/renovate`, then `renovate_account = ""` in `stacks/cloud` so new Apps are not set up. To stop check builds, remove `forgejo_status_token` from `secret/cloud/system` and from `cloud_system_carried_keys`.
 
