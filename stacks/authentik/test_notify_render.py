@@ -63,7 +63,7 @@ def urls(config):
     return out
 
 
-VIKTOR_PUSH = "jsons://ha-london.viktorbarzin.me/api/services/notify/mobile_app_viktor_barzins_iphone_17?+Authorization=Bearer%20${ha_london_token}&:version&:type"
+VIKTOR_PUSH = "jsons://ha-london.viktorbarzin.me/api/services/notify/mobile_app_viktor_barzins_iphone_17?+Authorization=Bearer%20${ha_london_token}&:version&:type&:attachments"
 
 
 def email_url(to):

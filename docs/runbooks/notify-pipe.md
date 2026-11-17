@@ -31,7 +31,7 @@ A new Topic: add it to `topics.json` in the same commit as its first rule, then 
 
 ## Change your settings
 
-Open https://authentik.viktorbarzin.me/if/flow/notify-settings/. The phone notify service is the Companion app's `notify.mobile_app_*` service on your HA instance, without `notify.`. List them with `curl -s -H "Authorization: Bearer $(homelab ha token --instance sofia)" https://ha-sofia.viktorbarzin.me/api/services | jq -r '.[] | select(.domain=="notify") | .services | keys[]' | grep mobile_app`.
+Open https://authentik.viktorbarzin.me/flows/-/default/authentication/?next=/if/flow/notify-settings/ (the bare flow URL answers "Flow does not apply to current user" to anyone not signed in). Your Recipient name is your Authentik username, which here is usually your email address, so a direct send to `vbarzin@gmail.com` has the tag `person-vbarzin-gmail-com`. The phone notify service is the Companion app's `notify.mobile_app_*` service on your HA instance, without `notify.`. List them with `curl -s -H "Authorization: Bearer $(homelab ha token --instance sofia)" https://ha-sofia.viktorbarzin.me/api/services | jq -r '.[] | select(.domain=="notify") | .services | keys[]' | grep mobile_app`.
 
 ## Check it
 
@@ -42,6 +42,6 @@ Open https://authentik.viktorbarzin.me/if/flow/notify-settings/. The phone notif
 
 ## When it breaks
 
-- `failed` with HTTP 424 in the adapter log: a Channel refused it. A wrong notify service gives HA 400; an expired HA token gives 401 (the tokens are in Vault `secret/openclaw` -> `skill_secrets`). Apprise's own log names the URL: `kubectl -n notify logs deploy/apprise`.
+- `failed` with HTTP 424 in the adapter log: a Channel refused it. A wrong notify service, or an extra field in the JSON body, gives HA 400 ("Unsupported Parameters": the push URL must keep `:version`, `:type` and `:attachments`); an expired HA token gives 401 (the tokens are in Vault `secret/openclaw` -> `skill_secrets`). Apprise's own log names the URL: `kubectl -n notify logs deploy/apprise`.
 - `no_recipients` for a Topic someone did subscribe to: Apprise does not hold their Channel. The config is rebuilt on the next User change: save the settings page again. If that does not help, check the Authentik worker log for the `notify-apprise-config` transport (`kubectl -n authentik logs deploy/goauthentik-worker | grep -i notify`).
 - Apprise lost its config (the volume was replaced): save any Recipient's settings page once.

@@ -5,6 +5,8 @@
 # chose and, on their default channel, person-<username>. The ${...} markers
 # are Apprise template values; apprise-api fills them from its environment
 # (stacks/notify/main.tf), so no secret is stored here or in Apprise's config.
+# The push URL's ":version", ":type" and ":attachments" drop those fields from
+# Apprise's JSON body: HA's notify service answers 400 to any of them.
 # Tests: test_notify_render.py.
 import json
 import re
@@ -34,7 +36,7 @@ for person in User.objects.filter(is_active=True, attributes__has_key="notify"):
     instance = settings.get("push_instance")
     service = (settings.get("push_service") or "").strip()
     if instance in HOSTS and re.fullmatch(r"[a-z0-9_]+", service):
-        channels["push"] = "jsons://%s/api/services/notify/%s?+Authorization=Bearer%%20%s&:version&:type" % (
+        channels["push"] = "jsons://%s/api/services/notify/%s?+Authorization=Bearer%%20%s&:version&:type&:attachments" % (
             HOSTS[instance],
             service,
             TOKENS[instance],
