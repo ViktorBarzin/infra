@@ -603,7 +603,9 @@ apply:
    reads `Cluster in healthy state`. Record the after values of step 2
    (300 and 10).
 6. Deploy the Cloud release. Its new render applies every Project again,
-   which sets each Project role to 4, 10 or 20.
+   which sets each Project role to its Size's limit (nano 4, small 10,
+   medium 20; Cloud's later migration 0030 makes nano 5 at each
+   Project's next apply).
 7. `presence release db:pg-cluster-v18`.
 
 Rollback: migration 0025 has no down path, and the old Cloud code
@@ -776,7 +778,7 @@ Every Project Postgres is a database on `pg-cluster-v18` named
 3. Restore as in `restore-postgresql.md`:
    `pg_restore -d <db> --clean --if-exists <dump>`. The role exists, so
    ownership comes back as it was.
-4. Set the limit back to the Size's (nano 4, small 10, medium 20):
+4. Set the limit back to the Size's (nano 5, small 10, medium 20):
    `ALTER ROLE <db> CONNECTION LIMIT <n>;`. The next apply of the Project sets
    it again anyway. A limit above 20 or none pages `CloudProjectRoleUnlimited`.
 
