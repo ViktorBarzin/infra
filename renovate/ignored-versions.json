@@ -12,17 +12,6 @@
       ],
       "matchNewValue": "v3.33.1",
       "enabled": false
-    },
-    {
-      "description": "rails revert 2026-11-17 pipeline #4064: stack nvidia failed after this bump: its verify checks failed (scripts/verify/run exit 1; newly failing: ClusterPolicy ready with the time-slicing config;DCGM metrics are fresh;floor: new firing alerts) (commit 166a1b01)",
-      "matchDatasources": [
-        "helm"
-      ],
-      "matchPackageNames": [
-        "gpu-operator"
-      ],
-      "matchNewValue": "v26.7.3",
-      "enabled": false
     }
   ]
 }
