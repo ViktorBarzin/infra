@@ -416,6 +416,10 @@ func money(symbol string, v float64) string { return fmt.Sprintf("%s%.2f", symbo
 // at most 70 characters.
 func shortTitle(page, fallback string) string {
 	t := strings.TrimSpace(page)
+	// Amazon titles end in ": Amazon.de: Computers & Accessories".
+	if i := strings.Index(t, ": Amazon."); i > 0 {
+		t = t[:i]
+	}
 	if i := strings.IndexAny(t, ",|"); i > 0 {
 		t = strings.TrimSpace(t[:i])
 	}
@@ -666,7 +670,8 @@ func (e *dealsEnv) retarget(arg string, goal float64) error {
 		symbol = shop.Symbol
 	}
 	update := map[string]any{
-		"notification_body": fmt.Sprintf("Now {{restock.currency}}{{restock.price}}, target %s. {{watch_url}}", money(symbol, goal)),
+		"notification_title": "{{watch_title}}",
+		"notification_body":  fmt.Sprintf("Now {{restock.currency}}{{restock.price}}, target %s. {{watch_url}}", money(symbol, goal)),
 		"processor_config_restock_diff": map[string]any{
 			"in_stock_processing": "off", "follow_price_changes": true, "price_change_min": goal,
 		},

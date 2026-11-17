@@ -404,3 +404,16 @@ func TestDealsRetarget(t *testing.T) {
 		t.Errorf("out %s", out)
 	}
 }
+
+func TestShortTitle(t *testing.T) {
+	cases := map[string]string{
+		"SanDisk Extreme PRO SDXC UHS-I 128 GB Memory Card: Amazon.de: Computer & Accessories": "SanDisk Extreme PRO SDXC UHS-I 128 GB Memory Card",
+		"SanDisk 128GB Extreme PRO SDXC card, SD Card, V30":                                    "SanDisk 128GB Extreme PRO SDXC card",
+		"": "fallback",
+	}
+	for in, want := range cases {
+		if got := shortTitle(in, "fallback"); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
