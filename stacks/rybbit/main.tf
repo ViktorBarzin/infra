@@ -801,7 +801,7 @@ resource "kubernetes_deployment" "rybbit-client" {
       spec {
         container {
           name  = "rybbit-client"
-          image = "ghcr.io/rybbit-io/rybbit-client:v2.9.2"
+          image = "ghcr.io/rybbit-io/rybbit-client:v2.9.3"
           env {
             name  = "NODE_ENV"
             value = "production"
