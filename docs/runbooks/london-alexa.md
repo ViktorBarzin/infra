@@ -97,7 +97,9 @@ it in the Alexa app.
   while the Pi keeps running. What worked on 2026-11-05: free disk first, stop
   Core, pull the image, then `ha core update --backup=false`. The
   `wifi_watchdog_reboot` automation now reboots the host if the router stays
-  unreachable for 6 minutes, and the Pi's power is on the Tapo plug.
+  unreachable for 6 minutes, and the Pi's power is on the Tapo plug. Since
+  2026-11-18 the onboard Wi-Fi is off and a USB adapter carries the network
+  (`docs/architecture/london-site.md`).
 - **The Lambda permission principal is `alexa-connectedhome.amazon.com`.** The
   `amazonaws.com` spelling is rejected by Lambda with "The provided principal was
   invalid".
