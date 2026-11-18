@@ -15,7 +15,8 @@ locals {
   image_tag = "0.1.108"
 
   common_env = {
-    TRADING_REDIS_URL                        = "redis://${var.redis_host}:6379/4"
+    # TRADING_REDIS_URL is not here: each container reads it from the
+    # trading-bot-redis Secret (kubernetes_manifest.redis_external_secret).
     TRADING_LOG_LEVEL                        = "INFO"
     TRADING_ALPACA_BASE_URL                  = "https://paper-api.alpaca.markets"
     TRADING_PAPER_TRADING                    = "true"
@@ -112,6 +113,50 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "imap_user", remoteRef = { key = "trading-bot", property = "imap_user" } },
         { secretKey = "imap_password", remoteRef = { key = "trading-bot", property = "imap_password" } },
       ]
+    }
+  }
+  depends_on = [kubernetes_namespace.trading-bot]
+}
+
+# The shared Redis as the ACL user trading-bot, db 4: only this namespace's
+# own key of Vault secret/redis/users (docs/runbooks/redis-acl.md). Every
+# container reads TRADING_REDIS_URL with a secret_key_ref that is not
+# optional, so a pod that starts before ESO has written the key waits for it
+# instead of falling back to the app's localhost default. Reloader rolls the
+# Deployments when the password changes.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "trading-bot-redis"
+      namespace = "trading-bot"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "trading-bot-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            TRADING_REDIS_URL = "redis://trading-bot:{{ .password }}@${var.redis_host}:6379/4"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "trading-bot"
+        }
+      }]
     }
   }
   depends_on = [kubernetes_namespace.trading-bot]
@@ -241,8 +286,13 @@ resource "kubernetes_job" "migrations" {
           image_pull_policy = "Always"
           command           = ["python", "-m", "alembic", "upgrade", "head"]
           env {
-            name  = "TRADING_REDIS_URL"
-            value = "redis://${var.redis_host}:6379/4"
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
+            }
           }
           env_from {
             secret_ref {
@@ -264,7 +314,7 @@ resource "kubernetes_job" "migrations" {
   timeouts {
     create = "5m"
   }
-  depends_on = [kubernetes_job.db_init]
+  depends_on = [kubernetes_job.db_init, kubernetes_manifest.redis_external_secret]
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
     # admission. A Job's pod template is immutable, so Terraform can't update
@@ -351,6 +401,15 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               value = env.value
             }
           }
+          env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
+            }
+          }
           env_from {
             secret_ref {
               name = "trading-bot-secrets"
@@ -389,7 +448,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
-  depends_on = [kubernetes_job.migrations]
+  depends_on = [kubernetes_job.migrations, kubernetes_manifest.redis_external_secret]
 }
 
 # Workers deployment - all background microservices
@@ -444,6 +503,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             }
           }
           env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
+            }
+          }
+          env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9093"
           }
@@ -476,6 +544,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             content {
               name  = env.key
               value = env.value
+            }
+          }
+          env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
             }
           }
           env {
@@ -514,6 +591,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             }
           }
           env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
+            }
+          }
+          env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9096"
           }
@@ -546,6 +632,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             content {
               name  = env.key
               value = env.value
+            }
+          }
+          env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
             }
           }
           env {
@@ -606,6 +701,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             }
           }
           env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
+            }
+          }
+          env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9098"
           }
@@ -643,6 +747,15 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             content {
               name  = env.key
               value = env.value
+            }
+          }
+          env {
+            name = "TRADING_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "trading-bot-redis"
+                key  = "TRADING_REDIS_URL"
+              }
             }
           }
           env {
@@ -721,7 +834,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
-  depends_on = [kubernetes_job.migrations]
+  depends_on = [kubernetes_job.migrations, kubernetes_manifest.redis_external_secret]
 }
 
 resource "kubernetes_service" "trading-bot-frontend" {
