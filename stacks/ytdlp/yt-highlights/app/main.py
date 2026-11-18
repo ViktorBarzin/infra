@@ -955,7 +955,9 @@ async def lifespan(app: FastAPI):
         redis_client = redis.from_url(REDIS_URL, decode_responses=False)
         redis_client.ping()
         job_store = JobStore(redis_client)
-        logger.info(f"Connected to Redis at {REDIS_URL}")
+        # REDIS_URL carries the ACL user's password, so log only where it points.
+        kw = redis_client.connection_pool.connection_kwargs
+        logger.info(f"Connected to Redis at {kw.get('host')}:{kw.get('port')}/{kw.get('db')}")
 
         # Expire old jobs on startup
         expired = job_store.expire_old_jobs()
