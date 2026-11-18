@@ -403,6 +403,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
 # waiting, a hung move leaves storageTemplateMigration active, a backlog leaves
 # thumbnailGeneration waiting.
 resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "immich-thumbnail-freshness"
     namespace = kubernetes_namespace.immich.metadata[0].name
@@ -502,13 +503,18 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
               command = ["/bin/sh", "-c", <<-EOT
                 set -eu
                 out=/shared/metrics.20-queues.prom
+                # After a refused AUTH redis-cli carries on as default and
+                # exits 0, so check the login first: a refusal prints
+                # "AUTH failed" before the PONG.
+                login=$(redis-cli -h "$REDIS_HOST" --user immich --no-auth-warning PING 2>&1)
+                [ "$login" = PONG ] || { echo "login as immich failed: $login" >&2; exit 1; }
                 {
                   echo "# HELP immich_job_queue_jobs Jobs waiting or running in an Immich BullMQ queue."
                   echo "# TYPE immich_job_queue_jobs gauge"
                   for q in metadataExtraction storageTemplateMigration thumbnailGeneration; do
                     for s in wait active prioritized; do
                       if [ "$s" = prioritized ]; then cmd=ZCARD; else cmd=LLEN; fi
-                      n=$(redis-cli -h "$REDIS_HOST" --no-raw "$cmd" "immich_bull:$q:$s" | tr -dc '0-9')
+                      n=$(redis-cli -h "$REDIS_HOST" --user immich --no-auth-warning --no-raw "$cmd" "immich_bull:$q:$s" | tr -dc '0-9')
                       [ -n "$n" ] || { echo "no answer for $q:$s" >&2; exit 1; }
                       echo "immich_job_queue_jobs{queue=\"$q\",state=\"$s\"} $n"
                     done
@@ -520,6 +526,19 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_freshness" {
               env {
                 name  = "REDIS_HOST"
                 value = var.redis_host
+              }
+              # As the ACL user immich (immich-redis, main.tf); redis-cli
+              # reads the password from REDISCLI_AUTH. The script checks the
+              # login itself, and a refused one fails the step, so nothing
+              # is pushed and ImmichThumbnailFreshnessStale fires.
+              env {
+                name = "REDISCLI_AUTH"
+                value_from {
+                  secret_key_ref {
+                    name = "immich-redis"
+                    key  = "password"
+                  }
+                }
               }
               volume_mount {
                 name       = "shared"

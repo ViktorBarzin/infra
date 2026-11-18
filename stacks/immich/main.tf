@@ -226,6 +226,55 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.immich]
 }
 
+# The shared Redis ACL user immich: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md). Read by immich-worker and
+# immich-api as REDIS_PASSWORD (BullMQ queues in db 0, unchanged) and by the
+# thumbnail-reconcile queue step as REDISCLI_AUTH. The match annotation lets
+# Reloader, in search mode on both Deployments, restart them when the password
+# changes.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "immich-redis"
+      namespace = "immich"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "immich-redis"
+        template = {
+          engineVersion = "v2"
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            password = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "immich"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.immich]
+}
+
 # Job tier of the worker split (docs/plans/2026-07-12-immich-horizontal-scaling-design.md):
 # runs EVERY background job (thumbnails, metadata, ML fan-out, transcoding —
 # job-based AND real-time HLS ffmpeg) via IMMICH_WORKERS_EXCLUDE=api. Exactly
@@ -233,6 +282,7 @@ resource "kubernetes_manifest" "external_secret" {
 # second worker would double every queue and race face-clustering. Client
 # traffic is served by immich-api; this pod has no HTTP surface.
 resource "kubernetes_deployment" "immich_server" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "immich-worker"
     namespace = kubernetes_namespace.immich.metadata[0].name
@@ -333,6 +383,21 @@ resource "kubernetes_deployment" "immich_server" {
           env {
             name  = "REDIS_HOSTNAME"
             value = var.redis_host
+          }
+          # The shared Redis ACL user immich (redis_external_secret). Not
+          # optional: a pod started before ESO has written the key waits.
+          env {
+            name  = "REDIS_USERNAME"
+            value = "immich"
+          }
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "immich-redis"
+                key  = "password"
+              }
+            }
           }
 
           # NO HTTP probes and NO port: the microservices worker binds an
@@ -474,6 +539,7 @@ resource "kubernetes_deployment" "immich_server" {
 # jobs + NVENC live in the single immich-worker (upstream #28051 caps that
 # tier at 1 replica).
 resource "kubernetes_deployment" "immich_api" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "immich-api"
     namespace = kubernetes_namespace.immich.metadata[0].name
@@ -584,6 +650,21 @@ resource "kubernetes_deployment" "immich_api" {
           env {
             name  = "REDIS_HOSTNAME"
             value = var.redis_host
+          }
+          # The shared Redis ACL user immich (redis_external_secret). Not
+          # optional: a pod started before ESO has written the key waits.
+          env {
+            name  = "REDIS_USERNAME"
+            value = "immich"
+          }
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "immich-redis"
+                key  = "password"
+              }
+            }
           }
 
           liveness_probe {
