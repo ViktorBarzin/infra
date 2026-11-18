@@ -81,6 +81,41 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.affine]
 }
 
+# The shared Redis ACL user affine: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md). The secret_key_refs are not
+# optional, so a pod started before ESO has written the key waits for it.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "affine-redis"
+      namespace = "affine"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "affine-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "affine"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.affine]
+}
+
 locals {
   mailserver_accounts = jsondecode(data.kubernetes_secret.eso_secrets.data["mailserver_accounts"])
 }
@@ -113,6 +148,12 @@ locals {
     {
       name  = "REDIS_SERVER_HOST"
       value = var.redis_host
+    },
+    # The shared Redis ACL user affine; REDIS_SERVER_PASSWORD comes from the
+    # affine-redis Secret on each container (redis_external_secret).
+    {
+      name  = "REDIS_SERVER_USERNAME"
+      value = "affine"
     },
     {
       name  = "AFFINE_INDEXER_ENABLED"
@@ -246,6 +287,15 @@ resource "kubernetes_deployment" "affine" {
               }
             }
           }
+          env {
+            name = "REDIS_SERVER_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "affine-redis"
+                key  = "password"
+              }
+            }
+          }
 
           volume_mount {
             name       = "data"
@@ -289,6 +339,15 @@ resource "kubernetes_deployment" "affine" {
               secret_key_ref {
                 name = "affine-db-creds"
                 key  = "DATABASE_URL"
+              }
+            }
+          }
+          env {
+            name = "REDIS_SERVER_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "affine-redis"
+                key  = "password"
               }
             }
           }
