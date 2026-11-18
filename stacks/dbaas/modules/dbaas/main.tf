@@ -1789,7 +1789,10 @@ resource "null_resource" "pg_cluster" {
 # (Cloud backlog B30, checklist P48). PostGIS stays superuser-only. Same PG
 # 18.6, PostGIS 3.6.4 and pgvector 0.8.7 packages; the base picked up Debian
 # updates to ca-certificates, libbrotli1, libheif and tzdata.
-# tests/cloud-postgres.test.sh checks this pin. Renovate
+# tests/cloud-postgres.test.sh checks this pin. Rolled 2026-11-18 03:47-03:54Z
+# (writes down ~3.5 min). The CI run that applied it died with Postgres, since
+# Woodpecker uses this cluster, so state kept the old trigger; the next commit
+# re-applied the identical Cluster spec to record it. Renovate
 # leaves ghcr.io/viktorbarzin/** alone (renovate.json5, "Our own images"), so a
 # new build lands here by hand. Changing this re-applies null_resource
 # pg_cluster_v18: CNPG restarts the replicas, then the primary in place.
