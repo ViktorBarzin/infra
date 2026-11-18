@@ -1,5 +1,4 @@
 variable "tier" { type = string }
-variable "redis_host" { type = string }
 variable "tls_secret_name" {}
 variable "auth_fallback_htpasswd" {
   type        = string

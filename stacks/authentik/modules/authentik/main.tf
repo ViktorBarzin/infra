@@ -2,7 +2,6 @@ variable "tls_secret_name" {}
 variable "secret_key" {}
 variable "postgres_password" {}
 variable "tier" { type = string }
-variable "redis_host" { type = string }
 variable "homepage_token" {
   type      = string
   default   = ""

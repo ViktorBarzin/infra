@@ -1,5 +1,4 @@
 variable "tls_secret_name" { type = string }
-variable "redis_host" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -16,7 +15,6 @@ data "vault_kv_secret_v2" "viktor" {
 module "traefik" {
   source                 = "./modules/traefik"
   tier                   = local.tiers.core
-  redis_host             = var.redis_host
   tls_secret_name        = var.tls_secret_name
   auth_fallback_htpasswd = data.vault_kv_secret_v2.secrets.data["auth_fallback_htpasswd"]
   # Same Vault key stacks/crowdsec seeds into LAPI as BOUNCER_KEY_traefik, so

@@ -3,7 +3,6 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "redis_host" { type = string }
 
 
 resource "kubernetes_namespace" "send" {
@@ -118,10 +117,6 @@ resource "kubernetes_deployment" "send" {
           env {
             name  = "MAX_EXPIRE_SECONDS"
             value = 7 * 24 * 3600
-          }
-          env {
-            name  = "REDIS_HOST"
-            value = var.redis_host
           }
           liveness_probe {
             http_get {
