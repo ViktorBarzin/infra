@@ -1781,13 +1781,21 @@ resource "null_resource" "pg_cluster" {
 # claude-memory-mcp deploy/infra/Dockerfile.pgvector (PG 18.6, PostGIS 3.6.4,
 # pgvector 0.8.7). Pinned by tag and digest. 2026-10-20: moved from
 # 18-pgvector0.8.7 (sha256:30e0bbd9...) to the 2026-10-19 rebuild, which clears
-# the two libexpat HIGH findings (Trivy: 0 fixable CRITICAL/HIGH). Renovate
+# the two libexpat HIGH findings (Trivy: 0 fixable CRITICAL/HIGH). 2026-11-17:
+# moved to 18-pgvector0.8.7-20261117 (rollback: the 20261019 pin above,
+# sha256:fb6c811d9f4f5ed3b9998fe24d8b572a191d826c083fb86b93ab9a5a470cd529).
+# Its vector.control says `trusted = true`, so a database owner that is not a
+# superuser, such as a Cloud Project's p_* role, can CREATE EXTENSION vector
+# (Cloud backlog B30, checklist P48). PostGIS stays superuser-only. Same PG
+# 18.6, PostGIS 3.6.4 and pgvector 0.8.7 packages; the base picked up Debian
+# updates to ca-certificates, libbrotli1, libheif and tzdata.
+# tests/cloud-postgres.test.sh checks this pin. Renovate
 # leaves ghcr.io/viktorbarzin/** alone (renovate.json5, "Our own images"), so a
 # new build lands here by hand. Changing this re-applies null_resource
 # pg_cluster_v18: CNPG restarts the replicas, then the primary in place.
 variable "pg_cluster_v18_image" {
   type    = string
-  default = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7-20261019@sha256:fb6c811d9f4f5ed3b9998fe24d8b572a191d826c083fb86b93ab9a5a470cd529"
+  default = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:18-pgvector0.8.7-20261117@sha256:e698b35c929c04922570d5906c6154ce89a267b2507d3ca756e8b59077c361b9"
 }
 
 # Which CNPG cluster consumers reach: the postgresql / postgresql-lb Services select

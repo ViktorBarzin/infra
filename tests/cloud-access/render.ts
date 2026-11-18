@@ -18,6 +18,12 @@
  *   one-off-job.json       a one-off job of the public App, as the reconciler
  *                          starts it for `cloud run` (src/reconciler/job-runs.ts,
  *                          B20)
+ *   toolbox-job.json       the psql toolbox Job of a session on the Postgres,
+ *                          as the reconciler starts it for `cloud psql`
+ *                          (src/reconciler/toolbox.ts, B22)
+ *   pg-tasks.json          the Postgres task Jobs and their Secrets, by kind
+ *                          (src/reconciler/pg-task-jobs.ts, B28b and B28c),
+ *                          and the image they pin
  *   fixtures/<n>/          the same two files for each of Cloud's snapshot
  *                          fixtures (render.fixtures.ts FIXTURES), and
  *   fixtures.json          [{dir, name, namespace}] listing them in order
@@ -152,6 +158,66 @@ if (await Bun.file(jobRunsFile).exists()) {
 	await writeFile(join(out, "one-off-job.json"), JSON.stringify(job, null, 2));
 }
 
+// The psql toolbox of a session on the Postgres (B22), built by Cloud's own
+// code with the image Cloud pins. A cloud checkout from before B22 has no
+// toolbox.ts and writes none.
+const toolboxFile = join(repo, "src/reconciler/toolbox.ts");
+if (await Bun.file(toolboxFile).exists()) {
+	const { toolboxJob } = await import(toolboxFile);
+	const [postgres] = Object.keys(rendered.tfvarsJson.postgres);
+	const job = toolboxJob({
+		project: rendered.tfvarsJson.project,
+		sessionId: "5c4d3e2f-1a0b-4c9d-8e7f-6a5b4c3d2e1f",
+		target: "postgres",
+		service: postgres,
+		image: renderer.TOOLBOX_IMAGES.postgres,
+	});
+	await writeFile(join(out, "toolbox-job.json"), JSON.stringify(job, null, 2));
+}
+
+// The Postgres task Jobs (B28b, B28c), each with its credentials Secret,
+// built by Cloud's own code in namespace cloud. A cloud checkout from
+// before B28 has no pg-task-jobs.ts and writes none.
+const pgTaskFile = join(repo, "src/reconciler/pg-task-jobs.ts");
+if (await Bun.file(pgTaskFile).exists()) {
+	const tasks = await import(pgTaskFile);
+	const taskId = "5c4b3a29-1807-4f6e-9d5c-4b3a29180765";
+	const database = renderer.postgresRoleName(rendered.tfvarsJson.project, "db");
+	const b64 = (v: string) => Buffer.from(v).toString("base64");
+	const found: Record<string, unknown> = { image: tasks.PG_TASK_IMAGE };
+	for (const kind of ["backups", "backup", "export", "restore"]) {
+		const job = tasks.pgTaskJob({
+			namespace: "cloud",
+			taskId,
+			kind,
+			project: rendered.tfvarsJson.project,
+			database,
+			...(kind === "restore" ? { file: "dump_2026_11_19_00_00.dump" } : {}),
+		});
+		const secret = tasks.connects(kind)
+			? tasks.pgTaskSecret({
+					namespace: "cloud",
+					taskId,
+					kind,
+					job: {
+						name: job.metadata.name,
+						uid: "00000000-0000-4000-8000-000000000030",
+					},
+					credentials: {
+						host: b64("pg-cluster-rw.dbaas"),
+						port: b64("5432"),
+						database: b64(database),
+						username: b64(database),
+						password: b64("not-a-real-password"),
+					},
+					...(kind === "export" ? { exportToken: "t".repeat(64) } : {}),
+				})
+			: null;
+		found[kind] = { job, secret };
+	}
+	await writeFile(join(out, "pg-tasks.json"), JSON.stringify(found, null, 2));
+}
+
 const list: { dir: string; name: string; namespace: string }[] = [];
 for (const [i, [name, projectFile]] of Object.entries(
 	fixtures.FIXTURES as Record<string, unknown>,
@@ -167,6 +233,8 @@ await writeFile(
 		{
 			namespace: rendered.namespace,
 			images: renderer.IMAGES,
+			// Null before B22.
+			toolboxImages: renderer.TOOLBOX_IMAGES ?? null,
 			egressExcluded: renderer.EGRESS_EXCLUDED,
 			egressDeniedTcpPorts: renderer.EGRESS_DENIED_TCP_PORTS ?? null,
 			stripCookies: fixtures.INSTANCE.stripCookies,

@@ -76,6 +76,24 @@ resource "kubernetes_cluster_role" "cloud_reconciler_project" {
   }
 }
 
+# Not bound here either (B22). Cloud's modules/project binds it to the
+# console's service account in each Project namespace (RoleBinding
+# cloud-console-exec); cloud-console-exec, the admission policy, limits what
+# the console may run there. Removing this resource stops every shell and
+# psql session and changes nothing else.
+resource "kubernetes_cluster_role" "cloud_console_exec" {
+  metadata { name = local.cloud_console_exec.role }
+  dynamic "rule" {
+    for_each = local.cloud_console_exec.rules
+    content {
+      api_groups     = rule.value.api_groups
+      resources      = rule.value.resources
+      verbs          = rule.value.verbs
+      resource_names = rule.value.resource_names
+    }
+  }
+}
+
 # How long Traefik waits for an App: every Cloud edge Service names this
 # ServersTransport (local.cloud_edge_transport in access_rules.tf, which
 # says why). Apply it before a Cloud release whose edge Services name it:

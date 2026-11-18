@@ -247,6 +247,9 @@ resource "authentik_policy_binding" "cloud_apps_active_users" {
 # the live secret and written again unchanged; a key not set yet stays absent.
 #   secrets_private_key, secrets_public_key  the App secrets key pair
 #   forgejo_read_token, forgejo_admin_token  the reconciler's Forgejo tokens
+#   forgejo_status_token                     cloud-bot's write:repository token
+#                                            for check build statuses (cloud
+#                                            B13); never leaves the reconciler
 #   github_api_token                         the console's private-repo check
 #   build_log_key                            opens the build logs the public
 #                                            builder seals (cloud B05)
@@ -259,6 +262,8 @@ locals {
     "secrets_public_key",
     "forgejo_read_token",
     "forgejo_admin_token",
+    # Check builds (cloud B13): posts the commit status cloud/build.
+    "forgejo_status_token",
     "github_api_token",
     # Builder v2 (cloud B05): Cloud's age identity for the sealed build logs.
     "build_log_key",

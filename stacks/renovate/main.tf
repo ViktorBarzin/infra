@@ -20,6 +20,16 @@
 # on master's merge whitelist, so the PR Renovate opens when a fast-forward
 # loses a race with another push (PR #113) can be merged by Renovate itself.
 #
+# A third CronJob, renovate-cloud-apps (bottom of this file), updates Cloud
+# Users' App repos (Cloud backlog B13, decision V13): repos found by the
+# Forgejo topic cloud-app, every update in one weekly pull request, merged
+# only when every commit status, Cloud's check build cloud/build among
+# them, is success (files/config-cloud-apps.js). It runs as its own
+# restricted Forgejo account, cloud-renovate, from its own Secret
+# renovate-cloud-env, which holds that token only: Users enrol their own
+# repos, so it must not hold renovate-bot's token or the GitHub and Docker
+# Hub ones. It shares only the image and the wrapper.
+#
 # Kyverno: the image is referenced as docker.io/renovate/renovate, which the
 # existing "docker.io/*" entry in require-trusted-registries already admits.
 
@@ -41,6 +51,25 @@ variable "apps_schedule" {
   # Every 6 hours, 30 minutes after the infra job (its runs end within 25
   # minutes, active_deadline_seconds), so the two never run at once.
   default = "47 */6 * * *"
+}
+
+variable "cloud_apps_suspended" {
+  type        = bool
+  description = "Kill switch for the renovate-cloud-apps CronJob only. true suspends it; the other jobs are unaffected."
+  # On since 2026-11-17, after the Operator steps in docs/runbooks/cloud.md
+  # ("Renovate on App repos") made cloud-renovate and its token. Set back to
+  # true to stop it.
+  default = false
+}
+
+variable "cloud_apps_schedule" {
+  type = string
+  # Every 2 hours at :07. Renovate opens or updates branches only inside its
+  # own window (Monday 00:00-05:59 UTC, config-cloud-apps.js), so 3 runs a
+  # week create the pull requests; the other runs merge the ones whose check
+  # build passed since, within 2 hours. At :07 a run overlaps at most one of
+  # the other two jobs, inside the namespace's 3Gi request quota.
+  default = "7 */2 * * *"
 }
 
 variable "schedule" {
@@ -477,4 +506,188 @@ resource "kubernetes_cron_job_v1" "renovate_apps" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
   depends_on = [kubernetes_manifest.external_secret]
+}
+
+# ---------------------------------------------------------------------------
+# renovate-cloud-apps: Cloud Users' App repos (Cloud backlog B13, 2026-11-17).
+# Repos come from the Forgejo topic cloud-app, which `cloud new` and `cloud
+# renovate enable` set with the User's own token, together with
+# cloud-renovate as a Write collaborator. The merge gate and the weekly group live in
+# files/config-cloud-apps.js. Same image pin as the other jobs. No Woodpecker
+# guard (Cloud builds App repos) and no rails cool-down; the etcd calm gate
+# stays on.
+# ---------------------------------------------------------------------------
+
+# cloud-renovate's PAT (write:repository, read:user, write:issue), made by
+# an Operator with Forgejo's in-pod CLI (docs/runbooks/cloud.md, "Renovate
+# on App repos"). The only key: this job gets no other credential.
+resource "kubernetes_manifest" "cloud_apps_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "renovate-cloud-env"
+      namespace = kubernetes_namespace.renovate.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "renovate-cloud-env"
+      }
+      data = [
+        {
+          secretKey = "RENOVATE_TOKEN"
+          remoteRef = { key = "renovate-cloud", property = "forgejo_token" }
+        },
+      ]
+    }
+  }
+}
+
+resource "kubernetes_config_map" "renovate_cloud_apps" {
+  metadata {
+    name      = "renovate-cloud-apps"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+  }
+  data = {
+    "config.js"       = file("${path.module}/files/config-cloud-apps.js")
+    "run-renovate.sh" = file("${path.module}/files/run-renovate.sh")
+  }
+}
+
+# Repo clones, lookup cache and the tools containerbase installs. Public or
+# per-User repo data that the next run rebuilds if lost, so no backup. Its
+# own PVC: the caches are RWO, and sharing one would tie the jobs to a node.
+resource "kubernetes_persistent_volume_claim" "cloud_apps_cache" {
+  wait_until_bound = false
+  metadata {
+    name      = "renovate-cloud-apps-cache"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-ssd"
+    resources {
+      requests = { storage = "5Gi" }
+    }
+  }
+  lifecycle {
+    # pvc-autoresizer grows this PVC; do not shrink it back on apply.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+resource "kubernetes_cron_job_v1" "renovate_cloud_apps" {
+  metadata {
+    name      = "renovate-cloud-apps"
+    namespace = kubernetes_namespace.renovate.metadata[0].name
+    labels    = { app = "renovate-cloud-apps" }
+  }
+  spec {
+    schedule                      = var.cloud_apps_schedule
+    suspend                       = var.cloud_apps_suspended
+    concurrency_policy            = "Forbid"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {
+        labels = { app = "renovate-cloud-apps" }
+      }
+      spec {
+        backoff_limit              = 0
+        active_deadline_seconds    = 1500
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = { app = "renovate-cloud-apps" }
+          }
+          spec {
+            restart_policy      = "Never"
+            priority_class_name = kubernetes_priority_class_v1.renovate.metadata[0].name
+            security_context {
+              fs_group               = 12021
+              fs_group_change_policy = "OnRootMismatch"
+            }
+            container {
+              name  = "renovate"
+              image = local.image
+              args  = ["/opt/renovate/run-renovate.sh"]
+              env_from {
+                secret_ref {
+                  name = "renovate-cloud-env"
+                }
+              }
+              env {
+                name  = "RENOVATE_CONFIG_FILE"
+                value = "/opt/renovate/config.js"
+              }
+              env {
+                name  = "LOG_LEVEL"
+                value = "info"
+              }
+              # Pushgateway group job="renovate", instance="cloud-apps", read by
+              # the RenovateCloudAppsNotSucceeding alert (stacks/monitoring).
+              env {
+                name  = "RENOVATE_INSTANCE"
+                value = "cloud-apps"
+              }
+              env {
+                name  = "RAILS_HOLD_COOLDOWN"
+                value = "0"
+              }
+              volume_mount {
+                name       = "config"
+                mount_path = "/opt/renovate"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "cache"
+                mount_path = "/tmp/renovate"
+              }
+              resources {
+                requests = {
+                  cpu    = "250m"
+                  memory = "768Mi"
+                }
+                limits = {
+                  memory = "3Gi"
+                }
+              }
+            }
+            volume {
+              name = "config"
+              config_map {
+                name         = kubernetes_config_map.renovate_cloud_apps.metadata[0].name
+                default_mode = "0755"
+              }
+            }
+            volume {
+              name = "cache"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.cloud_apps_cache.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.cloud_apps_external_secret]
 }

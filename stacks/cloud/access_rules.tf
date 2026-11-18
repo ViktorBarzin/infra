@@ -12,11 +12,12 @@
 # reconciler READ every Secret in the cluster, and no admission policy sees a
 # read. So the cluster-wide role holds only what has to be cluster-wide:
 # namespaces, RoleBindings (to wire up a new namespace), `bind` on the project
-# role and nothing else, and read on Ingresses and IngressRoutes (to find hosts
+# role and the console's exec role (B22) and nothing else, and read on Ingresses and IngressRoutes (to find hosts
 # already taken). Everything a Project contains is in the project role, which
 # the reconciler binds to itself with a RoleBinding inside each Project
-# namespace it creates. RBAC lets it bind that role and no other: `bind` is
-# limited to that name, and it holds none of the rights of admin or edit.
+# namespace it creates. RBAC lets it bind that role and the console's exec
+# role and no other: `bind` is limited to those names, and it holds none of
+# the rights of admin or edit.
 #
 # Admission. ValidatingAdmissionPolicies (built in since Kubernetes 1.30; this
 # cluster runs 1.35) then limit every write the reconciler makes:
@@ -77,8 +78,8 @@
 #     may have an init container: at most one, named migrate, with no
 #     restartPolicy (no sidecar) and the image of the pod's first container
 #     (Cloud's migrations, app-kit K3). Every pod is labelled
-#     cloud.viktorbarzin.me/component app, edge, oauth2-proxy, worker, cron
-#     or migrate. An edge pod
+#     cloud.viktorbarzin.me/component app, edge, oauth2-proxy, worker, cron,
+#     migrate, job or toolbox. An edge pod
 #     runs exactly the edge Cloud renders and an oauth2-proxy pod exactly the
 #     oauth2-proxy Cloud renders (local.cloud_edge, local.cloud_oauth2_proxy):
 #     one container, the pinned image, fixed args and env, no command, hook or
@@ -93,14 +94,22 @@
 #     a Job; no Deployment runs one. A one-off job pod (B20) has one
 #     container job, an image by digest, a command of 1 to 64 items of at
 #     most 4096 characters and no args, restartPolicy Never, no port, probe
-#     or hook, and is made only by a Job; no Deployment runs one.
+#     or hook, and is made only by a Job; no Deployment runs one. A psql
+#     toolbox pod (B22) has one container toolbox running the pinned
+#     toolbox image with the command sleep <seconds>, no args, port, probe,
+#     hook or envFrom, env only plain values and keys of Secret
+#     pg-<its Service>, no service account token, only emptyDir volumes, a
+#     read-only root, no privilege escalation and every capability
+#     dropped, restartPolicy Never, and is made only by a Job; no
+#     Deployment runs one.
 #   cloud-managed-job  a Job's pod template passes the pod rules above; it
 #     runs one pod once (backoffLimit 0) with restartPolicy Never, a
 #     deadline up to 12 h and a TTL up to a day. It is a Deploy's migrations
 #     (component migrate, named app-<App>-m<9 hex>, no owner, labelled
 #     like its pod; the reconciler's). A Job whose pod is component cron
 #     (B19's cron run) is left to cloud-managed-cron-job, and one whose pod
-#     is component job to cloud-managed-one-off-job.
+#     is component job to cloud-managed-one-off-job, and one whose pod is
+#     component toolbox to cloud-managed-toolbox-job.
 #   cloud-managed-cronjob  a CronJob (a cron Service, cron-<name>, B19)
 #     meets every rule of cloud-managed-pod in its Job template's pod, and
 #     that pod is component cron with no init container and restartPolicy
@@ -116,6 +125,18 @@
 #     (backoffLimit 0, restartPolicy Never), with a deadline up to 4260 s
 #     and a TTL up to a day. It is named job-<App>-<9 hex>, is labelled
 #     like its pod and has no owner: the reconciler's.
+#   cloud-managed-toolbox-job  a psql toolbox (B22, `cloud psql`): a Job
+#     whose pod is component toolbox passes the pod rules above and runs
+#     one pod once, with a deadline up to 3780 s and a TTL up to an hour.
+#     It carries its pod's Cloud labels, a session id and a target whose
+#     image it runs, is named toolbox-<the session id's first 9 hex> and
+#     has no owner: the reconciler's.
+#   cloud-console-exec  for the console's service account only, in every
+#     namespace: a CONNECT may only be an exec (no attach, no port
+#     forward), only in a namespace named p-* labelled managed, and only sh
+#     in container app or psql in container toolbox (B22). RBAC gives the
+#     console exec only through Cloud's RoleBinding cloud-console-exec in
+#     each Project namespace.
 #   cloud-managed-pdb  a PodDisruptionBudget is named app-<its App> (one
 #     per App), keeps exactly one App pod (minAvailable 1, no
 #     maxUnavailable) of the App its matchLabels name, selects
@@ -329,7 +350,7 @@ locals {
   # component cron (the cloud repo's B18 and B19): App code like an App pod,
   # with no init container, no edge and no way in (the ingress floor below
   # admits no connection to them).
-  cloud_workload_components = ["app", "edge", "oauth2-proxy", "worker", "cron", "migrate", "job"]
+  cloud_workload_components = ["app", "edge", "oauth2-proxy", "worker", "cron", "migrate", "job", "toolbox"]
 
   # A Deploy's migrations (backlog B16): a Job the reconciler starts once per
   # Deploy, before the rollout, from the App's own pod (the cloud repo's
@@ -361,7 +382,88 @@ locals {
     # builds, so a change on either side fails the test.
     max_deadline_seconds = 4260
   }
+  # A Postgres task (the cloud repo's B28b and B28c: `cloud pg backups`,
+  # `backup`, `export`, `restore`): a Job the reconciler starts in its own
+  # namespace `cloud`, never in a Project's, from the cloud repo's
+  # src/reconciler/pg-task-jobs.ts. Its pod mounts only Cloud's two dump
+  # directories (pg_backups.tf): the nightly `p_*` dumps read-only, and
+  # the manual ones, which only a backup Job writes. The image is pinned
+  # here and in Cloud's PG_TASK_IMAGE; tests/cloud-access.test.sh sends the
+  # Jobs Cloud's own code builds, so a change on either side fails the test.
+  cloud_pg_task = {
+    container = "pg"
+    image     = "docker.io/library/postgres:18.7-trixie@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc"
+    # The image's postgres user, who owns the manual dump directory
+    # (stacks/dbaas postgresql-backup makes it).
+    uid = 999
+    # pg-<kind>-<the first 9 hex digits of the task id>, and its Secret
+    # pg-task-<the same 9>.
+    kinds          = ["backups", "backup", "export", "restore"]
+    name_re        = "^pg-(backups|backup|export|restore)-[0-9a-f]{9}$"
+    secret_re      = "^pg-task-[0-9a-f]{9}$"
+    nightly_claim  = "cloud-pg-backups-nightly"
+    manual_claim   = "cloud-pg-backups-manual"
+    export_port    = 8080
+    task_label     = "cloud.viktorbarzin.me/postgres-task"
+    secret_keys    = ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "CLOUD_EXPORT_TOKEN"]
+    max_deadline   = 4200
+    max_ttl        = 3600
+    max_command    = 6
+    max_script_len = 8000
+  }
   cloud_one_off_job_component_is = "has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == '${local.cloud_one_off_job.component}'"
+
+  # A psql toolbox (the cloud repo's B22, `cloud psql`): a Job the
+  # reconciler starts for one session (src/reconciler/toolbox.ts
+  # toolboxJob). Its pod only sleeps; the console runs psql in it through
+  # pods/exec. It holds the session's Postgres role from that Postgres's
+  # own Secret pg-<name>, has no Kubernetes token, a read-only root and
+  # only /tmp, and reaches only DNS and the CNPG primary (the egress floor).
+  # The image is the one Cloud runs (the cloud repo's TOOLBOX_IMAGES), fed
+  # to the reconciler as TOOLBOX_POSTGRES_IMAGE from here (deploy_rules.tf),
+  # so a Renovate bump moves both. Key Value (Batch 4) adds an image.
+  cloud_toolbox = {
+    component = "toolbox"
+    container = "toolbox"
+    # toolbox-<the first 9 hex digits of the session id>.
+    name_re       = "^toolbox-[0-9a-f]{9}$"
+    session_label = "cloud.viktorbarzin.me/session"
+    target_label  = "cloud.viktorbarzin.me/target"
+    # The Postgres Secret modules/postgres writes, pg-<its name>.
+    secret_prefix = "pg-"
+    images = {
+      postgres = "docker.io/library/postgres:18-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015"
+    }
+    # Cloud's TOOLBOX_DEADLINE_SECONDS: 2 min to start, the 1 h session
+    # cap and a minute.
+    max_deadline_seconds = 3780
+  }
+  cloud_toolbox_component_is = "has(object.spec.template.metadata.labels) && '${local.cloud_component_label}' in object.spec.template.metadata.labels && object.spec.template.metadata.labels['${local.cloud_component_label}'] == '${local.cloud_toolbox.component}'"
+
+  # Shell and psql sessions (the cloud repo's B22, Viktor's decision V4):
+  # the console runs them through pods/exec as its own service account.
+  # This ClusterRole is not bound here. Cloud's modules/project binds it to
+  # the console in each Project namespace with RoleBinding
+  # cloud-console-exec, which the reconciler may create (`bind` on this
+  # role only) and cloud-reconciler-scope pins. list: the console picks a
+  # ready App pod by its labels; get on pods/exec: see the rule.
+  # cloud-console-exec (the admission policy) then allows exec only into
+  # the app container with sh or the toolbox container with psql, in
+  # managed p-* namespaces. Rollback: remove this role; sessions stop and
+  # nothing else changes.
+  cloud_console_exec = {
+    role            = "cloud-console-exec"
+    service_account = "cloud-console"
+    user            = "system:serviceaccount:${local.cloud_namespace}:cloud-console"
+    rules = [
+      { api_groups = [""], resources = ["pods"], verbs = ["get", "list"], resource_names = [] },
+      # Both verbs: Kubernetes authorizes a WebSocket exec (the console's
+      # v5.channel.k8s.io client) as get on pods/exec, then checks create
+      # too. With either alone the upgrade is refused. kubectl falls back to
+      # SPDY, which needs create only, so `kubectl exec` passing proves less.
+      { api_groups = [""], resources = ["pods/exec"], verbs = ["get", "create"], resource_names = [] },
+    ]
+  }
 
   # Every Cloud Job runs once: no retry, a deadline, and a TTL so it does
   # not pile up. B19's cron runs need the 12 h deadline and a day of TTL.
@@ -676,7 +778,9 @@ locals {
     # Create the RoleBinding to the project role in each new Project
     # namespace. Admission keeps these writes in managed namespaces.
     { api_groups = ["rbac.authorization.k8s.io"], resources = ["rolebindings"], verbs = local.cloud_write_verbs, resource_names = [] },
-    { api_groups = ["rbac.authorization.k8s.io"], resources = ["clusterroles"], verbs = ["bind"], resource_names = [local.cloud_project_role_name] },
+    # And the console's exec role (B22), which modules/project binds to the
+    # console in each Project namespace.
+    { api_groups = ["rbac.authorization.k8s.io"], resources = ["clusterroles"], verbs = ["bind"], resource_names = [local.cloud_project_role_name, local.cloud_console_exec.role] },
     # Hosts already routed, so a Project cannot take one.
     { api_groups = ["networking.k8s.io"], resources = ["ingresses"], verbs = ["get", "list", "watch"], resource_names = [] },
     { api_groups = ["traefik.io"], resources = ["ingressroutes"], verbs = ["get", "list", "watch"], resource_names = [] },
@@ -687,6 +791,24 @@ locals {
     # Calico requires `get` on a tier to manage policies in it. Project
     # policies live in the default tier.
     { api_groups = ["projectcalico.org"], resources = ["tiers"], verbs = ["get"], resource_names = ["default"] },
+  ]
+
+  # Bound in namespace `cloud` only (main.tf, Role cloud-reconciler-tasks):
+  # the Postgres task Jobs (B28b, B28c). It creates a task's Job suspended,
+  # creates the Secret with the task's credentials (owned by the Job, so
+  # Kubernetes deletes it with the Job), lets the Job go with a patch, reads
+  # its pod and log, and deletes a Job it gave up on. It may create Secrets
+  # here but not read, change or delete any, and it creates no pod: the Job
+  # controller does. cloud-pg-task and cloud-pg-task-secret admit only the
+  # task shapes, and cloud-reconciler-scope nothing else in this namespace.
+  cloud_reconciler_cloud_rules = [
+    { api_groups = ["batch"], resources = ["jobs"], verbs = ["create", "get", "list", "delete", "patch"], resource_names = [] },
+    { api_groups = [""], resources = ["pods", "events"], verbs = ["get", "list"], resource_names = [] },
+    # RBAC cannot narrow these to the task pods: resource_names takes exact
+    # names, and a Job's pod gets a random suffix. The reconciler reads
+    # only its own Jobs' pods; nothing it reads here is a Secret.
+    { api_groups = [""], resources = ["pods/log"], verbs = ["get"], resource_names = [] },
+    { api_groups = [""], resources = ["secrets"], verbs = ["create"], resource_names = [] },
   ]
 
   # Bound per Project namespace by a RoleBinding the reconciler creates there.
@@ -836,6 +958,9 @@ locals {
         # Project policy can undo it. Rollback: revert the commit that added
         # it and apply stacks/cloud.
         { action = "Deny", protocol = "TCP", destination = { ports = local.cloud_egress_denied_tcp_ports } },
+        # A psql toolbox (B22) reaches DNS and the CNPG primary above and
+        # nothing else: no internet, no other pod, even its own namespace's.
+        { action = "Deny", source = { selector = "${local.cloud_component_label} == '${local.cloud_toolbox.component}'" } },
         # Pods in a managed namespace: the Project policy allows only its own
         # namespace. A GlobalNetworkPolicy cannot say "the same namespace".
         { action = "Pass", destination = { namespaceSelector = "${local.cloud_managed_label} == 'true'" } },
@@ -1075,6 +1200,26 @@ locals {
       expression = "@JOB (has(@S.restartPolicy) && @S.restartPolicy == 'Never' && @S.containers.all(c, !has(c.lifecycle) && !has(c.ports) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe)))"
       message    = "in a Cloud namespace, a one-off job pod runs once (restartPolicy Never), listens on no port and has no probe or lifecycle hook"
     },
+    # A psql toolbox pod (local.cloud_toolbox, B22): one container that only
+    # sleeps, in Cloud's pinned image, with the Postgres role of its own
+    # Service from Secret pg-<service>, no token, a read-only root and only
+    # emptyDir volumes. The console runs psql in it through pods/exec.
+    {
+      expression = "@TBX (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_toolbox.container}' && @S.containers[0].image in ${jsonencode(values(local.cloud_toolbox.images))} && has(@S.containers[0].command) && size(@S.containers[0].command) == 2 && @S.containers[0].command[0] == 'sleep' && @S.containers[0].command[1].matches('^[0-9]{1,6}$') && (!has(@S.containers[0].args) || size(@S.containers[0].args) == 0))"
+      message    = "in a Cloud namespace, a toolbox pod has one container, ${local.cloud_toolbox.container}, running ${join(" or ", values(local.cloud_toolbox.images))} with the command sleep <seconds> and no args"
+    },
+    {
+      expression = "@TBX (has(@S.restartPolicy) && @S.restartPolicy == 'Never' && has(@S.automountServiceAccountToken) && !@S.automountServiceAccountToken && (!has(@S.volumes) || @S.volumes.all(v, has(v.emptyDir))) && @S.containers.all(c, !has(c.lifecycle) && !has(c.ports) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.startupProbe) && !has(c.envFrom)))"
+      message    = "in a Cloud namespace, a toolbox pod runs once (restartPolicy Never) with no service account token and only emptyDir volumes, and its container has no port, probe, lifecycle hook or envFrom"
+    },
+    {
+      expression = "@TBX @S.containers.all(c, !has(c.env) || c.env.all(e, (!has(e.valueFrom) && has(e.value)) || (has(e.valueFrom) && (!has(e.value) || e.value == '') && has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef) && e.valueFrom.secretKeyRef.name == '${local.cloud_toolbox.secret_prefix}' + variables.service)))"
+      message    = "in a Cloud namespace, a toolbox's env is plain values and keys of Secret ${local.cloud_toolbox.secret_prefix}<its Service> only"
+    },
+    {
+      expression = "@TBX @S.containers.all(c, has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem && has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation && has(c.securityContext.runAsNonRoot) && c.securityContext.runAsNonRoot && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0))"
+      message    = "in a Cloud namespace, a toolbox runs as non-root with a read-only root filesystem, no privilege escalation and every capability dropped"
+    },
     # The oauth2-proxy (local.cloud_oauth2_proxy).
     {
       expression = "@AUTH (size(@S.containers) == 1 && @S.containers[0].name == '${local.cloud_oauth2_proxy.container}' && @S.containers[0].image == '${local.cloud_oauth2_proxy.image}')"
@@ -1095,9 +1240,9 @@ locals {
       message    = "in a Cloud namespace, the oauth2-proxy mounts only ConfigMap ${local.cloud_oauth2_proxy.prefix}<its App>, read-only, at ${local.cloud_oauth2_proxy.emails_dir}, and with ${local.cloud_oauth2_proxy_any_email} nothing at all"
     },
     ] : {
-    expression = replace(replace(replace(replace(
+    expression = replace(replace(replace(replace(replace(
       try("@S.containers.all(c, ${r.each_container}) && (!has(@S.initContainers) || @S.initContainers.all(c, ${r.each_container}))", r.expression),
-    "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || "), "@MIG ", "variables.component != '${local.cloud_migrate.component}' || "), "@JOB ", "variables.component != '${local.cloud_one_off_job.component}' || ")
+    "@EDGE ", "variables.component != '${local.cloud_edge.component}' || "), "@AUTH ", "variables.component != '${local.cloud_oauth2_proxy.component}' || "), "@MIG ", "variables.component != '${local.cloud_migrate.component}' || "), "@JOB ", "variables.component != '${local.cloud_one_off_job.component}' || "), "@TBX ", "variables.component != '${local.cloud_toolbox.component}' || ")
     message = r.message
   }]
 
@@ -1144,13 +1289,18 @@ locals {
           { name = "isRoleBinding", expression = "request.resource.group == 'rbac.authorization.k8s.io' && request.resource.resource == 'rolebindings'" },
           { name = "isQuota", expression = "request.resource.group == '' && request.resource.resource == 'resourcequotas'" },
           { name = "isLimitRange", expression = "request.resource.group == '' && request.resource.resource == 'limitranges'" },
+          # A Postgres task's Job, or its Secret, in the reconciler's own
+          # namespace; cloud-pg-task and cloud-pg-task-secret check the shape.
+          # A delete names a Job by its old object, which no other policy
+          # checks, so the name is checked here.
+          { name = "isPgTask", expression = "namespaceObject != null && namespaceObject.metadata.name == '${local.cloud_namespace}' && ((request.resource.group == 'batch' && request.resource.resource == 'jobs' && (request.operation != 'DELETE' || (oldObject != null && oldObject.metadata.name.matches('${local.cloud_pg_task.name_re}')))) || (request.resource.group == '' && request.resource.resource == 'secrets' && request.operation == 'CREATE'))" },
         ]
         validations = [
           {
             # The name check too: a homelab namespace someone labels by
             # mistake must not become reconciler-writable.
-            expression = "variables.isNamespace || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
-            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true"
+            expression = "variables.isNamespace || variables.isPgTask || (namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")})"
+            message    = "cloud-reconciler may write only in namespaces named p-* labelled ${local.cloud_managed_label}=true, and Postgres task Jobs and their Secrets in ${local.cloud_namespace}"
             reason     = "Forbidden"
           },
           {
@@ -1172,8 +1322,10 @@ locals {
             # RBAC already stops it binding a role stronger than its own; this
             # stops it handing the project role to anyone else, such as
             # another Project's service account or system:authenticated.
-            expression = "!variables.isRoleBinding || request.operation == 'DELETE' || (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == '${local.cloud_project_role_name}' && has(object.subjects) && size(object.subjects) == 1 && object.subjects.all(s, s.kind == 'ServiceAccount' && s.name == '${local.cloud_reconciler_sa}' && has(s.namespace) && s.namespace == '${local.cloud_namespace}'))"
-            message    = "cloud-reconciler may bind only ClusterRole ${local.cloud_project_role_name}, and only to service account ${local.cloud_namespace}/${local.cloud_reconciler_sa}"
+            # The second shape is the console's exec binding (B22), named
+            # for its role, one per namespace.
+            expression = "!variables.isRoleBinding || request.operation == 'DELETE' || (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == '${local.cloud_project_role_name}' && has(object.subjects) && size(object.subjects) == 1 && object.subjects.all(s, s.kind == 'ServiceAccount' && s.name == '${local.cloud_reconciler_sa}' && has(s.namespace) && s.namespace == '${local.cloud_namespace}')) || (object.metadata.name == '${local.cloud_console_exec.role}' && object.roleRef.kind == 'ClusterRole' && object.roleRef.name == '${local.cloud_console_exec.role}' && has(object.subjects) && size(object.subjects) == 1 && object.subjects.all(s, s.kind == 'ServiceAccount' && s.name == '${local.cloud_console_exec.service_account}' && has(s.namespace) && s.namespace == '${local.cloud_namespace}'))"
+            message    = "cloud-reconciler may bind only ClusterRole ${local.cloud_project_role_name} to service account ${local.cloud_namespace}/${local.cloud_reconciler_sa}, and ClusterRole ${local.cloud_console_exec.role} to service account ${local.cloud_namespace}/${local.cloud_console_exec.service_account} in a RoleBinding named ${local.cloud_console_exec.role}"
             reason     = "Forbidden"
           },
           {
@@ -1504,11 +1656,11 @@ locals {
           message    = r.message
           reason     = "Forbidden"
           }], [{
-          # Only the Job controller makes a migrate or one-off job pod, for
-          # a Job that cloud-managed-job or cloud-managed-one-off-job
-          # admitted.
-          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}']) || (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller))"
-          message    = "in a Cloud namespace, a migrate or one-off job pod is made only by its Job"
+          # Only the Job controller makes a migrate, one-off job or toolbox
+          # pod, for a Job that cloud-managed-job, cloud-managed-one-off-job
+          # or cloud-managed-toolbox-job admitted.
+          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}', '${local.cloud_toolbox.component}']) || (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller))"
+          message    = "in a Cloud namespace, a migrate, one-off job or toolbox pod is made only by its Job"
           reason     = "Forbidden"
         }])
       }
@@ -1550,8 +1702,8 @@ locals {
           message    = "in a Cloud namespace, only an App or a worker Deployment may run 0 replicas (a suspended App, a stopped worker); the edge and the oauth2-proxy run at least one"
           reason     = "Forbidden"
           }, {
-          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}'])"
-          message    = "in a Cloud namespace, a migrate or one-off job pod runs only from a Job"
+          expression = "!(variables.component in ['${local.cloud_migrate.component}', '${local.cloud_one_off_job.component}', '${local.cloud_toolbox.component}'])"
+          message    = "in a Cloud namespace, a migrate, one-off job or toolbox pod runs only from a Job"
           reason     = "Forbidden"
           }, {
           # An App runs 1 to 3 instances (the Project File's `instances`),
@@ -1625,8 +1777,9 @@ locals {
     # a deadline and a TTL. It is a Deploy's migrations (B16): the
     # reconciler's own, named for its Deploy and owned by nothing. A cron
     # run (B19, pod component cron) is cloud-managed-cron-job's and a
-    # one-off job (B20, pod component job) cloud-managed-one-off-job's, so
-    # this policy skips both; every other Job is refused here.
+    # one-off job (B20, pod component job) cloud-managed-one-off-job's and a
+    # psql toolbox (B22, pod component toolbox) cloud-managed-toolbox-job's,
+    # so this policy skips all three; every other Job is refused here.
     managed_job = {
       apiVersion = "admissionregistration.k8s.io/v1"
       kind       = "ValidatingAdmissionPolicy"
@@ -1647,6 +1800,9 @@ locals {
           }, {
           name       = "not-a-one-off-job"
           expression = "!(${local.cloud_one_off_job_component_is})"
+          }, {
+          name       = "not-a-toolbox"
+          expression = "!(${local.cloud_toolbox_component_is})"
         }]
         variables = concat(
           [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }],
@@ -1683,7 +1839,7 @@ locals {
             # Not app: the App's Kubernetes Service selects component app, so
             # an App-labelled Job pod would get its requests.
             expression = "variables.component == '${local.cloud_migrate.component}'"
-            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}); a cron run is component cron and a one-off job component ${local.cloud_one_off_job.component}"
+            message    = "in a Cloud namespace, a Job is a Deploy's migrations (component ${local.cloud_migrate.component}); a cron run is component cron, a one-off job component ${local.cloud_one_off_job.component} and a psql toolbox component ${local.cloud_toolbox.component}"
             reason     = "Forbidden"
           },
           {
@@ -1766,6 +1922,254 @@ locals {
       kind       = "ValidatingAdmissionPolicyBinding"
       metadata   = { name = "cloud-managed-one-off-job" }
       spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-one-off-job" })
+    }
+    # A psql toolbox (B22): one sleeping pod for one session. The reconciler
+    # starts it; the pod rules above pin its pod.
+    managed_toolbox_job = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-managed-toolbox-job" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = ["batch"]
+            apiVersions = ["v1"]
+            operations  = ["CREATE", "UPDATE"]
+            resources   = ["jobs"]
+          }]
+        }
+        matchConditions = [{
+          name       = "a-toolbox"
+          expression = local.cloud_toolbox_component_is
+        }]
+        variables = concat(
+          [for v in local.cloud_pod_variables : { name = v.name, expression = replace(v.expression, "@M", "object.spec.template.metadata") }],
+          [
+            { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+            { name = "jobLabels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
+          ],
+        )
+        validations = concat([for r in local.cloud_pod_rules : {
+          expression = replace(r.expression, "@S", "object.spec.template.spec")
+          message    = r.message
+          reason     = "Forbidden"
+          }], [
+          {
+            expression = "has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.parallelism) || object.spec.parallelism <= 1) && (!has(object.spec.completions) || object.spec.completions == 1) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && (!has(object.spec.manualSelector) || !object.spec.manualSelector)"
+            message    = "in a Cloud namespace, a toolbox runs one pod once: backoffLimit 0, at most one pod, no failure or success policy and no manual selector"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_toolbox.max_deadline_seconds} && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished <= 3600"
+            message    = "in a Cloud namespace, a toolbox sets activeDeadlineSeconds up to ${local.cloud_toolbox.max_deadline_seconds} and ttlSecondsAfterFinished up to 3600"
+            reason     = "Forbidden"
+          },
+          {
+            # The Job carries every Cloud label of its pod (the Job
+            # controller adds its own to the pod), so what lists Jobs reads
+            # the same as what lists pods, and the session label names one.
+            expression = "variables.podLabels.all(k, !k.startsWith('cloud.viktorbarzin.me/') || (k in variables.jobLabels && variables.jobLabels[k] == variables.podLabels[k])) && '${local.cloud_toolbox.session_label}' in variables.podLabels && variables.podLabels['${local.cloud_toolbox.session_label}'].matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') && '${local.cloud_toolbox.target_label}' in variables.podLabels && variables.podLabels['${local.cloud_toolbox.target_label}'] in ${jsonencode(keys(local.cloud_toolbox.images))}"
+            message    = "in a Cloud namespace, a toolbox Job carries its pod's Cloud labels, a session id in ${local.cloud_toolbox.session_label} and a target in ${local.cloud_toolbox.target_label}"
+            reason     = "Forbidden"
+          },
+          {
+            # The image its target runs, so a Postgres session runs the
+            # Postgres toolbox.
+            expression = "variables.podLabels[?'${local.cloud_toolbox.target_label}'].orValue('') in ${jsonencode(keys(local.cloud_toolbox.images))} && object.spec.template.spec.containers.all(c, c.image == ${jsonencode(local.cloud_toolbox.images)}[variables.podLabels['${local.cloud_toolbox.target_label}']])"
+            message    = "in a Cloud namespace, a toolbox runs the image of its target"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "object.metadata.name.matches('${local.cloud_toolbox.name_re}') && object.metadata.name == 'toolbox-' + variables.podLabels[?'${local.cloud_toolbox.session_label}'].orValue('nosession').replace('-', '').substring(0, 9) && size(variables.owners) == 0"
+            message    = "in a Cloud namespace, a toolbox Job is named toolbox-<the first 9 hex digits of its session id> and has no owner"
+            reason     = "Forbidden"
+          },
+        ])
+      }
+    }
+    managed_toolbox_job_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-managed-toolbox-job" }
+      spec       = merge(local.cloud_managed_binding, { policyName = "cloud-managed-toolbox-job" })
+    }
+    # Shell and psql sessions (B22): what the console may run through
+    # pods/exec. RBAC already keeps it to Project namespaces (the role is
+    # bound only there); this keeps it to managed p-* namespaces even if a
+    # binding appears elsewhere, to the App container with sh and the
+    # toolbox container with psql, never the edge or the oauth2-proxy, and
+    # never another command. Exec is a CONNECT whose object is the
+    # PodExecOptions. No namespace selector on the binding: a refusal must
+    # reach every namespace.
+    console_exec = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-console-exec" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [{
+            apiGroups   = [""]
+            apiVersions = ["v1"]
+            operations  = ["CONNECT"]
+            resources   = ["pods/exec", "pods/attach", "pods/portforward"]
+          }]
+        }
+        matchConditions = [{
+          name       = "is-cloud-console"
+          expression = "request.userInfo.username == '${local.cloud_console_exec.user}'"
+        }]
+        validations = [
+          {
+            expression = "request.subResource == 'exec'"
+            message    = "the Cloud console may only exec, never attach or port-forward"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "namespaceObject != null && namespaceObject.metadata.name.startsWith('p-') && ${format(local.cloud_label_is_true, "namespaceObject", "namespaceObject", "namespaceObject")}"
+            message    = "the Cloud console may exec only in namespaces named p-* labelled ${local.cloud_managed_label}=true"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "request.subResource != 'exec' || (has(object.container) && has(object.command) && ((object.container == 'app' && object.command == ['sh']) || (object.container == '${local.cloud_toolbox.container}' && size(object.command) > 0 && object.command[0] == 'psql')))"
+            message    = "the Cloud console may exec only sh in container app or psql in container ${local.cloud_toolbox.container}"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    # A Postgres task's Job (the cloud repo's B28b, B28c) in the reconciler's
+    # own namespace; cloud-pg-task-secret below checks the Secret that holds
+    # the Project role's credentials for it. The only writes
+    # cloud-reconciler-scope lets the
+    # reconciler make in `cloud`, so this is the whole of what it may run
+    # there: the pinned postgres image as uid 999, with the task's fixed
+    # script, no service account token, no capability, a read-only root,
+    # and of the NFS claims only Cloud's two dump directories, the nightly
+    # one read-only and the manual one writable for a backup Job alone.
+    pg_task = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-pg-task" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = ["batch"], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["jobs"] },
+          ]
+        }
+        matchConditions = [{
+          name       = "is-cloud-reconciler"
+          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+        }]
+        variables = [
+          { name = "labels", expression = "has(object.metadata.labels) ? object.metadata.labels : {}" },
+          { name = "component", expression = "'${local.cloud_component_label}' in variables.labels ? variables.labels['${local.cloud_component_label}'] : ''" },
+          { name = "pod", expression = "object.spec.template.spec" },
+          { name = "podLabels", expression = "has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) ? object.spec.template.metadata.labels : {}" },
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "(variables.component in ${jsonencode([for k in local.cloud_pg_task.kinds : "pg-${k}"])} && object.metadata.name.matches('${local.cloud_pg_task.name_re}') && object.metadata.name.startsWith(variables.component + '-') && size(object.metadata.name) == size(variables.component) + 10 && '${local.cloud_component_label}' in variables.podLabels && variables.podLabels['${local.cloud_component_label}'] == variables.component && '${local.cloud_pg_task.task_label}' in variables.labels && '${local.cloud_pg_task.task_label}' in variables.podLabels && variables.podLabels['${local.cloud_pg_task.task_label}'] == variables.labels['${local.cloud_pg_task.task_label}'] && size(variables.owners) == 0)"
+            message    = "in ${local.cloud_namespace}, a Postgres task Job is named pg-<kind>-<9 hex digits>, carries its pod's ${local.cloud_component_label} and ${local.cloud_pg_task.task_label} labels and has no owner"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.parallelism) || object.spec.parallelism <= 1) && (!has(object.spec.completions) || object.spec.completions == 1) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= ${local.cloud_pg_task.max_deadline} && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished <= ${local.cloud_pg_task.max_ttl})"
+            message    = "in ${local.cloud_namespace}, a Postgres task Job runs one pod once (backoffLimit 0, no failure or success policy), with activeDeadlineSeconds up to ${local.cloud_pg_task.max_deadline} and ttlSecondsAfterFinished up to ${local.cloud_pg_task.max_ttl}"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(has(variables.pod.restartPolicy) && variables.pod.restartPolicy == 'Never' && has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false && (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == 'default') && (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) && (!has(variables.pod.hostPID) || !variables.pod.hostPID) && (!has(variables.pod.hostIPC) || !variables.pod.hostIPC) && !has(variables.pod.initContainers) && !has(variables.pod.ephemeralContainers) && !has(variables.pod.nodeName) && has(variables.pod.securityContext) && has(variables.pod.securityContext.runAsNonRoot) && variables.pod.securityContext.runAsNonRoot && has(variables.pod.securityContext.runAsUser) && variables.pod.securityContext.runAsUser == ${local.cloud_pg_task.uid})"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod sets restartPolicy Never, mounts no service account token, runs as uid ${local.cloud_pg_task.uid} with runAsNonRoot, and has no host namespaces, init containers or nodeName"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(size(variables.pod.containers) == 1 && variables.pod.containers.all(c, c.name == '${local.cloud_pg_task.container}' && c.image == '${local.cloud_pg_task.image}' && has(c.command) && size(c.command) >= 4 && size(c.command) <= ${local.cloud_pg_task.max_command} && c.command[0] == '/bin/bash' && c.command[1] == '-c' && size(c.command[2]) <= ${local.cloud_pg_task.max_script_len} && c.command[3] == 'pg-task' && (!has(c.args) || size(c.args) == 0) && !has(c.lifecycle) && has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem && (!has(c.securityContext.privileged) || !c.securityContext.privileged) && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && !has(c.securityContext.capabilities.add)))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod has one container ${local.cloud_pg_task.container} running ${local.cloud_pg_task.image} with /bin/bash -c and a task script, no privilege escalation, a read-only root and every capability dropped"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, (!has(c.ports) || size(c.ports) == 0 || (variables.component == 'pg-export' && c.ports.all(p, p.containerPort == ${local.cloud_pg_task.export_port} && !has(p.hostPort)))) && (!has(c.env) || c.env.all(e, !has(e.valueFrom))) && (!has(c.envFrom) || size(c.envFrom) == 0 || (variables.component != 'pg-backups' && size(c.envFrom) == 1 && has(c.envFrom[0].secretRef) && c.envFrom[0].secretRef.name == 'pg-task-' + object.metadata.name.substring(size(object.metadata.name) - 9) && !has(c.envFrom[0].prefix))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod listens only for an export, on ${local.cloud_pg_task.export_port}, and reads its credentials only from its own Secret pg-task-<the Job's 9 hex digits>"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "(!has(variables.pod.volumes) || variables.pod.volumes.all(v, (has(v.emptyDir) && has(v.emptyDir.sizeLimit)) || (has(v.persistentVolumeClaim) && ((v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.nightly_claim}' && variables.component in ['pg-backups', 'pg-restore'] && has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly) || (v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.manual_claim}' && variables.component != 'pg-export' && ((has(v.persistentVolumeClaim.readOnly) && v.persistentVolumeClaim.readOnly) || variables.component == 'pg-backup'))))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod may use only bounded emptyDirs, ${local.cloud_pg_task.nightly_claim} read-only (a list or a restore) and ${local.cloud_pg_task.manual_claim} (read-only unless it is a backup)"
+            reason     = "Forbidden"
+          },
+          {
+            expression = "variables.pod.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m, (!has(m.subPath) || m.subPath == '') && (!has(m.subPathExpr) || m.subPathExpr == '') && has(variables.pod.volumes) && variables.pod.volumes.exists(v, v.name == m.name && (!has(v.persistentVolumeClaim) || (has(m.readOnly) && m.readOnly) || (variables.component == 'pg-backup' && v.persistentVolumeClaim.claimName == '${local.cloud_pg_task.manual_claim}')))))"
+            message    = "in ${local.cloud_namespace}, a Postgres task pod mounts the dump directories read-only, but for a backup's manual one, and with no subPath"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    console_exec_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-console-exec" }
+      spec = {
+        policyName        = "cloud-console-exec"
+        validationActions = ["Deny"]
+      }
+    }
+    pg_task_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-pg-task" }
+      spec = {
+        policyName        = "cloud-pg-task"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
+      }
+    }
+    # The Secret of a Postgres task: the Project role's credentials, owned by
+    # its Job so that Kubernetes deletes it with the Job.
+    pg_task_secret = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicy"
+      metadata   = { name = "cloud-pg-task-secret" }
+      spec = {
+        failurePolicy = "Fail"
+        matchConstraints = {
+          resourceRules = [
+            { apiGroups = [""], apiVersions = ["v1"], operations = ["CREATE", "UPDATE"], resources = ["secrets"] },
+          ]
+        }
+        matchConditions = [{
+          name       = "is-cloud-reconciler"
+          expression = "request.userInfo.username == '${local.cloud_reconciler_user}'"
+        }]
+        variables = [
+          { name = "owners", expression = "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []" },
+        ]
+        validations = [
+          {
+            expression = "(request.operation == 'CREATE' && object.metadata.name.matches('${local.cloud_pg_task.secret_re}') && has(object.type) && object.type == 'Opaque' && size(variables.owners) == 1 && variables.owners.all(o, o.apiVersion == 'batch/v1' && o.kind == 'Job' && has(o.controller) && o.controller && o.name.matches('${local.cloud_pg_task.name_re}') && o.name.endsWith('-' + object.metadata.name.substring(8))) && (!has(object.data) || object.data.all(k, k in ${jsonencode(local.cloud_pg_task.secret_keys)})) && (!has(object.stringData) || object.stringData.all(k, k in ${jsonencode(local.cloud_pg_task.secret_keys)})))"
+            message    = "in ${local.cloud_namespace}, cloud-reconciler creates only Secrets pg-task-<9 hex digits> of type Opaque, owned by their Postgres task Job, holding only ${join(", ", local.cloud_pg_task.secret_keys)}"
+            reason     = "Forbidden"
+          },
+        ]
+      }
+    }
+    pg_task_secret_binding = {
+      apiVersion = "admissionregistration.k8s.io/v1"
+      kind       = "ValidatingAdmissionPolicyBinding"
+      metadata   = { name = "cloud-pg-task-secret" }
+      spec = {
+        policyName        = "cloud-pg-task-secret"
+        validationActions = ["Deny"]
+        matchResources = {
+          namespaceSelector = { matchLabels = { "kubernetes.io/metadata.name" = local.cloud_namespace } }
+        }
+      }
     }
     # Cron Services (the cloud repo's B19). Every pod rule applies to the
     # Job template's pod, so a CronJob the reconciler writes fails at apply

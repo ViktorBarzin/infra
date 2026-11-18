@@ -501,6 +501,82 @@ read-only:
 The User resumes it; an Operator does not scale it by hand, since the next
 apply would put Cloud's replicas back.
 
+## Deleted Projects: restore and early purge
+
+Since the cloud repo's B28d, a delete is soft. `cloud projects delete <p>`
+stops the Project: the reconciler applies it with every App suspended and
+no `edge-*` or `auth-*` Deployment and no Ingress, deletes its running
+one-off and cron Jobs, and keeps its Postgres, Vault entries, OpenTofu
+state, Deploys and images. Its address answers 404. For 7 days
+(`PROJECT_RESTORE_SECONDS` on the console, default 604800) its owner can
+run `cloud projects restore <p>`, or press Restore under Deleted Projects
+on the Projects page. Then the reconciler purges it with the old destroy
+(change `project.purge`).
+
+The Budget rule for a held Project (the parity lead's decision,
+2026-11-17, so the test suites' create and delete churn fits a Budget):
+it counts 0 Projects, 0 CPU and 0 memory, and only its Postgres storage.
+Its Postgres leaves the shared 80-connection ceiling too. Its restore
+plans again and is refused when the Budget or the ceiling no longer fits.
+Its App names stay held and count in the owner's 20 held names
+(`HELD_APP_NAMES_MAX`, with the names released in the last 30 days); a
+delete that would pass 20 is refused as `held_names_full`, and only
+`--purge` deletes then. A Project with no Services, and a delete with
+`--purge` (`DELETE /api/v1/projects/<p>?purge=true`), are destroyed at
+once. Nothing in infra changed for this: the reconciler already deletes
+edge Deployments and Ingresses when an App is removed, and may delete
+Jobs in Project namespaces.
+
+The held Projects, read-only, in the `cloud` database:
+
+```sql
+SELECT slug, deleted_at, purge_after FROM projects
+ WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purged_at IS NULL
+ ORDER BY purge_after;
+```
+
+A stopped Project, read-only:
+`kubectl --context kubernetes-admin@kubernetes -n p-<project> get deploy,ingress,jobs`
+shows each `app-<app>` at 0 replicas, no `edge-*` or `auth-*` and no
+Ingress.
+
+**Purge early** when a User asks, or to free a held Project's storage: the
+owner runs `cloud projects delete <p> --purge`. An Operator can end the
+hold instead; the reconciler purges it within `RECONCILE_POLL_SECONDS`
+(5 s) and records `project.purge` in the name of whoever deleted it:
+
+```sql
+UPDATE projects SET purge_after = now()
+ WHERE slug = '<p>' AND deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purged_at IS NULL;
+```
+
+**Restore** is the owner's: Cloud has no Operator restore, because a
+restore plans against the owner's Budget. To give an owner more time,
+move the purge later before it passes:
+
+```sql
+UPDATE projects SET purge_after = purge_after + interval '7 days'
+ WHERE slug = '<p>' AND deleted_at IS NOT NULL AND purged_at IS NULL;
+```
+
+After the purge only the nightly dumps are left; see "Restore a Project
+database" below.
+
+**Rolling back** the console and reconciler to a release before B28d:
+the old code knows no hold. It never purges a held Project, a re-apply
+of one (a Size change, a stop that is retried) renders it running again,
+so its address serves again, and its failed stop is retried as a
+destroy. Roll forward instead when you can. If you must roll back, purge
+the held Projects first: set `purge_after = now()` on all of them (the
+`UPDATE` above without the slug), wait until every one has `purged_at`
+and its destroy is done (`SELECT slug FROM projects WHERE purge_after IS
+NOT NULL AND purged_at IS NULL` returns nothing, and no destroy job is
+queued or running), then roll back. Tell their owners first: a purge
+cannot be undone. Migration 0031 is additive, so the old release runs on
+the new columns. A restore refused with `plan_invalid` and "no longer fits
+your Budget" means the owner's other Projects took the room; the owner
+frees some, or an Operator raises the Budget.
+
 ## Worker and cron Services
 
 A worker Service (the cloud repo's B18) is Deployment `worker-<name>` in
@@ -805,6 +881,29 @@ were in `/backup/per-db/` and age out of it by 2026-12-03.
 [restore-postgresql.md](restore-postgresql.md), "Restore Single Database",
 has the general steps.
 
+Users restore themselves (cloud B28c): `cloud pg backups <p> <db>` lists
+both kinds, and `cloud pg restore <p> <db> --backup <id> --into <new>` adds
+a new Postgres through an apply and runs `pg_restore` into it as its own
+role. It never writes into the existing database, so first point the User
+there. Each backup list, backup, export and restore is a Job the reconciler
+runs in namespace `cloud`:
+
+```sh
+kubectl -n cloud get jobs -l cloud.viktorbarzin.me/component=pg-restore   # or pg-backups, pg-backup, pg-export
+kubectl -n cloud logs job/pg-restore-<9 hex>
+```
+
+A Job and its credentials Secret `pg-task-<9 hex>` go 10 minutes after it
+ends. A task the reconciler lost track of fails as `task_stale` after 2
+hours. The manual dumps directory belongs to uid 999 (the postgres user of
+the task image); `postgresql-backup` makes it with that owner on every
+run, so a Job that cannot write there means the directory was changed by
+hand. Rollback of the task Jobs: delete the `cloud-pg-task` and
+`cloud-pg-task-secret` policies with their bindings and the Role `cloud-reconciler-tasks` (in `stacks/cloud`
+`pg_backups.tf` and `access_rules.tf`); every task then fails as
+`job_refused`, and the nightly dumps keep running. Restores below are the
+Operator's way into the existing database.
+
 1. Find the database:
    `SELECT datname FROM pg_database WHERE datname LIKE 'p\_<project>\_%';`
 2. Stop the App's writes for the restore: `ALTER ROLE <db> CONNECTION LIMIT 0;`
@@ -883,6 +982,180 @@ for s in $(kubectl exec -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d c
   kubectl exec -n dbaas "$PRIMARY" -c postgres -- psql -U postgres -d cloud_state -Atc "select '$s' from $s.states where data::jsonb ? 'resources'"
 done
 ```
+
+## Disaster recovery drill
+
+Cloud backlog B11. The drill shows that the nightly dumps alone can bring
+Cloud back: the `cloud` database holds each Project's desired state, and
+`cloud_state` holds the OpenTofu state its last apply wrote. The drill
+restores both into a scratch Postgres on the devvm and plans every live
+Project against them with the cloud repo's `offline-plan` entrypoint
+(`src/reconciler/offline-plan.ts`). It never touches the cluster, the
+shared Postgres or Vault after it reads the state key.
+
+Run it after a change to the backup job, the state encryption or the
+reconciler's render, and once a quarter. Run it before you trust the dumps
+in a real restore, too: it takes about a minute.
+
+### Safety rails
+
+- The entrypoint refuses to start unless `DATABASE_URL` and
+  `CLOUD_STATE_URL` point at `127.0.0.1` or `localhost` with no query key
+  but `sslmode` (libpq would take `host=` from the query), and while
+  `KUBERNETES_SERVICE_HOST`, a service account token, a `KUBECONFIG`
+  other than `/dev/null` or `VAULT_TOKEN` is present.
+- It runs `tofu init`, `tofu state pull`, `tofu plan -refresh=false
+  -lock=false` and `tofu show` only. It never applies, and it starts none
+  of the reconciler's loops. Do not start the stock reconciler
+  (`reconciler.js`) on restored data: its notification loop would send the
+  restored outbox's emails and webhooks again.
+- OpenTofu gets only `PATH` and the job's own variables, with `HOME` set to
+  the job directory, so it finds no kubeconfig. The Vault and Postgres
+  provider credentials are empty.
+- The state key lives only in a mode-600 file in a mode-700 scratch
+  directory. A trap on EXIT deletes the directory, the worktree and the
+  container.
+
+### What the Plan covers
+
+Two kinds of resources need a live API even with `-refresh=false`: every
+`kubernetes_manifest` (the provider reads the object's OpenAPI schema from
+the cluster at plan time) and every data source (OpenTofu reads them on
+each plan; Cloud's read Vault). The drill leaves them out with `-exclude`,
+and OpenTofu leaves out everything that depends on them. The report lists
+each instance it did not compare in `notCompared`. Today that is 11 of 31
+per Project: the 7 `kubernetes_manifest` objects (SecretStore,
+ExternalSecrets, the Calico policy), the App and oauth2-proxy Deployments,
+the oauth2-proxy Service and Vault entry, and `terraform_data.isolation`.
+The other 20 are compared: the namespace, quota, limit range,
+RoleBinding, service accounts, the edge, the App's Service and Ingress,
+the Postgres role, database and password, and the Vault entries.
+
+The report also checks two things across the dumps. `renderDigestMatches`
+is true when the build renders what the live reconciler last recorded
+(`reconciler_state.render`), so the drill used the same instance settings.
+`registryTokenMismatches` lists Projects whose state holds a pull token
+whose sha256 is not the one in `reconciler_state.registry_token`.
+
+What the drill does not prove: that the excluded objects match, that the
+live cluster still matches the state (that needs a refresh), and that ESO
+had synced every App's secrets (the drill assumes it had).
+
+### Commands
+
+The drill builds from a throwaway worktree of the cloud clone at the
+release that was live when the dumps were written, so the shared clone
+stays on its branch. That is usually the reconciler image now (its tag is
+the commit's short SHA:
+`kubectl -n cloud get deploy cloud-reconciler -o jsonpath='{..image}'`).
+When a release deployed after the dump time, take the one before it from
+`gh run list --repo ViktorBarzin/cloud --workflow "Build and Push"`: a
+later release renders what the dump does not hold yet, so the drill
+exits 3 with changes.
+The pinned tofu and provider mirror come from the clone's `.tools/`
+(cloud README, "Reconciler"). Run the block in one shell: the trap
+removes the container, the worktree, the dumps and the key file however
+the block ends.
+
+```sh
+SHA=<short sha of the reconciler image>
+CLOUD=~/code/cloud BUN=/usr/local/bin/bun
+umask 077; D=$(mktemp -d /var/tmp/cloud-dr.XXXXXX)   # mode 700
+trap 'docker rm -f cloud-dr-pg >/dev/null 2>&1; git -C "$CLOUD" worktree remove --force "$D/src" 2>/dev/null; rm -rf "$D"' EXIT
+
+git -C "$CLOUD" worktree add --detach "$D/src" "$SHA"
+(cd "$D/src" && $BUN install --frozen-lockfile && $BUN run build:entrypoints)
+
+# 1. The newest dumps, read-only from the NFS host
+#    (mirrors: /mnt/backup/nfs-mirror/postgresql-backup/ there, and Synology).
+for db in cloud cloud_state; do
+  f=$(ssh root@192.168.1.127 "ls -t /srv/nfs/postgresql-backup/per-db/$db/dump_*.dump | head -1")
+  scp -q "root@192.168.1.127:$f" "$D/$db.dump"
+done
+ls -l "$D"/*.dump
+
+# 2. A scratch Postgres on 127.0.0.1 only; the server major must be at
+#    least the dump's (pg_restore -l prints it).
+head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$D/pgpass"
+docker run -d --name cloud-dr-pg -p 127.0.0.1:55611:5432 --user root \
+  -e POSTGRES_PASSWORD_FILE=/run/pgpass -v "$D/pgpass:/run/pgpass:ro" postgres:18
+until docker exec cloud-dr-pg pg_isready -U postgres -q; do sleep 1; done
+for db in cloud cloud_state; do
+  docker cp "$D/$db.dump" cloud-dr-pg:/tmp/ && docker exec cloud-dr-pg createdb -U postgres $db
+  docker exec cloud-dr-pg pg_restore -U postgres -d $db --no-owner --no-acl --exit-on-error /tmp/$db.dump
+done
+
+# 3. The state key, straight into a mode-600 file; never printed. The
+#    state URL holds the password, so it goes in a file too.
+vault kv get -field=passphrase secret/cloud/state-key > "$D/state-key"
+printf 'postgres://postgres:%s@127.0.0.1:55611/cloud_state?sslmode=disable' "$(cat "$D/pgpass")" > "$D/state-url"
+
+# 4. The offline Plan. The instance settings are the live reconciler's
+#    (stacks/cloud deploy_rules.tf, cloud_reconciler_env).
+mkdir "$D/work"
+env -i PATH=/usr/bin:/bin HOME="$D/work" KUBECONFIG=/dev/null \
+  DATABASE_URL=postgres://postgres@127.0.0.1:55611/cloud DATABASE_PASSWORD_FILE="$D/pgpass" \
+  CLOUD_STATE_URL_FILE="$D/state-url" TOFU_STATE_PASSPHRASE_FILE="$D/state-key" \
+  TOFU_BIN="$CLOUD/.tools/tofu" TOFU_PLUGIN_DIR="$CLOUD/.tools/providers" \
+  RECONCILER_MODULES_DIR="$D/src/modules" RECONCILER_WORK_DIR="$D/work" \
+  RECONCILE_STATE_READ_UNENCRYPTED=false \
+  VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200 \
+  POSTGRES_HOST=pg-cluster-rw.dbaas.svc.cluster.local \
+  EDGE_IMAGE=<local.cloud_edge.image> OAUTH2_PROXY_IMAGE=<local.cloud_oauth2_proxy.image> \
+  $BUN "$D/src/.output/entrypoints/offline-plan.js" > "$D/report.json"; echo "exit $?"
+jq '{renderDigestMatches, registryTokenMismatches, projects: [.projects[] | {project, result, desiredVersion, appliedVersion, compared, stateResources, changes}]}' "$D/report.json"
+# Leaving the shell (or `trap - EXIT; ...` by hand) runs the cleanup.
+```
+
+`VAULT_ADDR` and `POSTGRES_HOST` are only rendered into the plan; nothing
+connects to them. No password reaches a command line: the scratch
+password, the state URL and the key are read from files.
+
+### What success looks like
+
+Exit 0 alone is success: every Project's `result` is `no_changes`,
+`renderDigestMatches` is true and `registryTokenMismatches` is empty. The
+other codes:
+
+| Exit | Meaning |
+|---|---|
+| 1 | A Plan failed (`error`, credentials redacted), a Project has no state schema in `cloud_state` (`no_state`), or the drill refused to start (`refused`) |
+| 2 | A Plan has changes: read `changes`. A Project whose `desiredVersion` is above its `appliedVersion` was converging when the dump was taken, so changes are expected for it |
+| 3 | Every Plan is empty, but a cross-check does not agree: `renderDigestMatches` false (or null: nothing recorded) means the worktree renders other than the release the dumps were taken under, so check out that release; a name in `registryTokenMismatches` holds a pull token the reconciler did not record |
+
+### Result on 2026-11-17
+
+Dumps from 2026-11-17 19:21 UTC, 2 h 12 min old at the copy: `cloud`
+1,084,391 bytes, `cloud_state` 304,633 bytes. The restore took 2.1 s with
+no errors. `cloud` held 128 Projects, 2 of them live and applied
+(`p03-rzhop0`, `p67-5fh7rt`), and `cloud_state` held exactly their 2 state
+schemas (serials 13 and 5). The offline Plan took 32 s:
+`renderDigestMatches` true, no token mismatch, 20 of 31 instances
+compared per Project, exit 2. The first run found one change in each Project:
+the edge Deployment's `tier = "4-aux"` label was in the state but not in
+the configuration. Kyverno's `sync-tier-label-from-namespace` adds it to
+every Deployment without one, so every plan proposed removing it. Cloud
+now ignores that label key on every Deployment it renders
+(`src/reconciler/kyverno-drift.test.ts`). With that build, the commands above
+(106 s, a fresh worktree and build included) gave `no_changes` for both
+Projects and exit 3, because `renderDigestMatches` is false: the module
+change moves the render digest. The live reconciler applies every Project
+once when that release deploys and records the new digest, and the next
+drill reads true and exits 0.
+
+### Result on 2026-11-18
+
+After the tier fix deployed (cloud b0afd73, 2026-11-17 22:54 UTC), the
+reconciler applied both live Projects once, and both live plans read "No
+changes"; no pod restarted. The nightly dumps of 2026-11-18 00:02 UTC
+(`cloud` 1,232,403 bytes, `cloud_state` 304,678 bytes) were copied 31 min
+later. At 255141a, the release live at the dump time, the commands above
+gave exit 0 in 42 s: `renderDigestMatches` true, no token mismatch, and
+`no_changes` for `p03-45gh2x` and `p67-5fh7rt` (20 of 31 instances
+compared each). At ffe7818, the release deployed 3 min after the dump,
+they gave exit 3 with 2 changes per Project (the resource quota, and the
+`console_exec` RoleBinding that release adds), which is why the drill
+takes the release of the dump time.
 
 ## Revoke a token
 
@@ -1018,6 +1291,61 @@ cloud.viktorbarzin.me/component=job` and `kubectl -n p-<project> describe
 job <name>`. Cloud has no cancel for a job yet; its deadline ends it
 within 71 minutes.
 
+## Shell and psql sessions
+
+Since cloud backlog B22 `cloud shell <project> <app>` runs `sh` in the
+`app` container of a ready App pod, and `cloud psql <project> <postgres>`
+runs `psql` in a toolbox pod the reconciler starts for that one session
+(Job `toolbox-<first 9 hex of the session id>`, component `toolbox`,
+image `postgres:18-alpine` pinned in `cloud_toolbox`). Both go through
+`pods/exec` as the console's service account `cloud/cloud-console`, which
+holds ClusterRole `cloud-console-exec` (pods get and list, pods/exec
+get and create) only through RoleBinding `cloud-console-exec` in each `p-*`
+namespace, made by Cloud's `modules/project`. Admission policy
+`cloud-console-exec` lets it run only `sh` in container `app` and `psql`
+in container `toolbox`, in managed `p-*` namespaces. The toolbox holds the
+Postgres's own role from Secret `pg-<postgres>`, no Kubernetes token, and
+the egress floor lets it reach DNS and the CNPG primary only. A session
+lasts at most 1 h and ends after 15 min with no bytes either way; a
+Project runs one psql session at a time.
+
+See sessions:
+
+- `cloud changes <project>` lists each session as a `shell` or `psql`
+  change, started at `createdAt`, ended at `finishedAt`, with the bytes
+  and how it ended in its log excerpt.
+- On the `cloud` database, the open ones: `select id, kind,
+  service_name, pod, user_id, created_at, connected_at, last_seen_at,
+  bytes_in, bytes_out from exec_sessions where ended_at is null;`
+- Kubernetes records every exec at Metadata level (the live audit policy,
+  `scripts/k8s-apiserver-audit-policy.yaml`, rule 4; a WebSocket exec is
+  verb `create`). In Loki: `{job="kubernetes-audit"} |= "/exec?" |=
+  "system:serviceaccount:cloud:cloud-console"`. The `requestURI` holds the
+  command (`sh`, or `psql`); SQL a User pipes in is stdin and is not in
+  the audit log.
+
+Cut one off: on the `cloud` database, `update exec_sessions set cut_off_at
+= now() where id = '<session id>';`. The console that runs it ends it at
+its next beat, within 15 s, and records `cut_off`. If no console answers
+(it stopped without a word), the reconciler ends the session as `lost`
+90 s after the last beat and deletes its toolbox Job.
+
+Sessions fail with `exec_unavailable` when the console has no service
+account token, `exec_refused` when Kubernetes refuses the exec (check that
+ClusterRole and policy `cloud-console-exec` are applied, and that the
+Project's RoleBinding exists: apply the Project again), and
+`toolbox_not_ready` when the toolbox pod did not run within 2 min (quota
+full during a Deploy, or an image pull; `kubectl -n p-<project> get jobs
+-l cloud.viktorbarzin.me/component=toolbox`, read-only).
+
+Rollback: remove `kubernetes_cluster_role.cloud_console_exec` from
+`stacks/cloud/main.tf` and apply. No new shell or psql session can start
+(the RoleBindings then name a role that does not exist and grant
+nothing); nothing else changes. Sessions already open keep their exec
+stream, so end them too on the `cloud` database: `update exec_sessions
+set cut_off_at = now() where ended_at is null`. The console ends each
+within 15 s, at its next beat.
+
 ## Alerts
 
 | Alert | Pages | First step |
@@ -1035,14 +1363,33 @@ within 71 minutes.
 
 ### The pull token, the ghcr cache and a rotation
 
-- An `UNAUTHORIZED` or a 500 from the ghcr cache at 10.0.20.10:5010 in a
-  Project pod's events is normal for a private image. The cache holds no
-  credentials by design (`playbooks/files/registry-cache/config-ghcr.yml`);
-  containerd then pulls from ghcr.io directly with the Project's
-  `cloud-registry` Secret (`hosts.toml` from
+- Cloud App images reach nodes through the ghcr cache at 10.0.20.10:5010
+  (cloud backlog B36). nginx there sends
+  `/v2/viktorbarzin/cloud-<project>_<app>/manifests/...` and `/blobs/...`
+  from the six k8s nodes to `registry-ghcr-cloud`, which signs in to ghcr
+  with Cloud's `ghcr_pull` token (Vault `secret/cloud/github-narrow`,
+  rendered into `/opt/registry/config-ghcr-cloud.yml` by
+  `playbooks/registry-cache.yml`). Every other ghcr path stays on
+  `registry-ghcr`, which holds no credentials
+  (`playbooks/files/registry-cache/config-ghcr.yml`). The token reads every
+  private package of the account, so the route is narrow: only App image
+  names, only GET and HEAD, only manifests and blobs by `sha256` digest,
+  and only from the six node addresses; anyone else gets 403. The node
+  addresses do not tell tenants apart, since the kubelet pulls for every
+  pod on its node, so any namespace on the cluster could ask for a Cloud
+  App image through a node. The digest is what keeps them out: Cloud runs
+  every App by digest and nobody else knows it, while a tag is a commit
+  sha, public for a public repo, so tags are refused. Project pods cannot
+  reach the VM at all: the egress floor denies them 10.0.0.0/8
+  (`cloud_project_egress_floor`). After a rotation of `ghcr_pull`, run the
+  playbook again and restart `registry-ghcr-cloud`.
+- An `UNAUTHORIZED`, a 403 or a 500 from 10.0.20.10:5010 in a Project
+  pod's events does not stop the pull: containerd then pulls from ghcr.io
+  directly with the Project's `cloud-registry` Secret (`hosts.toml` from
   `playbooks/k8s-node-tuning.yml`), and the kubelet reports only the first
   host's error. Look at the second pull attempt, or at whether the pod
-  started.
+  started. Before B36's registry apply, every App image pull went that
+  way.
 - The reconciler refuses every apply while `ghcr_pull_token` is empty
   (`registry_token_missing` on the change and in Notifications). Set the
   key, then apply the Project File again.
@@ -1066,6 +1413,49 @@ within 71 minutes.
   `ghcr.io/<owner>/cloud-<project>_<app>`, so Cloud's own image and infra
   images are never touched.
 
+### Old App images
+
+Since cloud B36 the reconciler also prunes the images of Apps that still
+run, every hour, with the same `ghcr_delete_token` (cloud
+`src/reconciler/packages.ts`, `pruneImagesOnce`). Only tagged versions go:
+an untagged one may be a child manifest of an index. Each App keeps its newest
+10 package versions, the image of every Deploy that is building, deploying
+or live (its workers and crons run that one), the images of its newest 10
+live or replaced Deploys (the rollback targets) and the image of a queued
+or running one-off job. A deleted Project, or one soft deleted and waiting
+for its purge, keeps every image. A pass makes at most 60 GitHub calls and
+20 deletes, goes on where the last one stopped, and stops at the first 401,
+403 or 429 without retrying. Each pruned version is a log line ("pruned an
+image version", with the repository, digest and tags), and a rollback to
+it answers `image_pruned` with the `cloud deploy --commit` command that
+builds it again.
+
+- The switch: `image_prune` in `stacks/cloud` (`deploy_rules.tf`), the
+  reconciler's `RECONCILE_IMAGE_PRUNE`. It starts at `dry-run` (2026-11-17)
+  and moves to `on` after the dry-run lines are read; `dry-run` logs
+  "would prune an image version" for each version and deletes none; `off`
+  is the rollback. Change the variable and let CI apply `cloud`.
+- Metrics: `cloud_image_versions_pruned_total{mode}`,
+  `cloud_image_prune_errors_total{reason}` (unauthorized, forbidden,
+  rate_limited, list_failed, delete_failed), `cloud_image_prune_api_calls`
+  and `cloud_image_prune_stopped`.
+- `CloudImagePruneStopped` (warning): GitHub answered 401 or 403, and
+  pruning is off until the reconciler restarts. Check `ghcr_delete` in
+  `secret/cloud/github-narrow` (`read:packages` and `delete:packages`),
+  then restart the reconciler. A 429 only skips to the next pass.
+- The cache on 10.0.20.10 keeps what it fetched for up to 168 h
+  (`proxy.ttl`), and nginx keeps blobs for 24 h, so a pruned version, or
+  the images of a purged Project, can still be pulled by digest through the
+  cache for up to a week after GitHub deleted them. Only the nodes can ask,
+  by digest. To drop them at once, delete their directories under
+  `/opt/registry/data/ghcr-cloud/docker/registry/v2/repositories/viktorbarzin/`
+  and restart `registry-ghcr-cloud`.
+- A version deleted by mistake can be restored for 30 days:
+  `POST /users/viktorbarzin/packages/container/<package>/versions/<id>/restore`
+  with a token that has `write:packages` (the id is in GitHub's deleted
+  versions list, `?state=deleted`). Then clear `image_pruned_at` on its
+  Deploys in Cloud's database so a rollback to it is allowed again.
+
 ## Forgejo bot accounts (created 2026-11-14)
 
 Two Forgejo accounts serve Cloud's builds, each with one scoped token in Vault
@@ -1076,6 +1466,8 @@ secret, `stacks/authentik/cloud-apps.tf`):
 |---|---|---|---|---|
 | `cloud-bot` | no | `forgejo_read_token` | read:repository | reconciler (branch polling) and the GitHub builder repo's `FORGEJO_READ_TOKEN` secret; reads a private App repo only as a Read collaborator, which `cloud new` adds (Cloud's `FORGEJO_READER`, default `cloud-bot`) |
 | `cloud-admin-reader` | yes | `forgejo_admin_token` | read:admin, read:repository, read:user | reconciler only (the Project owner's repo-access check); never copied anywhere |
+| `cloud-bot` | no | `forgejo_status_token` (a second token) | write:repository | reconciler only: posts the commit status `cloud/build` of check builds (B13). Write comes only from repos with Renovate on, where `cloud new` or `cloud renovate enable` makes `cloud-bot` a Write collaborator; elsewhere it stays Read or absent. Write lets this token push any branch of those repos, the deploy branch included; it is Forgejo's minimum for posting a status (`reqRepoWriter`), and no narrower role exists. Never copied to the builder |
+| `cloud-renovate` | no, restricted | in Vault `secret/renovate-cloud` `forgejo_token` | write:repository, read:user, write:issue | the `renovate-cloud-apps` CronJob only (`docs/runbooks/renovate.md`); a Write collaborator of enrolled App repos, and of nothing else |
 
 Both were made with the in-pod CLI (the admin REST endpoint cannot mint
 tokens for another user):
@@ -1088,6 +1480,43 @@ kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c \
 To rotate, mint a new token the same way, `vault kv patch secret/cloud/system <key>=-`
 from stdin, then revoke the old one with `DELETE /api/v1/users/<account>/tokens/<name>`
 as an admin. Their passwords are random and not stored; nobody signs in as them.
+
+## Renovate on App repos
+
+Cloud backlog B13. Renovate (`renovate-cloud-apps`, `docs/runbooks/renovate.md`) opens one pull request a week on each App repo with the topic `cloud-app`, as the Forgejo account `cloud-renovate`. Cloud builds each commit of a `renovate/*` branch as a check build that never deploys and posts the Forgejo commit status `cloud/build`. Renovate merges once every status of the commit is success, `cloud/build` among them. The merge is a push, so it deploys like any other and goes live only past its health check.
+
+Operator steps, before the job is unsuspended. Each token is held in a shell variable, checked to be non-empty, then piped to Vault, so it is never printed and an empty answer writes nothing:
+
+```sh
+fj() { kubectl -n forgejo exec deploy/forgejo -c forgejo -- su -s /bin/sh git -c "$1"; }
+
+# 1. The account: restricted, so it sees only repos it is a collaborator of.
+fj "forgejo admin user create --username cloud-renovate --email cloud-renovate@viktorbarzin.me --fullname 'Cloud Renovate' --random-password --must-change-password=false --restricted"
+
+# 2. Its token, into its own Vault path (Secret renovate-cloud-env).
+tok=$(fj "forgejo admin user generate-access-token --username cloud-renovate --token-name renovate-cloud --scopes 'write:repository,read:user,write:issue' --raw")
+[ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv put secret/renovate-cloud forgejo_token=-
+unset tok
+
+# 3. cloud-bot's status token, next to its read token.
+tok=$(fj "forgejo admin user generate-access-token --username cloud-bot --token-name cloud-status --scopes 'write:repository' --raw")
+[ -n "$tok" ] || { echo "no token; nothing written" >&2; false; } && printf %s "$tok" | vault kv patch secret/cloud/system forgejo_status_token=-
+unset tok
+```
+
+Until step 2 is done, the ExternalSecret `renovate/renovate-cloud-env` reports a sync error (no `secret/renovate-cloud` in Vault). That is expected while the job is suspended, and no alert reads it. ESO retries a failed sync on its own backoff, and the 1 h refresh at the latest reads the key after step 2; check with `kubectl -n renovate get externalsecret renovate-cloud-env` (Ready) before you unsuspend the job.
+
+The random password is not stored; nobody signs in as either account. `stacks/authentik` carries `forgejo_status_token` over on every apply (`cloud_system_carried_keys`), so land the infra change before an authentik apply can run after step 3. The reconciler reads the key within 5 minutes; from then on it check-builds.
+
+Then:
+
+1. Set `cloud_apps_suspended = false` in `stacks/renovate` and `renovate_account = "cloud-renovate"` in `stacks/cloud` (`deploy_rules.tf`), and push; CI applies both. Done 2026-11-17; both are now the defaults. The console then names Renovate on `GET /api/v1/instance`, and `cloud new` and `cloud renovate enable` set up repos.
+
+Setting `renovate_account` before step 3 leaves Renovate's pull requests waiting forever: with no status token Cloud runs no check builds, and a commit with no status never merges.
+
+What Cloud checks before it check-builds a commit: the repo is on Cloud's Forgejo and has the topic `cloud-app`, and this App is the oldest App of the repo that runs, deploys pushes and whose owner is an Operator or is linked to the Forgejo account that owns the repo (`forgejo_links`). So one App checks each commit, and another User's App of the same public repo cannot post the status. The owner check runs again before every post, and a status goes only to the repo the check build was made for. A failure that says nothing about the commit (no runner, the dispatch, the Budget, a refused status) is built again an hour after it ended, at most 3 builds per commit.
+
+Off for one repo: `cloud renovate disable <project> <app>`. Off for all: `cloud_apps_suspended = true` in `stacks/renovate`, then `renovate_account = ""` in `stacks/cloud` so new Apps are not set up. To stop check builds, remove `forgejo_status_token` from `secret/cloud/system` and from `cloud_system_carried_keys`.
 
 ## Turning builds on
 
