@@ -627,7 +627,7 @@ resource "kubernetes_deployment" "rybbit" {
       }
       spec {
         container {
-          image = "ghcr.io/rybbit-io/rybbit-backend:v2.9.2"
+          image = "ghcr.io/rybbit-io/rybbit-backend:v2.9.3"
           name  = "rybbit"
 
           env {
