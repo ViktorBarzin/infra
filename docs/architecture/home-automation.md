@@ -52,8 +52,11 @@ Nothing images the VM; the SSD can fail and recovery is a rebuild:
 
 ## Add-ons built from our repos
 
-One local add-on is built on the box from a repo rather than pulled from an
-add-on store: `local_intercom_watch`, emo's watchdog for the B4 intercom at the
+Two local add-ons are built on the box from a repo rather than pulled from an
+add-on store. On ha-london, `local_led_strip` drives the "Livia" LED strip from
+GPIO10 with the strandtest.py script rpi-london used to run; its source and
+`deploy.sh` are `ha-addons/led_strip/` in this repo (README there). On
+ha-sofia, `local_intercom_watch`, emo's watchdog for the B4 intercom at the
 Vermont complex. Its source is `ha-addon/` in `ebarzin/vermont-device-configs`,
 and that folder's `deploy.sh` copies it to `/addons/intercom_watch` over the
 SSH add-on, fills its secret options from Vault and Vaultwarden, and has the
@@ -61,7 +64,7 @@ Supervisor build and start it. It is a Debian container because the Hikvision
 SDK it reboots the intercom with is x86-64 glibc, which HA core (Alpine) cannot
 load. It reaches the intercom through an SSH tunnel to rpi-sofia with a key
 that may open only that tunnel. Details: `docs/runbooks/cameras-nvr-intercom.md`.
-HA's daily backup covers the add-on and its options.
+HA's backups cover both add-ons and their options.
 
 ## On the Showcase
 

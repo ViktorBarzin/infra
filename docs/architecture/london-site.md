@@ -168,17 +168,19 @@ python3 scripts/london-flint/build-ipk.py <version> <out-dir>
 ## Home Assistant Pi (ha-london)
 
 ha-london is Home Assistant OS on a Raspberry Pi 3 B (903 MB RAM, 32 GB SD
-card) at 192.168.8.103, on Wi-Fi. It runs Core 2026.11.0 since 2026-11-05. The
-only add-on kept running is Advanced SSH, which is the access path when Core is
-down (`ssh hassio@192.168.8.103`, then `sudo -n`). Whisper, Piper, VS Code and
+card) at 192.168.8.103, on Wi-Fi. It runs Core 2026.11.0 since 2026-11-05. Two
+add-ons run: Advanced SSH, which is the access path when Core is down
+(`ssh hassio@192.168.8.103`, then `sudo -n`), and LED strip (`local_led_strip`,
+below). Whisper, Piper, VS Code and
 the ESPHome builder were uninstalled on 2026-11-05 to free memory and disk;
 the ESPHome device YAMLs stay in `/homeassistant/esphome`.
 
 | Item | State | Notes |
 |---|---|---|
 | Power | Tapo P100 "pi living room Tapo P100", `plug-tapo` (192.168.8.108) | Third-Party Compatibility is on (Tapo app, Tapo Lab), so it speaks KLAP and python-kasa can switch it from the devvm: `kasa --host 192.168.8.108 --username <u> --password <p> off`, then `on`. The working login is the Vaultwarden item `www.tplinkcloud.com`. |
-| Wi-Fi failure | Onboard Wi-Fi can stop under load while the Pi keeps running | Kernel line `mmc1: Timeout waiting for hardware interrupt` (mmc1 is the Wi-Fi chip). Seen 2026-11-03 and four times on 2026-11-04, each 2-4 minutes after boot while Core started. The hardware watchdog does not fire, because the Pi is not frozen. An Ethernet cable would remove the cause. |
+| Wi-Fi | USB adapter TP-Link TL-WN722N v1 (Atheros AR9271, `ath9k_htc`), interface `wlu1u3`, MAC `c4:e9:84:10:52:c8`, static 192.168.8.103/24 on `2.4G-Tower`, set with `ha network update wlu1u3` | The onboard chip is off (`dtoverlay=disable-wifi` in `/mnt/boot/config.txt`). It stopped under load while the Pi kept running: kernel line `mmc1: Timeout waiting for hardware interrupt` (mmc1 is the SDIO Wi-Fi chip), so the hardware watchdog never fired. If the adapter is unplugged, the Pi has no network until the overlay line is removed from the SD card's boot partition. The Flint lease for 192.168.8.103 still names the old onboard MAC `b8:27:eb:e9:18:92`, which keeps the address reserved. An Ethernet cable is still the most reliable option. |
 | Self-recovery | HA automation `wifi_watchdog_reboot` | Every 2 minutes: if `binary_sensor.192_168_8_1` (ping of the Flint) has been off for 6 minutes and the automation has not run in the last 30 minutes, it calls `hassio.host_reboot`. It cannot help while Core is stopped; power-cycle through the plug then. |
+| LED strip "Livia" | Local add-on `local_led_strip`, source `ha-addons/led_strip/` in this repo | 150 WS2812 LEDs. Data on GPIO10 (pin 19, SPI MOSI), ground on pin 20; the strip's own 5 V supply is on the Kasa plug `switch.livia`. Boot config has `dtparam=spi=on` and `core_freq=250` (the Pi 3 SPI clock follows the core clock). HA entity `light.livia`, exposed to Alexa as "Livia"; HA side in `packages/livia.yaml` of the ha-london-config repo. Details: `ha-addons/led_strip/README.md`. |
 | Upgrades | Core image needs about 3.1 GB free at peak | Procedure that worked twice: stop Core, `nohup docker pull` the image over SSH, `ha core update --version <v> --backup=false`, `ha core start`. A UI update with a backup starved the Pi on 2026-11-04. |
 
 ### Backups
