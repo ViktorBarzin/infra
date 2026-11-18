@@ -130,7 +130,7 @@ resource "kubernetes_deployment" "owntracks" {
       spec {
 
         container {
-          image = "owntracks/recorder:1.0.5"
+          image = "owntracks/recorder:1.0.6"
           name  = "owntracks"
           port {
             name           = "http"
