@@ -4,6 +4,7 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
+variable "redis_host" { type = string }
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
@@ -101,6 +102,51 @@ resource "kubernetes_manifest" "external_secret" {
       dataFrom = [{
         extract = {
           key = "tv"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.tv]
+}
+
+# The shared Redis as the ACL user tv: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md). One URL per db the app
+# uses; the tv code builds every client from these two env vars
+# (tv/shared_redis.py, tv/channels/store.py). Every Deployment that talks to
+# Redis reads both: edge and worker through local.tv_env_secrets, transcoder,
+# watcher and recorder by hand. Reloader (auto) rolls them on a rotation.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "tv-redis"
+      namespace = "tv"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "tv-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            SHARE_REGISTRY_REDIS_URL = "redis://tv:{{ .password }}@${var.redis_host}:6379/11"
+            CHANNELS_REDIS_URL       = "redis://tv:{{ .password }}@${var.redis_host}:6379/12"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "tv"
         }
       }]
     }
@@ -482,6 +528,12 @@ locals {
 
   # Secret-backed env shared by the Edge and the Worker.
   tv_env_secrets = [
+    # The shared Redis as the ACL user tv: db 11 (share registry, stream
+    # health, viewer counts, devices) and db 12 (channels). Not optional, so
+    # a pod started before ESO has written the keys waits instead of using
+    # the app's password-less default (redis_external_secret below).
+    { name = "SHARE_REGISTRY_REDIS_URL", secret = "tv-redis", key = "SHARE_REGISTRY_REDIS_URL", optional = false },
+    { name = "CHANNELS_REDIS_URL", secret = "tv-redis", key = "CHANNELS_REDIS_URL", optional = false },
     # Signs the admin session cookie, and the URLs and internal header the
     # Roles pass each other. Unset, the app issues and accepts nothing rather
     # than signing with a guessable key. The Transcoder sets it on its own.
@@ -554,6 +606,7 @@ locals {
 # Edge: the site, the API, /proxy, /relay and replays. Every viewer byte passes
 # through an Edge, so this is the Role a rollout must not interrupt.
 resource "kubernetes_deployment_v1" "tv_edge" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "tv-edge"
     namespace = local.tv_namespace
@@ -869,6 +922,7 @@ resource "kubernetes_deployment_v1" "tv_edge" {
 # pod's IP, which the session record in Redis names. Segments stay in this
 # pod's memory, as before the split.
 resource "kubernetes_deployment_v1" "tv_transcoder" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "tv-transcoder"
     namespace = local.tv_namespace
@@ -1055,6 +1109,29 @@ resource "kubernetes_deployment_v1" "tv_transcoder" {
               }
             }
           }
+          # The shared Redis as the ACL user tv (redis_external_secret in
+          # main.tf). Not optional: a pod started before ESO has written the
+          # keys waits instead of using the app's password-less default.
+          env {
+            name = "SHARE_REGISTRY_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name     = "tv-redis"
+                key      = "SHARE_REGISTRY_REDIS_URL"
+                optional = false
+              }
+            }
+          }
+          env {
+            name = "CHANNELS_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name     = "tv-redis"
+                key      = "CHANNELS_REDIS_URL"
+                optional = false
+              }
+            }
+          }
           # Pinned keys; see tv_env_secrets.
           env {
             name = "URL_SIGNING_KEY"
@@ -1145,6 +1222,7 @@ resource "kubernetes_deployment_v1" "tv_transcoder" {
 # Worker: scheduler, extraction, scrapes, replay ladders and Early copies, and
 # the only Role that writes /data. A singleton: two would run every job twice.
 resource "kubernetes_deployment_v1" "tv_worker" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "tv-worker"
     namespace = local.tv_namespace

@@ -32,6 +32,7 @@
 # 3776Mi of 6Gi memory and 910m of 2 CPU with the guard Job, whose requests
 # were 256Mi and 50m. The quota is unchanged.
 resource "kubernetes_deployment_v1" "tv_watcher" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "tv-watcher"
     namespace = local.tv_namespace
@@ -174,6 +175,29 @@ resource "kubernetes_deployment_v1" "tv_watcher" {
               secret_key_ref {
                 name     = "tv-secrets"
                 key      = "admin_session_key"
+                optional = false
+              }
+            }
+          }
+          # The shared Redis as the ACL user tv (redis_external_secret in
+          # main.tf). Not optional: a pod started before ESO has written the
+          # keys waits instead of using the app's password-less default.
+          env {
+            name = "SHARE_REGISTRY_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name     = "tv-redis"
+                key      = "SHARE_REGISTRY_REDIS_URL"
+                optional = false
+              }
+            }
+          }
+          env {
+            name = "CHANNELS_REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name     = "tv-redis"
+                key      = "CHANNELS_REDIS_URL"
                 optional = false
               }
             }
