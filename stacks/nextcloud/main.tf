@@ -85,6 +85,41 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.nextcloud]
 }
 
+# The shared Redis ACL user nextcloud: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md). chart_values.yaml passes it
+# as NC_REDIS_PASSWORD to zzz-redis.config.php.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "nextcloud-redis"
+      namespace = "nextcloud"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "nextcloud-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "nextcloud"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.nextcloud]
+}
+
 # DB credentials from Vault database engine (rotated every 24h)
 # Nextcloud Helm chart reads password at runtime via existingSecret reference
 resource "kubernetes_manifest" "db_external_secret" {
@@ -178,7 +213,7 @@ resource "helm_release" "nextcloud" {
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = var.nextcloud_image_tag })]
   timeout    = 6000
-  depends_on = [kubernetes_manifest.db_external_secret]
+  depends_on = [kubernetes_manifest.db_external_secret, kubernetes_manifest.redis_external_secret]
 }
 
 resource "kubernetes_config_map" "apache_tuning" {
