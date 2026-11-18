@@ -1,0 +1,45 @@
+name: Build ha-london LED strip add-on
+
+# ADR-0002: built off-infra on GHA. The add-on runs on ha-london, a Pi 3 with
+# 903 MB RAM; compiling rpi_ws281x there froze the Pi until its watchdog reset
+# it (2026-11-18), so the Supervisor pulls this image instead of building it.
+# Tag = `version` in ha-addons/led_strip/config.yaml (the Supervisor pulls
+# <image>:<version>), so bump the version for every change.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ha-addons/led_strip/**'
+      - '.github/workflows/build-ha-addon-led-strip.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the add-on version
+        id: v
+        run: echo "version=$(sed -n 's/^version: "\(.*\)"/\1/p' ha-addons/led_strip/config.yaml)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ha-addons/led_strip
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          labels: |
+            org.opencontainers.image.source=https://github.com/ViktorBarzin/infra
+          tags: |
+            ghcr.io/viktorbarzin/ha-addon-led-strip:${{ steps.v.outputs.version }}
+            ghcr.io/viktorbarzin/ha-addon-led-strip:latest

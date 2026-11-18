@@ -1,9 +1,10 @@
 name: LED strip
-version: "1.0.2"
+version: "1.1.0"
 slug: led_strip
 description: >-
   Runs strandtest.py on the WS2812 strip wired to GPIO10 (SPI) and lets
   Home Assistant control it over HTTP (light.livia).
+image: ghcr.io/viktorbarzin/ha-addon-led-strip
 url: https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/ha-addons/led_strip
 arch:
   - aarch64
@@ -15,3 +16,7 @@ devices:
   - /dev/spidev0.0
   - /dev/gpiomem
 watchdog: tcp://[HOST]:[PORT:8099]
+options:
+  led_count: 150
+schema:
+  led_count: "int(1,1000)"

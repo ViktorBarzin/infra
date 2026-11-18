@@ -6,6 +6,8 @@
 # various animations on a strip of NeoPixels.
 
 import argparse
+import math
+import random
 import time
 from enum import Enum
 
@@ -178,6 +180,188 @@ def _draw_star(strip, offset, star_len, wait_ms=50):
     time.sleep(wait_ms / 1000.0)
 
 
+# --- Patterns added for Livia on ha-london (2026-11) -------------------------
+# Each one draws a single cycle and returns, like the ones above; the main loop
+# repeats it. They work on any strip length.
+
+
+def rgb_of(color):
+    """Split a Color() value into (r, g, b)."""
+    return (color >> 16) & 255, (color >> 8) & 255, color & 255
+
+
+def scaled(rgb, k):
+    """Color() of an (r, g, b) tuple scaled by k (0..1)."""
+    k = max(0.0, min(1.0, k))
+    return Color(int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k))
+
+
+FLAGS = {
+    "bg": [(255, 255, 255), (0, 150, 110), (214, 38, 18)],
+    "ro": [(0, 43, 127), (252, 209, 22), (206, 17, 38)],
+    "uk": [(1, 33, 105), (255, 255, 255), (200, 16, 46), (255, 255, 255)],
+}
+
+
+def flag(strip, colours, band=10, wait_ms=40, frames=None):
+    """Bands of a flag's colours scroll along the strip and ripple like cloth."""
+    n = strip.numPixels()
+    period = band * len(colours)
+    for t in range(frames or period * 2):
+        for i in range(n):
+            pos = (i + t // 2) % period
+            ripple = 0.6 + 0.4 * math.sin(2 * math.pi * (i / 25.0 - t / 30.0))
+            strip.setPixelColor(i, scaled(colours[pos // band], ripple))
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def flag_bg(strip):
+    flag(strip, FLAGS["bg"])
+
+
+def flag_ro(strip):
+    flag(strip, FLAGS["ro"])
+
+
+def flag_uk(strip):
+    flag(strip, FLAGS["uk"], band=8)
+
+
+def comet(strip, color, tail=20, wait_ms=15):
+    """A bright head runs the length of the strip with a fading tail."""
+    n = strip.numPixels()
+    rgb = rgb_of(color)
+    for head in range(n + tail):
+        for i in range(n):
+            d = head - i
+            strip.setPixelColor(i, scaled(rgb, (1 - d / tail) ** 2) if 0 <= d < tail else 0)
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def scanner(strip, color, eye=6, wait_ms=12):
+    """A Larson scanner: an eye sweeps back and forth, leaving a short glow."""
+    n = strip.numPixels()
+    rgb = rgb_of(color)
+    path = list(range(n)) + list(range(n - 2, 0, -1))
+    for centre in path or [0]:
+        for i in range(n):
+            strip.setPixelColor(i, scaled(rgb, 1 - abs(i - centre) / eye) if abs(i - centre) < eye else 0)
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def breathe(strip, color, steps=100, wait_ms=25):
+    """The whole strip fades in and out slowly."""
+    rgb = rgb_of(color)
+    for s in range(steps):
+        k = 0.03 + 0.97 * (1 - math.cos(2 * math.pi * s / steps)) / 2
+        c = scaled(rgb, k)
+        for i in range(strip.numPixels()):
+            strip.setPixelColor(i, c)
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def twinkle(strip, color, frames=200, wait_ms=30):
+    """Stars in the colour appear at random and fade out."""
+    n = strip.numPixels()
+    rgb = rgb_of(color)
+    level = [0.0] * n
+    for _ in range(frames):
+        for _ in range(max(1, n // 40)):
+            level[random.randrange(n)] = 1.0
+        for i in range(n):
+            strip.setPixelColor(i, scaled(rgb, level[i]))
+            level[i] *= 0.88
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def fire(strip, frames=300, cooling=55, sparking=120, wait_ms=20):
+    """Flickering flames rising from the start of the strip (Fire2012)."""
+    n = strip.numPixels()
+    heat = [0] * n
+    for _ in range(frames):
+        for i in range(n):
+            heat[i] = max(0, heat[i] - random.randint(0, cooling * 10 // n + 2))
+        for i in range(n - 1, 1, -1):
+            heat[i] = (heat[i - 1] + 2 * heat[i - 2]) // 3
+        if random.randint(0, 255) < sparking:
+            y = random.randint(0, min(6, n - 1))
+            heat[y] = min(255, heat[y] + random.randint(160, 255))
+        for i in range(n):
+            h = heat[i] * 191 // 255
+            ramp = (h & 63) << 2
+            if h > 127:
+                c = Color(255, 255, ramp)
+            elif h > 63:
+                c = Color(255, ramp, 0)
+            else:
+                c = Color(ramp, 0, 0)
+            strip.setPixelColor(i, c)
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def police(strip, wait_ms=60):
+    """Red and blue halves flash in turn, twice each."""
+    n = strip.numPixels()
+    half = max(1, n // 2)
+    for colour, lit in ((Color(255, 0, 0), range(half)), (Color(0, 0, 255), range(half, n) if n > 1 else range(n))):
+        for _ in range(2):
+            for i in range(n):
+                strip.setPixelColor(i, colour if i in lit else 0)
+            strip.show()
+            time.sleep(wait_ms / 1000.0)
+            for i in range(n):
+                strip.setPixelColor(i, 0)
+            strip.show()
+            time.sleep(wait_ms / 1000.0)
+
+
+def ocean(strip, frames=300, wait_ms=30):
+    """Slow blue and teal waves that roll along the strip."""
+    n = strip.numPixels()
+    for t in range(frames):
+        for i in range(n):
+            a = math.sin(i / 9.0 + t / 14.0)
+            b = math.sin(i / 23.0 - t / 21.0)
+            k = 0.35 + 0.65 * (a + b + 2) / 4
+            strip.setPixelColor(i, scaled((0, int(90 + 80 * (b + 1) / 2), 255), k))
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def candy_cane(strip, band=6, wait_ms=60):
+    """Red and white stripes march along the strip."""
+    n = strip.numPixels()
+    for t in range(band * 2):
+        for i in range(n):
+            red = ((i + t) // band) % 2 == 0
+            strip.setPixelColor(i, Color(255, 0, 0) if red else Color(255, 255, 255))
+        strip.show()
+        time.sleep(wait_ms / 1000.0)
+
+
+def ruler(strip):
+    """Count the strip: LED 1 blue, every 10th red, every 50th green, the rest dim."""
+    for i in range(strip.numPixels()):
+        k = i + 1
+        if k == 1:
+            c = Color(0, 0, 255)
+        elif k % 50 == 0:
+            c = Color(0, 255, 0)
+        elif k % 10 == 0:
+            c = Color(255, 0, 0)
+        else:
+            c = Color(12, 12, 12)
+        strip.setPixelColor(i, c)
+    strip.show()
+    time.sleep(1)
+
+
 class Pattern(Enum):
     color_wipe = "color_wipe"
     theater_chase = "theater_chase"
@@ -186,6 +370,18 @@ class Pattern(Enum):
     theater_chase_rainbow = "theater_chase_rainbow"
     jik_tak = "jik_tak"
     falling_stars = "falling_stars"
+    flag_bg = "flag_bg"
+    flag_ro = "flag_ro"
+    flag_uk = "flag_uk"
+    comet = "comet"
+    scanner = "scanner"
+    breathe = "breathe"
+    twinkle = "twinkle"
+    fire = "fire"
+    police = "police"
+    ocean = "ocean"
+    candy_cane = "candy_cane"
+    ruler = "ruler"
 
 
 def run_pattern(pattern_name: Pattern, *args) -> None:
@@ -204,6 +400,14 @@ def run_pattern(pattern_name: Pattern, *args) -> None:
         return jik_tak(*args)
     if pattern_name is Pattern.falling_stars:
         return falling_stars(*args)
+    added = {
+        Pattern.flag_bg: flag_bg, Pattern.flag_ro: flag_ro, Pattern.flag_uk: flag_uk,
+        Pattern.comet: comet, Pattern.scanner: scanner, Pattern.breathe: breathe,
+        Pattern.twinkle: twinkle, Pattern.fire: fire, Pattern.police: police,
+        Pattern.ocean: ocean, Pattern.candy_cane: candy_cane, Pattern.ruler: ruler,
+    }
+    if pattern_name in added:
+        return added[pattern_name](*args)
 
 
 def get_rgb_values(arg: str):
@@ -239,6 +443,13 @@ if __name__ == '__main__':
         'format: "r=10,g=20,b=30;r=23,g=30,b=30". Need to be of same length as strategies. Empty r,g,b combos are ignored'
     )
     parser.add_argument(
+        '-n',
+        '--count',
+        type=int,
+        default=LED_COUNT,
+        help='number of LEDs on the strip'
+    )
+    parser.add_argument(
         '-b',
         '--brightness',
         type=int,
@@ -254,7 +465,7 @@ if __name__ == '__main__':
 
     # Create NeoPixel object with appropriate configuration.
     strip = Adafruit_NeoPixel(
-        LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, args.brightness,
+        args.count, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, args.brightness,
         LED_CHANNEL
     )
     # Intialize the library (must be called once before other functions).

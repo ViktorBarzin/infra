@@ -59,6 +59,32 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("--colors") + 1], "r=10,g=20,b=30")
 
 
+class NewPatternTest(unittest.TestCase):
+    def test_new_colour_patterns_get_the_colour(self):
+        for pattern in ("comet", "scanner", "breathe", "twinkle"):
+            state = server.merge(server.DEFAULT_STATE, {"pattern": pattern, "rgb": [1, 2, 3]})
+            argv = server.command(state)
+            self.assertEqual(argv[argv.index("--colors") + 1], "r=1,g=2,b=3", pattern)
+
+    def test_colour_on_a_flag_switches_to_color_wipe(self):
+        state = server.merge(server.DEFAULT_STATE, {"pattern": "flag_bg"})
+        self.assertEqual(server.merge(state, {"rgb": [9, 9, 9]})["pattern"], "color_wipe")
+
+    def test_led_count_is_passed_through(self):
+        state = server.merge(server.DEFAULT_STATE, {"on": True})
+        argv = server.command(state, count=163)
+        self.assertEqual(argv[argv.index("--count") + 1], "163")
+
+    def test_led_count_from_options_with_fallback(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "options.json"
+            self.assertEqual(server.led_count(path), 150)
+            path.write_text(json.dumps({"led_count": 163}))
+            self.assertEqual(server.led_count(path), 163)
+            path.write_text(json.dumps({"led_count": 0}))
+            self.assertEqual(server.led_count(path), 150)
+
+
 class PersistTest(unittest.TestCase):
     def test_round_trip_and_fallback(self):
         with tempfile.TemporaryDirectory() as d:

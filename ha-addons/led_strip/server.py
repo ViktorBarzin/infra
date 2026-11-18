@@ -18,16 +18,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypedDict
 
+COLOUR_PATTERNS = ("color_wipe", "theater_chase", "comet", "scanner", "breathe", "twinkle")
 PATTERNS = (
     "rainbow",
     "rainbow_cycle",
     "theater_chase_rainbow",
     "jik_tak",
-    "color_wipe",
-    "theater_chase",
-)
-COLOUR_PATTERNS = ("color_wipe", "theater_chase")
+    "flag_bg",
+    "flag_ro",
+    "flag_uk",
+    "fire",
+    "ocean",
+    "police",
+    "candy_cane",
+    "ruler",
+) + COLOUR_PATTERNS
+DEFAULT_COUNT = 150
 STATE_FILE = Path("/data/state.json")
+OPTIONS_FILE = Path("/data/options.json")
 SCRIPT = Path(__file__).with_name("strandtest.py")
 PORT = 8099
 
@@ -81,7 +89,16 @@ def merge(state: State, change: object) -> State:
     return new
 
 
-def command(state: State) -> list[str]:
+def led_count(path: Path) -> int:
+    """The strip length from the add-on options, or the old default."""
+    try:
+        n = json.loads(path.read_text()).get("led_count")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_COUNT
+    return n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 1000 else DEFAULT_COUNT
+
+
+def command(state: State, count: int = DEFAULT_COUNT) -> list[str]:
     colours = ""
     if state["pattern"] in COLOUR_PATTERNS:
         r, g, b = state["rgb"]
@@ -91,6 +108,7 @@ def command(state: State) -> list[str]:
         "-s", state["pattern"],
         "--colors", colours,
         "--brightness", str(state["brightness"]),
+        "--count", str(count),
     ]
 
 
@@ -108,8 +126,9 @@ def save(path: Path, state: State) -> None:
 
 
 class Strip:
-    def __init__(self, state_file: Path) -> None:
+    def __init__(self, state_file: Path, count: int = DEFAULT_COUNT) -> None:
         self.state_file = state_file
+        self.count = count
         self.state = load(state_file)
         self.proc: subprocess.Popen[bytes] | None = None
         self.lock = threading.Lock()
@@ -132,7 +151,7 @@ class Strip:
     def _apply(self) -> None:
         self._stop()
         if self.state["on"]:
-            argv = command(self.state)
+            argv = command(self.state, self.count)
             print("starting", " ".join(argv[1:]), flush=True)
             self.proc = subprocess.Popen(argv)
 
@@ -186,7 +205,7 @@ def handler(strip: Strip) -> type[BaseHTTPRequestHandler]:
 
 
 def main() -> None:
-    strip = Strip(STATE_FILE)
+    strip = Strip(STATE_FILE, led_count(OPTIONS_FILE))
     strip.start()
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), handler(strip))
 
@@ -194,7 +213,7 @@ def main() -> None:
         threading.Thread(target=httpd.shutdown).start()
 
     signal.signal(signal.SIGTERM, stop)
-    print(f"listening on :{PORT}, state {strip.state}", flush=True)
+    print(f"listening on :{PORT}, {strip.count} LEDs, state {strip.state}", flush=True)
     try:
         httpd.serve_forever()
     finally:

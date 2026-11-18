@@ -34,9 +34,18 @@ the server starts it again with the new flags, as rpi-london's Flask page did.
 The state is saved in `/data/state.json`, and the add-on restores it when it
 starts.
 
-The patterns are `rainbow`, `rainbow_cycle`, `theater_chase_rainbow`,
-`jik_tak`, `color_wipe` and `theater_chase`. The last two use the colour.
-`falling_stars` is left out because it is unfinished.
+The patterns:
+
+| kind | patterns |
+|---|---|
+| from the original script | `rainbow`, `rainbow_cycle`, `theater_chase_rainbow`, `jik_tak`, `color_wipe`, `theater_chase` |
+| flags, scrolling with a cloth ripple | `flag_bg`, `flag_ro`, `flag_uk` |
+| scenes | `fire`, `ocean`, `police`, `candy_cane` |
+| in the chosen colour | `color_wipe`, `theater_chase`, `comet`, `scanner`, `breathe`, `twinkle` |
+| setup | `ruler` |
+
+`falling_stars` is left out because it is unfinished. A colour sent while a
+pattern without a colour runs switches to `color_wipe`.
 
 The add-on gets `/dev/spidev0.0`, `/dev/gpiomem` (rpi_ws281x sets the MOSI pin
 function through it) and the device tree (`devicetree: true`). Docker hides
@@ -54,13 +63,24 @@ The HA side is `packages/livia.yaml` in the ha-london-config repo:
 
 ```sh
 cd ha-addons/led_strip
-python3 -m unittest test_server   # state logic and process handling, no hardware
-./deploy.sh                       # copies to /addons/led_strip, installs, updates or rebuilds
+python3 -m unittest test_server test_patterns   # state logic, process handling and every pattern, no hardware
 ```
 
-Bump `version` in `config.yaml` for every change. Then `deploy.sh` runs an
-update instead of a rebuild. The build compiles rpi_ws281x on the Pi, which
-takes a few minutes.
+1. Bump `version` in `config.yaml`. The Supervisor pulls `<image>:<version>`.
+2. Land the change on master. GitHub Actions
+   (`.github/workflows/build-ha-addon-led-strip.yml`) builds the arm64 image
+   and pushes `ghcr.io/viktorbarzin/ha-addon-led-strip:<version>` (public).
+3. Run `./deploy.sh`. It waits for that tag, copies `config.yaml` and the
+   sources to `/addons/led_strip`, then has the Supervisor install or update
+   the add-on.
+
+Do not let the Pi build the image. On 2026-11-18, compiling rpi_ws281x on
+the Pi 3 (903 MB RAM) next to Core froze it until the hardware watchdog reset
+it. With `image:` set in `config.yaml`, the Supervisor pulls instead.
+
+The strip length is the add-on option `led_count` (default 150), under
+Settings > Add-ons > LED strip > Configuration. The `ruler` pattern helps to
+count it: LED 1 is blue, every 10th LED is red and every 50th is green.
 
 ## Check it
 
@@ -76,5 +96,5 @@ rises by about 30 a second during a rainbow.
 
 rpi-london's home directory is kept at `/srv/nfs/london-pi/` on the Proxmox
 host. It holds the original `strandtest.py`, `led.service` and the Flask page
-`toggle-led/`. This copy differs in two places: `LED_PIN = 10`, and a
-`--brightness` flag.
+`toggle-led/`. This copy uses `LED_PIN = 10`, adds `--brightness` and
+`--count` flags, and adds the patterns marked as added in the file.
