@@ -55,6 +55,40 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# The shared Redis ACL user netbox: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md).
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "netbox-redis"
+      namespace = "netbox"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "netbox-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "netbox"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.netbox]
+}
+
 resource "random_string" "random" {
   length = 50
   lower  = true
@@ -141,6 +175,23 @@ resource "kubernetes_deployment" "netbox" {
           env {
             name  = "REDIS_HOST"
             value = var.redis_host
+          }
+          # The shared Redis ACL user netbox, for both the tasks and the
+          # caching connection (netbox-docker configuration.py falls back to
+          # REDIS_USERNAME and REDIS_PASSWORD for caching). Not optional: a pod
+          # started before ESO has written the key waits for it.
+          env {
+            name  = "REDIS_USERNAME"
+            value = "netbox"
+          }
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "netbox-redis"
+                key  = "password"
+              }
+            }
           }
           env {
             name  = "ALLOWED_HOST"
