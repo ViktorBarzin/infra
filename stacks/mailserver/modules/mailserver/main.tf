@@ -217,11 +217,11 @@ resource "kubernetes_config_map" "mailserver_config" {
         nameserver = "master-slave:127.0.0.1:5335:10,10.96.0.10:53:1";
     }
     EOF
-    # Rspamd Redis: Bayes (backend = redis), history and the replies module
-    # need it. Shared Redis, db 5 (the mailserver namespace is on the redis
-    # stack's client allowlist). Bayes tokens carry no TTL until
-    # bayes_expiry sets one, and the shared instance evicts volatile-lru, so
-    # untimed tokens are never evicted.
+    # Rspamd's redis.conf holds a password, so the pod mounts it from the
+    # mailserver-rspamd-redis Secret (kubernetes_manifest.rspamd_redis). This
+    # copy is no longer mounted. It stays for one commit so that changing
+    # this ConfigMap does not add a Reloader restart on top of the Terraform
+    # one (Recreate); remove it in a later commit.
     "redis.conf" = <<-EOF
     servers = "${var.redis_host}:6379";
     db = "5";
@@ -409,6 +409,61 @@ resource "kubernetes_config_map" "mailserver_user_patches" {
   }
 }
 
+# Rspamd Redis: Bayes (backend = redis), history and the replies module need
+# it. Shared Redis, db 5 (the mailserver namespace is on the redis stack's
+# client allowlist), as the ACL user mailserver: only this namespace's own key
+# of Vault secret/redis/users (docs/runbooks/redis-acl.md). Bayes tokens carry
+# no TTL until bayes_expiry sets one, and the shared instance evicts
+# volatile-lru, so untimed tokens are never evicted. The match annotation lets
+# Reloader, in search mode on the Deployment, restart it when the password
+# changes (a sub_path mount does not see updates).
+resource "kubernetes_manifest" "rspamd_redis" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "mailserver-rspamd-redis"
+      namespace = kubernetes_namespace.mailserver.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "mailserver-rspamd-redis"
+        template = {
+          engineVersion = "v2"
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            "redis.conf" = <<-EOF
+            servers = "${var.redis_host}:6379";
+            db = "5";
+            username = "mailserver";
+            password = "{{ .password }}";
+            EOF
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "mailserver"
+        }
+      }]
+    }
+  }
+}
+
 resource "kubernetes_secret" "opendkim_key" {
   metadata {
     name      = "mailserver.opendkim.key"
@@ -453,6 +508,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 }
 
 resource "kubernetes_deployment" "mailserver" {
+  depends_on = [kubernetes_manifest.rspamd_redis]
   metadata {
     name      = "mailserver"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
@@ -629,7 +685,7 @@ resource "kubernetes_deployment" "mailserver" {
             read_only  = true
           }
           volume_mount {
-            name       = "config"
+            name       = "rspamd-redis"
             mount_path = "/tmp/docker-mailserver/rspamd/override.d/redis.conf"
             sub_path   = "redis.conf"
             read_only  = true
@@ -806,6 +862,13 @@ resource "kubernetes_deployment" "mailserver" {
           name = "opendkim-key"
           secret {
             secret_name = "mailserver.opendkim.key"
+          }
+        }
+        # Not optional: a pod started before ESO has written it waits.
+        volume {
+          name = "rspamd-redis"
+          secret {
+            secret_name = "mailserver-rspamd-redis"
           }
         }
         volume {
