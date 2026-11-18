@@ -109,11 +109,30 @@ variable "replicas" {
 variable "shared_store_url" {
   type        = string
   default     = null
-  description = "If set, Anubis stores in-flight challenge state in this Valkey/Redis-protocol URL instead of in-process memory, enabling HA across replicas. Format: redis://host:port/<db-index>. The DB index MUST be unique per Anubis instance (this module assumes 16 DBs available, common in standalone Redis). Cluster Redis is redis-master.redis.svc.cluster.local:6379 with HA via Sentinel + haproxy. Without this, replicas>1 causes ~50% PoW failures (challenge issued by pod A, solved against pod B → 500)."
+  description = "If set, Anubis stores in-flight challenge state in this Valkey/Redis-protocol URL instead of in-process memory, enabling HA across replicas. Format: redis://host:port/<db-index>, without credentials (see shared_store_redis_user). The DB index MUST be unique per Anubis instance (this module assumes 16 DBs available, common in standalone Redis). Cluster Redis is redis-master.redis.svc.cluster.local:6379 with HA via Sentinel + haproxy. Without this, replicas>1 causes ~50% PoW failures (challenge issued by pod A, solved against pod B → 500)."
 
   validation {
     condition     = var.shared_store_url == null || can(regex("^redis://[a-zA-Z0-9_.-]+:[0-9]+/[0-9]+$", var.shared_store_url))
     error_message = "shared_store_url must look like redis://host:port/<db-index> (explicit DB index required)."
+  }
+}
+
+variable "shared_store_redis_user" {
+  type        = string
+  default     = null
+  description = <<-EOT
+    The shared Redis ACL user this instance logs in as (B40, infra
+    docs/runbooks/redis-acl.md), for example "turnstile-gate". Needs
+    shared_store_url, which stays without credentials: the module reads the
+    user's password from Vault secret/redis/users (that key only) through an
+    ExternalSecret and writes the store URL as redis://<user>:<password>@...
+    into the policy file. The policy file is then a Secret, not a ConfigMap,
+    so neither the ConfigMap nor the Terraform state holds the password.
+  EOT
+
+  validation {
+    condition     = var.shared_store_redis_user == null || can(regex("^[a-z0-9-]+$", var.shared_store_redis_user))
+    error_message = "shared_store_redis_user must be a Redis ACL user name from stacks/redis acl_users.json (lowercase letters, digits, dashes)."
   }
 }
 
@@ -208,14 +227,24 @@ locals {
   # Anubis store config. With backend=valkey, multiple Anubis pods can share
   # in-flight PoW state and a challenge issued by pod A is verifiable by pod
   # B. Default backend is in-process memory which only works at replicas=1.
+  # With shared_store_redis_user the URL gets "<user>:{{ .password }}@" after
+  # the scheme, and ESO fills in the password (kubernetes_manifest.policy).
+  store_url = var.shared_store_url == null ? null : (
+    var.shared_store_redis_user == null ? var.shared_store_url :
+    replace(var.shared_store_url, "redis://", "redis://${var.shared_store_redis_user}:{{ .password }}@")
+  )
   store_yaml_block = var.shared_store_url == null ? "" : <<-EOT
 
 
     store:
       backend: valkey
       parameters:
-        url: "${var.shared_store_url}"
+        url: "${local.store_url}"
   EOT
+
+  # The policy file is a Secret rendered by ESO when it carries a password.
+  policy_in_secret = var.shared_store_redis_user != null
+  policy_name      = "${local.full_name}-policy"
 
   # Strict bot policy. Default Anubis policy only WEIGHs Mozilla|Opera UAs
   # and lets unmatched UAs (curl, wget, Python-requests, scrapy, headless
@@ -325,13 +354,73 @@ locals {
 
 # Bot policy ConfigMap. Mounted into the pod and referenced by POLICY_FNAME.
 resource "kubernetes_config_map" "policy" {
+  count = local.policy_in_secret ? 0 : 1
   metadata {
-    name      = "${local.full_name}-policy"
+    name      = local.policy_name
     namespace = var.namespace
     labels    = local.labels
   }
   data = {
     "botPolicies.yaml" = local.rendered_policy_yaml
+  }
+}
+
+# The ConfigMap gained a count with shared_store_redis_user (B40 R2).
+moved {
+  from = kubernetes_config_map.policy
+  to   = kubernetes_config_map.policy[0]
+}
+
+# The same policy file as a Secret, when the store URL carries a Redis
+# password. ESO renders the whole file with Go templates and substitutes only
+# {{ .password }}; the precondition keeps any other "{{" out of the policy,
+# where the template engine would read it as an action.
+resource "kubernetes_manifest" "policy" {
+  count = local.policy_in_secret ? 1 : 0
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = local.policy_name
+      namespace = var.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name           = local.policy_name
+        creationPolicy = "Owner"
+        template = {
+          engineVersion = "v2"
+          data = {
+            "botPolicies.yaml" = local.rendered_policy_yaml
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = var.shared_store_redis_user
+        }
+      }]
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = var.shared_store_url != null
+      error_message = "shared_store_redis_user needs shared_store_url."
+    }
+    precondition {
+      condition     = length(split("{{", local.rendered_policy_yaml)) == 2
+      error_message = "The policy holds a \"{{\" besides the store password; ESO's template engine would read it."
+    }
   }
 }
 
@@ -403,12 +492,16 @@ resource "kubernetes_deployment" "anubis" {
     template {
       metadata {
         labels = local.labels
-        annotations = {
+        annotations = merge({
           # Roll the deployment whenever the policy YAML changes — Anubis
           # reads the policy at startup, so a ConfigMap update alone
           # doesn't take effect until pods restart.
           "checksum/policy" = sha256(local.rendered_policy_yaml)
-        }
+          }, local.policy_in_secret ? {
+          # The Redis password lives only in the Secret, so a rotation does
+          # not change the checksum above; Reloader restarts the pods instead.
+          "secret.reloader.stakater.com/reload" = local.policy_name
+        } : {})
       }
 
       spec {
@@ -582,10 +675,24 @@ resource "kubernetes_deployment" "anubis" {
             }
           }
         }
-        volume {
-          name = "policy"
-          config_map {
-            name = kubernetes_config_map.policy.metadata[0].name
+        # A Secret volume that does not exist yet keeps the pod in
+        # ContainerCreating, so a pod never starts without its store URL.
+        dynamic "volume" {
+          for_each = local.policy_in_secret ? [] : [1]
+          content {
+            name = "policy"
+            config_map {
+              name = kubernetes_config_map.policy[0].metadata[0].name
+            }
+          }
+        }
+        dynamic "volume" {
+          for_each = local.policy_in_secret ? [1] : []
+          content {
+            name = "policy"
+            secret {
+              secret_name = local.policy_name
+            }
           }
         }
       }
@@ -613,10 +720,11 @@ resource "kubernetes_deployment" "anubis" {
       spec[0].template[0].spec[0].dns_config,
       metadata[0].annotations,
       metadata[0].labels,
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 
-  depends_on = [kubernetes_manifest.ed25519_secret]
+  depends_on = [kubernetes_manifest.ed25519_secret, kubernetes_manifest.policy]
 }
 
 resource "kubernetes_service" "anubis" {

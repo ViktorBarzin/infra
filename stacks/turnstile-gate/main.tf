@@ -535,6 +535,10 @@ module "anubis" {
   redirect_domains = "${local.domain},*.${local.domain}"
   # DB index 13 — 5 to 12 are taken by the per-site instances.
   shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/13"
+  # The shared Redis ACL user for this namespace (docs/runbooks/redis-acl.md).
+  # Anubis exits when its store PING fails at start, and the rollout keeps
+  # the old pods until a new one is Ready (max_unavailable 0).
+  shared_store_redis_user = "turnstile-gate"
 
   # One policy for every site. Per-site rules from the instances folded in on
   # 2026-10-16 come first, each scoped to its host: in forwardAuth mode the
