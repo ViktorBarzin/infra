@@ -292,5 +292,27 @@ grep -qx "passed=0 failed=1" <<<"$out" && ok "restarts: two restarts fail" || ba
 out=$(PODS="$(pod 2026-10-11T18:50:00Z 3)" VERIFY_SINCE=0 run_restarts)
 grep -qx "passed=1 failed=0" <<<"$out" && ok "restarts: no VERIFY_SINCE skips the check" || bad "restarts no since: $out"
 
+# --- redis_session ------------------------------------------------------------
+# A fake Redis that answers +OK to AUTH and SELECT and an error to anything else.
+# redis_session prints each command with its reply; an AUTH password must not
+# appear in that output (B40 R2: verify.sh logs in as the verify user).
+FAKE_PORT_FILE="$WORK/fake-redis.port"
+python3 -I -c '
+import socket, sys
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+c, _ = s.accept(); f = c.makefile("rb")
+for line in f:
+    cmd = line.decode().strip().split(" ")[0].upper()
+    c.sendall(b"+OK\r\n" if cmd in ("AUTH", "SELECT") else b"-ERR unknown\r\n")
+' "$FAKE_PORT_FILE" &
+fake_pid=$!
+for _ in $(seq 50); do [ -s "$FAKE_PORT_FILE" ] && break; command sleep 0.1; done
+out=$( (. "$HERE/lib.sh"; redis_session 127.0.0.1 "$(cat "$FAKE_PORT_FILE")" "AUTH verify s3cretPw0rd" "SELECT 15" "AUTH s3cretPw0rd"; echo "rc=$?") 2>&1)
+kill "$fake_pid" 2>/dev/null; wait "$fake_pid" 2>/dev/null
+grep -q "s3cretPw0rd" <<<"$out" && bad "redis_session printed the AUTH password: $out" || ok "redis_session hides the AUTH password"
+grep -qx "AUTH verify \*\*\* => OK" <<<"$out" && ok "redis_session shows the AUTH user and reply" || bad "redis_session AUTH line: $out"
+grep -qx "SELECT 15 => OK" <<<"$out" && grep -qx "AUTH \*\*\* => OK" <<<"$out" && grep -qx "rc=0" <<<"$out" && ok "redis_session after AUTH" || bad "redis_session after AUTH: $out"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi

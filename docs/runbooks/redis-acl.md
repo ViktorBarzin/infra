@@ -46,7 +46,7 @@ kubectl --context kubernetes-admin@kubernetes -n redis get jobs --sort-by=.metad
 homelab metrics query 'redis_clients_by_user'
 ```
 
-`verify.sh` holds no Redis password. It reads `ACL LIST` as `default` (until R4), the user list from the `redis-acl-sync` ConfigMap, and the sync's own `AUTH` results from Prometheus.
+`verify.sh` holds one Redis password, the `verify` user's (`REDIS_VERIFY_PASSWORD` in `verify-app-creds`, `stacks/verify`), and writes its db 15 scratch key as that user. It reads `ACL LIST` as `default` (until R4), the user list from the `redis-acl-sync` ConfigMap, and the sync's own `AUTH` results from Prometheus.
 
 Clients per namespace, read-only. Match ` addr=`, with the space: `laddr=` is Redis's own address and would count every client as `redis`.
 
@@ -74,6 +74,18 @@ Read the last failed Job's log; it names the reason on one line (`FAILED, nothin
 ## Add a user
 
 A new consumer namespace: add `"<namespace>": "~* &* +@all"` to `acl_users.json` and add the namespace to `local.redis_client_namespaces` in `main.tf`. The push applies `stacks/redis`; Vault gets the password and the sync creates the user within a minute. The consumer's ExternalSecret reads `secret/redis/users`, property `<namespace>`.
+
+## Move a consumer to its user
+
+From R2 each consumer namespace logs in as its own user. The pattern:
+
+- One ExternalSecret in the namespace, `vault-kv`, `remoteRef = { key = "redis/users", property = "<namespace>" }`, and no other key of that path. When the app wants a URL, build it in the ESO template: `redis://<namespace>:{{ .password }}@redis-master.redis.svc.cluster.local:6379/<db>`. Keep the db the app uses today, so no key moves.
+- Read it with a `secret_key_ref` that is not optional, or a Secret volume. A pod that starts before ESO has written the key then waits, instead of starting with the app's password-less default.
+- Send the username with the password. While `default` is `nopass`, Redis answers a one-argument `AUTH <password>` with an error. Clients differ: a raw `AUTH` gets the error, `redis-cli -a` prints it and carries on as `default`, go-redis v9 sends `HELLO 3 AUTH default <password>`, which works, and ioredis logs the error as a warning and stays connected. A client that cannot send a username stays on `default` with `default`'s password (see "Rybbit stays on default").
+- Restart on rotation: Reloader (`reloader.stakater.com/auto`, a `secret.reloader.stakater.com/reload` list, or `reloader.stakater.com/match` on the Secret for `search` mode).
+- Keep the password out of logs: check that the app does not log its Redis URL.
+- `redis-cli` exits 0 on an error reply (`NOAUTH`, `WRONGPASS`, `NOPERM`), and after a refused `AUTH` it carries on as `default`. A script checks the reply text, not the exit code: a login check is a `PING` whose whole output, stderr included, is `PONG`.
+- While `default` is open, a wrong password does not break every client: `redis-cli` carries on as `default`, and the R2 review found the same for rspamd and Dawarich, so the app stays healthy. The gate for each stack is therefore `CLIENT LIST` showing its clients as `user=<namespace>` after real traffic has reached them, not the app's health alone.
 
 ## Rotate a password
 

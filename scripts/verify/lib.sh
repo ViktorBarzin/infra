@@ -764,12 +764,18 @@ apps_healthy() {
 # redis_session <host> <port> <command>...
 # Sends inline commands on one connection and prints one reply per line.
 # Bulk replies are printed on one line; an error reply fails the call.
+# "AUTH <user> <password>" is printed as "AUTH <user> ***", "AUTH <password>"
+# as "AUTH ***".
 redis_session() {
   local host=$1 port=$2 cmd reply len data rc=0
   shift 2
   exec 3<>"/dev/tcp/$host/$port" || return 1
   for cmd in "$@"; do printf '%s\r\n' "$cmd" >&3; done
   for cmd in "$@"; do
+    case "$cmd" in
+      "AUTH "*" "*) cmd="AUTH $(cut -d' ' -f2 <<<"$cmd") ***" ;;
+      "AUTH "*) cmd="AUTH ***" ;;
+    esac
     IFS= read -r -t 10 reply <&3 || { echo "no reply to: $cmd"; rc=1; break; }
     reply=${reply%$'\r'}
     case "$reply" in

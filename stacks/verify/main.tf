@@ -231,7 +231,8 @@ resource "kubernetes_storage_class" "verify_nfs" {
 #   extensions it checks.
 #   verify-app-creds: the Immich Postgres and rybbit ClickHouse passwords from
 #   Vault KV (single-tenant servers; the probes write only to a scratch
-#   schema/database and drop it).
+#   schema/database and drop it), and the shared Redis user verify's password
+#   (secret/redis/users, its own key only; stacks/redis/verify.sh).
 # refreshInterval is short because the static roles rotate weekly and a Job
 # started just after a rotation would otherwise read the old password.
 resource "kubernetes_manifest" "verify_db_creds" {
@@ -307,6 +308,14 @@ resource "kubernetes_manifest" "verify_app_creds" {
           remoteRef = {
             key      = "rybbit"
             property = "clickhouse_password"
+          }
+        },
+        {
+          # The shared Redis ACL user "verify" (docs/runbooks/redis-acl.md).
+          secretKey = "REDIS_VERIFY_PASSWORD"
+          remoteRef = {
+            key      = "redis/users"
+            property = "verify"
           }
         },
       ]

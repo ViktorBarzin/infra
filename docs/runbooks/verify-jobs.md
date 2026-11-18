@@ -74,7 +74,7 @@ It has no `pods/exec` anywhere. Database checks log in over the network:
 | Secret in `verify` | Source | Used for |
 |---|---|---|
 | `verify-db-creds` | ESO from `vault-database`: static roles `pg-verify-probe`, `mysql-verify-probe` (7-day rotation, ESO refresh 2 min) | pg-cluster and MySQL as `verify_probe`, which owns only its `verify_probe` scratch database (pg also has `pg_monitor` and CONNECT on `dawarich`, `claude_memory`) |
-| `verify-app-creds` | ESO from `vault-kv`: `secret/immich` `db_password`, `secret/rybbit` `clickhouse_password` | Immich Postgres and the rybbit ClickHouse, single-tenant servers; the probes write only to a scratch schema/database and drop it |
+| `verify-app-creds` | ESO from `vault-kv`: `secret/immich` `db_password`, `secret/rybbit` `clickhouse_password`, `secret/redis/users` `verify` | Immich Postgres and the rybbit ClickHouse, single-tenant servers; the probes write only to a scratch schema/database and drop it. The shared Redis user `verify`, for the db 15 scratch key |
 
 Redis (no `requirepass`, risk-accepted in `stacks/redis`) and Dolt (`beads` user, empty password) need no secret. Redis is fenced by a namespace allowlist, `local.redis_client_namespaces` in `stacks/redis`, which includes `verify`.
 

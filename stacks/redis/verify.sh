@@ -4,23 +4,27 @@
 # Run it as a Job from the devvm: scripts/verify/run redis.
 #
 # ACL users (B40, modules/redis/acl.tf, docs/runbooks/redis-acl.md): the
-# checks below read only ACL LIST, as the default user, and the metrics
-# redis-acl-sync pushes. The Job holds no Redis user password: the sync job,
-# which already holds every one, proves each minute that every user can AUTH
-# and PING, and this script reads that result from Prometheus. The user list
-# is the redis-acl-sync ConfigMap's users.json, written from acl_users.json.
+# scratch check logs in as the verify user (REDIS_VERIFY_PASSWORD, from the
+# verify-app-creds ExternalSecret in stacks/verify). The ACL checks read
+# ACL LIST as the default user until R4, and the metrics redis-acl-sync
+# pushes. The Job holds no other user's password: the sync job, which holds
+# every one, proves each minute that every user can AUTH and PING, and this
+# script reads that result from Prometheus. The user list is the
+# redis-acl-sync ConfigMap's users.json, written from acl_users.json.
 VERIFY_GROUP="db"
 VERIFY_NAMESPACES="redis"
 VERIFY_ALERTNAMES="^Redis"
 
 RH=redis-master.redis.svc.cluster.local
 
+# As the verify user; redis_session prints the AUTH line without the password.
 _scratch() {
   local k out
+  [ -n "${REDIS_VERIFY_PASSWORD:-}" ] || { echo "REDIS_VERIFY_PASSWORD unset (verify-app-creds)"; return 1; }
   k="verify:probe:$(date +%s)"
-  out=$(redis_session "$RH" 6379 "SELECT 15" "SET $k ok EX 60" "GET $k" "DEL $k") || { echo "$out"; return 1; }
+  out=$(redis_session "$RH" 6379 "AUTH verify $REDIS_VERIFY_PASSWORD" "SELECT 15" "SET $k ok EX 60" "GET $k" "DEL $k") || { echo "$out"; return 1; }
   echo "$out" | tr '\n' ';'
-  grep -q "GET $k => ok" <<<"$out" && grep -q "DEL $k => 1" <<<"$out"
+  grep -q "AUTH verify \*\*\* => OK" <<<"$out" && grep -q "GET $k => ok" <<<"$out" && grep -q "DEL $k => 1" <<<"$out"
 }
 
 _persistence() {
@@ -98,7 +102,7 @@ _acl_auth_every_user() {
 verify_component() {
   check "redis-v2 converged" retry 300 10 workload_ready redis statefulset/redis-v2
   check "PING as the default user, no password" bash -c "exec 3<>/dev/tcp/$RH/6379 && printf 'PING\r\n' >&3 && read -r -t 5 r <&3 && echo \"\$r\" && [ \"\${r%\$'\r'}\" = '+PONG' ]"
-  check "scratch key written, read, deleted in db 15" _scratch
+  check "as the verify user: scratch key written, read, deleted in db 15" _scratch
   check "AOF and RDB persistence healthy" _persistence
   check "server answers and clients are connected" _server
   check "redis_exporter sees redis up" expect_prom 'max(redis_up{namespace="redis"})' -eq 1
