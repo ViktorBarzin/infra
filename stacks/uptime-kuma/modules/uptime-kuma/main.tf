@@ -754,14 +754,16 @@ locals {
       max_retries                 = 2
     },
     {
-      # HAProxy service in redis ns health-checks INFO replication and
-      # only routes to the current Sentinel-elected master, so this
-      # survives failover. Bitnami chart has auth disabled, so no
-      # password_vault_key.
+      # The shared Redis (one standalone pod behind redis-master). Logs in as
+      # the ACL user uptime-kuma (B40 R2, docs/runbooks/redis-acl.md). The
+      # sync replaces `{password}` with the value of password_env, which the
+      # CronJob reads from the internal-monitor-redis ExternalSecret, so
+      # neither the ConfigMap nor this stack's state holds the password.
       name                        = "Redis"
       type                        = "redis"
-      database_connection_string  = "redis://redis-master.redis.svc.cluster.local:6379"
+      database_connection_string  = "redis://uptime-kuma:{password}@redis-master.redis.svc.cluster.local:6379"
       database_password_vault_key = null
+      password_env                = "REDIS_UPTIME_KUMA_PASSWORD"
       hostname                    = null
       port                        = null
       url                         = null
@@ -1045,6 +1047,41 @@ resource "kubernetes_secret" "internal_monitor_sync" {
   )
 }
 
+# The "Redis" monitor's password: the shared Redis ACL user uptime-kuma, its
+# own key of Vault secret/redis/users only (docs/runbooks/redis-acl.md). An
+# ExternalSecret and not a plan-time data source, because a data source would
+# copy every user's password into this stack's state.
+resource "kubernetes_manifest" "internal_monitor_redis" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "internal-monitor-redis"
+      namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "internal-monitor-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "uptime-kuma"
+        }
+      }]
+    }
+  }
+}
+
 resource "kubernetes_config_map_v1" "internal_monitor_targets" {
   metadata {
     name      = "internal-monitor-targets"
@@ -1061,7 +1098,7 @@ resource "kubernetes_config_map_v1" "internal_monitor_targets" {
         url                        = m.url
         accepted_statuscodes       = m.accepted_statuscodes
         ignore_tls                 = m.ignore_tls
-        password_env               = m.database_password_vault_key != null || try(m.generated_credential, null) != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
+        password_env               = try(m.password_env, null) != null ? m.password_env : m.database_password_vault_key != null || try(m.generated_credential, null) != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
         interval                   = m.interval
         retry_interval             = m.retry_interval
         max_retries                = m.max_retries
@@ -1230,8 +1267,8 @@ for t in targets:
     name = t["name"]
     mtype = MonitorType(t["type"])
     # MYSQL uses `databaseConnectionString` + `radiusPassword` (UK v2 re-uses
-    # radiusPassword for mysql auth — backwards compat). Redis has auth
-    # disabled on the cluster, so password_env is null. PORT monitors use
+    # radiusPassword for mysql auth — backwards compat). Redis and Postgres
+    # take the password inside the connection string. PORT monitors use
     # hostname + port directly. HTTP monitors use url + accepted_statuscodes
     # + ignoreTls (camelCase on the API; stored as `ignore_tls` in DB).
     desired = {
@@ -1251,9 +1288,9 @@ for t in targets:
     else:
         conn = t["database_connection_string"]
         if t.get("password_env") and "{password}" in conn:
-            # Postgres monitors carry the password inside the connection
-            # string; substitute it here so the ConfigMap only has the
-            # placeholder. The password is URL-safe (alphanumeric).
+            # Postgres and Redis monitors carry the password inside the
+            # connection string; substitute it here so the ConfigMap only has
+            # the placeholder. The password is URL-safe (alphanumeric).
             desired["databaseConnectionString"] = conn.replace(
                 "{password}", urllib.parse.quote(os.environ[t["password_env"]], safe=""))
         else:
@@ -1303,6 +1340,15 @@ PYEOF
               env_from {
                 secret_ref {
                   name = kubernetes_secret.internal_monitor_sync.metadata[0].name
+                }
+              }
+              env {
+                name = "REDIS_UPTIME_KUMA_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_manifest.internal_monitor_redis.manifest.spec.target.name
+                    key  = "password"
+                  }
                 }
               }
               volume_mount {
