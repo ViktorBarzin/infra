@@ -1021,9 +1021,14 @@ had synced every App's secrets (the drill assumes it had).
 ### Commands
 
 The drill builds from a throwaway worktree of the cloud clone at the
-commit the reconciler image runs, so the shared clone stays on its
-branch. The image tag is that commit's short SHA:
-`kubectl -n cloud get deploy cloud-reconciler -o jsonpath='{..image}'`.
+release that was live when the dumps were written, so the shared clone
+stays on its branch. That is usually the reconciler image now (its tag is
+the commit's short SHA:
+`kubectl -n cloud get deploy cloud-reconciler -o jsonpath='{..image}'`).
+When a release deployed after the dump time, take the one before it from
+`gh run list --repo ViktorBarzin/cloud --workflow "Build and Push"`: a
+later release renders what the dump does not hold yet, so the drill
+exits 3 with changes.
 The pinned tofu and provider mirror come from the clone's `.tools/`
 (cloud README, "Reconciler"). Run the block in one shell: the trap
 removes the container, the worktree, the dumps and the key file however
@@ -1114,6 +1119,20 @@ Projects and exit 3, because `renderDigestMatches` is false: the module
 change moves the render digest. The live reconciler applies every Project
 once when that release deploys and records the new digest, and the next
 drill reads true and exits 0.
+
+### Result on 2026-11-18
+
+After the tier fix deployed (cloud b0afd73, 2026-11-17 22:54 UTC), the
+reconciler applied both live Projects once, and both live plans read "No
+changes"; no pod restarted. The nightly dumps of 2026-11-18 00:02 UTC
+(`cloud` 1,232,403 bytes, `cloud_state` 304,678 bytes) were copied 31 min
+later. At 255141a, the release live at the dump time, the commands above
+gave exit 0 in 42 s: `renderDigestMatches` true, no token mismatch, and
+`no_changes` for `p03-45gh2x` and `p67-5fh7rt` (20 of 31 instances
+compared each). At ffe7818, the release deployed 3 min after the dump,
+they gave exit 3 with 2 changes per Project (the resource quota, and the
+`console_exec` RoleBinding that release adds), which is why the drill
+takes the release of the dump time.
 
 ## Revoke a token
 
