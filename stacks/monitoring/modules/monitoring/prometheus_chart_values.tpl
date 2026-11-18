@@ -59,6 +59,23 @@ alertmanager:
       repeat_interval: 8760h
       receiver: slack-warning
       routes:
+        # The notify pipe (stacks/notify, docs/plans/2026-11-17-notify-pipe-
+        # design.md). A rule with a `topic` label (one of stacks/notify/
+        # topics.json) reaches the Recipients subscribed to that Topic; a rule
+        # with a `recipient` label (an Authentik username) reaches that
+        # person's default channel. continue: true, so every other route below
+        # still sees the alert: the pipe is an extra copy, never a diversion.
+        - receiver: notify-pipe
+          group_by: ["alertname", "topic"]
+          matchers:
+            - topic =~ ".+"
+          continue: true
+        - receiver: notify-pipe
+          group_by: ["alertname", "recipient"]
+          matchers:
+            - topic !~ ".+"
+            - recipient =~ ".+"
+          continue: true
         # Email copy for Emil (infra#142, 2026-10-25). Alerts that set
         # `notify_emo = "true"` go to his Gmail and then, via the next route,
         # to #alerts as usual. continue: true keeps the Slack route in play;
@@ -435,6 +452,12 @@ alertmanager:
     receivers:
       # No notifier on purpose: the sink for alerts without notify=page.
       - name: silent
+      # The notify pipe's adapter turns each alert group into one Notification
+      # for apprise-api. A 503 from it (Apprise down) makes Alertmanager retry.
+      - name: notify-pipe
+        webhook_configs:
+          - url: "http://notify-adapter.notify.svc.cluster.local:8080/alertmanager"
+            send_resolved: true
       - name: email-viktor
         email_configs:
           - to: "me@viktorbarzin.me"
@@ -1042,7 +1065,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|reels_.+|cloud_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|reels_.+|cloud_.+|notify_.+|realtime_listen_connected|realtime_last_notify_age_seconds|tasks_ops_total|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_deployment_annotations|kube_replicaset_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -1936,6 +1959,8 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
+              # notify pipe Topic (stacks/notify/topics.json).
+              topic: internet
             annotations:
               summary: "R730 is running on its backup uplink eno2 (SW2 P5) - primary eno1 / AX6000 port 1 failed"
               description: "eno2 has transmitted packets in the last 5m, so bond0 made it the active slave. Services keep working through SW2 and AX6000 port 2. Check AX6000 port 1 and cable SRV1; `cat /proc/net/bonding/bond0` on pve shows the active slave and failure counts. Context: infra#142."
@@ -1952,6 +1977,8 @@ serverFiles:
               severity: warning
               notify: page
               notify_emo: "true"
+              # notify pipe Topic (stacks/notify/topics.json).
+              topic: internet
             annotations:
               summary: "R730 backup uplink eno2 (SW2 P5) is down - the host has no second path"
               description: "bond0 reports fewer live slaves than configured while eno1 is still active, so the standby eno2 failed its link or ARP checks. Nothing is broken yet, but the next failure of AX6000 port 1 would take the host off the network. Check the LAN2 cable, SW2 P5 and SW2 itself. Context: infra#142."
@@ -6076,6 +6103,24 @@ serverFiles:
             annotations:
               summary: "Renovate has not completed a successful run in the last 13h (or has never pushed one), and its CronJob has not been suspended in that time"
               description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate exited non-zero or a repository aborted with external-host-error). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
+          # The renovate-cloud-apps CronJob (Cloud Users' App repos, Cloud B13)
+          # runs every 2 hours, so 7h is three runs in a row that did not
+          # succeed (the etcd calm gate skips count as not succeeding). Quiet
+          # while that CronJob is suspended, as above.
+          - alert: RenovateCloudAppsNotSucceeding
+            expr: |
+              (
+                (time() - max(renovate_last_success_timestamp_seconds{job="renovate", instance="cloud-apps"})) > 25200
+                or
+                absent(renovate_last_success_timestamp_seconds{job="renovate", instance="cloud-apps"})
+              )
+              unless on() (max(max_over_time(kube_cronjob_spec_suspend{namespace="renovate", cronjob="renovate-cloud-apps"}[7h])) == 1)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Renovate for Cloud App repos has not completed a successful run in 7h, and its CronJob has not been suspended in that time"
+              description: "Cloud Users' dependency updates are not landing. renovate_last_run_exit_code{instance=\"cloud-apps\"} shows the last outcome. kubectl -n renovate get jobs -l app=renovate-cloud-apps; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md, Cloud App repos"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
@@ -6750,6 +6795,30 @@ serverFiles:
               description: "The scheduler should never place more than 20. Above it means ghost attachments or pods placed before the cap changed. Compare 'qm config' with VolumeAttachments (healthcheck #47) and move a volume pod off the node."
       - name: "Application Health"
         rules:
+          - alert: NotifyPipeDown
+            # stacks/notify: the adapter Alertmanager posts to, or apprise-api
+            # behind it. While either is down no Topic or Recipient gets a
+            # Notification, so this pages on Slack, outside the pipe.
+            expr: |
+              (max(up{job="kubernetes-service-endpoints", namespace="notify", service="notify-adapter"}) or on() vector(0)) < 1
+              or (max(kube_deployment_status_replicas_available{namespace="notify", deployment="apprise"}) or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "The notify pipe (notify-adapter or apprise in namespace notify) has been down for 10m: Topic and Recipient notifications are not delivered"
+          - alert: NotifyDeliveryFailing
+            # result="failed": apprise-api did not answer, or a Channel refused
+            # the Notification (a wrong HA notify service, an expired HA token,
+            # SMTP refused). Runbook: docs/runbooks/notify-pipe.md.
+            expr: sum(increase(notify_notifications_total{result="failed"}[30m])) > 0
+            for: 1m
+            labels:
+              severity: warning
+              notify: page
+            annotations:
+              summary: "The notify pipe failed to deliver a Notification in the last 30m: check `kubectl -n notify logs deploy/notify-adapter` and docs/runbooks/notify-pipe.md"
           - alert: ClickHouseDown
             # ClickHouse (rybbit analytics event store) exposes its built-in
             # Prometheus endpoint since 2026-10-10. `or on() vector(0)` makes a
@@ -8617,6 +8686,19 @@ serverFiles:
             annotations:
               summary: "Cloud notifications are stuck: an email has waited over 15 minutes, or the notification loop stopped"
               description: "Cloud's oldest pending notification email is older than 15 minutes, or no notification pass succeeded for 15 minutes, for 10 minutes. Users miss failed Deploys and crashes. Check smtp_password in Vault secret/cloud/system (an authentik apply without it in cloud_system_carried_keys deletes it), the reconciler's cloud.notify log lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.notify\"'), and the mail server (kubectl -n mailserver get pods). Runbook: docs/runbooks/cloud.md, \"Notifications are stuck\"."
+          - alert: CloudImagePruneStopped
+            # cloud_image_prune_stopped: 1 once GitHub answered 401 or 403 to
+            # Cloud's image pruning (cloud B36, src/reconciler/packages.ts).
+            # Pruning then stays off until the reconciler restarts, so App
+            # images pile up again in ghcr. Nothing else breaks.
+            expr: max(cloud_image_prune_stopped) == 1
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud stopped pruning old App images: GitHub refused ghcr_delete_token"
+              description: "GitHub answered 401 or 403 to the reconciler's image pruning, so it stopped until the reconciler restarts. Check ghcr_delete in Vault secret/cloud/github-narrow (read:packages and delete:packages), then restart the reconciler. Runbook: docs/runbooks/cloud.md, \"Old App images\"."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown

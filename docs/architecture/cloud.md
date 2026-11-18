@@ -46,6 +46,7 @@ flowchart LR
 | Vault | static roles `pg-cloud`, `pg-cloud-state`, `pg-cloud-provisioner`; Kubernetes auth roles `cloud-reconciler`, `cloud-project` | `stacks/vault` |
 | Images | `ghcr.io/viktorbarzin/cloud` and `ghcr.io/viktorbarzin/cloud-reconciler`, private; Kyverno copies `ghcr-credentials` into `cloud` | `stacks/kyverno` `ghcr-credentials.tf` |
 | Notifications (cloud B04) | The reconciler emails as `cloud@viktorbarzin.me` (an account in Vault `secret/platform` `mailserver_accounts`; password also in `secret/cloud/system` `smtp_password`, carried by `stacks/authentik`, reaching the reconciler as `SMTP_PASSWORD_FILE`) through `mail.viktorbarzin.me:587`, and POSTs signed webhooks on 443. Webhook hosts are resolved through DNS over HTTPS at 1.1.1.1, since the cluster's DNS answers internal addresses for `*.viktorbarzin.me`, and private answers are refused. The `cloud` namespace has no egress policy, so no Calico rule is needed; the paths a future lockdown must keep are in cloud `docs/build/b04-infra.md` | `stacks/cloud/deploy_rules.tf`, `stacks/authentik/cloud-apps.tf` |
+| Postgres tasks (cloud B28b, B28c) | Jobs `pg-<kind>-<9 hex>` the reconciler runs in namespace `cloud` for `cloud pg backups`, `backup`, `export` and `restore`, each from the pinned `postgres:18.7-trixie` image as uid 999, with a credentials Secret `pg-task-<9 hex>` the Job owns. PersistentVolumes and claims `cloud-pg-backups-nightly` (`/srv/nfs/postgresql-backup/cloud-per-db`, `ReadOnlyMany` and `ro`) and `cloud-pg-backups-manual` (`/srv/nfs/postgresql-backup/cloud-manual`, writable only by a backup Job). Role `cloud-reconciler-tasks` (Jobs, pods, logs, Secret create); admission policies `cloud-pg-task` and `cloud-pg-task-secret` pin the shapes and `cloud-reconciler-scope` admits nothing else of the reconciler in `cloud`; NetworkPolicy `cloud-pg-tasks` lets only the console's pods reach a task pod, on 8080, where an export serves its dump once, and lets task pods reach only DNS and the dbaas Postgres pods on 5432. `postgresql-backup` in `stacks/dbaas` writes the `p_*` nightly dumps there and deletes both directories' dumps after 14 days | `stacks/cloud/pg_backups.tf`, `access_rules.tf`; `stacks/dbaas` |
 | Alerts | group `Cloud` | `stacks/monitoring` `prometheus_chart_values.tpl` |
 | App hosts in internal DNS | Helm release `external-dns-cloud` (namespace `technitium`) writes `CNAME <host> -> viktorbarzin.me` plus an owner TXT record in Technitium within seconds of an App Ingress appearing, and deletes both with the Ingress. It reads only Ingresses labelled `cloud.viktorbarzin.me/managed=true`, which Cloud's `modules/app` sets. Publicly the hosts ride the Cloudflare wildcard. See `docs/architecture/dns.md`, "Cloud App hosts" | `stacks/technitium` `external_dns.tf` |
 
@@ -63,6 +64,7 @@ Kuma monitor `[External] cloud` by itself.
 | `CLOUD_STATE_URL` (role `cloud_state`) | Vault static role `pg-cloud-state` | reconciler | ExternalSecret `cloud-reconciler-postgres`, file `/secrets/postgres/state-url` |
 | `POSTGRES_PROVISIONER_PASSWORD` | Vault static role `pg-cloud-provisioner` | reconciler | same ExternalSecret, file `/secrets/postgres/provisioner-password` |
 | `REGISTRY_TOKEN` (the ghcr pull token; since 2026-11-17 the narrow `read:packages` token from `secret/cloud/github-narrow`, see the runbook's "Turning builds on") | Vault KV `secret/cloud/system` `ghcr_pull_token` | reconciler, copied into each Project | ExternalSecret `cloud-reconciler-registry`, file `/secrets/registry/token` |
+| The same pull token, for the LAN cache (cloud B36) | Vault KV `secret/cloud/github-narrow` `ghcr_pull` | `registry-ghcr-cloud` on the registry VM 10.0.20.10, which serves Cloud App image manifests and blobs, by digest only, to the six k8s nodes only | `playbooks/registry-cache.yml` renders `/opt/registry/config-ghcr-cloud.yml` (0600) at apply time |
 | Vault token | Kubernetes auth login, role `cloud-reconciler`, 1 h TTL | reconciler | logs in with its service account token before each job |
 | B09: the OpenTofu state encryption passphrase | Vault KV `secret/cloud/state-key` `passphrase`, written once by hand (runbook, "State encryption key"); backed up by `vault-raft-backup`; the broad `secret/data/*` policies deny it (`tests/cloud-state-key.test.sh`) | reconciler only, as `TF_ENCRYPTION` for OpenTofu | the reconciler reads it with its Vault token on every job (policy `cloud-reconciler`); no ExternalSecret, no file |
 | Kubernetes API token | service account `cloud-reconciler` | reconciler, OpenTofu | projected token |
@@ -141,6 +143,14 @@ nothing: both processes read the password file on each new connection.
    `healthCheckPath` in its Project File has `httpGet` readiness, liveness
    and startup probes on that path with no host, which
    `cloud-managed-pod` admits (probes may not name a host).
+6. A delete is soft (the cloud repo's B28d). The first apply after it
+   stops the Project: every App suspended, no edge, oauth2-proxy or
+   Ingress, and its running one-off and cron Jobs deleted, while its
+   Postgres, Vault entries and state stay. Its owner can restore it for 7
+   days; then the reconciler queues the destroy (the purge). A delete
+   with `--purge`, and one of a Project with no Services, destroys at
+   once. The runbook, "Deleted Projects: restore and early purge", has
+   the Operator steps.
 
 ## Agent sign-in
 
@@ -288,6 +298,17 @@ on. The console gets `PROMETHEUS_URL=http://prometheus-server.monitoring.svc.clu
 (`stacks/monitoring/modules/monitoring/alloy.yaml`); the Logs tab uses it to
 leave out the "Not deployed yet" placeholder and to tag each line with its
 Deploy. It adds no streams, because each container is one stream already.
+
+Dependency updates (cloud B13): the `renovate-cloud-apps` CronJob
+(`stacks/renovate`) opens one weekly pull request on each App repo with the
+Forgejo topic `cloud-app`, as its own restricted account `cloud-renovate`.
+The reconciler builds each `renovate/*` commit as a check build that never
+deploys and posts the commit status `cloud/build` to Forgejo in-cluster as
+`cloud-bot`, with `forgejo_status_token` from `secret/cloud/system`;
+Renovate merges only when every status of the commit is success.
+The push webhook's branch filter includes `renovate/*`, so those pushes
+reach Cloud at once. Runbook: `docs/runbooks/cloud.md`, "Renovate on App
+repos".
 
 Push webhooks and Deploy Hooks (cloud B07): Forgejo posts push events to
 `https://cloud.viktorbarzin.me/hooks/forgejo`, and a User's Deploy Hook is a
@@ -470,6 +491,33 @@ container. Only its Job makes it, and no Deployment runs one. No
 Kubernetes Service selects component `job`, and the ingress floor has no
 rule for it; egress is the Project's. Like a worker or cron pod, a job
 pod cannot call an internal App.
+
+Shell and psql sessions (cloud backlog B22, Viktor's decision V4) are the
+one path where the console reaches into a Project. The CLI asks the API
+for a session (owner only, through `cloud login` or an Access Token made
+with `--allow-shell`, never a console cookie) and opens the WebSocket
+`/api/exec/<session>` with the one-time ticket the API answered. The
+console then runs `pods/exec` as `cloud/cloud-console`. Three layers keep
+that narrow. RBAC: ClusterRole `cloud-console-exec` (pods get and list,
+pods/exec get and create) is bound only by RoleBinding `cloud-console-exec` in
+each `p-*` namespace, which the reconciler may create (`bind` on that
+role) and `cloud-reconciler-scope` pins to that name, role and subject.
+Admission: `cloud-console-exec` (CONNECT on pods/exec, attach and
+portforward, for the console only, in every namespace) admits only exec,
+only in managed `p-*` namespaces, and only `sh` in container `app` or
+`psql` in container `toolbox`, so never the edge or the oauth2-proxy.
+Network: a `psql` toolbox is a Job the reconciler starts per session,
+admitted by `cloud-managed-toolbox-job` and the pod rules (one container
+`toolbox` running the pinned `postgres:18-alpine` with the command
+`sleep <seconds>`, env only plain values and keys of Secret
+`pg-<its Postgres>`, no token, a read-only root, no port, probe or envFrom,
+only emptyDir volumes, no owner, a deadline up to 3,780 s, only its Job
+makes the pod and no Deployment runs one). The egress floor lets toolbox
+pods reach DNS and the CNPG primary and then denies them, before any
+Pass, so a toolbox reaches neither the internet nor another pod. The
+ingress floor has no rule for it. The reconciler gets the image as
+`TOOLBOX_POSTGRES_IMAGE` from the same local the policy pins. The
+apiserver audit policy logs every exec. Rollback: remove the ClusterRole.
 
 The shapes from before K1 are refused: `cloud-managed-ingress` admits
 only `edge-<app>` port `edge` as a backend, never `auth-<app>`; the edge

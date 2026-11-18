@@ -1,6 +1,6 @@
 # Homelab infrastructure
 
-The language we use for the homelab's infrastructure. It starts with network security monitoring and deal watches; add other areas as their terms settle.
+The language we use for the homelab's infrastructure. It covers network security monitoring, deal watches and notifications; add other areas as their terms settle.
 
 ## Language
 
@@ -59,3 +59,29 @@ _Avoid_: owner
 **Price history**:
 The past prices of one product on one shop, as a price tracker such as Keepa recorded them. It helps to choose a target price; it never fires a deal watch.
 _Avoid_: price chart, price graph
+
+### Notifications
+
+**Notification**:
+One short piece of news the infrastructure sends to people, with a title and a body. It goes to a Topic or to one Recipient.
+_Avoid_: alert, message, push
+
+**Topic**:
+A named stream of Notifications about one shared thing, such as tv or the Sofia internet uplink. The list of Topics is fixed in the repo.
+_Avoid_: channel, feed, category
+
+**Recipient**:
+A person who can receive Notifications, named by their Authentik username. They need not have a devvm account.
+_Avoid_: subscriber, user, roster person
+
+**Channel**:
+One way to reach one Recipient, such as their phone through a Home Assistant instance, or their email address.
+_Avoid_: provider, target, destination
+
+**Subscription**:
+A Recipient's choice to receive one Topic, and on which of their Channels.
+_Avoid_: follow, opt-in
+
+**Default channel**:
+The Channel that receives the Notifications sent to a Recipient by name instead of to a Topic.
+_Avoid_: primary channel, fallback

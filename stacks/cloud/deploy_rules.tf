@@ -1,7 +1,7 @@
 # What the console and the reconciler Deployments get (milestones M4 and M5):
 # the console's cluster role, the env both processes read and the
-# reconciler's credential files. Locals only (plus var.postgresql_host and
-# var.builds_enabled, which have no other inputs), so
+# reconciler's credential files. Locals only (plus var.postgresql_host,
+# var.builds_enabled and var.image_prune, which have no other inputs), so
 # tests/cloud-deploy.test.sh checks them offline against the cloud repo's
 # src/server/env.server.ts. console.tf and reconciler.tf turn them into
 # resources; docs/architecture/cloud.md has the credentials table.
@@ -14,6 +14,35 @@
 variable "builds_enabled" {
   type    = bool
   default = true
+}
+
+# Pruning old App images from ghcr (cloud backlog B36,
+# src/reconciler/packages.ts): each App keeps its newest 10 images and every
+# one a Deploy or job still uses. "dry-run" logs each version it would
+# delete and deletes none; "off" is the rollback. docs/runbooks/cloud.md,
+# "Old App images". The first release runs dry-run; "on" follows once the
+# dry-run lines in the reconciler log read right.
+variable "image_prune" {
+  type    = string
+  default = "dry-run"
+  validation {
+    condition     = contains(["on", "dry-run", "off"], var.image_prune)
+    error_message = "image_prune is on, dry-run or off."
+  }
+}
+
+# Cloud backlog B13: Renovate on App repos. The Forgejo login the
+# renovate-cloud-apps CronJob runs as (stacks/renovate): "cloud-renovate",
+# never renovate-bot. Set, the console names it on GET /api/v1/instance, and
+# `cloud new` and `cloud renovate enable` add it, the topic cloud-app and
+# Cloud's status account (cloud-bot) to App repos. Empty keeps Renovate off on Cloud. Set it only after Vault
+# secret/cloud/system holds forgejo_status_token (runbook, "Renovate on App
+# repos"): without that token Cloud runs no check builds and posts no
+# status, so Renovate's pull requests would wait forever.
+variable "renovate_account" {
+  type = string
+  # On since 2026-11-17: secret/cloud/system holds forgejo_status_token.
+  default = "cloud-renovate"
 }
 
 # Builder v2 (cloud backlog B05): the builder's age recipient. Cloud seals
@@ -62,7 +91,7 @@ locals {
 
   # Appended to the tanstack_app module's platform env (DATABASE_URL,
   # OIDC_DISCOVERY_URL, the group names and the rest).
-  cloud_console_env = [
+  cloud_console_env = concat([
     # Plans ask the cluster for taken hosts; needs the token and the role above.
     { name = "TAKEN_HOSTS_FROM_CLUSTER", value = "true" },
     # Bearer tokens from both Authentik clients: the console's own (device
@@ -90,7 +119,9 @@ locals {
     # cluster's resolvers answer *.viktorbarzin.me with internal addresses.
     # Pod IPv6 is ULA with no NAT66, so Apps reach the internet over IPv4 only.
     { name = "CLOUD_OUTBOUND_IPV4", value = var.public_ip },
-  ]
+    ], var.renovate_account == "" ? [] : [
+    { name = "RENOVATE_ACCOUNT", value = var.renovate_account },
+  ])
 
   cloud_prometheus_url = "http://prometheus-server.monitoring.svc.cluster.local"
   cloud_loki_url       = "http://loki.monitoring.svc.cluster.local:3100"
@@ -137,6 +168,12 @@ locals {
     # (SMTP_USERNAME below). An empty file turns email off; the reconciler
     # logs it and keeps email deliveries pending.
     SMTP_PASSWORD = "smtp_password"
+    # Check builds (cloud B13): cloud-bot's write:repository token that posts
+    # the commit status cloud/build. Optional like the delete token, and for
+    # the same reason a file: with every other key a file, the reconciler
+    # never asks Vault, so without this it posts nothing and makes no check
+    # builds (found 2026-11-17 after the token went into Vault).
+    FORGEJO_STATUS_TOKEN = "forgejo_status_token"
   }
   cloud_reconciler_system_secret = "${local.cloud_reconciler}-system"
 
@@ -226,6 +263,8 @@ locals {
       # refused.
       { name = "EDGE_IMAGE", value = local.cloud_edge.image },
       { name = "OAUTH2_PROXY_IMAGE", value = local.cloud_oauth2_proxy.image },
+      # B22: the psql toolbox image, the one cloud-managed-toolbox-job pins.
+      { name = "TOOLBOX_POSTGRES_IMAGE", value = local.cloud_toolbox.images.postgres },
       # B09: OpenTofu state encryption. The passphrase is read from Vault
       # secret/cloud/state-key by the reconciler itself, never as a file.
       # false since 2026-11-17: every Project state was rewritten encrypted
@@ -252,6 +291,8 @@ locals {
       # 80% sends storage_high within P67's 2 minutes. Each pass is one
       # pg_database_size per Project database.
       { name = "RECONCILE_DATABASE_SIZE_SECONDS", value = "60" },
+      # B36's switch, var.image_prune above.
+      { name = "RECONCILE_IMAGE_PRUNE", value = var.image_prune },
     ],
     [for name, f in local.cloud_reconciler_files : { name = "${name}_FILE", value = "${f.mount}/${f.key}" }],
   )

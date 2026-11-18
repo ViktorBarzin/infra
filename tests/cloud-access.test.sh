@@ -109,6 +109,37 @@
 #     job pods; the reconciler may create,
 #     get, list and delete Jobs and read pod logs in its namespaces only,
 #     and may not create pods itself;
+#   - shell and psql sessions (the cloud repo's B22): Cloud's modules bind
+#     ClusterRole cloud-console-exec to the console in the Project namespace
+#     as the reconciler, and every other binding of it is refused; the psql
+#     toolbox Job Cloud's own code builds (toolbox.ts) and a pod from it are
+#     admitted, and each variant cloud-managed-toolbox-job and the pod rules
+#     forbid is refused (a second container, another image or a tag,
+#     another command, args, a port or probe, envFrom, another Secret, a
+#     token, a writable root, a hostPath, an owner, another name, a longer
+#     deadline or TTL, labels unlike its pod's); the real toolbox runs as
+#     uid 10001 with a read-only root, no token and its Postgres role; the
+#     console, with only Cloud's binding, runs sh in an App pod's app
+#     container and psql in the toolbox, and is refused another command,
+#     sh in the toolbox, the edge and oauth2-proxy containers, attach,
+#     port-forward, Secrets, a namespace that is not managed and the cloud
+#     namespace (even with a binding there by mistake); the egress floor
+#     denies toolbox pods before any Pass, and Cloud and infra pin the same
+#     toolbox image;
+#   - the Postgres task Jobs Cloud's own code builds (pg-task-jobs.ts, B28b
+#     and B28c: a backup list, a backup, an export, a restore) and their
+#     credentials Secrets are admitted as the reconciler in namespace cloud,
+#     with Cloud's image equal to infra's pin; each variant cloud-pg-task
+#     forbids is refused (another name or owner, retries, a longer deadline,
+#     no TTL, a service account token or account, root, host network, an init
+#     or second container, an image by tag or another image, another command
+#     or args, privilege, a writable root, an added capability, another
+#     Secret, a hostPath, the homelab's dumps, an unbounded emptyDir, a port
+#     but on an export, a writable nightly volume or mount, a subPath), as is
+#     a Secret with another name, owner, key or type, and the same Job in
+#     namespace default; the reconciler may create and patch Jobs and create
+#     Secrets in cloud, delete task Jobs there but no other Job, but not read, change or delete a Secret there, and
+#     creates no pod or Deployment there;
 #   - worker and cron Services (the cloud repo's B18 and B19), built from the
 #     rendered App: a worker Deployment (component worker, a command, no
 #     ports, probes or init container, 1 or 0 replicas) and a pod from it are
@@ -224,7 +255,7 @@ hosts.update({f"homelab-host-{i:03d}.viktorbarzin.me": f"ingress ns-{i:03d}/web-
 open(sys.argv[1], "w").write("locals {\n  cloud_taken_hosts = " + json.dumps(hosts) + "\n}\n")
 PY
 render "$HERE/stacks/cloud/access_rules.tf" \
-  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest})' \
+  'jsonencode({cluster = local.cloud_reconciler_cluster_rules, project = local.cloud_reconciler_project_rules, policies = local.cloud_admission_policies_applied, raw_policies = local.cloud_admission_policies, marker = local.cloud_taken_hosts_marker, project_role = local.cloud_project_role_name, auth_refused = local.cloud_secretstore_auth_refused, tier = local.cloud_tier, floor = local.cloud_project_egress_floor, ingress_floor = local.cloud_project_ingress_floor, app_port = local.cloud_app_port, egress = local.cloud_egress_excluded, denied_ports = local.cloud_egress_denied_tcp_ports, edge = local.cloud_edge, oauth2_proxy = local.cloud_oauth2_proxy, client_id = local.cloud_apps_client_id, strip_required = local.cloud_strip_cookies_required, live_guard = local.cloud_live_host_guard, live_guard_role = local.cloud_live_host_guard_kyverno_role, edge_transport = local.cloud_edge_transport, edge_transport_manifest = local.cloud_edge_transport_manifest, console_exec = local.cloud_console_exec, toolbox = local.cloud_toolbox, cloud_rules = local.cloud_reconciler_cloud_rules, pg_task = local.cloud_pg_task})' \
   "$TMP/k8s.raw" "$TMP/taken_hosts_stub.tf"
 render "$HERE/stacks/vault/cloud_policies.tf" \
   'jsonencode({reconciler = local.cloud_reconciler_policy, project = local.cloud_project_policy_template, selector = local.cloud_project_namespace_selector, ns_reader = local.vault_namespace_reader_rules})' \
@@ -263,8 +294,18 @@ docs = [
     {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": {"name": "cloud-reconciler"},
      "subjects": [sa("cloud-reconciler", "cloud")],
      "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cloud-reconciler"}},
+    # B22: the console's service account and its exec role, bound only by
+    # Cloud's modules/project in each Project namespace.
+    {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": k["console_exec"]["service_account"], "namespace": "cloud"}},
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": k["console_exec"]["role"]}, "rules": rules(k["console_exec"]["rules"])},
+    # Postgres task Jobs (the cloud repo's B28b, B28c) in namespace cloud.
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "cloud-reconciler-tasks", "namespace": "cloud"}, "rules": rules(k["cloud_rules"])},
+    {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": {"name": "cloud-reconciler-tasks", "namespace": "cloud"},
+     "subjects": [sa("cloud-reconciler", "cloud")],
+     "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "cloud-reconciler-tasks"}},
 ]
 (d / "rbac.yaml").write_text(yaml.safe_dump_all(docs))
+(d / "pg_task.json").write_text(json.dumps(k["pg_task"]))
 (d / "vap.yaml").write_text(yaml.safe_dump_all(list(k["policies"].values())))
 # cloud-managed-ingress as it would be applied without the taken hosts.
 (d / "vap-ingress-unfilled.yaml").write_text(yaml.safe_dump(k["raw_policies"]["managed_ingress"]))
@@ -284,6 +325,7 @@ docs = [
      "spec": {"policyName": "probe-kyverno-copy", "validationActions": ["Deny"]}},
 ]))
 (d / "project_role").write_text(k["project_role"])
+(d / "console_exec.json").write_text(json.dumps(k["console_exec"]))
 # The live host guard: Kyverno's ValidatingPolicy and the ClusterRole that
 # lets Kyverno's admission controller read IngressRoutes.
 lr = k["live_guard_role"]
@@ -310,6 +352,9 @@ if contract["images"]["edge"] != k["edge"]["image"]:
     problems.append(f"edge image: Cloud renders {contract['images']['edge']}, infra requires {k['edge']['image']}")
 if contract["images"]["oauth2Proxy"] != k["oauth2_proxy"]["image"]:
     problems.append(f"oauth2-proxy image: Cloud renders {contract['images']['oauth2Proxy']}, infra requires {k['oauth2_proxy']['image']}")
+# The psql toolbox image (B22): the one Cloud runs is the one the policy pins.
+if contract.get("toolboxImages") is not None and contract["toolboxImages"] != k["toolbox"]["images"]:
+    problems.append(f"toolbox images: Cloud runs {contract['toolboxImages']}, infra pins {k['toolbox']['images']}")
 missing = set(k["strip_required"]) - set(contract["stripCookies"])
 if missing:
     problems.append(f"Cloud's strip list {contract['stripCookies']} lacks {sorted(missing)}")
@@ -365,6 +410,11 @@ for i, r in enumerate(egress[:smtp[0] if smtp else 0]):
     ports = r.get("destination", {}).get("ports")
     if not ports or set(ports) & set(k["denied_ports"]):
         problems.append(f"floor rule {i} comes before the mail-port Deny and lets a mail port through: {r}")
+# A psql toolbox (B22) gets DNS and the CNPG primary, then a Deny before any
+# Pass: no internet, no other pod.
+tb_deny = [i for i, r in enumerate(egress) if r == {"action": "Deny", "source": {"selector": "cloud.viktorbarzin.me/component == 'toolbox'"}}]
+if len(tb_deny) != 1 or tb_deny[0] > first_pass:
+    problems.append(f"floor: no single Deny of toolbox pods before the first Pass (rule {tb_deny}, first Pass {first_pass})")
 dns = [r for r in egress if r.get("action") == "Allow" and 53 in r.get("destination", {}).get("ports", [])]
 if not any(r["destination"].get("nets") == ["10.96.0.10/32"] for r in dns) or not any("kube-dns" in r["destination"].get("selector", "") for r in dns):
     problems.append(f"floor: DNS must be allowed to the kube-dns ClusterIP and the CoreDNS pods: {dns}")
@@ -945,6 +995,12 @@ cp "$TMP/tofu/one-off-job.json" "$TMP/dump/" 2>/dev/null
 if [ -f "$CLOUD_REPO/src/reconciler/job-runs.ts" ]; then
   [ -s "$TMP/dump/one-off-job.json" ] && ok "Cloud's own code built a one-off job to check" || bad "Cloud has job-runs.ts but render.ts wrote no one-off job"
 fi
+# And the psql toolbox it builds for `cloud psql` of the Postgres (B22).
+cp "$TMP/tofu/toolbox-job.json" "$TMP/dump/" 2>/dev/null
+if [ -f "$CLOUD_REPO/src/reconciler/toolbox.ts" ]; then
+  [ -s "$TMP/dump/toolbox-job.json" ] && ok "Cloud's own code built a toolbox Job to check" || bad "Cloud has toolbox.ts but render.ts wrote no toolbox Job"
+  grep -q '"name": "cloud-console-exec"' "$TMP/dump/objects.json" && ok "Cloud's modules bound the console's exec role in the Project namespace" || bad "Cloud has toolbox.ts but its modules wrote no cloud-console-exec RoleBinding"
+fi
 if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants.py" "$TMP/dump" "$TMP/cases" p-demo >"$TMP/variants.log" 2>&1; then
   check="$(pods_check "$TMP/dump" "$TMP/cases" all-kinds)" && ok "every rendered Deployment's pod was admitted: $check" || bad "rendered pods: $check"
   # The SecretStore's service account must exist for a pod to name it.
@@ -953,6 +1009,34 @@ if [ -s "$TMP/dump/objects.json" ] && python3 "$HERE/tests/cloud-access/variants
   [ "$CASES_RUN" -gt 80 ] && ok "$CASES_RUN cases built from Cloud's real objects" || bad "only $CASES_RUN cases built from Cloud's real objects"
 else
   bad "no objects from Cloud's modules to check: $(cat "$TMP/variants.log" 2>/dev/null)"
+fi
+
+# --- Postgres task Jobs in namespace cloud (the cloud repo's B28b, B28c) --------
+# render.ts built each kind's Job and credentials Secret with Cloud's own
+# code; pg_tasks.py checks Cloud's image against infra's pin and writes the
+# admitted shapes and the refused variants. The reconciler may run them in
+# cloud only, create Secrets there but not read them, and create no pod.
+if [ -f "$CLOUD_REPO/src/reconciler/pg-task-jobs.ts" ]; then
+  if python3 "$HERE/tests/cloud-access/pg_tasks.py" "$TMP/tofu/pg-tasks.json" "$TMP/pg_task.json" "$TMP/pg-cases" >"$TMP/pg-tasks.log" 2>&1; then
+    run_cases "$TMP/pg-cases"
+    [ "$CASES_RUN" -gt 60 ] && ok "$CASES_RUN Postgres task cases built from Cloud's own Jobs" || bad "only $CASES_RUN Postgres task cases"
+  else
+    bad "Postgres task cases: $(cat "$TMP/pg-tasks.log")"
+  fi
+  can create jobs.batch -n cloud && ok "reconciler may create Jobs in cloud" || bad "reconciler cannot create Jobs in cloud"
+  can patch jobs.batch -n cloud && ok "reconciler may patch Jobs in cloud (to let a suspended task go)" || bad "reconciler cannot patch Jobs in cloud"
+  can create secrets -n cloud && ok "reconciler may create Secrets in cloud" || bad "reconciler cannot create Secrets in cloud"
+  for verb in get list update delete; do
+    can "$verb" secrets -n cloud && bad "reconciler may $verb Secrets in cloud" || ok "reconciler may not $verb Secrets in cloud"
+  done
+  # It deletes the task Jobs it gave up on, and no other Job in cloud.
+  ka create -f "$TMP/pg-cases/delete-task-job.json" >/dev/null 2>&1 && ka create -f "$TMP/pg-cases/delete-other-job.json" >/dev/null 2>&1 \
+    || bad "could not create the Jobs for the delete checks"
+  expect_ok "reconciler may delete a task Job in cloud" kr delete job -n cloud "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$TMP/pg-cases/delete-task-job.json")" --dry-run=server
+  expect_fail "reconciler may not delete another Job in cloud" "may write only in namespaces named p-" kr delete job -n cloud cloud-other-job --dry-run=server
+  ka delete job -n cloud --all >/dev/null 2>&1
+  can create pods -n cloud && bad "reconciler may create pods in cloud" || ok "reconciler creates no pod in cloud"
+  can create deployments.apps -n cloud && bad "reconciler may create Deployments in cloud" || ok "reconciler may not create Deployments in cloud"
 fi
 
 # --- Cloud's snapshot fixtures, each applied as the reconciler -----------------
@@ -989,6 +1073,104 @@ for i in $(seq 0 $((n_fx - 1))); do
   fi
 done
 TOFU_DIR="$TMP/tofu" DUMP_DIR="$TMP/dump"
+
+# --- shell and psql sessions (the cloud repo's B22) ---------------------------------
+# The console execs as service account cloud/cloud-console, with only what
+# Cloud's own RoleBinding (taken from the apply above) gives it, and
+# cloud-console-exec decides what it may run. Real pods: an App pod with
+# containers app, edge and oauth2-proxy stand-ins, and the toolbox Job
+# Cloud builds, which pulls the pinned postgres image.
+if [ -s "$TMP/dump/toolbox-job.json" ]; then
+  kc() { kubectl --as="system:serviceaccount:cloud:cloud-console" "$@"; }
+  BUSYBOX="docker.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478"
+  exec_pod_doc() { # namespace component service container...
+    local ns="$1" comp="$2" svc="$3"; shift 3
+    python3 - "$ns" "$comp" "$svc" "$BUSYBOX" "$@" <<'PY2'
+import json, sys
+ns, comp, svc, image, *names = sys.argv[1:]
+c = lambda n: {"name": n, "image": image, "command": ["sleep", "3600"],
+               "resources": {"requests": {"cpu": "10m", "memory": "16Mi", "ephemeral-storage": "16Mi"},
+                             "limits": {"cpu": "100m", "memory": "32Mi", "ephemeral-storage": "16Mi"}},
+               "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}}
+print(json.dumps({"apiVersion": "v1", "kind": "Pod",
+  "metadata": {"name": "exec-" + comp, "namespace": ns, "labels": {"cloud.viktorbarzin.me/managed": "true", "cloud.viktorbarzin.me/component": comp, "cloud.viktorbarzin.me/service": svc}},
+  "spec": {"automountServiceAccountToken": False, "enableServiceLinks": False,
+           "securityContext": {"runAsNonRoot": True, "runAsUser": 10001, "runAsGroup": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
+           "containers": [c(n) for n in names]}}))
+PY2
+  }
+  # Cloud's own binding, as the apply wrote it, moved into p-demo.
+  python3 - "$TMP/dump/objects.json" >"$TMP/console-rb.json" <<'PY2'
+import json, sys
+rb = [o for o in json.load(open(sys.argv[1]))["items"] if o["kind"] == "RoleBinding" and o["metadata"]["name"] == "cloud-console-exec"][0]
+md = rb["metadata"]
+rb["metadata"] = {"name": md["name"], "namespace": "p-demo", "labels": md.get("labels", {})}
+print(json.dumps(rb))
+PY2
+  expect_ok "the reconciler binds the console's exec role in p-demo, as Cloud's modules do" apply_as kr <"$TMP/console-rb.json"
+  # The console's own token, for a WebSocket exec as Cloud runs it
+  # (exec-ws.ts). `kubectl exec` falls back to SPDY when the WebSocket
+  # upgrade is refused, and SPDY needs only create on pods/exec, while
+  # Kubernetes authorizes a WebSocket exec as get and then create: only the
+  # WebSocket client shows that cloud-console-exec is enough. The refusals
+  # below use kubectl, which reaches the same admission policy.
+  ka create token cloud-console -n cloud >"$TMP/console.token" 2>/dev/null
+  kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"$TMP/cluster-ca.crt"
+  API_SERVER="$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')"
+  ws_exec() { (cd "$HERE/tests/cloud-access" && HOME="$TMP/home" "$BUN" exec-ws.ts "$API_SERVER" "$TMP/cluster-ca.crt" "$TMP/console.token" "$@"); }
+  [ "$(kc auth can-i create pods/exec -n default 2>/dev/null)" = "no" ] && ok "the console may not exec in default" || bad "the console may exec in default"
+  [ "$(kc auth can-i create pods/attach -n p-demo 2>/dev/null)" = "no" ] && ok "the console may not attach in p-demo" || bad "the console may attach in p-demo"
+  [ "$(kc auth can-i create pods/portforward -n p-demo 2>/dev/null)" = "no" ] && ok "the console may not port-forward in p-demo" || bad "the console may port-forward in p-demo"
+  [ "$(kc auth can-i get secrets -n p-demo 2>/dev/null)" = "no" ] && ok "the console may not read Secrets in p-demo" || bad "the console reads Secrets in p-demo"
+  # The toolbox reads pg-<its Postgres>; a stand-in Secret with the keys
+  # modules/postgres writes.
+  tb_svc="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["labels"]["cloud.viktorbarzin.me/service"])' "$TMP/dump/toolbox-job.json")"
+  ka create secret generic "pg-$tb_svc" -n p-demo --from-literal=host=pg.invalid --from-literal=port=5432 \
+    --from-literal=username=p_demo --from-literal=password=x --from-literal=database=p_demo >/dev/null 2>&1
+  python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); j["metadata"]["namespace"]="p-demo"; j["spec"]["template"]["metadata"]["labels"]; print(json.dumps(j))' "$TMP/dump/toolbox-job.json" >"$TMP/toolbox-p-demo.json"
+  expect_ok "the reconciler starts Cloud's toolbox Job in p-demo" kr create -f "$TMP/toolbox-p-demo.json"
+  expect_ok "admin starts an App pod (app, edge and oauth2-proxy containers) in p-demo" ka create -f - < <(exec_pod_doc p-demo app menu app edge oauth2-proxy)
+  ka create namespace exec-plain >/dev/null 2>&1
+  ka create -f - >/dev/null < <(exec_pod_doc exec-plain app menu app)
+  ka create -f - >/dev/null < <(exec_pod_doc cloud app menu app)
+  for ns in exec-plain cloud; do
+    ka create rolebinding console-mistake -n "$ns" --clusterrole=cloud-console-exec --serviceaccount=cloud:cloud-console >/dev/null 2>&1
+  done
+  tb_job="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$TMP/dump/toolbox-job.json")"
+  ka wait --for=condition=Ready pod/exec-app -n p-demo --timeout=180s >/dev/null 2>&1 || bad "the App pod in p-demo did not get ready: $(ka get pod exec-app -n p-demo -o jsonpath='{.status}')"
+  ka wait --for=condition=Ready pod -l "job-name=$tb_job" -n p-demo --timeout=300s >/dev/null 2>&1 \
+    && ok "the toolbox pod runs, as the App uid with a read-only root and no token" \
+    || bad "the toolbox pod did not run: $(ka get pods -n p-demo -l "job-name=$tb_job" -o jsonpath='{.items[*].status}') $(ka get events -n p-demo --field-selector reason=FailedCreate -o jsonpath='{.items[*].message}')"
+  tb_pod="$(ka get pods -n p-demo -l "job-name=$tb_job" -o jsonpath='{.items[0].metadata.name}')"
+  for ns in exec-plain cloud; do ka wait --for=condition=Ready pod/exec-app -n "$ns" --timeout=120s >/dev/null 2>&1; done
+  EXEC_REFUSED="may exec only"
+  expect_ok   "the console runs sh in an App pod's app container over a WebSocket, as Cloud does" ws_exec p-demo exec-app app sh
+  expect_fail "over a WebSocket too, the console cannot run another command in the app container" "refused" ws_exec p-demo exec-app app cat /etc/hostname
+  expect_fail "the console cannot run another command in the app container" "$EXEC_REFUSED" kc exec -n p-demo exec-app -c app -- cat /etc/hostname
+  expect_fail "the console cannot run sh -c in the app container" "$EXEC_REFUSED" kc exec -n p-demo exec-app -c app -- sh -c id
+  expect_fail "the console cannot exec into the edge container" "$EXEC_REFUSED" kc exec -n p-demo exec-app -c edge -- sh
+  expect_fail "the console cannot exec into the oauth2-proxy container" "$EXEC_REFUSED" kc exec -n p-demo exec-app -c oauth2-proxy -- sh
+  if [ -n "$tb_pod" ]; then
+    if out="$(ws_exec p-demo "$tb_pod" toolbox psql --version 2>&1)" && grep -q "PostgreSQL" <<<"$out"; then
+      ok "the console runs psql in the toolbox container over a WebSocket: $out"
+    else bad "the console could not run psql in the toolbox: $out"; fi
+    expect_fail "the console cannot run sh in the toolbox container" "$EXEC_REFUSED" kc exec -n p-demo "$tb_pod" -c toolbox -- sh
+    if out="$(ka exec -n p-demo "$tb_pod" -c toolbox -- sh -c 'id -u; touch /x 2>&1; ls /var/run/secrets/kubernetes.io 2>&1; printenv PGUSER' 2>&1)" \
+       && grep -q '^10001$' <<<"$out" && grep -qi "read-only" <<<"$out" && grep -qi "no such file" <<<"$out" && grep -q '^p_demo$' <<<"$out"; then
+      ok "the toolbox runs as uid 10001 with a read-only root, no service account token and the Postgres role in PGUSER"
+    else bad "the toolbox's identity, root or token: $out"; fi
+  fi
+  expect_fail "the console cannot exec in a namespace that is not managed, even with a binding there" "may exec only in namespaces named p-" kc exec -n exec-plain exec-app -c app -- sh
+  expect_fail "the console cannot exec in the cloud namespace, even with a binding there" "may exec only in namespaces named p-" kc exec -n cloud exec-app -c app -- sh
+  ka delete rolebinding console-mistake -n exec-plain >/dev/null 2>&1
+  expect_fail "without a binding, RBAC refuses the console in a namespace that is not managed" "forbidden" kc exec -n exec-plain exec-app -c app -- sh
+  expect_ok   "admin still execs anywhere (the policy binds only the console)" ka exec -n p-demo exec-app -c edge -- true
+  ka delete namespace exec-plain --wait=false >/dev/null 2>&1
+  ka delete rolebinding console-mistake -n cloud >/dev/null 2>&1
+  ka delete pod exec-app -n cloud --wait=false >/dev/null 2>&1
+  ka delete job "$tb_job" -n p-demo --wait=false >/dev/null 2>&1
+  ka delete pod exec-app -n p-demo --wait=false >/dev/null 2>&1
+fi
 
 expect_ok   "reconciler deletes p-other" kr delete namespace p-other --wait=false
 

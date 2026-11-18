@@ -42,12 +42,16 @@ the data disappeared.
 
 Since 2026-11-03 the nightly `postgresql-backup` job no longer writes a single
 `pg_dumpall` file. It writes `globals_<ts>.sql.gz` (roles, tablespaces) and one
-`pg_dump -Fc` per database under `per-db/<db>/dump_<ts>.dump`. To restore
-everything into an empty cluster, load the globals, then each database:
+`pg_dump -Fc` per database under `per-db/<db>/dump_<ts>.dump`. Cloud's
+Project databases (`p_*`) go to `cloud-per-db/<db>/dump_<ts>.dump` instead,
+apart from the homelab's, because Cloud's backup Jobs read that directory
+([cloud.md](cloud.md), "Restore a Project database"). To restore everything
+into an empty cluster, load the globals, then each database from both
+directories:
 
 ```bash
 PGPASSWORD=... zcat /backup/globals_<ts>.sql.gz | psql -h 127.0.0.1 -p 5433 -U postgres
-for f in /backup/per-db/*/dump_<ts>.dump; do
+for f in /backup/per-db/*/dump_<ts>.dump /backup/cloud-per-db/*/dump_<ts>.dump; do
   PGPASSWORD=... pg_restore --create -h 127.0.0.1 -p 5433 -U postgres -d postgres "$f"
 done
 ```
@@ -127,7 +131,7 @@ kubectl rollout restart deployment -n linkwarden
 
 ## Restore Single Database (from per-db backup)
 
-Per-database backups use `pg_dump -Fc` (custom format) and are stored at `/mnt/main/postgresql-backup/per-db/<dbname>/`.
+Per-database backups use `pg_dump -Fc` (custom format) and are stored at `/mnt/main/postgresql-backup/per-db/<dbname>/`. A Cloud Project database (`p_*`) is in `/mnt/main/postgresql-backup/cloud-per-db/<dbname>/`; for those, use [cloud.md](cloud.md), "Restore a Project database".
 
 ### 1. List available per-db backups
 ```bash

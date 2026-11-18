@@ -2743,17 +2743,31 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 # then pg_restore --create of each database (restore-postgresql.md).
                 # A manual or pre-upgrade run (scripts/renovate-rails) of this
                 # CronJob is therefore still a complete backup of the cluster.
+                #
+                # Cloud Project databases (p_*, Cloud's ADR-0003) are written to
+                # /backup/cloud-per-db/<db>/ instead, apart from the homelab's.
+                # Cloud's backup Jobs in namespace cloud mount only that directory,
+                # read-only, and /backup/cloud-manual, where Cloud's on-demand
+                # dumps go (stacks/cloud). They never mount /backup/per-db.
+                # cloud-manual belongs to uid 999, the postgres user of the image
+                # Cloud's Jobs run as, because only those Jobs write there.
                 pg_dumpall --globals-only -h postgresql.dbaas -U postgres | gzip -9 > /backup/globals_$now.sql.gz
+                mkdir -p /backup/per-db /backup/cloud-per-db
+                install -d -o 999 -g 999 -m 0750 /backup/cloud-manual
                 dbs=$(psql -h postgresql.dbaas -U postgres -t -A -c \
                   "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
                 total=0; ok=0; failed=0
                 for db in $dbs; do
                   total=$((total + 1))
-                  mkdir -p "/backup/per-db/$db"
-                  if pg_dump -Fc -h postgresql.dbaas -U postgres "$db" > "/backup/per-db/$db/dump_$now.dump"; then
-                    ok=$((ok + 1)); echo "  $db OK $(( $(stat -c%s "/backup/per-db/$db/dump_$now.dump") / 1024 )) KiB"
+                  case "$db" in
+                    p_*) dir="/backup/cloud-per-db/$db" ;;
+                    *) dir="/backup/per-db/$db" ;;
+                  esac
+                  mkdir -p "$dir"
+                  if pg_dump -Fc -h postgresql.dbaas -U postgres "$db" > "$dir/dump_$now.dump"; then
+                    ok=$((ok + 1)); echo "  $db OK $(( $(stat -c%s "$dir/dump_$now.dump") / 1024 )) KiB"
                   else
-                    failed=$((failed + 1)); echo "  $db FAILED"; rm -f "/backup/per-db/$db/dump_$now.dump"
+                    failed=$((failed + 1)); echo "  $db FAILED"; rm -f "$dir/dump_$now.dump"
                   fi
                 done
                 # Rotate — 14 day retention. Top-level dump_*.sql.gz are the old
@@ -2763,6 +2777,11 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 find . -maxdepth 1 -name "dump_*.sql.gz" -type f -mtime +14 -delete
                 find . -maxdepth 1 -name "dump_*.sql" -type f -mtime +14 -delete
                 find /backup/per-db -name "dump_*.dump" -type f -mtime +14 -delete
+                # Same 14 days for Cloud's nightly and on-demand dumps. A .part
+                # file is an on-demand dump whose Job died before it finished.
+                find /backup/cloud-per-db -name "dump_*.dump" -type f -mtime +14 -delete
+                find /backup/cloud-manual -name "manual_*.dump" -type f -mtime +14 -delete
+                find /backup/cloud-manual -name "*.part" -type f -mtime +1 -delete
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -2770,7 +2789,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 echo "databases: $total (ok: $ok, failed: $failed)"
                 echo "duration: $${_dur}s"
                 echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
-                _out_bytes=$(du -cb /backup/globals_$now.sql.gz /backup/per-db/*/dump_$now.dump 2>/dev/null | tail -1 | cut -f1)
+                _out_bytes=$(du -cb /backup/globals_$now.sql.gz /backup/per-db/*/dump_$now.dump /backup/cloud-per-db/*/dump_$now.dump 2>/dev/null | tail -1 | cut -f1)
                 # A failed database fails the job, and the success timestamp below
                 # is pushed only when every database dumped.
                 if [ "$failed" -gt 0 ] || [ "$total" -eq 0 ]; then

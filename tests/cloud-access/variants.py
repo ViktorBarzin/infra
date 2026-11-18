@@ -985,6 +985,111 @@ if run_file.exists():
         s_["containers"] = [copy.deepcopy(rc(run))]
     case("deploy-run-job", "kr", "runs only from a Job|a one-off job pod runs once", "a Deployment of one-off job pods", variant(app, run_deployment))
 
+# --- the console's exec RoleBinding (B22) -------------------------------------------------
+# Cloud's modules/project binds ClusterRole cloud-console-exec to the
+# console in every Project namespace (rendered above, admitted as the
+# reconciler); cloud-reconciler-scope admits that shape only.
+console_rb = [o for o in of_kind("RoleBinding") if o["metadata"]["name"] == "cloud-console-exec"]
+if console_rb:
+    crb = console_rb[0]
+    BIND = "may bind only"
+    CRB_RULES = [
+        ("other-name", lambda o: o["metadata"].update({"name": "console"}), BIND),
+        ("other-role", lambda o: o["roleRef"].update({"name": "admin"}), "forbidden|" + BIND),
+        ("other-sa", lambda o: o["subjects"][0].update({"name": "default"}), BIND),
+        ("other-namespace", lambda o: o["subjects"][0].update({"namespace": "p-other"}), BIND),
+        ("second-subject", lambda o: o["subjects"].append({"kind": "ServiceAccount", "name": "default", "namespace": target}), BIND),
+        ("group", lambda o: o.update({"subjects": [{"kind": "Group", "apiGroup": "rbac.authorization.k8s.io", "name": "system:authenticated"}]}), BIND),
+        ("reconciler", lambda o: o["subjects"][0].update({"name": "cloud-reconciler"}), BIND),
+    ]
+    for name, change, expect in CRB_RULES:
+        case(f"console-rb-{name}", "kr", expect, f"the console's exec RoleBinding with {name}", variant(crb, change))
+
+# --- the psql toolbox (B22) -----------------------------------------------------------------
+# render.ts wrote the toolbox Job of a session on the Postgres as Cloud's
+# toolbox loop (toolbox.ts) starts it for `cloud psql`; a cloud checkout
+# from before B22 writes none.
+tb_file = dump / "toolbox-job.json"
+if tb_file.exists():
+    tb = json.loads(tb_file.read_text())
+    tb["metadata"]["namespace"] = target
+    TONE = "a toolbox pod has one container"
+    TRUN = "a toolbox pod runs once"
+
+    def tc(o):
+        return o["spec"]["template"]["spec"]["containers"][0]
+
+    def tb_labels(key, value):
+        def f(o):
+            o["metadata"]["labels"][key] = value
+            o["spec"]["template"]["metadata"]["labels"][key] = value
+        return f
+
+    def tb_pod(j, owned=True):
+        t = j["spec"]["template"]
+        md = {"name": j["metadata"]["name"] + "-q7w2e", "namespace": target, "labels": dict(t["metadata"]["labels"])}
+        if owned:
+            md["ownerReferences"] = [{"apiVersion": "batch/v1", "kind": "Job", "name": j["metadata"]["name"],
+                                      "uid": "00000000-0000-4000-8000-000000000060", "controller": True, "blockOwnerDeletion": True}]
+        return {"apiVersion": "v1", "kind": "Pod", "metadata": md, "spec": copy.deepcopy(t["spec"])}
+
+    def env_add(entry):
+        return lambda o: tc(o).setdefault("env", []).append(entry)
+
+    def sec(key, value):
+        return lambda o: tc(o)["securityContext"].update({key: value})
+
+    case("toolbox-job", "kr", "ok", "the toolbox Job Cloud builds for `cloud psql`", tb)
+    case("toolbox-pod", "ka", "ok", "a pod the Job controller makes from the toolbox Job", tb_pod(tb))
+    case("toolbox-pod-unowned", "ka", "made only by its Job", "a toolbox pod with no Job owner", tb_pod(tb, owned=False))
+    TB_RULES = [
+        ("second-container", lambda o: o["spec"]["template"]["spec"]["containers"].append(dict(copy.deepcopy(tc(o)), name="x")), TONE),
+        ("container-app", lambda o: tc(o).update({"name": "app"}), TONE),
+        ("image-tag", lambda o: tc(o).update({"image": "docker.io/library/postgres:18-alpine"}), TONE),
+        ("other-image", lambda o: tc(o).update({"image": "docker.io/library/busybox@sha256:" + "f" * 64}), TONE),
+        ("command-sh", lambda o: tc(o).update({"command": ["sh", "-c", "sleep 3780"]}), TONE),
+        ("command-psql", lambda o: tc(o).update({"command": ["psql"]}), TONE),
+        ("args", lambda o: tc(o).update({"args": ["3780"]}), TONE),
+        ("port", lambda o: tc(o).update({"ports": [{"name": "pg", "containerPort": 5432}]}), TRUN),
+        ("probe", lambda o: tc(o).update({"readinessProbe": {"exec": {"command": ["true"]}}}), TRUN),
+        ("envfrom", lambda o: tc(o).update({"envFrom": [{"secretRef": {"name": "env-menu"}}]}), TRUN),
+        ("token", lambda o: o["spec"]["template"]["spec"].update({"automountServiceAccountToken": True}), TRUN),
+        ("token-unset", lambda o: o["spec"]["template"]["spec"].pop("automountServiceAccountToken"), TRUN),
+        ("configmap-volume", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "configMap": {"name": "edge-menu"}}), TRUN),
+        ("on-failure", lambda o: o["spec"]["template"]["spec"].update({"restartPolicy": "OnFailure"}), TRUN),
+        ("other-secret", env_add({"name": "X", "valueFrom": {"secretKeyRef": {"name": "edge-menu", "key": "secret"}}}), "plain values and keys of Secret pg-"),
+        ("fieldref", env_add({"name": "X", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}), "plain values and keys of Secret pg-"),
+        ("writable-root", sec("readOnlyRootFilesystem", False), "read-only root filesystem"),
+        ("escalation", sec("allowPrivilegeEscalation", True), "read-only root filesystem"),
+        ("caps", lambda o: tc(o)["securityContext"].update({"capabilities": {"drop": ["ALL"], "add": ["NET_RAW"]}}), "read-only root filesystem|violates PodSecurity|forbidden"),
+        ("hostpath", lambda o: o["spec"]["template"]["spec"]["volumes"].append({"name": "x", "hostPath": {"path": "/"}}), "may use only emptyDir"),
+        ("init", lambda o: o["spec"]["template"]["spec"].update({"initContainers": [dict(copy.deepcopy(tc(o)), name="setup")]}), "only an App pod may have an init container"),
+        ("serviceaccount", lambda o: o["spec"]["template"]["spec"].update({"serviceAccountName": "cloud-secrets"}), "runs as service account default"),
+        ("retries", lambda o: o["spec"].update({"backoffLimit": 1}), "a toolbox runs one pod once"),
+        ("no-deadline", lambda o: o["spec"].pop("activeDeadlineSeconds"), "a toolbox sets activeDeadlineSeconds"),
+        ("long-deadline", lambda o: o["spec"].update({"activeDeadlineSeconds": 3781}), "a toolbox sets activeDeadlineSeconds"),
+        ("long-ttl", lambda o: o["spec"].update({"ttlSecondsAfterFinished": 3601}), "a toolbox sets activeDeadlineSeconds"),
+        ("other-name", lambda o: o["metadata"].update({"name": "toolbox-000000000"}), "is named toolbox-"),
+        ("owned", lambda o: o["metadata"].update({"ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "app-menu", "uid": "00000000-0000-4000-8000-000000000061"}]}), "has no owner"),
+        ("label-mismatch", lambda o: o["metadata"]["labels"].update({SERVICE: "recipes"}), "carries its pod's Cloud labels"),
+        ("no-session", lambda o: [o["metadata"]["labels"].pop("cloud.viktorbarzin.me/session"), o["spec"]["template"]["metadata"]["labels"].pop("cloud.viktorbarzin.me/session")], "carries its pod's Cloud labels"),
+        ("other-target", tb_labels("cloud.viktorbarzin.me/target", "app"), "carries its pod's Cloud labels"),
+        # Relabelled, it leaves this policy for cloud-managed-job, which
+        # refuses every Job but a migrate Job.
+        ("app-component", tb_labels(COMPONENT, "app"), "a Job is a Deploy's migrations"),
+    ]
+    for name, change, expect in TB_RULES:
+        case(f"toolbox-{name}", "kr", expect, f"toolbox Job with {name}", variant(tb, change))
+
+    # No Deployment runs toolbox pods: they come from a Job only.
+    def tb_deployment(o):
+        relabel("toolbox")(o)
+        s_ = spec_of(o)
+        s_.pop("initContainers", None)
+        s_.pop("topologySpreadConstraints", None)
+        s_["containers"] = [copy.deepcopy(tc(tb))]
+    case("deploy-toolbox", "kr", "runs only from a Job|a toolbox pod", "a Deployment of toolbox pods", variant(app, tb_deployment))
+
 # --- Middlewares -------------------------------------------------------------------------
 mw = {"apiVersion": "traefik.io/v1alpha1", "kind": "Middleware", "metadata": {"name": "buffer", "namespace": target},
       "spec": {"buffering": {"maxRequestBodyBytes": 10737418240, "memRequestBodyBytes": 10737418240}}}
