@@ -102,6 +102,48 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.paperless-ngx]
 }
 
+# The shared Redis as the ACL user paperless-ngx, db 0 as before: only this
+# namespace's own key of Vault secret/redis/users (docs/runbooks/redis-acl.md).
+# The secret_key_ref on PAPERLESS_REDIS is not optional, so a pod started
+# before ESO has written the key waits for it.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "paperless-ngx-redis"
+      namespace = "paperless-ngx"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "paperless-ngx-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            PAPERLESS_REDIS = "redis://paperless-ngx:{{ .password }}@${var.redis_host}:6379"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "paperless-ngx"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.paperless-ngx]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
@@ -140,6 +182,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 
 
 resource "kubernetes_deployment" "paperless-ngx" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "paperless-ngx"
     namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
@@ -151,7 +194,8 @@ resource "kubernetes_deployment" "paperless-ngx" {
       "reloader.stakater.com/search" = "true"
       # The Postgres password rotates weekly and PAPERLESS_DBPASS is read once
       # at startup, so without this the app fails auth every seventh day.
-      "secret.reloader.stakater.com/reload" = "paperless-ngx-db-creds"
+      # PAPERLESS_REDIS is read once at startup too.
+      "secret.reloader.stakater.com/reload" = "paperless-ngx-db-creds,paperless-ngx-redis"
     }
   }
   spec {
@@ -185,7 +229,12 @@ resource "kubernetes_deployment" "paperless-ngx" {
           env {
             name = "PAPERLESS_REDIS"
             // If redis gets stuck, try deleting the locks files in log dir
-            value = "redis://${var.redis_host}"
+            value_from {
+              secret_key_ref {
+                name = "paperless-ngx-redis"
+                key  = "PAPERLESS_REDIS"
+              }
+            }
           }
           env {
             name  = "PAPERLESS_REDIS_PREFIX"
