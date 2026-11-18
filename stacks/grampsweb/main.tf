@@ -102,7 +102,56 @@ resource "random_password" "secret_key" {
   special = false
 }
 
+# The shared Redis ACL user grampsweb: only this namespace's own key of Vault
+# secret/redis/users (docs/runbooks/redis-acl.md). Celery in db 2, the rate
+# limiter in db 3, as before. The secret_key_refs are not optional, so a pod
+# started before ESO has written the keys waits for them.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grampsweb-redis"
+      namespace = "grampsweb"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grampsweb-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            GRAMPSWEB_CELERY_CONFIG__broker_url     = "redis://grampsweb:{{ .password }}@${var.redis_host}:6379/2"
+            GRAMPSWEB_CELERY_CONFIG__result_backend = "redis://grampsweb:{{ .password }}@${var.redis_host}:6379/2"
+            GRAMPSWEB_RATELIMIT_STORAGE_URI         = "redis://grampsweb:{{ .password }}@${var.redis_host}:6379/3"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "grampsweb"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.grampsweb]
+}
+
 locals {
+  redis_env = [
+    "GRAMPSWEB_CELERY_CONFIG__broker_url",
+    "GRAMPSWEB_CELERY_CONFIG__result_backend",
+    "GRAMPSWEB_RATELIMIT_STORAGE_URI",
+  ]
   common_env = [
     {
       name  = "GRAMPSWEB_TREE"
@@ -112,18 +161,8 @@ locals {
       name  = "GRAMPSWEB_SECRET_KEY"
       value = random_password.secret_key.result
     },
-    {
-      name  = "GRAMPSWEB_CELERY_CONFIG__broker_url"
-      value = "redis://${var.redis_host}:6379/2"
-    },
-    {
-      name  = "GRAMPSWEB_CELERY_CONFIG__result_backend"
-      value = "redis://${var.redis_host}:6379/2"
-    },
-    {
-      name  = "GRAMPSWEB_RATELIMIT_STORAGE_URI"
-      value = "redis://${var.redis_host}:6379/3"
-    },
+    # The Celery and rate-limit Redis URLs come from the grampsweb-redis
+    # Secret (redis_external_secret, redis_env below).
     {
       name  = "GRAMPSWEB_BASE_URL"
       value = "https://family.viktorbarzin.me"
@@ -223,6 +262,18 @@ resource "kubernetes_deployment" "grampsweb" {
               value = env.value.value
             }
           }
+          dynamic "env" {
+            for_each = local.redis_env
+            content {
+              name = env.value
+              value_from {
+                secret_key_ref {
+                  name = "grampsweb-redis"
+                  key  = env.value
+                }
+              }
+            }
+          }
 
           volume_mount {
             name       = "data"
@@ -286,6 +337,18 @@ resource "kubernetes_deployment" "grampsweb" {
             content {
               name  = env.value.name
               value = env.value.value
+            }
+          }
+          dynamic "env" {
+            for_each = local.redis_env
+            content {
+              name = env.value
+              value_from {
+                secret_key_ref {
+                  name = "grampsweb-redis"
+                  key  = env.value
+                }
+              }
             }
           }
 
