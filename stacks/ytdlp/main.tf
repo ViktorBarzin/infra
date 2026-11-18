@@ -37,6 +37,47 @@ resource "kubernetes_manifest" "external_secret" {
 
 variable "redis_host" { type = string }
 
+# The shared Redis ACL user ytdlp, db 0 as before: only this namespace's own
+# key of Vault secret/redis/users (docs/runbooks/redis-acl.md). yt-highlights
+# builds its client from REDIS_URL (yt-highlights/app/main.py).
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "ytdlp-redis"
+      namespace = "ytdlp"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "ytdlp-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            REDIS_URL = "redis://ytdlp:{{ .password }}@${var.redis_host}:6379/0"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "ytdlp"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.ytdlp]
+}
+
 
 resource "kubernetes_namespace" "ytdlp" {
   metadata {
@@ -377,9 +418,16 @@ resource "kubernetes_deployment" "yt_highlights" {
             name  = "SLACK_CHANNEL"
             value = var.slack_channel
           }
+          # The shared Redis as the ACL user ytdlp (redis_external_secret).
+          # Not optional: a pod started before ESO has written the key waits.
           env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:6379/0"
+            name = "REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = "ytdlp-redis"
+                key  = "REDIS_URL"
+              }
+            }
           }
           # Store model cache on NFS to avoid ephemeral storage eviction
           env {
