@@ -396,6 +396,45 @@ def test_backup_user_runs_the_backup_jobs_commands(box):
 
 
 @needs_docker
+def test_a_refused_login_falls_back_to_default_and_the_backup_check_sees_it(box):
+    # redis-cli carries on as default after a refused AUTH and exits 0, so
+    # the redis-backup job compares the PING output with "PONG" (main.tf).
+    pw = fake_passwords()
+    box.init(pw[ADMIN_USER])
+    box.start()
+    assert sync(box, pw).ok
+    check = f'login=$(redis-cli -p {box.port} --no-auth-warning --user backup PING 2>&1); [ "$login" = PONG ]; echo "rc=$?"'
+    good = box.docker("run", "--rm", "--network", "host", "-e", f"REDISCLI_AUTH={pw['backup']}", "--entrypoint", "sh", IMAGE, "-c", check)
+    bad = box.docker("run", "--rm", "--network", "host", "-e", "REDISCLI_AUTH=wrong", "--entrypoint", "sh", IMAGE, "-c", check)
+    whoami = box.docker("run", "--rm", "--network", "host", "-e", "REDISCLI_AUTH=wrong", "--entrypoint", "sh", IMAGE, "-c",
+                        f"redis-cli -p {box.port} --no-auth-warning --user verify ACL WHOAMI; echo rc=$?")
+    assert good.stdout.strip().endswith("rc=0")
+    assert bad.stdout.strip().endswith("rc=1")
+    assert "default" in whoami.stdout and "rc=0" in whoami.stdout
+
+
+@needs_docker
+def test_probe_script_pings_as_the_probe_user(box):
+    # probe.sh is the liveness and readiness command of the redis container
+    # (main.tf). It must answer PONG as `probe`, not as `default`, so the R3
+    # count sees no default client from the kubelet.
+    pw = fake_passwords()
+    box.init(pw[ADMIN_USER])
+    box.start()
+    assert sync(box, pw).ok
+    out = box.docker(
+        "run", "--rm", "--network", "host", "-e", f"REDIS_PROBE_PASSWORD={pw['probe']}",
+        "-e", f"REDISCLI_PORT={box.port}",
+        "-v", f"{HERE / 'probe.sh'}:/probe.sh:ro", "--entrypoint", "sh", IMAGE, "-c",
+        # The production probe talks to localhost:6379; here only the port differs.
+        "sed \"s/redis-cli /redis-cli -p $REDISCLI_PORT /\" /probe.sh > /tmp/p.sh && sh /tmp/p.sh",
+    )
+    assert out.stdout.strip() == "PONG"
+    assert pw["probe"] not in out.stdout + out.stderr
+    assert box.as_user(ADMIN_USER, pw[ADMIN_USER], "ACL", "LOG") == []
+
+
+@needs_docker
 @pytest.mark.parametrize(
     "broken",
     [

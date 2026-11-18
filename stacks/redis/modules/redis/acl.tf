@@ -45,7 +45,7 @@
 #              SETNAME. No key access, no CLIENT KILL.
 #   backup     the redis-backup job: BGSAVE, then `redis-cli --rdb`, which
 #              sends REPLCONF and SYNC.
-#   probe      PING only, for the liveness and readiness probes (R2).
+#   probe      PING only, for the liveness and readiness probes (probe.sh).
 #   the rest   the same rights as `default` today.
 
 variable "acl_sync_suspended" {
@@ -100,6 +100,22 @@ resource "kubernetes_secret" "redis_acl_seed" {
       user default on nopass ~* &* +@all
       user acl-admin on #${sha256(random_password.redis_acl["acl-admin"].result)} ${local.redis_acl_users["acl-admin"]}
     EOT
+  }
+}
+
+# The passwords of the users this namespace runs as itself (B40 R2): probe
+# for the redis container's probes, exporter for the redis_exporter sidecar,
+# backup for the redis-backup CronJob. A Terraform Secret, not an
+# ExternalSecret, because the Redis pod needs it to start: Terraform creates
+# it before the StatefulSet changes, and Redis does not wait on ESO. A
+# -replace of one of these passwords updates this Secret in the same apply.
+resource "kubernetes_secret" "redis_infra_users" {
+  metadata {
+    name      = "redis-infra-users"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  data = {
+    for name in ["probe", "exporter", "backup"] : name => random_password.redis_acl[name].result
   }
 }
 

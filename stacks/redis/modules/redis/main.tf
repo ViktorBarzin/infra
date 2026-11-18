@@ -304,9 +304,24 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
             read_only  = true
           }
 
+          # Only the probes use this; redis-server ignores it. Not named
+          # REDISCLI_AUTH, so a `redis-cli` typed in this container still
+          # starts as default. Optional, here and on the exporter: a missing
+          # redis-infra-users Secret must never keep Redis from starting.
+          env {
+            name = "REDIS_PROBE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.redis_infra_users.metadata[0].name
+                key      = "probe"
+                optional = true
+              }
+            }
+          }
+
           liveness_probe {
             exec {
-              command = ["redis-cli", "PING"]
+              command = ["sh", "-c", file("${path.module}/probe.sh")]
             }
             initial_delay_seconds = 15
             period_seconds        = 10
@@ -315,7 +330,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           }
           readiness_probe {
             exec {
-              command = ["redis-cli", "PING"]
+              command = ["sh", "-c", file("${path.module}/probe.sh")]
             }
             initial_delay_seconds = 5
             period_seconds        = 5
@@ -336,6 +351,22 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           env {
             name  = "REDIS_ADDR"
             value = "redis://localhost:6379"
+          }
+          # ACL user exporter: INFO, CONFIG GET, SLOWLOG, LATENCY, COMMAND
+          # INFO, CLIENT SETNAME and no key access (acl_users.json).
+          env {
+            name  = "REDIS_USER"
+            value = "exporter"
+          }
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name     = kubernetes_secret.redis_infra_users.metadata[0].name
+                key      = "exporter"
+                optional = true
+              }
+            }
           }
 
           resources {
@@ -453,11 +484,17 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 TIMESTAMP=$(date +%Y%m%d-%H%M)
+                # As the ACL user backup (BGSAVE, SYNC, PSYNC, REPLCONF);
+                # redis-cli reads the password from REDISCLI_AUTH. After a
+                # refused AUTH redis-cli carries on as default and exits 0,
+                # so check the login first: a refusal prints "AUTH failed".
+                login=$(redis-cli -h redis-master.redis --no-auth-warning --user backup PING 2>&1)
+                [ "$login" = PONG ] || { echo "login as backup failed: $login"; exit 1; }
                 # Trigger a fresh RDB save on the master
-                redis-cli -h redis-master.redis BGSAVE
+                redis-cli -h redis-master.redis --no-auth-warning --user backup BGSAVE
                 sleep 5
                 # Copy the RDB via redis-cli --rdb
-                redis-cli -h redis-master.redis --rdb /backup/redis-$TIMESTAMP.rdb
+                redis-cli -h redis-master.redis --no-auth-warning --user backup --rdb /backup/redis-$TIMESTAMP.rdb
                 # Rotate — 28-day retention
                 find /backup -name 'redis-*.rdb' -type f -mtime +28 -delete
 
@@ -479,6 +516,15 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
                 " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-backup" || true
               EOT
               ]
+              env {
+                name = "REDISCLI_AUTH"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.redis_infra_users.metadata[0].name
+                    key  = "backup"
+                  }
+                }
+              }
               volume_mount {
                 name       = "backup"
                 mount_path = "/backup"
