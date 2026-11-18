@@ -61,6 +61,41 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.rybbit]
 }
 
+# The shared Redis's default password: the only consumer that reads it
+# (stacks/redis local.redis_default_user_namespaces, docs/runbooks/redis-acl.md
+# "Rybbit stays on default"). Reloader (auto) rolls rybbit when it changes.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "rybbit-redis"
+      namespace = "rybbit"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "rybbit-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "default"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.rybbit]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
@@ -728,6 +763,21 @@ resource "kubernetes_deployment" "rybbit" {
           env {
             name  = "REDIS_PORT"
             value = "6379"
+          }
+          # Rybbit 2.9.3 reads no Redis username, so it stays on the default
+          # user with default's Vault password (rybbit-redis below). While
+          # default is nopass, ioredis logs Redis's one-argument AUTH error as
+          # a warning and stays connected; after B40 R4 the password is
+          # default's. Not optional: a pod started before ESO has written the
+          # key waits for it.
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "rybbit-redis"
+                key  = "password"
+              }
+            }
           }
           env {
             name  = "BETTER_AUTH_SECRET"
