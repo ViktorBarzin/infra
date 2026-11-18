@@ -57,7 +57,19 @@ The HA side is `packages/livia.yaml` in the ha-london-config repo:
 - a `rest` sensor `sensor.livia_state` polls the state every 30 seconds;
 - `script.livia_set` turns the plug on before a change and off after "off";
 - the template light `light.livia` has brightness, colour and the patterns as
-  effects.
+  effects;
+- the automation `livia_stop_when_unpowered` stops the output whenever
+  `switch.livia` is not on.
+
+Never drive the strip while its 5 V supply is off. A WS2812 strip without
+power draws current through the data line from the Pi's GPIO, which loads
+the Pi's 3.3 V rail. On 2026-11-18 the Livia plug went offline while the
+add-on kept sending, and ha-london froze three times until the add-on was
+stopped. The automation checks on every plug change and once a minute.
+
+The dashboard `livia-strip` (sidebar "Livia") has the light with brightness
+and favourite colours, a "Pick any colour" button that opens the colour
+wheel, preset colours, one button per pattern, and the plug.
 
 ## Change and deploy
 
