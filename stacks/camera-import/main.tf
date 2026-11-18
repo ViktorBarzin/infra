@@ -21,7 +21,7 @@ locals {
 
   sftpgo_image = "ghcr.io/drakkan/sftpgo:v2.7.6-slim"
   # Same version as the Immich server (stacks/immich var.immich_version).
-  cli_image = "ghcr.io/immich-app/immich-cli:3.4.1"
+  cli_image = "ghcr.io/immich-app/immich-cli:3.4.2"
 
   data_dir = "/srv/data"
 }
