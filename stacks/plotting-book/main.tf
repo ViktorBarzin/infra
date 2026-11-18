@@ -269,6 +269,9 @@ resource "kubernetes_service" "plotting-book" {
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   auth   = "required"
+  # Anca owns and uses this app and is not an admin, so Home Users reach it
+  # (ADR-0031). Listed in stacks/authentik/forward-auth-apps.json too.
+  allowed_groups = ["Home Users", "Home Server Admins"]
   # ADR-0026 / code-6m20: this was an auth-grey host. Nothing about the app
   # needs the direct path. It is a text-only interactive-fiction UI behind
   # Authentik, so no large bodies and no long-held requests. Proxied rides
