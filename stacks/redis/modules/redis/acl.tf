@@ -11,7 +11,8 @@
 #                    plus exporter, backup, probe, verify and acl-admin, each
 #                    with its fixed rule. The rule lives here, not in Vault.
 #   random_password  one per user, written to Vault secret/redis/users (one
-#                    key per user). From R2 each consumer's ExternalSecret
+#                    key per user), plus one for default (R4; rybbit sends it
+#                    from R2, see local.redis_default_user_namespaces). From R2 each consumer's ExternalSecret
 #                    names its own key. Vault cannot enforce that per key:
 #                    the eso-reader and ci policies read all of
 #                    secret/data/*, so the isolation rests on reviewing each
@@ -55,6 +56,11 @@ variable "acl_sync_suspended" {
 
 locals {
   redis_acl_users = jsondecode(file("${path.module}/acl_users.json"))
+  # Namespaces whose clients stay on the default user, because their app can
+  # send only a password: rybbit (v2.9.3 reads REDIS_PASSWORD, no username).
+  # They log in with default's Vault password. The R3 gate counts default
+  # clients outside these namespaces (redis_default_clients_unexpected).
+  redis_default_user_namespaces = ["rybbit"]
 }
 
 resource "random_password" "redis_acl" {
@@ -65,14 +71,23 @@ resource "random_password" "redis_acl" {
   special = false
 }
 
+# default's password. Not used by the render until R4, which sets it on
+# default instead of turning default off; rybbit sends it from R2 on, and
+# Redis ignores a password for a nopass default.
+resource "random_password" "redis_default" {
+  length  = 40
+  special = false
+}
+
 # CI writes this path through the `ci` policy (stacks/vault/main.tf), which
 # grants data and metadata write on secret/redis/users only.
 resource "vault_kv_secret_v2" "redis_users" {
   mount = "secret"
   name  = "redis/users"
-  data_json = jsonencode({
-    for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result
-  })
+  data_json = jsonencode(merge(
+    { for name, _ in local.redis_acl_users : name => random_password.redis_acl[name].result },
+    { default = random_password.redis_default.result },
+  ))
 }
 
 resource "kubernetes_secret" "redis_acl_seed" {
@@ -105,6 +120,39 @@ resource "kubernetes_config_map" "redis_acl_sync" {
 resource "kubernetes_service_account" "redis_acl_sync" {
   metadata {
     name      = "redis-acl-sync"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+}
+
+# The sync lists the pods of the namespaces allowed on default, to tell
+# their default clients from any other (R3 gate). Read-only, pods only.
+resource "kubernetes_role" "redis_acl_sync_pods" {
+  for_each = toset(local.redis_default_user_namespaces)
+  metadata {
+    name      = "redis-acl-sync-pods"
+    namespace = each.value
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_role_binding" "redis_acl_sync_pods" {
+  for_each = toset(local.redis_default_user_namespaces)
+  metadata {
+    name      = "redis-acl-sync-pods"
+    namespace = each.value
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.redis_acl_sync_pods[each.value].metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.redis_acl_sync.metadata[0].name
     namespace = kubernetes_namespace.redis.metadata[0].name
   }
 }
@@ -151,6 +199,10 @@ resource "kubernetes_cron_job_v1" "redis_acl_sync" {
               env {
                 name  = "VAULT_SECRET_PATH"
                 value = "secret/data/${vault_kv_secret_v2.redis_users.name}"
+              }
+              env {
+                name  = "DEFAULT_USER_NAMESPACES"
+                value = join(",", local.redis_default_user_namespaces)
               }
               env {
                 name  = "PUSHGATEWAY_URL"

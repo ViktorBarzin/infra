@@ -4,7 +4,10 @@ Runs every minute as the CronJob redis-acl-sync in namespace redis
 (stacks/redis/modules/redis/acl.tf). One run:
 
   1. connects to Redis as acl-admin and counts CLIENT LIST by user=
-     (the B40 R3 counter, redis_clients_by_user{user});
+     (the B40 R3 counter, redis_clients_by_user{user}), and counts the
+     default clients whose address is not a pod of DEFAULT_USER_NAMESPACES
+     (redis_default_clients_unexpected, the R3 gate; rybbit stays on
+     default because it can send only a password);
   2. reads the users' passwords from Vault secret/redis/users, and the fixed
      rule of each user from users.json (written by Terraform from
      acl_users.json); renders the desired users with #<sha256> password
@@ -37,6 +40,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -50,6 +54,11 @@ ADMIN_USER = "acl-admin"
 # R4 changes it to `user default off ...` (or a strong password) and must
 # keep a `default` entry: a file without one leaves default on, nopass,
 # +@all.
+# Vault holds a password for default too: rybbit, which can send only a
+# password, logs in with it (Redis ignores a password for a nopass default),
+# and R4 sets it as default's password instead of turning default off. The
+# render does not use it until R4.
+DEFAULT_PASSWORD_KEY = "default"
 DEFAULT_USER_ARGS = ["reset", "on", "nopass", "~*", "&*", "+@all"]
 DEFAULT_USER_LINE = "user default on nopass sanitize-payload ~* &* +@all"
 
@@ -127,10 +136,12 @@ def render(users_rules: dict[str, str], passwords: dict[str, str]) -> dict[str, 
     validate_rules(users_rules)
     if not isinstance(passwords, dict):
         raise SyncError("Vault secret/redis/users is not an object")
-    missing = sorted(set(users_rules) - set(passwords))
+    # The Vault document also holds default's password (DEFAULT_PASSWORD_KEY),
+    # which users.json does not name.
+    missing = sorted({*users_rules, DEFAULT_PASSWORD_KEY} - set(passwords))
     if missing:
         raise SyncError(f"Vault secret/redis/users has no key for: {', '.join(missing)}")
-    extra = sorted(set(passwords) - set(users_rules))
+    extra = sorted(set(passwords) - set(users_rules) - {DEFAULT_PASSWORD_KEY})
     if extra:
         raise SyncError(f"Vault secret/redis/users has keys users.json does not name: {', '.join(extra)}")
     for name, password in passwords.items():
@@ -177,6 +188,55 @@ def plan(current: dict[str, str], desired: dict[str, User]) -> list[list[str]]:
         if name not in desired and name not in ("default", ADMIN_USER):
             commands.append(["ACL", "DELUSER", name])
     return commands
+
+
+ADDR_RE = re.compile(r" addr=(\S+):\d+(?: |$)")
+
+
+def count_default_outside(client_list: str, allowed_ips: set[str]) -> int:
+    """Clients on default whose address is not a pod of an allowed namespace.
+
+    Matches " addr=" with the space: laddr= is Redis's own address.
+    """
+    n = 0
+    for line in client_list.splitlines():
+        if not re.search(r"(?:^| )user=default(?: |$)", line):
+            continue
+        match = ADDR_RE.search(line)
+        if match is None or match.group(1).strip("[]") not in allowed_ips:
+            n += 1
+    return n
+
+
+def pod_ips_from_list(doc: object) -> set[str]:
+    ips: set[str] = set()
+    items = doc.get("items", []) if isinstance(doc, dict) else []
+    for pod in items if isinstance(items, list) else []:
+        status = pod.get("status", {}) if isinstance(pod, dict) else {}
+        if not isinstance(status, dict):
+            continue
+        if isinstance(status.get("podIP"), str):
+            ips.add(status["podIP"])
+        for entry in status.get("podIPs", []) or []:
+            if isinstance(entry, dict) and isinstance(entry.get("ip"), str):
+                ips.add(entry["ip"])
+    return ips
+
+
+def namespace_pod_ips(namespaces: list[str], api: str, token_file: str, ca_file: str, timeout: float = 10.0) -> set[str]:
+    """Pod IPs of the namespaces allowed to stay on default (Role in acl.tf)."""
+    ips: set[str] = set()
+    try:
+        with open(token_file) as fh:
+            token = fh.read().strip()
+        ctx = ssl.create_default_context(cafile=ca_file)
+        for ns in namespaces:
+            req = urllib.request.Request(f"{api}/api/v1/namespaces/{ns}/pods", headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                ips |= pod_ips_from_list(json.load(resp))
+    except (OSError, urllib.error.URLError, ValueError) as exc:
+        raise SyncError(f"Kubernetes API unreachable or refused: {type(exc).__name__}: {exc}") from None
+    return ips
 
 
 def count_clients(client_list: str) -> dict[str, int]:
@@ -328,6 +388,9 @@ class Result:
     ok: bool
     changes: int = 0
     counts: dict[str, int] = field(default_factory=dict)
+    # Default clients outside the namespaces allowed on default (R3 gate).
+    default_unexpected: int | None = None
+    default_lookup_error: str = ""
     auth: dict[str, float] = field(default_factory=dict)
     error: str = ""
 
@@ -336,6 +399,7 @@ def run(
     users_rules: dict[str, str],
     fetch_passwords: Callable[[], dict[str, str]],
     connect: RedisFactory,
+    default_ips: Callable[[], set[str]] = set,
 ) -> Result:
     result = Result(ok=False)
     try:
@@ -356,7 +420,16 @@ def run(
         # The R3 counter runs before the render, so a broken input still
         # reports who is connected.
         client_list = admin.call("CLIENT", "LIST")
-        result.counts = count_clients(client_list if isinstance(client_list, str) else "")
+        clients = client_list if isinstance(client_list, str) else ""
+        result.counts = count_clients(clients)
+        # A failed pod lookup counts every default client as unexpected, so
+        # the R3 gate stays red rather than passing on missing data.
+        try:
+            allowed = default_ips()
+        except SyncError as exc:
+            allowed = set()
+            result.default_lookup_error = str(exc)
+        result.default_unexpected = count_default_outside(clients, allowed)
         # Every known user gets a series, 0 when idle, so the R3 gate can
         # tell "no clients" from "no data".
         known = ["default", *(users_rules if isinstance(users_rules, dict) else {})]
@@ -422,6 +495,12 @@ def main() -> int:
             env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
         ),
         connect=lambda: Redis(host, port),
+        default_ips=lambda: namespace_pod_ips(
+            [n for n in env.get("DEFAULT_USER_NAMESPACES", "").split(",") if n],
+            f"https://{env.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{env.get('KUBERNETES_SERVICE_PORT', '443')}",
+            env.get("SA_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+            env.get("SA_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
+        ),
     )
     now = time.time()
     gauges: dict[str, float] = {
@@ -433,6 +512,10 @@ def main() -> int:
         labelled["redis_clients_by_user"] = {u: float(c) for u, c in result.counts.items()}
     if result.auth:
         labelled["redis_acl_user_auth_ok"] = result.auth
+    if result.default_unexpected is not None:
+        gauges["redis_default_clients_unexpected"] = float(result.default_unexpected)
+    if result.default_lookup_error:
+        print(f"warning: counting every default client as unexpected: {result.default_lookup_error}", file=sys.stderr)
     if result.ok:
         gauges["redis_acl_sync_last_success_timestamp_seconds"] = now
         gauges["redis_acl_sync_changes"] = float(result.changes)

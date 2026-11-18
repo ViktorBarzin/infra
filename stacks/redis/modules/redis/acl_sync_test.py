@@ -30,7 +30,9 @@ IMAGE = "docker.io/library/redis:8.10.3-alpine"
 
 
 def fake_passwords(users: dict[str, str] = USERS, salt: str = "a") -> dict[str, str]:
-    return {u: hashlib.sha256(f"{salt}:{u}".encode()).hexdigest()[:40] for u in users}
+    # Vault also holds default's password (for R4, and for rybbit, which can
+    # send only a password), which is not a users.json user.
+    return {u: hashlib.sha256(f"{salt}:{u}".encode()).hexdigest()[:40] for u in [*users, "default"]}
 
 
 # --- unit ----------------------------------------------------------------------
@@ -50,10 +52,79 @@ def test_render_has_default_and_every_user_with_hashes_only():
         assert pw[name] not in " ".join(user.setuser_args)
 
 
+def test_render_keeps_default_open_while_vault_holds_its_password():
+    # Until R4 the default line stays nopass; its Vault password is only
+    # carried (rybbit sends it, and Redis ignores it for a nopass default).
+    pw = fake_passwords()
+    desired = acl_sync.render(USERS, pw)
+    assert desired["default"].line == DEFAULT_USER_LINE
+    assert desired["default"].password is None
+    for user in desired.values():
+        assert pw["default"] not in user.line
+        assert pw["default"] not in " ".join(user.setuser_args)
+
+
+CLIENTS = (
+    "id=3 addr=10.0.0.1:1 laddr=10.0.0.9:6379 fd=8 name= user=default lib-name=\n"
+    "id=4 addr=10.0.0.2:1 laddr=10.0.0.1:6379 fd=9 name=x user=immich\n"
+    "id=5 addr=10.0.0.3:1 laddr=10.0.0.1:6379 fd=10 name=y user=default\n"
+    "id=6 addr=10.0.0.1:2 laddr=10.0.0.9:6379 fd=11 name= user=default\n"
+)
+
+
+def test_count_default_outside_ignores_allowed_pods_and_laddr():
+    # 10.0.0.1 is a rybbit pod. laddr= is Redis's own side and must not match.
+    assert acl_sync.count_default_outside(CLIENTS, {"10.0.0.1"}) == 1
+    assert acl_sync.count_default_outside(CLIENTS, set()) == 3
+
+
+def test_pod_ips_from_a_pod_list():
+    doc = {"items": [
+        {"status": {"podIP": "10.0.0.1", "podIPs": [{"ip": "10.0.0.1"}, {"ip": "fd00::1"}]}},
+        {"status": {"podIP": "10.0.0.7"}},
+        {"status": {}},
+    ]}
+    assert acl_sync.pod_ips_from_list(doc) == {"10.0.0.1", "fd00::1", "10.0.0.7"}
+
+
+class ClientListRedis:
+    """Answers AUTH and CLIENT LIST; the run stops at ACL LIST."""
+
+    def call(self, *args: str) -> object:
+        if args[:2] == ("CLIENT", "LIST"):
+            return CLIENTS
+        if args[:2] == ("ACL", "LIST"):
+            raise acl_sync.RedisError("NOPERM fake")
+        return "OK"
+
+    def close(self) -> None:
+        pass
+
+
+def test_run_counts_default_clients_outside_the_allowed_namespaces():
+    result = acl_sync.run(USERS, fake_passwords, lambda: cast(Redis, ClientListRedis()), lambda: {"10.0.0.1"})
+    assert result.counts["default"] == 3
+    assert result.default_unexpected == 1
+    assert result.default_lookup_error == ""
+
+
+def test_run_counts_every_default_client_when_the_pod_lookup_fails():
+    # Fail towards a red R3 gate: without the pod list no default client is
+    # known to be rybbit's.
+    def broken() -> set[str]:
+        raise SyncError("Kubernetes API refused: HTTPError 403")
+
+    result = acl_sync.run(USERS, fake_passwords, lambda: cast(Redis, ClientListRedis()), broken)
+    assert result.default_unexpected == 3
+    assert "403" in result.default_lookup_error
+
+
 @pytest.mark.parametrize(
     "mutate, message",
     [
         (lambda u, p: p.pop("immich"), "no key for: immich"),
+        (lambda u, p: p.pop("default"), "no key for: default"),
+        (lambda u, p: p.update({"default": "short"}), "default is empty or malformed"),
         (lambda u, p: p.update({"stranger": "x" * 40}), "does not name: stranger"),
         (lambda u, p: p.update({"tv": ""}), "tv is empty or malformed"),
         (lambda u, p: p.update({"tv": "short"}), "tv is empty or malformed"),
