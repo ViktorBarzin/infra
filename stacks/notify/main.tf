@@ -291,7 +291,7 @@ resource "kubernetes_deployment" "adapter" {
       spec {
         container {
           name    = "adapter"
-          image   = "python:3.13-alpine"
+          image   = "python:3.15-alpine"
           command = ["python3", "-u", "/app/adapter.py"]
           port {
             container_port = 8080
