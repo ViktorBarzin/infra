@@ -36,6 +36,52 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.realestate-crawler]
 }
 
+# The shared Redis as the ACL user realestate-crawler: only this namespace's
+# own key of Vault secret/redis/users (docs/runbooks/redis-acl.md). Celery's
+# broker (db 0) and result backend (db 1); the API derives its rate-limit
+# client (db 3) and its WebSocket pub/sub client from CELERY_BROKER_URL. The
+# Deployments read both keys with a secret_key_ref that is not optional, so a
+# pod started before ESO has written them waits instead of falling back to
+# the localhost default. Reloader rolls them when the password changes.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "realestate-crawler-redis"
+      namespace = "realestate-crawler"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "realestate-crawler-redis"
+        template = {
+          engineVersion = "v2"
+          data = {
+            CELERY_BROKER_URL     = "redis://realestate-crawler:{{ .password }}@${var.redis_host}:6379/0"
+            CELERY_RESULT_BACKEND = "redis://realestate-crawler:{{ .password }}@${var.redis_host}:6379/1"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "realestate-crawler"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.realestate-crawler]
+}
+
 # DB credentials from Vault database engine (rotated automatically)
 # Provides DB_CONNECTION_STRING that auto-updates when password rotates
 resource "kubernetes_manifest" "db_external_secret" {
@@ -298,7 +344,7 @@ resource "kubernetes_service" "realestate-crawler-ui" {
 resource "kubernetes_deployment" "realestate-crawler-api" {
   # SLACK_WEBHOOK_URL is env-injected from the secret below, so it has to exist
   # before the pod starts or the container fails to schedule.
-  depends_on = [kubernetes_manifest.slack_external_secret]
+  depends_on = [kubernetes_manifest.slack_external_secret, kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "realestate-crawler-api"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
@@ -364,12 +410,22 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             }
           }
           env {
-            name  = "CELERY_BROKER_URL"
-            value = "redis://${var.redis_host}:6379/0"
+            name = "CELERY_BROKER_URL"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_BROKER_URL"
+              }
+            }
           }
           env {
-            name  = "CELERY_RESULT_BACKEND"
-            value = "redis://${var.redis_host}:6379/1"
+            name = "CELERY_RESULT_BACKEND"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_RESULT_BACKEND"
+              }
+            }
           }
 
           env {
@@ -636,6 +692,7 @@ module "ingress-api" {
 
 # Celery worker for background task processing
 resource "kubernetes_deployment" "realestate-crawler-celery" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "realestate-crawler-celery"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
@@ -710,12 +767,22 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
             }
           }
           env {
-            name  = "CELERY_BROKER_URL"
-            value = "redis://${var.redis_host}:6379/0"
+            name = "CELERY_BROKER_URL"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_BROKER_URL"
+              }
+            }
           }
           env {
-            name  = "CELERY_RESULT_BACKEND"
-            value = "redis://${var.redis_host}:6379/1"
+            name = "CELERY_RESULT_BACKEND"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_RESULT_BACKEND"
+              }
+            }
           }
           # No SLACK_WEBHOOK_URL here: no Celery task sends notifications, and
           # the only caller left is the signup alert on the api deployment.
@@ -795,6 +862,7 @@ resource "kubernetes_service" "realestate-crawler-celery-metrics" {
 
 # Celery beat for scheduled task management
 resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
+  depends_on = [kubernetes_manifest.redis_external_secret]
   metadata {
     name      = "realestate-crawler-celery-beat"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
@@ -856,12 +924,22 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
             }
           }
           env {
-            name  = "CELERY_BROKER_URL"
-            value = "redis://${var.redis_host}:6379/0"
+            name = "CELERY_BROKER_URL"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_BROKER_URL"
+              }
+            }
           }
           env {
-            name  = "CELERY_RESULT_BACKEND"
-            value = "redis://${var.redis_host}:6379/1"
+            name = "CELERY_RESULT_BACKEND"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-redis"
+                key  = "CELERY_RESULT_BACKEND"
+              }
+            }
           }
           env {
             name  = "SCRAPE_SCHEDULES"
