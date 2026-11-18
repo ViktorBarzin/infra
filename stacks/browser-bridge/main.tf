@@ -142,10 +142,45 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.browser_bridge]
 }
 
+# The shared Redis ACL user browser-bridge: only this namespace's own key of
+# Vault secret/redis/users (docs/runbooks/redis-acl.md). Its own Secret, so a
+# Redis password rotation touches nothing else.
+resource "kubernetes_manifest" "redis_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "browser-bridge-redis"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "browser-bridge-redis"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "redis/users"
+          property = "browser-bridge"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.browser_bridge]
+}
+
 # --- Server ---
 
 resource "kubernetes_deployment" "browser_bridge" {
-  depends_on = [kubernetes_manifest.external_secret]
+  depends_on = [kubernetes_manifest.external_secret, kubernetes_manifest.redis_external_secret]
 
   metadata {
     name      = "browser-bridge"
@@ -154,11 +189,12 @@ resource "kubernetes_deployment" "browser_bridge" {
       tier = local.tiers.aux
     })
     annotations = {
-      # Both values are read once at boot: the ingress secret builds the
-      # authenticator and a short or empty one is a boot failure, and the
-      # extension id is what /crx/update.xml advertises. Rotating either in
-      # Vault has to bounce the pod or the old value keeps serving.
-      "secret.reloader.stakater.com/reload" = "browser-bridge-secrets"
+      # Every value is read once at boot: the ingress secret builds the
+      # authenticator and a short or empty one is a boot failure, the
+      # extension id is what /crx/update.xml advertises, and the Redis
+      # password logs in once. Rotating one in Vault has to bounce the pod or
+      # the old value keeps serving.
+      "secret.reloader.stakater.com/reload" = "browser-bridge-secrets,browser-bridge-redis"
     }
   }
 
@@ -220,13 +256,27 @@ resource "kubernetes_deployment" "browser_bridge" {
             value = ":${local.admin_port}"
           }
           env {
-            # The shared instance. No password: stacks/redis sets
-            # `protected-mode no` and no `requirepass`, and a NetworkPolicy
-            # allowlist is what gates it, so BB_REDIS_PASSWORD stays unset.
-            # This namespace has to be on that allowlist — same change, see
-            # stacks/redis/modules/redis/main.tf.
+            # The shared instance. This namespace has to be on its
+            # NetworkPolicy allowlist (stacks/redis/modules/redis/main.tf).
             name  = "BB_REDIS_ADDR"
             value = "redis-master.redis.svc.cluster.local:6379"
+          }
+          env {
+            # The Redis ACL user for this namespace (B40 R2). The server reads
+            # it from v0.1.7 on. An older image sends the password as the
+            # default user (go-redis HELLO AUTH default), which works while
+            # default is nopass, but shows up as a default client.
+            name  = "BB_REDIS_USERNAME"
+            value = "browser-bridge"
+          }
+          env {
+            name = "BB_REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "browser-bridge-redis"
+                key  = "password"
+              }
+            }
           }
           env {
             name  = "BB_BASE_URL"
