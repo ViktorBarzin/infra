@@ -485,10 +485,18 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                     [ "$hasdata" = 1 ] && echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.gz', 'Native');" >> "$r"
                   done < "$work/tables.tsv"
                 done
-                clickhouse-local --path /tmp/restore --queries-file "$r"
+                # clickhouse-local caps itself at 0.9 x the container limit. By default it
+                # measures usage from the cgroup, which counts the page cache of the NFS
+                # dump it reads and the parts it writes, so a big dump hit that cap with
+                # little real memory in use (infra#205). Count its own allocations instead,
+                # and squash inserts into 32 MiB blocks on one thread rather than 256 MiB
+                # ones: session_replay_events alone dumps to about 1.8 GB.
+                printf '<clickhouse><memory_worker_use_cgroup>0</memory_worker_use_cgroup></clickhouse>\n' > "$work/local.xml"
+                chl() { clickhouse-local -C "$work/local.xml" --path /tmp/restore --max_threads=1 --max_insert_threads=1 --min_insert_block_size_rows=0 --min_insert_block_size_bytes=33554432 "$@"; }
+                chl --queries-file "$r"
                 fail=0
                 while IFS="$(printf '\t')" read -r db t n; do
-                  got=$(clickhouse-local --path /tmp/restore -q "SELECT count() FROM \`$db\`.\`$t\`")
+                  got=$(chl -q "SELECT count() FROM \`$db\`.\`$t\`")
                   echo "table $db.$t source=$n restored=$got"
                   [ "$got" -ge "$n" ] || fail=1
                 done < "$work/counts.tsv"

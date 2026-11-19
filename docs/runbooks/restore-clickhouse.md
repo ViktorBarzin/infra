@@ -27,6 +27,14 @@ only after that check passes. A directory that exists under its final name has
 been read back once. Alerts: `ClickHouseBackupStale` (36h), `ClickHouseBackupNeverRun`,
 and the generic `BackupCronJobFailed`.
 
+The check runs in the Job's 1Gi container. It gives `clickhouse-local` a
+one-line config with `memory_worker_use_cgroup=0`, so the cap (0.9 × the
+limit) counts ClickHouse's own allocations and not the page cache of the
+dump it reads. It also inserts on one thread in 32 MiB blocks. Without
+both, a dump of a few GB fails with `MEMORY_LIMIT_EXCEEDED` while real
+usage stays low (infra#205). Reuse those flags when you restore a large
+table with `clickhouse-local` by hand.
+
 ## Version rule
 
 Restore with the same ClickHouse release that wrote the dump (`VERSION` in the
