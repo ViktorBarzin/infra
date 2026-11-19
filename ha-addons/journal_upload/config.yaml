@@ -1,0 +1,26 @@
+name: Journal upload
+version: "1.0.0"
+slug: journal_upload
+description: >-
+  Streams this host's journal (kernel, Home Assistant, Supervisor and every
+  add-on) to the homelab Loki with the host's own systemd-journal-upload.
+image: ghcr.io/viktorbarzin/ha-addon-journal-upload
+url: https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/ha-addons/journal_upload
+arch:
+  - aarch64
+  - amd64
+init: false
+boot: auto
+startup: services
+# The uploader runs on the host: the add-on enters PID 1's mount namespace to
+# write a /run drop-in and drive systemctl. setns needs SYS_ADMIN and reading
+# /proc/1/ns needs SYS_PTRACE; AppArmor's add-on profile blocks both.
+host_pid: true
+privileged:
+  - SYS_ADMIN
+  - SYS_PTRACE
+apparmor: false
+options:
+  url: "http://10.0.20.200:19532"
+schema:
+  url: url

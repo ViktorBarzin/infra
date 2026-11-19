@@ -1,0 +1,36 @@
+# Helpers for run.sh, kept free of side effects so test_lib.sh can test them.
+
+# The systemd drop-in that points the host's stock systemd-journal-upload unit
+# at our receiver. DynamicUser=no + the static systemd-journal-upload user,
+# because HAOS keeps /var/lib/private on tmpfs: with a dynamic user the cursor
+# state would vanish at every reboot. StateDirectory (systemd/journal-upload)
+# then lands in /var/lib/systemd, which HAOS persists.
+# $1 = receiver URL, $2 = optional cursor to start from (first run only).
+render_dropin() {
+  cursor=""
+  [ -n "${2:-}" ] && cursor=" --cursor=\"$2\""
+  printf '%s\n' \
+    '[Service]' \
+    'DynamicUser=no' \
+    'User=systemd-journal-upload' \
+    'ExecStart=' \
+    "ExecStart=/usr/lib/systemd/systemd-journal-upload --save-state -u $1$cursor"
+}
+
+# The url option from the add-on's options.json, empty when unset.
+option_url() { jq -r '.url // empty' "$1"; }
+
+# The __CURSOR of the first JSON journal entry on stdin, empty when none.
+first_cursor() { head -n 1 | jq -r '.__CURSOR // empty' 2>/dev/null || true; }
+
+# A URL we are willing to paste into a unit file: http(s), no spaces or quotes.
+valid_url() {
+  case "$1" in
+    http://*|https://*) ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    *[[:space:]\"\'\;\\%\$\`]*) return 1 ;;
+  esac
+  return 0
+}
