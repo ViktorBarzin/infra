@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypedDict
@@ -38,6 +39,9 @@ STATE_FILE = Path("/data/state.json")
 OPTIONS_FILE = Path("/data/options.json")
 SCRIPT = Path(__file__).with_name("strandtest.py")
 PORT = 8099
+MIN_BACKOFF = 5.0  # seconds before restarting a pattern that died
+MAX_BACKOFF = 60.0
+CHECK_EVERY = 5.0
 
 
 class State(TypedDict):
@@ -132,6 +136,9 @@ class Strip:
         self.state = load(state_file)
         self.proc: subprocess.Popen[bytes] | None = None
         self.lock = threading.Lock()
+        self.backoff = MIN_BACKOFF
+        self.next_try = 0.0
+        self.last_restart = 0.0
 
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -166,7 +173,33 @@ class Strip:
                 self.state = new
                 save(self.state_file, new)
                 self._apply()
+                self.backoff = MIN_BACKOFF
+                self.next_try = 0.0
             return self.state
+
+    def keep_alive(self, now: float) -> bool:
+        """Restart the pattern if it died while the light is on.
+
+        The OOM killer can kill strandtest.py alone; the add-on then stays up
+        and reports "on" over a dark strip. A pattern that keeps dying is
+        retried with a backoff of up to MAX_BACKOFF seconds.
+        """
+        with self.lock:
+            if not self.state["on"]:
+                return False
+            if self.running():
+                if now - self.last_restart > MAX_BACKOFF:
+                    self.backoff = MIN_BACKOFF
+                return False
+            if now < self.next_try:
+                return False
+            code = self.proc.returncode if self.proc is not None else None
+            print(f"pattern exited (code {code}), restarting", flush=True)
+            self._apply()
+            self.last_restart = now
+            self.next_try = now + self.backoff
+            self.backoff = min(self.backoff * 2, MAX_BACKOFF)
+            return True
 
     def shutdown(self) -> None:
         with self.lock:
@@ -213,6 +246,13 @@ def main() -> None:
         threading.Thread(target=httpd.shutdown).start()
 
     signal.signal(signal.SIGTERM, stop)
+
+    def watch() -> None:
+        while True:
+            time.sleep(CHECK_EVERY)
+            strip.keep_alive(time.monotonic())
+
+    threading.Thread(target=watch, daemon=True).start()
     print(f"listening on :{PORT}, {strip.count} LEDs, state {strip.state}", flush=True)
     try:
         httpd.serve_forever()

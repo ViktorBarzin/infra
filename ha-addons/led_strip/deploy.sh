@@ -25,7 +25,7 @@ tar -C "$here" -czf - Dockerfile config.yaml server.py strandtest.py \
 ssh_ha 'bash -s' <<'EOF'
 set -euo pipefail
 T=$(sudo cat /run/s6/container_environment/SUPERVISOR_TOKEN)
-api() { curl -sf -X "$1" -H "Authorization: Bearer $T" "http://supervisor$2"; }
+api() { curl -sf -X "$1" -H "Authorization: Bearer $T" -H "Content-Type: application/json" ${3:+-d "$3"} "http://supervisor$2"; }
 api POST /store/reload >/dev/null
 read -r have want < <(api GET /addons/local_led_strip/info \
   | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(d["version"], d["version_latest"])')
@@ -39,7 +39,11 @@ else
   echo "rebuilding $have"
   api POST /addons/local_led_strip/rebuild >/dev/null
 fi
+# Supervisor watchdog on: it restarts the add-on when the container dies, for
+# example after an out-of-memory kill. It is a per-install setting, so set it
+# on every deploy.
+api POST /addons/local_led_strip/options '{"watchdog": true}' >/dev/null
 api POST /addons/local_led_strip/start >/dev/null || true
 sleep 5
-api GET /addons/local_led_strip/info | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("state", d["state"], "version", d["version"], "boot", d["boot"])'
+api GET /addons/local_led_strip/info | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("state", d["state"], "version", d["version"], "boot", d["boot"], "watchdog", d["watchdog"])'
 EOF

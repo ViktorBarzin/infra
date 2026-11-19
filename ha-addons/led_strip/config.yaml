@@ -1,5 +1,5 @@
 name: LED strip
-version: "1.1.0"
+version: "1.2.0"
 slug: led_strip
 description: >-
   Runs strandtest.py on the WS2812 strip wired to GPIO10 (SPI) and lets

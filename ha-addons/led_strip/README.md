@@ -34,6 +34,15 @@ the server starts it again with the new flags, as rpi-london's Flask page did.
 The state is saved in `/data/state.json`, and the add-on restores it when it
 starts.
 
+Two layers keep the strip running when the Pi runs out of memory. The kernel
+kills add-ons first (`oom_score_adj` 200):
+
+| what dies | what brings it back |
+|---|---|
+| `strandtest.py` alone | `server.py` checks every 5 s and restarts a pattern that died while the light is on; a pattern that keeps dying is retried after 5, 10, 20, 40, then 60 s |
+| the whole add-on | the Supervisor watchdog (`watchdog: true`, set by `deploy.sh`) restarts the container, which restores the saved state |
+| HA's view of it after a reboot | the automation `livia_reload_state_sensor` in `packages/livia.yaml` reloads the REST sensor when it stays unavailable |
+
 The patterns:
 
 | kind | patterns |

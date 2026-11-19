@@ -138,5 +138,51 @@ class StripProcessTest(unittest.TestCase):
                 server.SCRIPT = original
 
 
+class KeepAliveTest(unittest.TestCase):
+    def test_restarts_a_pattern_that_died_while_on_and_not_while_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "strandtest.py"
+            fake.write_text(FAKE_STRANDTEST)
+            original = server.SCRIPT
+            server.SCRIPT = fake
+            try:
+                strip = server.Strip(Path(d) / "state.json")
+                strip.change({"on": True})
+                first = strip.proc
+                first.kill()  # what the OOM killer does
+                first.wait()
+                self.assertFalse(strip.running())
+                self.assertTrue(strip.keep_alive(now=1000.0))
+                self.assertTrue(strip.running())
+                self.assertIsNot(strip.proc, first)
+                # alive: nothing to do
+                self.assertFalse(strip.keep_alive(now=1001.0))
+                strip.change({"on": False})
+                self.assertFalse(strip.keep_alive(now=2000.0))
+                self.assertFalse(strip.running())
+                strip.shutdown()
+            finally:
+                server.SCRIPT = original
+
+    def test_backs_off_when_the_pattern_keeps_dying(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "strandtest.py"
+            fake.write_text("import sys; sys.exit(1)\n")
+            original = server.SCRIPT
+            server.SCRIPT = fake
+            try:
+                strip = server.Strip(Path(d) / "state.json")
+                strip.change({"on": True})
+                strip.proc.wait()
+                self.assertTrue(strip.keep_alive(now=100.0))
+                strip.proc.wait()
+                # died again at once: the next restart waits
+                self.assertFalse(strip.keep_alive(now=101.0))
+                self.assertTrue(strip.keep_alive(now=100.0 + server.MAX_BACKOFF))
+                strip.shutdown()
+            finally:
+                server.SCRIPT = original
+
+
 if __name__ == "__main__":
     unittest.main()
