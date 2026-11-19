@@ -146,6 +146,22 @@ resource "kubernetes_config_map" "clickhouse_memory" {
           </prometheus>
       </clickhouse>
     EOF
+    # ClickHouse 26.8 changed the default of input_format_read_datetime_number_as_raw_value
+    # to 0: a bare JSON integer for a DateTime64 column is now read as Unix SECONDS.
+    # Rybbit inserts session replay events with timestamp = rrweb milliseconds as a JSON
+    # number, so every row landed 1000x in the future (saturated at 9999-12-31) and the
+    # 90-day replay TTL never fired (infra#206). 1 restores the pre-26.8 reading (raw
+    # ticks), which is what Rybbit is written against. Rybbit and Vector both use the
+    # default user; nothing here sends integer seconds to a DateTime64 column.
+    "profile.xml" = <<-EOF
+      <clickhouse>
+          <profiles>
+              <default>
+                  <input_format_read_datetime_number_as_raw_value>1</input_format_read_datetime_number_as_raw_value>
+              </default>
+          </profiles>
+      </clickhouse>
+    EOF
   }
 }
 
@@ -252,6 +268,11 @@ resource "kubernetes_deployment" "clickhouse" {
             name       = "memory-config"
             mount_path = "/etc/clickhouse-server/config.d/prometheus.xml"
             sub_path   = "prometheus.xml"
+          }
+          volume_mount {
+            name       = "memory-config"
+            mount_path = "/etc/clickhouse-server/users.d/profile.xml"
+            sub_path   = "profile.xml"
           }
           resources {
             requests = {
