@@ -1,0 +1,113 @@
+# Journal receiver for hosts outside the cluster (ha-london today).
+# Each host runs its own systemd-journal-upload (on HAOS via the add-on in
+# ha-addons/journal_upload) and POSTs to 10.0.20.200:19532 (Service
+# alloy-journal-upload in alloy_journal.tf). The journal-remote sidecar writes
+# what arrives to journal files on a shared emptyDir; Alloy reads them with
+# loki.source.journal and pushes to Loki as job="systemd-journal".
+# The files are only a hand-off: the uploader keeps its cursor on the host, so
+# a lost emptyDir loses at most the lines Alloy had not read yet.
+# Design notes: docs/architecture/london-site.md (Home Assistant logs).
+crds:
+  create: false
+rbac:
+  create: false
+controller:
+  type: deployment
+  replicas: 1
+  volumes:
+    extra:
+      - name: remote-journal
+        emptyDir:
+          sizeLimit: 1Gi
+  extraContainers:
+    - name: journal-remote
+      image: ghcr.io/viktorbarzin/journal-remote:1.0.0
+      ports:
+        - name: upload
+          containerPort: 19532
+          protocol: TCP
+      readinessProbe:
+        tcpSocket:
+          port: 19532
+        periodSeconds: 30
+      volumeMounts:
+        - name: remote-journal
+          mountPath: /var/log/journal/remote
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 128Mi
+alloy:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  mounts:
+    extra:
+      - name: remote-journal
+        mountPath: /var/log/journal/remote
+        readOnly: true
+  configMap:
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+      loki.source.journal "remote" {
+        path          = "/var/log/journal/remote"
+        max_age       = "12h"
+        relabel_rules = loki.relabel.journal.rules
+        forward_to    = [loki.process.journal.receiver]
+      }
+      loki.relabel "journal" {
+        forward_to = []
+        // HAOS hosts all call themselves "homeassistant", so name them by
+        // machine id. ha-london's id is fixed on its kernel command line
+        // (systemd.machine_id=). Anything unknown keeps its own hostname.
+        rule {
+          source_labels = ["__journal__hostname"]
+          target_label  = "host"
+        }
+        rule {
+          source_labels = ["__journal__machine_id"]
+          regex         = "9567992aefdc4913b32379b0809f4fe4"
+          target_label  = "host"
+          replacement   = "ha-london"
+        }
+        rule {
+          source_labels = ["__journal__systemd_unit"]
+          target_label  = "unit"
+        }
+        // Docker's journald driver: homeassistant, hassio_supervisor,
+        // addon_<slug>, hassio_dns and the other Supervisor containers.
+        rule {
+          source_labels = ["__journal_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__journal_syslog_identifier"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__journal_priority_keyword"]
+          target_label  = "level"
+        }
+      }
+      // job is stamped here, not with `labels` on the source: Alloy 1.19.2+
+      // ignores that argument and labels streams with the component id
+      // (see the node-journal note in alloy.yaml).
+      loki.process "journal" {
+        stage.static_labels {
+          values = { job = "systemd-journal" }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

@@ -129,8 +129,10 @@ func capabilities() []capability {
 				"  {job=\"pve-journal\"}                        the Proxmox host",
 				"  {job=\"sshd-devvm\"}                         ssh auth",
 				"  {job=\"systemd-journal\", host=\"rpi-sofia\"}   the Sofia pi",
-				"NOT in Loki: Home Assistant (outside the cluster), and a device's own",
-				"        loopback endpoints — those genuinely need the device.",
+				"  {job=\"systemd-journal\", host=\"ha-london\"}   ha-london: kernel, Core, Supervisor, add-ons",
+				"      (container=\"homeassistant\" | \"hassio_supervisor\" | \"addon_<slug>\"; app=\"kernel\")",
+				"NOT in Loki: ha-sofia, and a device's own loopback endpoints —",
+				"        those genuinely need the device.",
 			},
 		},
 		{

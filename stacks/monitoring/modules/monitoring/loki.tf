@@ -733,6 +733,44 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Hosts outside the cluster that upload their whole journal to the
+          # alloy-journal receiver (alloy_journal.tf): ha-london since
+          # 2026-11-19. job="systemd-journal" also carries rpi-sofia, which
+          # ships with its own Alloy, so the OOM rule covers it too.
+          name = "Off-cluster host journals"
+          rules = [
+            {
+              # ha-london (Pi 3, 903 MB) hit global OOM kills every ~6 h on
+              # 2026-11-19 (04:47, 10:43, 17:12 UTC); the victims were add-ons
+              # (oom_score_adj 200), so Home Assistant stayed up and nothing
+              # noticed until a light went unavailable. One alert per host and
+              # killed process name.
+              alert  = "HostOutOfMemoryKill"
+              expr   = "sum by (host, process) (count_over_time({job=\"systemd-journal\", app=\"kernel\"} |= \"Out of memory: Killed process\" | regexp `Killed process [0-9]+ \\((?P<process>[^)]+)\\)` [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", notify = "page" }
+              annotations = {
+                summary     = "{{ $labels.host }}: the kernel ran out of memory and killed {{ $labels.process }}."
+                description = "Read the kill and the memory report around it: {job=\"systemd-journal\", host=\"{{ $labels.host }}\", app=\"kernel\"}. The largest rss lines in the task list name what was holding memory. On ha-london an add-on is usually the victim, not the cause: check Home Assistant (container=\"homeassistant\") first."
+              }
+            },
+            {
+              # No lines for 30 min means the uploader, the tunnel or the host
+              # is down. ha-london writes well over one line a minute (the
+              # Supervisor alone logs every API call). Staleness plumbing, so
+              # it does not page; IngressUpstreamDown covers HA being down.
+              alert  = "HostJournalSilent"
+              expr   = "(sum(count_over_time({job=\"systemd-journal\", host=\"ha-london\"} [30m])) or vector(0)) < 1"
+              for    = "15m"
+              labels = { severity = "warning", host = "ha-london" }
+              annotations = {
+                summary     = "No journal lines from ha-london for 30+ minutes."
+                description = "Check the journal_upload add-on on ha-london (Settings > Add-ons > Journal upload, or its log via the Supervisor API), the alloy-journal pod in monitoring (kubectl -n monitoring logs deploy/alloy-journal -c journal-remote), and the London tunnel. Runbook: ha-addons/journal_upload/README.md."
+              }
+            },
+          ]
+        },
+        {
           # Site routers (2026-10-16). Every OpenWrt router shipping syslog to
           # Loki: today flint-london and mladost3-openwrt.
           name = "Site routers"

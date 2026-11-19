@@ -127,6 +127,22 @@ top namespaces/pods by errors, a live filterable logs panel, and a journals row.
 Error/warn panels use case-insensitive regex line-filters because pod logs carry
 no `level` stream label.
 
+**Journals from hosts outside the cluster** (2026-11-19): the London Flint and
+the Mladost 3 router send syslog to `alloy-syslog` (10.0.20.208:514).
+ha-london (HAOS) uploads its whole systemd journal instead: the
+`journal_upload` add-on (`ha-addons/journal_upload/`) runs the host's own
+`systemd-journal-upload` against `alloy-journal-upload` (10.0.20.200:19532).
+The `alloy-journal` pod (`alloy_journal.tf`, `alloy-journal.yaml`) has a
+`journal-remote` container (image `ghcr.io/viktorbarzin/journal-remote`, source
+`images/journal-remote/`) that writes the upload to journal files on an
+emptyDir, and Alloy reads them with `loki.source.journal` into
+`{job="systemd-journal"}` with labels `host`, `unit`, `container`, `app` and
+`level`. HAOS hosts all call themselves `homeassistant`, so `host` comes from
+the machine id. The uploader keeps its cursor on the host, so tunnel outages
+and pod restarts lose nothing it has not yet sent. Loki group "Off-cluster host
+journals": `HostOutOfMemoryKill` (pages, any `systemd-journal` host) and
+`HostJournalSilent` (ha-london, 30 minutes without a line).
+
 **Surfaced in ha-sofia** for Emo: two RESTful sensors
 (`/config/rest_resources/loki_cluster_{errors,warnings}.yaml`) query Loki for
 cluster error/warn line counts (5-min window) → `sensor.cluster_log_errors_5m` /
