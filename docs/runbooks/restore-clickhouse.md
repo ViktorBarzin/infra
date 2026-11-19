@@ -27,7 +27,7 @@ only after that check passes. A directory that exists under its final name has
 been read back once. Alerts: `ClickHouseBackupStale` (36h), `ClickHouseBackupNeverRun`,
 and the generic `BackupCronJobFailed`.
 
-The check runs in the Job's 1Gi container. It gives `clickhouse-local` a
+The check runs in the Job's 2Gi container (1Gi failed about half the runs on a 1.9 GB dump, infra#208). It gives `clickhouse-local` a
 one-line config with `memory_worker_use_cgroup=0`, so the cap (0.9 × the
 limit) counts ClickHouse's own allocations and not the page cache of the
 dump it reads. It also inserts on one thread in 32 MiB blocks. Without

@@ -511,7 +511,9 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                 # dump it reads and the parts it writes, so a big dump hit that cap with
                 # little real memory in use (infra#205). Count its own allocations instead,
                 # and squash inserts into 32 MiB blocks on one thread rather than 256 MiB
-                # ones: session_replay_events alone dumps to about 1.8 GB.
+                # ones: session_replay_events alone dumps to about 1.9 GB. Even so the
+                # process RSS it caps on reaches ~920 MiB on that table, so the
+                # container limit is 2Gi (infra#208); 1Gi failed about half the runs.
                 printf '<clickhouse><memory_worker_use_cgroup>0</memory_worker_use_cgroup></clickhouse>\n' > "$work/local.xml"
                 chl() { clickhouse-local -C "$work/local.xml" --path /tmp/restore --max_threads=1 --max_insert_threads=1 --min_insert_block_size_rows=0 --min_insert_block_size_bytes=33554432 "$@"; }
                 chl --queries-file "$r"
@@ -545,7 +547,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                   memory = "256Mi"
                 }
                 limits = {
-                  memory = "1Gi"
+                  memory = "2Gi"
                 }
               }
               volume_mount {
