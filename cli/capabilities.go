@@ -130,7 +130,7 @@ func capabilities() []capability {
 				"  {job=\"sshd-devvm\"}                         ssh auth",
 				"  {job=\"systemd-journal\", host=\"rpi-sofia\"}   the Sofia pi",
 				"  {job=\"systemd-journal\", host=\"ha-london\"}   ha-london: kernel, Core, Supervisor, add-ons",
-				"      (container=\"homeassistant\" | \"hassio_supervisor\" | \"addon_<slug>\"; app=\"kernel\")",
+				"      (container=\"homeassistant\" | \"hassio_supervisor\" | \"app_<slug>\"; app=\"kernel\")",
 				"NOT in Loki: ha-sofia, and a device's own loopback endpoints —",
 				"        those genuinely need the device.",
 			},

@@ -37,10 +37,14 @@ reads them into Loki.
 | label | from | examples |
 |---|---|---|
 | `host` | machine id (every HAOS host is called `homeassistant`) | `ha-london` |
-| `container` | `CONTAINER_NAME` (Docker's journald driver) | `homeassistant`, `hassio_supervisor`, `addon_local_led_strip` |
+| `container` | `CONTAINER_NAME` (Docker's journald driver) | `homeassistant`, `hassio_supervisor`, `app_local_led_strip` |
 | `app` | `SYSLOG_IDENTIFIER` | `kernel`, `homeassistant`, `NetworkManager` |
 | `unit` | `_SYSTEMD_UNIT` | `docker.service` |
 | `level` | `PRIORITY` | `err`, `warning`, `info` |
+
+One-off `docker run --rm` helpers (the `nsenter` commands in the runbooks)
+show up under Docker's random names, such as `container="beautiful_curran"`.
+Name them with `--name` to make their lines easy to find.
 
 ## Privileges
 
