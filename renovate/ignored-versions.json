@@ -12,6 +12,17 @@
       ],
       "matchNewValue": "v3.33.1",
       "enabled": false
+    },
+    {
+      "description": "rails revert 2026-11-19 pipeline #4138: stack frigate failed after this bump: its terragrunt apply failed (commit c0fa2a98)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/blakeblackshear/frigate"
+      ],
+      "matchNewValue": "0.18.3-tensorrt",
+      "enabled": false
     }
   ]
 }
