@@ -242,6 +242,15 @@ for name, det in stats.get('detectors', {}).items():
       }
     }
   }
+  # A version bump pulls a ~2.85 GB -tensorrt layer that is cold in the GHCR
+  # pull-through cache (10.0.20.10:5010). That cold pull alone has taken 8-9
+  # minutes, and when the upstream stream breaks, kubelet's retry needs another
+  # ~3. The provider's default 10m rollout wait is too short for that, and the
+  # Renovate rails reverted 0.18.3-tensorrt for it (infra#204).
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1

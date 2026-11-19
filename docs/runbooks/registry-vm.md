@@ -121,6 +121,16 @@ templates still carry it. They only seed a rebuilt VM through cloud-init
 (`stacks/infra`), so run `playbooks/registry-cache.yml` after a rebuild:
 it overwrites them with the declared configs.
 
+A different failure on a cold multi-GB blob: containerd reports `failed
+commit on ref "layer-sha256:<A>": unexpected commit digest sha256:<B>,
+expected sha256:<A>`. The blob is not corrupt in the cache. The first
+fetch was still streaming from upstream when that stream broke, and
+`registry-nginx` logs it as `upstream prematurely closed connection` with
+a short byte count and `cache=MISS`. Kubelet's retry then gets the whole
+blob. Check with `docker logs registry-nginx --since 1h | grep <A>`. If a
+deployment's rollout wait cannot cover a cold pull plus one retry, give
+it `timeouts` (frigate's ~2.85 GB `-tensorrt` layer: 30m, infra#204).
+
 ## DNS configuration
 
 Ubuntu ships `systemd-resolved` and uses netplan to declare per-link
