@@ -1,11 +1,11 @@
 ---
-status: approved
+status: executing
 plan: true
 ---
 
 # One flow for every alert: Slack and the two emails move into the notify pipe
 
-Today an alert reaches people by four separate paths: Slack routes picked by a `notify: page` label in code, two email routes, and the notify pipe. This plan moves all of them into the notify pipe, so each person decides on https://notify.viktorbarzin.me which alerts reach them, on any mix of Phone, Email and Slack.
+Today an alert reaches people by four separate paths: Slack routes picked by a label in code, two email routes, and the notify pipe. This plan moves all of them into the notify pipe. Each person then decides on https://notify.viktorbarzin.me which alerts reach them, on any mix of Phone, Email and Slack.
 
 ## In numbers
 
@@ -53,11 +53,11 @@ edges:
   - {from: page, to: ak, state: same, label: save}
   - {from: am, to: old, state: removed}
 checks:
-  - {node: am, text: "amtool routes test: critical, security, event, Trivy and UPS alerts reach notify-pipe with today's timings; the 6 root-cause alerts also reach slack-fallback", status: open}
-  - {node: ad, text: "unit tests; the seed holds exactly the 222 paged alertnames before step 4", status: open}
-  - {node: ad, text: "a synthetic critical posts to #alerts in today's format, and health check 49 still parses it", status: open}
-  - {node: ad, text: "with Authentik unreachable and the pod restarted, routing uses the snapshot", status: open}
-  - {node: fb, text: "NotifyPipeDown posts with the adapter scaled to zero", status: open}
+  - {node: am, text: "amtool routes test against the rendered config: critical, security, event, Trivy, UPS and recipient alerts reach the right receiver; the 6 root-cause alerts also reach slack-fallback. It found a fall-through that a last catch-all route fixed.", status: passed}
+  - {node: ad, text: "148 unit tests; the seed held exactly 222 paged alertnames (181 Prometheus, 41 Loki)", status: passed}
+  - {node: ad, text: "a synthetic NotifyPipeDown posted to #alerts twice (pipe and fallback) in the old format, and check 49's parser read both", status: passed}
+  - {node: ad, text: "routing from the snapshot is unit-tested; live, /state/subscribers.json exists at mode 0600. An Authentik outage was not simulated.", status: open}
+  - {node: fb, text: "slack-fallback posted a synthetic NotifyPipeDown; the adapter was not scaled to zero", status: open}
 left_out:
   - "Looking people up in Slack by email: the bot lacks users:read.email, so each person pastes their member ID once."
   - "A shadow week: step 3 keeps Slack sending off while the pipe computes it, and logs any difference from the old routes."
