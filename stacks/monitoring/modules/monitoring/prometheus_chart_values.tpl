@@ -8747,16 +8747,17 @@ serverFiles:
             # retries), invalid_input (Cloud sent the builder something it
             # refused) and image_missing (the build finished, its image is not
             # in the registry) are Cloud's fault: one fires. runner_unavailable
-            # (no GitHub runner in 30 minutes) is GitHub's, so it fires at the
-            # second in 2 hours (`> 1.5` absorbs extrapolation). Code
+            # (no GitHub runner in 30 minutes) is GitHub's, and run_failed (the
+            # builder stopped before it finished) may be one runner's, so each
+            # fires at the second in 2 hours (`> 1.5` absorbs extrapolation). Code
             # failures (build_failed, timed_out, ...) are the User's.
-            expr: sum by (failure) (increase(cloud_build_failures_total{failure=~"dispatch_failed|invalid_input|image_missing"}[1h])) > 0 or sum by (failure) (increase(cloud_build_failures_total{failure="runner_unavailable"}[2h])) > 1.5
+            expr: sum by (failure) (increase(cloud_build_failures_total{failure=~"dispatch_failed|invalid_input|image_missing"}[1h])) > 0 or sum by (failure) (increase(cloud_build_failures_total{failure=~"runner_unavailable|run_failed"}[2h])) > 1.5
             labels:
               severity: warning
               subsystem: cloud
             annotations:
               summary: "Cloud builds fail for Cloud's reason: {{ $labels.failure }}"
-              description: "Builds failed with {{ $labels.failure }}, which is not the User's code: every push may fail to deploy. dispatch_failed: check github_dispatch_token in Vault secret/cloud/github-narrow and the builder repo (BUILDER_REPO). runner_unavailable: GitHub had no runner for the builder for 30 minutes twice. image_missing or invalid_input: read the reconciler's cloud.builds lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.builds\"'). Recent ones: SELECT project_id, service_name, failure, log_excerpt FROM deploys WHERE status = 'failed' ORDER BY finished_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Builds fail for Cloud's reason\"."
+              description: "Builds failed with {{ $labels.failure }}, which is not the User's code: every push may fail to deploy. dispatch_failed: check github_dispatch_token in Vault secret/cloud/github-narrow and the builder repo (BUILDER_REPO). runner_unavailable: GitHub had no runner for the builder for 30 minutes twice. run_failed: the builder run stopped before it finished twice; read the run on the builder repo. image_missing or invalid_input: read the reconciler's cloud.builds lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.builds\"'). Recent ones: SELECT project_id, service_name, failure, log_excerpt FROM deploys WHERE status = 'failed' ORDER BY finished_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Builds fail for Cloud's reason\"."
           - alert: CloudReconcilerLoopStalled
             # cloud_reconciler_loop_last_success_timestamp_seconds{loop}: when a
             # reconciler loop's last pass succeeded, or when it started (cloud

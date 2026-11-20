@@ -447,3 +447,18 @@ tests:
         alertname: CloudReconcilerLoopStalled
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud, loop: postgres_size}
+
+  # run_failed (the builder stopped before it finished) is Cloud's too,
+  # and fires at the second in 2 hours, like runner_unavailable.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_build_failures_total{namespace="cloud", service="cloud-reconciler", failure="run_failed"}'
+        values: '0x5 1x10 2x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudBuildsFailingForCloud
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: CloudBuildsFailingForCloud
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, failure: run_failed}

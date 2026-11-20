@@ -1448,13 +1448,15 @@ is Cloud's fault, or when `task_failed` repeats. The User's message for
 
 `CloudBuildsFailingForCloud{failure}` fires on one `dispatch_failed`,
 `invalid_input` or `image_missing` in an hour, or on two
-`runner_unavailable` in two hours. These are not the User's code.
+`runner_unavailable` or two `run_failed` in two hours. These are not the User's code.
 
 - `dispatch_failed`: Cloud could not start the builder after its retries.
   Check `github_dispatch_token` in `secret/cloud/github-narrow` and that
   the builder repo exists (`BUILDER_REPO`).
 - `runner_unavailable`: GitHub had no runner for 30 minutes. Check
   githubstatus.com and the builder repo's Actions settings.
+- `run_failed`: the builder run stopped before it finished; open the run
+  on the builder repo's Actions page.
 - `image_missing`, `invalid_input`: read the reconciler's `cloud.builds`
   lines and the Deploy's `log_excerpt`.
 
