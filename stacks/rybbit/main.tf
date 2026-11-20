@@ -246,7 +246,7 @@ resource "kubernetes_deployment" "clickhouse" {
           # serialization changes), so dump clickhouse.events in Native format
           # before bumping, and keep each hop within ClickHouse's one-year
           # compatibility window.
-          image = "clickhouse/clickhouse-server:26.10.7.24"
+          image = "clickhouse/clickhouse-server:26.10.8.34"
           env {
             name  = "CLICKHOUSE_DB"
             value = local.clickhouse_db
@@ -475,7 +475,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
             restart_policy = "Never"
             container {
               name  = "clickhouse-backup"
-              image = "clickhouse/clickhouse-server:26.10.7.24"
+              image = "clickhouse/clickhouse-server:26.10.8.34"
               env {
                 name  = "CH_HOST"
                 value = "${kubernetes_service.clickhouse.metadata[0].name}.${kubernetes_namespace.rybbit.metadata[0].name}.svc.cluster.local"
