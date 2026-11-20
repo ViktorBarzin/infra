@@ -118,9 +118,12 @@ resource "kubernetes_persistent_volume_claim" "clickhouse_data_proxmox" {
     name      = "rybbit-clickhouse-data-proxmox"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
     annotations = {
+      # 20Gi holds the 90-day replay steady state (~13 GiB on disk at the
+      # Nov 2026 rate of ~0.15 GiB/day) with headroom; 5Gi filled in weeks
+      # (infra#214).
       "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
+      "resize.topolvm.io/storage_limit" = "20Gi"
     }
   }
   spec {
@@ -426,7 +429,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
 #
 # Each run writes /backup/<UTC yyyymmdd-hhmm>/ with, per user table, the
 # schema (<db>.<table>.sql, from SHOW CREATE) and the data in Native format
-# (<db>.<table>.native.gz), plus VERSION, counts.tsv and SHA256SUMS. Before
+# (<db>.<table>.native.zst, zstd; .native.gz before 2026-11-20), plus VERSION, counts.tsv and SHA256SUMS. Before
 # the directory is written, the job restores the whole dump into
 # clickhouse-local from the same image and checks every table's row count, so
 # a dump that does not read back never lands. 14-day retention. Restore:
@@ -523,7 +526,11 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                       Replacing*|Aggregating*|Collapsing*|VersionedCollapsing*|Summing*|Coalescing*|Graphite*) final=FINAL ;;
                     esac
                     n=$(ch -q "SELECT count() FROM \`$db\`.\`$t\` $final")
-                    ch -q "SELECT * FROM \`$db\`.\`$t\` FORMAT Native" | gzip -6 > "$work/$db.$t.native.gz"
+                    # zstd written by the client itself, not gzip -6 (single-threaded,
+                    # the dump's bottleneck): session_replay_events went to 895 MB
+                    # in 97 s, against ~2.1 GB with gzip (infra#214). file() in the
+                    # restore check picks the codec from the .zst extension.
+                    ch -q "SELECT * FROM \`$db\`.\`$t\` INTO OUTFILE '$work/$db.$t.native.zst' COMPRESSION 'zstd' LEVEL 3 FORMAT Native"
                     printf '%s\t%s\t%s\n' "$db" "$t" "$n" >> "$work/counts.tsv"
                   fi
                 done < "$work/tables.tsv"
@@ -538,7 +545,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
                   while IFS="$(printf '\t')" read -r db t hasdata; do
                     [ "$hasdata" = "$pass" ] || continue
                     { cat "$work/$db.$t.sql"; echo ";"; } >> "$r"
-                    [ "$hasdata" = 1 ] && echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.gz', 'Native');" >> "$r"
+                    [ "$hasdata" = 1 ] && echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.zst', 'Native');" >> "$r"
                   done < "$work/tables.tsv"
                 done
                 # clickhouse-local caps itself at 0.9 x the container limit. By default it
@@ -562,7 +569,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_backup" {
 
                 out=/backup/$TS
                 mkdir -p "$out.partial"
-                cp "$work"/*.sql "$work"/*.native.gz "$work/VERSION" "$work/databases" "$work/tables.tsv" "$work/counts.tsv" "$out.partial/"
+                cp "$work"/*.sql "$work"/*.native.zst "$work/VERSION" "$work/databases" "$work/tables.tsv" "$work/counts.tsv" "$out.partial/"
                 rm -f "$out.partial/restore.sql"
                 (cd "$out.partial" && sha256sum * > SHA256SUMS)
                 mv "$out.partial" "$out"

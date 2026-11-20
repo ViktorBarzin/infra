@@ -1,6 +1,6 @@
 # Restore ClickHouse (rybbit)
 
-Last updated: 2026-10-10 (backup CronJob added)
+Last updated: 2026-11-20 (dumps are zstd, infra#214)
 
 Applies to the single-replica `clickhouse` Deployment in the `rybbit`
 namespace, the event store for Rybbit analytics.
@@ -16,7 +16,9 @@ namespace, the event store for Rybbit analytics.
 Each run directory holds, per user table:
 
 - `<db>.<table>.sql`: the `SHOW CREATE TABLE` statement
-- `<db>.<table>.native.gz`: the rows, `SELECT * ... FORMAT Native`, gzipped
+- `<db>.<table>.native.zst`: the rows, `SELECT * ... FORMAT Native`, zstd-compressed
+  by `clickhouse-client` (`INTO OUTFILE ... COMPRESSION 'zstd'`). Runs before
+  2026-11-20 hold `.native.gz` (gzip) instead.
 
 plus `<db>.database.sql`, `VERSION` (server version at dump time), `counts.tsv`
 (rows per table at dump time), `tables.tsv` and `SHA256SUMS`.
@@ -63,7 +65,9 @@ D=/backup/<yyyymmdd-hhmm>
 ch() { clickhouse-client --host clickhouse.rybbit.svc.cluster.local --port 9000 --user default --password "$CLICKHOUSE_PASSWORD" "$@"; }
 ch -q "RENAME TABLE clickhouse.events TO clickhouse.events_broken"   # keep the old copy until verified
 ch --queries-file "$D/clickhouse.events.sql"
-zcat "$D/clickhouse.events.native.gz" | ch -q "INSERT INTO clickhouse.events FORMAT Native"
+ch -q "INSERT INTO clickhouse.events FROM INFILE '$D/clickhouse.events.native.zst' COMPRESSION 'zstd' FORMAT Native"
+# a run from before 2026-11-20 (gzip):
+# zcat "$D/clickhouse.events.native.gz" | ch -q "INSERT INTO clickhouse.events FORMAT Native"
 ch -q "SELECT count() FROM clickhouse.events"                        # compare with counts.tsv
 ```
 
