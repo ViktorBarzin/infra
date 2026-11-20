@@ -1249,6 +1249,15 @@ resource "kubernetes_config_map" "auth_proxy_config" {
           client_header_buffer_size 8k;
           large_client_header_buffers 8 64k;
 
+          # The outpost's answer carries the user's Authentik attributes (in
+          # the ak_proxy claims), and a user with a large `notify` attribute
+          # (notify.viktorbarzin.me choices, 2026-11-20) pushed it past the
+          # default 4k/8k proxy buffer: "upstream sent too big header", a 502
+          # on every forward-auth host for that user.
+          proxy_buffer_size 64k;
+          proxy_buffers 8 64k;
+          proxy_busy_buffers_size 128k;
+
           # RETRY ONCE BEFORE SURRENDERING THE WHOLE ESTATE TO BASIC AUTH.
           # This location decides, for EVERY request to EVERY auth="required"
           # host, whether the user is signed in. It had a single upstream peer,
