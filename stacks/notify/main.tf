@@ -14,6 +14,8 @@
 # environment. The adapter decides per alert which tags to notify, from the
 # same attributes and Prometheus's rule groups (files/subs.py).
 
+# The ingress names the TLS Secret; Kyverno's sync-tls-secret policy copies
+# it into every namespace, so this stack does not create it.
 variable "tls_secret_name" {
   type      = string
   sensitive = true
@@ -40,12 +42,6 @@ resource "kubernetes_namespace" "notify" {
 # webhook writes the config with it (stacks/authentik/notify.tf reads this
 # Secret). It guards sending and config writes only: the config holds no
 # secrets.
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.notify.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
-
 resource "random_password" "apprise_admin" {
   length  = 32
   special = false
