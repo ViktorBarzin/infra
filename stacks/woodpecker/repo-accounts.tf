@@ -209,6 +209,19 @@ resource "kubernetes_role" "ci_deploy_tv" {
     resource_names = ["tv-guard-secrets", "ghcr-credentials"]
     verbs          = ["get"]
   }
+  # publish-tv's publish step starts a short-lived busybox pod on the data
+  # volume, copies the APK in with kubectl cp and exec, and deletes the pod.
+  # Reading pods comes from the ci-deployer ClusterRole.
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["create", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create", "get"]
+  }
 }
 
 resource "kubernetes_role_binding" "ci_deploy_tv" {
