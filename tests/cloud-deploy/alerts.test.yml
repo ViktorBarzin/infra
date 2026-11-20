@@ -343,3 +343,107 @@ tests:
         alertname: CloudNotificationsStuck
         exp_alerts:
           - exp_labels: {severity: warning, subsystem: cloud}
+
+  # Postgres tasks (cloud B28b): Kubernetes refusing a task's Job fires at
+  # once, with its kind and result; a task that ended done stays quiet.
+  # Every kind and result series starts at 0 (src/reconciler/metrics.ts).
+  - interval: 2m
+    input_series:
+      - series: 'cloud_postgres_tasks_total{namespace="cloud", service="cloud-reconciler", kind="backups", result="job_refused"}'
+        values: '0x5 1x20'
+      - series: 'cloud_postgres_tasks_total{namespace="cloud", service="cloud-reconciler", kind="backup", result="done"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CloudPostgresTasksFailing
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: CloudPostgresTasksFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, kind: backups, result: job_refused}
+      - eval_time: 50m
+        alertname: CloudPostgresTasksFailing
+        exp_alerts: []
+  # A kind's own failure fires only when it repeats: 3 in an hour.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_postgres_tasks_total{namespace="cloud", service="cloud-reconciler", kind="export", result="task_failed"}'
+        values: '0x5 1x20'
+      - series: 'cloud_postgres_tasks_total{namespace="cloud", service="cloud-reconciler", kind="restore", result="task_failed"}'
+        values: '0x5 1 2 3x20'
+      - series: 'cloud_postgres_tasks_total{namespace="cloud", service="cloud-reconciler", kind="restore", result="database_not_empty"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudPostgresTasksFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, kind: restore, result: task_failed}
+
+  # Builds that fail for Cloud's reasons: one dispatch_failed fires; one
+  # runner_unavailable waits for a second; a build_failed is the User's.
+  - interval: 2m
+    input_series:
+      - series: 'cloud_build_failures_total{namespace="cloud", service="cloud-reconciler", failure="dispatch_failed"}'
+        values: '0x5 1x20'
+      - series: 'cloud_build_failures_total{namespace="cloud", service="cloud-reconciler", failure="build_failed"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CloudBuildsFailingForCloud
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, failure: dispatch_failed}
+  - interval: 2m
+    input_series:
+      - series: 'cloud_build_failures_total{namespace="cloud", service="cloud-reconciler", failure="runner_unavailable"}'
+        values: '0x5 1x10 2x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CloudBuildsFailingForCloud
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: CloudBuildsFailingForCloud
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, failure: runner_unavailable}
+
+  # Reconciler loops: a loop whose last good pass is older than its
+  # threshold, for 5 minutes, fires with its name. A fresh loop is quiet.
+  # The size pass, which has its own timestamp, joins as postgres_size.
+  # Timestamps are Unix seconds; the test clock starts at 0.
+  - interval: 2m
+    input_series:
+      # health_watch stops succeeding at 2 minutes.
+      - series: 'cloud_reconciler_loop_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler", loop="health_watch"}'
+        values: '0 120x20'
+      # cron_watch keeps succeeding.
+      - series: 'cloud_reconciler_loop_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler", loop="cron_watch"}'
+        values: '0+120x20'
+      # builds stops at 0: quiet until 15 minutes, then 5 more.
+      - series: 'cloud_reconciler_loop_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler", loop="builds"}'
+        values: '0x20'
+      - series: 'cloud_postgres_size_pass_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler"}'
+        values: '0+120x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: CloudReconcilerLoopStalled
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: CloudReconcilerLoopStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, loop: health_watch}
+      - eval_time: 22m
+        alertname: CloudReconcilerLoopStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, loop: health_watch}
+          - exp_labels: {severity: warning, subsystem: cloud, loop: builds}
+  - interval: 2m
+    input_series:
+      - series: 'cloud_postgres_size_pass_last_success_timestamp_seconds{namespace="cloud", service="cloud-reconciler"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CloudReconcilerLoopStalled
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: CloudReconcilerLoopStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, subsystem: cloud, loop: postgres_size}

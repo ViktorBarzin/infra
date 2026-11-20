@@ -1416,7 +1416,64 @@ within 15 s, at its next beat.
 | `CloudPostgresDiskEnforcementFailed` | no | on the primary, find the Project session that holds a lock on its role (`SELECT pid, usename, state, query FROM pg_stat_activity WHERE usename LIKE 'p\_%' AND (state = 'idle in transaction' OR wait_event_type = 'Lock');`) and end it with `pg_terminate_backend(pid)`; the next pass, within 10 minutes, enforces the limit. The reconciler log lines are in the alert's description |
 | `CloudPostgresReadOnly` | no | none: the owner sees why in the console, and write access returns when usage drops or the Size grows |
 | `CloudBuildMinutesHigh` | no | GitHub billing page; Cloud builds stop at the Budget |
+| `CloudPostgresTasksFailing` | no | "Postgres tasks fail", below |
+| `CloudBuildsFailingForCloud` | no | "Builds fail for Cloud's reason", below |
+| `CloudReconcilerLoopStalled` | no | "A reconciler loop stalled", below |
 | `CloudProvisionerForeignRole`, `CloudProjectRoleUnlimited`, `CloudProjectConnectionsOverCeiling` | yes | their summaries hold the query; [docs/agents/databases.md](../agents/databases.md), "Cloud" |
+
+### Postgres tasks fail
+
+`CloudPostgresTasksFailing{kind,result}` fires when a Postgres task
+(`cloud pg backups`, `backup`, `export`, `restore`) ends with a code that
+is Cloud's fault, or when `task_failed` repeats. The User's message for
+`job_refused` says the Operator has been alerted, so act on it.
+
+1. Read the recent failures in the `cloud` database:
+   `SELECT kind, error, finished_at FROM postgres_tasks WHERE state = 'failed' ORDER BY finished_at DESC LIMIT 20;`
+2. `job_refused`: an admission policy refused the task's Job or pod. The
+   usual cause is an image pin out of step: the reconciler's
+   `PG_TASK_IMAGE` must equal the image `cloud-pg-task` admits
+   (`stacks/cloud`, cloud repo `docs/build/render-parity/b28-infra.md`).
+   `kubectl -n cloud get events --field-selector reason=FailedCreate`
+   names the policy. Fix the pin in Terraform; the next task runs.
+3. `reconciler_error` or `task_stale`: read the reconciler's
+   `cloud.reconciler.postgres-tasks` lines
+   (`homelab logs query '{namespace="cloud", container="reconciler"} |= "postgres-tasks"'`).
+4. `task_failed`: the task's stored log ends with the reason
+   (`SELECT log FROM postgres_tasks WHERE id = '<id>';`). A pull failure
+   or a timeout on every kind is Cloud's; one database failing is that
+   database's.
+
+### Builds fail for Cloud's reason
+
+`CloudBuildsFailingForCloud{failure}` fires on one `dispatch_failed`,
+`invalid_input` or `image_missing` in an hour, or on two
+`runner_unavailable` in two hours. These are not the User's code.
+
+- `dispatch_failed`: Cloud could not start the builder after its retries.
+  Check `github_dispatch_token` in `secret/cloud/github-narrow` and that
+  the builder repo exists (`BUILDER_REPO`).
+- `runner_unavailable`: GitHub had no runner for 30 minutes. Check
+  githubstatus.com and the builder repo's Actions settings.
+- `image_missing`, `invalid_input`: read the reconciler's `cloud.builds`
+  lines and the Deploy's `log_excerpt`.
+
+### A reconciler loop stalled
+
+`CloudReconcilerLoopStalled{loop}` fires when a loop has not finished a
+pass for many of its ticks: 5 minutes for `health_watch`, `cron_watch`,
+`job_runs`, `toolbox` and `postgres_tasks`, 15 minutes for `builds`, 30
+minutes for `postgres_size`, then 5 minutes more. The other loops keep
+running, so only that loop's work stops: crash notifications, cron runs,
+`cloud run` jobs, `cloud psql` sessions, Postgres tasks, builds, or the
+size pass.
+
+1. Read the loop's failure lines:
+   `homelab logs query '{namespace="cloud", container="reconciler"} |= "failed"' --since 30m`.
+   A lost connection to the `cloud` database or the Kubernetes API is the
+   usual cause.
+2. If the lines stop (a hung loop) or the cause is gone, restart the
+   reconciler ("Restart" above). Its series starts again at the restart.
 
 ### The pull token, the ghcr cache and a rotation
 

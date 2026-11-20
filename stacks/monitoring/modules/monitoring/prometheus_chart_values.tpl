@@ -8719,6 +8719,65 @@ serverFiles:
             annotations:
               summary: "Cloud stopped pruning old App images: GitHub refused ghcr_delete_token"
               description: "GitHub answered 401 or 403 to the reconciler's image pruning, so it stopped until the reconciler restarts. Check ghcr_delete in Vault secret/cloud/github-narrow (read:packages and delete:packages), then restart the reconciler. Runbook: docs/runbooks/cloud.md, \"Old App images\"."
+          - alert: CloudPostgresTasksFailing
+            # cloud_postgres_tasks_total{kind,result}: Postgres backups, backup,
+            # export and restore tasks by how they ended (cloud B28b,
+            # src/reconciler/metrics.ts); every kind and result starts at 0, so
+            # increase() sees the first one. job_refused (Kubernetes refused
+            # the task's Job or pod: an admission policy, an image pin out of
+            # step), reconciler_error and task_stale are Cloud's fault, and the
+            # User's message says the Operator has been alerted, so one fires
+            # at once, with no `for`. task_failed (a kind's own <kind>_failed:
+            # pg_dump or pg_restore exited non-zero, a timeout, an image pull)
+            # may be one database's fault, so it fires at 3 in an hour
+            # (`> 2.5` absorbs increase()'s extrapolation). The other results
+            # (backup_not_found, database_not_empty, apply_failed, ...) are
+            # the User's and stay quiet.
+            expr: sum by (kind, result) (increase(cloud_postgres_tasks_total{result=~"job_refused|reconciler_error|task_stale"}[30m])) > 0 or sum by (kind, result) (increase(cloud_postgres_tasks_total{result="task_failed"}[1h])) > 2.5
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud Postgres {{ $labels.kind }} tasks fail with {{ $labels.result }}"
+              description: "Cloud Postgres tasks of kind {{ $labels.kind }} ended {{ $labels.result }}, a Cloud problem: Users cannot list, take, export or restore backups. job_refused: an admission policy refused the task's Job or pod; compare PG_TASK_IMAGE on the reconciler with the image cloud-pg-task pins (stacks/cloud) and read kubectl -n cloud get events --field-selector reason=FailedCreate. Recent failures: SELECT kind, error, finished_at FROM postgres_tasks WHERE state = 'failed' ORDER BY finished_at DESC LIMIT 20; in the cloud database. Logs: homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"postgres-tasks\"'. Runbook: docs/runbooks/cloud.md, \"Postgres tasks fail\"."
+          - alert: CloudBuildsFailingForCloud
+            # cloud_build_failures_total{failure}: failed and refused builds by
+            # failure code (src/lib/deploys.ts DEPLOY_FAILURES), each from 0.
+            # dispatch_failed (Cloud could not start the builder after its
+            # retries), invalid_input (Cloud sent the builder something it
+            # refused) and image_missing (the build finished, its image is not
+            # in the registry) are Cloud's fault: one fires. runner_unavailable
+            # (no GitHub runner in 30 minutes) is GitHub's, so it fires at the
+            # second in 2 hours (`> 1.5` absorbs extrapolation). Code
+            # failures (build_failed, timed_out, ...) are the User's.
+            expr: sum by (failure) (increase(cloud_build_failures_total{failure=~"dispatch_failed|invalid_input|image_missing"}[1h])) > 0 or sum by (failure) (increase(cloud_build_failures_total{failure="runner_unavailable"}[2h])) > 1.5
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud builds fail for Cloud's reason: {{ $labels.failure }}"
+              description: "Builds failed with {{ $labels.failure }}, which is not the User's code: every push may fail to deploy. dispatch_failed: check github_dispatch_token in Vault secret/cloud/github-narrow and the builder repo (BUILDER_REPO). runner_unavailable: GitHub had no runner for the builder for 30 minutes twice. image_missing or invalid_input: read the reconciler's cloud.builds lines (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"cloud.builds\"'). Recent ones: SELECT project_id, service_name, failure, log_excerpt FROM deploys WHERE status = 'failed' ORDER BY finished_at DESC LIMIT 20; in the cloud database. Runbook: docs/runbooks/cloud.md, \"Builds fail for Cloud's reason\"."
+          - alert: CloudReconcilerLoopStalled
+            # cloud_reconciler_loop_last_success_timestamp_seconds{loop}: when a
+            # reconciler loop's last pass succeeded, or when it started (cloud
+            # src/reconciler/metrics.ts). The threshold is many of each loop's
+            # ticks: health_watch (5 s, a full pass 10 s), cron_watch (15 s),
+            # job_runs (2 s), toolbox (1 s) and postgres_tasks (2 s) at 5
+            # minutes; builds (BUILD_TICK_SECONDS 5 s, but a pass polls every
+            # due App and follows every build) at 15 minutes; and the size
+            # pass (600 s; its own cloud_postgres_size_pass_last_success_timestamp_seconds,
+            # at most 649 s old over the 7 days to 2026-11-20) at three passes,
+            # 30 minutes. max() takes the newest pod's series, so the old
+            # pod's series after a restart does not fire. A reconciler that is
+            # down has no series: CloudReconcilerDown covers it.
+            expr: (time() - max by (loop) (cloud_reconciler_loop_last_success_timestamp_seconds{loop=~"health_watch|cron_watch|job_runs|toolbox|postgres_tasks"})) > 300 or (time() - max by (loop) (cloud_reconciler_loop_last_success_timestamp_seconds{loop="builds"})) > 900 or label_replace((time() - max(cloud_postgres_size_pass_last_success_timestamp_seconds)) > 1800, "loop", "postgres_size", "", "")
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: cloud
+            annotations:
+              summary: "Cloud reconciler loop {{ $labels.loop }} has not finished a pass for {{ $value | humanizeDuration }}"
+              description: "The reconciler's {{ $labels.loop }} loop has not finished a pass for longer than many of its ticks. health_watch: crash and health Events and their notifications stop. cron_watch: cron runs and cron_failed stop. job_runs: cloud run jobs wait. toolbox: cloud psql sessions do not start. postgres_tasks: backups, exports and restores wait. builds: pushes are not built. postgres_size: database sizes and the read-only switch go stale. Usually the cloud database or the Kubernetes API is unreachable for that loop; its log line says why (homelab logs query '{namespace=\"cloud\", container=\"reconciler\"} |= \"failed\"'). A restart of the reconciler is safe (kubectl -n cloud rollout restart deploy/cloud-reconciler, after presence claim). Runbook: docs/runbooks/cloud.md, \"A reconciler loop stalled\"."
       - name: Mladost 3 site
         rules:
           - alert: Mladost3TunnelDown
