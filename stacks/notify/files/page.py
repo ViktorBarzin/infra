@@ -67,7 +67,7 @@ def summary_text(alert) -> str:
 STYLE = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#e3e3e3;--card:#f7f7f7;--accent:#2f6fed;--accent-fg:#fff;--ghost:#dbe6fb;--bad:#b3261e}
 @media (prefers-color-scheme:dark){:root{--bg:#121212;--fg:#eee;--muted:#9a9a9a;--line:#2c2c2c;--card:#1b1b1b;--accent:#4b82f0;--ghost:#25324d;--bad:#f2b8b5}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,sans-serif}
 main{max-width:760px;margin:0 auto;padding:16px 16px 96px}
 h1{font-size:22px;margin:8px 0 4px}h2{font-size:17px;margin:28px 0 8px}
 .muted{color:var(--muted);font-size:13px}.banner{padding:10px 14px;border-radius:8px;margin:12px 0;background:var(--ghost)}
@@ -290,6 +290,8 @@ class Handler(BaseHTTPRequestHandler):
                     notify = (user.get("attributes") or {}).get("notify") or {}
                     rules = self.server.rules
                     self.reply(200, alert_page(user, notify, name, rules.catalog(), rules.groups_of, saved))
+            elif url.path == "/favicon.ico":
+                self.reply(204)
             else:
                 self.reply(404, message_page("Not found.", "/"))
         except subs.Unavailable as e:

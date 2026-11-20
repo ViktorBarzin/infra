@@ -162,6 +162,11 @@ class PageTest(unittest.TestCase):
         self.directory.down = True
         self.assertEqual(self.request("/")[0], 503)
 
+    def test_hidden_attribute_beats_display_rules(self):
+        # Search hides rows with `hidden`; .row sets display:flex, which would win.
+        _, html, _ = self.request("/")
+        self.assertIn("[hidden]{display:none!important}", html)
+
     def test_saved_banner(self):
         _, html, _ = self.request("/?saved=1")
         self.assertIn("Saved.", html)
