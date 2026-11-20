@@ -372,7 +372,7 @@ resource "kubernetes_deployment" "shim" {
         }
         container {
           name  = "nginx"
-          image = "nginx:1.31.8"
+          image = "nginx:1.31.9"
           port {
             container_port = 8080
           }
