@@ -1,4 +1,5 @@
 import itertools
+import json
 import random
 import unittest
 
@@ -133,27 +134,35 @@ class PlayTest(unittest.TestCase):
 
 class DashboardTest(unittest.TestCase):
     def config(self):
-        return {"views": [{"sections": [
+        return {"views": [{"max_columns": 2, "sections": [
             {"type": "grid", "cards": [{"type": "tile", "entity": "light.livia"}]},
             {"type": "grid", "cards": [{"type": "button", "tap_action": {"data": {"effect": "rainbow"}}}]},
+            {"type": "grid", "cards": [{"type": "button", "tap_action": {"data": {"effect": "fire"}}}]},
+            {"type": "grid", "cards": [{"type": "markdown"}]},
         ]}]}
 
-    def test_replaces_the_pattern_section_and_keeps_the_rest(self):
-        sections = dashboard.updated(self.config(), "9.9.9")["views"][0]["sections"]
-        self.assertEqual(len(sections), 2)
+    def test_one_section_per_group_in_place_of_the_old_ones(self):
+        view = dashboard.updated(self.config(), "9.9.9")["views"][0]
+        groups = list(dict.fromkeys(p.group for p in patterns.PATTERNS.values()))
+        sections = view["sections"]
         self.assertEqual(sections[0]["cards"], [{"type": "tile", "entity": "light.livia"}])
-        effects = [c["tap_action"]["data"]["effect"] for c in sections[1]["cards"] if c["type"] == "picture"]
+        self.assertEqual(sections[-1]["cards"], [{"type": "markdown"}])
+        middle = sections[1:-1]
+        self.assertEqual([s["cards"][0]["heading"] for s in middle], groups)
+        effects = [c["tap_action"]["data"]["effect"] for s in middle for c in s["cards"] if c["type"] == "picture"]
         self.assertEqual(effects, list(patterns.PATTERNS))
-        self.assertIn("/local/livia/aurora.webp?v=9.9.9", [c.get("image") for c in sections[1]["cards"]])
+        self.assertIn("/local/livia/aurora.webp?v=9.9.9", [c.get("image") for s in middle for c in s["cards"]])
+        self.assertEqual(view["max_columns"], 4)
+        self.assertTrue(view["dense_section_placement"])
 
-    def test_has_a_heading_per_group(self):
-        cards = dashboard.section("1")["cards"]
-        headings = [c["heading"] for c in cards if c["type"] == "heading"]
-        self.assertEqual(headings[1:], list(dict.fromkeys(p.group for p in patterns.PATTERNS.values())))
+    def test_running_twice_changes_nothing(self):
+        once = dashboard.updated(self.config(), "1")
+        self.assertEqual(dashboard.updated(json.loads(json.dumps(once)), "1"), once)
 
-    def test_adds_the_section_when_missing(self):
+    def test_adds_the_sections_when_missing(self):
         config = {"views": [{"sections": [{"type": "grid", "cards": []}]}]}
-        self.assertEqual(len(dashboard.updated(config, "1")["views"][0]["sections"]), 2)
+        groups = {p.group for p in patterns.PATTERNS.values()}
+        self.assertEqual(len(dashboard.updated(config, "1")["views"][0]["sections"]), 1 + len(groups))
 
 
 if __name__ == "__main__":

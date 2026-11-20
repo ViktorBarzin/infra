@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Rebuild the pattern section of the Livia dashboard from patterns.py.
+"""Rebuild the pattern sections of the Livia dashboard from patterns.py.
 
     HA_TOKEN=... python3 dashboard.py --version 1.3.0 [--dry-run]
 
-Each pattern becomes a picture card with its preview (/local/livia/<name>.webp,
-from preview.py), grouped under a heading per group; a tap starts it. The
-section holding the pattern cards is replaced; the rest of the dashboard
-(the light, colours and the plug) is left as it is. deploy.sh runs this.
+Each group of patterns becomes one section: a heading, then a picture card
+per pattern with its preview (/local/livia/<name>.webp, from preview.py); a
+tap starts it. The view is up to four sections wide with dense placement, so
+on a wide screen the groups sit side by side, and on a phone they stack. The
+sections holding pattern cards are replaced; the rest of the dashboard (the
+light, colours and the plug) is left as it is. deploy.sh runs this.
 """
 
 import argparse
@@ -20,6 +22,7 @@ import patterns
 URL = "wss://ha-london.viktorbarzin.me/api/websocket"
 DASHBOARD = "livia-strip"
 LIGHT = "light.livia"
+MAX_COLUMNS = 4
 Card = dict[str, Any]
 
 
@@ -38,15 +41,12 @@ def pattern_card(p: patterns.Pattern, version: str) -> Card:
     }
 
 
-def section(version: str) -> Card:
-    cards: list[Card] = [{"type": "heading", "heading": "Patterns", "icon": "mdi:animation-play"}]
-    group = None
+def sections(version: str) -> list[Card]:
+    """One section per group, in the order of PATTERNS."""
+    groups: dict[str, list[Card]] = {}
     for p in patterns.PATTERNS.values():
-        if p.group != group:
-            group = p.group
-            cards.append({"type": "heading", "heading": group, "heading_style": "subtitle"})
-        cards.append(pattern_card(p, version))
-    return {"type": "grid", "cards": cards}
+        groups.setdefault(p.group, [{"type": "heading", "heading": p.group}]).append(pattern_card(p, version))
+    return [{"type": "grid", "cards": cards} for cards in groups.values()]
 
 
 def is_pattern_section(s: Card) -> bool:
@@ -54,17 +54,14 @@ def is_pattern_section(s: Card) -> bool:
 
 
 def updated(config: Card, version: str) -> Card:
-    """The dashboard with its pattern section replaced, or added at the end."""
+    """The dashboard with its pattern sections replaced, where the first one was."""
     view = config["views"][0]
-    sections = view.get("sections", [])
-    new = section(version)
-    for i, s in enumerate(sections):
-        if is_pattern_section(s):
-            sections[i] = new
-            break
-    else:
-        sections.append(new)
-    view["sections"] = sections
+    old = view.get("sections", [])
+    at = next((i for i, s in enumerate(old) if is_pattern_section(s)), len(old))
+    kept = [s for s in old if not is_pattern_section(s)]
+    view["sections"] = kept[:at] + sections(version) + kept[at:]
+    view["max_columns"] = MAX_COLUMNS
+    view["dense_section_placement"] = True
     return config
 
 
