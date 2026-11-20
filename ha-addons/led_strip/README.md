@@ -75,9 +75,9 @@ To add a pattern, write its generator in `patterns.py` and add it to
 `PATTERNS`. The tests, the effect list in Home Assistant, the preview and the
 dashboard card follow from that entry when `deploy.sh` runs.
 
-The script `script.livia_weather` (button "Show the weather") reads the daily
-forecast and starts the matching weather pattern: today's until 17:00, then
-tomorrow's.
+The weather patterns are started by hand. ha-london has no working forecast
+source yet: the Met Office integration needs a DataHub key, and the key in
+its disabled "Islington" entry is an old DataPoint key that DataHub refuses.
 
 The add-on gets `/dev/spidev0.0`, `/dev/gpiomem` (rpi_ws281x sets the MOSI pin
 function through it) and the device tree (`devicetree: true`). Docker hides

@@ -146,11 +146,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(effects, list(patterns.PATTERNS))
         self.assertIn("/local/livia/aurora.webp?v=9.9.9", [c.get("image") for c in sections[1]["cards"]])
 
-    def test_has_a_heading_per_group_and_the_weather_button(self):
+    def test_has_a_heading_per_group(self):
         cards = dashboard.section("1")["cards"]
         headings = [c["heading"] for c in cards if c["type"] == "heading"]
         self.assertEqual(headings[1:], list(dict.fromkeys(p.group for p in patterns.PATTERNS.values())))
-        self.assertIn(dashboard.WEATHER_BUTTON, cards)
 
     def test_adds_the_section_when_missing(self):
         config = {"views": [{"sections": [{"type": "grid", "cards": []}]}]}

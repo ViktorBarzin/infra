@@ -38,16 +38,6 @@ def pattern_card(p: patterns.Pattern, version: str) -> Card:
     }
 
 
-WEATHER_BUTTON: Card = {
-    "type": "button",
-    "name": "Show the weather",
-    "icon": "mdi:weather-partly-cloudy",
-    "show_state": False,
-    "tap_action": {"action": "perform-action", "perform_action": "script.livia_weather"},
-    "grid_options": {"columns": 12, "rows": 1},
-}
-
-
 def section(version: str) -> Card:
     cards: list[Card] = [{"type": "heading", "heading": "Patterns", "icon": "mdi:animation-play"}]
     group = None
@@ -55,8 +45,6 @@ def section(version: str) -> Card:
         if p.group != group:
             group = p.group
             cards.append({"type": "heading", "heading": group, "heading_style": "subtitle"})
-            if group == "Weather":
-                cards.append(WEATHER_BUTTON)
         cards.append(pattern_card(p, version))
     return {"type": "grid", "cards": cards}
 
